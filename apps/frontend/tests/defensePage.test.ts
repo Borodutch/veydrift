@@ -60,7 +60,7 @@ describe("Defense status panel surfaces only failures", () => {
     });
     const text = visibleText(panel);
     expect(text).toContain("Unlock or reconnect your wallet");
-    expect(text).not.toContain("No VeydriftGame home planet");
+    expect(text).not.toContain("No home planet");
   });
 
   test("keeps true missing-home-planet copy when no wallet recovery is needed", () => {
@@ -70,7 +70,7 @@ describe("Defense status panel surfaces only failures", () => {
       error: undefined,
       loading: false,
     });
-    expect(visibleText(panel)).toContain("No VeydriftGame home planet");
+    expect(visibleText(panel)).toContain("No home planet");
   });
 
   test("does not mistake a not-yet-loaded selected-planet snapshot for a missing home planet", () => {

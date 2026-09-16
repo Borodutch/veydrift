@@ -11,7 +11,7 @@ describe("alliance war protection UI", () => {
     expect(source).toContain("only {allianceName}&apos;s original members can bypass score protection and bashing limits");
     expect(source).toContain("both original rosters will bypass score protection and bashing limits");
     expect(source).toContain("A weaker/equal declaration or a stronger declaration within 1.5× is bilateral");
-    expect(source).toContain("each alliance can snapshot at most 64 members");
+    expect(source).toContain("each alliance can have at most 64 members at declaration");
     expect(source).toContain("<WarDeclarationRule icon={Scale}");
   });
 });

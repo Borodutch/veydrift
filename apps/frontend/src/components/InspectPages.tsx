@@ -65,7 +65,7 @@ export function PlayerInspectPage({
   const profile = highscore?.profile ?? planets?.player ?? null;
   const loading = Boolean(apiBaseUrl && !planets && !highscore && !profile && [planetsQuery, highscoreQuery].some((query) => query.snapshot?.freshness !== "failed"));
   const error = !apiBaseUrl
-    ? "Game API unavailable."
+    ? "Game connection unavailable."
     : !planets && !highscore && !profile && [planetsQuery, highscoreQuery].every((query) => query.snapshot?.freshness === "failed")
       ? planetsQuery.snapshot?.error ?? highscoreQuery.snapshot?.error ?? "Public player profile could not be loaded."
       : undefined;
@@ -146,7 +146,7 @@ export function PlayerInspectPage({
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-slate-400">No indexed public planets are available for this player.</p>
+              <p className="text-sm text-slate-400">No public planets are available for this player.</p>
             )}
           </Panel>
 
@@ -161,7 +161,7 @@ export function PlayerInspectPage({
                 ))}
               </dl>
             ) : (
-              <p className="text-sm text-slate-400">No public score row is indexed yet.</p>
+              <p className="text-sm text-slate-400">No public score is available yet.</p>
             )}
           </Panel>
         </div>
@@ -333,7 +333,7 @@ export function AllianceInspectPage({
       onBack={onBack}
     >
       {!allianceState && !alliance ? <InspectPanelSkeleton label="Loading alliance" /> : null}
-      {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}
+      {allianceState && !alliance ? <Notice tone="error">Alliance details are not available yet.</Notice> : null}
       {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {alliance ? (
         <div className="grid gap-4">
@@ -398,7 +398,7 @@ export function AllianceInspectPage({
             </Panel>
           ) : (
             <Panel title="Members">
-              {detailQuery.isInitialLoading ? <InspectPanelSkeleton label="Loading alliance members" /> : detailQuery.snapshot?.error ? <Notice tone="error">{detailQuery.snapshot.error}</Notice> : <p className="text-sm text-slate-400">No indexed public members are available for this alliance yet.</p>}
+              {detailQuery.isInitialLoading ? <InspectPanelSkeleton label="Loading alliance members" /> : detailQuery.snapshot?.error ? <Notice tone="error">{detailQuery.snapshot.error}</Notice> : <p className="text-sm text-slate-400">No public members are available for this alliance yet.</p>}
             </Panel>
           )}
 
@@ -682,7 +682,7 @@ function RosterGroup({
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-400">No indexed public members are available.</p>
+        <p className="text-sm text-slate-400">No public members are available.</p>
       )}
     </div>
   );

@@ -171,11 +171,11 @@ describe("TopBar", () => {
     const energyInfo = elementNodes(topBar).find(
       (item) => item.type === "summary"
         && typeof item.props?.["aria-label"] === "string"
-        && item.props["aria-label"].includes("Crawler production details are syncing")
+        && item.props["aria-label"].includes("Crawler production details are loading")
     );
     const panelText = visibleText(energyDetailsNode(topBar));
 
-    expect(energyInfo?.props?.["aria-label"]).toContain("Crawler production details are syncing from the backend production model.");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Crawler production details are loading.");
     expect(panelText).toContain("Crawler boost");
     expect(panelText).not.toContain("Syncing");
     expect(panelText).not.toContain("Waiting for production model");

@@ -43,7 +43,7 @@ const docsPageDefinitions: DocsPageDefinition[] = [
     slug: "mechanics",
     title: "Action Mechanics",
     eyebrow: "Transactions",
-    description: "What each transaction does and what state changes after indexing.",
+    description: "What each transaction does and when its effects appear.",
   },
 ];
 

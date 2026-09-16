@@ -540,7 +540,7 @@ describe("walletFlow", () => {
       }),
     ).toBe(false);
     expect(isTransientWalletBootstrapError(new Error("Wallet is locked. Please unlock your wallet and try again."))).toBe(false);
-    expect(isTransientWalletBootstrapError(new Error("Settlement state is unavailable because the game API is not configured."))).toBe(false);
+    expect(isTransientWalletBootstrapError(new Error("Settlement is temporarily unavailable. Please try again later."))).toBe(false);
   });
 
   test("applies a custom shorter timeout to bootstrap account and chain reads", async () => {
@@ -1740,7 +1740,7 @@ describe("walletFlow", () => {
     globalThis.fetch = (async () => Response.json({ result: "0x1" })) as unknown as typeof fetch;
 
     try {
-      await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).rejects.toThrow("Configured transaction RPC reports chain 0x1");
+      await expect(sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)).rejects.toThrow("The game connection is on the wrong network");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2303,7 +2303,7 @@ describe("walletFlow", () => {
         missionType: 3,
         ships,
       }),
-    ).rejects.toThrow("rejected this transaction");
+    ).rejects.toThrow("transaction was rejected");
   });
 
   test("encodes mission ships, cargo, and randomness in contract ABI order", () => {
@@ -2839,7 +2839,7 @@ describe("walletFlow", () => {
         message: "execution reverted",
         data: customErrorData("0x2ab0f96f", [0, 0, 0]),
       }),
-    ).toContain("indexed spendable balance");
+    ).toContain("balance may still be updating");
     expect(
       walletRequestErrorMessage({
         message: "execution reverted",
@@ -2870,7 +2870,7 @@ describe("walletFlow", () => {
         data: "0xcc9beebc",
       }),
     ).toContain("Another queue is already active");
-    expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("indexed spendable balance");
+    expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("balance may still be updating");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain("Unlock or reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain("Servers are unavailable");
@@ -2879,7 +2879,7 @@ describe("walletFlow", () => {
     expect(walletRecoveryActionMessage("Timed out reading wallet accounts from the wallet after 10 seconds.")).toBe(
       "Wallet needs attention. Unlock or reconnect your wallet, return to Veydrift, then retry.",
     );
-    expect(walletRecoveryActionMessage("No VeydriftGame home planet was found for this wallet.")).toBeUndefined();
+    expect(walletRecoveryActionMessage("No home planet was found for this wallet.")).toBeUndefined();
   });
 
   test("detects on-chain reverts wrapped in an internal JSON-RPC error", () => {
@@ -2921,7 +2921,7 @@ describe("walletFlow", () => {
         message: "Internal JSON-RPC error.",
         data: { originalError: { code: 3, message: "execution reverted" } },
       }),
-    ).toBe("The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.");
+    ).toBe("The transaction was rejected without a specific reason. Refresh game state and retry, or choose a different action if the state changed.");
 
     // A bare -32603 with no revert markers stays in the server-unavailable bucket.
     expect(
@@ -2971,7 +2971,7 @@ describe("walletFlow", () => {
         missionType: 3,
         ships,
       }),
-    ).rejects.toThrow("the wallet did not provide a specific reason");
+    ).rejects.toThrow("without a specific reason");
 
     expect(requests.some((request) => (request as { method: string }).method === "eth_sendTransaction")).toBe(true);
   });
@@ -3174,7 +3174,7 @@ describe("walletFlow", () => {
           startPriceWei: 50_000_000_000_000_000n,
         },
       ),
-    ).rejects.toThrow("Migration state snapshot is not ready for this wallet yet.");
+    ).rejects.toThrow("Your reserved planet is not ready to claim yet. Please try again later.");
   });
 
   test("reads an unclaimed migration reservation for the connected wallet", async () => {
@@ -3279,7 +3279,7 @@ describe("walletFlow", () => {
         balanceWei: null,
         contractKind: "game",
         startPriceWei: 12_000_000_000_000_000n,
-        unavailableReason: "Resource token reserves are not configured.",
+        unavailableReason: "Starting resources are currently unavailable.",
       },
       13_000_000_000_000_000n,
     );
@@ -3287,7 +3287,7 @@ describe("walletFlow", () => {
     expect(funded.affordable).toBe(true);
     expect(settlementFundingShortfallWei(funded)).toBe(0n);
     expect(unavailable.affordable).toBe(false);
-    expect(unavailable.unavailableReason).toContain("Resource token reserves");
+    expect(unavailable.unavailableReason).toContain("Starting resources are currently unavailable");
   });
 
   test("submits legacy settleFirstPlanet when backend reports no game start price", async () => {
@@ -3361,7 +3361,7 @@ describe("walletFlow", () => {
         },
         { startPriceWei: 50_000_000_000_000_000n },
       ),
-    ).rejects.toThrow("Resource token reserves are not configured");
+    ).rejects.toThrow("Starting resources are currently unavailable");
   });
 
   test("submits VeydriftGame building and shipyard transactions", async () => {
@@ -3977,7 +3977,7 @@ describe("walletFlow", () => {
           fresh: true,
           timeoutMs: 5,
         }),
-      ).rejects.toThrow("Timed out reading infrastructure");
+      ).rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
       expect(calls).toBe(4);
       await Promise.allSettled(blockers);
     } finally {
@@ -4000,7 +4000,7 @@ describe("walletFlow", () => {
     }) as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.test", account, "1", { timeoutMs: 5 }))
-        .rejects.toThrow("Timed out reading infrastructure");
+        .rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
       expect(signal?.aborted).toBe(true);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(JSON.parse(warn.mock.calls[0]![0])).toMatchObject({
@@ -4013,7 +4013,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("includes backend wallet API validation messages in shipyard errors", async () => {
+  test("shows recovery instead of raw backend validation diagnostics in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = (async () =>
@@ -4023,7 +4023,7 @@ describe("walletFlow", () => {
       })) as unknown as typeof fetch;
 
     try {
-      await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow("Shipyard API failed: 400: planetId must be a positive integer.");
+      await expect(fetchShipyardState("https://api.example.test", account, "4")).rejects.toThrow("Shipyard could not be completed. Refresh and review your selection before trying again.");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -4513,7 +4513,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("surfaces wallet API error messages from backend responses", async () => {
+  test("keeps alliance error recovery without backend decoding diagnostics", async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -4530,7 +4530,7 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchAllianceState("https://api.example.test", account)).rejects.toThrow("Alliance API failed: 400: Alliance profile could not be decoded.");
+      await expect(fetchAllianceState("https://api.example.test", account)).rejects.toThrow("Alliance could not be completed. Refresh and review your selection before trying again.");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -4576,7 +4576,7 @@ describe("walletFlow", () => {
       )) as unknown as typeof fetch;
 
     try {
-      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow("Rankings are warming from indexed game state. Retry in a moment.");
+      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow("Rankings are updating. Retry in a moment.");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -4645,7 +4645,7 @@ describe("walletFlow", () => {
         fetchWatchedPlanets("https://api.example.test", account, {
           timeoutMs: 1,
         }),
-      ).rejects.toThrow("Timed out reading watched planets from the game API after 0 seconds.");
+      ).rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
     } finally {
       globalThis.fetch = originalFetch;
     }

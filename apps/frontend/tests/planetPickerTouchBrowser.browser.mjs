@@ -2185,7 +2185,7 @@ test("public-only treasury keeps withdrawals available while private invite acti
   await clickExpression(button("Max"));
   await waitForExpression(`[...document.querySelectorAll('main button')].some(button => button.textContent.includes('Rift resources to') && !button.disabled)`);
   await clickExpression(button("Private Invites"));
-  await waitForExpression(`document.querySelector('main').textContent.includes('Private invite purchases are not enabled')`);
+  await waitForExpression(`document.querySelector('main').textContent.includes('Private invite purchases are currently unavailable.')`);
   assert.equal(await evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.includes('Buy private invite')).disabled`), true);
   assert.equal(await evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.includes('Recover')).disabled`), true);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction' || request.method === 'personal_sign')`), false);

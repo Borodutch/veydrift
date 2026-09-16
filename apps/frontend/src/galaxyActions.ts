@@ -1,3 +1,4 @@
+import { playerNotice } from "./playerNotice";
 import type { Planet } from "./types";
 import { DEFENSE_HOLD_MISSION_TYPE, type ChainDefenseState, type ChainShipyardState } from "./walletFlow";
 
@@ -385,7 +386,7 @@ function originActionBlocker(
   account: string | undefined,
   homePlanetId: string | null | undefined
 ): string | undefined {
-  if (!account) return "Connect a wallet to launch contract missions.";
+  if (!account) return "Connect a wallet to launch missions.";
   if (!homePlanetId) return "No home planet is loaded for this wallet.";
   return undefined;
 }
@@ -395,10 +396,10 @@ function fleetActionBlocker(
 ): string | undefined {
   if (!shipyardState) return "Shipyard state is still loading.";
   if (shipyardState.productionAvailable === false) {
-    return shipyardState.unavailableReason ?? "Fleet actions are unavailable on this deployment.";
+    return playerNotice(shipyardState.unavailableReason) ?? "Fleet actions are currently unavailable.";
   }
   if (shipyardState.fleetLaunchAvailable === false) {
-    return shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing.";
+    return playerNotice(shipyardState.fleetLaunchUnavailableReason) ?? playerNotice(shipyardState.unavailableReason) ?? "Fleet slot state is still syncing.";
   }
   return undefined;
 }
@@ -426,7 +427,7 @@ function firstAvailableDeployShipBlocker(shipyardState: ChainShipyardState | nul
 function interplanetaryMissileBlocker(defenseState: ChainDefenseState | null | undefined): string | undefined {
   if (!defenseState) return "Defense state is still loading.";
   if (defenseState.productionAvailable === false) {
-    return defenseState.unavailableReason ?? "Missile actions are unavailable on this deployment.";
+    return playerNotice(defenseState.unavailableReason) ?? "Missile actions are currently unavailable.";
   }
 
   const interplanetaryMissiles = (defenseState.launchableDefenses ?? defenseState.defenses)

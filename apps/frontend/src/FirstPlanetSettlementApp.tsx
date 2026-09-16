@@ -1,3 +1,4 @@
+import { playerNotice } from "./playerNotice";
 import { ChevronDown, Coins, Copy, Gift, Link, RefreshCw, Share2, TicketCheck, UserRound } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -8,7 +9,6 @@ import { Skeleton, SkeletonRegion } from "./components/Skeleton";
 import { TelegramIcon } from "./components/TelegramIcon";
 import {
   detectFarcasterMiniApp,
-  FARCASTER_WALLET_CAPABILITY,
   farcasterMiniAppPlatformType,
   farcasterMiniAppWalletSupport,
   hasMiniAppUrlHint,
@@ -78,11 +78,10 @@ import { walletRecoveryCopy, walletRecoveryDeviceForNavigator, walletRecoveryPag
 
 
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
-export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
-const GAME_BACKEND_UNAVAILABLE_BODY = "The Veydrift backend is likely restarting or temporarily unreachable. It should be back in a few minutes.";
+export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Preparing your planet…";
+const GAME_BACKEND_UNAVAILABLE_BODY = "Veydrift is temporarily unavailable. Please try again in a few minutes.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
-const FARCASTER_MINIAPP_REPORT_SUFFIX = "Please send this exact message to Veydrift support.";
 
 type SettlementConfigState = { status: "loading"; apiUrl?: string; config: SettlementConfig } | { status: "ready"; apiUrl?: string; config: SettlementConfig };
 
@@ -147,56 +146,12 @@ export function shouldUseWalletProviderForSettlement(input: { miniAppMode: boole
   return !input.miniAppMode || input.walletProviderSource === "farcaster";
 }
 
-export function farcasterMiniAppReportableWalletError(
-  code: string,
-  message: string,
-  details?: {
-    chainId?: string | undefined;
-    source?: string | undefined;
-    requestedChainId?: string | undefined;
-    support?: FarcasterMiniAppWalletSupport | undefined;
-    error?: unknown;
-  },
-): string {
-  const detailRows = [
-    details?.chainId ? `chain=${details.chainId}` : undefined,
-    details?.requestedChainId ? `requestedChain=${details.requestedChainId}` : undefined,
-    details?.source ? `source=${details.source}` : undefined,
-    details?.support ? farcasterMiniAppSupportDetail(details.support) : undefined,
-    ...walletErrorDetails(details?.error),
-  ]
-    .filter((value): value is string => Boolean(value))
-    .join("; ");
-  const detailsCopy = detailRows ? ` Details: ${detailRows}.` : "";
-  return `Wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
+export function farcasterMiniAppReportableWalletError(message: string): string {
+  return `${message} Retry the wallet connection. If it still fails, contact Veydrift support.`;
 }
 
 export function farcasterMiniAppSupportErrorMessage(support: Exclude<FarcasterMiniAppWalletSupport, { status: "supported" }>): string {
-  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
-  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
-  const requiredChain = farcasterChainFor(defaultVeydriftChainForLocation());
-  return farcasterMiniAppReportableWalletError(
-    support.code,
-    `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${requiredChain}. Reported capabilities: ${capabilities}. Reported chains: ${chains}.`,
-  );
-}
-
-function farcasterMiniAppSupportDetail(support: FarcasterMiniAppWalletSupport): string {
-  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
-  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
-  return `support=${support.status}/${support.status === "supported" ? "ok" : support.code}; capabilities=${capabilities}; chains=${chains}`;
-}
-
-function walletErrorDetails(error: unknown): string[] {
-  if (!error || typeof error !== "object") {
-    return [];
-  }
-
-  const candidate = error as { code?: unknown; message?: unknown };
-  return [
-    candidate.code !== undefined ? `errorCode=${String(candidate.code)}` : undefined,
-    typeof candidate.message === "string" && candidate.message ? `errorMessage=${candidate.message.replace(/\s+/g, " ").slice(0, 240)}` : undefined,
-  ].filter((value): value is string => Boolean(value));
+  return farcasterMiniAppReportableWalletError(support.message);
 }
 
 export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind: "error" | "rejected" }>): {
@@ -684,7 +639,7 @@ export function FirstPlanetSettlementApp() {
         if (disposed || blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
           return;
         }
-        showFarcasterWalletProviderUnavailable(support);
+        showFarcasterWalletProviderUnavailable();
         return;
       }
 
@@ -699,11 +654,7 @@ export function FirstPlanetSettlementApp() {
           setWallet({ kind: "disconnected" });
           setPlanet({
             kind: "error",
-            message: farcasterMiniAppReportableWalletError(
-              "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
-              "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
-              { support },
-            ),
+            message: farcasterMiniAppReportableWalletError("Farcaster could not connect your wallet."),
           });
           return;
         }
@@ -740,7 +691,7 @@ export function FirstPlanetSettlementApp() {
         if (disposed || blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
           return;
         }
-        showFarcasterWalletProviderUnavailable(support);
+        showFarcasterWalletProviderUnavailable();
         return;
       }
 
@@ -841,7 +792,7 @@ export function FirstPlanetSettlementApp() {
     return true;
   }
 
-  function showFarcasterWalletProviderUnavailable(support: FarcasterMiniAppWalletSupport | undefined): void {
+  function showFarcasterWalletProviderUnavailable(): void {
     walletProviderCleanup.current?.();
     walletProviderCleanup.current = undefined;
     setProvider(undefined);
@@ -849,9 +800,7 @@ export function FirstPlanetSettlementApp() {
     setWallet({ kind: "disconnected" });
     setPlanet({
       kind: "error",
-      message: farcasterMiniAppReportableWalletError("FARCASTER_WALLET_PROVIDER_UNAVAILABLE", "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.", {
-        support,
-      }),
+      message: farcasterMiniAppReportableWalletError("Farcaster could not connect your wallet."),
     });
   }
 
@@ -1017,13 +966,7 @@ export function FirstPlanetSettlementApp() {
             });
             setPlanet({
               kind: "error",
-              message: farcasterMiniAppReportableWalletError("FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED", walletRequestErrorMessage(error), {
-                chainId,
-                requestedChainId: requiredChain.chainIdHex,
-                source: context.walletProviderSource,
-                support,
-                error,
-              }),
+              message: farcasterMiniAppReportableWalletError(walletRequestErrorMessage(error)),
             });
           }
           return;
@@ -1075,10 +1018,7 @@ export function FirstPlanetSettlementApp() {
         kind: "error",
         message:
           context.miniAppMode && context.walletProviderSource === "farcaster"
-            ? farcasterMiniAppReportableWalletError("FARCASTER_WALLET_BOOTSTRAP_FAILED", walletRequestErrorMessage(error), {
-                source: context.walletProviderSource,
-                error,
-              })
+            ? farcasterMiniAppReportableWalletError(walletRequestErrorMessage(error))
             : walletRequestErrorMessage(error),
       });
     }
@@ -1096,7 +1036,7 @@ export function FirstPlanetSettlementApp() {
       if (!isCurrentIdentity()) return;
       const indexedSettlement = settlement ? indexedSettlementState(settlement) : undefined;
       if (!indexedSettlement) {
-        throw new Error("Settlement state is unavailable because the game API is not configured.");
+        throw new Error("Settlement is temporarily unavailable. Please try again later.");
       }
       if (indexedSettlement.kind === "settled") {
         setPlanet({
@@ -1129,7 +1069,7 @@ export function FirstPlanetSettlementApp() {
 
   async function refreshSettlementFunding(walletProvider: Eip1193Provider | undefined, connectedAccount: string) {
     if (!settlementConfigState.apiUrl) {
-      throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      throw new Error("Settlement pricing is temporarily unavailable. Please try again later.");
     }
     // The descriptor owns loading/error/identity lifecycle. This explicit
     // refresh only asks it to re-read after a wallet/network transition.
@@ -1174,13 +1114,13 @@ export function FirstPlanetSettlementApp() {
       if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
         return;
       }
-      showFarcasterWalletProviderUnavailable(support);
+      showFarcasterWalletProviderUnavailable();
       return;
     }
 
     if (!activeProvider) {
       if (miniAppMode) {
-        showFarcasterWalletProviderUnavailable(support);
+        showFarcasterWalletProviderUnavailable();
       } else {
         setWallet(walletConnectEnabled(false) ? { kind: "disconnected" } : { kind: "no-wallet" });
       }
@@ -1197,15 +1137,7 @@ export function FirstPlanetSettlementApp() {
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
         message: miniAppMode
-          ? farcasterMiniAppReportableWalletError(
-              isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_ACCOUNT_FAILED",
-              isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
-              {
-                source: providerContext.walletProviderSource,
-                support,
-                error,
-              },
-            )
+          ? farcasterMiniAppReportableWalletError(isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error))
           : isUserRejected(error)
             ? "Wallet connection was rejected."
             : walletRequestErrorMessage(error),
@@ -1241,13 +1173,7 @@ export function FirstPlanetSettlementApp() {
         setWallet(wallet);
         setPlanet({
           kind: "error",
-          message: farcasterMiniAppReportableWalletError("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED", walletRequestErrorMessage(error), {
-            chainId: wallet.chainId,
-            requestedChainId: requiredChain.chainIdHex,
-            source: walletProviderSource,
-            support,
-            error,
-          }),
+          message: farcasterMiniAppReportableWalletError(walletRequestErrorMessage(error)),
         });
         return;
       }
@@ -1269,7 +1195,7 @@ export function FirstPlanetSettlementApp() {
     if (!apiUrl) {
       setPlanet({
         kind: "error",
-        message: "Settlement indexing is unavailable because the game API is not configured.",
+        message: "Settlement is temporarily unavailable. Please try again later.",
       });
       return;
     }
@@ -1277,7 +1203,7 @@ export function FirstPlanetSettlementApp() {
 
     if (paidAllianceInviteSecret) {
       if (!paidAllianceInviteCapabilitiesForRuntime(runtimeConfigQuery.snapshot?.data).redemption) {
-        setPlanet({ kind: "error", message: "Private invite redemption is not enabled on this backend." });
+        setPlanet({ kind: "error", message: "Private invitations are currently unavailable." });
         return;
       }
       const resolution = await refreshPaidAllianceInviteValidation();
@@ -1415,7 +1341,7 @@ export function FirstPlanetSettlementApp() {
       if (!currentIdentity()) return undefined;
       const settlement = settlementSnapshot ? indexedSettlementState(settlementSnapshot) : undefined;
       if (!settlement) {
-        throw new Error("Settlement state is unavailable because the game API is not configured.");
+        throw new Error("Settlement is temporarily unavailable. Please try again later.");
       }
 
       if (settlement.kind === "settled") {
@@ -1431,7 +1357,7 @@ export function FirstPlanetSettlementApp() {
         if (!currentIdentity()) return undefined;
         setPlanet({
           kind: "pending",
-          label: "Settlement confirmed. Indexing starting resources before opening planetary overview.",
+          label: "Settlement confirmed. Preparing your planet…",
         });
         return undefined;
       }
@@ -1439,7 +1365,7 @@ export function FirstPlanetSettlementApp() {
       if (!currentIdentity()) return undefined;
       setPlanet({ kind: "not-settled" });
       if (!settlementConfigState.apiUrl) {
-        throw new Error("Settlement funding is unavailable because the game API is not configured.");
+        throw new Error("Settlement pricing is temporarily unavailable. Please try again later.");
       }
       const nextFunding: SettlementFunding = {
         status: "ready",
@@ -1460,7 +1386,7 @@ export function FirstPlanetSettlementApp() {
       throw new Error("Wallet provider is unavailable. Reconnect your wallet, then retry.");
     }
     if (!settlementConfigState.apiUrl) {
-      throw new Error("Settlement funding is unavailable because the game API is not configured.");
+      throw new Error("Settlement pricing is temporarily unavailable. Please try again later.");
     }
     return backendDataStoreFor(settlementConfigState.apiUrl)
       .queries.settlementFundingProjection(
@@ -1512,7 +1438,7 @@ export function FirstPlanetSettlementApp() {
             <>
               {paidAllianceInviteSecret ? (
                 runtimeConfigQuery.snapshot?.data && !paidAllianceInviteCapabilitiesForRuntime(runtimeConfigQuery.snapshot.data).redemption ? (
-                  <StateMessage title="Private invites unavailable" body="Private invite redemption is not enabled on this backend." tone="warning" />
+                  <StateMessage title="Private invites unavailable" body="Private invitations are currently unavailable." tone="warning" />
                 ) : paidAllianceInviteValidation.status === "resolved" && !paidAllianceInviteValidation.resolution.valid ? (
                   <PaidAllianceInviteUnavailable resolution={paidAllianceInviteValidation.resolution} />
                 ) : paidAllianceInviteValidation.status === "error" ? (
@@ -1759,7 +1685,7 @@ function ReferralProgramPanel({
           <p className="referral-error">{state.message}</p>
         ) : null}
 
-        {dashboard && !dashboard.configured ? <p className="referral-muted">Referral invites are not configured on this deployment.</p> : null}
+        {dashboard && !dashboard.configured ? <p className="referral-muted">Referral invitations are currently unavailable.</p> : null}
 
         {dashboard && (accruedRewards > 0n || claimableRewards > 0n) ? (
           <div className="referral-reward-summary" aria-label="Referral rewards">
@@ -2251,7 +2177,7 @@ function FlowBody({
   }
 
   if (mode === "contract-unconfigured") {
-    return <StateMessage title="Settlement beacon offline" body={`Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the ${networkName} settlement contract.`} tone="warning" />;
+    return <StateMessage title="Settlement beacon offline" body="Settlement is currently unavailable. Please try again later." tone="warning" />;
   }
 
   if (mode === "pending" && planet.kind === "pending") {
@@ -2391,7 +2317,7 @@ function PaidAllianceInviteUnavailable({ resolution }: { resolution: PaidAllianc
 }
 
 export function settlementLaunchBlocker(settlementReady: boolean, settlementFunding: SettlementFunding, prepaidAllianceInvite = false): string | undefined {
-  if (!settlementReady) return "Settlement contract address is not configured.";
+  if (!settlementReady) return "Settlement is currently unavailable.";
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
     return "Settlement funding information is still loading.";
   }
@@ -2399,7 +2325,7 @@ export function settlementLaunchBlocker(settlementReady: boolean, settlementFund
     return settlementFunding.message;
   }
   if (settlementFunding.funding.unavailableReason) {
-    return settlementFunding.funding.unavailableReason;
+    return playerNotice(settlementFunding.funding.unavailableReason);
   }
   if (!prepaidAllianceInvite && !settlementFunding.funding.affordable) {
     const shortfallWei = settlementFundingShortfallWei(settlementFunding.funding);
@@ -2476,7 +2402,7 @@ function settlementBody(
   const referralPreview =
     referralCode.trim() && !migrationReservation
       ? referralValidation.status === "resolved" && referralValidation.resolution.valid
-        ? " Invite code verified: referral settlement starts this planet with 1,000 metal / 1,000 crystal / 0 deuterium and 2× production for 7 days."
+        ? " This invite starts your planet with 1,000 metal / 1,000 crystal / 0 deuterium and 2× production for 7 days."
         : referralValidation.status === "resolved"
           ? ` Invite not usable: ${referralValidation.resolution.message}`
           : referralValidation.status === "error"
@@ -2485,7 +2411,7 @@ function settlementBody(
       : "";
 
   if (prepaidAllianceInvite) {
-    return "Everything is ready. Launch your first planet to accept the invitation and join your alliance.";
+    return "Launch your first planet to accept the invitation and join your alliance.";
   }
 
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
@@ -2499,7 +2425,7 @@ function settlementBody(
   if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
     const startPrice = formatEth(settlementFunding.funding.startPriceWei ?? 0n);
     if (settlementFunding.funding.unavailableReason) {
-      return `${prefix} ${settlementFunding.funding.unavailableReason}${referralPreview}`;
+      return `${prefix} ${playerNotice(settlementFunding.funding.unavailableReason)}${referralPreview}`;
     }
 
     if (settlementFunding.funding.balanceWei === null) {

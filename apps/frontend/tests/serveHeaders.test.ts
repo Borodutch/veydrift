@@ -288,7 +288,7 @@ describe("frontend static server headers", () => {
     expect(meta).toMatchObject({
       kind: "referral",
       title: "Join Veydrift with secret-invite-code",
-      description: "Use invite code secret-invite-code. Eligibility and exact benefits are verified in-game before settlement.",
+      description: "Use invite code secret-invite-code. Check invitation availability and benefits before settling.",
       status: "CODE secret-invite-code",
       supportingCopy: "2× resources · 2× production / 7 days",
       subtitle: "",
@@ -401,7 +401,7 @@ describe("frontend static server headers", () => {
 
     const output = injectShareMeta(html, {
       canonicalUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE",
-      description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
+      description: "Open this Veydrift invite. Check invitation availability and benefits before settling.",
       imageUrl: "https://veydrift.com/og/referral/secret-invite-code.png",
       launchUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE&miniApp=true",
       miniAppImageUrl: "https://veydrift.com/og/farcaster/referral/secret-invite-code.png?v=1",

@@ -132,7 +132,7 @@ describe("BattlePreviewScheduler", () => {
 
     timers.runPending();
     expect(workers[0]?.terminated).toBe(true);
-    expect(errors).toEqual(["The battle preview worker timed out."]);
+    expect(errors).toEqual(["The battle preview took too long. Please retry."]);
   });
 });
 

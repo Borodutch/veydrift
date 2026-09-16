@@ -132,7 +132,7 @@ describe("Playable MVP app display helpers", () => {
     expect(missionDraftFor({ ...action, enabled: false, reason: "Protected" }, undefined, coords, origin, "moon")).toBeNull();
   });
 
-  const buildingFinishStateReadFailureLabel = "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+  const buildingFinishStateReadFailureLabel = "Can't check your upgrade right now. Retry in a moment.";
   const buildingFinishLiveStateRequiredLabel = "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
   const buildingCompletionWalletPrompt = "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.";
 
@@ -650,7 +650,7 @@ describe("Playable MVP app display helpers", () => {
       kind: "defenseHold",
       label: "Defend",
       mission: "defenseHold",
-      reason: "Stationed defense can only target planets in the current mission contract.",
+      reason: "Stationed defense is not available for this target.",
     });
   });
 
@@ -723,7 +723,7 @@ describe("Playable MVP app display helpers", () => {
     expect(ownMoonActions[2]).toMatchObject({
       enabled: false,
       kind: "defenseHold",
-      reason: "Stationed defense can only target planets in the current mission contract.",
+      reason: "Stationed defense is not available for this target.",
     });
     expect(enemyMoonActions).toHaveLength(1);
     expect(enemyMoonActions[0]).toMatchObject({
@@ -1066,7 +1066,7 @@ describe("Playable MVP app display helpers", () => {
         },
         ships: { smallCargo: 1 },
       }),
-    ).toBe("Fleet slot state is waiting for mission settlement.");
+    ).toBe("Mission is still resolving. Refresh after it finishes before launching another fleet.");
 
     const blocker = missionShipInventoryBlocker({
       shipyardState: {
@@ -1513,7 +1513,7 @@ describe("Playable MVP app display helpers", () => {
         activeActionLabel: "Ship production: syncing indexed state...",
         inputsAvailable: true,
         transactionPending: true,
-        unavailableReason: "Wallet or game contract unavailable",
+        unavailableReason: "Wallet or game connection unavailable",
       }),
     ).toBe("Ship production: syncing indexed state...");
 
@@ -1521,7 +1521,7 @@ describe("Playable MVP app display helpers", () => {
       transactionUnavailableReasonFor({
         inputsAvailable: true,
         transactionPending: true,
-        unavailableReason: "Wallet or game contract unavailable",
+        unavailableReason: "Wallet or game connection unavailable",
       }),
     ).toBe("An action using these resources is processing.");
 
@@ -1529,15 +1529,15 @@ describe("Playable MVP app display helpers", () => {
       transactionUnavailableReasonFor({
         inputsAvailable: false,
         transactionPending: true,
-        unavailableReason: "Wallet or game contract unavailable",
+        unavailableReason: "Wallet or game connection unavailable",
       }),
-    ).toBe("Wallet or game contract unavailable");
+    ).toBe("Wallet or game connection unavailable");
 
     expect(
       transactionUnavailableReasonFor({
         inputsAvailable: true,
         transactionPending: false,
-        unavailableReason: "Wallet or game contract unavailable",
+        unavailableReason: "Wallet or game connection unavailable",
       }),
     ).toBeUndefined();
   });
@@ -1547,7 +1547,7 @@ describe("Playable MVP app display helpers", () => {
       clearRecoveredWalletContractUnavailableAction(
         {
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         },
         true,
       ),
@@ -1557,7 +1557,7 @@ describe("Playable MVP app display helpers", () => {
       clearRecoveredWalletContractUnavailableAction(
         {
           status: "error",
-          label: "Wallet, game contract, or resource token is unavailable.",
+          label: "Wallet, game connection, or resource token is unavailable.",
         },
         true,
       ),
@@ -1567,13 +1567,13 @@ describe("Playable MVP app display helpers", () => {
       clearRecoveredWalletContractUnavailableAction(
         {
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         },
         false,
       ),
     ).toEqual({
       status: "error",
-      label: "Wallet, game contract, or home planet is unavailable.",
+      label: "Wallet, game connection, or home planet is unavailable.",
     });
 
     expect(
@@ -2917,7 +2917,7 @@ describe("Playable MVP app display helpers", () => {
         isDisplayedBuildingQueueReady: true,
         now: 1_700_000_000_000,
       }),
-    ).toBe("Wallet or game contract is unavailable.");
+    ).toBe("Wallet or game connection is unavailable.");
   });
 
   test("does not retain unreachable building-finish recovery state", () => {
@@ -3281,13 +3281,13 @@ describe("Playable MVP app display helpers", () => {
         infrastructureChainState: {
           ...infrastructureState(),
           infrastructureAvailable: false,
-          unavailableReason: "Infrastructure is unavailable on this deployment.",
+          unavailableReason: "Infrastructure is currently unavailable.",
         },
         isWalletConnected: true,
         onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
         runtimeConfigStatus: "ready",
       }),
-    ).toBe("Infrastructure is unavailable on this deployment.");
+    ).toBe("Infrastructure is currently unavailable.");
   });
 
   test("blocks building transactions when refreshed backend resources cannot afford the upgrade", () => {

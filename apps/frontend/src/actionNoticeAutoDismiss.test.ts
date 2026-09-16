@@ -99,7 +99,7 @@ describe("action notice auto-dismiss timers", () => {
   test("auto-dismisses user-rejected transaction notices but keeps contract blockers", () => {
     const timers = createFakeTimers();
     const rejectedAction: ActionState = { status: "error", label: "Building upgrade failed: User rejected the request." };
-    const contractAction: ActionState = { status: "error", label: "Game contract rejected this fleet action: INVALID_MISSION_SPEED." };
+    const contractAction: ActionState = { status: "error", label: "Fleet action was rejected: INVALID_MISSION_SPEED." };
     const rejectedHarness = createActionHarness(rejectedAction);
     const contractHarness = createActionHarness(contractAction);
 
@@ -233,7 +233,7 @@ describe("action notice auto-dismiss timers", () => {
         status: "error",
         label: "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.",
       },
-      { status: "error", label: "Game contract rejected this fleet action: INVALID_MISSION_SPEED." },
+      { status: "error", label: "Fleet action was rejected: INVALID_MISSION_SPEED." },
       { status: "error", label: "Mission launch was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying." },
     ];
     const harnesses = blockerActions.map(createActionHarness);

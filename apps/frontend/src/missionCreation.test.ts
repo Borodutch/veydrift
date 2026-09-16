@@ -21,8 +21,8 @@ test("missile submit protection ignores only the fleet bashing limit", () => {
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "bashing_limit", blockedReasonLabel: "Bashing" }, { ignoreBashingLimit: true })).toBeUndefined();
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "score_protection", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("score protection");
   expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "same_alliance", blockedReasonLabel: null }, { ignoreBashingLimit: true })).toContain("alliance");
-  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "none", blockedReasonLabel: null })).toContain("not verified");
-  expect(attackProtectionSubmitBlocker({ allowed: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null })).toContain("not verified");
+  expect(attackProtectionSubmitBlocker({ allowed: false, blockedReason: "none", blockedReasonLabel: null })).toContain("could not be checked");
+  expect(attackProtectionSubmitBlocker({ allowed: true, warEligibilityNeedsCheck: true, blockedReason: "none", blockedReasonLabel: null })).toContain("could not be checked");
   expect(attackProtectionSubmitBlocker({ allowed: true, blockedReason: "score_protection", blockedReasonLabel: "Protected" })).toBe("Protected");
 });
 
@@ -30,7 +30,7 @@ test("shows canonical active-war eligibility and persistent mission errors in th
   expect(missionCreationSource).toContain("warProtectionNotice");
   expect(missionCreationSource).toContain("actionError");
   expect(missionCreationSource).toContain('role="alert"');
-  expect(playableMvpAppSource).toContain("Checking this target's canonical attack protection.");
+  expect(playableMvpAppSource).toContain("Checking this target's attack protection.");
   expect(playableMvpAppSource).toContain("Frozen original rosters and declaration direction still apply.");
 });
 
@@ -482,7 +482,7 @@ describe("mission creation", () => {
     expect(moonResourceIntel.current).not.toEqual({ metal: 100_000, crystal: 80_000, deuterium: 60_000 });
     expect(moonResourceIntel.projectedArrival).toEqual({ metal: 7_386, crystal: 2_472, deuterium: 1_335 });
     expect(moonResourceIntel.projectedArrivalLootable).toEqual({ metal: 3_693, crystal: 1_236, deuterium: 667 });
-    expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
+    expect(moonResourceIntel.projectionDetail).toContain("arrival estimate uses current resources");
     expect(moonBattleForecast.defenderPower).toBe(320);
     expect(moonBattleForecast.kind).not.toBe("uncertain");
     expect(moonBattleForecast.sampleReport?.defender.startingShips).toEqual([
@@ -579,7 +579,7 @@ describe("mission creation", () => {
 
   test("fails moon attacks closed until the upgraded contract capability is enabled", () => {
     expect(missionCreationSource).toContain("moonAttackParityEnabled = false");
-    expect(missionCreationSource).toContain("Moon attack parity is still activating. Refresh shortly before launching.");
+    expect(missionCreationSource).toContain("Moon attacks are temporarily unavailable. Refresh shortly before launching.");
     expect(playableMvpAppSource).toContain("runtimeConfig.config.featureSupport?.moonAttackParity === true");
     expect(playableMvpAppSource).toContain("(originIsMoon || targetIsMoon) && !moonAttackParityEnabled");
   });
@@ -990,7 +990,7 @@ describe("mission creation", () => {
     expect(intel.current).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
     expect(intel.projectedArrival).toEqual({ metal: 1_065, crystal: 500, deuterium: 200 });
     expect(intel.projectedArrivalLootable).toEqual({ metal: 532, crystal: 250, deuterium: 100 });
-    expect(intel.projectionDetail).toContain("public building/resource preview math");
+    expect(intel.projectionDetail).toContain("assumes no spending, transport, or combat changes");
   });
 
   test("requires a selected fleet travel time before showing arrival resources", () => {
@@ -1152,7 +1152,7 @@ describe("mission creation", () => {
       sampleCount: 128,
       outcomeCounts: { win: 0, draw: 128, defeat: 0 },
     });
-    expect(forecast.detail).toContain("future oracle word");
+    expect(forecast.detail).toContain("actual battle may differ");
   });
 
   test("includes Solar Satellites in the attack-launch battle preview instead of silently omitting them", () => {
@@ -1194,7 +1194,7 @@ describe("mission creation", () => {
       count: 4,
     });
     expect(forecast.sampleReport?.rapidfireExtraShots.attacker).toBeGreaterThan(0);
-    expect(forecast.detail).toContain("future oracle word is not known");
+    expect(forecast.detail).toContain("actual battle may differ");
   });
 
   test("passes Crawler defenders into the battle worker input used for attack launch", () => {
@@ -1557,7 +1557,7 @@ describe("mission creation", () => {
 
     expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
     expect(forecast.detail).toContain("scheduled-window-unknown");
-    expect(forecast.detail).toContain("no exact indexed hold window");
+    expect(forecast.detail).toContain("no confirmed hold window");
   });
 
   test("fails closed when the public payload does not attest a complete defender timeline", () => {
@@ -1582,7 +1582,7 @@ describe("mission creation", () => {
     );
 
     expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
-    expect(forecast.detail).toContain("timeline is incomplete");
+    expect(forecast.detail).toContain("arrival and departure times are incomplete");
   });
 
   test("join-attack forecast includes the lead, visible joiners, and selected joining fleet", () => {
@@ -1795,7 +1795,7 @@ describe("mission creation", () => {
     expect(missingTech.detail).toContain("Lead attack #77");
     expect(missingTech.detail).toContain("combat technology");
     expect(missingLane).toMatchObject({ kind: "uncertain", defenderPower: null });
-    expect(missingLane.detail).toContain("lane");
+    expect(missingLane.detail).toContain("battle details are incomplete");
   });
 
   test("battle forecast fails closed when a stationed defender lane is missing", () => {
@@ -1830,7 +1830,7 @@ describe("mission creation", () => {
 
     expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
     expect(forecast.detail).toContain("legacy-hold");
-    expect(forecast.detail).toContain("lane identity");
+    expect(forecast.detail).toContain("incomplete battle details");
   });
 
   test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {
@@ -1866,7 +1866,7 @@ describe("mission creation", () => {
       kind: "uncertain",
       defenderPower: null,
     });
-    expect(forecast.detail).toContain("combat technology is not indexed");
+    expect(forecast.detail).toContain("combat technology is unknown");
   });
 
   test("fails closed for partial planet or moon force-intel payloads", () => {
@@ -1931,7 +1931,7 @@ describe("mission creation", () => {
         projectedArrival: { metal: 1_100, crystal: 550, deuterium: 225 },
         currentLootable: { metal: 500, crystal: 250, deuterium: 100 },
         projectedArrivalLootable: { metal: 550, crystal: 275, deuterium: 112 },
-        projectionDetail: "Arrival projection uses public building/resource preview math.",
+        projectionDetail: "Arrival projection uses assumes no spending, transport, or combat changes.",
       },
       stationedDefenderUnits: [],
       targetDefenseUnits: [{ key: "rocketLauncher", label: "Rocket Launcher", count: 3 }],
@@ -2417,7 +2417,7 @@ describe("mission creation", () => {
       targetFleetUnits: [],
     })).join(" ");
 
-    expect(text).toContain("No indexed debris");
+    expect(text).toContain("No debris available");
     expect(text).toContain("Nothing to collect");
     expect(text).not.toContain("Unknown");
   });
@@ -2442,7 +2442,7 @@ describe("mission creation", () => {
         projectedArrival: { metal: 1_100, crystal: 550, deuterium: 225 },
         currentLootable: { metal: 500, crystal: 250, deuterium: 100 },
         projectedArrivalLootable: { metal: 550, crystal: 275, deuterium: 112 },
-        projectionDetail: "Arrival projection uses public building/resource preview math.",
+        projectionDetail: "Arrival projection uses assumes no spending, transport, or combat changes.",
       },
       stationedDefenderUnits: [],
       targetDefenseUnits: [{ key: "rocketLauncher", label: "Rocket Launcher", count: 3 }],
@@ -2579,7 +2579,7 @@ describe("mission creation", () => {
   });
 
   test("shows previous-mission indexing as the primary launch blocker", () => {
-    const blocker = "Waiting for previous mission to index.";
+    const blocker = "Waiting for the previous mission to update.";
 
     expect(missionDraftBlocker({
       action: attackAction,

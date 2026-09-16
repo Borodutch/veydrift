@@ -3411,11 +3411,11 @@ export function missionReport(
         : "No group recorded.",
     attacker: commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId)),
     battleTime: formatMissionTime(mission.arrivalAt, now),
-    debris: harvestReturnCargoLabel(mission) ?? "Not reported by the visible mission feed yet.",
+    debris: harvestReturnCargoLabel(mission) ?? "Not available yet.",
     defender: planetLookup.get(mission.targetPlanetId)?.owner
       ? commanderLabel(planetLookup.get(mission.targetPlanetId)!.owner, planetLookup.get(mission.targetPlanetId))
       : "External commander unavailable",
-    losses: mission.status === "Resolved" ? "Resolved combat losses are not exposed in this mission feed." : "Pending battle resolution.",
+    losses: mission.status === "Resolved" ? "Combat losses are unavailable for this mission." : "Pending battle resolution.",
     origin,
     outcome: isMissionReadyToResolve(mission) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
     routeSummary: `${origin} -> ${target}`,

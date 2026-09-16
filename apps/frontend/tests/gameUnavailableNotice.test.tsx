@@ -38,10 +38,10 @@ describe("shared game unavailable notice", () => {
     expect(isGameUnavailableMessage(
       "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.",
     )).toBe(true);
-    expect(isGameUnavailableMessage("Game API unavailable.")).toBe(true);
+    expect(isGameUnavailableMessage("Game connection unavailable.")).toBe(true);
     expect(isGameUnavailableMessage("Servers are unavailable. Retrying in 1 second.")).toBe(true);
     expect(isGameUnavailableMessage("Wallet connection was rejected.")).toBe(false);
-    expect(isGameUnavailableMessage("Rankings are warming from indexed game state. Retry in a moment.")).toBe(false);
+    expect(isGameUnavailableMessage("Rankings are updating. Retry in a moment.")).toBe(false);
   });
 });
 

@@ -44,7 +44,7 @@ export function walletConnectEnabled(
 }
 
 export function walletConnectConfigurationMessage(): string {
-  return "WalletConnect is not configured yet. Install a browser wallet, or try again once Veydrift enables WalletConnect.";
+  return "WalletConnect is currently unavailable. Use a browser wallet or try again later.";
 }
 
 /**

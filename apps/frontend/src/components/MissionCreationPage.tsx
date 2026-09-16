@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
@@ -723,7 +724,7 @@ export function MissionCreationPage({
     cargoTotal,
     fleetSlots: effectiveShipyardState?.fleetSlots,
     fleetSlotsUnavailableReason: effectiveShipyardState?.fleetLaunchAvailable === false
-      ? effectiveShipyardState.fleetLaunchUnavailableReason ?? effectiveShipyardState.unavailableReason ?? "Fleet slot state is still syncing."
+      ? playerNotice(effectiveShipyardState.fleetLaunchUnavailableReason) ?? playerNotice(effectiveShipyardState.unavailableReason) ?? "Fleet slot state is still syncing."
       : undefined,
     fuelCost: effectiveFuelCost,
     lootRatioActive,
@@ -736,7 +737,7 @@ export function MissionCreationPage({
     selectedShipCount,
     staleShipQuantityBlocker,
     submitBlocker: moonAttackNeedsUpgrade
-      ? "Moon attack parity is still activating. Refresh shortly before launching."
+      ? "Moon attacks are temporarily unavailable. Refresh shortly before launching."
       : effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
       ? "Moon fleet state is still loading."
       : missionTargetMoonUnavailableReason(effectiveTargetIsMoon, bodySelection?.targetMoonAvailable)
@@ -1678,7 +1679,7 @@ export function stationedDefendersAtAttackArrival(
   if (!timelineComplete) {
     return {
       defenders: [],
-      unavailableReason: "The indexed stationed-defender timeline is incomplete, so the battle-time defender roster is unknown.",
+      unavailableReason: "Stationed-defender arrival and departure times are incomplete, so the battle-time defender roster is unknown.",
     };
   }
   if (defenders.length === 0) return { defenders: [] };
@@ -1716,7 +1717,7 @@ export function stationedDefendersAtAttackArrival(
       if (arrivalAt > projectedAttackArrivalAt || holdUntil < projectedAttackArrivalAt) continue;
       return {
         defenders: [],
-        unavailableReason: `Stationed fleet #${defender.missionId} has no exact indexed hold window at the projected battle arrival.`,
+        unavailableReason: `Stationed fleet #${defender.missionId} has no confirmed hold window at the projected battle arrival.`,
       };
     }
     if (arrivalAt <= projectedAttackArrivalAt && holdUntil >= projectedAttackArrivalAt) {
@@ -1861,7 +1862,7 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
         currentLootable: plunderableResources(current),
         projectedArrivalLootable: travelSeconds > 0 ? plunderableResources(current) : null,
         projectionDetail: travelSeconds > 0
-          ? "Moon arrival projection uses the current public moon resource snapshot until moon production data is available."
+          ? "Moon production is unavailable, so the arrival estimate uses current resources."
           : "Select ships to calculate travel time; current public moon resources are shown now.",
       };
     }
@@ -1880,7 +1881,7 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
       projectedArrival: null,
       currentLootable: null,
       projectedArrivalLootable: null,
-      projectionDetail: "Destination resources are not present in the public indexed state yet.",
+      projectionDetail: "Destination resources are not available yet.",
     };
   }
 
@@ -1932,7 +1933,7 @@ export function preparePublicTargetBattleForecast(
     return complete({
       kind: "uncertain",
       label: "Uncertain",
-      detail: joinAttackContext.unavailableReason,
+      detail: playerNotice(joinAttackContext.unavailableReason),
       attackerPower,
       defenderPower: null,
       ...forecastTech,
@@ -1954,7 +1955,7 @@ export function preparePublicTargetBattleForecast(
         return complete({
           kind: "uncertain",
           label: "Uncertain",
-          detail: `${participant.label} combat technology is missing from public intel, so owner-specific contract scaling cannot be simulated safely.`,
+          detail: `${participant.label} combat technology is unknown, so the battle outcome cannot be estimated.`,
           attackerPower,
           defenderPower: null,
           ...forecastTech,
@@ -1964,7 +1965,7 @@ export function preparePublicTargetBattleForecast(
         return complete({
           kind: "uncertain",
           label: "Uncertain",
-          detail: `${participant.label} contract random-stream lane identity is missing from public intel.`,
+          detail: `${participant.label} battle details are incomplete, so the battle outcome cannot be estimated.`,
           attackerPower,
           defenderPower: null,
           ...forecastTech,
@@ -1975,7 +1976,7 @@ export function preparePublicTargetBattleForecast(
       return complete({
         kind: "uncertain",
         label: "Uncertain",
-        detail: "The selected joining fleet's exact contract random-stream lane is missing from public intel.",
+        detail: "The joining fleet's battle details are incomplete, so the outcome cannot be estimated.",
         attackerPower,
         defenderPower: null,
         ...forecastTech,
@@ -2031,7 +2032,7 @@ export function preparePublicTargetBattleForecast(
     return complete({
       kind: "uncertain",
       label: "Uncertain",
-      detail: `${missingStationedTechnology.defenderDisplayName ?? missingStationedTechnology.defender}'s stationed fleet combat technology is not indexed, so its owner-specific contract scaling cannot be simulated safely.`,
+      detail: `${missingStationedTechnology.defenderDisplayName ?? missingStationedTechnology.defender}'s stationed fleet combat technology is unknown, so the battle outcome cannot be estimated.`,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
@@ -2044,7 +2045,7 @@ export function preparePublicTargetBattleForecast(
     return complete({
       kind: "uncertain",
       label: "Uncertain",
-      detail: `Stationed fleet #${missingStationedLane.missionId} is missing its exact contract random-stream lane identity.`,
+      detail: `Stationed fleet #${missingStationedLane.missionId} has incomplete battle details, so the outcome cannot be estimated.`,
       attackerPower,
       defenderPower: null,
       ...forecastTech,
@@ -2292,9 +2293,7 @@ function TargetIdentityContent({
           {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.type} /> : null}
         </span>
       ) : (
-        <div className={placeholderClassName}>
-          No image
-        </div>
+        <div aria-hidden="true" className={placeholderClassName} />
       )}
       <div className="min-w-0">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Target</h3>
@@ -2430,7 +2429,7 @@ function harvestDebrisTotal(resources: MissionResourceSnapshot): number {
 
 function formatHarvestDebris(resources: MissionResourceSnapshot): string {
   const total = harvestDebrisTotal(resources);
-  if (total <= 0) return "No indexed debris";
+  if (total <= 0) return "No debris available";
   return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C (${formatResourceAmount(total)} total)`;
 }
 
@@ -2680,7 +2679,7 @@ function LazySimulatedBattleReportControl({
         if ("report" in event.data) setState({ status: "ready", report: event.data.report });
         else setState({ status: "error", message: event.data.error });
       };
-      worker.onerror = () => fail("The battle report worker failed.");
+      worker.onerror = () => fail("The battle report failed. Please retry.");
       worker.onmessageerror = () => fail("The battle report could not be read.");
       timeoutRef.current = setTimeout(() => fail("The battle report took too long. Please retry."), ATTACK_BATTLE_PREVIEW_TIMEOUT_MS);
       worker.postMessage({
@@ -2690,7 +2689,7 @@ function LazySimulatedBattleReportControl({
         sampleId: reportSeed.sampleId,
       });
     } catch {
-      fail("The battle report worker could not start.");
+      fail("The battle report could not start. Please retry.");
     }
   }, [reportInput, reportSeed, state.status, stopWorker]);
 
@@ -3441,7 +3440,7 @@ function projectedResourceSnapshot(
   if (!buildings) {
     return {
       resources: current,
-      detail: "Arrival projection falls back to current resources until public production data is available.",
+      detail: "Production is unavailable, so the arrival estimate uses current resources.",
     };
   }
 
@@ -3458,7 +3457,7 @@ function projectedResourceSnapshot(
   const projected = projectResourcesForTravel(current, production, caps, travelSeconds);
   return {
     resources: projected,
-    detail: "Arrival projection uses public building/resource preview math and assumes no spending, transport, or combat changes before arrival.",
+    detail: "Arrival estimate assumes no spending, transport, or combat changes before arrival.",
   };
 }
 
@@ -3639,10 +3638,10 @@ function battleForecastDetail(
   const targetLabel = targetIsMoon ? "moon" : "destination";
   const defenders = hasStationedDefenders ? " and visible owner-specific stationed fleets" : "";
   if (varies) {
-    return `Estimated from current public ${targetLabel} intel${defenders}. Contract-equivalent 256-bit samples produce different outcomes or losses; the future oracle word is not known yet.`;
+    return `Estimated from current public ${targetLabel} intel${defenders}. Simulated outcomes or losses vary; the actual battle may differ.`;
   }
   const result = kind === "win" ? "win" : kind === "defeat" ? "loss" : "draw";
-  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.sampleCount} contract-equivalent samples produced the same ${result}, but this is not a guarantee because the future oracle word is unknown.`;
+  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.sampleCount} simulations produced the same ${result}, but the actual battle may differ.`;
 }
 
 function resourceSnapshotsEqual(left: CombatResources, right: CombatResources): boolean {

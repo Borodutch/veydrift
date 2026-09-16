@@ -602,7 +602,7 @@ describe("debris target finder", () => {
         fleetLaunchAvailable: false,
         fleetLaunchUnavailableReason: "Fleet slot state is waiting for mission settlement.",
       }),
-    })[0]!.harvestDisabledReason).toBe("Fleet slot state is waiting for mission settlement.");
+    })[0]!.harvestDisabledReason).toBe("Mission is still resolving. Refresh after it finishes before launching another fleet.");
 
     expect(buildDebrisTargets({
       targets: [debrisTarget()],

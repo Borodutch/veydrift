@@ -173,7 +173,7 @@ export function PlayerActivityDialog({
   const title = mode === "away" ? "While you were away" : "Commander activity";
   const subtitle = mode === "away" && since
     ? `Updates since ${formatActivityTime(String(since))}`
-    : "Your indexed Veydrift actions and transactions";
+    : "Your Veydrift actions and transactions";
 
   return (
     <div
@@ -245,7 +245,7 @@ export function PlayerActivityDialog({
                   {mode === "away" && selectedCategory ? `No loaded ${activityCategoryLabel(selectedCategory)} activity` : "No activity yet"}
                 </p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {mode === "away" && selectedCategory ? "Choose All to restore the complete loaded list." : "Indexed transactions will appear here."}
+                  {mode === "away" && selectedCategory ? "Choose All to restore the complete loaded list." : "Your actions will appear here."}
                 </p>
               </div>
             </div>

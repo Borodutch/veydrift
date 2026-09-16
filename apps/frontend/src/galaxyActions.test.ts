@@ -297,7 +297,7 @@ describe("galaxyActions", () => {
     expect(rankingsProtectionPresentation(null)).toBeUndefined();
     expect(attack).toMatchObject({
       enabled: false,
-      reason: "Connect a wallet to launch contract missions.",
+      reason: "Connect a wallet to launch missions.",
     });
   });
 

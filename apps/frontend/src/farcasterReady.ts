@@ -73,7 +73,7 @@ export async function farcasterMiniAppWalletSupport(
     () => client.getCapabilities?.(),
     timeoutMs,
     "FARCASTER_CAPABILITIES_UNAVAILABLE",
-    "Farcaster Mini App host did not report wallet capabilities.",
+    "Farcaster wallet support could not be checked.",
   );
   if (capabilities.status === "reported" && !capabilities.values.includes(requiredCapability)) {
     return {
@@ -81,7 +81,7 @@ export async function farcasterMiniAppWalletSupport(
       code: "FARCASTER_WALLET_CAPABILITY_MISSING",
       capabilities: capabilities.values,
       chains: [],
-      message: `Farcaster Mini App host does not advertise ${requiredCapability}.`,
+      message: "This Farcaster app does not support wallet connections.",
     };
   }
 
@@ -89,7 +89,7 @@ export async function farcasterMiniAppWalletSupport(
     () => client.getChains?.(),
     timeoutMs,
     "FARCASTER_CHAINS_UNAVAILABLE",
-    "Farcaster Mini App host did not report supported chains.",
+    "Farcaster network support could not be checked.",
   );
   if (chains.status === "reported" && !chains.values.includes(requiredChain)) {
     return {
@@ -97,7 +97,7 @@ export async function farcasterMiniAppWalletSupport(
       code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
       capabilities: capabilities.status === "reported" ? capabilities.values : [],
       chains: chains.values,
-      message: `Farcaster Mini App host does not advertise ${requiredChain}.`,
+      message: "This Farcaster app does not support the required game network. Open Veydrift in a supported wallet browser.",
     };
   }
 

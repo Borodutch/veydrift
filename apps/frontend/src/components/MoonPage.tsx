@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
@@ -93,7 +94,7 @@ export function MoonPage({
 }: MoonPageProps) {
   const moon = moonState?.moon;
   const hasMoon = Boolean(moon?.exists);
-  const unavailableReason = moonState?.unavailableReason;
+  const unavailableReason = playerNotice(moonState?.unavailableReason);
   const moonUnavailable = moonState?.moonAvailable === false;
   return (
     <div className="grid gap-4">
@@ -135,7 +136,7 @@ export function MoonPage({
         <MoonSkeleton />
       ) : moonUnavailable ? (
         <MoonStatusPanel
-          title={moonState?.indexedNotReady ? "Moon state is indexing" : "Moon systems unavailable"}
+          title={moonState?.indexedNotReady ? "Moon state is updating" : "Moon systems unavailable"}
           body={unavailableReason ?? "Moon state is not available for the selected planet yet."}
           tone="warning"
         />
@@ -201,7 +202,7 @@ function ChickenBurnPanel({
 
       {!configured ? (
         <p className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-          Burning Chicken burn config is not available yet.
+          Chicken burning is currently unavailable.
         </p>
       ) : null}
 
@@ -259,9 +260,9 @@ function chickenBurnDisabledReason({
   pending: boolean;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
-  if (!configured) return "Burning Chicken burn config is unavailable.";
+  if (!configured) return "Chicken burning is currently unavailable.";
   if (hasMoon) return "The selected planet already has a moon.";
-  if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Burning Chicken contract unavailable.";
+  if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Chicken burning is unavailable.";
   if (pending) return "A moon transaction is already pending.";
   return undefined;
 }
@@ -980,11 +981,11 @@ export function moonDefenseProductionItems({
   return sharedItems.filter((item) => item.group !== "missile").map((item) => {
     const available = moonState?.defenses.some((defense) => defense.id === item.id) ?? false;
     const moonBlocker = !canTransact
-      ? transactionUnavailableReason ?? "Wallet or moon contract unavailable"
+      ? transactionUnavailableReason ?? "Wallet or moon connection unavailable"
       : moonState && !moonState.moon?.exists
         ? "No selected moon"
         : moonState && !available
-          ? "Defense unavailable on current moon deployment"
+          ? "Moon defense is currently unavailable"
           : undefined;
     const blockedReason = moonBlocker ?? item.blockedReason;
 
@@ -1082,16 +1083,16 @@ function formatMoonAmount(value: string | number): string {
   return Number.isFinite(numeric) ? numeric.toLocaleString() : String(value);
 }
 
-function GuidanceStep({ label, value }: { label: string; value: string }) {
+function GuidanceStep({ label, value }: { label: string; value: string | undefined }) {
   return (
     <div className="rounded border border-white/10 bg-black/15 p-3">
       <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{label}</div>
-      <div className="mt-1 leading-5 text-slate-300">{value}</div>
+      {value ? <div className="mt-1 leading-5 text-slate-300">{value}</div> : null}
     </div>
   );
 }
 
-function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undefined): Array<{ label: string; description: string }> {
+function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undefined): Array<{ label: string; description: string | undefined }> {
   const descriptions = new Map([
     ["Lunar Base", "Adds moon fields so more lunar structures can be built."],
     ["Robotics Factory", "Speeds moon facilities and unlocks the moon Shipyard."],
@@ -1110,7 +1111,7 @@ function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undef
   return uniqueLabels
     .map((label) => ({
       label,
-      description: descriptions.get(label) ?? "Buildable moon structure available after the moon is granted.",
+      description: descriptions.get(label),
     }));
 }
 
@@ -1167,7 +1168,7 @@ export function moonStructureStatus(
     return {
       ...base,
       disabled: true,
-      reason: options.transactionUnavailableReason ?? "Wallet or moon contract unavailable.",
+      reason: options.transactionUnavailableReason ?? "Wallet or moon connection unavailable.",
     };
   }
 

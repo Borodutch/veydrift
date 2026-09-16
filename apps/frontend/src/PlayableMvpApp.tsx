@@ -1,3 +1,4 @@
+import { playerNotice } from "./playerNotice";
 import { UiClock, useUiClock } from "./useUiClock";
 import { AlertTriangle } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
@@ -56,7 +57,7 @@ import {
 } from "./constructionProgress";
 import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import { formatDurationUntil } from "./durationFormat";
-import { detectFarcasterMiniApp, FARCASTER_WALLET_CAPABILITY, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
+import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
 import { fleetMissionDistance, type FleetDriveLevels } from "./fleetMissionRules";
 import { emptyMissionShips, galaxyActionsForSlot, missionTypeId, type GalaxyAction, type MissionShipKey, type MissionShips } from "./galaxyActions";
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
@@ -341,10 +342,10 @@ export function missionMoonShipyardState({ moonState, shipyardState }: { moonSta
     ...(shipyardState?.fleetLaunchAvailable !== undefined ? { fleetLaunchAvailable: shipyardState.fleetLaunchAvailable } : {}),
     ...(shipyardState?.fleetLaunchUnavailableReason
       ? {
-          fleetLaunchUnavailableReason: shipyardState.fleetLaunchUnavailableReason,
+          fleetLaunchUnavailableReason: playerNotice(shipyardState.fleetLaunchUnavailableReason),
         }
       : {}),
-    ...(shipyardState?.unavailableReason ? { unavailableReason: shipyardState.unavailableReason } : {}),
+    ...(shipyardState?.unavailableReason ? { unavailableReason: playerNotice(shipyardState.unavailableReason) } : {}),
     ...(stale !== undefined ? { stale } : {}),
     shipyardLevel: 0,
     naniteLevel: 0,
@@ -356,16 +357,16 @@ export function missionMoonShipyardState({ moonState, shipyardState }: { moonSta
 
 type StartedBuildingExpectation = { itemId: number; planetId?: string | undefined; targetLevel?: number | undefined };
 
-const buildingFinishStateReadFailureLabel = "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
+const buildingFinishStateReadFailureLabel = "Can't check your upgrade right now. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel = "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.";
 
 const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel = `${serverUnavailableRetryMessage()} Building actions are paused until current game state is available.`;
 export const infrastructureMissionResolutionPendingLabel =
-  "Mission resolution is pending for this planet. Refresh after the battle keeper or indexer settles the due mission before starting another upgrade.";
+  "A mission is still resolving at this planet. Wait for it to finish, then refresh before starting another upgrade.";
 
 
-export const previousMissionIndexingBlockerLabel = "Waiting for previous mission to index.";
+export const previousMissionIndexingBlockerLabel = "Waiting for the previous mission to update.";
 export const previousMissionTransactionBlockerLabel = "Waiting for previous mission transaction.";
 
 type RefreshFreshnessGate = { current: number };
@@ -702,7 +703,7 @@ export function joinAttackForecastContextForMission(mission: FleetMissionSummary
       defenderDisplayName: defender.defenderDisplayName ?? null,
     })),
     selectedAttackerLaneGroup: preview.selectedAttackerLaneGroup,
-    ...(preview.unavailableReason ? { unavailableReason: preview.unavailableReason } : {}),
+    ...(preview.unavailableReason ? { unavailableReason: playerNotice(preview.unavailableReason) } : {}),
   };
 }
 
@@ -894,7 +895,7 @@ export function missionShipInventoryBlocker({
 }): string | undefined {
   if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
   if (shipyardState.fleetLaunchAvailable === false) {
-    return shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing.";
+    return playerNotice(shipyardState.fleetLaunchUnavailableReason) ?? playerNotice(shipyardState.unavailableReason) ?? "Fleet slot state is still syncing.";
   }
   if (!shipyardState.fleetSlots || shipyardState.fleetSlots.limit <= 0) {
     return "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching.";
@@ -962,7 +963,7 @@ export function attackProtectionSubmitBlocker(
   options: { ignoreBashingLimit?: boolean } = {},
 ): string | undefined {
   if (!status || status.warEligibilityNeedsCheck || (!status.allowed && status.blockedReason === "none")) {
-    return "Attack eligibility is not verified. Retry before launching an attack.";
+    return "Attack eligibility could not be checked. Retry before launching an attack.";
   }
   if (status.blockedReason === "none") return undefined;
   if (options.ignoreBashingLimit && status.blockedReason === "bashing_limit") return undefined;
@@ -997,7 +998,7 @@ export function attackProtectionPreparation({
   }
   if (!snapshot?.data || snapshot.freshness !== "fresh") {
     return {
-      blocker: "Checking this target's canonical attack protection.",
+      blocker: "Checking this target's attack protection.",
       retryAvailable: false,
     };
   }
@@ -1013,7 +1014,7 @@ export function attackProtectionPreparation({
   const warNotice = status.atWar
     ? blocker
       ? "This war does not bypass protection for this attacker/target pairing. Frozen original rosters and declaration direction still apply."
-      : "War eligibility verified for this target. Bypass applies only to original declaration-roster members in the allowed direction."
+      : "War protection exceptions apply to this target. Only original members qualify, in the allowed attack direction."
     : undefined;
   const retryAvailable = Boolean(blocker && (status.warEligibilityNeedsCheck || status.blockedReason === "none"));
   return { ...(blocker ? { blocker } : {}), retryAvailable, ...(warNotice ? { warNotice } : {}) };
@@ -1074,7 +1075,7 @@ export function researchCompletionUnavailableReasonFor({
   researchState: ChainResearchState | null;
 }): string | undefined {
   if (!canTransact) {
-    return "Wallet or game contract is unavailable.";
+    return "Wallet or game connection is unavailable.";
   }
 
   const queue = researchState?.queue;
@@ -1164,7 +1165,7 @@ export function buildingCompletionUnavailableReasonFor({
   now?: number;
 }): string | undefined {
   if (!canTransact) {
-    return "Wallet or game contract is unavailable.";
+    return "Wallet or game connection is unavailable.";
   }
 
   const syncPausedReason = infrastructureBackendSyncPausedReasonFor({
@@ -1244,7 +1245,7 @@ export function buildingFinishUnavailableReasonForDisplay({
   }
 
   if (!canTransact) {
-    return "Wallet or game contract is unavailable.";
+    return "Wallet or game connection is unavailable.";
   }
 
   if (backendSyncPausedReason && !hasReadyIndexedBuildingCompletionState(infrastructureState, now)) {
@@ -1369,7 +1370,7 @@ export function researchStartUnavailableReasonFor({
   researchState: ChainResearchState | null;
 }): string | undefined {
   if (!canTransact) {
-    return "Wallet or game contract is unavailable.";
+    return "Wallet or game connection is unavailable.";
   }
 
   if (!researchState) {
@@ -1377,7 +1378,7 @@ export function researchStartUnavailableReasonFor({
   }
 
   if (researchState.researchAvailable === false) {
-    return researchState.unavailableReason ?? "Research unavailable on this contract.";
+    return playerNotice(researchState.unavailableReason) ?? "Research is currently unavailable.";
   }
 
   if (isResearchBackendSyncPaused(researchState)) {
@@ -1385,7 +1386,7 @@ export function researchStartUnavailableReasonFor({
   }
 
   if (!researchState.homePlanetId) {
-    return "No VeydriftGame home planet is available for research.";
+    return "No home planet is available for research.";
   }
 
   if (activeResearchQueue(researchState.queue)) {
@@ -1510,38 +1511,8 @@ interface PlayableMvpAppProps {
   referralProgramPanel?: ComponentChildren | ((navigate: (route: InspectRoute) => void) => ComponentChildren);
 }
 
-const farcasterWalletReportInstruction = "Please send this exact message to Veydrift support.";
-
-function playableFarcasterMiniAppWalletError(
-  code: string,
-  message: string,
-  details: {
-    support?: FarcasterMiniAppWalletSupport | undefined;
-    error?: unknown;
-  } = {},
-): string {
-  const detailParts = [details.support ? playableFarcasterSupportDiagnostics(details.support) : undefined, ...playableFarcasterRawErrorDiagnostics(details.error)].filter((part): part is string =>
-    Boolean(part),
-  );
-  const detailText = detailParts.length > 0 ? ` Details: ${detailParts.join("; ")}.` : "";
-  return `Wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
-}
-
-function playableFarcasterSupportDiagnostics(support: FarcasterMiniAppWalletSupport): string {
-  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
-  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
-  return `support=${support.status}/${support.status === "supported" ? "ok" : support.code}; capabilities=${capabilities}; chains=${chains}`;
-}
-
-function playableFarcasterRawErrorDiagnostics(error: unknown): string[] {
-  if (!error || typeof error !== "object") {
-    return [];
-  }
-  const providerError = error as { code?: unknown; message?: unknown };
-  return [
-    providerError.code !== undefined ? `errorCode=${String(providerError.code)}` : undefined,
-    typeof providerError.message === "string" && providerError.message.trim() ? `errorMessage=${providerError.message.replace(/\s+/g, " ").slice(0, 240)}` : undefined,
-  ].filter((part): part is string => Boolean(part));
+function playableFarcasterMiniAppWalletError(message: string): string {
+  return `${message} Retry the wallet connection. If it still fails, contact Veydrift support.`;
 }
 
 type ShipyardActionState = { status: "idle" } | { status: "pending"; label: string } | { status: "success"; label: string } | { status: "error"; label: string; autoDismiss?: boolean | undefined };
@@ -1596,6 +1567,9 @@ export function transactionUnavailableReasonFor({
 
 export function isWalletContractUnavailableActionLabel(label: string): boolean {
   return (
+    /wallet.*game connection.*unavailable/i.test(label) ||
+    /wallet.*moon connection.*unavailable/i.test(label) ||
+    /alliance actions (?:are )?unavailable/i.test(label) ||
     /wallet.*game contract.*unavailable/i.test(label) ||
     /wallet or game contract (?:is )?unavailable/i.test(label) ||
     /game contract unavailable/i.test(label) ||
@@ -1701,12 +1675,12 @@ export function infrastructureUnavailableReasonFor({
   if ((runtimeConfigStatus === "error" || onChainStatus === "error" || infrastructureError || !onChainResources) && !hasLoadedInfrastructureState) {
     return "Game state unavailable; upgrades are disabled until your wallet resources and building levels load.";
   }
-  if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
+  if (!gameContract) return "Game connection unavailable; upgrades are disabled.";
   if (!homePlanetId) return "No home planet found for this wallet.";
   const actionBlockerReason = infrastructureActionBlockerReasonFor(infrastructureChainState);
   if (actionBlockerReason) return actionBlockerReason;
   if (infrastructureChainState?.infrastructureAvailable === false) {
-    return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
+    return playerNotice(infrastructureChainState.unavailableReason) ?? "Infrastructure is currently unavailable.";
   }
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
   const syncPausedReason = infrastructureBackendSyncPausedReasonFor({
@@ -2043,7 +2017,7 @@ function moonTargetActions(actionsByKind: ReadonlyMap<string, GalaxyAction>, isO
 
 function moonTargetMissionAction(action: GalaxyAction | undefined, kind: "attack" | "transport" | "deploy" | "defenseHold", label: string): GalaxyAction {
   if (kind === "defenseHold") {
-    return disabledMissionAction(kind, label, "Stationed defense can only target planets in the current mission contract.");
+    return disabledMissionAction(kind, label, "Stationed defense is not available for this target.");
   }
   if (!action) return disabledMissionAction(kind, label, `${label} is unavailable.`);
   if (!action.enabled) return { ...action, label, reason: overviewOwnedPlanetActionReason(action.reason) };
@@ -2189,7 +2163,7 @@ export function batchSupplySourceForPlanet(
   const fleetUnavailable =
     readUnavailableReason
     ?? (shipyard?.fleetLaunchAvailable === false
-      ? (shipyard.fleetLaunchUnavailableReason ?? shipyard.unavailableReason ?? "Fleet slots are unavailable.")
+      ? (playerNotice(shipyard.fleetLaunchUnavailableReason) ?? playerNotice(shipyard.unavailableReason) ?? "Fleet slots are unavailable.")
       : shipyard && !hasUsableSupplyCargoFleet(ships)
         ? "No usable cargo ships are available on this planet."
         : undefined);
@@ -2455,18 +2429,14 @@ export function PlayableMvpApp({
       });
       if (support.status === "unsupported") {
         showMiniAppWalletError(
-          playableFarcasterMiniAppWalletError(support.code, `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${requiredChain}.`, { support }),
-        );
+          playableFarcasterMiniAppWalletError(support.message),);
         return;
       }
 
       const walletProvider = await getAvailableWalletProviderDetails(window as typeof window & { ethereum?: Eip1193Provider }, undefined, { preferFarcasterProvider: true });
       if (!walletProvider?.provider || walletProvider.source !== "farcaster") {
         showMiniAppWalletError(
-          playableFarcasterMiniAppWalletError("FARCASTER_WALLET_PROVIDER_UNAVAILABLE", "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.", {
-            support,
-          }),
-        );
+          playableFarcasterMiniAppWalletError("Farcaster could not connect your wallet."),);
         return;
       }
 
@@ -2475,16 +2445,12 @@ export function PlayableMvpApp({
         accounts = await requestAccounts(walletProvider.provider);
       } catch (error) {
         showMiniAppWalletError(
-          playableFarcasterMiniAppWalletError(
-            isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_ACCOUNT_FAILED",
-            isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
-            { support, error },
-          ),
+          playableFarcasterMiniAppWalletError(isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)),
         );
         return;
       }
       if (!accounts[0]) {
-        showMiniAppWalletError(playableFarcasterMiniAppWalletError("FARCASTER_WALLET_ACCOUNT_UNAVAILABLE", "Wallet authorization completed without returning an account.", { support }));
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError("Wallet authorization completed without returning an account."));
         return;
       }
 
@@ -2492,11 +2458,7 @@ export function PlayableMvpApp({
         await switchVeydriftNetwork(walletProvider.provider, walletChain);
       } catch (error) {
         showMiniAppWalletError(
-          playableFarcasterMiniAppWalletError(walletChain.chainId === 8453 ? "FARCASTER_BASE_MAINNET_SWITCH_FAILED" : "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED", walletRequestErrorMessage(error), {
-            support,
-            error,
-          }),
-        );
+          playableFarcasterMiniAppWalletError(walletRequestErrorMessage(error)),);
         return;
       }
       setMiniAppProvider(walletProvider.provider);
@@ -2505,11 +2467,7 @@ export function PlayableMvpApp({
 
     } catch (error) {
       showMiniAppWalletError(
-        playableFarcasterMiniAppWalletError(
-          isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_BOOTSTRAP_FAILED",
-          isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
-          { support, error },
-        ),
+        playableFarcasterMiniAppWalletError(isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)),
       );
     }
   }, [providedAccount, providedProvider, showMiniAppWalletError]);
@@ -2979,7 +2937,7 @@ export function PlayableMvpApp({
 
   const runGatedTransaction = useCallback(
     async (key: string, action: () => Promise<void>) => {
-      if (!backendData) throw new Error("Game state store is unavailable.");
+      if (!backendData) throw new Error("Game state is unavailable. Please refresh and retry.");
       try {
         await backendData.runExclusiveTransaction(key, key, action);
       } catch {
@@ -3463,7 +3421,7 @@ export function PlayableMvpApp({
       prepare?: () => Promise<void>;
       send: (provider: Eip1193Provider) => Promise<string>;
     }) => {
-      if (!backendData || !provider) throw new Error("Game state store or wallet is unavailable.");
+      if (!backendData || !provider) throw new Error("Game state or wallet is unavailable. Please refresh and retry.");
       return backendData.runWriteTransaction({
         waitForIndexing: false,
         confirmRetry: confirmTransactionRetry,
@@ -3869,7 +3827,7 @@ export function PlayableMvpApp({
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: infrastructureUnavailableReason ?? "Wallet, game contract, active planet, or game API is unavailable.",
+          label: infrastructureUnavailableReason ?? "Wallet, game connection, or active planet is unavailable.",
         });
         return;
       }
@@ -4082,7 +4040,7 @@ export function PlayableMvpApp({
           await options.prepare?.();
           if (options.validateShipInventory) {
             if (!apiBaseUrl || !account) {
-              throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
+              throw new Error("Could not refresh your fleet. Check your wallet connection and retry.");
             }
             const [freshShipyardState, freshMoonState] = await Promise.all([
               backendData!.shipyard(account, options.validateShipInventory.originPlanetId, { fresh: true }),
@@ -4109,7 +4067,7 @@ export function PlayableMvpApp({
           if (options.validateAttackProtection) {
             const { targetPlanetId, targetIsMoon = false, ignoreBashingLimit = false } = options.validateAttackProtection;
             if (!apiBaseUrl || !account) {
-              throw new Error("Wallet or game API is unavailable while refreshing target protection.");
+              throw new Error("Could not check target protection. Check your wallet connection and retry.");
             }
             await revalidateAttackProtectionBeforeSubmit(
               () => backendData!.attackProtection(account, targetPlanetId, targetIsMoon, {
@@ -4302,7 +4260,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
         setMoonAction({
           status: "error",
-          label: "Wallet, Burning Chicken config, or selected planet coordinates are unavailable.",
+          label: "Wallet, Chicken burning, or selected planet is unavailable.",
         });
         return;
       }
@@ -4342,7 +4300,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !planetId) {
         setShipyardAction({
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         });
         return;
       }
@@ -4363,7 +4321,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
         setDefenseAction({
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         });
         return;
       }
@@ -4385,7 +4343,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4404,7 +4362,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4419,7 +4377,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !paidAllianceInviteContract || !apiBaseUrl || !canPurchasePaidInvites) {
         setAllianceAction({
           status: "error",
-          label: "Paid alliance invites are not configured.",
+          label: "Private alliance invitations are currently unavailable.",
         });
         return;
       }
@@ -4444,7 +4402,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !allianceState.profile?.bonusBalance || allianceError || !activePlanetId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance production treasury is not configured.",
+          label: "Alliance treasury is currently unavailable.",
         });
         return;
       }
@@ -4471,7 +4429,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4491,7 +4449,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !apiBaseUrl || !allianceContract) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4540,7 +4498,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4555,7 +4513,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4570,7 +4528,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4624,7 +4582,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4678,7 +4636,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4693,7 +4651,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4714,7 +4672,7 @@ export function PlayableMvpApp({
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({
         status: "error",
-        label: "Alliance contract unavailable.",
+        label: "Alliance actions are unavailable.",
       });
       return;
     }
@@ -4728,7 +4686,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4743,7 +4701,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4766,7 +4724,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4782,7 +4740,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
-          label: "Alliance contract unavailable.",
+          label: "Alliance actions are unavailable.",
         });
         return;
       }
@@ -4799,7 +4757,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
         setResearchAction({
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         });
         return;
       }
@@ -4833,7 +4791,7 @@ export function PlayableMvpApp({
           if (!transactionPlanetId) {
             setResearchAction({
               status: "error",
-              label: "No VeydriftGame planet is available for research.",
+              label: "No planet is available for research.",
             });
             return;
           }
@@ -4861,7 +4819,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !resource.tokenAddress) {
         setRiftAction({
           status: "error",
-          label: "Wallet, game contract, or resource token is unavailable.",
+          label: "Wallet, game connection, or resource token is unavailable.",
         });
         return;
       }
@@ -4887,7 +4845,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
-          label: riftState?.unavailableReason ?? "Rift Stabilizer is unavailable.",
+          label: playerNotice(riftState?.unavailableReason) ?? "Rift Stabilizer is unavailable.",
         });
         return;
       }
@@ -4917,7 +4875,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
-          label: riftState?.unavailableReason ?? "Rift Stabilizer is unavailable.",
+          label: playerNotice(riftState?.unavailableReason) ?? "Rift Stabilizer is unavailable.",
         });
         return;
       }
@@ -4948,7 +4906,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !resource) {
         setRiftAction({
           status: "error",
-          label: "Wallet, game contract, or withdrawal resource is unavailable.",
+          label: "Wallet, game connection, or withdrawal resource is unavailable.",
         });
         return;
       }
@@ -5019,7 +4977,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !activePlanetId) {
         setPlanetRenameAction({
           status: "error",
-          label: "Wallet, game contract, or planet is unavailable.",
+          label: "Wallet, game connection, or planet is unavailable.",
         });
         return;
       }
@@ -5047,7 +5005,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !apiBaseUrl) {
         setPlayerProfileAction({
           status: "error",
-          label: "Wallet or game API is unavailable.",
+          label: "Wallet or game connection is unavailable.",
         });
         return;
       }
@@ -5404,7 +5362,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
-          label: "Wallet, game contract, or origin planet is unavailable.",
+          label: "Wallet, game connection, or origin planet is unavailable.",
         });
         return;
       }
@@ -5423,14 +5381,14 @@ export function PlayableMvpApp({
         try {
           const readiness = await backendData!.queries.randomnessReadiness().read();
           if (readiness.ready !== true) {
-            const reason = Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string" ? readiness.reasons[0] : "Randomness safety is not ready. New attacks are temporarily paused.";
+            const reason = Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string" ? playerNotice(readiness.reasons[0]) : "Randomness safety is not ready. New attacks are temporarily paused.";
             setGalaxyAction({ status: "error", label: reason });
             return;
           }
         } catch (error) {
           const reason = error instanceof Error
             && error.message.endsWith("New attacks are temporarily paused.")
-            ? error.message
+            ? playerNotice(error.message)
             : "Randomness safety status is unavailable. New attacks are temporarily paused.";
           setGalaxyAction({
             status: "error",
@@ -5590,7 +5548,7 @@ export function PlayableMvpApp({
       if (action.kind === "attack" && (originIsMoon || targetIsMoon) && !moonAttackParityEnabled) {
         setGalaxyAction({
           status: "error",
-          label: "Moon attack parity is still activating. Refresh shortly before launching.",
+          label: "Moon attacks are temporarily unavailable. Refresh shortly before launching.",
         });
         return;
       }
@@ -5707,7 +5665,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
-          label: "Wallet, moon contract, or home planet is unavailable.",
+          label: "Wallet, moon connection, or home planet is unavailable.",
         });
         return;
       }
@@ -5725,7 +5683,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
-          label: "Wallet, moon contract, or home planet is unavailable.",
+          label: "Wallet, moon connection, or home planet is unavailable.",
         });
         return;
       }
@@ -5743,7 +5701,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
-          label: "Wallet, moon contract, or home planet is unavailable.",
+          label: "Wallet, moon connection, or home planet is unavailable.",
         });
         return;
       }
@@ -5765,7 +5723,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract) {
         setMissionAction({
           status: "error",
-          label: "Wallet or game contract is unavailable.",
+          label: "Wallet or game connection is unavailable.",
         });
         return;
       }
@@ -5793,7 +5751,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract) {
         setMissionAction({
           status: "error",
-          label: "Wallet or game contract is unavailable.",
+          label: "Wallet or game connection is unavailable.",
         });
         return;
       }
@@ -5818,7 +5776,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract) {
         setMissionAction({
           status: "error",
-          label: "Wallet or game contract is unavailable.",
+          label: "Wallet or game connection is unavailable.",
         });
         return;
       }
@@ -5857,7 +5815,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
         setMissionAction({
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         });
         return;
       }
@@ -5898,7 +5856,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
-          label: "Wallet, game contract, or origin planet is unavailable.",
+          label: "Wallet, game connection, or origin planet is unavailable.",
         });
         return;
       }
@@ -5952,7 +5910,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
         setGalaxyAction({
           status: "error",
-          label: "Wallet, game contract, or home planet is unavailable.",
+          label: "Wallet, game connection, or home planet is unavailable.",
         });
         return;
       }
@@ -5979,7 +5937,7 @@ export function PlayableMvpApp({
       if (!provider || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
-          label: "Wallet, game contract, or selected origin is unavailable.",
+          label: "Wallet, game connection, or selected origin is unavailable.",
         });
         return;
       }
@@ -5994,7 +5952,7 @@ export function PlayableMvpApp({
         if ((originIsMoon || targetIsMoon) && !moonAttackParityEnabled) {
           setGalaxyAction({
             status: "error",
-            label: "Moon attack parity is still activating. Refresh shortly before joining.",
+            label: "Moon attacks are temporarily unavailable. Refresh shortly before joining.",
           });
           return;
         }
@@ -6133,7 +6091,7 @@ export function PlayableMvpApp({
         onClick: deployAction.enabled ? () => handleMoonMissionAction(deployAction, selectedManagedPlanet) : undefined,
       },
       {
-        disabledReason: "Moon defense stationing is not available in the current mission contract.",
+        disabledReason: "Stationing defense on moons is currently unavailable.",
         kind: "defend" as const,
         label: "Defend",
       },
@@ -6275,7 +6233,7 @@ export function PlayableMvpApp({
     transactionPending: false,
     unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
       ? "Loading the selected planet's latest state."
-      : "Wallet or game contract unavailable",
+      : "Wallet or game connection unavailable",
   });
   const missionTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
@@ -6283,19 +6241,19 @@ export function PlayableMvpApp({
     transactionPending: missionTransactionPending,
     unavailableReason: gameContractTransactionInputsAvailable && !activePlanetStateFresh
       ? "Loading the selected planet's latest state."
-      : "Wallet or game contract unavailable",
+      : "Wallet or game connection unavailable",
   });
   const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,
     inputsAvailable: allianceTransactionInputsAvailable,
     transactionPending: allianceTransactionPending,
-    unavailableReason: "Alliance contract unavailable.",
+    unavailableReason: "Alliance actions are unavailable.",
   });
   const moonTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(moonAction) ?? writeTransactionState.label,
     inputsAvailable: moonTransactionInputsAvailable,
     transactionPending: false,
-    unavailableReason: Boolean(provider && account && moonContract) && !activePlanetStateFresh ? "Loading the selected planet's latest state." : "Wallet or moon contract unavailable.",
+    unavailableReason: Boolean(provider && account && moonContract) && !activePlanetStateFresh ? "Loading the selected planet's latest state." : "Wallet or moon connection unavailable.",
   });
   const canSubmitGameTransaction = gameTransactionInputsAvailable;
   const canSubmitMissionTransaction = missionTransactionInputsAvailable && !missionTransactionPending;
@@ -7696,7 +7654,7 @@ function HydratingPlanetState({ page, error, onRetry, status, txHash }: { page: 
         <div className="mx-auto mb-4 h-10 w-10 rounded-full border border-cyan-200/20 bg-cyan-200/10" />
         <h1 className="text-base font-semibold text-white">Planet sync delayed</h1>
         <p className="mt-2 text-sm leading-6 text-slate-400">
-          The settlement transaction is confirmed, but the game API has not returned complete planet resources yet.
+          Your settlement is confirmed. Your planet resources are still updating.
         </p>
         {txHash ? <p className="mt-2 truncate text-xs text-slate-500">Tx: {txHash}</p> : null}
         {error ? <p className="mt-2 truncate text-xs text-amber-200/80">{error}</p> : null}

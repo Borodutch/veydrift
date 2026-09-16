@@ -194,7 +194,7 @@ export function RankingsTable({
       {shouldShowRankingsInitialLoader({ hasLoadedData, loading, viewTransitioning }) ? (
         <RankingsRowsSkeleton />
       ) : entries.length === 0 ? (
-        <RankingsMessage label="No settled commanders indexed yet" />
+        <RankingsMessage label="No settled commanders yet" />
       ) : (
         entries.map((entry) => (
           <RankingRow
@@ -365,7 +365,7 @@ export function RankingRow({
             {isAtWar && alliance ? (
               <span
                 className="shrink-0 rounded border border-rose-300/40 bg-rose-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none tracking-normal text-rose-100"
-                title={`At war with ${alliance.name}. Attack eligibility is verified for the selected target: frozen original rosters and declaration direction still apply.`}
+                title={`At war with ${alliance.name}. Only original war members qualify for protection exceptions, in the allowed attack direction.`}
               >
                 {`War [${alliance.tag}]`}
               </span>

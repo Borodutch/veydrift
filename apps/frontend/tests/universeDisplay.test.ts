@@ -850,7 +850,7 @@ describe("tester universe display data", () => {
       { kind: "transport", defaultTargetIsMoon: true },
       { kind: "deploy", defaultTargetIsMoon: true },
     ]);
-    expect(ownActions.find((action) => action.kind === "defend")?.disabledReason).toContain("Moon defense stationing");
+    expect(ownActions.find((action) => action.kind === "defend")?.disabledReason).toContain("Stationing defense on moons");
 
     const unavailableActions = publicMoonActions({
       ...base,

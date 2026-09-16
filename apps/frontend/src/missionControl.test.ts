@@ -1561,7 +1561,7 @@ describe("Mission Control battle reports", () => {
     }))).join(" ").replace(/\s+/g, " ");
 
     expect(text).toContain("Combat resolving: 4 of up to 6 rounds complete");
-    expect(text).toContain("The resolver will continue automatically");
+    expect(text).toContain("Combat will continue automatically");
     expect(text).not.toContain("Report generating, please hold");
   });
 
@@ -2258,7 +2258,7 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ");
 
-    expect(text).toContain("Report generating, please hold...");
+    expect(text).toContain("Generating battle report…");
   });
 
   test("VEY-KANEO-425: still shows the due/resolving notice for an outbound combat fleet whose arrival has passed", () => {
@@ -2284,7 +2284,7 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ");
 
-    expect(text).toContain("Report generating, please hold...");
+    expect(text).toContain("Generating battle report…");
   });
 
   test("VEY-KANEO-425: keeps a non-combat outbound mission free of any battle-report notice", () => {

@@ -891,13 +891,13 @@ function safeLandingBigInt(value: string | undefined): bigint {
 }
 
 function landingFeedEmptyCopy(status: LandingLoadStatus): string {
-  if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
-  return "The backend mission index has no active universe-wide fleet rows right now.";
+  if (status === "offline") return "Veydrift is temporarily unavailable. Please try again shortly.";
+  return "No fleets are currently in flight.";
 }
 
 function landingAllianceEmptyCopy(status: LandingLoadStatus): string {
-  if (status === "offline") return "The Veydrift API is not reachable from this page right now.";
-  return "The backend highscore index has no alliance-ranked commanders yet.";
+  if (status === "offline") return "Veydrift is temporarily unavailable. Please try again shortly.";
+  return "No alliances have ranked commanders yet.";
 }
 
 function landingAllianceBoardLabel(status: LandingLoadStatus): string {

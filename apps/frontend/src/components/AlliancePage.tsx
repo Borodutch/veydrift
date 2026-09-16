@@ -1,3 +1,4 @@
+import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useUiClock } from "../useUiClock";
 import type { LucideIcon } from "lucide-preact";
@@ -198,7 +199,7 @@ export function AlliancePage({
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
       ) : null}
       {allianceState?.allianceAvailable === false ? (
-        <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
+        <Notice>{playerNotice(allianceState.unavailableReason) ?? "Alliance actions are currently unavailable."}</Notice>
       ) : null}
       {!canTransact && showTransactionUnavailableNotice ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
@@ -635,7 +636,7 @@ function MyAllianceSection({
 
         {activeControlPanel === "paid-invites" ? (
           <AllianceManagementPanel description={<AlliancePrivateInviteExplanation />}>
-            {!onBuyPaidInvite ? <p className="mb-2 text-sm text-slate-400">Private invite purchases are not enabled on this backend.</p> : null}
+            {!onBuyPaidInvite ? <p className="mb-2 text-sm text-slate-400">Private invite purchases are currently unavailable.</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className={allianceManagementPrimaryActionClass}
@@ -1135,7 +1136,7 @@ function WarDeclarationDialog({
           </WarDeclarationRule>
           {snapshotTooLarge ? (
             <WarDeclarationRule icon={X} tone="rose">
-              War unavailable: each alliance can snapshot at most 64 members.
+              War unavailable: each alliance can have at most 64 members at declaration.
             </WarDeclarationRule>
           ) : null}
         </ul>
@@ -1309,13 +1310,13 @@ function WarSection({
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-400">War uses its declaration snapshot: only original members qualify, and they regain eligibility by rejoining their original alliance. A weaker/equal declaration or a stronger declaration within 1.5× is bilateral; otherwise only the declared-on side bypasses score protection and bashing. {warMinimumDurationCopy}</p>
+                  <p className="mt-1 text-xs text-slate-400">Only members present at the war declaration qualify, and they regain eligibility by rejoining their original alliance. A weaker/equal declaration or a stronger declaration within 1.5× is bilateral; otherwise only the declared-on side bypasses score protection and bashing. {warMinimumDurationCopy}</p>
                   {war.warSnapshot ? (
                     <p className="mt-1 text-xs text-slate-500">
-                      Snapshot — declarer score {formatScore(war.warSnapshot.declarerScore)} ({war.warSnapshot.declarerMemberCount} members), declaree score {formatScore(war.warSnapshot.declareeScore)} ({war.warSnapshot.declareeMemberCount} members).
+                      At declaration — declarer score {formatScore(war.warSnapshot.declarerScore)} ({war.warSnapshot.declarerMemberCount} members), declaree score {formatScore(war.warSnapshot.declareeScore)} ({war.warSnapshot.declareeMemberCount} members).
                     </p>
                   ) : (
-                    <p className="mt-1 text-xs text-amber-200">Legacy war: no protection snapshot exists, so normal score protection applies.</p>
+                    <p className="mt-1 text-xs text-amber-200">Normal score protection applies to this older war.</p>
                   )}
                 </div>
                 {endAction.visible ? (
@@ -2367,7 +2368,7 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
               </div>
             ) : (
               <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
-                No indexed planets are available for this wallet yet.
+                No planets are available for this wallet yet.
               </p>
             )}
           </>

@@ -148,7 +148,7 @@ describe("Moon page helpers", () => {
         { kind: "inspect", label: "Inspect", onClick: () => undefined },
         { kind: "transport", label: "Transport", onClick: () => undefined },
         { kind: "deploy", label: "Deploy", onClick: () => undefined },
-        { kind: "defend", label: "Defend", disabledReason: "Moon defense stationing is not available yet." },
+        { kind: "defend", label: "Defend", disabledReason: "Stationing defense on moons is not available yet." },
       ],
       moonState: loadedMoonState({
         moon: {
@@ -263,7 +263,7 @@ describe("Moon page helpers", () => {
       selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
 
-    expect(visibleText(page)).toContain("Burning Chicken burn config is not available yet.");
+    expect(visibleText(page)).toContain("Chicken burning is currently unavailable.");
   });
 
   test("keeps Burning Chicken ownership errors visible", () => {
@@ -1064,8 +1064,8 @@ describe("Moon page helpers", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Moon state is indexing");
-    expect(text).toContain("Moon indexed state is still warming. Refresh shortly.");
+    expect(text).toContain("Moon state is updating");
+    expect(text).toContain("Moon data is still updating. Refresh shortly.");
     expect(text).not.toContain("Reading lunar telemetry");
     expect(text).not.toContain("No moon in orbit");
   });

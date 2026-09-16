@@ -510,7 +510,7 @@ export function publicMoonActions({
       unavailableReason,
     }),
     {
-      disabledReason: "Moon defense stationing is not available in the current mission contract.",
+      disabledReason: "Stationing defense on moons is currently unavailable.",
       kind: "defend",
       label: "Defend",
     },

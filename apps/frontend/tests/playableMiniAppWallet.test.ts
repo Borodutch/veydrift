@@ -12,10 +12,11 @@ describe("playable Mini App wallet binding", () => {
     expect(source).not.toContain("getCurrentAccounts(walletProvider.provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS)");
     expect(source).toContain("accounts = await requestAccounts(walletProvider.provider)");
     expect(source).toContain("await switchVeydriftNetwork(walletProvider.provider, walletChain)");
-    expect(source).toContain("FARCASTER_BASE_MAINNET_SWITCH_FAILED");
-    expect(source).toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
-    expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
+    expect(source).not.toContain("FARCASTER_BASE_MAINNET_SWITCH_FAILED");
+    expect(source).not.toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
+    expect(source).not.toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("MiniAppWalletErrorState");
+    expect(source).toContain("Retry the wallet connection");
     expect(source).toContain("const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined)");
     expect(source).toContain("onConnectWallet={effectiveConnectWallet}");
   });

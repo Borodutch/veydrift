@@ -73,10 +73,10 @@ describe("AlliancePage loading display", () => {
     })).toBe(false);
     expect(shouldShowAllianceTransactionNotice({
       actionLabel: label,
-      transactionUnavailableReason: "Alliance contract unavailable.",
+      transactionUnavailableReason: "Alliance actions are unavailable.",
     })).toBe(true);
     expect(shouldShowAllianceTransactionNotice({
-      transactionUnavailableReason: "Alliance contract unavailable.",
+      transactionUnavailableReason: "Alliance actions are unavailable.",
     })).toBe(true);
     expect(shouldShowAllianceTransactionNotice({ actionLabel: label })).toBe(false);
   });
@@ -545,7 +545,7 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain('role="tooltip"');
     expect(alliancePageSource).toContain('title={endAction.reason ?? "End war"}');
     expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
-    expect(alliancePageSource).toContain("War uses its declaration snapshot: only original members qualify");
+    expect(alliancePageSource).toContain("Only members present at the war declaration qualify");
   });
 
   test("keeps member administration compact behind explicit controls", () => {
@@ -589,7 +589,7 @@ describe("AlliancePage loading display", () => {
     expect(walletFlowSource).toContain("members?: Array<{");
     expect(inspectPagesSource).toContain("publicRoster.all.length");
     expect(inspectPagesSource).toContain("members={publicRoster.all}");
-    expect(inspectPagesSource).toContain("No indexed public members are available for this alliance yet.");
+    expect(inspectPagesSource).toContain("No public members are available for this alliance yet.");
     expect(inspectPagesSource).not.toContain("Public directory data exposes");
   });
 

@@ -1078,7 +1078,7 @@ export function shipCombatStats(ship: (typeof shipCatalog)[number]): CombatStatB
       {
         label: "Cargo",
         value: shipCargoCapacityByKey[ship.key],
-        hint: "Contract cargo capacity for missions and loot.",
+        hint: "Cargo capacity for missions and loot.",
       },
     ],
     notes,
@@ -1118,7 +1118,7 @@ export function defenseCombatStats(defense: (typeof defenseCatalog)[number]): Co
         {
           label: "Silo slots",
           value: defense.key === "interplanetaryMissile" ? 2 : 1,
-          hint: "Missile silo capacity cost from the contract catalog.",
+          hint: "Missile silo space used per missile.",
         },
       ],
       notes,
@@ -1785,7 +1785,7 @@ export function buildingEffectMetrics(
     kind: "facility",
     currentLevel: buildings[key],
     nextLevel: nextBuildings[key],
-    label: "Catalog facility",
+    label: "Facility",
   };
 }
 

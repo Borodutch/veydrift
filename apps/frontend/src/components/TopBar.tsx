@@ -471,7 +471,7 @@ function formatRate(value: number): string {
 
 function crawlerExplanationTitle(crawler: CrawlerProductionInfo | null | undefined): string {
   if (!crawler) {
-    return "Crawler production details are syncing from the backend production model.";
+    return "Crawler production details are loading.";
   }
 
   const details = [

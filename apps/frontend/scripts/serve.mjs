@@ -429,11 +429,11 @@ function referralMeta(code = "") {
     title: inviteCode ? `Join Veydrift with ${inviteCode}` : "Join Veydrift",
     imageTitle: "Veydrift Invite",
     description: inviteCode
-      ? `Use invite code ${inviteCode}. Eligibility and exact benefits are verified in-game before settlement.`
-      : "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
+      ? `Use invite code ${inviteCode}. Check invitation availability and benefits before settling.`
+      : "Open this Veydrift invite. Check invitation availability and benefits before settling.",
     status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
     supportingCopy: inviteCode ? "2× resources · 2× production / 7 days" : "",
-    subtitle: inviteCode ? "" : "Benefits verified in-game",
+    subtitle: "",
     accent: "#5eead4",
     footer: "veydrift.com",
     commander: true,

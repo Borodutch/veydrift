@@ -10,7 +10,7 @@ Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Me
 
 Veydrift is an onchain space strategy game. You grow planets, manage resources, unlock research, build fleets and defenses, and use missions to expand, raid, defend, transport, deploy, harvest debris, and colonize.
 
-Every important game action is a transaction. The frontend waits for the receipt and then for the exact indexed transaction or expected state change. Wait for the app to report success before sending another action that depends on the result.
+Every important game action is a transaction. Wait for the app to report success before sending another action that depends on the result.
 
 ### Connect And Settle
 
@@ -21,7 +21,7 @@ Every important game action is a transaction. The frontend waits for the receipt
 
 ### Read Resources
 
-Resources are Metal, Crystal, and Deuterium. The top bar and page panels show backend-indexed current values, including uncollected production when the backend can calculate it.
+Resources are Metal, Crystal, and Deuterium. The top bar and page panels show current balances, including available production.
 
 | Resource | Main use | Early priority |
 | --- | --- | --- |
@@ -33,11 +33,11 @@ Energy is not a stored spendable resource. Mines need energy to operate at full 
 
 ### Data Freshness
 
-The blockchain is authoritative, while the app reads a fast event-sourced index. A confirmed wallet receipt can appear before the corresponding indexed balance, queue, fleet, or report.
+A wallet confirmation can appear before the corresponding balance, queue, fleet, or report updates in the app.
 
 Views update independently, so refreshing one planet does not block another. Existing data stays visible during background refreshes. After a transaction is sent, you can navigate while the app checks its progress. Reloading fetches the latest game state; it neither resubmits a transaction nor restores an old processing lock. A reload does not cancel a transaction already sent to the blockchain.
 
-Resource-changing transactions include their final authoritative balances in contract events. This includes building and production spending, transport or deploy arrival, fleet-return cargo, raid loot, deposits, colonies, settlement, and Rift resource movement. When the backend indexes one of those events, the affected view projections refresh immediately; periodic polling remains a recovery path.
+Balances refresh after building and production spending, mission arrivals, raid loot, settlement, and resource transfers.
 
 A confirmed transaction can take a little longer to appear in the game. Wait for updated balances before relying on them for another action; do not resend the same action just because its result has not appeared yet.
 
@@ -79,7 +79,7 @@ Mission arrivals and returns normally settle automatically. If a mission stays *
 ### Common Mistakes
 
 - Do not send all cargo capacity as resources. Fuel is deducted from available cargo.
-- Do not start a dependent action until the app reports that the confirmed transaction is indexed.
+- Do not start a dependent action until the app shows the result of the previous transaction.
 - Do not build only mines without energy. Underpowered mines produce less.
 
 ## Concepts And Mechanics
@@ -94,11 +94,11 @@ Fields limit how many building levels can fit on a body. Terraformer and Lunar B
 
 Moons are separate bodies attached to planets. They have their own resources, ships, defenses, buildings, fields, and Jump Gate state. Moon fleets can use moon resources and moon ship inventory. Jump Gates move moon fleets only and do not carry resources.
 
-Moons may also be granted by burning Burning Chicken NFTs through the Moon page. The UI verifies the typed Chicken ID is owned by the connected wallet on Base mainnet before opening the burn transaction. The app waits for indexed Veydrift state before showing the moon. Any Chicken NFT can be burned for a moon at any planet.
+Moons may also be granted by burning Burning Chicken NFTs through the Moon page. The UI verifies the typed Chicken ID is owned by the connected wallet on Base mainnet before opening the burn transaction. The moon appears after the game confirms the burn. Any Chicken NFT can be burned for a moon at any planet.
 
 ### Resources And Queues
 
-Spending happens when the transaction succeeds on the blockchain; the displayed balance updates when that result is indexed. Completed work can be collected explicitly or settled by a later relevant action where supported.
+Spending happens when the transaction succeeds on the blockchain; the displayed balance may take a little longer to update. Completed work can be collected explicitly or settled by a later relevant action where supported.
 
 | Queue | Scope | Examples |
 | --- | --- | --- |
@@ -124,14 +124,14 @@ Harvest missions use recyclers to collect debris. Recycler cargo capacity and ro
 
 ### Protection, Bashing, And Inactive State
 
-Attack protection prevents invalid or abusive launches. The backend reports protection status for the current target.
+Attack protection prevents invalid or abusive launches. The mission screen shows protection status for the current target.
 
 | Rule | Effect |
 | --- | --- |
 | New or low-score protection | Below 50,000 score, attacks are limited to a 1.5× gap. From 50,000 to 499,999, the limit is 10×. |
 | Same alliance | Blocks hostile attacks against current allies. |
 | Bashing window | Tracks repeated attacks by attacker, defender, and planet in the 24 hour window. |
-| Inactive defender | May remove some protection gates when the indexed player activity marks the defender inactive. |
+| Inactive defender | May remove some protection gates when the defender is marked inactive. |
 
 ### Alliances And ACS Defend
 
@@ -139,7 +139,7 @@ Alliances support invitations, membership, and coordinated action. ACS Defend le
 
 ### Rankings And Highscore
 
-Rankings are indexed from public game state. Scores cover economy, research, fleet, defense, and protection-relevant totals. Rankings also surface attackability context such as protection and inactive state where available.
+Rankings reflect public game state. Scores cover economy, research, fleet, defense, and protection-relevant totals. Rankings also surface attackability context such as protection and inactive state where available.
 
 ## Catalogs
 
@@ -280,11 +280,11 @@ ACS Defend stations an allied fleet at the defended planet until the hostile att
 
 ### Moon Actions
 
-Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. For Chicken moon grants, the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for indexed moon state.
+Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. For Chicken moon grants, the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for the moon to appear.
 
 ## Formulas
 
-This page lists the formulas exposed by the app and backend. `floor` rounds down, `ceil` rounds up, and bps means basis points where `10,000 bps = 100%`.
+This page lists the game formulas. `floor` rounds down, `ceil` rounds up, and bps means basis points where `10,000 bps = 100%`.
 
 ### Cost Scaling
 
@@ -316,8 +316,7 @@ include crawlers, Fusion Reactor upkeep, energy shortage scaling, or Solar
 Satellite effects.
 
 The resource top bar and its Resources popup show live effective production
-from the backend's canonical contract-derived model. The contract applies the
-live modifiers in this order, rounding down after every basis-point scaling:
+with modifiers applied in this order, rounding down after every basis-point scaling:
 
 ```text
 crawler boost bps = min(effective crawlers * 2, 5,000)
@@ -363,7 +362,7 @@ research seconds = max(min queue seconds, floor((metal + crystal) * 3600 / (1000
 ship or defense seconds = max(min queue seconds, ceil((metal + crystal) * quantity * 3600 / (2500 * (shipyard + 1) * 2 ^ nanite * universe speed)))
 ```
 
-Intergalactic Research Network links the highest eligible lab levels for research speed where backend state provides linked lab levels.
+Intergalactic Research Network links the highest eligible lab levels for research speed when linked lab levels are available.
 
 ### Flight Distance, Speed, And Time
 
@@ -523,7 +522,7 @@ If 2 Rocket Launchers were destroyed and the defender does not win earlier, floo
 
 ### Protection, Bashing, And Alliance Wars
 
-Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. Below 50,000 score, players are protected from opponents more than 1.5× stronger or weaker. From 50,000 through 499,999, the limit is 10×; at 500,000 and above, score protection does not apply. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components contribute to one player score. Below 50,000 score, players are protected from opponents more than 1.5× stronger or weaker. From 50,000 through 499,999, the limit is 10×; at 500,000 and above, score protection does not apply. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
 
 When an alliance declares war, the contract snapshots both alliance total scores and both rosters. Only members in those original rosters receive war exceptions; leaving removes the exception while outside the alliance, and rejoining that same original alliance restores it. If the declaring alliance was weaker or equal at declaration, both original rosters bypass score protection and bashing limits. If it was stronger but no more than 1.5× the declared-on alliance, both original rosters also bypass both limits. If it was more than 1.5× stronger, only original members of the declared-on alliance can bypass score protection and bashing limits when attacking the declaring alliance. An active-war target is marked for verification in target lists; before Confirm is enabled, the mission screen checks the selected attacker, target, frozen roster, and direction against the live war snapshot and explains when normal protection still applies.
 

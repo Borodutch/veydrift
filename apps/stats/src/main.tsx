@@ -205,14 +205,14 @@ function App() {
     const load = async () => {
       try {
         const response = await fetch(`${apiUrl}/api/stats`);
-        if (!response.ok) throw new Error(`Telemetry unavailable (${response.status})`);
+        if (!response.ok) throw new Error("Stats are unavailable");
         const next = await response.json() as Stats;
         if (active) {
           setStats(next);
           setError(null);
         }
-      } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Telemetry unavailable");
+      } catch {
+        if (active) setError("Stats are unavailable");
       }
     };
     void load();
@@ -277,7 +277,7 @@ function App() {
         </div>
       </section>
 
-      {error && stats && <div class="error-panel">Showing the last completed snapshot. {error}. Retrying automatically.</div>}
+      {error && stats && <div class="error-panel">Showing the last loaded stats. {error}. Retrying automatically.</div>}
       {error && !stats && <div class="error-panel">{error}. Retrying automatically.</div>}
       {!stats && !error && <div class="loading"><span /><span /><span /> Acquiring telemetry</div>}
 
@@ -375,7 +375,7 @@ function App() {
 
           <footer>
             <div><span class="pulse" /> LIVE FROM BASE</div>
-            <p>Indexed event time: {stats.coverage.throughTimestamp ? new Date(stats.coverage.throughTimestamp * 1000).toLocaleString() : "unavailable"}. Canonical onchain telemetry from blocks {number.format(stats.coverage.fromBlock)}–{number.format(stats.coverage.throughBlock)}. One transaction may emit several events.</p>
+            <p>Indexed event time: {stats.coverage.throughTimestamp ? new Date(stats.coverage.throughTimestamp * 1000).toLocaleString() : "unavailable"}. Onchain activity from blocks {number.format(stats.coverage.fromBlock)}–{number.format(stats.coverage.throughBlock)}. One transaction may emit several events.</p>
             <span>{new Date(stats.generatedAt).toLocaleString()}</span>
           </footer>
         </>

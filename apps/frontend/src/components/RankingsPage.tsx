@@ -109,7 +109,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
   const dataSnapshot = rankingsQuery.snapshot;
   const data = dataSnapshot?.data ?? null;
   const loading = dataSnapshot?.freshness === "refreshing";
-  const error = apiBaseUrl ? dataSnapshot?.error : "Game API unavailable.";
+  const error = apiBaseUrl ? dataSnapshot?.error : "Game connection unavailable.";
 
   const beginViewTransition = () => {
     setViewTransitioning(true);

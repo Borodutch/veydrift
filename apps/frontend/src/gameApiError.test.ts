@@ -24,7 +24,7 @@ test("Retry-After dates and invalid headers are parsed without changing retry po
 test("non-JSON failures retain their HTTP status and network failures retain their cause", async () => {
   globalThis.fetch = (async () => new Response("bad request", { status: 400 })) as unknown as typeof fetch;
   const badRequest = await fetchGameApiJson("https://api.test/queues", "Queues").catch(error => error);
-  expect(badRequest).toMatchObject({ status: 400, retryable: false, message: "Queues API failed: 400" });
+  expect(badRequest).toMatchObject({ status: 400, retryable: false, message: "Queues could not be completed. Refresh and review your selection before trying again." });
   const cause = new TypeError("Offline");
   globalThis.fetch = (async () => { throw cause; }) as unknown as typeof fetch;
   const network = await fetchGameApiJson("https://api.test/queues", "Queues").catch(error => error);

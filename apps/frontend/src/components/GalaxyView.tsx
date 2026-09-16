@@ -562,10 +562,10 @@ export function galaxyLoadErrorPresentation({
 }
 
 export function systemLoadErrorLabel(error: unknown): string {
-  if (error instanceof Error && error.name === "AbortError") return "The universe API request was cancelled.";
+  if (error instanceof Error && error.name === "AbortError") return "Galaxy loading was cancelled. Please retry.";
   if (error instanceof TypeError) return GAME_UNAVAILABLE_MESSAGE;
   if (error instanceof Error && /\b5\d\d\b/.test(error.message)) return GAME_UNAVAILABLE_MESSAGE;
-  return error instanceof Error ? error.message : "The universe API request failed.";
+  return error instanceof Error ? error.message : "Galaxy could not be loaded. Please retry.";
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {
@@ -810,7 +810,7 @@ export function galaxyMoonActionsForSlot({
       disabledMoonTargetGalaxyAction(
         "defenseHold",
         "Defend",
-        "Stationed defense can only target planets in the current mission contract.",
+        "Stationed defense is not available for this target.",
       ),
     ];
   }
@@ -820,7 +820,7 @@ export function galaxyMoonActionsForSlot({
     ? [disabledMoonTargetGalaxyAction(
         "defenseHold",
         "Defend",
-        "Stationed defense can only target planets in the current mission contract.",
+        "Stationed defense is not available for this target.",
       )]
     : [moonTargetGalaxyAction(actionsByKind.get("attack"), "attack", "Attack")];
 }
