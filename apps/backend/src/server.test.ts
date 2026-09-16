@@ -12154,7 +12154,7 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     }
   });
 
-  test("reader workers skip mission resolution even when test config enables it", async () => {
+  test("reader workers skip mission and moon chance resolution even when configured", async () => {
     const indexer = {
       snapshot() {
         return {
@@ -12168,6 +12168,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       config: {
         ...configuredTestConfig,
         missionResolutionEnabled: true,
+        moonContractAddress: "0x5555555555555555555555555555555555555555",
+        randomnessEngineAddress: "0x6666666666666666666666666666666666666666",
         missionResolverAddress: "0x4444444444444444444444444444444444444444"
       },
       indexer,
@@ -12273,6 +12275,125 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       resolverAddress: "0x4444444444444444444444444444444444444444"
     });
     expect(response.status).toBe(503);
+  });
+
+  test("writer health exposes bounded moon chance backlog, pending outcomes and retained failure diagnostics", async () => {
+    let finalizationError: Error | null = null;
+    let terminalIndexed = false;
+    const service = new MissionResolutionService(
+      {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444",
+        moonContractAddress: "0x5555555555555555555555555555555555555555",
+        randomnessEngineAddress: "0x6666666666666666666666666666666666666666"
+      },
+      {
+        candidateSource: {
+          missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+          moonChanceResolutionCandidateCount: () => terminalIndexed ? 0 : 8,
+          moonChanceResolutionCandidates: () => terminalIndexed ? [] : [{ cursor: 8, outcomeId: "8" }],
+          moonChanceTerminalOutcomeIds: (outcomeIds) => terminalIndexed
+            ? outcomeIds.filter(outcomeId => outcomeId === "8")
+            : []
+        },
+        chainClient: {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async resolveFleetMission() { return "0xresolve"; },
+          async completeFleetMissionReturn() { return "0xreturn"; },
+          async finalizeMoonChance() {
+            if (finalizationError) throw finalizationError;
+            return "pending" as const;
+          }
+        },
+        intervalMs: 60_000,
+        logger: { warn() {}, error() {} }
+      }
+    );
+    await service.tick();
+    const indexer = {
+      snapshot() {
+        return { indexedState: "healthy", safeToServeIndexedState: true };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer,
+      missionResolution: service
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.missionResolution).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        enabled: true,
+        maxPerTick: 10,
+        cursor: 0,
+        indexedBacklog: 8,
+        lastScanned: 1,
+        lastPending: 1,
+        lastFinalized: 0,
+        lastDeferred: 0,
+        lastFailed: 0,
+        retrying: 0,
+        totalFailures: 0,
+        lastOutcomeId: "8",
+        lastResult: "pending",
+        lastError: null,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+
+    finalizationError = new Error("moon resolver RPC unavailable");
+    await service.tick();
+    const failedResponse = await handler(new Request("http://localhost/health"));
+    const failedBody = await failedResponse.json();
+
+    service.stop();
+    expect(failedBody.missionResolution).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailed: 1,
+        lastOutcomeId: "8",
+        lastResult: "failed",
+        lastError: "moon resolver RPC unavailable",
+        lastFailedOutcomeId: "8",
+        lastFailedError: "moon resolver RPC unavailable"
+      }
+    });
+    expect(failedBody.readiness).toMatchObject({
+      degraded: true,
+      degradationReasons: ["moon_chance_resolution_retrying"],
+      missionResolutionStatus: "degraded"
+    });
+
+    terminalIndexed = true;
+    await service.tick();
+    const recoveredResponse = await handler(new Request("http://localhost/health"));
+    const recoveredBody = await recoveredResponse.json();
+    expect(recoveredBody.missionResolution).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        indexedBacklog: 0,
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+    expect(recoveredBody.readiness).toMatchObject({
+      degraded: false,
+      degradationReasons: [],
+      missionResolutionStatus: "healthy"
+    });
   });
 
   test("writer health reports stale mission-resolution backlog degradation", async () => {
@@ -12484,3 +12605,44 @@ async function resolvesWithin<T>(promise: Promise<T>, timeoutMs: number): Promis
   }
   return result.value;
 }
+
+test("moon chance pending/terminal results converge in full system and watched planet APIs without changing debris", async () => {
+  const indexer = testIndexer();
+  const watcher = privateKeyToAccount(`0x${"11".repeat(32)}`);
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+  const signature = await watcher.signMessage({ message: watchedPlanetMessage(watcher.address, "watch", planet.planetId) });
+  const watch = await handler(new Request(`http://localhost/wallet/${watcher.address}/watched-planets`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ planetId: planet.planetId, signature })
+  }));
+  expect(watch.status).toBe(200);
+  indexer.applyDebrisEvent({ eventName: "DebrisFieldUpdated", transactionHash: "0xdebris", blockNumber: "98",
+    planetId: planet.planetId, resources: { metal: "90000", crystal: "10000" } });
+  const request: MoonChanceReportEvent = {
+    eventName: "MoonChanceRequested", transactionHash: "0xrequest", blockNumber: "99",
+    battleId: "42", targetPlanetId: planet.planetId, outcomeId: "8", chanceBps: 2000
+  };
+  // An older result and the decimal block boundary catch both first-row and lexicographic-order bugs.
+  indexer.applyMoonChanceEvent({ ...request, outcomeId: "7", blockNumber: "98", eventName: "MoonChanceFinalized", moonCreated: false });
+  indexer.applyMoonChanceEvent(request);
+  for (const [event, status] of [
+    [request, "pending"],
+    [{ ...request, blockNumber: "100", eventName: "MoonChanceFinalized", moonCreated: false }, "not_created"],
+    [{ ...request, blockNumber: "101", outcomeId: "9", battleId: "43" }, "pending"],
+    [{ ...request, blockNumber: "102", outcomeId: "9", battleId: "43", eventName: "MoonChanceFinalized", moonCreated: true }, "created"]
+  ] as const) {
+    indexer.applyMoonChanceEvent(event);
+    for (const url of [
+      `http://localhost/universe/galaxies/${planet.galaxy}/systems/${planet.system}?detail=full`,
+      `http://localhost/wallet/${watcher.address}/watched-planets`
+    ]) {
+      const response = await handler(new Request(url));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const result = body.planets.find((candidate: { position: number }) => candidate.position === planet.position);
+      expect(result.moonChance).toMatchObject({ status, outcomeId: event.outcomeId, chanceBps: 2000 });
+      expect(result.debrisField).toMatchObject({ metal: "90000", crystal: "10000" });
+      expect(result.occupiedBy.planetId).toBe(planet.planetId);
+    }
+  }
+});

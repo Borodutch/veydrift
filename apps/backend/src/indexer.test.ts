@@ -13826,3 +13826,68 @@ function topic(value: bigint): string {
 function addressTopic(address: Address): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
 }
+
+describe("moon chance resolution projection", () => {
+  test("indexes only pending creation candidates, pages fairly and preserves numeric report order and lifecycle identities", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 1n, { database });
+    indexer.applyEvent(planet);
+    indexer.applyDebrisEvent(debris);
+    indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "99" });
+    indexer.applyMoonChanceEvent({ ...moonChance, outcomeId: "6", battleId: "43", blockNumber: "100" });
+    indexer.applyMoonChanceEvent({ ...moonChance, eventName: "MoonDestructionRequested", blockNumber: "101" });
+    const first = indexer.moonChanceResolutionCandidates(0, 1);
+    expect(first).toHaveLength(1);
+    expect(first[0]!.outcomeId).toBe("5");
+    expect(indexer.moonChanceResolutionCandidates(first[0]!.cursor, 1)[0]!.outcomeId).toBe("6");
+    expect(indexer.moonChanceResolutionCandidateCount()).toBe(2);
+    expect(indexer.moonChanceReportsInSystem(2, 44).map(report => report.blockNumber)).toEqual(["99", "100", "101"]);
+    const terminal = { ...moonChance, eventName: "MoonChanceFinalized" as const, moonCreated: false, blockNumber: "102" };
+    indexer.applyMoonChanceEvent(terminal);
+    // Late delivery of an old request must not regress a terminal projection.
+    indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "99" });
+    indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "102" });
+    expect(indexer.moonChanceResolutionCandidates().map(candidate => candidate.outcomeId)).toEqual(["6"]);
+    expect(indexer.moonChanceResolutionCandidateCount()).toBe(1);
+    expect(indexer.moonChanceTerminalOutcomeIds(["5", "6", "999"])).toEqual(["5"]);
+    expect(indexer.moonChanceReportsInSystem(2, 44).at(-1)).toMatchObject(terminal);
+    expect(indexer.moonChanceReportsInSystem(2, 44)).toHaveLength(3);
+    expect(indexer.debrisFieldsInSystem(2, 44)[0]!.resources).toEqual(debris.resources);
+    expect(indexer.hasMoon(planet.planetId)).toBe(false);
+    const plan = database.query(`EXPLAIN QUERY PLAN SELECT rowid, outcome_id FROM contract_moon_chance_reports
+      WHERE json_extract(event_json, '$.eventName') = 'MoonChanceRequested' AND rowid > 0
+      AND outcome_id IS NOT NULL ORDER BY rowid LIMIT 10`).all();
+    expect(JSON.stringify(plan)).toContain("contract_moon_chance_reports_resolution_idx");
+    expect(JSON.stringify(plan)).not.toContain("TEMP B-TREE");
+    database.close();
+  });
+
+  test("restart retains pending candidates and migrates legacy destruction keys without overwriting creation outcomes", () => {
+    const directory = mkdtempSync(join(tmpdir(), "moon-chance-restart-"));
+    const databasePath = join(directory, "index.sqlite");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    try {
+      const first = new SettlementIndexer(reader, 1n, { databasePath, runStartupBackfill: false });
+      first.applyEvent(planet);
+      first.applyMoonChanceEvent(moonChance);
+      const database = new Database(databasePath);
+      for (const table of ["indexed_moon_chance_reports", "contract_moon_chance_reports"]) {
+        database.query(`INSERT INTO ${table} VALUES (?, ?, ?, ?, ?, ?)`)
+          .run("outcome:6", planet.planetId, "44", "6", "126", JSON.stringify({ ...moonChance, eventName: "MoonDestructionRequested", outcomeId: "6" }));
+      }
+      database.close();
+      const restarted = new SettlementIndexer(reader, 1n, { databasePath, runStartupBackfill: false });
+      restarted.applyMoonChanceEvent({ ...moonChance, outcomeId: "6", blockNumber: "127" });
+      expect(restarted.moonChanceResolutionCandidates().map(candidate => candidate.outcomeId)).toEqual(["5", "6"]);
+      expect(restarted.moonChanceReportsInSystem(2, 44)).toHaveLength(3);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});

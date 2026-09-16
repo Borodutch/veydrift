@@ -4,6 +4,7 @@ import {
   defineChain,
   encodeFunctionData,
   http,
+  parseAbi,
   toHex,
   type Hex,
   type PublicClient,
@@ -25,6 +26,7 @@ import { ResolverTransactionCoordinator } from "./resolverTransactions";
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
 const missionResolutionConcurrency = 4;
+const maxMoonChancesPerTick = 10;
 const promptnessTargetMs = 60_000;
 const latencySampleLimit = 1_000;
 const initialFailureRetryMs = 30_000;
@@ -39,7 +41,19 @@ const gamePausedStorageSlot = toHex(52n, { size: 32 });
 // bounded battle as UnsupportedGameplayModule instead of broadcasting it.
 const fleetMissionResolutionGas = 16_777_216n;
 
+const moonReadAbi = parseAbi([
+  "function moonChanceRandomness(uint256 outcomeId) view returns (uint256 requestId, bytes32 purposeHash, bool finalized, uint256 randomWord)",
+  "function request(uint256 requestId) view returns ((address requester, bytes32 purposeHash, bytes32 randomnessCommitment, uint64 createdAt, uint64 fulfilledAt, uint256 randomWord))"
+]);
+
 const veydriftGameResolutionAbi = [
+  {
+    type: "function",
+    name: "finalizeMoonChance",
+    stateMutability: "nonpayable",
+    inputs: [{ type: "uint256", name: "outcomeId" }],
+    outputs: [{ type: "bool" }]
+  },
   {
     type: "function",
     name: "resolveFleetMission",
@@ -62,6 +76,7 @@ export type MissionResolutionChainClient = {
   resolveFleetMission(missionId: string): Promise<string>;
   completeFleetMissionReturn(missionId: string): Promise<string>;
   gamePaused?(): Promise<boolean>;
+  finalizeMoonChance?(outcomeId: string): Promise<"pending" | "finalized">;
 };
 
 export type MissionResolutionCandidates = {
@@ -69,7 +84,12 @@ export type MissionResolutionCandidates = {
   returns: ReturnableFleetMission[];
 };
 
+export type MoonChanceResolutionCandidate = { cursor: number; outcomeId: string };
+
 export type MissionResolutionCandidateSource = {
+  moonChanceResolutionCandidateCount?(): number;
+  moonChanceResolutionCandidates?(afterCursor: number, limit: number): MoonChanceResolutionCandidate[];
+  moonChanceTerminalOutcomeIds?(outcomeIds: readonly string[]): string[];
   missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
    * A resolver settlement can expose a stale event-indexed mission status, including when a durable
@@ -102,6 +122,25 @@ type LatencySnapshot = {
   p95Seconds: number | null;
 };
 
+type MoonChanceResolutionSnapshot = {
+  enabled: boolean;
+  maxPerTick: number;
+  cursor: number;
+  indexedBacklog: number | null;
+  lastScanned: number;
+  lastPending: number;
+  lastFinalized: number;
+  lastDeferred: number;
+  lastFailed: number;
+  retrying: number;
+  totalFailures: number;
+  lastOutcomeId: string | null;
+  lastResult: "pending" | "finalized" | "deferred" | "failed" | null;
+  lastError: string | null;
+  lastFailedOutcomeId: string | null;
+  lastFailedError: string | null;
+};
+
 export type MissionResolutionSnapshot = {
   enabled: boolean;
   resolverConfigured: boolean;
@@ -132,6 +171,7 @@ export type MissionResolutionSnapshot = {
   dueArrivals: DueLegSnapshot;
   dueReturns: DueLegSnapshot;
   failuresByLeg: Record<MissionLeg, number>;
+  moonChanceResolution: MoonChanceResolutionSnapshot;
   settlementLatency: Record<MissionLeg, LatencySnapshot>;
 };
 
@@ -170,6 +210,18 @@ export class MissionResolutionService {
   private lastTickDurationMs: number | null = null;
   private lastScanDurationMs: number | null = null;
   private skippedOverlappingRuns = 0;
+  private moonChanceCursor = 0;
+  private moonChanceIndexedBacklog: number | null = null;
+  private moonChanceLastScanned = 0;
+  private moonChanceLastPending = 0;
+  private moonChanceLastFinalized = 0;
+  private moonChanceLastDeferred = 0;
+  private moonChanceLastFailed = 0;
+  private moonChanceTotalFailures = 0;
+  private moonChanceLastOutcomeId: string | null = null;
+  private moonChanceLastResult: MoonChanceResolutionSnapshot["lastResult"] = null;
+  private moonChanceLastError: string | null = null;
+  private moonChanceRetryReconciliationOffset = 0;
   private lastError: string | null = null;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
@@ -193,7 +245,7 @@ export class MissionResolutionService {
   // Besides wasting RPC/gas-estimation work, viem's multi-line error payloads can flood container
   // stdout and contend with API readers. Keep the candidate visible to health checks, but retry it
   // with bounded exponential backoff until its underlying condition changes.
-  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number }>();
+  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number; error?: string }>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -219,6 +271,7 @@ export class MissionResolutionService {
     const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
+    const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
       resolverConfigured: Boolean(this.config.missionResolverAddress || this.config.missionResolverPrivateKey),
@@ -251,6 +304,24 @@ export class MissionResolutionService {
       dueArrivals,
       dueReturns,
       failuresByLeg: { ...this.failuresByLeg },
+      moonChanceResolution: {
+        enabled: this.moonChanceResolutionEnabled,
+        maxPerTick: maxMoonChancesPerTick,
+        cursor: this.moonChanceCursor,
+        indexedBacklog: this.moonChanceIndexedBacklog,
+        lastScanned: this.moonChanceLastScanned,
+        lastPending: this.moonChanceLastPending,
+        lastFinalized: this.moonChanceLastFinalized,
+        lastDeferred: this.moonChanceLastDeferred,
+        lastFailed: this.moonChanceLastFailed,
+        retrying: this.moonChanceRetryingCount(),
+        totalFailures: this.moonChanceTotalFailures,
+        lastOutcomeId: this.moonChanceLastOutcomeId,
+        lastResult: this.moonChanceLastResult,
+        lastError: this.moonChanceLastError,
+        lastFailedOutcomeId: moonChanceLastFailure?.outcomeId ?? null,
+        lastFailedError: moonChanceLastFailure?.error ?? null
+      },
       settlementLatency: {
         arrival: latencySnapshot(this.latencySamples.arrival),
         return: latencySnapshot(this.latencySamples.return)
@@ -295,7 +366,13 @@ export class MissionResolutionService {
         this.lastError = null;
         return;
       }
-      await this.settleCandidates(settlementCandidates);
+      const results = await Promise.allSettled([
+        this.settleCandidates(settlementCandidates),
+        this.settleMoonChances()
+      ]);
+      // Keep the overlap guard until both lanes finish, even if an indexed read fails in one.
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
@@ -310,6 +387,13 @@ export class MissionResolutionService {
 
   private get enabled(): boolean {
     return this.config.missionResolutionEnabled && Boolean(this.chainClient);
+  }
+
+  private get moonChanceResolutionEnabled(): boolean {
+    return this.enabled
+      && Boolean(this.config.moonContractAddress && this.config.randomnessEngineAddress)
+      && Boolean(this.candidateSource?.moonChanceResolutionCandidates)
+      && Boolean(this.chainClient?.finalizeMoonChance);
   }
 
   private resolverAddress(): Address | null {
@@ -435,6 +519,100 @@ export class MissionResolutionService {
     }
   }
 
+  private async settleMoonChances(): Promise<void> {
+    if (!this.moonChanceResolutionEnabled
+      || !this.candidateSource?.moonChanceResolutionCandidates || !this.chainClient?.finalizeMoonChance) return;
+    this.moonChanceIndexedBacklog = this.candidateSource.moonChanceResolutionCandidateCount?.() ?? null;
+    // Keyset pagination rotates past genuinely unfulfilled or failed requests, so an old pending
+    // page cannot starve newer fulfilled outcomes. Restart begins at zero and catches existing rows.
+    const candidates = this.candidateSource.moonChanceResolutionCandidates(this.moonChanceCursor, maxMoonChancesPerTick);
+    const completedSweep = candidates.length < maxMoonChancesPerTick;
+    this.moonChanceCursor = completedSweep ? 0 : candidates.at(-1)!.cursor;
+    this.moonChanceLastScanned = candidates.length;
+    this.moonChanceLastPending = 0;
+    this.moonChanceLastFinalized = 0;
+    this.moonChanceLastDeferred = 0;
+    this.moonChanceLastFailed = 0;
+    this.moonChanceLastOutcomeId = null;
+    this.moonChanceLastResult = null;
+    this.moonChanceLastError = null;
+    for (const candidate of candidates) {
+      if (this.gamePaused) break;
+      const key = `moon-chance:${candidate.outcomeId}`;
+      const retry = this.failedCandidateRetries.get(key);
+      if (retry && retry.retryAtMs > this.now()) {
+        this.recordMoonChanceResult(candidate.outcomeId, "deferred");
+        this.moonChanceLastDeferred += 1;
+        continue;
+      }
+      try {
+        const result = await this.chainClient.finalizeMoonChance(candidate.outcomeId);
+        this.recordMoonChanceResult(candidate.outcomeId, result);
+        if (result === "pending") this.moonChanceLastPending += 1;
+        else this.moonChanceLastFinalized += 1;
+        this.failedCandidateRetries.delete(key);
+        // Only indexed MoonChanceFinalized / MoonCreated logs update API/UI state. A canonical
+        // finalized check can suppress a redundant write while chain-sync catches up after restart.
+      } catch (error) {
+        if (error instanceof GamePausedBeforeResolverAllocationError) {
+          this.observeGamePause(true, this.now());
+          break;
+        }
+        this.recordMoonChanceResult(candidate.outcomeId, "failed");
+        this.moonChanceLastFailed += 1;
+        this.moonChanceTotalFailures += 1;
+        const reason = conciseReasonText(error);
+        this.moonChanceLastError = reason;
+        const retryAfterMs = this.scheduleRetry(key, reason);
+        this.logger.warn(`[mission-resolution] finalizeMoonChance(${candidate.outcomeId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${reason}`);
+      }
+    }
+    if (completedSweep) this.reconcileTerminalMoonChanceRetries();
+  }
+
+  private reconcileTerminalMoonChanceRetries(): void {
+    if (!this.candidateSource?.moonChanceTerminalOutcomeIds) return;
+    const retryEntries = [...this.failedCandidateRetries.keys()]
+      .filter(key => key.startsWith("moon-chance:"));
+    if (retryEntries.length === 0) {
+      this.moonChanceRetryReconciliationOffset = 0;
+      return;
+    }
+    const start = this.moonChanceRetryReconciliationOffset < retryEntries.length
+      ? this.moonChanceRetryReconciliationOffset
+      : 0;
+    const count = Math.min(maxMoonChancesPerTick, retryEntries.length);
+    const batch = Array.from({ length: count }, (_, index) => retryEntries[(start + index) % retryEntries.length]!);
+    this.moonChanceRetryReconciliationOffset = (start + count) % retryEntries.length;
+    const outcomeIds = batch.map(key => key.slice("moon-chance:".length));
+    const terminal = new Set(this.candidateSource.moonChanceTerminalOutcomeIds(outcomeIds));
+    for (const key of batch) {
+      if (terminal.has(key.slice("moon-chance:".length))) this.failedCandidateRetries.delete(key);
+    }
+  }
+
+  private recordMoonChanceResult(
+    outcomeId: string,
+    result: Exclude<MoonChanceResolutionSnapshot["lastResult"], null>
+  ): void {
+    this.moonChanceLastOutcomeId = outcomeId;
+    this.moonChanceLastResult = result;
+    this.moonChanceLastError = null;
+  }
+
+  private moonChanceRetryingCount(): number {
+    return [...this.failedCandidateRetries.keys()].filter(key => key.startsWith("moon-chance:")).length;
+  }
+
+  private moonChanceLastFailure(): { outcomeId: string; error: string | null } | null {
+    let lastFailure: { outcomeId: string; error: string | null } | null = null;
+    for (const [key, retry] of this.failedCandidateRetries) {
+      if (!key.startsWith("moon-chance:")) continue;
+      lastFailure = { outcomeId: key.slice("moon-chance:".length), error: retry.error ?? null };
+    }
+    return lastFailure;
+  }
+
   private async settleCandidate(candidate: MissionSettlementCandidate): Promise<boolean> {
     if (!this.chainClient) return false;
     try {
@@ -476,7 +654,7 @@ export class MissionResolutionService {
           );
         }
       }
-      const retryAfterMs = this.scheduleRetry(candidate);
+      const retryAfterMs = this.scheduleRetry(candidateRetryKey(candidate));
       this.logger.warn(
         `[mission-resolution] ${method}(${candidate.mission.missionId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`
       );
@@ -489,13 +667,14 @@ export class MissionResolutionService {
     return !retry || retry.retryAtMs <= this.now();
   }
 
-  private scheduleRetry(candidate: MissionSettlementCandidate): number {
-    const key = candidateRetryKey(candidate);
+  private scheduleRetry(key: string, error?: string): number {
     const failures = (this.failedCandidateRetries.get(key)?.failures ?? 0) + 1;
     const retryAfterMs = Math.min(maxFailureRetryMs, initialFailureRetryMs * 2 ** (failures - 1));
+    this.failedCandidateRetries.delete(key);
     this.failedCandidateRetries.set(key, {
       failures,
-      retryAtMs: this.now() + retryAfterMs
+      retryAtMs: this.now() + retryAfterMs,
+      ...(error === undefined ? {} : { error })
     });
     return retryAfterMs;
   }
@@ -516,6 +695,7 @@ export class MissionResolutionService {
     if (this.gamePauseAgeSeconds(this.now()) * 1_000 >= this.longPauseAlertAfterMs) {
       warnings.push("game_pause_long_running");
     }
+    if (this.moonChanceRetryingCount() > 0) warnings.push("moon_chance_resolution_retrying");
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
@@ -544,7 +724,9 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly walletClient?: WalletClient,
     private readonly chain?: ReturnType<typeof defineChain>,
     private readonly rpcUrl?: string,
-    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:")
+    private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:"),
+    private readonly moonAddress?: Address,
+    private readonly randomnessEngineAddress?: Address
   ) {}
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
@@ -563,6 +745,29 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.write("completeFleetMissionReturn", missionId);
   }
 
+  async finalizeMoonChance(outcomeId: string): Promise<"pending" | "finalized"> {
+    if (!this.publicClient || !this.moonAddress || !this.randomnessEngineAddress) {
+      throw new Error("moon chance resolver is missing canonical contract clients");
+    }
+    const [requestId, purposeHash, finalized] = await this.publicClient.readContract({
+      abi: moonReadAbi, address: this.moonAddress,
+      functionName: "moonChanceRandomness", args: [BigInt(outcomeId)]
+    });
+    if (finalized) return "finalized";
+    if (requestId === 0n) throw new Error(`unknown moon chance outcome ${outcomeId}`);
+    const request = await this.publicClient.readContract({
+      abi: moonReadAbi, address: this.randomnessEngineAddress,
+      functionName: "request", args: [requestId]
+    });
+    if (request.requester.toLowerCase() !== this.moonAddress.toLowerCase()
+      || request.purposeHash.toLowerCase() !== purposeHash.toLowerCase() || request.createdAt === 0n) {
+      throw new Error(`moon chance ${outcomeId} randomness identity mismatch`);
+    }
+    if (request.fulfilledAt === 0n) return "pending";
+    await this.write("finalizeMoonChance", outcomeId);
+    return "finalized";
+  }
+
   async gamePaused(): Promise<boolean> {
     if (!this.publicClient) throw new Error("mission resolver is missing a public client for the canonical game pause probe");
     const value = await this.publicClient.getStorageAt({
@@ -572,7 +777,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return value !== undefined && BigInt(value) !== 0n;
   }
 
-  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn", missionId: string): Promise<string> {
+  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
+    const targetAddress = functionName === "finalizeMoonChance" ? this.moonAddress! : this.gameAddress;
+    const operationId = functionName === "finalizeMoonChance"
+      ? `moon-chance:${targetAddress.toLowerCase()}:${missionId}`
+      : `mission:${functionName}:${missionId}`;
     const data = encodeFunctionData({
       abi: veydriftGameResolutionAbi,
       functionName,
@@ -590,7 +799,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       return this.transactionCoordinator.submit({
         chainId: this.chain.id,
         address: account.address,
-        operationId: `mission:${functionName}:${missionId}`,
+        operationId,
         getTransactionCount: (blockTag) => this.publicClient!.getTransactionCount({
           address: account.address,
           blockTag
@@ -598,7 +807,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         submit: (nonce) => this.walletClient!.writeContract({
           abi: veydriftGameResolutionAbi,
           account,
-          address: this.gameAddress,
+          address: targetAddress,
           chain: this.chain!,
           functionName,
           args: [BigInt(missionId)],
@@ -606,12 +815,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
         }),
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
-        isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
+        isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
         replace: async (nonce, previousHash) => this.walletClient!.writeContract({
           abi: veydriftGameResolutionAbi,
           account,
-          address: this.gameAddress,
+          address: targetAddress,
           chain: this.chain!,
           functionName,
           args: [BigInt(missionId)],
@@ -637,22 +846,24 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.transactionCoordinator.submit({
       chainId: this.chain.id,
       address: from,
-      operationId: `mission:${functionName}:${missionId}`,
+      operationId,
       getTransactionCount: (blockTag) => this.publicClient!.getTransactionCount({
         address: from,
         blockTag
       }),
       submit: (nonce) => this.sendUnlockedTransaction(
         from,
+        targetAddress,
         data,
         nonce,
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
       ),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
-      isOperationComplete: () => this.isMissionOperationComplete(functionName, missionId),
+      isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
         from,
+        targetAddress,
         data,
         nonce,
         functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined,
@@ -662,10 +873,17 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     });
   }
 
-  private async isMissionOperationComplete(
-    functionName: "resolveFleetMission" | "completeFleetMissionReturn",
+  private async isResolutionOperationComplete(
+    functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance",
     missionId: string
   ): Promise<boolean> {
+    if (functionName === "finalizeMoonChance") {
+      const state = await this.publicClient!.readContract({
+        abi: moonReadAbi, address: this.moonAddress!,
+        functionName: "moonChanceRandomness", args: [BigInt(missionId)]
+      });
+      return state[2];
+    }
     const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
     if (!mission) return true;
     if (functionName === "resolveFleetMission") return mission.status !== "Outbound";
@@ -692,6 +910,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
 
   private async sendUnlockedTransaction(
     from: Address,
+    to: Address,
     data: Hex,
     nonce: number,
     gas?: bigint,
@@ -706,7 +925,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         method: "eth_sendTransaction",
         params: [{
           from,
-          to: this.gameAddress,
+          to,
           data,
           nonce: `0x${nonce.toString(16)}`,
           ...(gas === undefined ? {} : { gas: `0x${gas.toString(16)}` }),
@@ -761,7 +980,9 @@ function buildMissionResolutionChainClient(
       config.rpcUrl,
       transactionCoordinator ?? new ResolverTransactionCoordinator(
         config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
-      )
+      ),
+      config.moonContractAddress,
+      config.randomnessEngineAddress
     );
   }
 
@@ -783,7 +1004,9 @@ function buildMissionResolutionChainClient(
     config.rpcUrl,
     transactionCoordinator ?? new ResolverTransactionCoordinator(
       config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
-    )
+    ),
+    config.moonContractAddress,
+    config.randomnessEngineAddress
   );
 }
 

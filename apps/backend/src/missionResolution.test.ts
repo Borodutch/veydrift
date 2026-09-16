@@ -1053,3 +1053,252 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   }
   throw new Error("condition was not met before timeout");
 }
+
+describe("moon chance resolution", () => {
+  const moon = "0x5555555555555555555555555555555555555555" as const;
+  const engine = "0x6666666666666666666666666666666666666666" as const;
+  const moonConfig = { ...config, moonContractAddress: moon, randomnessEngineAddress: engine };
+  const purpose = `0x${"ab".repeat(32)}` as const;
+
+  test("uses canonical fulfilled randomness, moon target and the shared mission nonce coordinator", async () => {
+    const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    const writes: Array<{ address: string; functionName: string; nonce: number }> = [];
+    let fulfilledAt = 0n;
+    let finalized = false;
+    let requester: string = moon;
+    let requestPurpose: string = purpose;
+    let paused = false;
+    let nonceReads = 0;
+    let pendingNonce = 4;
+    const publicClient = {
+      readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
+        ? [16621n, purpose, finalized, 0n]
+        : { requester, purposeHash: requestPurpose, createdAt: 1n, fulfilledAt, randomWord: 19n },
+      getStorageAt: async () => paused ? "0x01" : "0x00",
+      getTransactionCount: async () => { nonceReads++; return pendingNonce; },
+      waitForTransactionReceipt: async () => ({ status: "success" }),
+      getTransactionReceipt: async () => ({ status: "success" })
+    } as unknown as PublicClient;
+    const walletClient = {
+      writeContract: async (call: typeof writes[number]) => {
+        writes.push(call);
+        pendingNonce = call.nonce + 1;
+        return `0x${call.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = () => new ViemMissionResolutionChainClient(
+      { listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      config.gameContractAddress!, account, publicClient, walletClient,
+      { id: config.chainId } as never, config.rpcUrl, coordinator, moon, engine
+    );
+    expect(await client().finalizeMoonChance("8")).toBe("pending");
+    expect(nonceReads).toBe(0);
+    fulfilledAt = 2n;
+    requester = config.gameContractAddress!;
+    await expect(client().finalizeMoonChance("8")).rejects.toThrow("identity mismatch");
+    requester = moon;
+    requestPurpose = `0x${"cd".repeat(32)}`;
+    await expect(client().finalizeMoonChance("8")).rejects.toThrow("identity mismatch");
+    requestPurpose = purpose;
+    paused = true;
+    await expect(client().finalizeMoonChance("8")).rejects.toThrow("canonical game pause");
+    expect(nonceReads).toBe(0);
+    paused = false;
+    await Promise.all([client().finalizeMoonChance("8"), client().resolveFleetMission("99")]);
+    expect(writes.map(({ address, functionName, nonce }) => ({ address, functionName, nonce }))).toEqual([
+      { address: config.gameContractAddress!, functionName: "resolveFleetMission", nonce: 4 },
+      { address: moon, functionName: "finalizeMoonChance", nonce: 5 }
+    ]);
+    finalized = true;
+    // Re-created client / old indexed request: canonical finalization avoids any resubmission.
+    expect(await client().finalizeMoonChance("8")).toBe("finalized");
+    expect(writes).toHaveLength(2);
+  });
+
+  test("rotates bounded indexed candidates, catches existing pending on restart, backs off failures and honors pause/disable", async () => {
+    let now = 0;
+    let paused = false;
+    let failFirstOutcome = true;
+    const calls: string[] = [];
+    const pages: number[] = [];
+    const source = {
+      missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+      moonChanceResolutionCandidateCount: () => 12,
+      moonChanceResolutionCandidates: (after: number, limit: number) => {
+        pages.push(after);
+        expect(limit).toBe(10);
+        return Array.from({ length: 12 }, (_, i) => ({ cursor: i + 1, outcomeId: String(i + 1) }))
+          .filter(candidate => candidate.cursor > after).slice(0, limit);
+      }
+    };
+    const options = {
+      candidateSource: source,
+      now: () => now,
+      logger: silentLogger(),
+      chainClient: {
+        ...fakeClient({ calls: [], resolvable: [], returnable: [], paused: async () => paused }),
+        finalizeMoonChance: async (id: string): Promise<"pending" | "finalized"> => {
+          calls.push(id);
+          if (id === "1" && failFirstOutcome) throw new Error("RPC temporarily unavailable");
+          return id === "12" ? "finalized" : "pending";
+        }
+      }
+    };
+    const service = new MissionResolutionService(moonConfig, options);
+    await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        enabled: true,
+        maxPerTick: 10,
+        cursor: 10,
+        indexedBacklog: 12,
+        lastScanned: 10,
+        lastPending: 9,
+        lastFinalized: 0,
+        lastDeferred: 0,
+        lastFailed: 1,
+        retrying: 1,
+        totalFailures: 1,
+        lastOutcomeId: "10",
+        lastResult: "pending",
+        lastError: null,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
+      }
+    });
+    await service.tick();
+    expect(service.snapshot().moonChanceResolution).toMatchObject({
+      cursor: 0,
+      lastScanned: 2,
+      lastPending: 1,
+      lastFinalized: 1,
+      lastFailed: 0,
+      retrying: 1,
+      totalFailures: 1,
+      lastOutcomeId: "12",
+      lastResult: "finalized",
+      lastError: null,
+      lastFailedOutcomeId: "1",
+      lastFailedError: "RPC temporarily unavailable"
+    });
+    await service.tick();
+    expect(pages).toEqual([0, 10, 0]);
+    expect(calls.filter(id => id === "1")).toHaveLength(1);
+    expect(calls).toContain("12");
+    now = 30_000;
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
+      }
+    });
+    await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: {
+        retrying: 1,
+        lastFailedOutcomeId: "1",
+        lastFailedError: "RPC temporarily unavailable"
+      }
+    });
+    failFirstOutcome = false;
+    await service.tick();
+    expect(calls.filter(id => id === "1")).toHaveLength(2);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+    paused = true;
+    const beforePause = calls.length;
+    await service.tick();
+    expect(calls).toHaveLength(beforePause);
+    paused = false;
+    await new MissionResolutionService({ ...moonConfig, missionResolutionEnabled: false }, options).tick();
+    expect(calls).toHaveLength(beforePause);
+    await new MissionResolutionService(moonConfig, options).tick();
+    expect(pages.at(-1)).toBe(0);
+    expect(calls.filter(id => id === "1")).toHaveLength(3);
+  });
+
+  test("clears failed retry health only after a complete sweep observes its exact terminal report", async () => {
+    const pending = new Set(Array.from({ length: 11 }, (_, index) => String(index + 1)));
+    const terminal = new Set<string>();
+    const pages: number[] = [];
+    const terminalChecks: string[][] = [];
+    const source = {
+      missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+      moonChanceResolutionCandidateCount: () => pending.size,
+      moonChanceResolutionCandidates: (after: number, limit: number) => {
+        pages.push(after);
+        return [...pending].map((outcomeId) => ({ cursor: Number(outcomeId), outcomeId }))
+          .filter(candidate => candidate.cursor > after).slice(0, limit);
+      },
+      moonChanceTerminalOutcomeIds: (outcomeIds: readonly string[]) => {
+        terminalChecks.push([...outcomeIds]);
+        return outcomeIds.filter(outcomeId => terminal.has(outcomeId));
+      }
+    };
+    const service = new MissionResolutionService(moonConfig, {
+      candidateSource: source,
+      logger: silentLogger(),
+      chainClient: {
+        ...fakeClient({ calls: [], resolvable: [], returnable: [] }),
+        finalizeMoonChance: async (outcomeId: string): Promise<"pending"> => {
+          if (outcomeId === "1") throw new Error("confirmation RPC timed out");
+          return "pending";
+        }
+      }
+    });
+
+    await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { cursor: 10, retrying: 1, lastFailedOutcomeId: "1" }
+    });
+
+    // Outcome 1 is absent from this second keyset page, but omission from one page is not terminal
+    // evidence. The retained retry must survive the completed sweep.
+    await service.tick();
+    expect(pages).toEqual([0, 10]);
+    expect(terminalChecks).toEqual([["1"]]);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { cursor: 0, retrying: 1, lastFailedOutcomeId: "1" }
+    });
+
+    // Chain sync replaces the pending request with an authoritative terminal report. The next
+    // complete sweep must clear the stale failure even though the candidate can no longer reappear.
+    pending.delete("1");
+    terminal.add("1");
+    await service.tick();
+    expect(service.snapshot().moonChanceResolution.cursor).toBe(11);
+    await service.tick();
+    expect(pages).toEqual([0, 10, 0, 11]);
+    expect(terminalChecks).toEqual([["1"], ["1"]]);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        cursor: 0,
+        indexedBacklog: 10,
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+  });
+});
