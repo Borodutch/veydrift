@@ -1657,6 +1657,18 @@ export class SettlementIndexer {
     return row.count;
   }
 
+  moonChanceTerminalOutcomeIds(outcomeIds: readonly string[]): string[] {
+    const bounded = [...new Set(outcomeIds)].slice(0, 100);
+    if (bounded.length === 0) return [];
+    const placeholders = bounded.map(() => "?").join(", ");
+    return (this.db.query(`
+      SELECT outcome_id AS outcomeId
+      FROM contract_moon_chance_reports
+      WHERE outcome_id IN (${placeholders})
+        AND json_extract(event_json, '$.eventName') = 'MoonChanceFinalized'
+    `).all(...bounded) as Array<{ outcomeId: string }>).map(row => row.outcomeId);
+  }
+
   moonChanceReportsInSystem(galaxy: number, system: number): IndexedMoonChanceReportEvent[] {
     const rows = this.db.query(`
       SELECT report.event_json

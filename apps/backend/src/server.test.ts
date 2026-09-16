@@ -12279,6 +12279,7 @@ describe("worker role gating (VEY-KANEO-466)", () => {
 
   test("writer health exposes bounded moon chance backlog, pending outcomes and retained failure diagnostics", async () => {
     let finalizationError: Error | null = null;
+    let terminalIndexed = false;
     const service = new MissionResolutionService(
       {
         ...configuredTestConfig,
@@ -12290,8 +12291,11 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       {
         candidateSource: {
           missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
-          moonChanceResolutionCandidateCount: () => 8,
-          moonChanceResolutionCandidates: () => [{ cursor: 8, outcomeId: "8" }]
+          moonChanceResolutionCandidateCount: () => terminalIndexed ? 0 : 8,
+          moonChanceResolutionCandidates: () => terminalIndexed ? [] : [{ cursor: 8, outcomeId: "8" }],
+          moonChanceTerminalOutcomeIds: (outcomeIds) => terminalIndexed
+            ? outcomeIds.filter(outcomeId => outcomeId === "8")
+            : []
         },
         chainClient: {
           async listResolvableFleetMissions() { return []; },
@@ -12369,6 +12373,26 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       degraded: true,
       degradationReasons: ["moon_chance_resolution_retrying"],
       missionResolutionStatus: "degraded"
+    });
+
+    terminalIndexed = true;
+    await service.tick();
+    const recoveredResponse = await handler(new Request("http://localhost/health"));
+    const recoveredBody = await recoveredResponse.json();
+    expect(recoveredBody.missionResolution).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        indexedBacklog: 0,
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+    expect(recoveredBody.readiness).toMatchObject({
+      degraded: false,
+      degradationReasons: [],
+      missionResolutionStatus: "healthy"
     });
   });
 

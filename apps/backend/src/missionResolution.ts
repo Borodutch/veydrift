@@ -89,6 +89,7 @@ export type MoonChanceResolutionCandidate = { cursor: number; outcomeId: string 
 export type MissionResolutionCandidateSource = {
   moonChanceResolutionCandidateCount?(): number;
   moonChanceResolutionCandidates?(afterCursor: number, limit: number): MoonChanceResolutionCandidate[];
+  moonChanceTerminalOutcomeIds?(outcomeIds: readonly string[]): string[];
   missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
    * A resolver settlement can expose a stale event-indexed mission status, including when a durable
@@ -220,6 +221,7 @@ export class MissionResolutionService {
   private moonChanceLastOutcomeId: string | null = null;
   private moonChanceLastResult: MoonChanceResolutionSnapshot["lastResult"] = null;
   private moonChanceLastError: string | null = null;
+  private moonChanceRetryReconciliationOffset = 0;
   private lastError: string | null = null;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
@@ -524,7 +526,8 @@ export class MissionResolutionService {
     // Keyset pagination rotates past genuinely unfulfilled or failed requests, so an old pending
     // page cannot starve newer fulfilled outcomes. Restart begins at zero and catches existing rows.
     const candidates = this.candidateSource.moonChanceResolutionCandidates(this.moonChanceCursor, maxMoonChancesPerTick);
-    this.moonChanceCursor = candidates.length === maxMoonChancesPerTick ? candidates.at(-1)!.cursor : 0;
+    const completedSweep = candidates.length < maxMoonChancesPerTick;
+    this.moonChanceCursor = completedSweep ? 0 : candidates.at(-1)!.cursor;
     this.moonChanceLastScanned = candidates.length;
     this.moonChanceLastPending = 0;
     this.moonChanceLastFinalized = 0;
@@ -563,6 +566,28 @@ export class MissionResolutionService {
         const retryAfterMs = this.scheduleRetry(key, reason);
         this.logger.warn(`[mission-resolution] finalizeMoonChance(${candidate.outcomeId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${reason}`);
       }
+    }
+    if (completedSweep) this.reconcileTerminalMoonChanceRetries();
+  }
+
+  private reconcileTerminalMoonChanceRetries(): void {
+    if (!this.candidateSource?.moonChanceTerminalOutcomeIds) return;
+    const retryEntries = [...this.failedCandidateRetries.keys()]
+      .filter(key => key.startsWith("moon-chance:"));
+    if (retryEntries.length === 0) {
+      this.moonChanceRetryReconciliationOffset = 0;
+      return;
+    }
+    const start = this.moonChanceRetryReconciliationOffset < retryEntries.length
+      ? this.moonChanceRetryReconciliationOffset
+      : 0;
+    const count = Math.min(maxMoonChancesPerTick, retryEntries.length);
+    const batch = Array.from({ length: count }, (_, index) => retryEntries[(start + index) % retryEntries.length]!);
+    this.moonChanceRetryReconciliationOffset = (start + count) % retryEntries.length;
+    const outcomeIds = batch.map(key => key.slice("moon-chance:".length));
+    const terminal = new Set(this.candidateSource.moonChanceTerminalOutcomeIds(outcomeIds));
+    for (const key of batch) {
+      if (terminal.has(key.slice("moon-chance:".length))) this.failedCandidateRetries.delete(key);
     }
   }
 

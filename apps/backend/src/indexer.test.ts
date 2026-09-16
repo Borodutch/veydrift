@@ -13853,6 +13853,7 @@ describe("moon chance resolution projection", () => {
     indexer.applyMoonChanceEvent({ ...moonChance, blockNumber: "102" });
     expect(indexer.moonChanceResolutionCandidates().map(candidate => candidate.outcomeId)).toEqual(["6"]);
     expect(indexer.moonChanceResolutionCandidateCount()).toBe(1);
+    expect(indexer.moonChanceTerminalOutcomeIds(["5", "6", "999"])).toEqual(["5"]);
     expect(indexer.moonChanceReportsInSystem(2, 44).at(-1)).toMatchObject(terminal);
     expect(indexer.moonChanceReportsInSystem(2, 44)).toHaveLength(3);
     expect(indexer.debrisFieldsInSystem(2, 44)[0]!.resources).toEqual(debris.resources);

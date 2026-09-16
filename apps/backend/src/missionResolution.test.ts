@@ -1231,4 +1231,74 @@ describe("moon chance resolution", () => {
     expect(pages.at(-1)).toBe(0);
     expect(calls.filter(id => id === "1")).toHaveLength(3);
   });
+
+  test("clears failed retry health only after a complete sweep observes its exact terminal report", async () => {
+    const pending = new Set(Array.from({ length: 11 }, (_, index) => String(index + 1)));
+    const terminal = new Set<string>();
+    const pages: number[] = [];
+    const terminalChecks: string[][] = [];
+    const source = {
+      missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+      moonChanceResolutionCandidateCount: () => pending.size,
+      moonChanceResolutionCandidates: (after: number, limit: number) => {
+        pages.push(after);
+        return [...pending].map((outcomeId) => ({ cursor: Number(outcomeId), outcomeId }))
+          .filter(candidate => candidate.cursor > after).slice(0, limit);
+      },
+      moonChanceTerminalOutcomeIds: (outcomeIds: readonly string[]) => {
+        terminalChecks.push([...outcomeIds]);
+        return outcomeIds.filter(outcomeId => terminal.has(outcomeId));
+      }
+    };
+    const service = new MissionResolutionService(moonConfig, {
+      candidateSource: source,
+      logger: silentLogger(),
+      chainClient: {
+        ...fakeClient({ calls: [], resolvable: [], returnable: [] }),
+        finalizeMoonChance: async (outcomeId: string): Promise<"pending"> => {
+          if (outcomeId === "1") throw new Error("confirmation RPC timed out");
+          return "pending";
+        }
+      }
+    });
+
+    await service.tick();
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { cursor: 10, retrying: 1, lastFailedOutcomeId: "1" }
+    });
+
+    // Outcome 1 is absent from this second keyset page, but omission from one page is not terminal
+    // evidence. The retained retry must survive the completed sweep.
+    await service.tick();
+    expect(pages).toEqual([0, 10]);
+    expect(terminalChecks).toEqual([["1"]]);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["moon_chance_resolution_retrying"],
+      moonChanceResolution: { cursor: 0, retrying: 1, lastFailedOutcomeId: "1" }
+    });
+
+    // Chain sync replaces the pending request with an authoritative terminal report. The next
+    // complete sweep must clear the stale failure even though the candidate can no longer reappear.
+    pending.delete("1");
+    terminal.add("1");
+    await service.tick();
+    expect(service.snapshot().moonChanceResolution.cursor).toBe(11);
+    await service.tick();
+    expect(pages).toEqual([0, 10, 0, 11]);
+    expect(terminalChecks).toEqual([["1"], ["1"]]);
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        cursor: 0,
+        indexedBacklog: 10,
+        retrying: 0,
+        lastFailedOutcomeId: null,
+        lastFailedError: null
+      }
+    });
+  });
 });
