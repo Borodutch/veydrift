@@ -12277,6 +12277,70 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(response.status).toBe(503);
   });
 
+  test("writer health exposes bounded moon chance backlog and genuinely pending outcomes", async () => {
+    const service = new MissionResolutionService(
+      {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444",
+        moonContractAddress: "0x5555555555555555555555555555555555555555",
+        randomnessEngineAddress: "0x6666666666666666666666666666666666666666"
+      },
+      {
+        candidateSource: {
+          missionResolutionCandidates: () => ({ arrivals: [], returns: [] }),
+          moonChanceResolutionCandidateCount: () => 8,
+          moonChanceResolutionCandidates: () => [{ cursor: 8, outcomeId: "8" }]
+        },
+        chainClient: {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async resolveFleetMission() { return "0xresolve"; },
+          async completeFleetMissionReturn() { return "0xreturn"; },
+          async finalizeMoonChance() { return "pending" as const; }
+        },
+        intervalMs: 60_000
+      }
+    );
+    await service.tick();
+    const indexer = {
+      snapshot() {
+        return { indexedState: "healthy", safeToServeIndexedState: true };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer,
+      missionResolution: service
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    service.stop();
+    expect(body.missionResolution).toMatchObject({
+      healthStatus: "healthy",
+      healthWarnings: [],
+      moonChanceResolution: {
+        enabled: true,
+        maxPerTick: 10,
+        cursor: 0,
+        indexedBacklog: 8,
+        lastScanned: 1,
+        lastPending: 1,
+        lastFinalized: 0,
+        lastDeferred: 0,
+        lastFailed: 0,
+        retrying: 0,
+        totalFailures: 0,
+        lastOutcomeId: "8",
+        lastResult: "pending",
+        lastError: null
+      }
+    });
+  });
+
   test("writer health reports stale mission-resolution backlog degradation", async () => {
     const service = new MissionResolutionService(
       {
