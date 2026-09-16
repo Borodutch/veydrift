@@ -1540,6 +1540,14 @@ function isReadOnlyRpcMethod(method: string): boolean {
   return method.startsWith("eth_get") || ["eth_call", "eth_blockNumber", "eth_chainId", "net_version"].includes(method);
 }
 
+function publicRpcEndpoint(rpcUrl: string): string {
+  try {
+    return new URL(rpcUrl).origin;
+  } catch {
+    return "[redacted]";
+  }
+}
+
 export class HttpJsonRpcTransport {
   private readonly metrics: RpcMetrics = {
     activeRpcUrl: null,
@@ -1724,7 +1732,7 @@ export class HttpJsonRpcTransport {
       ? Math.min(...this.activeRequestStartedAt.values())
       : null;
     return {
-      activeRpcUrl: this.activeRpcUrl(),
+      activeRpcUrl: publicRpcEndpoint(this.activeRpcUrl()),
       batchRequests: this.metrics.batchRequests,
       callsByMethod: { ...this.metrics.callsByMethod },
       callsBySource: Object.fromEntries(
@@ -1733,7 +1741,7 @@ export class HttpJsonRpcTransport {
       failoverCount: this.metrics.failoverCount,
       httpRequests: this.metrics.httpRequests,
       lastFailoverReason: this.metrics.lastFailoverReason,
-      rpcUrls: [...this.rpcUrls],
+      rpcUrls: this.rpcUrls.map(publicRpcEndpoint),
       timeouts: this.metrics.timeouts,
       requestSource: this.requestSource,
       startedHttpRequests: this.metrics.startedHttpRequests,
