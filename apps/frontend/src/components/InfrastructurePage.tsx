@@ -903,12 +903,8 @@ function compactEffect(
     return `${formatNumber(effect.currentSupport)} Deut.`;
   }
 
-  if (effect.kind === "shipyard") {
-    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
-  }
-
-  if (effect.kind === "researchSpeed") {
-    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
+  if (effect.kind === "shipyard" || effect.kind === "researchSpeed") {
+    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built";
   }
 
   if (effect.kind === "facility") {
@@ -916,7 +912,7 @@ function compactEffect(
       return effect.currentLevel > 0 ? "Built" : "Not built";
     }
 
-    return effect.currentLevel > 0 ? `Level ${effect.currentLevel}` : "Locked";
+    return effect.currentLevel > 0 ? `Level ${effect.currentLevel}` : "Not built";
   }
 
   if (effect.kind === "terraformer") {
