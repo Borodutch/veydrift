@@ -23,7 +23,8 @@ type ReownModalState = {
   open: boolean;
 };
 
-type ReownAppKit = {
+export type ReownAppKit = {
+  close(): Promise<void>;
   getWalletProvider(): unknown;
   open(options?: { namespace?: "eip155"; view?: "Connect" }): Promise<unknown>;
   subscribeProviders(callback: () => void): () => void;
@@ -60,10 +61,13 @@ export function walletConnectCustomRpcUrls(
   };
 }
 
-export async function connectWalletConnect(): Promise<AvailableWalletProvider | undefined> {
-  const appKit = await loadReownAppKit();
+export async function connectWalletConnect(
+  loadAppKit: () => Promise<ReownAppKit> = loadReownAppKit,
+): Promise<AvailableWalletProvider | undefined> {
+  const appKit = await loadAppKit();
   const existingProvider = asEip1193Provider(appKit.getWalletProvider());
   if (existingProvider) {
+    closeReownModal(appKit);
     return { provider: existingProvider, source: "reown" };
   }
 
@@ -72,14 +76,15 @@ export async function connectWalletConnect(): Promise<AvailableWalletProvider | 
     let settled = false;
     let unsubscribeProviders = () => {};
     let unsubscribeState = () => {};
-    const timeout = window.setTimeout(() => settle(undefined), REOWN_CONNECT_TIMEOUT_MS);
+    const timeout = globalThis.setTimeout(() => settle(undefined), REOWN_CONNECT_TIMEOUT_MS);
 
     const settle = (provider: Eip1193Provider | undefined) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
       unsubscribeProviders();
       unsubscribeState();
+      if (provider) closeReownModal(appKit);
       resolve(provider ? { provider, source: "reown" } : undefined);
     };
 
@@ -101,12 +106,16 @@ export async function connectWalletConnect(): Promise<AvailableWalletProvider | 
       .catch((error) => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         unsubscribeProviders();
         unsubscribeState();
         reject(error);
       });
   });
+}
+
+function closeReownModal(appKit: ReownAppKit): void {
+  void appKit.close().catch(() => undefined);
 }
 
 async function loadReownAppKit(): Promise<ReownAppKit> {
