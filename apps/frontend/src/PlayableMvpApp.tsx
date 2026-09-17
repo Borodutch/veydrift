@@ -1592,6 +1592,18 @@ function pendingActionLabel(...actions: Array<{ status: string; label?: string |
   return actions.find((action) => isActionBusy(action) && action.label)?.label;
 }
 
+// Home identity comes from the unmodified settlement/roster, never the active selector.
+export function homeWorldCoordinates(
+  settlement: Pick<WalletSettlementResponse, "homePlanetId" | "planet"> | undefined,
+  planets: readonly Pick<ManagedPlanetResponse, "planetId" | "isHomePlanet" | "galaxy" | "system" | "position">[],
+): Coordinates | undefined {
+  const home = settlement
+    ? planets.find((planet) => planet.planetId === settlement.homePlanetId)
+      ?? (settlement.planet?.planetId === settlement.homePlanetId ? settlement.planet : undefined)
+    : planets.find((planet) => planet.isHomePlanet);
+  return home ? { galaxy: home.galaxy, system: home.system, position: home.position } : undefined;
+}
+
 export function displayHomeCoordinates(homePlanet: Coordinates | undefined, homeCoords: Coordinates | undefined, fallbackCoordinates: string | undefined): string | undefined {
   const coordinates = homePlanet ?? homeCoords;
   if (!coordinates) return fallbackCoordinates;
@@ -3076,6 +3088,7 @@ export function PlayableMvpApp({
       ),
     [activeBodyKind, activePlanetId, displayFleetVisibility, walletPlanets],
   );
+  const homeWorldCoords = homeWorldCoordinates(onChainSettlementState, walletPlanets);
   const activePlanetCoords = selectedManagedPlanet
     ? {
         galaxy: selectedManagedPlanet.galaxy,
@@ -6508,7 +6521,8 @@ export function PlayableMvpApp({
           actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           galaxy={galaxyNav.galaxy}
-          homeCoords={activePlanetCoords}
+          homeCoords={homeWorldCoords}
+          originCoords={activePlanetCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           ownedPlanets={walletPlanets.map(planetFromSettlementPlanet)}
@@ -6538,7 +6552,8 @@ export function PlayableMvpApp({
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
           defenseState={defenseState}
-          homeCoords={activePlanetCoords}
+          homeCoords={homeWorldCoords}
+          originCoords={activePlanetCoords}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}
@@ -7494,6 +7509,9 @@ function PlanetSelectorButton({
         ) : null}
       </span>
       <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">{planetDisplayName(planet)}</span>
+      {planet.isHomePlanet ? (
+        <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1 text-[0.6rem] font-semibold uppercase leading-3 text-cyan-100">Home</span>
+      ) : null}
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">{planet.coordinates}</span>
       <PlanetSelectorProgressBars
         planet={planet}

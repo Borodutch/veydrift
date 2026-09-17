@@ -54,6 +54,7 @@ interface Props {
   apiBaseUrl?: string | undefined;
   defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
+  originCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
@@ -151,6 +152,7 @@ export function PlanetDetail({
   apiBaseUrl = playableApiUrl,
   defenseState = null,
   homeCoords,
+  originCoords = homeCoords,
   homePlanetId,
   homePlanet,
   onAction,
@@ -161,10 +163,10 @@ export function PlanetDetail({
   transactionUnavailableReason,
 }: Props) {
   const trustedHomePlanet = useMemo(
-    () => sameCoordinates(homeCoords, coords) && homePlanet
+    () => sameCoordinates(homePlanet, coords) && homePlanet
       ? homePlanet
       : null,
-    [coords.galaxy, coords.position, coords.system, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, homePlanet],
+    [coords.galaxy, coords.position, coords.system, homePlanet],
   );
   const backendData = useMemo(() => backendDataStoreFor(apiBaseUrl), [apiBaseUrl]);
   const systemQuery = useBackendDataQuery<ApiSystemResponse>(
@@ -190,7 +192,7 @@ export function PlanetDetail({
   const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
   const targetPlanetId = planet?.occupiedBy?.planetId;
   const attackProtectionQuery = useBackendDataQuery<AttackProtectionStatus>(
-    account && targetPlanetId && !isHome
+    account && targetPlanetId && !sameCoordinates(originCoords, planet!)
       ? backendData.queries.attackProtection(account, targetPlanetId, false)
       : undefined,
   );
@@ -235,7 +237,7 @@ export function PlanetDetail({
         attackProtection: null,
         coords,
         defenseState,
-        homeCoords,
+        homeCoords: originCoords,
         homePlanetId,
         planet: undefined,
         shipyardState,
@@ -272,7 +274,7 @@ export function PlanetDetail({
     attackProtection,
     coords,
     defenseState,
-    homeCoords,
+    homeCoords: originCoords,
     homePlanetId,
     planet,
     shipyardState,
@@ -288,7 +290,7 @@ export function PlanetDetail({
   const settled = isPublicPlanetSettled(planet);
   const commanderLabel = planet.occupiedBy?.ownerDisplayName
     ?? (planet.occupiedBy?.owner ? shortAddress(planet.occupiedBy.owner) : null);
-  const planetIdLabel = planet.occupiedBy?.planetId ?? (isHome ? homePlanetId : null);
+  const planetIdLabel = planet.occupiedBy?.planetId ?? (sameCoordinates(originCoords, planet) ? homePlanetId : null);
   const publicStateLoading = source === "loading";
 
   return (
