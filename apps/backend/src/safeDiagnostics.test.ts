@@ -58,6 +58,27 @@ describe("safe diagnostics", () => {
     expect(JSON.stringify((output as Record<string, unknown>).error)).not.toContain(privateKey);
   });
 
+  test("redacts scalar compound containers and custom error names while preserving configured flags", () => {
+    const error = new Error("synthetic failure");
+    error.name = opaque;
+    const output = sanitizeDiagnosticValue({
+      configured: true,
+      gameConfigured: false,
+      serviceConfig: opaque,
+      requestHeaders: opaque,
+      error
+    }) as Record<string, unknown>;
+
+    expectNoCanaries(output);
+    expect(output).toMatchObject({
+      configured: true,
+      gameConfigured: false,
+      serviceConfig: "[redacted]",
+      requestHeaders: "[redacted]",
+      error: { name: "Error", message: "synthetic failure" }
+    });
+  });
+
   test("sanitizes before truncating error text", () => {
     const output = safeDiagnosticText(
       `Authorization: Bearer ${bearer} https://user:${password}@rpc.invalid/path?token=${queryKey} private_key=${privateKey} ${"x".repeat(5000)}`,

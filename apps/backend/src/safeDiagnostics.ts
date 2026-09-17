@@ -6,7 +6,13 @@ const normalizedSensitiveKeyTokens = [
   "authorization", "cookie", "credential", "credentials", "password", "passwd", "secret", "token",
   "apikey", "privatekey", "signingkey", "mnemonic", "seed"
 ];
-const normalizedOpaqueContainerTokens = ["configuration", "environment", "config", "header", "variables"];
+const normalizedOpaqueContainerTokens = [
+  "configuration", "environment", "variables", "config", "headers", "header", "variable", "env"
+];
+const publicErrorNames = new Set([
+  "AbortError", "AggregateError", "DOMException", "Error", "EvalError", "RangeError",
+  "ReferenceError", "SyntaxError", "TimeoutError", "TypeError", "URIError"
+]);
 
 function normalizedKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -19,11 +25,11 @@ function isSensitiveKey(key: string): boolean {
 
 function isOpaqueContainerKey(key: string, value: unknown): boolean {
   const normalized = normalizedKey(key);
-  return opaqueContainers.has(normalized) || (
-    value !== null
-    && typeof value === "object"
-    && normalizedOpaqueContainerTokens.some((token) => normalized.includes(token))
-  );
+  if (typeof value === "boolean" && (normalized === "configured" || normalized.endsWith("configured"))) {
+    return false;
+  }
+  return opaqueContainers.has(normalized)
+    || normalizedOpaqueContainerTokens.some((token) => normalized.includes(token));
 }
 
 function publicUrl(value: string): string {
@@ -60,10 +66,14 @@ export function sanitizeDiagnosticValue(
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "string") return safeDiagnosticText(value, 2_048, publicHashKeys.has(normalizedKey(key)));
   if (value instanceof Error) {
+    const name = publicErrorNames.has(value.name) ? value.name : "Error";
+    const stack = value.stack && value.name && value.name !== name
+      ? value.stack.split(value.name).join(name)
+      : value.stack;
     return {
-      name: value.name,
+      name,
       message: safeDiagnosticText(value.message),
-      ...(value.stack ? { stack: safeDiagnosticText(value.stack) } : {})
+      ...(stack ? { stack: safeDiagnosticText(stack) } : {})
     };
   }
   if (typeof value !== "object") return safeDiagnosticText(value);

@@ -321,7 +321,7 @@ function parseArgs(args) {
 }
 
 function usage(message) {
-  if (message) console.error(message);
+  if (message) console.error(safeDiagnosticText(message));
   console.error(
     "Usage: node scripts/veydrift-redeploy-preflight.mjs [--api-url <url>] [--rpc-url <url>] [--game <address>] [--metal <address>] [--crystal <address>] [--deuterium <address>] [--migration-plan-approved | --no-alpha-state] [--out <file>]"
   );

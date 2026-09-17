@@ -49,10 +49,11 @@ describe("operator diagnostic output boundaries", () => {
     expect(JSON.stringify(lines)).toContain("https://rpc.invalid");
   });
 
-  test("mission report child stdout and stderr sanitize structured containers", async () => {
+  test("mission report child stdout and stderr sanitize object and serialized containers", async () => {
     const { lines } = await captureConsole(() => {
-      emitSanitizedProcessOutput("info", JSON.stringify({ status: "healthy", serviceConfig: { value: opaque } }));
+      emitSanitizedProcessOutput("info", JSON.stringify({ status: "healthy", serviceConfig: opaque }));
       emitSanitizedProcessOutput("error", JSON.stringify({ status: "failed", requestHeaders: { authorization: `Bearer ${bearer}` } }));
+      emitSanitizedProcessOutput("error", JSON.stringify({ status: "failed", requestHeaders: opaque }));
     });
 
     expectNoCanaries(lines);

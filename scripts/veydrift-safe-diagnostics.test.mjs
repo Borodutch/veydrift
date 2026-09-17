@@ -52,6 +52,26 @@ test("sanitizes nested config, headers, private keys, URLs, and truncation", () 
   assert.match(truncated, /…\[truncated\]$/);
 });
 
+test("redacts scalar compound containers and custom error names while preserving configured flags", () => {
+  const error = new Error("synthetic failure");
+  error.name = opaque;
+  const output = sanitizeDiagnosticValue({
+    configured: true,
+    gameConfigured: false,
+    serviceConfig: opaque,
+    requestHeaders: opaque,
+    error
+  });
+
+  assertNoCanaries(output);
+  assert.equal(output.configured, true);
+  assert.equal(output.gameConfigured, false);
+  assert.equal(output.serviceConfig, "[redacted]");
+  assert.equal(output.requestHeaders, "[redacted]");
+  assert.equal(output.error.name, "Error");
+  assert.equal(output.error.message, "synthetic failure");
+});
+
 test("preflight emits allowlisted snapshots and no response bodies", async (context) => {
   const server = createServer(async (request, response) => {
     let body;
@@ -137,6 +157,17 @@ test("referral migration fatal output sanitizes before stderr", async () => {
   assert.equal(result.code, 1);
   assertNoCanaries(result.stdout + result.stderr);
   assert.match(result.stderr, /ENOENT/);
+});
+
+test("preflight sanitizes credential-bearing positional arguments before usage stderr", async () => {
+  const result = await run(process.execPath, [
+    "scripts/veydrift-redeploy-preflight.mjs",
+    `https://user:${password}@rpc.invalid/path?apiKey=${queryKey}`
+  ]);
+  assert.equal(result.code, 1);
+  assertNoCanaries(result.stdout + result.stderr);
+  assert.match(result.stderr, /Unexpected positional argument: https:\/\/rpc\.invalid/);
+  assert.match(result.stderr, /Usage: node scripts\/veydrift-redeploy-preflight\.mjs/);
 });
 
 function run(command, args) {
