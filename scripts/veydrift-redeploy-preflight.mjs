@@ -2,6 +2,13 @@
 
 import { writeFileSync } from "node:fs";
 
+import {
+  pickDiagnosticPaths,
+  publicDiagnosticUrl,
+  safeDiagnosticText,
+  sanitizeDiagnosticValue
+} from "./veydrift-safe-diagnostics.mjs";
+
 const ERC1967_IMPLEMENTATION_SLOT =
   "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -85,9 +92,19 @@ const stateEvidenceComplete = health.ok
   && stateEvidence.signals.length > 0;
 const nonzeroReserves = Object.values(reserveEvidence).some((entry) => BigInt(entry.balance ?? "0") > 0n);
 const backendSnapshots = {
-  health: snapshotOf(health),
-  runtimeConfig: snapshotOf(runtime),
-  indexer: snapshotOf(indexer)
+  health: snapshotOf(health, [
+    "ok", "configured", "readiness.ready", "readiness.safeToServeIndexedState",
+    "backend.worker.role", "backend.build.gitSha", "backend.build.deploymentCommit", "backend.build.deploymentAbiHash",
+    "indexer.indexedState", "indexer.safeToServeIndexedState", "indexer.fromBlock", "indexer.latestIndexedBlock",
+    "chain.chainId", "chain.indexFromBlock", "chain.gameContractConfigured", "chain.resourceTokenAddressesConfigured",
+    "chain.allianceContractConfigured", "chain.moonContractConfigured", "chain.randomnessEngineConfigured"
+  ]),
+  runtime: snapshotOf(runtime, [
+    "gameContractAddress", "contractAddress", "allianceContractAddress", "moonContractAddress",
+    "randomnessEngineAddress", "referralSystemAddress", "referralSignerAddress", "network", "rpcProvider",
+    "featureSupport.researchEndpoint", "featureSupport.highscoresEndpoint", "featureSupport.referralsConfigured"
+  ]),
+  indexer: snapshotOf(indexer, ["indexedState", "safeToServeIndexedState", "fromBlock", "latestIndexedBlock"])
 };
 
 if (!gameAddress) {
@@ -127,8 +144,8 @@ for (const [resource, token] of Object.entries(resourceTokens)) {
 
 const result = {
   ok: blockers.length === 0,
-  apiUrl,
-  rpcUrl: redactUrl(rpcUrl),
+  apiUrl: publicDiagnosticUrl(apiUrl),
+  rpcUrl: publicDiagnosticUrl(rpcUrl),
   checkedAt: new Date().toISOString(),
   gameAddress,
   implementationAddress,
@@ -145,7 +162,7 @@ const result = {
   evidence
 };
 
-const output = `${JSON.stringify(result, null, 2)}\n`;
+const output = `${JSON.stringify(sanitizeDiagnosticValue(result), null, 2)}\n`;
 if (options.out) {
   writeFileSync(options.out, output);
 } else {
@@ -172,11 +189,11 @@ async function fetchJsonEvidence(name, url) {
   }
 }
 
-function snapshotOf(fetchResult) {
+function snapshotOf(fetchResult, paths) {
   return {
     ok: fetchResult.ok,
     status: fetchResult.status,
-    body: fetchResult.body
+    diagnostics: pickDiagnosticPaths(fetchResult.body, paths)
   };
 }
 
@@ -261,7 +278,7 @@ function normalizedAddress(value, label, required = true) {
     return null;
   }
   if (!addressPattern.test(value)) {
-    blockers.push(`${label} address is invalid: ${value}`);
+    blockers.push(`${label} address is invalid.`);
     return null;
   }
   return value;
@@ -278,10 +295,6 @@ function wordToAddress(word) {
 
 function trimSlash(value) {
   return value.replace(/\/+$/, "");
-}
-
-function redactUrl(value) {
-  return value.replace(/([?&](?:api[_-]?key|key|token)=)[^&]+/gi, "$1<redacted>");
 }
 
 function parseArgs(args) {
@@ -308,7 +321,7 @@ function parseArgs(args) {
 }
 
 function usage(message) {
-  if (message) console.error(message);
+  if (message) console.error(safeDiagnosticText(message));
   console.error(
     "Usage: node scripts/veydrift-redeploy-preflight.mjs [--api-url <url>] [--rpc-url <url>] [--game <address>] [--metal <address>] [--crystal <address>] [--deuterium <address>] [--migration-plan-approved | --no-alpha-state] [--out <file>]"
   );
@@ -316,5 +329,5 @@ function usage(message) {
 }
 
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return safeDiagnosticText(error);
 }

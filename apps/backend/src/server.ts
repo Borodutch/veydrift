@@ -59,6 +59,7 @@ import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } fro
 import { MissionResolutionService } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
+import { safeDiagnosticText } from "./safeDiagnostics";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -519,7 +520,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     // Explicit operator/test rebuild only. This path performs canonical eth_call reads and therefore must
     // never run automatically for frontend/API serving; normal mutation comes from event replay/listeners.
     void indexer.rebuild().catch((error) => {
-      console.error("Veydrift explicit index reconciliation failed", error);
+      console.error("Veydrift explicit index reconciliation failed", safeDiagnosticText(error));
     });
   }
   if (
@@ -534,7 +535,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startFleetMissionStateHealOnce(loaded.config.currentStateHealRunId)
       .catch((error) => {
-        console.error("Veydrift current-state heal failed", error);
+        console.error("Veydrift current-state heal failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.fullCanonicalStateHealRunId && indexer && loaded.problems.length === 0) {
@@ -549,7 +550,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           : {})
       })
       .catch((error) => {
-        console.error("Veydrift full canonical state heal failed", error);
+        console.error("Veydrift full canonical state heal failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.researchQueueStartedAtRepairRunId && indexer && loaded.problems.length === 0) {
@@ -558,7 +559,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startResearchQueueStartedAtRepairOnce(loaded.config.researchQueueStartedAtRepairRunId)
       .catch((error) => {
-        console.error("Veydrift research queue started-at repair failed", error);
+        console.error("Veydrift research queue started-at repair failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.productionQueueTimingRepairRunId && indexer && loaded.problems.length === 0) {
@@ -568,7 +569,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startProductionQueueTimingRepairOnce(loaded.config.productionQueueTimingRepairRunId)
       .catch((error) => {
-        console.error("Veydrift production queue timing repair failed", error);
+        console.error("Veydrift production queue timing repair failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.missionArchiveRestoreRunId && indexer && loaded.problems.length === 0) {
@@ -578,7 +579,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startFleetMissionArchiveRestoreOnce(loaded.config.missionArchiveRestoreRunId)
       .catch((error) => {
-        console.error("Veydrift fleet mission archive restore failed", error);
+        console.error("Veydrift fleet mission archive restore failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.resourceStateHealRunId && indexer && loaded.problems.length === 0) {
@@ -588,7 +589,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startCanonicalResourceHealOnce(loaded.config.resourceStateHealRunId)
       .catch((error) => {
-        console.error("Veydrift canonical resource-state heal failed", error);
+        console.error("Veydrift canonical resource-state heal failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && loaded.config.allianceStateHealRunId && indexer && loaded.problems.length === 0) {
@@ -598,7 +599,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer
       .startAllianceStateHealOnce(loaded.config.allianceStateHealRunId)
       .catch((error) => {
-        console.error("Veydrift alliance-state heal failed", error);
+        console.error("Veydrift alliance-state heal failed", safeDiagnosticText(error));
       });
   }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
@@ -5193,7 +5194,7 @@ function highscoreFailureResponse(error: unknown): Response {
     return Response.json(
       {
         error: "highscores_unavailable",
-        detail: error instanceof Error ? error.message : "RPC request failed."
+        detail: safeDiagnosticText(error instanceof Error ? error.message : "RPC request failed.")
       },
       {
         headers: corsHeaders,
@@ -6581,7 +6582,7 @@ function errorResponse(error: unknown, status: number): Response {
   const responseStatus = statusForError(error, status);
   return Response.json(
     {
-      error: error instanceof Error ? error.message : "Request failed."
+      error: safeDiagnosticText(error instanceof Error ? error.message : "Request failed.")
     },
     {
       headers: {
@@ -6594,7 +6595,7 @@ function errorResponse(error: unknown, status: number): Response {
 }
 
 function reasonText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return safeDiagnosticText(error);
 }
 
 function statusForError(error: unknown, fallback: number): number {
@@ -6831,7 +6832,7 @@ async function transactionStatusResponse(
     }, { headers });
   } catch (error) {
     return Response.json({
-      error: error instanceof Error ? error.message : "Transaction status read failed."
+      error: safeDiagnosticText(error instanceof Error ? error.message : "Transaction status read failed.")
     }, {
       headers,
       status: 502

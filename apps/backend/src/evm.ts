@@ -13,6 +13,7 @@ import {
 } from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 export type Address = `0x${string}`;
 
@@ -4182,7 +4183,7 @@ export class VeydriftGameReader implements ChainReader {
       ]);
       return decodeUint(block.timestamp).toString();
     } catch (error) {
-      console.error(error);
+      console.error(safeDiagnosticText(error));
       return null;
     }
   }
@@ -4217,7 +4218,7 @@ export class VeydriftGameReader implements ChainReader {
       ]);
       return decodeUint(block.timestamp).toString();
     } catch (error) {
-      console.error(error);
+      console.error(safeDiagnosticText(error));
       return null;
     }
   }
@@ -4252,7 +4253,7 @@ export class VeydriftGameReader implements ChainReader {
       ]);
       return decodeUint(block.timestamp).toString();
     } catch (error) {
-      console.error(error);
+      console.error(safeDiagnosticText(error));
       return null;
     }
   }
@@ -4356,7 +4357,7 @@ export class VeydriftGameReader implements ChainReader {
       ]);
       return decodeUint(block.timestamp).toString();
     } catch (error) {
-      console.error(error);
+      console.error(safeDiagnosticText(error));
       return null;
     }
   }

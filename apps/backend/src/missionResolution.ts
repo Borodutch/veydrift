@@ -22,6 +22,7 @@ import {
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -375,8 +376,9 @@ export class MissionResolutionService {
       if (failed?.status === "rejected") throw failed.reason;
       this.lastError = null;
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
-      this.logger.error("[mission-resolution] tick failed", error);
+      const safeError = safeDiagnosticText(error);
+      this.lastError = safeError;
+      this.logger.error("[mission-resolution] tick failed", safeError);
     } finally {
       const completedAtMs = this.now();
       this.lastCompletedRunAt = new Date(completedAtMs).toISOString();
@@ -702,7 +704,7 @@ export class MissionResolutionService {
 }
 
 function needsCanonicalMissionReconciliation(error: unknown): boolean {
-  const reason = conciseReasonText(error);
+  const reason = reasonText(error);
   // FleetMissionNotResolved(uint64); the selector is stable across the proxy modules. A private-key
   // submission can also reach this path through a mined receipt whose RPC response exposes only the
   // transaction hash, not the revert data. Refreshing that single mission from canonical state is
@@ -1021,7 +1023,8 @@ function conciseReasonText(error: unknown): string {
   const message = typeof shortMessage === "string" && shortMessage.trim().length > 0
     ? shortMessage
     : reasonText(error);
-  const firstParagraph = message.split(/\n\s*\n|\nRequest Arguments:|\nContract Call:/)[0] ?? "Unknown resolver failure";
+  const safeMessage = safeDiagnosticText(message);
+  const firstParagraph = safeMessage.split(/\n\s*\n|\nRequest Arguments:|\nContract Call:/)[0] ?? "Unknown resolver failure";
   return firstParagraph
     .replace(/\s+/g, " ")
     .trim()

@@ -119,6 +119,7 @@ async function main() {
     await runLogged("backend-check", "bun", ["run", "check:backend"]);
     await runLogged("backend-test", "bun", ["run", "test:backend"]);
     await runLogged("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
+    await runLogged("release-diagnostics-test", "node", ["--test", "scripts/veydrift-safe-diagnostics.test.mjs"]);
   }
 
   if (scope.frontend) {

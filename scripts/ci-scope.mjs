@@ -84,7 +84,7 @@ export function filesRequireBackendChecks(files) {
   return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types))\//)
     || anyMatch(
       files,
-      /^scripts\/(ci-(run-scoped-checks|scope)|veydrift-api-(latency-report|route-benchmark))(\.test)?\.mjs$/,
+      /^scripts\/(ci-(run-scoped-checks|scope)|veydrift-api-(latency-report|route-benchmark)|veydrift-(redeploy-preflight|redeploy-readiness-probe|safe-diagnostics))(\.test)?\.mjs$/,
     );
 }
 

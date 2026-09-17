@@ -222,6 +222,39 @@ describe("MissionResolutionService", () => {
     expect(service.snapshot().lastError).toBeNull();
   });
 
+  test("sanitizes tick failures before health state and logger output", async () => {
+    const privateKey = `0x${"ab".repeat(32)}`;
+    const queryKey = "synthetic-query-canary-1234567890";
+    const bearer = "synthetic-bearer-canary-1234567890";
+    const logged: unknown[][] = [];
+    const service = new MissionResolutionService(config, {
+      chainClient: fakeClient({
+        calls: [],
+        resolvable: [],
+        returnable: [],
+        paused: async () => {
+          throw new Error(
+            `request failed at https://user:${queryKey}@rpc.invalid/path?apiKey=${queryKey} `
+            + `Authorization: Bearer ${bearer} private_key=${privateKey}`
+          );
+        }
+      }),
+      logger: {
+        warn() {},
+        error(...args) { logged.push(args); }
+      }
+    });
+
+    await service.tick();
+
+    const output = JSON.stringify({ snapshot: service.snapshot(), logged });
+    expect(output).not.toContain(privateKey);
+    expect(output).not.toContain(queryKey);
+    expect(output).not.toContain(bearer);
+    expect(output).toContain("https://rpc.invalid");
+    expect(service.snapshot().healthWarnings).toContain("mission_resolution_tick_failed");
+  });
+
   test("continues past failed return candidates until the per-tick success cap", async () => {
     const calls: string[] = [];
     const service = new MissionResolutionService(config, {

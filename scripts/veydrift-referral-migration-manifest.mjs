@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import process from "node:process";
 import {
   createPublicClient,
@@ -13,6 +14,8 @@ import {
   stringToHex
 } from "viem";
 import { base } from "viem/chains";
+
+import { safeDiagnosticText } from "./veydrift-safe-diagnostics.mjs";
 
 const migrationKindValid = 1;
 const migrationKindHashOnly = 2;
@@ -38,7 +41,7 @@ const referralAbi = parseAbi([
 ]);
 
 function usage(message) {
-  if (message) console.error(message);
+  if (message) console.error(safeDiagnosticText(message));
   console.error(
     "Usage: veydrift-referral-migration-manifest.mjs --rpc-url <url> --input <path|-> --out <path>"
   );
@@ -460,7 +463,13 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+export function reportReferralMigrationFailure(error) {
+  console.error(safeDiagnosticText(error));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    reportReferralMigrationFailure(error);
+    process.exit(1);
+  });
+}

@@ -81,6 +81,27 @@ describe("crash diagnostics handlers", () => {
     expect(logged[0]?.detail.stack).toBeUndefined();
   });
 
+  test("redacts synthetic secrets before custom loggers receive crash details", () => {
+    const privateKey = `0x${"ab".repeat(32)}`;
+    const bearer = "synthetic-bearer-canary-1234567890";
+    const password = "synthetic-password-canary-1234567890";
+    const queryKey = "synthetic-query-canary-1234567890";
+    const { logged } = record();
+    const handlers = buildDiagnosticsHandlers(
+      (event, detail) => logged.push({ event, detail }),
+      () => undefined
+    );
+
+    handlers.onUnhandledRejection(new Error(
+      `Authorization: Bearer ${bearer} url=https://user:${password}@rpc.invalid/path?apiKey=${queryKey} private_key=${privateKey}`
+    ));
+
+    const output = JSON.stringify(logged);
+    for (const canary of [privateKey, bearer, password, queryKey]) expect(output).not.toContain(canary);
+    expect(output).toContain("https://rpc.invalid");
+    expect(logged[0]?.detail.memory).toMatchObject({ rssMb: expect.any(Number) });
+  });
+
   test("records signals and exits zero", () => {
     const { logged, exits } = record();
     const handlers = buildDiagnosticsHandlers(

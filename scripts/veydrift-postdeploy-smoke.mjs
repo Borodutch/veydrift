@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { keccak256 } from "viem";
 
 import { receiptActivatesImplementation } from "./veydrift-upgrade-receipt.mjs";
+import { publicDiagnosticUrl, safeDiagnosticText, sanitizeDiagnosticValue } from "./veydrift-safe-diagnostics.mjs";
 
 const eip1967ImplementationSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const gamePausedSelector = "0xc3de1ab9";
@@ -201,13 +202,13 @@ await checkRuntimeConfigStress(runtimeStressEndpoints());
 
 const result = {
   ok: failures.length === 0,
-  apiUrl,
+  apiUrl: publicDiagnosticUrl(apiUrl),
   wallet: wallet ?? null,
   evidence,
   failures
 };
 
-process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify(sanitizeDiagnosticValue(result), null, 2)}\n`);
 if (failures.length > 0) {
   process.exit(1);
 }
@@ -468,7 +469,7 @@ function expect(condition, message) {
 }
 
 function fail(message) {
-  failures.push(message);
+  failures.push(safeDiagnosticText(message));
 }
 
 function eqAddress(actual, expected) {
@@ -505,17 +506,17 @@ function readManifest(path) {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch (error) {
-    console.error(`Could not read deployment manifest ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(safeDiagnosticText(`Could not read deployment manifest ${path}: ${error instanceof Error ? error.message : String(error)}`));
     process.exit(1);
   }
 }
 
 function usage(message) {
-  console.error(
+  console.error(safeDiagnosticText(
     `${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] ` +
       `[--api-url <url>] [--wallet <0x...>] [--timeout-ms 6000] [--runtime-stress-rounds 12] ` +
       `[--runtime-stress-p95-ms 500] [--runtime-stress-timeout-ms 6000] ` +
       `[--rpc-url <url> --referral-signer <0x...> --referral-start-price-wei <wei>]`
-  );
+  ));
   process.exit(1);
 }

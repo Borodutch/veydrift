@@ -10,6 +10,7 @@ import {
   technologyIds
 } from "./contractStateSchema";
 import type { FleetDefenseUnitCount } from "./fleetDefenseParity";
+import { safeDiagnosticText } from "./safeDiagnostics";
 import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
@@ -5193,7 +5194,7 @@ export class SettlementIndexer {
     if (!this.targetedHealPromise) {
       this.targetedHealPromise = this.drainTargetedHealQueue()
         .catch((error) => {
-          console.error("Veydrift targeted canonical heal failed", error);
+          console.error("Veydrift targeted canonical heal failed", safeDiagnosticText(error));
         })
         .finally(() => {
           this.targetedHealPromise = null;
@@ -5392,7 +5393,7 @@ export class SettlementIndexer {
     this.currentStateHealPromise = this.seedCurrentFleetMissionState(normalizedRunId)
       .catch((error) => {
         this.recordReconciliationError(error);
-        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
+        this.setMetadata("lastCanonicalFleetMissionSyncError", safeDiagnosticText(error));
         throw error;
       })
       .finally(() => {
@@ -5415,7 +5416,7 @@ export class SettlementIndexer {
     this.currentStateHealPromise = this.restoreFleetMissionArchive(normalizedRunId)
       .catch((error) => {
         this.recordReconciliationError(error);
-        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
+        this.setMetadata("lastCanonicalFleetMissionSyncError", safeDiagnosticText(error));
         throw error;
       })
       .finally(() => {
@@ -12545,7 +12546,7 @@ export class SettlementIndexer {
   }
 
   private recordReconciliationError(error: unknown): void {
-    this.setMetadata("lastReconciliationError", error instanceof Error ? error.message : String(error));
+    this.setMetadata("lastReconciliationError", safeDiagnosticText(error));
   }
 
   private setMetadata(key: string, value: string, options: { invalidateSnapshot?: boolean } = {}): void {

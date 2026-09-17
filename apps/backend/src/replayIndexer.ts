@@ -1,6 +1,7 @@
 import { loadBackendConfig } from "./config";
 import { VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 type ReplayArgs = {
   allianceStateSeed: boolean;
@@ -136,6 +137,6 @@ function parseArgs(args: string[]): ReplayArgs {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(safeDiagnosticText(error));
   process.exit(1);
 });

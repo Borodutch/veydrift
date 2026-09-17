@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
 
+import { publicDiagnosticUrl, safeDiagnosticText } from "./veydrift-safe-diagnostics.mjs";
+
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const options = parseArgs(process.argv.slice(2));
 const manifestPath = options.manifest ?? usage("Missing --manifest <file>.");
@@ -46,7 +48,13 @@ if (options["frontend-env-out"]) {
 }
 
 if (!options["backend-env-out"] && !options["frontend-env-out"]) {
-  process.stdout.write(JSON.stringify({ backendEnv, frontendEnv }, null, 2));
+  process.stdout.write(JSON.stringify({
+    backendEnv,
+    frontendEnv: {
+      ...frontendEnv,
+      VITE_VEYDRIFT_API_URL: publicDiagnosticUrl(frontendEnv.VITE_VEYDRIFT_API_URL)
+    }
+  }, null, 2));
   process.stdout.write("\n");
 }
 
@@ -119,6 +127,6 @@ function usage(message) {
 }
 
 function fail(message) {
-  console.error(message);
+  console.error(safeDiagnosticText(message));
   process.exit(1);
 }

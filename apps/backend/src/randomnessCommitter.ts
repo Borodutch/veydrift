@@ -25,6 +25,7 @@ import {
 } from "./randomness";
 import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 /**
  * Minimal RandomnessEngine ABI: the commit-reveal surface the backend fulfiller drives. Keeping it
@@ -383,7 +384,7 @@ export type RandomnessCommitterOptions = {
 
 const consoleLogger: RandomnessCommitterLogger = {
   warn: (message) => console.warn(message),
-  error: (message, error) => console.error(message, error)
+  error: (message, error) => console.error(message, safeDiagnosticText(error))
 };
 
 const defaultCommitIntervalMs = 1_000;
@@ -507,7 +508,7 @@ export class RandomnessCommitterService {
       this.activeAlerts = nextAlerts;
       this.lastError = null;
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
+      this.lastError = safeDiagnosticText(error);
       if (this.readinessSnapshotEnabled) this.persistReadiness(null, this.lastError);
       this.logger.error("[randomness-committer] tick failed", error);
     } finally {

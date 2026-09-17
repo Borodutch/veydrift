@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { encodeAbiParameters, isHex, keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { loadBackendConfig } from "./config";
+import { safeDiagnosticText } from "./safeDiagnostics";
 import {
   VeydriftGameReader,
   type Address,
@@ -768,7 +769,11 @@ const missionShipKeyIds: Record<string, number> = {
 
 if (import.meta.main) {
   main().catch((error) => {
-    console.error(error);
+    reportMigrationSnapshotFailure(error);
     process.exit(1);
   });
+}
+
+export function reportMigrationSnapshotFailure(error: unknown): void {
+  console.error(safeDiagnosticText(error));
 }
