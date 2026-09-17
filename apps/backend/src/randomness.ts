@@ -176,6 +176,8 @@ export type RandomnessCommitmentRecord = {
   word: string;
   committedAtBlock: number | null;
   createdAt: string;
+  /** Persisted before reveal so finalized cleanup can resume after candidate discovery moves on. */
+  requestId?: string;
 };
 
 /**
@@ -379,15 +381,30 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
         created_at TEXT NOT NULL
       );
     `);
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const columns = this.database.query("PRAGMA table_info(randomness_commitments)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "request_id")) {
+        this.database.exec("ALTER TABLE randomness_commitments ADD COLUMN request_id TEXT;");
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
     this.migrateLegacyFile(legacyFilePath);
   }
 
   load(): RandomnessCommitmentRecord[] {
     return this.database.query(`
-      SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt
+      SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt,
+        request_id AS requestId
       FROM randomness_commitments
       ORDER BY created_at ASC, commitment ASC
-    `).all() as RandomnessCommitmentRecord[];
+    `).all().map((row) => {
+      const { requestId, ...record } = row as Omit<RandomnessCommitmentRecord, "requestId"> & { requestId: string | null };
+      return requestId === null ? record : { ...record, requestId };
+    });
   }
 
   save(records: RandomnessCommitmentRecord[]): void {
@@ -401,11 +418,11 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
       const nextByCommitment = new Map(records.map((record) => [record.commitment, record]));
       this.database.query("DELETE FROM randomness_commitments").run();
       const insert = this.database.query(`
-        INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at, request_id)
+        VALUES (?, ?, ?, ?, ?)
       `);
       for (const record of records) {
-        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt);
+        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt, record.requestId ?? null);
       }
       const audit = this.database.query(`
         INSERT INTO randomness_commitment_audit (action, commitment, created_at)
@@ -509,6 +526,11 @@ export interface RandomnessCommitmentChainClient {
   computeCommitment(randomWord: bigint): Promise<string>;
   commitRandomnessBatch(commitments: string[]): Promise<string>;
   listPendingRequests(): Promise<RandomnessRequestEvent[]>;
+  /** Null means unknown/unfulfilled, never proof that a missing candidate is terminal. */
+  getRequestFulfillment(requestId: bigint, blockTag: "latest" | "finalized"): Promise<{
+    randomnessCommitment: string;
+    randomWord: string;
+  } | null>;
   fulfillRandomness(requestId: bigint, randomWord: bigint): Promise<string>;
 }
 
@@ -550,6 +572,7 @@ export class RandomnessCommitmentWorker {
   private readonly fulfilled: RandomnessFulfillmentRecord[] = [];
   private lastCommitError: string | null = null;
   private missingRevealMappings: string[] = [];
+  private cleanupCursor = 0;
 
   constructor(
     private readonly chainClient: RandomnessCommitmentChainClient,
@@ -585,8 +608,15 @@ export class RandomnessCommitmentWorker {
       this.reconcileInventoryRecords(records, inventory);
     }
 
-    const pending = await this.chainClient.listPendingRequests();
+    const discovered = await this.chainClient.listPendingRequests();
+    // Discovery omits fulfilled requests. Keep failed IDs until a direct engine read proves
+    // fulfillment, even if the index/tail no longer lists them.
+    const pending = [...new Map([
+      ...this.failures.map((request) => [request.requestId, request] as const),
+      ...discovered.map((request) => [request.requestId, request] as const)
+    ]).values()];
     const stillPending = await this.revealConsumedCommitments(pending, records);
+    await this.pruneFinalizedRecords(records);
 
     await this.store.save(records);
 
@@ -611,17 +641,27 @@ export class RandomnessCommitmentWorker {
 
     for (const request of pending) {
       try {
+        const record = records.find((entry) => entry.commitment === normalizeCommitment(request.randomnessCommitment ?? ""));
+        if (record && record.requestId !== request.requestId) {
+          record.requestId = request.requestId;
+          // A crash after broadcast must not orphan the association needed for finalized cleanup.
+          await this.store.save(records);
+        }
+        if (await this.reconcileFulfilledRequest(request.requestId)) continue;
         const word = this.resolveRevealWord(request, records);
         const txHash = await this.chainClient.fulfillRandomness(BigInt(request.requestId), word);
-        this.fulfilled.push({
+        if (!this.fulfilled.some((entry) => entry.requestId === request.requestId)) this.fulfilled.push({
           ...request,
           fulfilledAt: this.now().toISOString(),
           randomWord: word.toString(),
           transactionHash: txHash
         });
-        this.clearFailure(request.requestId);
-        this.dropRecord(records, request.randomnessCommitment);
+        // A receipt (including one reused by the coordinator) is not terminal proof.
+        if (!await this.reconcileFulfilledRequest(request.requestId)) stillPending.push(request);
       } catch (error) {
+        // A duplicate/retry may have won between read and write. Revert text alone is not proof;
+        // failed RPC reads must preserve the failure and durable reveal secret too.
+        if (await this.reconcileFulfilledRequest(request.requestId).catch(() => false)) continue;
         stillPending.push(request);
         this.upsertFailure({
           ...request,
@@ -632,6 +672,32 @@ export class RandomnessCommitmentWorker {
     }
 
     return stillPending;
+  }
+
+  private async reconcileFulfilledRequest(requestId: string): Promise<boolean> {
+    if (!await this.chainClient.getRequestFulfillment(BigInt(requestId), "latest")) return false;
+    this.clearFailure(requestId);
+    return true;
+  }
+
+  private async pruneFinalizedRecords(records: RandomnessCommitmentRecord[]): Promise<void> {
+    // Finality can lag latest by many minutes. Bound GC reads per tick; never downgrade to a
+    // shallow receipt/latest proof when the RPC cannot serve finalized state.
+    const associated = records.filter((entry) => entry.requestId !== undefined);
+    const batch = Array.from({ length: Math.min(8, associated.length) }, (_, index) =>
+      associated[(this.cleanupCursor + index) % associated.length]!
+    );
+    this.cleanupCursor = associated.length ? (this.cleanupCursor + batch.length) % associated.length : 0;
+    for (const record of batch) {
+      const fulfillment = await this.chainClient.getRequestFulfillment(
+        BigInt(record.requestId!), "finalized"
+      ).catch(() => null);
+      if (fulfillment
+        && normalizeCommitment(fulfillment.randomnessCommitment) === record.commitment
+        && fulfillment.randomWord === record.word) {
+        this.dropRecord(records, record.commitment);
+      }
+    }
   }
 
   private upsertFailure(failure: RandomnessFailureRecord): void {
@@ -793,11 +859,14 @@ export class RandomnessCommitmentWorker {
           ": " +
           lastFailure.error
       );
-      if (lastFailure.error.includes("no tracked random word")) {
+      if (this.failures.some((failure) => failure.error.includes("no tracked random word"))) {
         readinessReasons.push(
           "A required randomness reveal mapping is unavailable. New attacks are temporarily paused."
         );
       }
+      readinessReasons.push(
+        "A randomness fulfillment has not been confirmed. New attacks are temporarily paused."
+      );
     }
 
     return {

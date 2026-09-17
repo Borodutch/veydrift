@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +124,11 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
   block = 1;
   inventory: RandomnessCommitmentInventory["commitments"] = [];
   failCommit = false;
+  staleFulfillmentReads = false;
+  finalized = true;
+  fulfillmentReadError = false;
+  fulfillError: string | null = null;
+  fulfillCalls = 0;
   commits: string[] = [];
   private readonly requests = new Map<
     string,
@@ -192,7 +198,18 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
       }));
   }
 
+  async getRequestFulfillment(requestId: bigint, blockTag: "latest" | "finalized") {
+    if (this.fulfillmentReadError) throw new Error("request RPC unavailable");
+    if (this.staleFulfillmentReads || (blockTag === "finalized" && !this.finalized)) return null;
+    const request = this.requests.get(requestId.toString());
+    return request?.fulfilled && request.revealedWord
+      ? { randomnessCommitment: request.commitment, randomWord: request.revealedWord.toString() }
+      : null;
+  }
+
   async fulfillRandomness(requestId: bigint, randomWord: bigint): Promise<string> {
+    this.fulfillCalls += 1;
+    if (this.fulfillError) throw new Error(this.fulfillError);
     const request = this.requests.get(requestId.toString());
     if (!request) throw new Error("UnknownRequest");
     if (request.fulfilled) throw new Error("AlreadyFulfilled");
@@ -396,6 +413,248 @@ describe("Randomness commitment worker", () => {
     const repeated = await worker.tick();
     expect(repeated.failed).toBe(1);
     expect(worker.failureHistory()).toHaveLength(1);
+  });
+
+  test("clears the receipt -> stale pending -> missing-word failure after authoritative fulfillment", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    let word = 100n;
+    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => word++, targetCommitments: 1 });
+    await worker.tick();
+    engine.block++;
+    engine.consume("42", 1_000);
+    const stalePending = await engine.listPendingRequests();
+    engine.listPendingRequests = async () => stalePending;
+    engine.staleFulfillmentReads = true;
+    await worker.tick(); // successful receipt, but neither latest nor finalized proves completion
+    expect(engine.requestFulfilledWith("42")).toBe(100n);
+    expect(store.load().find((record) => record.word === "100")?.requestId).toBe("42");
+
+    // Model the legacy production deletion; the repaired worker above deliberately retains it.
+    store.save(store.load().filter((record) => record.word !== "100"));
+    engine.block++;
+    let status = await worker.tick();
+    expect(status.failed).toBe(1);
+    expect(status.readinessReasons.length).toBeGreaterThan(0);
+    expect(worker.failureHistory()[0]?.error).toContain("no tracked random word");
+    expect(engine.fulfillCalls).toBe(1);
+
+    // Discovery stops mentioning the ID, so failures must be reconciled independently.
+    engine.listPendingRequests = async () => [];
+    engine.staleFulfillmentReads = false;
+    status = await worker.tick();
+    expect(status.failed).toBe(0);
+    expect(status.pendingRequests).toBe(0);
+    expect(status.readinessReasons).toEqual([]);
+    expect(worker.failureHistory()).toEqual([]);
+    expect(engine.fulfillCalls).toBe(1);
+    expect((await worker.tick()).failed).toBe(0);
+  });
+
+  for (const kind of ["file", "sqlite"] as const) {
+    test(`retains receipt-only secrets across ${kind} restart and prunes only matching finalized state`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "vey-terminal-restart-"));
+      const path = join(dir, kind === "sqlite" ? "commitments.sqlite" : "commitments.json");
+      const openStore = () => kind === "sqlite"
+        ? new SqliteRandomnessCommitmentStore(path)
+        : new FileRandomnessCommitmentStore(path);
+      try {
+        const engine = new FakeRandomnessEngine();
+        engine.finalized = false;
+        let word = 100n;
+        const options = { now, randomWord: () => word++, targetCommitments: 1 };
+        const before = new RandomnessCommitmentWorker(engine, openStore(), options);
+        await before.tick();
+        engine.block++;
+        engine.consume("42", 1_000);
+        const fulfill = engine.fulfillRandomness.bind(engine);
+        engine.fulfillRandomness = async (id, value) => {
+          expect(openStore().load().find((record) => record.word === "100")?.requestId).toBe("42");
+          return fulfill(id, value);
+        };
+        await before.tick();
+        expect(openStore().load().find((record) => record.word === "100")?.requestId).toBe("42");
+
+        const after = new RandomnessCommitmentWorker(engine, openStore(), options);
+        engine.block++;
+        await after.tick(); // no pending candidates, cleanup must use durable requestId
+        expect(openStore().load().some((record) => record.word === "100")).toBe(true);
+        engine.fulfillmentReadError = true;
+        await after.tick(); // unavailable finalized RPC must not delete or require a new reveal
+        expect(openStore().load().some((record) => record.word === "100")).toBe(true);
+        engine.fulfillmentReadError = false;
+        engine.finalized = true;
+        const status = await after.tick();
+        expect(openStore().load().some((record) => record.word === "100")).toBe(false);
+        expect(status.failed).toBe(0);
+        expect(status.readinessReasons).toEqual([]);
+        expect(engine.fulfillCalls).toBe(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("retries genuine failures, never clears on candidate absence or failed proof reads", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    let word = 100n;
+    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => word++, targetCommitments: 1 });
+    await worker.tick();
+    engine.block++;
+    engine.consume("42", 1_000);
+    engine.fulfillError = "oracle wallet has no gas";
+    expect((await worker.tick()).failed).toBe(1);
+    engine.block++;
+    engine.listPendingRequests = async () => [];
+    let status = await worker.tick();
+    expect(status.failed).toBe(1);
+    expect(status.pendingRequests).toBe(1);
+    expect(status.readinessReasons.length).toBeGreaterThan(0);
+    expect(engine.fulfillCalls).toBe(2);
+    engine.fulfillmentReadError = true;
+    expect((await worker.tick()).failed).toBe(1);
+    expect(store.load().some((record) => record.word === "100")).toBe(true);
+    expect(engine.fulfillCalls).toBe(2);
+    engine.fulfillmentReadError = false;
+    engine.fulfillError = null;
+    status = await worker.tick();
+    expect(engine.requestFulfilledWith("42")).toBe(100n);
+    expect(status.failed).toBe(0);
+    expect(status.readinessReasons).toEqual([]);
+  });
+
+  test("clears only proven terminal failures while a sibling missing-word request stays unhealthy", async () => {
+    const engine = new FakeRandomnessEngine();
+    engine.block = 5;
+    engine.inventory = [
+      { commitment: fakeCommitment(100n), committedAtBlock: 1 },
+      { commitment: fakeCommitment(200n), committedAtBlock: 1 }
+    ];
+    engine.consume("42", 1_000);
+    engine.consume("43", 1_000);
+    const worker = new RandomnessCommitmentWorker(engine, new InMemoryRandomnessCommitmentStore(), {
+      now, randomWord: () => 900n, targetCommitments: 1
+    });
+    expect((await worker.tick()).failed).toBe(2);
+    await engine.fulfillRandomness(42n, 100n);
+    engine.block++;
+    engine.listPendingRequests = async () => [];
+    const status = await worker.tick();
+    expect(status.failed).toBe(1);
+    expect(status.pendingRequests).toBe(1);
+    expect(status.readinessReasons.length).toBeGreaterThan(0);
+    expect(worker.failureHistory().map((failure) => failure.requestId)).toEqual(["43"]);
+    expect(engine.requestFulfilledWith("43")).toBeUndefined();
+  });
+
+  test("a restarted worker reconstructs genuine failure and can retry its durable word", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vey-failure-restart-"));
+    const path = join(dir, "commitments.sqlite");
+    try {
+      const engine = new FakeRandomnessEngine();
+      let word = 100n;
+      const options = { now, randomWord: () => word++, targetCommitments: 1 };
+      const before = new RandomnessCommitmentWorker(engine, new SqliteRandomnessCommitmentStore(path), options);
+      await before.tick();
+      engine.block++;
+      engine.consume("42", 1_000);
+      engine.fulfillError = "oracle wallet has no gas";
+      expect((await before.tick()).failed).toBe(1);
+      engine.block++;
+      const after = new RandomnessCommitmentWorker(engine, new SqliteRandomnessCommitmentStore(path), options);
+      expect((await after.tick()).failed).toBe(1);
+      expect(after.failureHistory()[0]?.error).toBe("oracle wallet has no gas");
+      expect(new SqliteRandomnessCommitmentStore(path).load().some((record) => record.word === "100")).toBe(true);
+      engine.fulfillError = null;
+      const status = await after.tick();
+      expect(status.failed).toBe(0);
+      expect(status.readinessReasons).toEqual([]);
+      expect(engine.requestFulfilledWith("42")).toBe(100n);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("treats an AlreadyFulfilled race as success only with authoritative proof", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    let word = 100n;
+    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => word++, targetCommitments: 1 });
+    await worker.tick();
+    engine.block++;
+    engine.consume("42", 1_000);
+    const fulfill = engine.fulfillRandomness.bind(engine);
+    engine.fulfillRandomness = async (id, value) => {
+      await fulfill(id, value);
+      throw new Error("AlreadyFulfilled");
+    };
+    expect((await worker.tick()).failed).toBe(0);
+    expect(store.load().some((record) => record.word === "100")).toBe(false);
+    expect(engine.fulfillCalls).toBe(1);
+  });
+
+  test("retains secrets and failure for unproven AlreadyFulfilled and deduplicates receipt retries", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    let word = 100n;
+    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => word++, targetCommitments: 1 });
+    await worker.tick();
+    engine.block++;
+    engine.consume("42", 1_000);
+    engine.fulfillError = "AlreadyFulfilled";
+    expect((await worker.tick()).failed).toBe(1);
+    expect(store.load().some((record) => record.word === "100")).toBe(true);
+    engine.fulfillRandomness = async () => "0xcached-receipt";
+    expect((await worker.tick()).failed).toBe(1);
+    expect((await worker.tick()).failed).toBe(1);
+    expect(worker.fulfillmentHistory()).toHaveLength(1);
+    expect(store.load().some((record) => record.word === "100")).toBe(true);
+  });
+
+  test("does not prune mismatched finalized proofs and does not starve later cleanup candidates", async () => {
+    const engine = new FakeRandomnessEngine();
+    const initial = Array.from({ length: 10 }, (_, index) => ({
+      commitment: fakeCommitment(BigInt(index + 100)), word: String(index + 100),
+      committedAtBlock: 1, createdAt: now().toISOString(), requestId: String(index + 1)
+    }));
+    const store = new InMemoryRandomnessCommitmentStore(initial);
+    const reads: bigint[] = [];
+    engine.getRequestFulfillment = async (id) => {
+      reads.push(id);
+      if (id === 10n) return { randomnessCommitment: fakeCommitment(109n), randomWord: "109" };
+      // Matching ID alone is insufficient: wrong word and/or commitment must not delete secrets.
+      return { randomnessCommitment: fakeCommitment(100n), randomWord: "999" };
+    };
+    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 900n, targetCommitments: 1 });
+    await worker.tick();
+    expect(reads).toHaveLength(8);
+    expect(store.load().filter((record) => record.requestId)).toHaveLength(10);
+    await worker.tick();
+    expect(reads).toHaveLength(16);
+    expect(store.load().filter((record) => record.requestId)).toHaveLength(9);
+    expect(store.load().some((record) => record.requestId === "10")).toBe(false);
+  });
+
+  test("migrates pre-association SQLite stores without losing secrets", () => {
+    const dir = mkdtempSync(join(tmpdir(), "vey-terminal-migration-"));
+    const path = join(dir, "commitments.sqlite");
+    try {
+      const db = new Database(path);
+      db.exec(`CREATE TABLE randomness_commitments (
+        commitment TEXT PRIMARY KEY, word TEXT NOT NULL, committed_at_block INTEGER, created_at TEXT NOT NULL
+      )`);
+      db.query("INSERT INTO randomness_commitments VALUES (?, ?, ?, ?)").run(fakeCommitment(100n), "100", 1, now().toISOString());
+      db.close();
+      const store = new SqliteRandomnessCommitmentStore(path);
+      const records = store.load();
+      expect(records).toEqual([{ commitment: fakeCommitment(100n), word: "100", committedAtBlock: 1, createdAt: now().toISOString() }]);
+      records[0]!.requestId = "42";
+      store.save(records);
+      expect(new SqliteRandomnessCommitmentStore(path).load()).toEqual(records);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("survives a real process restart via the file-backed store", async () => {

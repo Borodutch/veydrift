@@ -212,6 +212,7 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       chainId: this.chain.id,
       address: this.account.address,
       operationId: `randomness:fulfill:${requestId}`,
+      isOperationComplete: async () => Boolean(await this.getRequestFulfillment(requestId, "latest")),
       getTransactionCount: (blockTag) => this.publicClient.getTransactionCount({
         address: this.account.address,
         blockTag
@@ -246,6 +247,23 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       }),
       confirm: (hash) => this.confirm(hash)
     });
+  }
+
+  async getRequestFulfillment(requestId: bigint, blockTag: "latest" | "finalized") {
+    const request = await this.publicClient.readContract({
+      abi: randomnessEngineAbi,
+      address: this.engineAddress,
+      functionName: "request",
+      args: [requestId],
+      blockTag
+    });
+    if (request.requester === zeroAddress || request.fulfilledAt === 0n || request.randomWord === 0n) {
+      return null;
+    }
+    return {
+      randomnessCommitment: request.randomnessCommitment,
+      randomWord: request.randomWord.toString()
+    };
   }
 
   async listPendingRequests(): Promise<RandomnessRequestEvent[]> {
