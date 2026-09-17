@@ -12,6 +12,7 @@ const queryKey = "synthetic-query-canary-1234567890";
 const opaque = "synthetic-opaque-canary-1234567890";
 const canaries = [privateKey, bearer, password, queryKey, opaque];
 const address = (digit) => `0x${digit.repeat(40)}`;
+const publicTransactionHash = `0x${"cd".repeat(32)}`;
 
 function assertNoCanaries(value) {
   const output = typeof value === "string" ? value : JSON.stringify(value);
@@ -26,12 +27,21 @@ test("sanitizes nested config, headers, private keys, URLs, and truncation", () 
     releasePrivateKey: privateKey,
     deploymentSigningKey: password,
     providerApiKey: queryKey,
+    clientSecretValue: opaque,
+    requestHeaders: { customSigningMaterial: opaque },
+    serviceConfig: { value: opaque },
+    hash: privateKey,
+    transactionHash: publicTransactionHash,
     endpoint: `https://user:${password}@rpc.invalid/path?apiKey=${queryKey}`
   });
   assertNoCanaries(output);
   assert.equal(output.status, "running");
   assert.equal(output.Environment, "[redacted]");
   assert.equal(output.config, "[redacted]");
+  assert.equal(output.requestHeaders, "[redacted]");
+  assert.equal(output.serviceConfig, "[redacted]");
+  assert.equal(output.hash, "[redacted]");
+  assert.equal(output.transactionHash, publicTransactionHash);
   assert.equal(output.endpoint, "https://rpc.invalid");
 
   const truncated = safeDiagnosticText(
@@ -45,7 +55,8 @@ test("sanitizes nested config, headers, private keys, URLs, and truncation", () 
 test("preflight emits allowlisted snapshots and no response bodies", async (context) => {
   const server = createServer(async (request, response) => {
     let body;
-    if (request.url === "/health") {
+    const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    if (pathname === "/health") {
       body = {
         ok: true,
         configured: true,
@@ -54,7 +65,7 @@ test("preflight emits allowlisted snapshots and no response bodies", async (cont
         indexer: { indexedState: "healthy", safeToServeIndexedState: true, fromBlock: "1", latestIndexedBlock: "2" },
         environment: { SIGNING_PRIVATE_KEY: privateKey, opaque }
       };
-    } else if (request.url === "/runtime-config") {
+    } else if (pathname === "/runtime-config") {
       body = {
         gameContractAddress: address("1"),
         contractAddress: address("1"),
@@ -65,7 +76,7 @@ test("preflight emits allowlisted snapshots and no response bodies", async (cont
         featureSupport: { researchEndpoint: true },
         config: { authorization: `Bearer ${bearer}`, opaque }
       };
-    } else if (request.url === "/debug/indexer") {
+    } else if (pathname === "/debug/indexer") {
       body = { indexedState: "healthy", safeToServeIndexedState: true, indexedPlanets: 0, environment: { secret: opaque } };
     } else {
       const chunks = [];
@@ -93,6 +104,7 @@ test("preflight emits allowlisted snapshots and no response bodies", async (cont
   assert.equal(report.ok, true);
   assert.equal(report.backendSnapshots.health.diagnostics["backend.worker.role"], "writer");
   assert.equal(report.backendSnapshots.health.diagnostics["backend.build.gitSha"], "0123456789abcdef0123456789abcdef01234567");
+  assert.equal(report.backendSnapshots.runtime.diagnostics.gameContractAddress, address("1"));
   assert.equal(Object.hasOwn(report.backendSnapshots.health, "body"), false);
   assert.equal(JSON.stringify(report.backendSnapshots).includes("environment"), false);
   assert.equal(
@@ -101,6 +113,30 @@ test("preflight emits allowlisted snapshots and no response bodies", async (cont
     ),
     false
   );
+
+  const readiness = await run(process.execPath, [
+    "scripts/veydrift-redeploy-readiness-probe.mjs",
+    "--api-url", origin,
+    "--duration-seconds", "1",
+    "--interval-ms", "1000",
+    "--timeout-ms", "500",
+    "--endpoint", `/health?apiKey=${queryKey}`
+  ]);
+  assert.equal(readiness.code, 0, readiness.stderr || readiness.stdout);
+  assertNoCanaries(readiness.stdout + readiness.stderr);
+  assert.match(readiness.stdout, /\[redacted\]/);
+});
+
+test("referral migration fatal output sanitizes before stderr", async () => {
+  const result = await run(process.execPath, [
+    "scripts/veydrift-referral-migration-manifest.mjs",
+    "--rpc-url", `https://user:${password}@rpc.invalid/path?apiKey=${queryKey}`,
+    "--input", `/tmp/token=${bearer}-${privateKey}.json`,
+    "--out", "/tmp/unused-referral-manifest.json"
+  ]);
+  assert.equal(result.code, 1);
+  assertNoCanaries(result.stdout + result.stderr);
+  assert.match(result.stderr, /ENOENT/);
 });
 
 function run(command, args) {

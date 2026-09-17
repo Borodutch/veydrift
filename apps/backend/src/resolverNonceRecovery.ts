@@ -3,6 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import { loadBackendConfig } from "./config";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 type RecoveryArguments = {
   fromNonce: number;
@@ -86,7 +87,13 @@ function parseArguments(args: string[]): RecoveryArguments {
   return { fromNonce, throughNonce, broadcast: args.includes("--broadcast") };
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+export function reportResolverNonceRecoveryFailure(error: unknown): void {
+  console.error(safeDiagnosticText(error));
+}
+
+if (import.meta.main) {
+  main().catch((error) => {
+    reportResolverNonceRecoveryFailure(error);
+    process.exitCode = 1;
+  });
+}

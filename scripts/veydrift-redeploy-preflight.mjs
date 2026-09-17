@@ -99,7 +99,7 @@ const backendSnapshots = {
     "chain.chainId", "chain.indexFromBlock", "chain.gameContractConfigured", "chain.resourceTokenAddressesConfigured",
     "chain.allianceContractConfigured", "chain.moonContractConfigured", "chain.randomnessEngineConfigured"
   ]),
-  runtimeConfig: snapshotOf(runtime, [
+  runtime: snapshotOf(runtime, [
     "gameContractAddress", "contractAddress", "allianceContractAddress", "moonContractAddress",
     "randomnessEngineAddress", "referralSystemAddress", "referralSignerAddress", "network", "rpcProvider",
     "featureSupport.researchEndpoint", "featureSupport.highscoresEndpoint", "featureSupport.referralsConfigured"

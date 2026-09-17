@@ -8,6 +8,7 @@ const password = "synthetic-password-canary-1234567890";
 const queryKey = "synthetic-query-canary-1234567890";
 const opaque = "synthetic-opaque-canary-1234567890";
 const canaries = [privateKey, bearer, password, queryKey, opaque];
+const publicTransactionHash = `0x${"cd".repeat(32)}`;
 
 function expectNoCanaries(value: unknown): void {
   const output = JSON.stringify(value);
@@ -27,11 +28,22 @@ describe("safe diagnostics", () => {
       releasePrivateKey: privateKey,
       deploymentSigningKey: password,
       providerApiKey: queryKey,
+      clientSecretValue: opaque,
+      requestHeaders: { customSigningMaterial: opaque },
+      serviceConfig: { value: opaque },
+      hash: privateKey,
+      transactionHash: publicTransactionHash,
       endpoint: `https://user:${password}@rpc.invalid/v2/path?apiKey=${queryKey}`
     });
 
     expectNoCanaries(output);
     expect(output).toMatchObject({ status: "running", Environment: "[redacted]", config: "[redacted]" });
+    expect(output).toMatchObject({
+      requestHeaders: "[redacted]",
+      serviceConfig: "[redacted]",
+      hash: "[redacted]",
+      transactionHash: publicTransactionHash
+    });
     expect(output).toMatchObject({ endpoint: "https://rpc.invalid" });
   });
 

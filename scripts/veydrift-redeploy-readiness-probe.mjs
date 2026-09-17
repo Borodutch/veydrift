@@ -35,7 +35,7 @@ while (Date.now() < deadline) {
 }
 
 const summary = summarize(samples);
-process.stdout.write(`${JSON.stringify({
+const safeSummary = sanitizeDiagnosticValue({
   ok: summary.longestUnhealthyWindowMs < 1_000,
   apiUrl: publicDiagnosticUrl(apiUrl),
   endpoints,
@@ -45,7 +45,8 @@ process.stdout.write(`${JSON.stringify({
   intervalMs,
   timeoutMs,
   summary
-}, null, 2)}\n`);
+});
+process.stdout.write(`${JSON.stringify(safeSummary, null, 2)}\n`);
 
 if (summary.longestUnhealthyWindowMs >= 1_000) {
   process.exit(1);

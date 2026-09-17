@@ -1,11 +1,12 @@
 const redacted = "[redacted]";
 const sensitiveKey = /(?:^|[_\-\s])(?:authorization|auth|cookie|credential|password|passwd|secret|token|api[_\-]?key|private[_\-]?key|signing[_\-]?key|mnemonic|seed)(?:$|[_\-\s])/i;
 const opaqueContainers = new Set(["config", "configuration", "env", "environment", "header", "headers", "secret", "secrets", "variable", "variables"]);
-const publicHashKeys = new Set(["commithash", "gitsha", "hash", "runtimecodehash", "transactionhash", "upgradetransactionhash"]);
-const normalizedSensitiveKeySuffixes = [
+const publicHashKeys = new Set(["commithash", "gitsha", "runtimecodehash", "transactionhash", "upgradetransactionhash"]);
+const normalizedSensitiveKeyTokens = [
   "authorization", "cookie", "credential", "credentials", "password", "passwd", "secret", "token",
   "apikey", "privatekey", "signingkey", "mnemonic", "seed"
 ];
+const normalizedOpaqueContainerTokens = ["configuration", "environment", "config", "header", "variables"];
 
 function normalizedKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -13,7 +14,16 @@ function normalizedKey(key: string): string {
 
 function isSensitiveKey(key: string): boolean {
   const normalized = normalizedKey(key);
-  return sensitiveKey.test(key) || normalizedSensitiveKeySuffixes.some((suffix) => normalized.endsWith(suffix));
+  return sensitiveKey.test(key) || normalizedSensitiveKeyTokens.some((token) => normalized.includes(token));
+}
+
+function isOpaqueContainerKey(key: string, value: unknown): boolean {
+  const normalized = normalizedKey(key);
+  return opaqueContainers.has(normalized) || (
+    value !== null
+    && typeof value === "object"
+    && normalizedOpaqueContainerTokens.some((token) => normalized.includes(token))
+  );
 }
 
 function publicUrl(value: string): string {
@@ -72,7 +82,7 @@ export function sanitizeDiagnosticValue(
         output["[truncated]"] = `${entries.length - index} more fields`;
         break;
       }
-      output[childKey] = isSensitiveKey(childKey) || opaqueContainers.has(normalizedKey(childKey))
+      output[childKey] = isSensitiveKey(childKey) || isOpaqueContainerKey(childKey, child)
         ? redacted
         : sanitizeDiagnosticValue(child, childKey, depth + 1, seen);
     }

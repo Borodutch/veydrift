@@ -2,6 +2,7 @@ import { loadBackendConfig, safeConfigSummary } from "./config";
 import type { ChainReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { emitObservabilityEvent } from "./observability";
+import { safeDiagnosticText, sanitizeDiagnosticValue } from "./safeDiagnostics";
 
 const materializerWorkerPath = new URL("./battleReportMaterializerWorker.ts", import.meta.url).pathname;
 
@@ -29,7 +30,7 @@ type MissionReportGeneratorSnapshot = {
   materializedCount: number;
 };
 
-class MissionReportGeneratorService {
+export class MissionReportGeneratorService {
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
@@ -84,8 +85,9 @@ class MissionReportGeneratorService {
       }
       this.lastError = null;
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
-      console.error("[mission-report-generator] tick failed", error);
+      const safeError = safeDiagnosticText(error);
+      this.lastError = safeError;
+      console.error("[mission-report-generator] tick failed", safeError);
     } finally {
       this.inFlight = false;
     }
@@ -120,8 +122,8 @@ class MissionReportGeneratorService {
       new Response(process.stderr).text(),
       process.exited
     ]);
-    if (stdout.trim()) console.info(stdout.trim());
-    if (stderr.trim()) console.error(stderr.trim());
+    emitSanitizedProcessOutput("info", stdout);
+    emitSanitizedProcessOutput("error", stderr);
     if (exitCode !== 0) {
       throw new Error(`battle report materializer worker exited with ${exitCode}`);
     }
@@ -129,6 +131,7 @@ class MissionReportGeneratorService {
   }
 }
 
+if (import.meta.main) {
 const loaded = loadBackendConfig();
 if (!loaded.config.indexDbPath) {
   console.error("[mission-report-generator] disabled: VEYDRIFT_INDEX_DB_PATH is required");
@@ -178,6 +181,7 @@ emitObservabilityEvent({
   message: `[mission-report-generator] listening on http://localhost:${port}`,
   port
 });
+}
 
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
@@ -190,6 +194,21 @@ function chunks<T>(items: T[], size: number): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+export function safeProcessOutput(output: string): string {
+  const text = output.trim();
+  if (!text) return "";
+  try {
+    return JSON.stringify(sanitizeDiagnosticValue(JSON.parse(text)));
+  } catch {
+    return text.split(/\r?\n/).map((line) => safeDiagnosticText(line)).join("\n");
+  }
+}
+
+export function emitSanitizedProcessOutput(level: "info" | "error", output: string): void {
+  const safeOutput = safeProcessOutput(output);
+  if (safeOutput) console[level](safeOutput);
 }
 
 function parsedMaterializedCount(output: string): number {
