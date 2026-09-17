@@ -12,6 +12,7 @@ import {
 import {
   abandonPlanetUnavailableLabel,
   displayHomeCoordinates,
+  homeWorldCoordinates,
   shouldShowAbandonPlanetButton,
   type PlanetActionState,
 } from "./PlayableMvpApp";
@@ -76,6 +77,25 @@ function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedP
 }
 
 describe("planet identity", () => {
+  test("home identity survives roster order, multiple colony selections, and partial hydration", () => {
+    const home = managedPlanet({ planetId: "83", galaxy: 8, system: 42, position: 15, isHomePlanet: true });
+    const first = managedPlanet({ planetId: "775", galaxy: 8, system: 43, position: 14 });
+    const second = managedPlanet({ planetId: "786", galaxy: 8, system: 42, position: 14 });
+    const settlement = { homePlanetId: "83", planet: home };
+    const expected = { galaxy: 8, system: 42, position: 15 };
+    for (const selected of [home, first, second, home]) {
+      const roster = [selected, ...[home, first, second].filter(planet => planet !== selected)];
+      expect(homeWorldCoordinates(settlement, roster)).toEqual(expected);
+      expect(homeWorldCoordinates(undefined, roster)).toEqual(expected);
+      // Even an accidentally selection-overlaid settlement cannot make a colony home.
+      expect(homeWorldCoordinates({ ...settlement, planet: selected }, roster)).toEqual(expected);
+    }
+    expect(homeWorldCoordinates(settlement, [])).toEqual(expected);
+    expect(homeWorldCoordinates(undefined, [first, second])).toBeUndefined();
+    expect(homeWorldCoordinates({ homePlanetId: "83", planet: first }, [first, second])).toBeUndefined();
+    expect(homeWorldCoordinates({ homePlanetId: null, planet: null }, [home])).toBeUndefined();
+  });
+
   test("uses one slot-aware art resolver instead of stale absolute-temperature archetypes", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 1,

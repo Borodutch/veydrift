@@ -129,6 +129,16 @@ publicSystems.get("1:2")?.planets.push(
   systemPayload(1, 2, 9, "Nearby Rival", unrelatedOwner, "nearby-rival", 4404, true).planets[0]!,
 );
 
+// A second colony in the home system exercises home badges independently of origin.
+if (fixtureParams.get("homeIdentityProbe") === "true") {
+  ownedPlanets.push(managedPlanet({
+    galaxy: 1, system: 2, position: 4, planetId: "103", name: "Owned Delta",
+  }));
+  publicSystems.get("1:2")!.planets.push(
+    systemPayload(1, 2, 4, "Owned Delta Public", account, "103", 3303, false).planets[0]!,
+  );
+}
+
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;
 const fixtureErrors: string[] = [];
@@ -349,6 +359,19 @@ globalThis.fetch = (async (input, init) => {
     });
   }
 
+  if (fixtureParams.get("homeIdentityProbe") === "true" && url.pathname.endsWith("/highscores")) {
+    const response = raidEligibilityHighscores();
+    response.rankings.total = [{
+      ...response.rankings.total[0]!, wallet: account, displayName: "Fixture Commander",
+      homePlanetId: "101", planetCount: ownedPlanets.length,
+      planets: ownedPlanets.map(planet => ({
+        ...response.rankings.total[0]!.planets[0]!, planetId: planet.planetId,
+        name: planet.name!, hasMoon: false,
+        coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      })),
+    }];
+    return Response.json(response);
+  }
   if (raidEligibilityProbe && url.pathname.endsWith("/highscores")) {
     return Response.json(raidEligibilityHighscores());
   }

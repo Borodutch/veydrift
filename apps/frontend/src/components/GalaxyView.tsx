@@ -167,6 +167,7 @@ interface Props {
   system: number;
   apiBaseUrl?: string | undefined;
   homeCoords?: Coordinates | undefined;
+  originCoords?: Coordinates | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
   ownedPlanets?: readonly Planet[] | undefined;
@@ -191,6 +192,7 @@ export function GalaxyView({
   system,
   apiBaseUrl = playableApiUrl,
   homeCoords,
+  originCoords = homeCoords,
   homePlanetId,
   homePlanet,
   ownedPlanets = [],
@@ -235,8 +237,8 @@ export function GalaxyView({
     [homePlanetOverride, ownedPlanetsInSystem, systemPlanets]
   );
   const protectionRequests = useMemo(
-    () => galaxyAttackProtectionRequests(planets, account, homeCoords),
-    [account, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planets],
+    () => galaxyAttackProtectionRequests(planets, account, originCoords),
+    [account, originCoords?.galaxy, originCoords?.position, originCoords?.system, planets],
   );
   const protectionRequestSignature = useMemo(
     () => galaxyAttackProtectionRequestSignature(protectionRequests),
@@ -391,6 +393,7 @@ export function GalaxyView({
                 <GalaxySlot
                   galaxy={galaxy}
                   isHome={isHome}
+                  isOrigin={planet ? sameCoordinates(originCoords, planet) : false}
                   key={pos}
                   account={account}
                   actionState={actionState}
@@ -639,6 +642,7 @@ function GalaxySlot({
   homeCoords,
   homePlanetId,
   isHome,
+  isOrigin,
   defenseState,
   shipyardState,
   onAction,
@@ -662,6 +666,7 @@ function GalaxySlot({
   homeCoords: Coordinates | undefined;
   homePlanetId: string | null | undefined;
   isHome: boolean;
+  isOrigin: boolean;
   defenseState: ChainDefenseState | null;
   shipyardState: ChainShipyardState | null;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
@@ -682,7 +687,7 @@ function GalaxySlot({
     account,
     attackProtection,
     homePlanetId,
-    isOrigin: isHome,
+    isOrigin,
     planet,
     defenseState,
     shipyardState,
