@@ -428,10 +428,11 @@ describe("Randomness commitment worker", () => {
     engine.staleFulfillmentReads = true;
     await worker.tick(); // successful receipt, but neither latest nor finalized proves completion
     expect(engine.requestFulfilledWith("42")).toBe(100n);
-    expect(store.load().find((record) => record.word === "100")?.requestId).toBe("42");
+    expect(store.loadReveals().find((entry) => entry.record?.word === "100")?.request.requestId).toBe("42");
 
-    // Model the legacy production deletion; the repaired worker above deliberately retains it.
+    // Model pre-journal production deletion; the repaired worker retains a second durable copy.
     store.save(store.load().filter((record) => record.word !== "100"));
+    store.saveReveals([]);
     engine.block++;
     let status = await worker.tick();
     expect(status.failed).toBe(1);
@@ -469,11 +470,11 @@ describe("Randomness commitment worker", () => {
         engine.consume("42", 1_000);
         const fulfill = engine.fulfillRandomness.bind(engine);
         engine.fulfillRandomness = async (id, value) => {
-          expect(openStore().load().find((record) => record.word === "100")?.requestId).toBe("42");
+          expect(openStore().loadReveals().find((entry) => entry.record?.word === "100")?.request.requestId).toBe("42");
           return fulfill(id, value);
         };
         await before.tick();
-        expect(openStore().load().find((record) => record.word === "100")?.requestId).toBe("42");
+        expect(openStore().loadReveals().find((entry) => entry.record?.word === "100")?.request.requestId).toBe("42");
 
         const after = new RandomnessCommitmentWorker(engine, openStore(), options);
         engine.block++;
@@ -494,6 +495,171 @@ describe("Randomness commitment worker", () => {
       }
     });
   }
+
+  for (const kind of ["file", "sqlite"] as const) {
+    test(`keeps cached receipts unhealthy and retryable without discovery across ${kind} restart`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "vey-unproven-receipt-"));
+      const path = join(dir, kind === "sqlite" ? "commitments.sqlite" : "commitments.json");
+      const openStore = () => kind === "sqlite"
+        ? new SqliteRandomnessCommitmentStore(path)
+        : new FileRandomnessCommitmentStore(path);
+      try {
+        const engine = new FakeRandomnessEngine();
+        let word = 100n;
+        const options = { now, randomWord: () => word++, targetCommitments: 2 };
+        const before = new RandomnessCommitmentWorker(engine, openStore(), options);
+        await before.tick();
+        engine.block++;
+        engine.consume("42", 1_000);
+        const actuallyFulfill = engine.fulfillRandomness.bind(engine);
+        const attempts: Array<{ id: bigint; word: bigint }> = [];
+        engine.fulfillRandomness = async (id, value) => {
+          attempts.push({ id, word: value });
+          return "0xcached-success-receipt";
+        };
+        const first = await before.tick();
+        expect(first.pendingRequests).toBe(1);
+        expect(first.failed).toBe(1);
+        expect(first.readinessReasons).toContain("A randomness fulfillment has not been confirmed. New attacks are temporarily paused.");
+        engine.listPendingRequests = async () => [];
+        const second = await before.tick();
+        expect(second.pendingRequests).toBe(1);
+        expect(second.failed).toBe(1);
+        expect(second.readinessReasons.length).toBeGreaterThan(0);
+        const after = new RandomnessCommitmentWorker(engine, openStore(), options);
+        const restarted = await after.tick();
+        expect(restarted.pendingRequests).toBe(1);
+        expect(restarted.failed).toBe(1);
+        expect(restarted.readinessReasons.length).toBeGreaterThan(0);
+        expect(attempts).toEqual(Array.from({ length: 3 }, () => ({ id: 42n, word: 100n })));
+        expect(openStore().load().some((record) => record.word === "100")).toBe(true);
+        await actuallyFulfill(42n, 100n);
+        const resolved = await after.tick();
+        expect(resolved.pendingRequests).toBe(0);
+        expect(resolved.failed).toBe(0);
+        expect(resolved.readinessReasons).toEqual([]);
+        expect(attempts).toHaveLength(3);
+        expect(openStore().load().some((record) => record.word === "100")).toBe(false);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const kind of ["file", "sqlite"] as const) {
+    test(`legacy ${kind} saves cannot erase journaled retries or words during overlapping owners`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "vey-legacy-overlap-"));
+      const path = join(dir, kind === "sqlite" ? "commitments.sqlite" : "commitments.json");
+      // Start with the exact old four-column schema; old writers never know about the new journal.
+      const legacyDb = kind === "sqlite" ? new Database(path) : undefined;
+      legacyDb?.exec(`CREATE TABLE randomness_commitments (
+        commitment TEXT PRIMARY KEY, word TEXT NOT NULL, committed_at_block INTEGER, created_at TEXT NOT NULL
+      )`);
+      const openStore = () => kind === "sqlite"
+        ? new SqliteRandomnessCommitmentStore(path)
+        : new FileRandomnessCommitmentStore(path);
+      const legacyOwner = openStore(); // lock/lease protocol is unchanged from 57d35fa6
+      const legacySave = (dropWord = false) => {
+        // Reproduce 57d35fa6 load + whole-table replacement, including receipt-based deletion.
+        const rows = legacyDb
+          ? legacyDb.query(`SELECT commitment, word, committed_at_block AS committedAtBlock,
+              created_at AS createdAt FROM randomness_commitments`).all() as ReturnType<InMemoryRandomnessCommitmentStore["load"]>
+          : new FileRandomnessCommitmentStore(path).load();
+        const records = dropWord ? rows.filter((record) => record.word !== "100") : rows;
+        if (legacyDb) {
+          legacyDb.exec("BEGIN IMMEDIATE;");
+          try {
+            legacyDb.query("DELETE FROM randomness_commitments").run();
+            const insert = legacyDb.query(`INSERT INTO randomness_commitments
+              (commitment, word, committed_at_block, created_at) VALUES (?, ?, ?, ?)`);
+            for (const record of records) insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt);
+            legacyDb.exec("COMMIT;");
+          } catch (error) {
+            legacyDb.exec("ROLLBACK;");
+            throw error;
+          }
+        } else {
+          new FileRandomnessCommitmentStore(path).save(records); // exact original primary-file save
+        }
+      };
+      try {
+        const engine = new FakeRandomnessEngine();
+        let word = 100n;
+        const options = { now, randomWord: () => word++, targetCommitments: 2 };
+        const before = new RandomnessCommitmentWorker(engine, openStore(), options);
+        await before.tick();
+        engine.block++;
+        engine.consume("42", 1_000);
+        const attempts: bigint[] = [];
+        engine.fulfillRandomness = async (_id, value) => { attempts.push(value); return "0xcached-receipt"; };
+        expect((await before.tick()).failed).toBe(1);
+        const journal = openStore().loadReveals();
+        expect(journal[0]?.record?.word).toBe("100");
+        await legacyOwner.withExclusiveLock(async () => legacySave());
+        expect(openStore().loadReveals()).toEqual(journal);
+        if (kind === "file") expect(statSync(path + ".reveals.json").mode & 0o777).toBe(0o600);
+
+        let entered!: () => void;
+        let release!: () => void;
+        const oldEntered = new Promise<void>((resolve) => { entered = resolve; });
+        const oldGate = new Promise<void>((resolve) => { release = resolve; });
+        const oldWrite = legacyOwner.withExclusiveLock(async () => {
+          entered();
+          await oldGate;
+          legacySave(true); // old receipt cleanup deletes the secret from its primary store
+          expect(openStore().load().some((record) => record.word === "100")).toBe(false);
+          expect(openStore().loadReveals()).toEqual(journal);
+        });
+        await oldEntered;
+        engine.listPendingRequests = async () => [];
+        const after = new RandomnessCommitmentWorker(engine, openStore(), options);
+        const newTick = after.tick(); // must wait for the old owner, then recover from journal
+        await Promise.resolve();
+        expect(attempts).toEqual([100n]);
+        release();
+        const [, status] = await Promise.all([oldWrite, newTick]);
+        expect(status.pendingRequests).toBe(1);
+        expect(status.failed).toBe(1);
+        expect(status.readinessReasons.length).toBeGreaterThan(0);
+        expect(attempts).toEqual([100n, 100n]);
+        expect(openStore().loadReveals()).toEqual(journal);
+        expect(openStore().load().some((record) => record.word === "100")).toBe(true);
+      } finally {
+        legacyDb?.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("missing-word failures survive restart and discovery loss without inventing a reveal", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vey-missing-word-restart-"));
+    const path = join(dir, "commitments.sqlite");
+    try {
+      const engine = new FakeRandomnessEngine();
+      engine.block = 5;
+      engine.pendingCommitment = fakeCommitment(100n);
+      engine.pendingCommitmentBlock = 1;
+      engine.consume("42", 1_000);
+      let word = 900n;
+      const options = { now, randomWord: () => word++, targetCommitments: 2 };
+      const before = new RandomnessCommitmentWorker(engine, new SqliteRandomnessCommitmentStore(path), options);
+      expect((await before.tick()).failed).toBe(1);
+      engine.block++;
+      engine.listPendingRequests = async () => [];
+      const after = new RandomnessCommitmentWorker(engine, new SqliteRandomnessCommitmentStore(path), options);
+      const status = await after.tick();
+      expect(status.pendingRequests).toBe(1);
+      expect(status.failed).toBe(1);
+      expect(status.readinessReasons.length).toBeGreaterThan(0);
+      expect(after.failureHistory()[0]?.error).toContain("no tracked random word");
+      expect(engine.fulfillCalls).toBe(0);
+      await engine.fulfillRandomness(42n, 100n);
+      expect((await after.tick()).failed).toBe(0);
+      expect(new SqliteRandomnessCommitmentStore(path).loadReveals()).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   test("retries genuine failures, never clears on candidate absence or failed proof reads", async () => {
     const engine = new FakeRandomnessEngine();
@@ -616,12 +782,15 @@ describe("Randomness commitment worker", () => {
     const engine = new FakeRandomnessEngine();
     const initial = Array.from({ length: 10 }, (_, index) => ({
       commitment: fakeCommitment(BigInt(index + 100)), word: String(index + 100),
-      committedAtBlock: 1, createdAt: now().toISOString(), requestId: String(index + 1)
+      committedAtBlock: 1, createdAt: now().toISOString()
     }));
     const store = new InMemoryRandomnessCommitmentStore(initial);
+    store.saveReveals(initial.map((record, index) => ({
+      request: { ...request, requestId: String(index + 1), randomnessCommitment: record.commitment }, record
+    })));
     const reads: bigint[] = [];
-    engine.getRequestFulfillment = async (id) => {
-      reads.push(id);
+    engine.getRequestFulfillment = async (id, blockTag) => {
+      if (blockTag === "finalized") reads.push(id);
       if (id === 10n) return { randomnessCommitment: fakeCommitment(109n), randomWord: "109" };
       // Matching ID alone is insufficient: wrong word and/or commitment must not delete secrets.
       return { randomnessCommitment: fakeCommitment(100n), randomWord: "999" };
@@ -629,14 +798,14 @@ describe("Randomness commitment worker", () => {
     const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 900n, targetCommitments: 1 });
     await worker.tick();
     expect(reads).toHaveLength(8);
-    expect(store.load().filter((record) => record.requestId)).toHaveLength(10);
+    expect(store.loadReveals()).toHaveLength(10);
     await worker.tick();
     expect(reads).toHaveLength(16);
-    expect(store.load().filter((record) => record.requestId)).toHaveLength(9);
-    expect(store.load().some((record) => record.requestId === "10")).toBe(false);
+    expect(store.loadReveals()).toHaveLength(9);
+    expect(store.loadReveals().some((entry) => entry.request.requestId === "10")).toBe(false);
   });
 
-  test("migrates pre-association SQLite stores without losing secrets", () => {
+  test("adds an independent reveal journal without changing the legacy four-column SQLite table", () => {
     const dir = mkdtempSync(join(tmpdir(), "vey-terminal-migration-"));
     const path = join(dir, "commitments.sqlite");
     try {
@@ -649,9 +818,14 @@ describe("Randomness commitment worker", () => {
       const store = new SqliteRandomnessCommitmentStore(path);
       const records = store.load();
       expect(records).toEqual([{ commitment: fakeCommitment(100n), word: "100", committedAtBlock: 1, createdAt: now().toISOString() }]);
-      records[0]!.requestId = "42";
-      store.save(records);
+      const reveals = [{ request: { ...request, randomnessCommitment: records[0]!.commitment }, record: records[0]! }];
+      store.saveReveals(reveals);
       expect(new SqliteRandomnessCommitmentStore(path).load()).toEqual(records);
+      expect(new SqliteRandomnessCommitmentStore(path).loadReveals()).toEqual(reveals);
+      const legacy = new Database(path);
+      expect((legacy.query("PRAGMA table_info(randomness_commitments)").all() as Array<{ name: string }>).map((column) => column.name))
+        .toEqual(["commitment", "word", "committed_at_block", "created_at"]);
+      legacy.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

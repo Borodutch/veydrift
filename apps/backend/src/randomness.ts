@@ -176,8 +176,12 @@ export type RandomnessCommitmentRecord = {
   word: string;
   committedAtBlock: number | null;
   createdAt: string;
-  /** Persisted before reveal so finalized cleanup can resume after candidate discovery moves on. */
-  requestId?: string;
+};
+
+/** Durable retry metadata and, when known, the secret protected from legacy commitment saves. */
+export type RandomnessPendingReveal = {
+  request: RandomnessRequestEvent;
+  record?: RandomnessCommitmentRecord;
 };
 
 /**
@@ -234,11 +238,14 @@ export function saveRandomnessReadinessSnapshot(
 export interface RandomnessCommitmentStore {
   load(): RandomnessCommitmentRecord[] | Promise<RandomnessCommitmentRecord[]>;
   save(records: RandomnessCommitmentRecord[]): void | Promise<void>;
+  loadReveals(): RandomnessPendingReveal[] | Promise<RandomnessPendingReveal[]>;
+  saveReveals(reveals: RandomnessPendingReveal[]): void | Promise<void>;
   withExclusiveLock?<T>(operation: () => Promise<T>): Promise<T>;
 }
 
 export class InMemoryRandomnessCommitmentStore implements RandomnessCommitmentStore {
   private records: RandomnessCommitmentRecord[];
+  private reveals: RandomnessPendingReveal[] = [];
 
   constructor(initial: RandomnessCommitmentRecord[] = []) {
     this.records = initial.map((record) => ({ ...record }));
@@ -250,6 +257,14 @@ export class InMemoryRandomnessCommitmentStore implements RandomnessCommitmentSt
 
   save(records: RandomnessCommitmentRecord[]): void {
     this.records = records.map((record) => ({ ...record }));
+  }
+
+  loadReveals(): RandomnessPendingReveal[] {
+    return structuredClone(this.reveals);
+  }
+
+  saveReveals(reveals: RandomnessPendingReveal[]): void {
+    this.reveals = structuredClone(reveals);
   }
 }
 
@@ -280,12 +295,34 @@ export class FileRandomnessCommitmentStore implements RandomnessCommitmentStore 
   }
 
   save(records: RandomnessCommitmentRecord[]): void {
-    mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 });
-    const tempPath = this.filePath + ".tmp";
+    this.writeRecords(this.filePath, records);
+  }
+
+  loadReveals(): RandomnessPendingReveal[] {
+    let raw: string;
+    try {
+      raw = readFileSync(this.filePath + ".reveals.json", "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error("randomness pending reveal journal is not an array");
+    return parsed as RandomnessPendingReveal[];
+  }
+
+  saveReveals(reveals: RandomnessPendingReveal[]): void {
+    // The same full-cycle lock protects both files; old replicas never write this journal.
+    this.writeRecords(this.filePath + ".reveals.json", reveals);
+  }
+
+  private writeRecords(path: string, records: unknown[]): void {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const tempPath = path + ".tmp";
     writeFileSync(tempPath, JSON.stringify(records, null, 2), { encoding: "utf8", mode: 0o600 });
     chmodSync(tempPath, 0o600);
-    renameSync(tempPath, this.filePath);
-    chmodSync(this.filePath, 0o600);
+    renameSync(tempPath, path);
+    chmodSync(path, 0o600);
   }
 
   async withExclusiveLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -369,6 +406,10 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
         committed_at_block INTEGER,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS randomness_pending_reveals (
+        request_id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS randomness_committer_lease (
         lease_id INTEGER PRIMARY KEY CHECK (lease_id = 1),
         holder TEXT NOT NULL,
@@ -381,30 +422,36 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
         created_at TEXT NOT NULL
       );
     `);
-    this.database.exec("BEGIN IMMEDIATE;");
-    try {
-      const columns = this.database.query("PRAGMA table_info(randomness_commitments)").all() as Array<{ name: string }>;
-      if (!columns.some((column) => column.name === "request_id")) {
-        this.database.exec("ALTER TABLE randomness_commitments ADD COLUMN request_id TEXT;");
-      }
-      this.database.exec("COMMIT;");
-    } catch (error) {
-      this.database.exec("ROLLBACK;");
-      throw error;
-    }
     this.migrateLegacyFile(legacyFilePath);
   }
 
   load(): RandomnessCommitmentRecord[] {
     return this.database.query(`
-      SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt,
-        request_id AS requestId
+      SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt
       FROM randomness_commitments
       ORDER BY created_at ASC, commitment ASC
-    `).all().map((row) => {
-      const { requestId, ...record } = row as Omit<RandomnessCommitmentRecord, "requestId"> & { requestId: string | null };
-      return requestId === null ? record : { ...record, requestId };
-    });
+    `).all() as RandomnessCommitmentRecord[];
+  }
+
+  loadReveals(): RandomnessPendingReveal[] {
+    return (this.database.query(
+      "SELECT payload FROM randomness_pending_reveals ORDER BY request_id"
+    ).all() as Array<{ payload: string }>).map((row) => JSON.parse(row.payload) as RandomnessPendingReveal);
+  }
+
+  saveReveals(reveals: RandomnessPendingReveal[]): void {
+    // No foreign key/cascade into the legacy table: its old DELETE+INSERT saves cannot erase
+    // either retry metadata or the retained reveal word during a start-first rolling deployment.
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.database.query("DELETE FROM randomness_pending_reveals").run();
+      const insert = this.database.query("INSERT INTO randomness_pending_reveals (request_id, payload) VALUES (?, ?)");
+      for (const reveal of reveals) insert.run(reveal.request.requestId, JSON.stringify(reveal));
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
   }
 
   save(records: RandomnessCommitmentRecord[]): void {
@@ -418,11 +465,11 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
       const nextByCommitment = new Map(records.map((record) => [record.commitment, record]));
       this.database.query("DELETE FROM randomness_commitments").run();
       const insert = this.database.query(`
-        INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at, request_id)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at)
+        VALUES (?, ?, ?, ?)
       `);
       for (const record of records) {
-        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt, record.requestId ?? null);
+        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt);
       }
       const audit = this.database.query(`
         INSERT INTO randomness_commitment_audit (action, commitment, created_at)
@@ -589,7 +636,13 @@ export class RandomnessCommitmentWorker {
     // Never retain an in-memory snapshot across ticks. During a start-first rollout, the replica
     // holding the lock may change; each lock holder must begin from the latest durable secrets.
     const loaded = await this.store.load();
-    const records = loaded.map((record) => ({ ...record }));
+    const reveals = await this.store.loadReveals();
+    // A legacy replica may have deleted/reinserted the entire commitment table after a shallow
+    // receipt. The separate journal keeps both the retry identity and the original word intact.
+    const records = [...new Map([
+      ...loaded.map((record) => [record.commitment, { ...record }] as const),
+      ...reveals.flatMap(({ record }) => record ? [[record.commitment, { ...record }] as const] : [])
+    ]).values()];
     const blockNumber = await this.chainClient.getBlockNumber();
 
     const targetCommitments = Math.min(
@@ -609,21 +662,24 @@ export class RandomnessCommitmentWorker {
     }
 
     const discovered = await this.chainClient.listPendingRequests();
-    // Discovery omits fulfilled requests. Keep failed IDs until a direct engine read proves
-    // fulfillment, even if the index/tail no longer lists them.
+    // Discovery is only a source of new candidates, never the lifecycle/retry authority.
     const pending = [...new Map([
+      ...reveals.map(({ request }) => [request.requestId, request] as const),
       ...this.failures.map((request) => [request.requestId, request] as const),
       ...discovered.map((request) => [request.requestId, request] as const)
     ]).values()];
-    const stillPending = await this.revealConsumedCommitments(pending, records);
-    await this.pruneFinalizedRecords(records);
+    const stillPending = await this.revealConsumedCommitments(pending, records, reveals);
+    const finalized = await this.pruneFinalizedRecords(records, reveals);
 
+    // Remove primary secrets before retiring their journal copies. A crash between saves retains
+    // the journal and safely repeats reconciliation, never loses an unresolved reveal.
     await this.store.save(records);
+    await this.store.saveReveals(reveals);
 
     const front = inventory.commitments[0];
 
     return this.status({
-      pendingRequests: stillPending,
+      pendingRequests: stillPending.filter((request) => !finalized.has(request.requestId)),
       pendingCommitmentAvailable: inventory.readyCommitments > 0,
       pendingCommitmentAgeBlocks: front ? Math.max(blockNumber - front.committedAtBlock, 0) : null,
       commitmentInventory: inventory.commitments.length,
@@ -635,18 +691,24 @@ export class RandomnessCommitmentWorker {
 
   private async revealConsumedCommitments(
     pending: RandomnessRequestEvent[],
-    records: RandomnessCommitmentRecord[]
+    records: RandomnessCommitmentRecord[],
+    reveals: RandomnessPendingReveal[]
   ): Promise<RandomnessRequestEvent[]> {
     const stillPending: RandomnessRequestEvent[] = [];
 
     for (const request of pending) {
+      const record = records.find((entry) => entry.commitment === normalizeCommitment(request.randomnessCommitment ?? ""));
+      const reveal = { request: { ...request }, ...(record ? { record: { ...record } } : {}) };
+      const index = reveals.findIndex((entry) => entry.request.requestId === request.requestId);
+      if (index < 0) reveals.push(reveal);
+      else reveals[index] = reveal;
+    }
+    // Checkpoint every observed request (including missing-word/fulfill-only cases) in one write
+    // before any reveal. Failure aborts the tick without broadcasting or discarding retry state.
+    await this.store.saveReveals(reveals);
+
+    for (const request of pending) {
       try {
-        const record = records.find((entry) => entry.commitment === normalizeCommitment(request.randomnessCommitment ?? ""));
-        if (record && record.requestId !== request.requestId) {
-          record.requestId = request.requestId;
-          // A crash after broadcast must not orphan the association needed for finalized cleanup.
-          await this.store.save(records);
-        }
         if (await this.reconcileFulfilledRequest(request.requestId)) continue;
         const word = this.resolveRevealWord(request, records);
         const txHash = await this.chainClient.fulfillRandomness(BigInt(request.requestId), word);
@@ -657,7 +719,9 @@ export class RandomnessCommitmentWorker {
           transactionHash: txHash
         });
         // A receipt (including one reused by the coordinator) is not terminal proof.
-        if (!await this.reconcileFulfilledRequest(request.requestId)) stillPending.push(request);
+        if (!await this.reconcileFulfilledRequest(request.requestId)) {
+          throw new Error("randomness fulfillment is not yet authoritative for request " + request.requestId);
+        }
       } catch (error) {
         // A duplicate/retry may have won between read and write. Revert text alone is not proof;
         // failed RPC reads must preserve the failure and durable reveal secret too.
@@ -680,24 +744,31 @@ export class RandomnessCommitmentWorker {
     return true;
   }
 
-  private async pruneFinalizedRecords(records: RandomnessCommitmentRecord[]): Promise<void> {
-    // Finality can lag latest by many minutes. Bound GC reads per tick; never downgrade to a
-    // shallow receipt/latest proof when the RPC cannot serve finalized state.
-    const associated = records.filter((entry) => entry.requestId !== undefined);
-    const batch = Array.from({ length: Math.min(8, associated.length) }, (_, index) =>
-      associated[(this.cleanupCursor + index) % associated.length]!
+  private async pruneFinalizedRecords(
+    records: RandomnessCommitmentRecord[],
+    reveals: RandomnessPendingReveal[]
+  ): Promise<Set<string>> {
+    // Finality can lag latest by many minutes. Bound GC reads per tick; never downgrade proof.
+    const finalized = new Set<string>();
+    const batch = Array.from({ length: Math.min(8, reveals.length) }, (_, index) =>
+      reveals[(this.cleanupCursor + index) % reveals.length]!
     );
-    this.cleanupCursor = associated.length ? (this.cleanupCursor + batch.length) % associated.length : 0;
-    for (const record of batch) {
+    this.cleanupCursor = reveals.length ? (this.cleanupCursor + batch.length) % reveals.length : 0;
+    for (const { request, record } of batch) {
       const fulfillment = await this.chainClient.getRequestFulfillment(
-        BigInt(record.requestId!), "finalized"
+        BigInt(request.requestId), "finalized"
       ).catch(() => null);
-      if (fulfillment
-        && normalizeCommitment(fulfillment.randomnessCommitment) === record.commitment
-        && fulfillment.randomWord === record.word) {
-        this.dropRecord(records, record.commitment);
+      if (fulfillment && (!record || (
+        normalizeCommitment(fulfillment.randomnessCommitment) === record.commitment
+        && fulfillment.randomWord === record.word
+      ))) {
+        if (record) this.dropRecord(records, record.commitment);
+        reveals.splice(reveals.findIndex((entry) => entry.request.requestId === request.requestId), 1);
+        this.clearFailure(request.requestId);
+        finalized.add(request.requestId);
       }
     }
+    return finalized;
   }
 
   private upsertFailure(failure: RandomnessFailureRecord): void {
