@@ -75,6 +75,15 @@ class FakeEngineChainClient implements RandomnessCommitmentChainClient {
     return "0xfulfill";
   }
 
+  async getRequestFulfillment(requestId: bigint, _blockTag: "latest" | "finalized") {
+    const fulfilled = this.fulfilled.find((entry) => entry.requestId === requestId);
+    const request = this.requests.find((entry) => entry.requestId === requestId.toString());
+    return fulfilled && request ? {
+      randomnessCommitment: request.randomnessCommitment ?? "0x" + "0".repeat(64),
+      randomWord: fulfilled.randomWord.toString()
+    } : null;
+  }
+
   async listPendingRequests(): Promise<RandomnessRequestEvent[]> {
     return this.requests;
   }
@@ -233,6 +242,37 @@ describe("RandomnessCommitterService", () => {
     expect(warnings).toHaveLength(firstWarningCount);
   });
 
+  test("publishes ready again after authoritative fulfillment clears a missing-word failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-readiness-recovery-"));
+    const config = { ...baseConfig, randomnessCommitmentStorePath: join(dir, "commitments.sqlite") };
+    const engine = new FakeEngineChainClient();
+    const commitment = "0x" + "ff".repeat(32);
+    engine.requests = [{ requestId: "42", requester: "0x1111111111111111111111111111111111111111",
+      purposeHash: "0x" + "aa".repeat(32), createdAt: 1000, randomnessCommitment: commitment }];
+    try {
+      const service = new RandomnessCommitterService(config, { logger: silentLogger, chainClient: engine });
+      await service.tick();
+      expect(service.snapshot().status?.failed).toBe(1);
+      expect(loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath)?.ready).toBe(false);
+      engine.block++;
+      engine.requests = [];
+      engine.getRequestFulfillment = async (id) => id === 42n
+        ? { randomnessCommitment: commitment, randomWord: "100" }
+        : null;
+      await service.tick();
+      expect(service.snapshot().status?.failed).toBe(0);
+      expect(service.snapshot().status?.alerts).toEqual([]);
+      expect(loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath)?.ready).toBe(true);
+      expect(engine.fulfilled).toEqual([]);
+      const restarted = new RandomnessCommitterService(config, { logger: silentLogger, chainClient: engine });
+      await restarted.tick();
+      expect(restarted.snapshot().status?.failed).toBe(0);
+      expect(loadRandomnessReadinessSnapshot(config.randomnessCommitmentStorePath)?.ready).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("fails closed for new attacks when a consumed commitment has no durable reveal word", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-randomness-committer-"));
     const config = { ...baseConfig, randomnessCommitmentStorePath: join(dir, "commitments.sqlite") };
@@ -262,6 +302,76 @@ describe("RandomnessCommitterService", () => {
 });
 
 describe("ViemRandomnessCommitmentChainClient", () => {
+  test("requires nonzero requester, fulfilledAt and word at the explicitly requested block tag", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const reads: Array<{ args?: readonly bigint[]; blockTag?: string }> = [];
+    let state = {
+      requester: "0x1111111111111111111111111111111111111111",
+      purposeHash: `0x${"aa".repeat(32)}`,
+      randomnessCommitment: `0x${"bb".repeat(32)}` as const,
+      createdAt: 1n, fulfilledAt: 0n, randomWord: 0n
+    };
+    const client = new ViemRandomnessCommitmentChainClient({
+      async readContract(input: { args?: readonly bigint[]; blockTag?: string }) {
+        reads.push(input);
+        return state;
+      }
+    } as unknown as PublicClient, {} as WalletClient, baseConfig.randomnessEngineAddress!, account,
+    { id: baseConfig.chainId } as never, new ResolverTransactionCoordinator(":memory:"));
+    expect(await client.getRequestFulfillment(42n, "latest")).toBeNull();
+    state = { ...state, fulfilledAt: 2n };
+    expect(await client.getRequestFulfillment(42n, "latest")).toBeNull();
+    state = { ...state, randomWord: 100n };
+    expect(await client.getRequestFulfillment(42n, "latest")).toEqual({
+      randomnessCommitment: state.randomnessCommitment, randomWord: "100"
+    });
+    expect(await client.getRequestFulfillment(42n, "finalized")).toEqual({
+      randomnessCommitment: state.randomnessCommitment, randomWord: "100"
+    });
+    state = { ...state, requester: "0x0000000000000000000000000000000000000000" };
+    expect(await client.getRequestFulfillment(42n, "finalized")).toBeNull();
+    expect(reads.map((input) => input.blockTag)).toEqual(["latest", "latest", "latest", "finalized", "finalized"]);
+    expect(reads.every((input) => input.args?.[0] === 42n)).toBe(true);
+  });
+
+  test("does not reuse a persisted successful receipt as proof of an unfulfilled operation", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    const dir = mkdtempSync(join(tmpdir(), "vey-randomness-retry-"));
+    let pendingNonce = 21;
+    let fulfilled = false;
+    const writes: number[] = [];
+    const publicClient = {
+      async getTransactionCount() { return pendingNonce; },
+      async waitForTransactionReceipt() { return { status: "success" }; },
+      async readContract() {
+        return { requester: account.address, fulfilledAt: fulfilled ? 2n : 0n, randomWord: fulfilled ? 100n : 0n,
+          randomnessCommitment: `0x${"bb".repeat(32)}`, purposeHash: `0x${"aa".repeat(32)}`, createdAt: 1n };
+      }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: { nonce: number }) {
+        writes.push(input.nonce);
+        pendingNonce++;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = () => new ViemRandomnessCommitmentChainClient(publicClient, walletClient,
+      baseConfig.randomnessEngineAddress!, account, { id: baseConfig.chainId } as never,
+      new ResolverTransactionCoordinator(join(dir, "transactions.sqlite")));
+    try {
+      await client().fulfillRandomness(42n, 100n);
+      await client().fulfillRandomness(42n, 100n); // restart/reorg: confirmed receipt, request still pending
+      expect(writes).toEqual([21, 22]);
+      fulfilled = true;
+      const completed = client();
+      await completed.fulfillRandomness(42n, 100n);
+      await completed.fulfillRandomness(42n, 100n);
+      expect(writes).toEqual([21, 22]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("reads only indexed pending requests and the unindexed chain tail", async () => {
     const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
     const requestReads: bigint[] = [];

@@ -82,6 +82,20 @@ creation reverts instead of accepting entropy that could be chosen after the req
 - persists the secret word↔commitment pair through an injected `RandomnessCommitmentStore`
   **before** broadcasting the commit tx, allowing reveal recovery after restart as long as that
   durable store is preserved;
+- journals every observed request and its known reveal secret before revealing. This independent
+  retry journal survives missing discovery, successful/cached receipts, and restarts; unproven
+  receipts remain unhealthy and retryable. Only an engine `request(id)` read at `finalized` with a
+  nonzero requester, fulfillment timestamp and word, matching the stored commitment and word,
+  permits secret deletion. Finalized cleanup
+  is bounded to eight records per tick; unavailable finalized reads retain secrets for later retry;
+- reconciles failed IDs independently of pending candidate discovery. Direct `latest` fulfilled
+  request state clears stale failures and makes duplicate/retry observations idempotent; missing
+  candidates, receipts and `AlreadyFulfilled` error text alone do not. Unproven failures remain
+  unhealthy and retryable. SQLite stores the journal in a separate table, leaving the legacy
+  four-column commitment table unchanged; file stores use a separate owner-only `.reveals.json`
+  sidecar under the same full-cycle lock. Old replicas cannot erase journaled identities or words
+  with their whole-store saves or receipt cleanup. Finalized cleanup removes primary secrets
+  before journal copies, so a crash between saves only retains data for another safe reconciliation;
 - surfaces operational alerts: no pending commitment available, stale pending requests, an on-chain
   pending commitment whose reveal word is not tracked, and commit failures — plus the pending
   commitment age in blocks (`pendingCommitmentAgeBlocks`), inventory and ready/target counts.
