@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { safeDiagnosticText } from "./safeDiagnostics";
+
 export type Address = string;
 
 export type RandomnessRequestEvent = {
@@ -96,7 +98,7 @@ export class RandomnessFulfillmentWorker {
         this.failures.push({
           ...request,
           failedAt: this.now().toISOString(),
-          error: error instanceof Error ? error.message : String(error)
+          error: safeDiagnosticText(error)
         });
       }
     }
@@ -730,7 +732,7 @@ export class RandomnessCommitmentWorker {
         this.upsertFailure({
           ...request,
           failedAt: this.now().toISOString(),
-          error: error instanceof Error ? error.message : String(error)
+          error: safeDiagnosticText(error)
         });
       }
     }
@@ -837,7 +839,7 @@ export class RandomnessCommitmentWorker {
       for (const record of staged) record.committedAtBlock = blockNumber;
       this.lastCommitError = null;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = safeDiagnosticText(error);
       this.lastCommitError = "failed to refill randomness commitment inventory: " + message;
     }
   }

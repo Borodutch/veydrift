@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { publicDiagnosticUrl, safeDiagnosticText, sanitizeDiagnosticValue } from "./veydrift-safe-diagnostics.mjs";
+
 const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? "https://api-test.veydrift.com");
 const durationSeconds = positiveInteger(options["duration-seconds"] ?? "180", "duration-seconds");
@@ -25,8 +27,9 @@ while (Date.now() < deadline) {
     elapsedMs: Date.now() - startedAt.getTime(),
     results
   };
-  samples.push(sample);
-  process.stdout.write(`${JSON.stringify(sample)}\n`);
+  const safeSample = sanitizeDiagnosticValue(sample);
+  samples.push(safeSample);
+  process.stdout.write(`${JSON.stringify(safeSample)}\n`);
   sequence += 1;
   await sleep(Math.max(0, intervalMs - (Date.now() - sampledAt.getTime())));
 }
@@ -34,7 +37,7 @@ while (Date.now() < deadline) {
 const summary = summarize(samples);
 process.stdout.write(`${JSON.stringify({
   ok: summary.longestUnhealthyWindowMs < 1_000,
-  apiUrl,
+  apiUrl: publicDiagnosticUrl(apiUrl),
   endpoints,
   startedAt: startedAt.toISOString(),
   finishedAt: new Date().toISOString(),
@@ -66,7 +69,7 @@ async function probe(endpoint) {
       ms: Date.now() - started,
       healthOk: endpoint === "/health" ? parsed?.ok === true : undefined,
       readinessReady: endpoint === "/health" ? parsed?.readiness?.ready === true : undefined,
-      error: parsed?.error ?? undefined
+      error: parsed?.error === undefined ? undefined : safeDiagnosticText(parsed.error)
     };
   } catch (error) {
     return {
@@ -74,7 +77,7 @@ async function probe(endpoint) {
       ok: false,
       status: null,
       ms: Date.now() - started,
-      error: error instanceof Error ? error.message : String(error)
+      error: safeDiagnosticText(error)
     };
   } finally {
     clearTimeout(timeout);
@@ -164,10 +167,10 @@ function sleep(ms) {
 }
 
 function usage(message) {
-  console.error(
+  console.error(safeDiagnosticText(
     `${message}\nUsage: node scripts/veydrift-redeploy-readiness-probe.mjs ` +
       `[--api-url https://api-test.veydrift.com] [--duration-seconds 180] ` +
       `[--interval-ms 1000] [--timeout-ms 3000] [--endpoint /health]`
-  );
+  ));
   process.exit(1);
 }

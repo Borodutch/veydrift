@@ -13,6 +13,7 @@ import {
 import type { RpcLog } from "./evm";
 import { projectionInvalidationReasons, type SettlementIndexer } from "./indexer";
 import { emitObservabilityEvent } from "./observability";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
 // HTTP catch-up source. `getHeadBlock` resolves the current chain head (eth_blockNumber) and
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
@@ -662,8 +663,7 @@ export class ChainSyncService {
       this.timedMissilePayloadHistoryBackfill.inProgress = false;
       // No self-heal escalation: record the failure, leave the cursor put, and let the next interval
       // retry the same range. A heavy canonical reconcile is never triggered from a transient RPC blip.
-      this.lastError =
-        error instanceof Error ? error.message : "Chain-sync poll failed.";
+      this.lastError = safeDiagnosticText(error instanceof Error ? error.message : "Chain-sync poll failed.");
       this.pollFailureCount += 1;
       if (this.pollFailureCount >= CONNECTED_FAILURE_THRESHOLD) {
         this.connected = false;
@@ -681,7 +681,7 @@ export class ChainSyncService {
     try {
       this.options.diagnosticsPublisher?.(this.snapshot());
     } catch (error) {
-      console.warn("Veydrift chain-sync diagnostics publish failed", error);
+      console.warn("Veydrift chain-sync diagnostics publish failed", safeDiagnosticText(error));
     }
   }
 
@@ -725,9 +725,9 @@ export class ChainSyncService {
       };
     } catch (error) {
       this.referralHistoryBackfill.inProgress = false;
-      this.referralHistoryBackfill.lastError = error instanceof Error
-        ? error.message
-        : "Referral history backfill failed.";
+      this.referralHistoryBackfill.lastError = safeDiagnosticText(
+        error instanceof Error ? error.message : "Referral history backfill failed."
+      );
       // A configured referral contract whose history has not reconciled is not safe/ready: public and
       // private dashboards could otherwise serve a false null invite until the generic five-poll RPC
       // failure threshold trips.
@@ -793,9 +793,9 @@ export class ChainSyncService {
       };
     } catch (error) {
       this.paidAllianceInviteHistoryBackfill.inProgress = false;
-      this.paidAllianceInviteHistoryBackfill.lastError = error instanceof Error
-        ? error.message
-        : "Paid alliance invite history backfill failed.";
+      this.paidAllianceInviteHistoryBackfill.lastError = safeDiagnosticText(
+        error instanceof Error ? error.message : "Paid alliance invite history backfill failed."
+      );
       this.connected = false;
       throw error;
     }
@@ -911,9 +911,9 @@ export class ChainSyncService {
       };
     } catch (error) {
       this.timedMissilePayloadHistoryBackfill.inProgress = false;
-      this.timedMissilePayloadHistoryBackfill.lastError = error instanceof Error
-        ? error.message
-        : "Timed missile payload history backfill failed.";
+      this.timedMissilePayloadHistoryBackfill.lastError = safeDiagnosticText(
+        error instanceof Error ? error.message : "Timed missile payload history backfill failed."
+      );
       this.connected = false;
       throw error;
     }
@@ -972,7 +972,7 @@ export class ChainSyncService {
 
   private handleLiveListenerError(error: unknown, generation: number): void {
     if (this.stopped || generation !== this.liveListenerGeneration) return;
-    const message = error instanceof Error ? error.message : "Viem websocket live listener failed.";
+    const message = safeDiagnosticText(error instanceof Error ? error.message : "Viem websocket live listener failed.");
     this.liveListenerConnected = false;
     this.activeSource = "fallback_poll";
     this.liveListenerErrorCount += 1;
@@ -999,7 +999,7 @@ export class ChainSyncService {
     if (this.livePollWakeDrain) return;
     this.livePollWakeDrain = this.drainLivePollWakeups()
       .catch((error) => {
-        this.lastError = error instanceof Error ? error.message : "Failed to handle live chain logs.";
+        this.lastError = safeDiagnosticText(error instanceof Error ? error.message : "Failed to handle live chain logs.");
         this.publishDiagnostics();
       })
       .finally(() => {
@@ -1107,8 +1107,7 @@ export class ChainSyncService {
           }
         }
       } catch (error) {
-        this.lastError =
-          error instanceof Error ? error.message : "Failed to index contract log.";
+        this.lastError = safeDiagnosticText(error instanceof Error ? error.message : "Failed to index contract log.");
         throw error;
       } finally {
         this.recordHandlerCompletion(log, source, Date.now() - handlerStartedAt, result);

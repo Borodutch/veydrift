@@ -9,6 +9,8 @@
 // The RPC-layer abort/timeout fix (see HttpJsonRpcTransport.fetchWithTimeout) removes the root cause of
 // the orphan accumulation; this module is the matching observability half so a regression is loud.
 
+import { safeDiagnosticText, sanitizeDiagnosticValue } from "./safeDiagnostics";
+
 export type DiagnosticsLogger = (event: string, detail: Record<string, unknown>) => void;
 
 export type CrashDiagnosticsOptions = {
@@ -33,18 +35,17 @@ function toMebibytes(bytes: number): number {
 }
 
 function reasonText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
+  return safeDiagnosticText(error);
 }
 
 function stackText(error: unknown): string | undefined {
-  return error instanceof Error && error.stack ? error.stack : undefined;
+  return error instanceof Error && error.stack ? safeDiagnosticText(error.stack) : undefined;
 }
 
 export function defaultDiagnosticsLogger(event: string, detail: Record<string, unknown>): void {
   // Single-line JSON keeps the diagnostics greppable in the deploy log aggregator and avoids
   // interleaving with concurrent request logging.
-  console.error(`veydrift-crash-diagnostics ${JSON.stringify({ event, ...detail })}`);
+  console.error(`veydrift-crash-diagnostics ${JSON.stringify(sanitizeDiagnosticValue({ event, ...detail }))}`);
 }
 
 // Pure handler factory so the behavior can be unit-tested without registering real process listeners
