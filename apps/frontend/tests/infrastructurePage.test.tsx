@@ -10,6 +10,7 @@ import {
   MetricDeltaSubtext,
   buildingProductionUpgradeEffect,
   deduplicatedInfrastructureActionNotice,
+  getBuildingRequirementStates,
   detailEffectRows,
   infrastructureUpgradeButtonLabel,
   infrastructureRefreshButtonState,
@@ -20,7 +21,7 @@ import {
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
-import { buildingEffectMetrics, createInitialPlayableState } from "../src/playableMvp";
+import { buildingCatalog, buildingEffectMetrics, buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
 const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
 
@@ -34,6 +35,104 @@ describe("Infrastructure page display helpers", () => {
       selectedBuildingKey: "shipyard",
     })).toBe("shipyard");
     expect(selectedInfrastructureBuildingKey({})).toBe("metalMine");
+  });
+
+  test("reserves catalog Locked text and warning tone for actual prerequisites (VEY-KANEO-881)", () => {
+    // Check the page wiring as well as the helpers below: effect formatting must
+    // not invent a second Locked state independent of the prerequisite gate.
+    expect(infrastructurePageSource.match(/"Locked"/g)).toHaveLength(1);
+    expect(infrastructurePageSource).toContain('statusText: starterPrerequisite || missingRequirement ? "Locked" : infrastructureCatalogStatusText(');
+    expect(infrastructurePageSource).toContain('statusTone: starterPrerequisite || missingRequirement ? "warning" as const : "accent" as const');
+  });
+
+  for (const [key, requiredRobotics] of [["shipyard", 2], ["researchLab", 1]] as const) {
+    test(`${key} level 0 is Not built with met prerequisites, including a busy queue (VEY-KANEO-881)`, () => {
+      const state = createInitialPlayableState(1_000);
+      state.buildings.roboticsFactory = requiredRobotics;
+      state.resources = { metal: 10_000, crystal: 10_000, deuterium: 10_000 };
+
+      expect(unmetBuildingRequirement(state, key)).toBeUndefined();
+      expect(getBuildingRequirementStates(state, key)).toEqual([{
+        label: `Robotics Factory ${requiredRobotics}`,
+        met: true,
+        target: { kind: "building", key: "roboticsFactory" },
+      }]);
+      expect(infrastructureCatalogStatusText(state, key)).toBe("Not built");
+      expect(buildingUpgradeStatus(state, key)).toMatchObject({ disabled: false, reason: "Ready for Level 1" });
+
+      state.queue = {
+        kind: "building", key: "fusionReactor", label: "Fusion Reactor",
+        startedAt: 1_000, readyAt: 61_000, targetLevel: 4,
+      };
+      expect(infrastructureCatalogStatusText(state, key)).toBe("Not built");
+      expect(getBuildingRequirementStates(state, key).every((requirement) => requirement.met)).toBe(true);
+      expect(buildingUpgradeStatus(state, key, { now: 2_000 })).toMatchObject({
+        disabled: true, reason: "Another building is currently upgrading: Fusion Reactor Level 4",
+      });
+      expect(infrastructureCatalogTitleTone(buildingUpgradeStatus(state, key, {
+        ignoreActiveQueue: true, now: 2_000,
+      }))).toBe("normal");
+
+      // An upgrade of this building still has a queue blocker, not a prerequisite lock.
+      state.queue = { ...state.queue, key, label: key === "shipyard" ? "Shipyard" : "Research Lab", targetLevel: 1 };
+      expect(infrastructureCatalogStatusText(state, key)).toBe("Not built");
+      expect(buildingUpgradeStatus(state, key, { now: 2_000 }).reason).toContain("upgrade in progress");
+    });
+
+    test(`${key} remains prerequisite-gated below Robotics Factory ${requiredRobotics} (VEY-KANEO-881)`, () => {
+      const state = createInitialPlayableState(1_000);
+      state.buildings.roboticsFactory = requiredRobotics - 1;
+      state.resources = { metal: 10_000, crystal: 10_000, deuterium: 10_000 };
+
+      expect(unmetBuildingRequirement(state, key)).toEqual({ type: "building", key: "roboticsFactory", level: requiredRobotics });
+      expect(getBuildingRequirementStates(state, key)[0]?.met).toBe(false);
+      const status = buildingUpgradeStatus(state, key);
+      expect(status).toMatchObject({ disabled: true, reason: `Requires Robotics Factory ${requiredRobotics}` });
+      expect(infrastructureCatalogTitleTone(status)).toBe("muted");
+      // The page gate supplies Locked; the effect helper describes only build state.
+      expect(infrastructureCatalogStatusText(state, key)).toBe("Not built");
+    });
+  }
+
+  test("preserves every genuine building and research prerequisite gate (VEY-KANEO-881)", () => {
+    for (const { key } of buildingCatalog) {
+      const requirements = buildingRequirementsFor(key);
+      for (const missing of requirements) {
+        const state = createInitialPlayableState(1_000);
+        state.resources = { metal: 1e12, crystal: 1e12, deuterium: 1e12 };
+        for (const requirement of requirements) {
+          if (requirement.type === "building") state.buildings[requirement.key] = requirement.level;
+          else state.research[requirement.key] = requirement.level;
+        }
+        expect(unmetBuildingRequirement(state, key)).toBeUndefined();
+        expect(buildingUpgradeStatus(state, key).disabled).toBe(false);
+        expect(infrastructureCatalogStatusText(state, key)).not.toBe("Locked");
+
+        if (missing.type === "building") state.buildings[missing.key] = missing.level - 1;
+        else state.research[missing.key] = missing.level - 1;
+        expect(unmetBuildingRequirement(state, key)).toEqual(missing);
+        expect(getBuildingRequirementStates(state, key).filter((requirement) => !requirement.met)).toHaveLength(1);
+        expect(buildingUpgradeStatus(state, key).disabled).toBe(true);
+        expect(infrastructureCatalogTitleTone(buildingUpgradeStatus(state, key))).toBe("muted");
+      }
+    }
+  });
+
+  test("preserves current effect summaries for every catalog building (VEY-KANEO-881)", () => {
+    const state = createInitialPlayableState(1_000);
+    const expected = {
+      metalMine: ["0/h", "32/h"], crystalMine: ["0/h", "22/h"], deuteriumSynthesizer: ["0/h", "11/h"],
+      solarPlant: ["0 energy", "22 energy"], fusionReactor: ["0 energy", "31 energy"],
+      roboticsFactory: ["x1", "x2"], naniteFactory: ["x1", "x2"],
+      shipyard: ["Not built", "x2"], researchLab: ["Not built", "x1"],
+      metalStorage: ["10,000 cap", "20,000 cap"], crystalStorage: ["10,000 cap", "20,000 cap"], deuteriumTank: ["10,000 cap", "20,000 cap"],
+      missileSilo: ["0 slots", "10 slots"], allianceDepot: ["0 Deut.", "20,000 Deut."],
+      terraformer: ["No expansion", "+5 fields"], interdimensionalRiftStabilizer: ["Not built", "Built"],
+    };
+    for (const { key } of buildingCatalog) {
+      expect(infrastructureCatalogStatusText(state, key)).toBe(expected[key][0]);
+      expect(infrastructureCatalogStatusText({ ...state, buildings: { ...state.buildings, [key]: 1 } }, key)).toBe(expected[key][1]);
+    }
   });
 
   test("renders load errors without fake infrastructure values", () => {
