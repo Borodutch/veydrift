@@ -800,7 +800,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.path, "/planet/4/5/6");
   assert.equal(snapshot.heading, "Owned Beta");
-  assert.match(snapshot.text, /Home world/);
+  assert.doesNotMatch(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
   assert.ok(
     snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")),
@@ -810,6 +810,61 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
   assert.ok(snapshot.topBarTitles.some((title) => title.startsWith("Deuterium: 202")));
   assert.doesNotMatch(snapshot.text, /Unrelated Gamma|9,909/);
 });
+
+for (const width of [390, 1440]) {
+  test(`home badges stay authoritative while selecting home and two colonies at ${width}px`, { timeout: 60_000 }, async () => {
+    await loadInspectorFixture("/planet/1/2/3", width, { homeIdentityProbe: "true" });
+    await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");
+    assert.match((await inspectorSnapshot()).text, /Home world/);
+
+    const selector = width < 768 ? '#mobile-navigation-menu' : 'aside[aria-label="Select planet"]';
+    const nav = width < 768 ? '#mobile-navigation-menu nav' : 'nav.hidden';
+    async function openMenu() {
+      if (width < 768) await clickExpression(`document.querySelector('summary[aria-label="Open navigation menu"]')`);
+    }
+    for (const [id, name, route] of [
+      ["102", "Owned Beta", "/planet/4/5/6"],
+      ["103", "Owned Delta", "/planet/1/2/4"],
+      ["101", "Owned Alpha", "/planet/1/2/3"],
+    ]) {
+      await openMenu();
+      await clickExpression(`document.querySelector('${selector} [data-planet-selector-item="${id}"] button[data-planet-selector-long-press]')`);
+      await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
+      assert.equal(/Home world/.test((await inspectorSnapshot()).text), id === "101");
+      assert.equal(await evaluate(`document.querySelector('${selector} button[data-planet-selector-long-press][aria-current="true"]')?.dataset.planetSelectorLongPress`), id);
+      assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('${selector} [data-planet-selector-item]')).filter(node => [...node.querySelectorAll('span')].some(span => span.textContent.trim() === 'Home')).map(node => node.dataset.planetSelectorItem)`), ["101"]);
+
+      await openMenu();
+      await clickExpression(`document.querySelector('${nav} a[href="/galaxy"]')`);
+      await waitForExpression(`document.querySelector('main button[aria-label="Open ${name}"]') !== null`);
+      const rows = await evaluate(`Array.from(document.querySelectorAll('main button[aria-label^="Open Owned"]')).map(button => {
+        const row = button.closest('div.group');
+        return { name: button.getAttribute('aria-label').slice(5), home: [...row.querySelectorAll('span')].some(span => span.textContent.trim() === 'Home'), transport: [...row.querySelectorAll('button')].some(button => button.getAttribute('aria-label')?.startsWith('Transport') && !button.closest('[data-watchable-moon-row]')) };
+      })`);
+      assert.ok(rows.length > 0);
+      for (const row of rows) {
+        assert.equal(row.home, row.name === "Owned Alpha", JSON.stringify(rows));
+        assert.equal(row.transport, row.name !== name, "Transport must follow launch origin, not HOME identity: " + JSON.stringify(rows));
+      }
+      assert.deepEqual(await evaluate("window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction')"), []);
+      // Galaxy selection stays inline; reopen the inspector before the next switch.
+      await clickExpression(`document.querySelector('main button[aria-label="Open ${name}"]')`);
+      await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
+      await openMenu();
+      await clickExpression(`document.querySelector('${nav} a[href="/rankings"]')`);
+      await waitForExpression("document.querySelector('main button[aria-label=\"Show planets and moons for Fixture Commander\"]') !== null");
+      await clickExpressionWithTrustedPointer(`document.querySelector('main button[aria-label="Show planets and moons for Fixture Commander"]')`, width < 768 ? "touch" : "mouse");
+      await waitForExpression("document.querySelectorAll('main [data-ranking-planet-row]').length === 3");
+      assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('main [data-ranking-planet-row]')).filter(row => row.textContent.includes('[HOME]')).map(row => row.dataset.rankingPlanetRow)`), ["101"]);
+      await clickExpression(`document.querySelector('main [data-ranking-planet-row="${id}"] button')`);
+      await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
+    }
+    // Fresh route hydration cannot badge a colony, even before selector interaction.
+    await loadInspectorFixture("/planet/1/2/4", width, { homeIdentityProbe: "true" });
+    await waitForExpression("document.querySelector('main h2')?.textContent?.includes('Owned Delta') === true");
+    assert.doesNotMatch((await inspectorSnapshot()).text, /Home world/);
+  });
+}
 
 test("mobile hamburger is exposed as a button with a clickable hit region", async () => {
   await loadInspectorFixture("/planet/9/9/9", 390);
@@ -849,7 +904,7 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
 
   const snapshot = await inspectorSnapshot();
   assert.equal(snapshot.heading, "Owned Beta");
-  assert.match(snapshot.text, /Home world/);
+  assert.doesNotMatch(snapshot.text, /Home world/);
   assert.match(snapshot.text, /Add media/);
   assert.ok(
     snapshot.topBarTitles.some((title) => title.startsWith("Metal: 203")),
