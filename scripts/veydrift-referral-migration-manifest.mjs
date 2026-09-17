@@ -41,7 +41,7 @@ const referralAbi = parseAbi([
 ]);
 
 function usage(message) {
-  if (message) console.error(message);
+  if (message) console.error(safeDiagnosticText(message));
   console.error(
     "Usage: veydrift-referral-migration-manifest.mjs --rpc-url <url> --input <path|-> --out <path>"
   );

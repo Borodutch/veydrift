@@ -159,6 +159,18 @@ test("referral migration fatal output sanitizes before stderr", async () => {
   assert.match(result.stderr, /ENOENT/);
 });
 
+test("referral migration sanitizes credential-bearing invalid arguments before usage stderr", async () => {
+  const result = await run(process.execPath, [
+    "scripts/veydrift-referral-migration-manifest.mjs",
+    `https://user:${password}@rpc.invalid/path?apiKey=${queryKey}`,
+    "ignored"
+  ]);
+  assert.equal(result.code, 2);
+  assertNoCanaries(result.stdout + result.stderr);
+  assert.match(result.stderr, /Invalid argument: https:\/\/rpc\.invalid/);
+  assert.match(result.stderr, /Usage: veydrift-referral-migration-manifest\.mjs/);
+});
+
 test("preflight sanitizes credential-bearing positional arguments before usage stderr", async () => {
   const result = await run(process.execPath, [
     "scripts/veydrift-redeploy-preflight.mjs",
