@@ -7509,9 +7509,6 @@ function PlanetSelectorButton({
         ) : null}
       </span>
       <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">{planetDisplayName(planet)}</span>
-      {planet.isHomePlanet ? (
-        <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1 text-[0.6rem] font-semibold uppercase leading-3 text-cyan-100">Home</span>
-      ) : null}
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">{planet.coordinates}</span>
       <PlanetSelectorProgressBars
         planet={planet}

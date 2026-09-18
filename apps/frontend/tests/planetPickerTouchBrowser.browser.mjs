@@ -812,7 +812,7 @@ test("desktop selector atomically replaces an unrelated inspector with one owned
 });
 
 for (const width of [390, 1440]) {
-  test(`home badges stay authoritative while selecting home and two colonies at ${width}px`, { timeout: 60_000 }, async () => {
+  test(`home labels stay authoritative outside the selector while selecting home and two colonies at ${width}px`, { timeout: 60_000 }, async () => {
     await loadInspectorFixture("/planet/1/2/3", width, { homeIdentityProbe: "true" });
     await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");
     assert.match((await inspectorSnapshot()).text, /Home world/);
@@ -832,7 +832,7 @@ for (const width of [390, 1440]) {
       await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
       assert.equal(/Home world/.test((await inspectorSnapshot()).text), id === "101");
       assert.equal(await evaluate(`document.querySelector('${selector} button[data-planet-selector-long-press][aria-current="true"]')?.dataset.planetSelectorLongPress`), id);
-      assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('${selector} [data-planet-selector-item]')).filter(node => [...node.querySelectorAll('span')].some(span => span.textContent.trim() === 'Home')).map(node => node.dataset.planetSelectorItem)`), ["101"]);
+      assert.deepEqual(await evaluate(`Array.from(document.querySelectorAll('${selector} [data-planet-selector-item]')).filter(node => [...node.querySelectorAll('span')].some(span => span.textContent.trim() === 'Home')).map(node => node.dataset.planetSelectorItem)`), []);
 
       await openMenu();
       await clickExpression(`document.querySelector('${nav} a[href="/galaxy"]')`);
