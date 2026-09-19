@@ -2831,7 +2831,7 @@ export function PlayableMvpApp({
   } | null>(null);
   const composingMission = Boolean(pendingGalaxyMission || pendingJoinAttack || pendingAcsDefend);
   const moonQuery = backendData && account && activePlanetId ? backendData.queries.moon(account, activePlanetId) : undefined;
-  const { snapshot: moonSnapshot, isInitialLoading: moonLoading } = useBackendDataQuery<ChainMoonState>(moonQuery, activeBodyKind === "moon" || page === "moon");
+  const { snapshot: moonSnapshot, isInitialLoading: moonLoading } = useBackendDataQuery<ChainMoonState>(moonQuery, activeBodyKind === "moon" || page === "moon" || composingMission);
   const moonState = moonSnapshot?.data ?? null;
 
   const moonError = moonSnapshot?.error;
@@ -4097,6 +4097,7 @@ export function PlayableMvpApp({
           `wallet:${account!.toLowerCase()}` as const,
           ...affectedPlanetIds.map((planetId) => `planet:${planetId}` as const),
           "kind:shipyard" as const,
+          "kind:moon" as const,
           "kind:defenses" as const,
           "kind:infrastructure" as const,
         ];
@@ -5095,8 +5096,15 @@ export function PlayableMvpApp({
     // when composition starts so a pre-arrival slot count and moon inventory cannot keep blocking the
     // newly launchable fleet. The ref makes callback/state identity changes harmless and reopening the
     // composer performs another fresh read.
-    void Promise.allSettled([refreshShipyardState(), refreshInfrastructureState()]);
-  }, [missionComposerRefreshKey, refreshInfrastructureState, refreshShipyardState]);
+    if (!backendData || !account) return;
+    const originPlanetId = pendingGalaxyMission?.originPlanet?.planetId ?? activePlanetId;
+    if (!originPlanetId) return;
+    void Promise.allSettled([
+      backendData.shipyard(account, originPlanetId, { fresh: true }),
+      backendData.moon(account, originPlanetId, { fresh: true }),
+      refreshInfrastructureState(),
+    ]);
+  }, [account, activePlanetId, backendData, missionComposerRefreshKey, refreshInfrastructureState]);
 
   const missionCounterplayComposerRefreshKey = pendingJoinAttack
     ? `join:${pendingJoinAttack.attackMissionId}:${activePlanetId ?? "unknown"}`
@@ -5114,8 +5122,12 @@ export function PlayableMvpApp({
 
     // Mission Control can switch origins entirely from its cached wallet roster. Only fetch the
     // selected origin's live ship inventory once the player actually opens Join/Defend composition.
-    void refreshShipyardState();
-  }, [missionCounterplayComposerRefreshKey, refreshShipyardState]);
+    if (!backendData || !account || !activePlanetId) return;
+    void Promise.allSettled([
+      backendData.shipyard(account, activePlanetId, { fresh: true }),
+      backendData.moon(account, activePlanetId, { fresh: true }),
+    ]);
+  }, [account, activePlanetId, backendData, missionCounterplayComposerRefreshKey]);
 
   const handleGalaxyAction = useCallback(
     (action: GalaxyAction, target: Planet | undefined, coords: Coordinates, defaults?: PendingGalaxyMission["bodySelectionDefaults"]) => {
@@ -5383,33 +5395,6 @@ export function PlayableMvpApp({
         setGalaxyAction({ status: "error", label: "Wallet changed before mission preparation. Open the target again." });
         return;
       }
-      if (action.kind === "attack") {
-        if (!apiBaseUrl) {
-          setGalaxyAction({
-            status: "error",
-            label: "Randomness safety status is unavailable. New attacks are temporarily paused.",
-          });
-          return;
-        }
-        try {
-          const readiness = await backendData!.queries.randomnessReadiness().read();
-          if (readiness.ready !== true) {
-            const reason = Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string" ? playerNotice(readiness.reasons[0]) : "Randomness safety is not ready. New attacks are temporarily paused.";
-            setGalaxyAction({ status: "error", label: reason });
-            return;
-          }
-        } catch (error) {
-          const reason = error instanceof Error
-            && error.message.endsWith("New attacks are temporarily paused.")
-            ? playerNotice(error.message)
-            : "Randomness safety status is unavailable. New attacks are temporarily paused.";
-          setGalaxyAction({
-            status: "error",
-            label: reason,
-          });
-          return;
-        }
-      }
       playSfx("mission-launch");
       haptic("select");
       const pendingLaunchOptions = ({
@@ -5444,6 +5429,23 @@ export function PlayableMvpApp({
           | undefined;
       }) => ({
         missionComposerContext: pendingMissionComposerContext,
+        // Readiness belongs inside the coordinated preparation lock/deadline,
+        // just like inventory. No await may leave body controls or Confirm live.
+        prepare: async () => {
+          if (action.kind !== "attack") return;
+          let readiness;
+          try {
+            if (!apiBaseUrl) throw new Error("Missing API connection");
+            readiness = await backendData!.queries.randomnessReadiness().read();
+          } catch {
+            throw new Error("Randomness safety status is unavailable. New attacks are temporarily paused.");
+          }
+          if (readiness.ready !== true) {
+            throw new Error(Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string"
+              ? playerNotice(readiness.reasons[0])
+              : "Randomness safety is not ready. New attacks are temporarily paused.");
+          }
+        },
         validateAttackProtection,
         resourceChange: {
           bodyKind: originIsMoon ? ("moon" as const) : ("planet" as const),
@@ -5750,9 +5752,9 @@ export function PlayableMvpApp({
         indexing: resourceChange
           ? backendData!.indexing.all([
               backendData!.indexing.resourceChange(account, resourceChange.planetId, resourceChange.bodyKind),
-              backendData!.indexing.fleetVisibility(account, [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility", `planet:${resourceChange.planetId}`]),
+              backendData!.indexing.fleetVisibility(account, [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility", "kind:shipyard", "kind:moon", `planet:${resourceChange.planetId}`]),
             ])
-          : backendData!.indexing.fleetVisibility(account, [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility"]),
+          : backendData!.indexing.fleetVisibility(account, [`wallet:${account.toLowerCase()}`, "kind:fleet-visibility", "kind:shipyard", "kind:moon"]),
         errorLabel: (error) => (error instanceof Error ? error.message : `${label} transaction failed.`),
       });
     },
@@ -5775,7 +5777,7 @@ export function PlayableMvpApp({
         (provider: Eip1193Provider) => sendRecallFleetMissionTransaction(provider, account, gameContract, missionId),
         mission
           ? {
-              bodyKind: "planet",
+              bodyKind: mission.originIsMoon ? "moon" : "planet",
               planetId: mission.originPlanetId,
             }
           : undefined,
@@ -6447,6 +6449,7 @@ export function PlayableMvpApp({
             ships: emptyMissionShips(),
             defaultTargetIsMoon: pendingJoinAttack.mission.targetIsMoon === true,
           }}
+          actionError={galaxyAction.status === "error" ? galaxyAction.label : undefined}
           actionPending={isActionBusy(galaxyAction)}
           actionPendingLabel={isActionBusy(galaxyAction) ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
@@ -6496,6 +6499,7 @@ export function PlayableMvpApp({
             mission: "acsDefend",
             ships: emptyMissionShips(),
           }}
+          actionError={galaxyAction.status === "error" ? galaxyAction.label : undefined}
           actionPending={isActionBusy(galaxyAction)}
           actionPendingLabel={isActionBusy(galaxyAction) ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}

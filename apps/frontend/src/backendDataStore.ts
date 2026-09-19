@@ -911,7 +911,7 @@ export class BackendDataStore {
   private refreshGameplay(): void {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-    const timed = new Set(["settlement", "infrastructure", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
+    const timed = new Set(["settlement", "infrastructure", "shipyard", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
     const keys = [...this.resources.values()].filter(resource => {
       if (!this.state.subscriberCount(resource.key)) return false;
       if (resource.options.wallet && resource.options.wallet.toLowerCase() !== this.contextWallet) return false;

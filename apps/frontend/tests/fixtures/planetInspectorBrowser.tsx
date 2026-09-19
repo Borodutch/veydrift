@@ -279,7 +279,7 @@ globalThis.fetch = (async (input, init) => {
         gameConfigured: true,
         highscoresEndpoint: true,
         moonConfigured: false,
-        ...(raidEligibilityProbe ? { moonAttackParity: true } : {}),
+        ...(raidEligibilityProbe || moonOverview ? { moonAttackParity: true } : {}),
         referralsConfigured: false,
         researchEndpoint: true,
         resourceTokensConfigured: false,

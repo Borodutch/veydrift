@@ -3593,6 +3593,53 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
   });
 
+  test("VEY-888 last Small Cargo remains canonical across production, launch, recall, return, and a second launch", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const apply = (block: bigint, hash: string, logIndex: bigint, topics: string[], data: string) => {
+      const log = { blockNumber: toHex(block), transactionHash: hash, logIndex: toHex(logIndex), topics, data };
+      indexer.applyLog(log);
+      return log;
+    };
+    const assertInventory = (count: number) => {
+      expect(indexer.shipRows("7").find(row => row.id === 0)?.count).toBe(count);
+      expect(indexer.launchableShipCounts("7").find(row => row.id === 0)?.count).toBe(count);
+      expect(indexer.availableShipRows("7").find(row => row.id === 0)?.count).toBe(count);
+    };
+    // A due timed queue is projected once; its completion must not add a second ship.
+    apply(128n, "0x888queue", 0n, [shipQueuedTopic, topic(7n), topic(0n)], abiWords(1n, 1767225599n, 0n, 0n, 0n));
+    apply(128n, "0x888queue", 1n, [shipQueueTimingSetTopic, topic(7n), topic(0n), topic(1767225599n)], abiWords(1767225539n, 1n, 60n, 1n));
+    assertInventory(1);
+    const completion = apply(129n, "0x888complete", 0n, [shipCompletedTopic, topic(7n), topic(0n)], abiWords(1n, 1n));
+    assertInventory(1);
+    const launch = (id: bigint, block: bigint) => {
+      apply(block, `0x888launch${id}`, 0n, [fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(0n)], abiWords(7n, 99n, 1770001200n, 1770002400n, 0n));
+      apply(block, `0x888launch${id}`, 1n, [fleetMissionShipsTopic, topic(id)], abiWords(1n, ...Array(13).fill(0n)));
+      apply(block, `0x888launch${id}`, 2n, [planetShipCountChangedTopic, topic(7n), topic(0n)], abiWords(0n));
+    };
+    launch(888n, 144n);
+    assertInventory(0);
+    // Duplicate historical production must not resurrect a committed ship (#1805).
+    indexer.applyLog(completion);
+    assertInventory(0);
+    apply(145n, "0x888recall", 0n, [fleetMissionRecalledTopic, topic(888n), addressTopic(player)], abiWords(1767225800n, 0n));
+    assertInventory(0); // returning is not yet at the origin
+    apply(146n, "0x888return", 0n, [planetShipCountChangedTopic, topic(7n), topic(0n)], abiWords(1n));
+    const returned = apply(146n, "0x888return", 1n, [fleetMissionReturnedTopic, topic(888n), addressTopic(player), topic(7n)], "0x");
+    assertInventory(1);
+    indexer.applyLog(returned);
+    assertInventory(1);
+    launch(889n, 147n);
+    assertInventory(0);
+    // No forecast credit for a destroyed fleet: the absolute contract count remains zero.
+    apply(148n, "0x888loss", 0n, [planetShipCountChangedTopic, topic(7n), topic(0n)], abiWords(0n));
+    assertInventory(0);
+  });
+
   test("credits a returned non-combat fleet back to the launchable roster from events alone (VEY-KANEO-461/460)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -3983,6 +4030,18 @@ describe("SettlementIndexer", () => {
       launchableShips: expect.arrayContaining([expect.objectContaining({ id: 0, count: 1 })])
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+    indexer.applyLog({
+      blockNumber: "0x91", transactionHash: "0x722settle", logIndex: "0x0",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(0n)], data: abiWords(1n),
+    });
+    indexer.applyLog({
+      blockNumber: "0x91", transactionHash: "0x722settle", logIndex: "0x1",
+      topics: [fleetMissionResolvedTopic, topic(6n), addressTopic(player), topic(1n)],
+      data: abiWords(8n, 7n, 0n, 0n, 0n),
+    });
+    const settled = indexer.moonState(player, planet.planetId);
+    expect(settled.ships.find(row => row.id === 0)?.count).toBe(1);
+    expect(settled.launchableShips?.find(row => row.id === 0)?.count).toBe(1);
   });
 
   // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat
