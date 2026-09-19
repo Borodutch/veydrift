@@ -55,7 +55,7 @@ import {
   type ConstructionProgressState,
   type ConstructionQueueObservation,
 } from "./constructionProgress";
-import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
+import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, planetTypeFromTemperature, type ApiSystemResponse } from "./data/mockUniverse";
 import { formatDurationUntil } from "./durationFormat";
 import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
 import { fleetMissionDistance, type FleetDriveLevels } from "./fleetMissionRules";
@@ -7497,7 +7497,7 @@ function PlanetSelectorButton({
     >
       <span className="relative h-14 w-14">
         <span className="block h-14 w-14 overflow-hidden rounded-full bg-black/30">
-          <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(planetImage(planet), 64)} />
+          <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(planetImageForManagedPlanet(planet), 64)} />
         </span>
         {showMoonIndicator ? <PlanetMoonIndicator className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5" compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
         {hasIncomingAttack ? (
@@ -7643,8 +7643,8 @@ function planetDisplayName(planet: ManagedPlanetResponse): string {
   return planet.name?.trim() || `Planet ${planet.coordinates}`;
 }
 
-function planetImage(planet: ManagedPlanetResponse): string {
-  return planetImageForType(planetArtTypeForCoordinates(planet));
+export function planetImageForManagedPlanet(planet: Pick<ManagedPlanetResponse, "temperature">): string {
+  return planetImageForType(planetTypeFromTemperature(planet.temperature));
 }
 
 function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined, ownerDisplayName?: string | null | undefined): Planet | undefined {

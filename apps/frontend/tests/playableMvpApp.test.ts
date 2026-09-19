@@ -35,6 +35,7 @@ import {
   replanBatchSupplyForConfirmation,
   revalidateAttackProtectionBeforeSubmit,
   overviewResearchCompletionUnavailableReasonFor,
+  planetImageForManagedPlanet,
   planetHasIncomingAttack,
   planetScopedFleetVisibility,
   previousMissionIndexingBlockerLabel,
@@ -93,6 +94,16 @@ import type {
 } from "../src/walletFlow";
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+test("owned planet selector art follows each planet's temperature", () => {
+  const planets = [
+    { planetId: "zion", temperature: 248 },
+    { planetId: "montreal", temperature: 38 },
+    { planetId: "astro", temperature: -38 },
+  ];
+  const expected = ["scorching-molten.webp", "warm-terracotta.webp", "frozen-ice.webp"];
+  expect(planets.map((planet) => planetImageForManagedPlanet(planet).split("/").at(-1))).toEqual(expected);
+});
 
 test("static infrastructure projection does not depend on the display clock", () => {
   expect(playableMvpSource).toContain("useMemo<PlayableState>(() => infrastructurePlayableState(infrastructureChainState), [infrastructureChainState])");
@@ -927,7 +938,8 @@ describe("Playable MVP app display helpers", () => {
     expect(itemSource).not.toContain("PlanetSelectorMoonButton");
     expect(itemSource).not.toContain("selectedMoonBody");
     expect(buttonSource).toContain("veydrift-planet-selector-button");
-    expect(buttonSource).toContain("planetImage(planet)");
+    expect(buttonSource).toContain("planetImageForManagedPlanet(planet)");
+    expect(buttonSource).not.toContain("planetImageForManagedPlanet(selectedPlanet)");
     expect(buttonSource).toContain("showMoonIndicator");
     expect(buttonSource).toContain("PlanetMoonIndicator");
     expect(buttonSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
