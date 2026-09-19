@@ -2602,6 +2602,7 @@ export class SettlementIndexer {
         {
           building: this.planetQueue(planet.planetId, "building"),
           defense: this.planetQueue(planet.planetId, "defense"),
+          unsettledDefense: this.unsettledDefenseQueue(planet.planetId),
           ship: this.planetQueue(planet.planetId, "ship")
         },
         moonSummary
@@ -2624,6 +2625,7 @@ export class SettlementIndexer {
       homePlanetId: planetId,
       building: planetId ? this.planetQueue(planetId, "building") : null,
       defense: planetId ? this.planetQueue(planetId, "defense") : null,
+      unsettledDefense: planetId ? this.unsettledDefenseQueue(planetId) : null,
       ship: planetId ? this.planetQueue(planetId, "ship") : null,
       research: this.researchQueue(wallet)
     };
@@ -15561,7 +15563,7 @@ export function indexedManagedPlanet(
   planet: SettledPlanetEvent,
   homePlanetId: string | null,
   buildings: InfrastructureState["buildings"] = [],
-  queues: Pick<ManagedPlanet["queues"], "building" | "defense" | "ship"> = {
+  queues: ManagedPlanet["queues"] = {
     building: null,
     defense: null,
     ship: null
