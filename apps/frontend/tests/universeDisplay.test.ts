@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   formatPlanetType,
-  planetArtTypeForCoordinates,
   planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
@@ -645,7 +644,7 @@ describe("tester universe display data", () => {
     ]);
     expect(publicPlanetDataRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
       "Coordinates: [2:44:8]",
-      `Type: ${formatPlanetType(planetArtTypeForCoordinates(planet))}`,
+      `Type: ${formatGalaxyHeatLabel(planet.temperature)}`,
       "Fields: 211",
       "Diameter: 15,192 km",
       "Temperature: -28°C to 12°C",
@@ -739,7 +738,7 @@ describe("tester universe display data", () => {
     expect(moonRecordRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual(expect.arrayContaining([
       "Fields: 12",
       "Diameter: 8,777 km",
-      `Parent type: ${formatPlanetType(planetArtTypeForCoordinates(planet))}`,
+      `Parent type: ${formatGalaxyHeatLabel(planet.temperature)}`,
     ]));
     expect(moonRecordRows(planet).map((row) => row.label)).not.toContain("Created");
     expect(moonStateRows(planet.publicMoonState?.buildings, [{ id: 0, label: "Lunar Base" }, { id: 3, label: "Shipyard" }], "level")).toEqual([

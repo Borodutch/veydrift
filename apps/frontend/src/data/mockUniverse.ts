@@ -101,11 +101,8 @@ export function planetImageForType(type: PlanetType): string {
   return PLANET_IMAGES[type];
 }
 
-// Planet artwork is a coordinate/slot property. Temperature remains an economic and climate-label
-// input, but its absolute Celsius value spans a different range in every classic slot and therefore
-// must not select the art family. Prefer coordinates whenever they exist so stale backend archetypes
-// from the pre-classic temperature scale cannot make every inner/middle planet look molten.
-// Backend archetypes remain a compatibility fallback only for historical records without coordinates.
+// Coordinate-only artwork fallback for routes without live planet climate.
+// Hydrated planet identities use planetTypeFromTemperature, matching Galaxy and the API.
 export function planetArtTypeForCoordinates(
   coords: { galaxy: number; position: number; system: number },
 ): PlanetType {
@@ -180,7 +177,7 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
 }
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
-  const type = planetArtTypeForCoordinates(settlement);
+  const type = planetTypeFromTemperature(settlement.temperature);
   const existingOccupant = planet.occupiedBy?.owner.toLowerCase() === settlement.owner.toLowerCase()
     ? planet.occupiedBy
     : null;
@@ -229,7 +226,8 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     return null;
   }
 
-  const type = planetArtTypeForCoordinates(planet);
+  // Match Galaxy and the API biome resolver using the same indexed climate.
+  const type = planetTypeFromTemperature(temperature);
   const occupiedBy = planet.occupiedBy ?? null;
   const alliance = occupiedBy?.alliance ?? null;
 
