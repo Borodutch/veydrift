@@ -1267,7 +1267,7 @@ export function moonBuildingRequirementRows(
       : undefined
   );
   const rows: RequirementRow[] = [{
-    label: fieldSummary.open === 1 ? "1 open field" : `${fieldSummary.open} open fields`,
+    label: "1 open field",
     met: fieldSummary.open > 0,
     status: fieldSummary.open > 0 ? "Available" : "No open fields",
   }];
