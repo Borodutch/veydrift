@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { BodySelectionRow, AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, reconcileMissionShips, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
 import { forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
 import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
@@ -10,7 +10,9 @@ import {
   missionComposerIdentity,
   missionMoonShipyardState,
 } from "./PlayableMvpApp";
-import { encodeLaunchFleetMissionCall } from "./walletFlow";
+import { missionInventory, encodeLaunchFleetMissionCall } from "./walletFlow";
+import { BackendDataStore } from "./backendDataStore";
+import { transactionIsBusy, type WriteTransactionState } from "./transactionActionGate";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -308,11 +310,10 @@ describe("mission creation", () => {
       })).toBe("Choose at least one ship.");
     }
 
-    // Desktop and mobile share this single responsive component state. The only fleet-state write is
-    // the quantity input handler, so inventory refreshes, body/target changes, and async hydration
-    // cannot inject a quantity after the all-zero mount/reset initializer runs.
+    // Desktop/mobile share one draft. Inventory reconciliation only reduces it;
+    // body changes clear it and hydration never selects ships on the player's behalf.
     expect(missionCreationSource.match(/useState<MissionShips>/g)).toHaveLength(1);
-    expect(missionCreationSource.match(/setShips\(/g)).toHaveLength(1);
+    expect(reconcileMissionShips(initialMissionShips(attackAction), { ships: [{ id: 0, count: 99 }] })).toEqual(initialMissionShips(attackAction));
     // The application shell already pads the page; the composer must not add a
     // second outer padding layer.
     expect(missionCreationSource).toContain('aria-label="Mission creation"');
@@ -661,7 +662,8 @@ describe("mission creation", () => {
 
     expect(state?.fleetSlots).toEqual({ active: 5, limit: 6 });
     expect(state?.ships.find((ship) => ship.id === 0)?.count).toBe(1);
-    expect(playableMvpAppSource).toContain("refreshShipyardState()");
+    expect(playableMvpAppSource).toContain("backendData.shipyard(account, originPlanetId, { fresh: true })");
+    expect(playableMvpAppSource).toContain("backendData.moon(account, originPlanetId, { fresh: true })");
     expect(playableMvpAppSource).toContain("refreshInfrastructureState()");
   });
 
@@ -3064,3 +3066,79 @@ function collectText(node: unknown): string[] {
     : [];
   return labels.concat(collectText(vnode.props?.children));
 }
+
+
+describe("VEY-888 canonical mission quantities", () => {
+  test("reduces only invalid quantities and never reselects returned or newly produced ships", () => {
+    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 2, lightFighter: 3 };
+    const reduced = reconcileMissionShips(draft, { ships: [{ id: 0, count: 1 }, { id: 1, count: 3 }] });
+    expect(reduced).toEqual({ ...draft, smallCargo: 1 });
+    expect(draft.smallCargo).toBe(2);
+    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 9 }, { id: 1, count: 3 }] })).toBe(reduced);
+    expect(reconcileMissionShips(reduced, null)).toBe(reduced);
+    expect(reconcileMissionShips(reduced, { ships: [] })).toEqual(initialMissionShips({ mode: "mission" } as any));
+  });
+
+  test("last Small Cargo cannot survive canonical launchable inventory decreasing to zero", () => {
+    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 1 };
+    const inventory = missionInventory({ ships: [{ id: 0, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } }], launchableShips: [{ id: 0, count: 0 }] });
+    const reduced = reconcileMissionShips(draft, inventory);
+    expect(reduced.smallCargo).toBe(0);
+    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 1 }] }).smallCargo).toBe(0);
+  });
+});
+
+
+test("attack readiness preparation locks both body selectors and Confirm before awaiting", async () => {
+  // Pin the app wiring as well as exercising the real transaction gate and controls.
+  const handler = playableMvpAppSource.split("const handleConfirmGalaxyMission =")[1]!.split("const closeMissionCreation =")[0]!;
+  expect(handler.split("prepare: async () => {")[0]!.replace(/\/\/[^\n]*/g, "")).not.toContain("await ");
+  expect(handler).toContain('prepare: async () => {\n          if (action.kind !== "attack") return;');
+  expect(handler).toContain("await backendData!.queries.randomnessReadiness().read()");
+  expect(missionCreationSource.match(/<BodySelectionRow\s+disabled={actionPending}/g)).toHaveLength(2);
+  let release!: () => void;
+  const readiness = new Promise<void>(resolve => { release = resolve; });
+  const store = new BackendDataStore("https://readiness.test", {
+    transactionStatusReader: async transactionHash => ({ transactionHash, phase: "applied", events: [], indexedEventCount: 0, latestIndexedBlock: "20", receiptBlock: "20" }),
+  });
+  let state: WriteTransactionState | undefined;
+  let preparations = 0;
+  let sends = 0;
+  let origin = false;
+  let target = false;
+  const descriptor = {
+    key: "galaxy:Attack", label: "Attack", invalidateTags: ["wallet:0xabc", "planet:7"] as const,
+    prepare: async () => { preparations++; await readiness; },
+    send: async () => { sends++; return "0x888"; },
+    onStateChange: (next: WriteTransactionState) => { state = next; },
+  };
+  try {
+    const first = store.runWriteTransaction(descriptor);
+    // Synchronous assertion: readiness is unresolved, but the interaction is locked.
+    expect(state?.phase).toBe("preparing");
+    const pending = transactionIsBusy(state);
+    const rows = [
+      BodySelectionRow({ disabled: pending, moonAvailable: true, moonLabel: "Origin moon", planetLabel: "Origin planet", value: origin, onChange: value => { origin = value; } }),
+      BodySelectionRow({ disabled: pending, moonAvailable: true, moonLabel: "Destination moon", planetLabel: "Destination planet", value: target, onChange: value => { target = value; } }),
+    ];
+    for (const row of rows) {
+      for (const button of findElements(row, "button")) {
+        const props = button.props as { disabled?: boolean; onClick: () => void };
+        expect(props.disabled).toBe(true);
+        if (!props.disabled) props.onClick();
+      }
+    }
+    const confirm = MissionConfirmButton({ actionPending: pending, blockedReason: undefined, label: "Confirm Mission", onConfirm: () => { void store.runWriteTransaction(descriptor); } });
+    expect(confirm.props.disabled).toBe(true);
+    if (!confirm.props.disabled) confirm.props.onClick();
+    expect(origin).toBe(false);
+    expect(target).toBe(false);
+    expect(sends).toBe(0);
+    // Even a same-tick/programmatic duplicate cannot start another preparation.
+    const duplicate = store.runWriteTransaction(descriptor);
+    expect(preparations).toBe(1);
+    release();
+    await Promise.all([first, duplicate]);
+    expect(sends).toBe(1);
+  } finally { release(); store.dispose(); }
+});

@@ -57,7 +57,7 @@ but only the store deduplicates reads, and mutations are never automatically ret
 Reads have no priorities, configurable deduplication, or queue deadlines. Each
 key always shares its running request; timeout handling lives in the HTTP adapter.
 
-`startGameplaySync` owns the refresh cadence. Infrastructure, moon, queue,
+`startGameplaySync` owns the refresh cadence. Infrastructure, shipyard, moon, queue,
 active fleet/count and mission-detail queries refresh on the ten-second policy;
 entries with active production also use that cadence. Archive and other mounted
 reads have a two-minute safety refresh. Hidden/offline
@@ -104,6 +104,16 @@ Each response owns its own canonical key and never populates another endpoint's 
 | Mission Control | Global count loads without opening All; full global rows load only for All/filters. Subscribe to count OR rows, and use the newest cached source for the badge. |
 | Archives | Paginated history and compact battle summaries; full report detail on demand. Keep mission detail polling while outcomes remain pending. |
 | Launch inventories | `{id, count}` availability overlays the base catalog; do not lose cost/duration/energy data. |
+
+Mission composers subscribe to both selected-planet shipyard and moon keys, including
+when the shell still has the parent planet selected. Opening and final preflight
+revalidate those same canonical keys; failures refresh the captured origin, not
+whichever body is selected later. Launch, recall and resolution plans invalidate
+unit inventory as well as mission visibility. The draft clamps quantities against
+updated launchable counts before render/confirmation and persists reductions, so
+returns never silently reselect ships. Changing the origin clears the ship draft;
+body controls are disabled during submission, including the coordinated attack-readiness check. Backend canonical event counts already
+include mission debits/credits: the frontend must not subtract active missions again.
 
 Background refreshes do not replace loaded panels with skeletons, reset drafts,
 or turn a known empty section into a new loading block. Disabled requests do not

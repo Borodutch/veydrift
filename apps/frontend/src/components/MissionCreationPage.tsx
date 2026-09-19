@@ -1,6 +1,6 @@
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   contractCombatPower,
   forecastContractBattle,
@@ -506,7 +506,7 @@ export function MissionCreationPage({
     ? bodySelection.originMoonShipyardState ?? null
     : undefined;
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
-  const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action, initialOriginShipyardState));
+  const [shipDraft, setShips] = useState<MissionShips>(() => initialMissionShips(action, initialOriginShipyardState));
   const [cargo, setCargo] = useState<MissionCargoDraft>(emptyMissionCargoDraft);
   const [greedyLootEnabled, setGreedyLootEnabled] = useState(false);
   const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
@@ -534,6 +534,17 @@ export function MissionCreationPage({
   // to the parent planet would change the transaction target without the player's consent; the draft
   // blocker below instead keeps the Moon selection visible and fails closed.
   const effectiveTargetIsMoon = targetIsMoon;
+  const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
+  const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
+  // Derive before rendering/submission, then persist reductions so a later return
+  // cannot silently resurrect a quantity the player no longer sees selected.
+  const ships = useMemo(() => reconcileMissionShips(shipDraft, effectiveShipyardState), [shipDraft, effectiveShipyardState]);
+  const [inventoryAdjusted, setInventoryAdjusted] = useState(false);
+  useLayoutEffect(() => {
+    if (ships === shipDraft) return;
+    setShips(ships);
+    setInventoryAdjusted(true);
+  }, [ships, shipDraft]);
   const distance = originCoords
     ? action.mode === "mission"
       ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
@@ -567,8 +578,6 @@ export function MissionCreationPage({
   const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
   const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
-  const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
-  const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
@@ -761,6 +770,7 @@ export function MissionCreationPage({
     setCargo(reconcileMissionCargoAfterFleetChange);
   };
   const changeOriginBody = (value: boolean) => {
+    if (value !== effectiveOriginIsMoon) setShips(emptyMissionShips());
     setCargo((current) => missionCargoAfterBodyChange(current, effectiveOriginIsMoon, value));
     setOriginIsMoon(value);
   };
@@ -830,12 +840,14 @@ export function MissionCreationPage({
         {timingRows.length > 0 ? <MissionTimingGrid rows={timingRows} /> : null}
       </section>
 
+      {inventoryAdjusted ? <p role="status" className="text-sm text-amber-200">Fleet inventory changed. Unavailable ship quantities were reduced; review your fleet and cargo before confirming again.</p> : null}
       <div className="grid gap-3">
         <section className="grid gap-3">
           {bodySelectionVisibility.sectionVisible ? (
             <MissionFormSection title="Bodies" eyebrow="Route">
               {bodySelectionVisibility.originVisible ? (
                 <BodySelectionRow
+                  disabled={actionPending}
                   moonAvailable
                   moonLabel="Origin moon"
                   onChange={changeOriginBody}
@@ -845,6 +857,7 @@ export function MissionCreationPage({
               ) : null}
               {bodySelectionVisibility.targetVisible ? (
                 <BodySelectionRow
+                  disabled={actionPending}
                   moonAvailable
                   moonLabel="Destination moon"
                   onChange={changeTargetBody}
@@ -1139,13 +1152,15 @@ function useDeferredPublicTargetBattleForecast(
   }
 }
 
-function BodySelectionRow({
+export function BodySelectionRow({
+  disabled,
   moonAvailable,
   moonLabel,
   onChange,
   planetLabel,
   value,
 }: {
+  disabled?: boolean;
   moonAvailable: boolean;
   moonLabel: string;
   onChange: (value: boolean) => void;
@@ -1161,6 +1176,7 @@ function BodySelectionRow({
             ? "border-signal/45 bg-signal/15 text-signal"
             : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
         }`}
+        disabled={disabled}
         onClick={() => onChange(false)}
         type="button"
       >
@@ -1173,7 +1189,7 @@ function BodySelectionRow({
             ? "border-signal/45 bg-signal/15 text-signal"
             : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
         }`}
-        disabled={!moonAvailable}
+        disabled={disabled || !moonAvailable}
         onClick={() => onChange(true)}
         title={moonAvailable ? moonLabel : `${moonLabel} unavailable for this route.`}
         type="button"
@@ -1622,6 +1638,20 @@ function cargoResourceOverdraft(
 
   if (missing.length <= 0) return undefined;
   return `Cargo exceeds available resources: ${missing.join(", ")}.`;
+}
+
+/** Reconcile only player quantities; inventory stays owned by BackendDataStore. */
+export function reconcileMissionShips(ships: MissionShips, inventory: MissionShipInventorySnapshot | null): MissionShips {
+  if (!inventory) return ships;
+  let next = ships;
+  for (const ship of missionShipOptions) {
+    const available = Math.max(0, Math.trunc(inventory.ships.find(row => row.id === ship.id)?.count ?? 0));
+    const count = Math.min(Math.max(0, Math.trunc(ships[ship.key] ?? 0)), available);
+    if (count === ships[ship.key]) continue;
+    if (next === ships) next = { ...ships };
+    next[ship.key] = count;
+  }
+  return next;
 }
 
 export function staleSelectedShipQuantityBlocker(
