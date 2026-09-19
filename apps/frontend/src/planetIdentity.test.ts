@@ -96,7 +96,7 @@ describe("planet identity", () => {
     expect(homeWorldCoordinates({ homePlanetId: null, planet: null }, [home])).toBeUndefined();
   });
 
-  test("uses one slot-aware art resolver instead of stale absolute-temperature archetypes", () => {
+  test("uses canonical climate biomes for hydrated API planets", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 1,
       system: 1,
@@ -109,13 +109,11 @@ describe("planet identity", () => {
     });
 
     expect(planets.map((planet) => planet.type)).toEqual([
-      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 1 }),
-      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 4 }),
-      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 8 }),
-      planetArtTypeForCoordinates({ galaxy: 1, system: 1, position: 13 }),
+      "scorching-molten",
+      "scorching-molten",
+      "scorching-molten",
+      "frozen-ice",
     ]);
-    expect(new Set(planets.map((planet) => planet.type)).size).toBe(4);
-    expect(planets.slice(1).every((planet) => planet.type !== "scorching-molten")).toBe(true);
   });
 
   test("normalizes mission and historical archetypes through coordinates", () => {
@@ -154,15 +152,15 @@ describe("planet identity", () => {
       system: 407,
       position: 15,
       fields: 196,
-      type: planetArtTypeForCoordinates(settlementPlanet),
+      type: "frozen-ice",
       temperature: {
         min: -75,
         max: -35,
       },
       diameter: 14_000,
-      image: planetImageForType(planetArtTypeForCoordinates(settlementPlanet)),
+      image: planetImageForType("frozen-ice"),
     });
-    expect(formatPlanetType(identity.type)).toBe(formatPlanetType(planetArtTypeForCoordinates(settlementPlanet)));
+    expect(formatPlanetType(identity.type)).toBe("Frozen Ice");
   });
 
   test("preserves moon presence on settlement-derived planet identity", () => {
@@ -251,7 +249,7 @@ describe("planet identity", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
       fields: 196,
-      type: planetArtTypeForCoordinates(settlementPlanet),
+      type: "frozen-ice",
       occupiedBy: {
         planetId: "2",
         owner: settlementPlanet.owner,

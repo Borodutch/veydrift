@@ -342,6 +342,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   queues: {
     building: QueueStateResponse | null;
     defense: QueueStateResponse | null;
+    unsettledDefense?: QueueStateResponse | null;
     ship: QueueStateResponse | null;
   };
   moon: {
@@ -687,6 +688,7 @@ export type TargetCombatIntel = {
   };
   queues: {
     defense: QueueStateResponse | null;
+    unsettledDefense?: QueueStateResponse | null;
     ship: QueueStateResponse | null;
   };
 };
@@ -862,6 +864,8 @@ export type ChainDefenseState = {
   }>;
   launchableDefenses?: Array<Pick<ChainDefenseState["defenses"][number], "id" | "count"> & Partial<ChainDefenseState["defenses"][number]>>;
   queue: QueueStateResponse | null;
+  /** Canonical unsettled production; absent on legacy backends. */
+  unsettledQueue?: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };

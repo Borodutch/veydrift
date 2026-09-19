@@ -41,6 +41,8 @@ export type PlayerQueues<Wallet extends string = string> = {
   homePlanetId: string | null;
   building: QueueState | null;
   defense: QueueState | null;
+  /** Canonical unsettled defense batch; defense above is projected not-yet-due work. */
+  unsettledDefense?: QueueState | null;
   ship: QueueState | null;
   research: QueueState | null;
 };

@@ -3561,6 +3561,7 @@ function indexedWalletPlanetsSnapshot(
     const queues = {
       building: indexer.planetQueue(planet.planetId, "building"),
       defense: indexer.planetQueue(planet.planetId, "defense"),
+      unsettledDefense: indexer.unsettledDefenseQueue(planet.planetId),
       ship: indexer.planetQueue(planet.planetId, "ship")
     };
     const queuesAt = performance.now();
@@ -4191,7 +4192,10 @@ function indexedDefenseState(
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
-    queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
+    // Keep legacy in-flight work stable for cached clients. The additive field
+    // proves whether a launchable surplus still belongs to canonical production.
+    queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null,
+    unsettledQueue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
 }
 
@@ -4604,6 +4608,7 @@ function targetCombatIntelForMission(
     defenses: tactical.defenses,
     queues: {
       defense: moon ? moon.defenseQueue : indexer.planetQueue(planet.planetId, "defense"),
+      ...(!targetIsMoon ? { unsettledDefense: indexer.unsettledDefenseQueue(planet.planetId) } : {}),
       ship: targetIsMoon ? null : indexer.planetQueue(planet.planetId, "ship")
     }
   };
@@ -4626,6 +4631,7 @@ function publicPlanetStateRef(
   queues: {
     building: PlayerQueues["building"];
     defense: PlayerQueues["defense"];
+    unsettledDefense?: PlayerQueues["unsettledDefense"];
     ship: PlayerQueues["ship"];
     research: PlayerQueues["research"];
   };
@@ -4657,6 +4663,7 @@ function publicPlanetStateRef(
     queues: {
       building: indexer.planetQueue(planet.planetId, "building"),
       defense: indexer.planetQueue(planet.planetId, "defense"),
+      unsettledDefense: indexer.unsettledDefenseQueue(planet.planetId),
       ship: indexer.planetQueue(planet.planetId, "ship"),
       research: indexer.researchQueue(planet.owner)
     }
