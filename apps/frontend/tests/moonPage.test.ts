@@ -482,6 +482,49 @@ describe("Moon page helpers", () => {
     });
   });
 
+  for (const openFields of [0, 1, 3]) {
+    for (const buildingKey of ["lunarBase", "roboticsFactory", "jumpGate", "shipyard"] as const) {
+      test(`${buildingKey} requires exactly one open field with ${openFields} available`, () => {
+        const moonState = loadedMoonState({
+          moon: {
+            exists: true,
+            planetId: "7",
+            owner: "0x1111111111111111111111111111111111111111",
+            fields: 6 + openFields,
+            diameterKm: 8774,
+            createdAt: "1770000000",
+            jumpGateReadyAt: "0",
+          },
+          resourcesAsOfNow: { metal: "999999999", crystal: "999999999", deuterium: "999999999" },
+          buildings: [
+            { id: 0, key: "lunarBase", label: "Lunar Base", level: 3, cost: { metal: "160000", crystal: "320000", deuterium: "160000" } },
+            { id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 2, cost: { metal: "1600", crystal: "480", deuterium: "800" } },
+            { id: 2, key: "jumpGate", label: "Jump Gate", level: 0, cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" } },
+            { id: 3, key: "shipyard", label: "Shipyard", level: 1, cost: { metal: "800", crystal: "400", deuterium: "200" } },
+          ],
+          technologyLevels: { "8": 7 },
+        });
+        const building = moonState.buildings.find((candidate) => candidate.key === buildingKey)!;
+        const requirements = moonBuildingRequirementRows(building, moonState.moon!, moonState);
+        const status = moonStructureStatus(building, moonState.moon!, moonState, { canTransact: true });
+
+        expect(moonFieldSummary(moonState.moon!, moonState)).toEqual({ capacity: 6 + openFields, used: 6, open: openFields });
+        expect(requirements[0]).toEqual({
+          label: "1 open field",
+          met: openFields > 0,
+          status: openFields > 0 ? "Available" : "No open fields",
+        });
+        expect(requirements.slice(1).every((requirement) => requirement.met)).toBe(true);
+        expect(status.requirements).toEqual(requirements);
+        expect(status.disabled).toBe(openFields === 0);
+        expect(status.reason).toBe(openFields === 0
+          ? "Requires 1 open field (No open fields)"
+          : building.level === 0 ? `Ready to build ${building.label}` : `Ready for Level ${building.level + 1}`);
+        if (buildingKey === "lunarBase") expect(status.targetLevel).toBe(4);
+      });
+    }
+  }
+
   test("softly requires Lunar Base as the first moon build", () => {
     const moonState = loadedMoonState({
       moon: {
