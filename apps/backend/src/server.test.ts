@@ -10202,7 +10202,7 @@ describe("Veydrift backend", () => {
       { id: 0, count: 7 },
       { id: 2, count: 1 }
     ]);
-    expect(defensesBody.queue).toBeNull();
+    expect(defensesBody.queue).toMatchObject({ active: true, itemId: 1, quantity: 2, asOfNow: { complete: true } });
     expect(defensesBody.defenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
       { id: 0, count: 10 }
     ]);
@@ -10210,6 +10210,98 @@ describe("Veydrift backend", () => {
       { id: 0, count: 15 },
       { id: 1, count: 2 }
     ]);
+  });
+
+  test.each([
+    { planetId: "775", itemId: 0, canonical: 2, quantity: 1 },
+    { planetId: "786", itemId: 0, canonical: 0, quantity: 2 },
+    { planetId: "7", itemId: 9, canonical: 1, quantity: 2 }
+  ])("defense API keeps due inventory tied to an unsettled queue for planet $planetId (VEY-885)", async ({ planetId, itemId, canonical, quantity }) => {
+    const database = new Database(":memory:");
+    const reader = new MockChainReader();
+    const originalNow = Date.now();
+    const now = Math.floor(originalNow / 1_000);
+    let indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const makeHandler = () => createRequestHandler({
+      config: configuredTestConfig, chainReader: reader, indexer, role: "reader",
+      enableResponseCache: true, prewarmResponseCache: false
+    });
+    let handler = makeHandler();
+    const read = async () => {
+      const response = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=${planetId}`));
+      expect(response.status).toBe(200);
+      return await response.json() as DefenseState;
+    };
+    const count = (state: DefenseState) => state.launchableDefenses!.find(row => row.id === itemId)!.count;
+    const canonicalCount = (state: DefenseState) => state.defenses.find(row => row.id === itemId)!.count;
+    try {
+      indexer.applyEvent({ ...planet, planetId, eventName: "PlanetStarted", transactionHash: "0xvey885-planet", blockNumber: "123" });
+      indexer.applyLog({
+        blockNumber: "0x80", transactionHash: "0xvey885-base", logIndex: "0x0",
+        topics: [planetDefenseCountChangedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
+        data: abiWords(BigInt(canonical))
+      });
+      const absent = await read();
+      expect(absent.queue).toBeNull();
+      expect(absent.launchableDefenses).toEqual(absent.defenses.map(({ id, count }) => ({ id, count })));
+      const logs: IndexedRpcLog[] = [{
+        blockNumber: "0x81", transactionHash: "0xvey885-start", logIndex: "0x0",
+        blockTimestamp: `0x${now.toString(16)}`,
+        topics: [defenseQueuedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
+        data: abiWords(BigInt(quantity), BigInt(now + quantity * 10), 0n, 0n, 0n)
+      }];
+      indexer.applyLog(logs[0]!);
+      const notDue = await read();
+      expect(notDue.queue).toMatchObject({ active: true, quantity, asOfNow: { complete: false } });
+      expect(count(notDue)).toBe(canonical);
+      setSystemTime(new Date((now + 10) * 1_000));
+      const partial = await read();
+      expect(canonicalCount(partial)).toBe(canonical);
+      expect(count(partial)).toBe(canonical + 1);
+      expect(partial.queue).toMatchObject({ active: true, quantity, asOfNow: { completedQuantity: 1 } });
+      const partialSettled = quantity > 1 ? 1 : 0;
+      if (partialSettled) {
+        logs.push({
+          blockNumber: "0x82", transactionHash: "0xvey885-partial", logIndex: "0x0",
+          topics: [defenseCompletedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
+          data: abiWords(1n, BigInt(canonical + 1))
+        });
+        indexer.applyLog(logs.at(-1)!);
+        const partialCompletion = await read();
+        expect(canonicalCount(partialCompletion)).toBe(canonical + 1);
+        expect(count(partialCompletion)).toBe(canonical + 1);
+        expect(partialCompletion.queue?.quantity).toBe(quantity - 1);
+      }
+      setSystemTime(new Date((now + quantity * 10) * 1_000));
+      const due = await read();
+      expect(canonicalCount(due)).toBe(canonical + partialSettled);
+      expect(count(due)).toBe(canonical + quantity);
+      expect(due.queue).toMatchObject({ active: true, quantity: quantity - partialSettled, asOfNow: { complete: true, remainingQuantity: 0 } });
+      // Restart before settlement must preserve legitimate due launchability.
+      indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+      handler = makeHandler();
+      expect(count(await read())).toBe(canonical + quantity);
+      logs.push({
+        blockNumber: "0x83", transactionHash: "0xvey885-complete", logIndex: "0x0",
+        topics: [defenseCompletedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
+        data: abiWords(BigInt(quantity - partialSettled), BigInt(canonical + quantity))
+      });
+      indexer.applyLog(logs.at(-1)!);
+      const settled = await read();
+      expect(settled.queue).toBeNull();
+      expect(canonicalCount(settled)).toBe(canonical + quantity);
+      expect(settled.launchableDefenses).toEqual(settled.defenses.map(({ id, count }) => ({ id, count })));
+      // Duplicate start/completion delivery and a restarted writer must not resurrect a surplus.
+      for (const log of logs) indexer.applyLog(log);
+      indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+      handler = makeHandler();
+      const restarted = await read();
+      expect(restarted.queue).toBeNull();
+      expect(restarted.launchableDefenses).toEqual(settled.launchableDefenses);
+    } finally {
+      setSystemTime(new Date(originalNow));
+      database.close();
+    }
   });
 
   test("keeps selected planet id in warm indexed shipyard responses", async () => {

@@ -4315,6 +4315,25 @@ export class SettlementIndexer {
     return this.queueSettlement(`${kind}:${planetId}`).queue;
   }
 
+  unsettledDefenseQueue(planetId: string): QueueState | null {
+    const queue = this.queueState(`defense:${planetId}`);
+    if (!queue) return null;
+    const now = nowSeconds();
+    const withProgress = (entry: QueueState): QueueState => {
+      const { backlog: _backlog, ...batch } = entry;
+      const projected = settleQueueAsOfNow(batch, now);
+      const asOfNow = projected.queue?.asOfNow ?? projected.completed[0]?.asOfNow;
+      return { ...batch, ...(asOfNow ? { asOfNow } : {}) };
+    };
+    // Due production is launchable, but is not deployed until its completion
+    // event arrives. Keep the canonical active batch (and quantities) visible:
+    // returning the settled-to-now null queue hid the source of that surplus.
+    return {
+      ...withProgress(queue),
+      ...(queue.backlog ? { backlog: queue.backlog.map(withProgress) } : {})
+    };
+  }
+
   moonQueue(planetId: string): QueueState | null {
     return this.queueSettlement(`moon-building:${planetId}`).queue;
   }

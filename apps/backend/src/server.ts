@@ -4191,7 +4191,7 @@ function indexedDefenseState(
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
-    queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
+    queue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
 }
 
