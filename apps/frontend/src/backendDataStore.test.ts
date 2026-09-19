@@ -12,7 +12,7 @@ const appliedTransactionStatusReader = async (transactionHash: string) => ({
 });
 
 describe("BackendDataStore", () => {
-  test("fresh origin reads wait past an older request, coalesce, and do not block other planets", async () => {
+  test.each(["shipyard", "moon"] as const)("fresh %s origin reads reject stale publication, coalesce, and isolate other planets", async kind => {
     const originalFetch = globalThis.fetch;
     const store = new BackendDataStore("https://api.test");
     let complete!: (response: Response) => void;
@@ -24,16 +24,22 @@ describe("BackendDataStore", () => {
       return Response.json({ planetId: new URL(url).searchParams.get("planetId"), ships: [{ id: 0, count: 0 }] });
     }) as typeof fetch;
     try {
-      const old = store.shipyard("0xabc", "7");
+      const published: number[] = [];
+      store.subscribeKey(store.queries[kind]("0xabc", "7").key, () => {
+        const count = store.snapshot<any>(store.queries[kind]("0xabc", "7").key)?.data?.ships?.[0]?.count;
+        if (count !== undefined) published.push(count);
+      });
+      const old = store[kind]("0xabc", "7");
       await Promise.resolve();
-      const fresh = Array.from({ length: 10 }, () => store.shipyard("0xabc", "7", { fresh: true }));
-      expect((await store.shipyard("0xabc", "8")).planetId).toBe("8");
+      const fresh = Array.from({ length: 10 }, () => store[kind]("0xabc", "7", { fresh: true }));
+      expect(await store[kind]("0xabc", "8")).toMatchObject({ planetId: "8" });
       expect(requests).toHaveLength(2);
       complete(Response.json({ planetId: "7", ships: [{ id: 0, count: 2 }] }));
-      expect((await old).ships[0]?.count).toBe(2);
-      expect((await Promise.all(fresh)).every(state => state.ships[0]?.count === 0)).toBe(true);
+      expect((await old).ships?.[0]?.count).toBe(2);
+      expect((await Promise.all(fresh)).every(state => state.ships?.[0]?.count === 0)).toBe(true);
       expect(requests).toHaveLength(3);
-      expect(store.snapshot(store.queries.shipyard("0xabc", "7").key)?.data).toMatchObject({ ships: [{ id: 0, count: 0 }] });
+      expect(published).not.toContain(2);
+      expect(store.snapshot(store.queries[kind]("0xabc", "7").key)?.data).toMatchObject({ ships: [{ id: 0, count: 0 }] });
     } finally { store.dispose(); globalThis.fetch = originalFetch; }
   });
 
@@ -1046,10 +1052,12 @@ describe("BackendDataStore", () => {
     let now = Date.now();
     const store = new BackendDataStore("https://policy.test", { now: () => now });
     store.setContext("0xabc", "7");
-    const reads = { infrastructure: 0, inactive: 0, fleet: 0, research: 0, profile: 0 };
+    const reads = { infrastructure: 0, shipyard: 0, moon: 0, inactive: 0, fleet: 0, research: 0, profile: 0 };
     for (const [name, kind, planetId, active, value] of [
       ["infrastructure", "infrastructure", "7", true, {}],
-      ["inactive", "infrastructure", "8", false, {}],
+      ["inactive", "shipyard", "8", false, {}],
+      ["shipyard", "shipyard", "7", true, {}],
+      ["moon", "moon", "7", true, {}],
       ["fleet", "fleet-visibility", undefined, true, {}],
       ["research", "research", "7", true, { queue: { active: true } }],
       ["profile", "profile", undefined, true, {}],
@@ -1061,7 +1069,7 @@ describe("BackendDataStore", () => {
     now += 20_000;
     (store as any).refreshGameplay();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(reads).toEqual({ infrastructure: 2, inactive: 1, fleet: 2, research: 2, profile: 1 });
+    expect(reads).toEqual({ infrastructure: 2, shipyard: 2, moon: 2, inactive: 1, fleet: 2, research: 2, profile: 1 });
     now += 120_000;
     (store as any).refreshGameplay();
     await new Promise(resolve => setTimeout(resolve, 0));

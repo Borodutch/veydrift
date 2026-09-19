@@ -2519,3 +2519,167 @@ test("a real browser reload drops session locks and never restores or resubmits 
   assert.equal(await evaluate("window.recoveryProof.saved()"), false);
   assert.equal(await evaluate("document.querySelector('[role=alertdialog]')"), null);
 });
+
+// These scenarios exercise the real mounted composer, canonical store and write
+// coordinator. Only HTTP inventory and the external wallet send are fixtures.
+async function openInventoryComposer({ spareFighter = false } = {}) {
+  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true", moonOverview: "true" });
+  await evaluate(`(async () => {
+    const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(url);
+    const store = backendDataStoreFor('/local-api');
+    window.inventoryProof = { store, planet: 1, moon: 2, spareFighter: ${spareFighter}, sends: 0, mode: 'success', result: null, reads: [] };
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      const url = new URL(String(args[0]), location.origin);
+      if (url.pathname.endsWith('/randomness-readiness')) {
+        if (window.inventoryProof.holdReadiness) {
+          window.inventoryProof.waitingForReadiness = true;
+          await new Promise(resolve => { window.inventoryProof.releaseReadiness = resolve; });
+        }
+        return Response.json({ ready: true, reasons: [] });
+      }
+      if (url.pathname.endsWith('/transactions/0x888/status')) {
+        return Response.json({ transactionHash: '0x888', phase: 'applied', events: [], indexedEventCount: 0, latestIndexedBlock: '20', receiptBlock: '20' });
+      }
+      const response = await originalFetch(...args);
+      if (!url.pathname.endsWith('/shipyard') && !url.pathname.endsWith('/moon')) return response;
+      const data = await response.json();
+      const moon = url.pathname.endsWith('/moon');
+      window.inventoryProof.reads.push({ moon, planetId: url.searchParams.get('planetId') });
+      const fighter = !moon && window.inventoryProof.spareFighter;
+      return Response.json({ ...data, planetId: url.searchParams.get('planetId'),
+        ...(fighter ? { ships: [...data.ships, { id: 1, count: 1, cost: { metal: '3000', crystal: '1000', deuterium: '0' }, durationSeconds: 60 }] } : {}),
+        launchableShips: [{ id: 0, count: moon ? window.inventoryProof.moon : window.inventoryProof.planet }, ...(fighter ? [{ id: 1, count: 1 }] : [])] });
+    };
+    const runWrite = store.runWriteTransaction.bind(store);
+    store.runWriteTransaction = descriptor => runWrite({ ...descriptor, send: async beforeSend => {
+      window.inventoryProof.sends++;
+      if (window.inventoryProof.mode === 'revert') {
+        window.inventoryProof.moon = 0;
+        throw new Error('Need 1 Small Cargo, only 0 available on the origin moon. Refresh fleet state or reduce the selected ships before launching.');
+      }
+      beforeSend();
+      window.inventoryProof.planet = 0;
+      return '0x888';
+    }}).then(result => { window.inventoryProof.result = result; return result; });
+    await store.shipyard(window.inspectorProof.account, '101', { fresh: true });
+  })()`);
+  const attack = `document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`;
+  await waitForExpression(`${attack} !== null`);
+  await clickExpression(attack);
+  await waitForExpression(`document.querySelector('input[aria-label="Small Cargo quantity"]') !== null
+    && document.querySelector('button[title="Origin moon"]') !== null`);
+  // Wait for the composer's on-open fresh reads before mutating test inventory.
+  await delay(150);
+}
+
+const cargoQuantity = `document.querySelector('input[aria-label="Small Cargo quantity"]')`;
+const increaseCargo = `document.querySelector('button[aria-label="Increase Small Cargo"]')`;
+
+test("VEY-888 mounted canonical updates clamp drafts and isolate planet/moon inventory", async () => {
+  await openInventoryComposer();
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${cargoQuantity}?.value === '1'`);
+  await evaluate(`window.inventoryProof.planet = 0; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
+  await waitForExpression(`${cargoQuantity} === null && document.querySelector('[data-mission-composer]')?.textContent.includes('Unavailable ship quantities were reduced')`);
+  await evaluate(`window.inventoryProof.planet = 1; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
+  await waitForExpression(`${cargoQuantity}?.value === '0'`);
+  await clickExpression(increaseCargo);
+  await clickExpression(`document.querySelector('button[title="Origin moon"]')`);
+  await waitForExpression(`${cargoQuantity}?.value === '0'`);
+  await clickExpression(increaseCargo);
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${cargoQuantity}?.value === '2'`);
+  await evaluate(`window.inventoryProof.moon = 1; window.inventoryProof.store.moon(window.inspectorProof.account, '101', { fresh: true })`);
+  await waitForExpression(`${cargoQuantity}?.value === '1'`);
+  await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Origin planet')`);
+  await waitForExpression(`${cargoQuantity}?.value === '0'`);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("VEY-888 final fresh preflight clamps the last cargo before any wallet send", async () => {
+  await openInventoryComposer();
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await evaluate(`window.inventoryProof.planet = 0`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
+  assert.ok(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('only 0 available')`));
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("VEY-888 exact-origin revert recovery updates the mounted moon, not parent quantities", async () => {
+  await openInventoryComposer();
+  await clickExpression(`document.querySelector('button[title="Origin moon"]')`);
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await evaluate(`window.inventoryProof.mode = 'revert'; window.inventoryProof.reads = []`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
+  assert.ok(await evaluate(`window.inventoryProof.reads.filter(read => read.moon && read.planetId === '101').length >= 2`));
+  assert.ok(await evaluate(`window.inventoryProof.reads.every(read => read.planetId === '101')`));
+  await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Origin planet')`);
+  await waitForExpression(`${cargoQuantity}?.value === '0' && !${increaseCargo}.disabled`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+test("VEY-888 consecutive composer cannot reoffer the last cargo sent on the prior mission", async () => {
+  // Retain a different, unselected ship so a second attack is a valid entry.
+  await openInventoryComposer({ spareFighter: true });
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="Light Fighter quantity"]')?.value`), '0');
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
+  // The composer closes on submission, before indexed refresh releases the
+  // origin's spend lock. Wait for real convergence and its rendered entry gate.
+  await waitForExpression(`window.inventoryProof.store.snapshot(window.inventoryProof.store.writeTransactionKey(undefined, window.inspectorProof.account))?.data?.phase === 'success'`);
+  const attack = `document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`;
+  await waitForExpression(`${attack} !== null`);
+  await clickExpression(attack);
+  await waitForExpression(`document.querySelector('[data-mission-composer]') !== null && ${cargoQuantity} === null`);
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="Light Fighter quantity"]')?.value`), '0');
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+
+test("VEY-888 deferred attack readiness locks body selection and repeated confirmation", async () => {
+  await openInventoryComposer();
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await evaluate(`window.inventoryProof.holdReadiness = true`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.waitingForReadiness === true`);
+  assert.ok(await evaluate(`[...document.querySelectorAll('[data-mission-composer] button')]
+    .filter(button => /^(Origin|Destination) (planet|moon)$/.test(button.textContent.trim()))
+    .every(button => button.disabled)`));
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
+  await evaluate(`document.querySelector('button[title="Origin moon"]').click()`);
+  assert.ok(await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Origin planet').getAttribute('aria-pressed') === 'true'`));
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
+  await evaluate(`window.inventoryProof.releaseReadiness()`);
+  await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+
+test("VEY-888 sending the last movable ship keeps Attack unavailable after indexing", async () => {
+  await openInventoryComposer();
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
+  await waitForExpression(`window.inventoryProof.store.snapshot(window.inventoryProof.store.writeTransactionKey(undefined, window.inspectorProof.account))?.data?.phase === 'success'`);
+  const blockedAttack = `document.querySelector('main button[aria-label="Attack: Requires at least one movable ship on your home planet."]')`;
+  await waitForExpression(`${blockedAttack}?.disabled === true`);
+  await evaluate(`${blockedAttack}.click()`);
+  assert.equal(await evaluate(`document.querySelector('[data-mission-composer]')`), null);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
