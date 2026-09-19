@@ -2522,13 +2522,13 @@ test("a real browser reload drops session locks and never restores or resubmits 
 
 // These scenarios exercise the real mounted composer, canonical store and write
 // coordinator. Only HTTP inventory and the external wallet send are fixtures.
-async function openInventoryComposer() {
+async function openInventoryComposer({ spareFighter = false } = {}) {
   await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true", moonOverview: "true" });
   await evaluate(`(async () => {
     const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
     const { backendDataStoreFor } = await import(url);
     const store = backendDataStoreFor('/local-api');
-    window.inventoryProof = { store, planet: 1, moon: 2, sends: 0, mode: 'success', result: null, reads: [] };
+    window.inventoryProof = { store, planet: 1, moon: 2, spareFighter: ${spareFighter}, sends: 0, mode: 'success', result: null, reads: [] };
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
       const url = new URL(String(args[0]), location.origin);
@@ -2547,8 +2547,10 @@ async function openInventoryComposer() {
       const data = await response.json();
       const moon = url.pathname.endsWith('/moon');
       window.inventoryProof.reads.push({ moon, planetId: url.searchParams.get('planetId') });
+      const fighter = !moon && window.inventoryProof.spareFighter;
       return Response.json({ ...data, planetId: url.searchParams.get('planetId'),
-        launchableShips: [{ id: 0, count: moon ? window.inventoryProof.moon : window.inventoryProof.planet }] });
+        ...(fighter ? { ships: [...data.ships, { id: 1, count: 1, cost: { metal: '3000', crystal: '1000', deuterium: '0' }, durationSeconds: 60 }] } : {}),
+        launchableShips: [{ id: 0, count: moon ? window.inventoryProof.moon : window.inventoryProof.planet }, ...(fighter ? [{ id: 1, count: 1 }] : [])] });
     };
     const runWrite = store.runWriteTransaction.bind(store);
     store.runWriteTransaction = descriptor => runWrite({ ...descriptor, send: async beforeSend => {
@@ -2626,13 +2628,21 @@ test("VEY-888 exact-origin revert recovery updates the mounted moon, not parent 
 });
 
 test("VEY-888 consecutive composer cannot reoffer the last cargo sent on the prior mission", async () => {
-  await openInventoryComposer();
+  // Retain a different, unselected ship so a second attack is a valid entry.
+  await openInventoryComposer({ spareFighter: true });
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="Light Fighter quantity"]')?.value`), '0');
   await clickExpression(increaseCargo);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
   await clickExpression(missionConfirmExpression(false));
   await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
-  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
+  // The composer closes on submission, before indexed refresh releases the
+  // origin's spend lock. Wait for real convergence and its rendered entry gate.
+  await waitForExpression(`window.inventoryProof.store.snapshot(window.inventoryProof.store.writeTransactionKey(undefined, window.inspectorProof.account))?.data?.phase === 'success'`);
+  const attack = `document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`;
+  await waitForExpression(`${attack} !== null`);
+  await clickExpression(attack);
   await waitForExpression(`document.querySelector('[data-mission-composer]') !== null && ${cargoQuantity} === null`);
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="Light Fighter quantity"]')?.value`), '0');
   assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
@@ -2655,5 +2665,21 @@ test("VEY-888 deferred attack readiness locks body selection and repeated confir
   assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
   await evaluate(`window.inventoryProof.releaseReadiness()`);
   await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
+
+test("VEY-888 sending the last movable ship keeps Attack unavailable after indexing", async () => {
+  await openInventoryComposer();
+  await clickExpression(increaseCargo);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inventoryProof.sends === 1 && document.querySelector('[data-mission-composer]') === null`);
+  await waitForExpression(`window.inventoryProof.store.snapshot(window.inventoryProof.store.writeTransactionKey(undefined, window.inspectorProof.account))?.data?.phase === 'success'`);
+  const blockedAttack = `document.querySelector('main button[aria-label="Attack: Requires at least one movable ship on your home planet."]')`;
+  await waitForExpression(`${blockedAttack}?.disabled === true`);
+  await evaluate(`${blockedAttack}.click()`);
+  assert.equal(await evaluate(`document.querySelector('[data-mission-composer]')`), null);
+  assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
