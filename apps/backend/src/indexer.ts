@@ -2602,6 +2602,7 @@ export class SettlementIndexer {
         {
           building: this.planetQueue(planet.planetId, "building"),
           defense: this.planetQueue(planet.planetId, "defense"),
+          unsettledDefense: this.unsettledDefenseQueue(planet.planetId),
           ship: this.planetQueue(planet.planetId, "ship")
         },
         moonSummary
@@ -2624,6 +2625,7 @@ export class SettlementIndexer {
       homePlanetId: planetId,
       building: planetId ? this.planetQueue(planetId, "building") : null,
       defense: planetId ? this.planetQueue(planetId, "defense") : null,
+      unsettledDefense: planetId ? this.unsettledDefenseQueue(planetId) : null,
       ship: planetId ? this.planetQueue(planetId, "ship") : null,
       research: this.researchQueue(wallet)
     };
@@ -4313,6 +4315,25 @@ export class SettlementIndexer {
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
     return this.queueSettlement(`${kind}:${planetId}`).queue;
+  }
+
+  unsettledDefenseQueue(planetId: string): QueueState | null {
+    const queue = this.queueState(`defense:${planetId}`);
+    if (!queue) return null;
+    const now = nowSeconds();
+    const withProgress = (entry: QueueState): QueueState => {
+      const { backlog: _backlog, ...batch } = entry;
+      const projected = settleQueueAsOfNow(batch, now);
+      const asOfNow = projected.queue?.asOfNow ?? projected.completed[0]?.asOfNow;
+      return { ...batch, ...(asOfNow ? { asOfNow } : {}) };
+    };
+    // Due production is launchable, but is not deployed until its completion
+    // event arrives. Keep the canonical active batch (and quantities) visible:
+    // returning the settled-to-now null queue hid the source of that surplus.
+    return {
+      ...withProgress(queue),
+      ...(queue.backlog ? { backlog: queue.backlog.map(withProgress) } : {})
+    };
   }
 
   moonQueue(planetId: string): QueueState | null {
@@ -15542,7 +15563,7 @@ export function indexedManagedPlanet(
   planet: SettledPlanetEvent,
   homePlanetId: string | null,
   buildings: InfrastructureState["buildings"] = [],
-  queues: Pick<ManagedPlanet["queues"], "building" | "defense" | "ship"> = {
+  queues: ManagedPlanet["queues"] = {
     building: null,
     defense: null,
     ship: null

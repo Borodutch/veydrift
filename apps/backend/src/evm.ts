@@ -83,6 +83,7 @@ export type ManagedPlanet = PlanetState & {
   queues: {
     building: QueueState | null;
     defense: QueueState | null;
+    unsettledDefense?: QueueState | null;
     ship: QueueState | null;
   };
   moon: {
@@ -912,6 +913,9 @@ export type DefenseState = {
   // deterministic lazy defense-production settlement prologue.
   launchableDefenses?: Array<Pick<DefenseState["defenses"][number], "id" | "count">>;
   queue: QueueState | null;
+  /** Canonical unsettled production (including due units); null proves no active batch.
+   * queue retains the legacy settled-to-now work view for existing clients. */
+  unsettledQueue?: QueueState | null;
 };
 
 export type InfrastructureState = {
