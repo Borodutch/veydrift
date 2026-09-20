@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { planetArchetypeForTemperature } from "../../backend/src/universe";
 import {
   formatPlanetType,
+  planetArtTypeForCoordinates,
   mergePlanetWithSettlement,
   planetFromSettlementPlanet,
   planetImageForType,
@@ -63,7 +64,7 @@ function settlement(sample: typeof cases[number]) {
   };
 }
 
-describe("Planet detail canonical biome (VEY-884)", () => {
+describe("Planet detail separates slot artwork from canonical climate (VEY-890)", () => {
   for (const sample of cases) {
     test(`8:${sample.system}:${sample.position} agrees with Galaxy/API through settled-planet hydration`, () => {
       const api = apiPlanet(sample);
@@ -74,11 +75,11 @@ describe("Planet detail canonical biome (VEY-884)", () => {
       expect(planetArchetypeForTemperature(sample.temperature)).toBe(sample.type);
       for (const trustedHomePlanet of [null, owned, refreshed]) {
         const detail = planetDetailRefreshResultPlanet({ apiPlanet: galaxyPlanet, coords, currentPlanet: null, trustedHomePlanet })!;
-        expect(detail.type).toBe(api.archetype!);
-        expect(formatPlanetType(detail.type)).toBe(formatGalaxyHeatLabel(galaxyPlanet.temperature));
-        expect(detail.image).toBe(planetImageForType(sample.type));
+        expect(detail.type).toBe(planetArtTypeForCoordinates(coords));
+        expect(formatPlanetType(sample.type)).toBe(formatGalaxyHeatLabel(galaxyPlanet.temperature));
+        expect(detail.image).toBe(planetImageForType(planetArtTypeForCoordinates(coords)));
         expect(detail.temperature).toEqual({ min: sample.temperature - 20, max: sample.temperature + 20 });
-        expect(publicPlanetDataRows(detail)).toContainEqual({ label: "Type", value: formatPlanetType(sample.type) });
+        expect(publicPlanetDataRows(detail)).toContainEqual({ label: "Climate", value: formatPlanetType(sample.type) });
         expect(planetEconomyPillRows(detail)).toContainEqual({
           label: "Deuterium",
           modifier: `${(Math.round(sample.deuteriumMultiplierBps / 50) / 2).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`,
@@ -87,22 +88,23 @@ describe("Planet detail canonical biome (VEY-884)", () => {
     });
   }
 
-  test("uses live temperature when archetype is missing or obsolete, never coordinate art", () => {
+  test("keeps coordinate art when climate archetype is missing or obsolete, but requires live stats", () => {
     const api = apiPlanet(cases[0]);
     const { archetype: _, ...withoutArchetype } = api;
-    expect(parse(withoutArchetype)?.type).toBe("frozen-ice");
-    expect(parse({ ...api, archetype: "deuterium-blue" })?.type).toBe("frozen-ice");
+    expect(parse(withoutArchetype)?.type).toBe(planetArtTypeForCoordinates(api));
+    expect(parse({ ...api, archetype: "deuterium-blue" })?.type).toBe(planetArtTypeForCoordinates(api));
     expect(parse({ ...api, temperature: undefined })).toBeUndefined();
     expect(parse({ ...api, temperature: Number.NaN })).toBeUndefined();
   });
 
-  test("keeps the settled biome during loading/failure and does not leak it to another coordinate", () => {
+  test("keeps the settled art and climate during loading/failure and does not leak it to another coordinate", () => {
     const sample = cases[4];
     const coords = { galaxy: 8, system: sample.system, position: sample.position };
     const owned = planetFromSettlementPlanet(settlement(sample));
     const fallback = planetDetailRefreshResultPlanet({ apiPlanet: null, coords, currentPlanet: null, trustedHomePlanet: owned });
-    expect(fallback?.type).toBe("warm-terracotta");
-    expect(fallback?.image).toBe(planetImageForType("warm-terracotta"));
+    expect(fallback?.type).toBe(planetArtTypeForCoordinates(coords));
+    expect(fallback?.image).toBe(planetImageForType(planetArtTypeForCoordinates(coords)));
+    expect(fallback?.temperature).toEqual({ min: sample.temperature - 20, max: sample.temperature + 20 });
     expect(shouldShowPlanetDetailInitialLoader({ planet: fallback, source: "loading" })).toBe(false);
     const missing = planetDetailRefreshResultPlanet({ apiPlanet: null, coords: { ...coords, position: 1 }, currentPlanet: owned, trustedHomePlanet: owned });
     expect(missing).toBeNull();

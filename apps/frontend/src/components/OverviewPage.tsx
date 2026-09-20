@@ -338,7 +338,7 @@ export function OverviewPage({
     setRenamePanelOpen(false);
   }, [selectedBodyKind]);
   const planetSubhead = homePlanet
-    ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
+    ? `Art: ${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : "Home planet";
   const currentPlanetKey = homePlanet
     ? planetKeyFromCoordinates(homePlanet)

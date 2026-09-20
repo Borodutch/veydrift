@@ -369,7 +369,7 @@ export function moonRecordRows(planet: Planet): Array<{ label: string; value: st
   return [
     { label: "Fields", value: moon?.fields === undefined ? "Unknown" : moon.fields.toLocaleString("en-US") },
     { label: "Diameter", value: moon?.diameterKm === undefined ? "Unknown" : `${moon.diameterKm.toLocaleString("en-US")} km` },
-    { label: "Parent type", value: formatPlanetType(planet.type) },
+    { label: "Parent art family", value: formatPlanetType(planet.type) },
   ];
 }
 

@@ -738,7 +738,7 @@ function GalaxySlot({
     shipyardState,
   });
   const meta: PlanetMetaItem[] = [
-    { label: formatGalaxyHeatLabel(planet.temperature) },
+    { label: `Climate: ${formatGalaxyHeatLabel(planet.temperature)}` },
     { label: `${planet.fields} fields` },
     ...(planet.migrationReservation ? [{ label: "Reserved", tone: "info" as const }] : []),
     ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),

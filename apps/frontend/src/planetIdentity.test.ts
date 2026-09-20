@@ -96,7 +96,7 @@ describe("planet identity", () => {
     expect(homeWorldCoordinates({ homePlanetId: null, planet: null }, [home])).toBeUndefined();
   });
 
-  test("uses canonical climate biomes for hydrated API planets", () => {
+  test("uses slot-aware artwork for hydrated API planets", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 1,
       system: 1,
@@ -108,12 +108,7 @@ describe("planet identity", () => {
       ],
     });
 
-    expect(planets.map((planet) => planet.type)).toEqual([
-      "scorching-molten",
-      "scorching-molten",
-      "scorching-molten",
-      "frozen-ice",
-    ]);
+    expect(planets.map((planet) => planet.type)).toEqual(planets.map(planetArtTypeForCoordinates));
   });
 
   test("normalizes mission and historical archetypes through coordinates", () => {
@@ -152,15 +147,15 @@ describe("planet identity", () => {
       system: 407,
       position: 15,
       fields: 196,
-      type: "frozen-ice",
+      type: planetArtTypeForCoordinates(settlementPlanet),
       temperature: {
         min: -75,
         max: -35,
       },
       diameter: 14_000,
-      image: planetImageForType("frozen-ice"),
+      image: planetImageForType(planetArtTypeForCoordinates(settlementPlanet)),
     });
-    expect(formatPlanetType(identity.type)).toBe("Frozen Ice");
+    expect(formatPlanetType(identity.type)).toBe("Metal Planetoid");
   });
 
   test("preserves moon presence on settlement-derived planet identity", () => {
@@ -249,7 +244,7 @@ describe("planet identity", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({
       fields: 196,
-      type: "frozen-ice",
+      type: planetArtTypeForCoordinates(settlementPlanet),
       occupiedBy: {
         planetId: "2",
         owner: settlementPlanet.owner,
