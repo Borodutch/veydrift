@@ -32,4 +32,3 @@ export function planetTypeFromCoordinates(galaxy: number, system: number, positi
   const seed = galaxy * 10000 + system * 100 + position;
   return pickPlanetType(position, seed + 1);
 }
-
