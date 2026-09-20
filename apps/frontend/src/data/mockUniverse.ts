@@ -1,4 +1,6 @@
 import type { DebrisField, MigrationReservation, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicMoonState, PublicPlanetState, Resources } from "../types";
+import { planetTypeFromCoordinates } from "../planetArtwork";
+export { planetTypeFromCoordinates } from "../planetArtwork";
 import { PLANET_ANIMATION_BASE } from "../../planetAnimationConfig";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
@@ -15,33 +17,6 @@ const PLANET_IMAGES: Record<PlanetType, string> = {
   "crystal-violet": `${PLANET_ANIMATION_BASE}/crystal-violet.webp`,
   "deuterium-blue": `${PLANET_ANIMATION_BASE}/deuterium-blue.webp`,
 };
-
-function seededRandom(seed: number): number {
-  const x = Math.sin(seed * 9301 + 49297) * 233280;
-  return x - Math.floor(x);
-}
-
-function pickFromSeed<T>(seed: number, arr: T[]): T {
-  const idx = Math.floor(seededRandom(seed) * arr.length);
-  return arr[idx]!;
-}
-
-function pickPlanetType(position: number, seed: number): PlanetType {
-  const hot: PlanetType[] = ["scorching-molten", "hot-desert", "warm-terracotta"];
-  const temperate: PlanetType[] = ["temperate-ocean", "lush-temperate"];
-  const cool: PlanetType[] = ["cool-misty-blue", "cold-tundra"];
-  const cold: PlanetType[] = ["frozen-ice", "outer-cryo"];
-  const special: PlanetType[] = ["metal-planetoid", "crystal-violet", "deuterium-blue"];
-
-  const types =
-    position <= 3 ? hot
-    : position <= 6 ? temperate
-    : position <= 9 ? cool
-    : position <= 12 ? cold
-    : special;
-
-  return pickFromSeed(seed, types);
-}
 
 export type ApiPlanet = {
   key?: string;
@@ -101,8 +76,7 @@ export function planetImageForType(type: PlanetType): string {
   return PLANET_IMAGES[type];
 }
 
-// Coordinate-only artwork fallback for routes without live planet climate.
-// Hydrated planet identities use planetTypeFromTemperature, matching Galaxy and the API.
+// Artwork is a stable coordinate/slot property, independent of economic climate.
 export function planetArtTypeForCoordinates(
   coords: { galaxy: number; position: number; system: number },
 ): PlanetType {
@@ -124,15 +98,7 @@ export function formatPlanetType(type: PlanetType): string {
   return type.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
-// Deterministic planet art-type from coordinates alone. Used only for visuals when a real
-// archetype/temperature is unavailable — e.g. uncharted colonization targets — so a card can still
-// show planet art by type (VEY-403). It never fabricates planet data such as names, owners,
-// resources, or stats; those always come from the live universe API.
-export function planetTypeFromCoordinates(galaxy: number, system: number, position: number): PlanetType {
-  const seed = galaxy * 10000 + system * 100 + position;
-  return pickPlanetType(position, seed + 1);
-}
-
+// Canonical temperature classification is for climate labels, never artwork.
 export function planetTypeFromTemperature(temperature: number): PlanetType {
   if (temperature <= -35) return "frozen-ice";
   if (temperature <= -10) return "cold-tundra";
@@ -177,7 +143,7 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
 }
 
 export function mergePlanetWithSettlement(planet: Planet, settlement: SettlementPlanetIdentity): Planet {
-  const type = planetTypeFromTemperature(settlement.temperature);
+  const type = planetArtTypeForCoordinates(settlement);
   const existingOccupant = planet.occupiedBy?.owner.toLowerCase() === settlement.owner.toLowerCase()
     ? planet.occupiedBy
     : null;
@@ -226,8 +192,8 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     return null;
   }
 
-  // Match Galaxy and the API biome resolver using the same indexed climate.
-  const type = planetTypeFromTemperature(temperature);
+  // Backend archetypes describe climate, not the visual art family.
+  const type = planetArtTypeForCoordinates(planet);
   const occupiedBy = planet.occupiedBy ?? null;
   const alliance = occupiedBy?.alliance ?? null;
 

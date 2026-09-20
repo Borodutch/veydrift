@@ -26,6 +26,17 @@ describe("navigation and planet selector UI source contracts", () => {
     { galaxy: 4, system: 5, position: 6, planetId: "owned-b", moon: null },
   ];
 
+  test("keeps art-family copy separate from canonical climate on every hydrated surface", () => {
+    expect(overviewSource).toContain("Art: ${formatPlanetType(homePlanet.type)}");
+    expect(overviewSource).toContain("overviewHeroImage(homePlanet,");
+    expect(planetDetailSource).toContain('label="Art family"');
+    expect(planetDetailSource).toContain('label: "Climate"');
+    expect(galaxySource).toContain("Climate: ${formatGalaxyHeatLabel(planet.temperature)}");
+    expect(rankingsSource).toContain("planetArtTypeForCoordinates(planet.coordinates)");
+    expect(playableSource).toContain("planetImageForType(planetArtTypeForCoordinates(planet))");
+    expect(playableSource).not.toContain("planetTypeFromTemperature");
+  });
+
   test("builds one canonical owned-body route for an unrelated inspector selection", () => {
     const route = inspectRouteForManagedPlanetSelection("planet", "planet", ownedPlanets[1]);
     expect(route).toEqual({

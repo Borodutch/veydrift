@@ -1,6 +1,7 @@
 export interface Planet {
   id: string;
   name: string;
+  /** Visual art family only; climate/economics come from temperature and multipliers. */
   type: PlanetType;
   image: string;
   position: number;

@@ -95,13 +95,13 @@ import type {
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
-test("owned planet selector art follows each planet's temperature", () => {
+test("owned planet selector art follows each planet's coordinates, not temperature", () => {
   const planets = [
-    { planetId: "zion", temperature: 248 },
-    { planetId: "montreal", temperature: 38 },
-    { planetId: "astro", temperature: -38 },
+    { planetId: "zion", galaxy: 6, system: 9, position: 1, temperature: 248 },
+    { planetId: "montreal", galaxy: 6, system: 9, position: 7, temperature: 38 },
+    { planetId: "astro", galaxy: 6, system: 9, position: 13, temperature: -38 },
   ];
-  const expected = ["scorching-molten.webp", "warm-terracotta.webp", "frozen-ice.webp"];
+  const expected = ["warm-terracotta.webp", "cool-misty-blue.webp", "metal-planetoid.webp"];
   expect(planets.map((planet) => planetImageForManagedPlanet(planet).split("/").at(-1))).toEqual(expected);
 });
 

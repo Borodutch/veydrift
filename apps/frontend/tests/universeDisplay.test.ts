@@ -644,7 +644,8 @@ describe("tester universe display data", () => {
     ]);
     expect(publicPlanetDataRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
       "Coordinates: [2:44:8]",
-      `Type: ${formatGalaxyHeatLabel(planet.temperature)}`,
+      `Art family: ${formatPlanetType(planet.type)}`,
+      `Climate: ${formatGalaxyHeatLabel(planet.temperature)}`,
       "Fields: 211",
       "Diameter: 15,192 km",
       "Temperature: -28°C to 12°C",
@@ -738,7 +739,7 @@ describe("tester universe display data", () => {
     expect(moonRecordRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual(expect.arrayContaining([
       "Fields: 12",
       "Diameter: 8,777 km",
-      `Parent type: ${formatGalaxyHeatLabel(planet.temperature)}`,
+      `Parent art family: ${formatPlanetType(planet.type)}`,
     ]));
     expect(moonRecordRows(planet).map((row) => row.label)).not.toContain("Created");
     expect(moonStateRows(planet.publicMoonState?.buildings, [{ id: 0, label: "Lunar Base" }, { id: 3, label: "Shipyard" }], "level")).toEqual([

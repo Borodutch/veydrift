@@ -1,3 +1,5 @@
+import { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
+export { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -481,7 +483,7 @@ async function planetMeta(route) {
     kind: "planet",
     title: name,
     description: `${route.galaxy}:${route.system}:${route.position}`,
-    status: type.toUpperCase(),
+    status: `ART: ${type.toUpperCase()}`,
     subtitle: `${route.galaxy}:${route.system}:${route.position}`,
     accent: "#67e8f9",
     planetAssets: [planetAssetFor(archetype)],
@@ -501,7 +503,7 @@ async function moonMeta(route) {
     title: moonName,
     description: `Moon orbiting ${parentName}`,
     status: "MOON",
-    subtitle: `${route.galaxy}:${route.system}:${route.position} · ${type}`,
+    subtitle: `${route.galaxy}:${route.system}:${route.position} · Art: ${type}`,
     accent: "#67e8f9",
     planetAssets: [planetAssetFor(archetype)],
   };
@@ -671,18 +673,6 @@ function planetTypeForPlanet(planet) {
     return planetTypeFromCoordinates(galaxy, system, position);
   }
   return planet?.archetype ?? "temperate-ocean";
-}
-
-export function planetTypeFromCoordinates(galaxy, system, position) {
-  const seed = Number(galaxy) * 10_000 + Number(system) * 100 + Number(position) + 1;
-  const hot = ["scorching-molten", "hot-desert", "warm-terracotta"];
-  const temperate = ["temperate-ocean", "lush-temperate"];
-  const cool = ["cool-misty-blue", "cold-tundra"];
-  const cold = ["frozen-ice", "outer-cryo"];
-  const special = ["metal-planetoid", "crystal-violet", "deuterium-blue"];
-  const types = position <= 3 ? hot : position <= 6 ? temperate : position <= 9 ? cool : position <= 12 ? cold : special;
-  const random = Math.sin(seed * 9301 + 49297) * 233280;
-  return types[Math.floor((random - Math.floor(random)) * types.length)] ?? "temperate-ocean";
 }
 
 function formatPlanetType(type) {

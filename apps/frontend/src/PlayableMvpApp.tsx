@@ -55,7 +55,7 @@ import {
   type ConstructionProgressState,
   type ConstructionQueueObservation,
 } from "./constructionProgress";
-import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, planetTypeFromTemperature, type ApiSystemResponse } from "./data/mockUniverse";
+import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import { formatDurationUntil } from "./durationFormat";
 import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
 import { fleetMissionDistance, type FleetDriveLevels } from "./fleetMissionRules";
@@ -7643,8 +7643,8 @@ function planetDisplayName(planet: ManagedPlanetResponse): string {
   return planet.name?.trim() || `Planet ${planet.coordinates}`;
 }
 
-export function planetImageForManagedPlanet(planet: Pick<ManagedPlanetResponse, "temperature">): string {
-  return planetImageForType(planetTypeFromTemperature(planet.temperature));
+export function planetImageForManagedPlanet(planet: Pick<ManagedPlanetResponse, "galaxy" | "system" | "position">): string {
+  return planetImageForType(planetArtTypeForCoordinates(planet));
 }
 
 function namedSettlementPlanet(planet: Planet | undefined, name: string | null | undefined, ownerDisplayName?: string | null | undefined): Planet | undefined {
