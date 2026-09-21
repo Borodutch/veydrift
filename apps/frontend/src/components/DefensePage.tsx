@@ -256,7 +256,9 @@ export function defenseProductionItems({
       transactionUnavailableReason,
     }) : undefined;
     const disabled = Boolean(blockedReason) || actionPending;
-    const queued = queuedDefenseCount(defense.id, inventoryQueue);
+    // Queued describes remaining production, like Overview/progress. Canonical
+    // unsettled quantities still reserve capacity above until settlement arrives.
+    const queued = queuedDefenseCount(defense.id, queue);
     const combatStats = defenseCombatStats(defense);
     const stats = combatStats.rows.map((row) => `${row.label} ${formatStatValue(row.value)}`).join(" · ");
 

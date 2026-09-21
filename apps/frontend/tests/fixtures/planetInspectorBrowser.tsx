@@ -71,6 +71,13 @@ if (fixtureParams.get("holdBootstrapEffects") === "true") {
     };
   };
 }
+const defenseCompletion = fixtureParams.get("defenseCompletion");
+const completedDefenseQueue: QueueStateResponse | null = defenseCompletion === "complete" ? {
+  active: true, kind: "defense", itemId: 0, quantity: 1,
+  readyAt: String(Math.floor(Date.now() / 1000) - 49 * 60),
+  cost: { metal: "2000", crystal: "0", deuterium: "0" },
+  asOfNow: { complete: true, secondsRemaining: 0, completedQuantity: 1, remainingQuantity: 0 },
+} : null;
 const incompleteOverview = fixtureParams.get("incompleteOverview") === "true";
 const stallMissionBackgroundReads = fixtureParams.get("stallMissionBackgroundReads") === "true";
 const walletEventOnPointerDown = fixtureParams.get("walletEventOnPointerDown");
@@ -538,10 +545,11 @@ globalThis.fetch = (async (input, init) => {
     return Response.json({
       defenses: [{
         cost: { crystal: "0", deuterium: "0", metal: "2000" },
-        count: 3,
+        count: defenseCompletion === "settled" ? 9 : defenseCompletion === "complete" ? 8 : 3,
         durationSeconds: 60,
         id: 0,
       }],
+      ...(defenseCompletion ? { launchableDefenses: [{ id: 0, count: 9 }], unsettledQueue: completedDefenseQueue } : {}),
       homePlanetId: "101",
       missileSiloLevel: 0,
       naniteLevel: 0,
@@ -840,7 +848,7 @@ function managedPlanet(overrides: Partial<ManagedPlanetResponse>): ManagedPlanet
     owner: account,
     planetId: "owned-fixture",
     position,
-    queues: { building: null, defense: null, ship: null },
+    queues: { building: null, defense: null, ship: null, ...(defenseCompletion ? { unsettledDefense: completedDefenseQueue } : {}) },
     resources: { crystal: "1", deuterium: "2", metal: "3" },
     system,
     temperature: 20,
@@ -870,6 +878,7 @@ function walletOverview() {
     queues: {
       building: null,
       defense: null,
+      ...(defenseCompletion ? { unsettledDefense: completedDefenseQueue } : {}),
       homePlanetId: selected.planetId,
       research: null,
       ship: null,

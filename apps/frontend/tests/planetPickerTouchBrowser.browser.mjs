@@ -1997,6 +1997,38 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
   assert.deepEqual(request, { crystal: "1995", deuterium: "", metal: "1990" });
 });
 
+for (const phase of ["complete", "settled"]) {
+  test(`completed defense queue stays absent across route hydration and hard reload: ${phase} (VEY-891)`, async () => {
+    const options = { defenseCompletion: phase, shell: "settlement" };
+    await loadInspectorFixture("/defenses", 1280, options);
+    const deployed = phase === "settled" ? 9 : 8;
+    const assertDefense = async () => {
+      await waitForExpression(`document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: ${deployed}') === true`);
+      const state = await evaluate(`({
+        catalog: document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent,
+        detail: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+        errors: window.inspectorProof.errors,
+      })`);
+      assert.doesNotMatch(state.catalog, /Queued/);
+      assert.match(state.detail, new RegExp('Deployed ' + deployed));
+      assert.doesNotMatch(state.detail, /Queued [1-9]/);
+      assert.deepEqual(state.errors, []);
+    };
+    await assertDefense();
+    // Restore the fixture URL (the mounted app routes replace it), then perform
+    // an actual cache-bypassing reload rather than reusing the in-memory store.
+    const reloadUrl = `${inspectorFixtureUrl}?${new URLSearchParams({ route: "/defenses", ...options })}`;
+    await evaluate(`history.replaceState(null, '', ${JSON.stringify(reloadUrl)})`);
+    await cdp.send("Page.reload", { ignoreCache: true });
+    await waitForExpression("window.inspectorProof?.appReady === true");
+    await assertDefense();
+    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Overview')");
+    await waitForExpression("location.pathname === '/' && document.querySelector('main')?.textContent?.includes('No active defense production.') === true");
+    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Defenses')");
+    await assertDefense();
+  });
+}
+
 test("mobile Defenses renders its indexed planet snapshot while wallet overview hydration is incomplete", async () => {
   await loadInspectorFixture("/defenses", 390, {
     incompleteOverview: "true",
