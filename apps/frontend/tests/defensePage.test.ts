@@ -210,6 +210,64 @@ describe("Defense page display helpers", () => {
     expect(items.find(item => item.key === "lightLaser")?.countValue).toBe(1);
   });
 
+  test.each(["not-due", "partial", "complete", "settled"] as const)("Queued follows remaining production, not unsettled inventory: %s (VEY-891)", phase => {
+    const completed = phase === "not-due" ? 0 : phase === "partial" ? 1 : 2;
+    const canonicalQueue = {
+      active: true, kind: "defense", itemId: 0, quantity: 2, readyAt: "1700000000",
+      cost: { metal: "4000", crystal: "0", deuterium: "0" },
+      asOfNow: { complete: completed === 2, secondsRemaining: completed === 2 ? 0 : 10, completedQuantity: completed, remainingQuantity: 2 - completed },
+    };
+    const state = defenseState({
+      shipyardLevel: 1,
+      defenses: [{ id: 0, count: phase === "settled" ? 10 : 8, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
+      launchableDefenses: [{ id: 0, count: 8 + completed }],
+      queue: completed === 2 ? null : { ...canonicalQueue, quantity: 2 - completed },
+      unsettledQueue: phase === "settled" ? null : canonicalQueue,
+    });
+    // Fresh JSON hydration must not resurrect completed canonical quantities.
+    for (const snapshot of [state, JSON.parse(JSON.stringify(state)) as ChainDefenseState]) {
+      const item = defenseProductionItems({
+        actionPending: false, canTransact: true, productionAvailable: true, quantities: {},
+        resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+        defenseState: snapshot, queue: snapshot.queue,
+      }).find(item => item.key === "rocketLauncher");
+      expect(item).toMatchObject({ countValue: phase === "settled" ? 10 : 8, queued: 2 - completed, status: completed === 2 ? "ready" : "queued" });
+    }
+  });
+
+  test("completed batches disappear from presentation but still reserve silo and dome capacity (VEY-891)", () => {
+    for (const id of [3, 9]) {
+      const complete = {
+        active: true, kind: "defense", itemId: id, quantity: 1, readyAt: "1700000000",
+        cost: { metal: "0", crystal: "0", deuterium: "0" },
+        asOfNow: { complete: true, secondsRemaining: 0, completedQuantity: 1, remainingQuantity: 0 },
+      };
+      const items = defenseProductionItems({
+        actionPending: false, canTransact: true, productionAvailable: true, quantities: {}, queue: null,
+        resources: { metal: 1000000, crystal: 1000000, deuterium: 1000000 },
+        defenseState: defenseState({
+          shipyardLevel: 10, missileSiloLevel: 1, technologyLevels: { "4": 10, "6": 10 },
+          defenses: [{ id, count: id === 3 ? 0 : 4, cost: { metal: "1000", crystal: "0", deuterium: "0" } }],
+          launchableDefenses: [{ id, count: id === 3 ? 1 : 5 }],
+          unsettledQueue: complete,
+        }),
+      });
+      expect(items.find(item => item.id === id)).toMatchObject({ queued: 0, maxQuantity: 0, disabled: true, countValue: id === 3 ? 0 : 4 });
+    }
+  });
+
+  test("only remaining FIFO batches contribute to Queued (VEY-891)", () => {
+    const batch = (itemId: number, quantity: number) => ({ active: true, kind: "defense", itemId, quantity, readyAt: "1700000000", cost: { metal: "0", crystal: "0", deuterium: "0" } });
+    const items = defenseProductionItems({
+      actionPending: false, canTransact: true, productionAvailable: true, quantities: {},
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+      defenseState: defenseState({ unsettledQueue: { ...batch(0, 1), backlog: [batch(1, 2), batch(0, 3)] } }),
+      queue: { ...batch(1, 1), backlog: [batch(0, 3)] },
+    });
+    expect(items.find(item => item.id === 0)?.queued).toBe(3);
+    expect(items.find(item => item.id === 1)?.queued).toBe(1);
+  });
+
   test("silo limits count canonical inventory plus unsettled batches only once (VEY-885)", () => {
     const queue = { active: true, kind: "defense", itemId: 9, quantity: 2, readyAt: "1700000000", cost: { metal: "0", crystal: "0", deuterium: "0" } };
     const items = defenseProductionItems({
