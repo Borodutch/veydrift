@@ -13,6 +13,10 @@ interface IVeydriftGameProductionSettler {
     function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
 }
 
+interface IVeydriftGamePaidInvitePointer {
+    function paidInviteSystem() external view returns (address);
+}
+
 /// @notice Deployable Base Sepolia test MVP for first-planet settlement and resource-token wiring.
 /// @dev Advanced gameplay entrypoints stay in the ABI and fail explicitly until they are split into modules.
 contract VeydriftGame is VeydriftResourceReserves {
@@ -29,7 +33,13 @@ contract VeydriftGame is VeydriftResourceReserves {
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     /// @dev Paid alliance invite fees enter the same proxy balance as first-planet fees.
-    function depositPaidAllianceInviteFee() external payable {}
+    function depositPaidAllianceInviteFee() external payable {
+        _requireGameNotPaused();
+        if (
+            _allianceSystem == address(0)
+                || IVeydriftGamePaidInvitePointer(_allianceSystem).paidInviteSystem() != msg.sender
+        ) revert Unauthorized(msg.sender);
+    }
 
     constructor(
         address admin,
@@ -123,6 +133,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         payable
         returns (uint256)
     {
+        _requireGameNotPaused();
         _delegateToFirstPlanetSettlementModule();
     }
 

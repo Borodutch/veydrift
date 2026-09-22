@@ -26,6 +26,9 @@ contract UpgradeMoonSystem is Script {
         require(address(game) != address(0), "MOON_GAME_NOT_CONFIGURED");
         require(address(randomness) != address(0), "MOON_RANDOMNESS_NOT_CONFIGURED");
         require(broadcaster == proxied.owner(), "BROADCASTER_MUST_BE_PROXY_OWNER");
+        (bool delegationOk, bytes memory delegationData) = address(game)
+            .staticcall(abi.encodeWithSignature("effectivePlayer(address)", broadcaster));
+        require(delegationOk && delegationData.length >= 32, "GAME_DELEGATION_NOT_UPGRADED");
         VeydriftLiveUpgradePolicy.requireMoonUpgradeReady(address(game));
 
         vm.startBroadcast(privateKey);

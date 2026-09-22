@@ -155,8 +155,21 @@ contract VeydriftAllianceSystemTest is Test {
         warProtection = new VeydriftAllianceWarProtection(
             address(alliances), address(game), address(0), address(this)
         );
-        paidInvites = new VeydriftPaidAllianceInvites(
-            IVeydriftPaidInviteAlliance(address(alliances)), admin, vm.addr(inviteSignerKey)
+        VeydriftPaidAllianceInvites paidInviteImplementation = new VeydriftPaidAllianceInvites();
+        paidInvites = VeydriftPaidAllianceInvites(
+            address(
+                new ERC1967Proxy(
+                    address(paidInviteImplementation),
+                    abi.encodeCall(
+                        VeydriftPaidAllianceInvites.initialize,
+                        (
+                            IVeydriftPaidInviteAlliance(address(alliances)),
+                            admin,
+                            vm.addr(inviteSignerKey)
+                        )
+                    )
+                )
+            )
         );
         metalToken = new AllianceMockResourceToken();
         crystalToken = new AllianceMockResourceToken();
@@ -205,6 +218,338 @@ contract VeydriftAllianceSystemTest is Test {
             )
         );
         alliances.updateAllianceProfile(allianceId, "NOPE", "Denied", "revoked");
+    }
+
+    function testPaidInviteMigrationRestoresCompleteFrozenStateExactlyOnce() public {
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](2);
+        invites[0] = VeydriftPaidAllianceInvites.InviteMigration({
+            commitment: keccak256("outstanding"),
+            invite: VeydriftPaidAllianceInvites.PaidInvite({
+                allianceId: 7,
+                purchaser: leader,
+                settlementPrice: uint128(paidInvites.INVITE_PRICE()),
+                purchasedAt: 101,
+                redeemed: false
+            }),
+            invitee: address(0),
+            redeemedAt: 0
+        });
+        invites[1] = VeydriftPaidAllianceInvites.InviteMigration({
+            commitment: keccak256("redeemed"),
+            invite: VeydriftPaidAllianceInvites.PaidInvite({
+                allianceId: 23,
+                purchaser: member,
+                settlementPrice: uint128(paidInvites.INVITE_PRICE()),
+                purchasedAt: 202,
+                redeemed: true
+            }),
+            invitee: newCommander,
+            redeemedAt: 303
+        });
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](1);
+        issuances[0] = VeydriftPaidAllianceInvites.IssuanceMigration({
+            invitee: newCommander,
+            allianceId: 23,
+            remainder: VeydriftPaidAllianceInvites.ProductionRemainder({
+                metal: 123, crystal: 456, deuterium: 789
+            })
+        });
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](1);
+        balances[0] = VeydriftPaidAllianceInvites.BalanceMigration({
+            allianceId: 23,
+            balance: VeydriftGameStorage.Resources({metal: 19, crystal: 8, deuterium: 4}),
+            pendingBalance: VeydriftGameStorage.Resources({metal: 3, crystal: 2, deuterium: 1})
+        });
+        bytes32 stateHash = keccak256(abi.encode(invites, issuances, balances));
+        VeydriftPaidAllianceInvites target = _deployPaidInviteMigrationTarget(stateHash);
+        uint256 invitePrice = target.INVITE_PRICE();
+
+        vm.expectRevert(VeydriftPaidAllianceInvites.MigrationUnavailable.selector);
+        target.buy{value: invitePrice}(keccak256("blocked-before-import"));
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftPaidAllianceInvites.Unauthorized.selector, leader)
+        );
+        target.importMigration(invites, issuances, balances);
+
+        vm.prank(admin);
+        vm.recordLogs();
+        target.importMigration(invites, issuances, balances);
+        Vm.Log[] memory importedLogs = vm.getRecordedLogs();
+        uint256 purchasedEvents;
+        uint256 redeemedEvents;
+        uint256 accruedEvents;
+        uint256 deferredEvents;
+        for (uint256 i = 0; i < importedLogs.length; ++i) {
+            if (importedLogs[i].emitter != address(target)) continue;
+            bytes32 topic = importedLogs[i].topics[0];
+            if (
+                topic
+                    == keccak256(
+                        "PaidAllianceInvitePurchased(bytes32,uint256,address,uint256,uint64)"
+                    )
+            ) {
+                ++purchasedEvents;
+            } else if (
+                topic
+                    == keccak256(
+                        "PaidAllianceInviteRedeemed(bytes32,uint256,address,address,uint64)"
+                    )
+            ) {
+                ++redeemedEvents;
+            } else if (
+                topic
+                    == keccak256(
+                        "AllianceProductionBonusAccrued(uint256,address,uint128,uint128,uint128)"
+                    )
+            ) {
+                ++accruedEvents;
+            } else if (
+                topic
+                    == keccak256(
+                        "AllianceProductionBonusDeferred(uint256,address,uint128,uint128,uint128)"
+                    )
+            ) {
+                ++deferredEvents;
+            }
+        }
+        assertEq(purchasedEvents, 2);
+        assertEq(redeemedEvents, 1);
+        assertEq(accruedEvents, 1);
+        assertEq(deferredEvents, 1);
+        assertTrue(target.migrationFinalized());
+        assertEq(target.migrationHash(), stateHash);
+        assertEq(target.migrationSource(), address(paidInvites));
+        VeydriftPaidAllianceInvites.PaidInvite memory outstanding =
+            target.invite(invites[0].commitment);
+        VeydriftPaidAllianceInvites.PaidInvite memory redeemed =
+            target.invite(invites[1].commitment);
+        assertEq(outstanding.allianceId, 7);
+        assertEq(outstanding.purchaser, leader);
+        assertFalse(outstanding.redeemed);
+        assertEq(redeemed.allianceId, 23);
+        assertEq(redeemed.purchaser, member);
+        assertTrue(redeemed.redeemed);
+        assertEq(target.issuingAllianceOf(newCommander), 23);
+        VeydriftPaidAllianceInvites.ProductionRemainder memory remainder =
+            target.productionRemainder(newCommander);
+        assertEq(remainder.metal, 123);
+        assertEq(remainder.crystal, 456);
+        assertEq(remainder.deuterium, 789);
+        VeydriftGameStorage.Resources memory balance = target.bonusBalance(23);
+        VeydriftGameStorage.Resources memory pending = target.pendingBonusBalance(23);
+        assertEq(balance.metal, 19);
+        assertEq(balance.crystal, 8);
+        assertEq(balance.deuterium, 4);
+        assertEq(pending.metal, 3);
+        assertEq(pending.crystal, 2);
+        assertEq(pending.deuterium, 1);
+
+        vm.prank(admin);
+        vm.expectRevert(VeydriftPaidAllianceInvites.MigrationUnavailable.selector);
+        target.importMigration(invites, issuances, balances);
+    }
+
+    function testPaidInviteMigrationRejectsWrongStateHash() public {
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](0);
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](0);
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](0);
+        bytes32 actualHash = keccak256(abi.encode(invites, issuances, balances));
+        bytes32 expectedHash = keccak256("different-state");
+        VeydriftPaidAllianceInvites target = _deployPaidInviteMigrationTarget(expectedHash);
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftPaidAllianceInvites.MigrationHashMismatch.selector, expectedHash, actualHash
+            )
+        );
+        target.importMigration(invites, issuances, balances);
+        assertFalse(target.migrationFinalized());
+    }
+
+    function testPaidInviteMigrationRequiresFrozenActiveSourceAtInitializationAndImport() public {
+        VeydriftPaidAllianceInvites implementation = new VeydriftPaidAllianceInvites();
+        bytes32 stateHash = keccak256("frozen-source-only");
+        bytes memory initData = abi.encodeCall(
+            VeydriftPaidAllianceInvites.initializeMigration,
+            (
+                IVeydriftPaidInviteAlliance(address(alliances)),
+                admin,
+                vm.addr(inviteSignerKey),
+                address(paidInvites),
+                stateHash
+            )
+        );
+        vm.expectRevert(VeydriftPaidAllianceInvites.MigrationUnavailable.selector);
+        new ERC1967Proxy(address(implementation), initData);
+
+        VeydriftPaidAllianceInvites target = _deployPaidInviteMigrationTarget(stateHash);
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](0);
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](0);
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](0);
+        vm.prank(admin);
+        game.setGamePaused(false);
+        vm.prank(admin);
+        vm.expectRevert(VeydriftPaidAllianceInvites.MigrationUnavailable.selector);
+        target.importMigration(invites, issuances, balances);
+
+        vm.prank(admin);
+        game.setGamePaused(true);
+        alliances.setPaidInviteSystem(address(target));
+        vm.prank(admin);
+        vm.expectRevert(VeydriftPaidAllianceInvites.MigrationUnavailable.selector);
+        target.importMigration(invites, issuances, balances);
+        assertFalse(target.migrationFinalized());
+    }
+
+    function testLegacyPaidInviteCannotSellOrphanedInvitesAfterPointerSwitch() public {
+        vm.prank(leader);
+        alliances.createAlliance("VDFT", "Veydrift Union", "");
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](0);
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](0);
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](0);
+        VeydriftPaidAllianceInvites target =
+            _deployPaidInviteMigrationTarget(keccak256(abi.encode(invites, issuances, balances)));
+        vm.prank(admin);
+        target.importMigration(invites, issuances, balances);
+        alliances.setPaidInviteSystem(address(target));
+        vm.prank(admin);
+        game.setGamePaused(false);
+
+        uint256 treasuryBefore = address(game).balance;
+        uint256 invitePrice = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(paidInvites))
+        );
+        paidInvites.buy{value: invitePrice}(keccak256("stale-client"));
+        assertEq(address(game).balance, treasuryBefore);
+        assertEq(paidInvites.invite(keccak256("stale-client")).allianceId, 0);
+
+        vm.prank(leader);
+        target.buy{value: invitePrice}(keccak256("active-client"));
+        assertEq(address(game).balance, treasuryBefore + invitePrice);
+    }
+
+    function testPaidInviteMigrationRejectsRedeemedInviteIssuanceMismatch() public {
+        bytes32 commitment = keccak256("mismatched-redeemed-invite");
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](1);
+        invites[0] = VeydriftPaidAllianceInvites.InviteMigration({
+            commitment: commitment,
+            invite: VeydriftPaidAllianceInvites.PaidInvite({
+                allianceId: 7,
+                purchaser: leader,
+                settlementPrice: uint128(paidInvites.INVITE_PRICE()),
+                purchasedAt: 101,
+                redeemed: true
+            }),
+            invitee: newCommander,
+            redeemedAt: 202
+        });
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](1);
+        issuances[0] = VeydriftPaidAllianceInvites.IssuanceMigration({
+            invitee: newCommander,
+            allianceId: 8,
+            remainder: VeydriftPaidAllianceInvites.ProductionRemainder({
+                metal: 0, crystal: 0, deuterium: 0
+            })
+        });
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](0);
+        bytes32 stateHash = keccak256(abi.encode(invites, issuances, balances));
+        VeydriftPaidAllianceInvites target = _deployPaidInviteMigrationTarget(stateHash);
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftPaidAllianceInvites.InvalidMigrationEntry.selector, commitment
+            )
+        );
+        target.importMigration(invites, issuances, balances);
+        assertFalse(target.migrationFinalized());
+    }
+
+    function testPaidInviteUpgradeAuthorizationRemainsOwnerGated() public {
+        VeydriftPaidAllianceInvites nextImplementation = new VeydriftPaidAllianceInvites();
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftPaidAllianceInvites.Unauthorized.selector, leader)
+        );
+        paidInvites.upgradeToAndCall(address(nextImplementation), "");
+
+        vm.prank(admin);
+        paidInvites.upgradeToAndCall(address(nextImplementation), "");
+        assertEq(paidInvites.owner(), admin);
+    }
+
+    function testGamePauseFreezesPaidInvitePurchasesRedemptionsWithdrawalsAndAccrual() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        uint256 planetId = _startPaidInvitee(allianceId, keccak256("before-pause"));
+        _enableMetalProduction(planetId);
+        vm.warp(block.timestamp + 10 hours);
+        vm.prank(newCommander);
+        game.collectResources(planetId);
+        VeydriftGameStorage.Resources memory balanceBefore = paidInvites.bonusBalance(allianceId);
+        assertGt(balanceBefore.metal, 0);
+
+        bytes32 outstanding = keccak256("redeem-after-pause");
+        uint256 invitePrice = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: invitePrice}(outstanding);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(outstanding, address(0x919), expiresAt);
+        vm.prank(admin);
+        game.setGamePaused(true);
+        uint256 leaderPlanetId = game.homePlanetOf(leader);
+        _setBuildingLevel(leaderPlanetId, Building.InterdimensionalRiftStabilizer, 1);
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(paidInvites))
+        );
+        paidInvites.buy{value: invitePrice}(keccak256("blocked-buy"));
+
+        vm.prank(address(0x919));
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(0x919))
+        );
+        game.startPlanetWithAllianceInvite(outstanding, expiresAt, v, r, s);
+
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(newCommander);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, newCommander)
+        );
+        game.collectResources(planetId);
+        assertEq(paidInvites.bonusBalance(allianceId).metal, balanceBefore.metal);
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(alliances))
+        );
+        paidInvites.withdraw(
+            allianceId,
+            leaderPlanetId,
+            VeydriftGameStorage.Resources({metal: 1, crystal: 0, deuterium: 0})
+        );
+        assertEq(paidInvites.bonusBalance(allianceId).metal, balanceBefore.metal);
     }
 
     function testPaidInviteStartsInviteeForFreeAutoJoinsAndReusesStarterBonus() public {
@@ -1912,6 +2257,32 @@ contract VeydriftAllianceSystemTest is Test {
     function _start(address player) internal {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _deployPaidInviteMigrationTarget(bytes32 stateHash)
+        internal
+        returns (VeydriftPaidAllianceInvites target)
+    {
+        vm.prank(admin);
+        game.setGamePaused(true);
+        VeydriftPaidAllianceInvites implementation = new VeydriftPaidAllianceInvites();
+        target = VeydriftPaidAllianceInvites(
+            address(
+                new ERC1967Proxy(
+                    address(implementation),
+                    abi.encodeCall(
+                        VeydriftPaidAllianceInvites.initializeMigration,
+                        (
+                            IVeydriftPaidInviteAlliance(address(alliances)),
+                            admin,
+                            vm.addr(inviteSignerKey),
+                            address(paidInvites),
+                            stateHash
+                        )
+                    )
+                )
+            )
+        );
     }
 
     function _signPaidInvite(bytes32 commitment, address invitee, uint64 expiresAt)

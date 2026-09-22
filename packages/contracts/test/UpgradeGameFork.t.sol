@@ -15,6 +15,7 @@ import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
 import {
     IVeydriftMoonGame,
     IVeydriftRandomnessEngine,
@@ -63,7 +64,6 @@ contract UpgradeGameForkTest is Test {
         uint32 shipBefore = VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo);
         assertFalse(VeydriftGame(PROXY).gamePaused(), "game unexpectedly paused before upgrade");
 
-        _upgradeMoonSystem();
         // Exercise the same live/migration preflight as UpgradeGame.s.sol. The fork must fail
         // rather than silently perform a proxy switch when any pause-only migration is pending.
         VeydriftLiveUpgradePolicy.requireGameUpgradeReady(PROXY);
@@ -107,6 +107,10 @@ contract UpgradeGameForkTest is Test {
         assertEq(VeydriftGame(PROXY).owner(), ownerBefore, "owner not preserved");
         assertEq(VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo), shipBefore, "ship count drift");
         assertFalse(VeydriftGame(PROXY).gamePaused(), "game paused by upgrade");
+
+        // Delegation-aware consumers must only be upgraded after Game exposes effectivePlayer.
+        assertEq(IVeydriftDelegation(PROXY).effectivePlayer(address(this)), address(this));
+        _upgradeMoonSystem();
     }
 
     function _upgradeMoonSystem() private {

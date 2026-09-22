@@ -39,14 +39,15 @@ import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePol
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
 ///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
 ///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
-///        MOON_PROXY_ADDRESS the already-upgraded MoonSystem proxy
+///        MOON_PROXY_ADDRESS the configured MoonSystem proxy (its delegation-aware upgrade must
+///                           run only after this Game upgrade)
 ///      Optional env:
 ///        ADMIN_ADDRESS      module-admin arg for the new impl (defaults to broadcaster; only
 ///                           affects the impl's own storage, never the proxy)
 ///
-///      Gameplay remains live for the entire upgrade. Any future state migration must therefore be
-///      designed as a backward-compatible, resumable live migration; this script must never pause
-///      the Game or add a pause precondition.
+///      Gameplay remains live for this Game implementation switch. The paid-invite migration is a
+///      separate, explicitly paused and resumable operation that runs only after this script, then
+///      upgrades Alliance and finally Moon in dependency order.
 ///
 ///      Dry run (no broadcast):
 ///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet>

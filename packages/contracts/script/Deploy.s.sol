@@ -137,15 +137,29 @@ contract Deploy is ResourceTokenDeployment {
         emit VeydriftAuxiliaryProxyDeployed(
             "alliance", allianceSystemAddress, address(allianceImplementation)
         );
-        VeydriftPaidAllianceInvites paidAllianceInvites = new VeydriftPaidAllianceInvites(
-            IVeydriftPaidInviteAlliance(allianceSystemAddress),
-            allianceAdmin,
-            paidAllianceInviteSigner
+        VeydriftPaidAllianceInvites paidAllianceInviteImplementation =
+            new VeydriftPaidAllianceInvites();
+        VeydriftPaidAllianceInvites paidAllianceInvites = VeydriftPaidAllianceInvites(
+            address(
+                new ERC1967Proxy(
+                    address(paidAllianceInviteImplementation),
+                    abi.encodeCall(
+                        VeydriftPaidAllianceInvites.initialize,
+                        (
+                            IVeydriftPaidInviteAlliance(allianceSystemAddress),
+                            allianceAdmin,
+                            paidAllianceInviteSigner
+                        )
+                    )
+                )
+            )
         );
         VeydriftAllianceSystem(allianceSystemAddress)
             .setPaidInviteSystem(address(paidAllianceInvites));
         emit VeydriftAuxiliaryProxyDeployed(
-            "paid-alliance-invites", address(paidAllianceInvites), address(paidAllianceInvites)
+            "paid-alliance-invites",
+            address(paidAllianceInvites),
+            address(paidAllianceInviteImplementation)
         );
 
         RandomnessEngine randomnessImplementation = new RandomnessEngine(admin, randomnessFulfiller);

@@ -1487,6 +1487,56 @@ describe("ChainSyncService (polling)", () => {
     restarted.stop();
   });
 
+  test("rebuilds paid invite projections from only the migrated contract after an address switch", async () => {
+    const indexer = makeIndexer();
+    const legacyBackfiller = new MockBackfiller(182n);
+    legacyBackfiller.paidAllianceInviteLogsFor = () => [{
+      address: paidAllianceInviteAddress,
+      blockNumber: "0x98",
+      transactionHash: "0xlegacy-accrue",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topicWord(7n), ownerTopic(player)],
+      data: abiWords(10n, 20n, 30n)
+    }];
+    const legacy = new ChainSyncService({
+      ...config,
+      paidAllianceInviteAddress,
+      paidAllianceInviteIndexFromBlock: 150n
+    }, indexer, { logBackfiller: legacyBackfiller });
+    await legacy.poll();
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance.metal).toBe("10");
+    legacy.stop();
+
+    const migratedAddress = "0x6666666666666666666666666666666666666666" as const;
+    const migratedBackfiller = new MockBackfiller(190n);
+    migratedBackfiller.paidAllianceInviteLogsFor = () => [{
+      address: migratedAddress,
+      blockNumber: "0xb8",
+      transactionHash: "0xmigrated-accrue",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topicWord(7n), ownerTopic(player)],
+      data: abiWords(10n, 20n, 30n)
+    }];
+    const migrated = new ChainSyncService({
+      ...config,
+      paidAllianceInviteAddress: migratedAddress,
+      paidAllianceInviteIndexFromBlock: 184n
+    }, indexer, { logBackfiller: migratedBackfiller });
+    await migrated.poll();
+
+    expect(migratedBackfiller.paidAllianceInviteRanges).toEqual([{ from: 184n, to: 190n }]);
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance).toEqual({
+      metal: "10",
+      crystal: "20",
+      deuterium: "30"
+    });
+    expect(indexer.paidAllianceInviteHistoryBackfillStatus(migratedAddress, 184n)).toMatchObject({
+      required: false,
+      marker: { contractAddress: migratedAddress, fromBlock: "184", throughBlock: "190" }
+    });
+    migrated.stop();
+  });
+
   test("periodically reconciles paid alliance overlap and removes orphaned projections", async () => {
     const indexer = makeIndexer();
     const paidConfig: BackendConfig = {
