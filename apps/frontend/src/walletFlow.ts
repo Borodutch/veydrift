@@ -1516,16 +1516,79 @@ type WalletTransactionTransport = {
 };
 
 const walletTransactionTransports = new WeakMap<Eip1193Provider, WalletTransactionTransport>();
+const walletDiagnosticIds = new WeakMap<Eip1193Provider, number>();
+let nextWalletDiagnosticId = 0;
+let nextWalletRequestId = 0;
+
+export type WalletSendLifecycle = {
+  signal: AbortSignal;
+  disconnected: () => void;
+};
+
+// Only local object IDs and allowlisted booleans: never serialize the provider,
+// RPC params/results, account, error message/data, or extension-supplied metadata.
+function walletSubmissionDiagnostic(provider: Eip1193Provider) {
+  let providerId = walletDiagnosticIds.get(provider);
+  if (!providerId) walletDiagnosticIds.set(provider, providerId = ++nextWalletDiagnosticId);
+  const requestId = ++nextWalletRequestId;
+  const source = walletTransactionTransports.get(provider)?.source ?? "unconfigured";
+  const flags = ["isRabby", "isOkxWallet", "isOKExWallet", "isTrust", "isTrustWallet", "isMetaMask", "isCoinbaseWallet"].filter(flag => {
+    try { return Reflect.get(provider, flag) === true; } catch { return false; }
+  });
+  const started = performance.now();
+  return (phase: "requested" | "disconnected" | "foreground_released" | "resolved" | "rejected") => {
+    try { console.info(JSON.stringify({ event: "wallet_submission", providerId, requestId, source, flags, phase, elapsedMs: Math.round(performance.now() - started) })); }
+    catch { /* Diagnostics cannot change submission. */ }
+  };
+}
 
 /** Per-attempt wrapper: preserve the wallet receiver and app RPC configuration.
  * The callback can refuse a late send after preparation has been abandoned. */
-export function transactionWalletProvider(provider: Eip1193Provider, beforeSend: () => void): Eip1193Provider {
+export function transactionWalletProvider(provider: Eip1193Provider, beforeSend: () => WalletSendLifecycle | void): Eip1193Provider {
   const wrapped = new Proxy({} as Eip1193Provider, {
     get(_target, property) {
       const target = provider;
       if (property === "request") return (args: Parameters<Eip1193Provider["request"]>[0]) => {
-        if (args.method === "eth_sendTransaction") beforeSend();
-        return target.request(args);
+        if (args.method !== "eth_sendTransaction") return target.request(args);
+        const lifecycle = beforeSend();
+        const log = walletSubmissionDiagnostic(target);
+        let observing = false;
+        const cleanup = () => {
+          lifecycle?.signal.removeEventListener("abort", released);
+          if (observing) {
+            observing = false;
+            try { target.removeListener?.("disconnect", disconnected); } catch { /* Best effort for nonconforming providers. */ }
+          }
+        };
+        const released = () => { log("foreground_released"); cleanup(); };
+        const disconnected = () => {
+          if (!observing) return;
+          log("disconnected");
+          // Release the foreground, NOT the provider promise: it can still
+          // return a hash, which the store must journal and reconcile.
+          lifecycle?.disconnected();
+          cleanup();
+        };
+        if (lifecycle && !lifecycle.signal.aborted) {
+          lifecycle.signal.addEventListener("abort", released, { once: true });
+          try {
+            if (target.on && target.removeListener) {
+              observing = true;
+              target.on("disconnect", disconnected);
+            }
+          } catch { cleanup(); }
+        }
+        log("requested");
+        return (async () => {
+          try {
+            const result = await target.request(args);
+            log("resolved");
+            return result;
+          } catch (error) {
+            log("rejected");
+            throw error;
+          } finally { cleanup(); }
+        })();
       };
       const value = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
