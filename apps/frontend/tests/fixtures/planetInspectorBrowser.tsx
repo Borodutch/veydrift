@@ -362,6 +362,10 @@ globalThis.fetch = (async (input, init) => {
     return Response.json(incompleteOverview ? incompleteWalletOverview() : walletOverview());
   }
 
+  if (url.pathname.endsWith(`/wallet/${account}/delegation`)) {
+    return Response.json({ wallet: account, main: account, delegate: null, actingAsDelegate: false });
+  }
+
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
     if (manualNetworkSwitch && !manualSwitchComplete) return Response.json({ hasFirstPlanet: false, homePlanetId: null, planet: null, wallet: account });
     return Response.json(walletOverview().settlement);

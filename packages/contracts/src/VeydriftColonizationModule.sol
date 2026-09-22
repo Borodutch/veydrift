@@ -139,7 +139,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     {
         _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
-        (uint16 galaxy, uint16 system, uint8 position) = _nextColonyCoordinates(msg.sender, salt);
+        (uint16 galaxy, uint16 system, uint8 position) =
+            _nextColonyCoordinates(_actingPlayer(), salt);
         return _launchColonyMission(
             originPlanetId,
             galaxy,
@@ -222,9 +223,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         // arrivals BEFORE `_validateColonyCreation` runs `_requireNoPendingMissionResolutionForPlanet`.
         // A ready-but-unsettled arrival on the origin would otherwise revert the launch instead of
         // settling first. Mirrors the prologue every other mutating colonization path already runs.
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
-        _settleResearchDue(msg.sender, _currentTimestamp());
+        _settleDueColonizeArrivals(_actingPlayer());
+        _settleDueCombatArrivals(_actingPlayer());
+        _settleResearchDue(_actingPlayer(), _currentTimestamp());
         _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
@@ -289,12 +290,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function _validateColonyCreation(uint256 originPlanetId) private view {
         _requirePlanetOwner(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
-        uint256 limit = 1 + _technologyLevels[msg.sender][Technology.Astrophysics];
-        if (planetCountOf[msg.sender] >= limit) revert PlanetLimitReached(limit);
+        uint256 limit = 1 + _technologyLevels[_actingPlayer()][Technology.Astrophysics];
+        if (planetCountOf[_actingPlayer()] >= limit) revert PlanetLimitReached(limit);
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[_actingPlayer()][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+        if (activeFleetMissionCount[_actingPlayer()] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
         _requireShips(originPlanetId, Ship.ColonyShip, 1);
@@ -317,9 +318,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             _planetDistanceToCoordinates(originPlanetId, galaxy, system, position);
         (uint256 capacity, uint256 fuelConsumption, uint256 speed) = VeydriftCatalog.shipMovementStats(
             Ship.ColonyShip,
-            _technologyLevels[msg.sender][Technology.CombustionDrive],
-            _technologyLevels[msg.sender][Technology.ImpulseDrive],
-            _technologyLevels[msg.sender][Technology.HyperspaceDrive]
+            _technologyLevels[_actingPlayer()][Technology.CombustionDrive],
+            _technologyLevels[_actingPlayer()][Technology.ImpulseDrive],
+            _technologyLevels[_actingPlayer()][Technology.HyperspaceDrive]
         );
         uint256 fuelNumerator = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
             fuelConsumption, 1, travelDistance, speed, speed, speedPercent
@@ -346,14 +347,14 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
-        activeFleetMissionCount[msg.sender] += 1;
+        activeFleetMissionCount[_actingPlayer()] += 1;
         MissionShips memory ships;
         ships.colonyShip = 1;
         uint256 targetPlanetId = _encodeColonyTarget(galaxy, system, position);
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: FleetMissionType.Colonize,
-            owner: msg.sender,
+            owner: _actingPlayer(),
             originPlanetId: originPlanetId,
             targetPlanetId: targetPlanetId,
             departureAt: departureAt,
@@ -369,7 +370,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         });
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            _actingPlayer(),
             FleetMissionType.Colonize,
             originPlanetId,
             targetPlanetId,
@@ -501,7 +502,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {

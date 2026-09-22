@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 interface IVeydriftReferralGame {
+    function effectivePlayer(address actor) external view returns (address);
     function gamePaused() external view returns (bool);
     function homePlanetOf(address player) external view returns (uint256);
     function startPrice() external view returns (uint256);
@@ -412,21 +413,23 @@ contract VeydriftReferralSystem {
 
     function claimReferralCode(string calldata code) external {
         if (!referralMigrationFinalized) revert ReferralMigrationPending();
+        if (game == address(0)) revert Unauthorized(msg.sender);
+        address player = IVeydriftReferralGame(game).effectivePlayer(msg.sender);
         if (
-            game == address(0) || IVeydriftReferralGame(game).gamePaused()
-                || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0
+            IVeydriftReferralGame(game).gamePaused()
+                || IVeydriftReferralGame(game).homePlanetOf(player) == 0
         ) {
-            revert Unauthorized(msg.sender);
+            revert Unauthorized(player);
         }
 
         (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(code);
         if (referralCodeMigrationKind[codeHash] == REFERRAL_MIGRATION_KIND_HASH_ONLY) {
             revert ReferralCodeInvalid();
         }
-        bytes32 commitment = referralCommitment(msg.sender, codeHash);
-        bytes32 existingCommitment = referralCommitmentOf[msg.sender];
+        bytes32 commitment = referralCommitment(player, codeHash);
+        bytes32 existingCommitment = referralCommitmentOf[player];
         if (existingCommitment != bytes32(0) && existingCommitment != commitment) {
-            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+            revert ReferralInviteAlreadyClaimed(player, existingCommitment);
         }
         uint64 nowTimestamp = uint64(block.timestamp);
         if (existingCommitment != bytes32(0)) {
@@ -435,8 +438,8 @@ contract VeydriftReferralSystem {
                 revert ReferralInviteTopUpUnavailable(existingCommitment, availableAt);
             }
         }
-        _claimCodeOwnership(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
-        _recordActivation(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
+        _claimCodeOwnership(player, codeHash, normalizedCode, nowTimestamp, false);
+        _recordActivation(player, codeHash, normalizedCode, nowTimestamp, false);
     }
 
     function redeemReferralInvite(
@@ -498,27 +501,28 @@ contract VeydriftReferralSystem {
     function withdrawReferralReward(bytes32 commitment, address invitee, address payable recipient)
         external
     {
+        address inviter = IVeydriftReferralGame(game).effectivePlayer(msg.sender);
         if (_withdrawingReferralReward) revert ReferralRewardWithdrawalReentered();
-        if (referralInvites[commitment].inviter != msg.sender) revert Unauthorized(msg.sender);
+        if (referralInvites[commitment].inviter != inviter) revert Unauthorized(inviter);
         if (recipient == address(0)) revert ReferralRewardRecipientInvalid();
         uint256 amount = referralRewardCredits[commitment][invitee];
         if (amount == 0) revert ReferralRewardUnavailable();
 
         _withdrawingReferralReward = true;
         referralRewardCredits[commitment][invitee] = 0;
-        claimableReferralRewards[msg.sender] -= amount;
+        claimableReferralRewards[inviter] -= amount;
         (bool ok,) = recipient.call{value: amount}("");
         if (!ok) {
             referralRewardCredits[commitment][invitee] = amount;
-            claimableReferralRewards[msg.sender] += amount;
+            claimableReferralRewards[inviter] += amount;
             _withdrawingReferralReward = false;
             revert ReferralRewardWithdrawalFailed(recipient, amount);
         }
-        totalReferralRewardsPaid[msg.sender] += amount;
-        totalReferralRewardsClaimed[msg.sender] += amount;
+        totalReferralRewardsPaid[inviter] += amount;
+        totalReferralRewardsClaimed[inviter] += amount;
         _withdrawingReferralReward = false;
         emit ReferralRewardClaimed(
-            msg.sender, invitee, commitment, recipient, amount, uint64(block.timestamp)
+            inviter, invitee, commitment, recipient, amount, uint64(block.timestamp)
         );
     }
 

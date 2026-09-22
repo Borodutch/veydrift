@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 import {
+  createDelegationAwareWalletMessageVerifier,
   createRpcWalletMessageVerifier,
   createWalletMessageVerifier,
   walletMessageSignatureMaxBytes,
@@ -12,6 +13,69 @@ const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
 const otherAccount = privateKeyToAccount(`0x${"22".repeat(32)}`);
 
 describe("wallet message verifier", () => {
+  test("accepts the main wallet without resolving delegation", async () => {
+    const message = "main";
+    const signature = await account.signMessage({ message });
+    let delegateLookups = 0;
+    const verify = createDelegationAwareWalletMessageVerifier(
+      async () => { throw new Error("smart-wallet verifier should not run"); },
+      async () => {
+        delegateLookups += 1;
+        return otherAccount.address;
+      },
+    );
+
+    expect(await verify({ address: account.address, message, signature })).toBe(true);
+    expect(delegateLookups).toBe(0);
+  });
+
+  test("accepts the configured delegate for the same main-wallet message", async () => {
+    const message = "act for main";
+    const signature = await otherAccount.signMessage({ message });
+    let smartWalletCalls = 0;
+    const verify = createDelegationAwareWalletMessageVerifier(
+      async () => {
+        smartWalletCalls += 1;
+        return false;
+      },
+      async (main) => {
+        expect(main).toBe(account.address);
+        return otherAccount.address;
+      },
+    );
+
+    const input = { address: account.address, message, signature };
+    expect(await verify(input)).toBe(true);
+    expect(smartWalletCalls).toBe(0);
+  });
+
+  test("falls back to smart-wallet verification for a configured smart delegate", async () => {
+    const verifiedAddresses: string[] = [];
+    const verify = createDelegationAwareWalletMessageVerifier(
+      async ({ address }) => {
+        verifiedAddresses.push(address);
+        return address === otherAccount.address;
+      },
+      async () => otherAccount.address,
+    );
+
+    expect(await verify({ address: account.address, message: "smart delegate", signature: "0x1234" })).toBe(true);
+    expect(verifiedAddresses).toEqual([account.address, otherAccount.address]);
+  });
+
+  test("rejects when the main signature fails and no delegate is configured", async () => {
+    const verify = createDelegationAwareWalletMessageVerifier(async () => false, async () => null);
+    expect(await verify({ address: account.address, message: "no delegate", signature: "0x1234" })).toBe(false);
+  });
+
+  test("classifies delegation lookup failures as temporarily unavailable", async () => {
+    const verify = createDelegationAwareWalletMessageVerifier(async () => false, async () => {
+      throw new Error("RPC offline");
+    });
+    await expect(verify({ address: account.address, message: "lookup", signature: "0x1234" }))
+      .rejects.toBeInstanceOf(WalletMessageVerificationUnavailableError);
+  });
+
   test("keeps existing EOA verification local", async () => {
     const message = "Veydrift wallet verification";
     const signature = await account.signMessage({ message });

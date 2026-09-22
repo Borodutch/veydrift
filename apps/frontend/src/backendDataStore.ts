@@ -34,6 +34,7 @@ import {
   fetchSupplySources,
   fetchSystemData,
   fetchWalletOverviewSnapshot,
+  fetchWalletDelegation,
   fetchWalletPlanets,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -98,6 +99,7 @@ import {
   type SignedMetadataOptions,
   type WalletReadOptions,
   type WalletOverviewSnapshotResponse,
+  type WalletDelegationState,
   type WalletPlanetsResponse,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse,
@@ -625,6 +627,10 @@ export class BackendDataStore {
       const key = walletCacheKey("profile", wallet);
       return this.query(key, () => this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }), { wallet }));
     },
+    delegation: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletDelegationState> => {
+      const key = walletCacheKey("delegation", wallet);
+      return this.query(key, () => this.refresh(key, (signal) => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal }), { wallet }));
+    },
     queues: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<PlayerQueuesResponse> => {
       const key = walletCacheKey("queues", wallet, planetId);
       return this.query(key, () => this.refresh(
@@ -808,10 +814,10 @@ export class BackendDataStore {
     missionLaunch: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey("fleet-visibility", wallet, false), this.key("global-active-missions"), ...this.keysForScope(tags)]),
     alliance: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("alliance", wallet)]),
-    paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string): BackendIndexingPlan =>
+    paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string, signer = wallet): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey("alliance", wallet)], async () => [{
         kind: "paid-alliance-invite", secret,
-        signature: await requestPersonalSignature(provider, wallet, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
+        signature: await requestPersonalSignature(provider, signer, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
       }]),
     planetRename: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet)]),
     planetAbsent: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet), walletCacheKey("settlement", wallet)]),
@@ -1699,7 +1705,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
   /** Recover paid-invite secrets through the same wallet-scoped action gate
    * as contract writes. The response is a short-lived canonical snapshot and
    * is cleared with its wallet context. */
-  async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider): Promise<Array<{ commitment: string; secret: string }>> {
+  async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider, signer = wallet): Promise<Array<{ commitment: string; secret: string }>> {
     const normalizedWallet = wallet.toLowerCase();
     const recovered = await this.runExclusiveTransaction(
       "paid-alliance-invite-recovery",
@@ -1708,7 +1714,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         if (this.contextWallet && this.contextWallet !== normalizedWallet) {
           throw new Error("Wallet changed before invite recovery could begin.");
         }
-        const invites = await recoverPaidAllianceInvites(this.apiBaseUrl, provider, wallet);
+        const invites = await recoverPaidAllianceInvites(this.apiBaseUrl, provider, wallet, signer);
         if (this.contextWallet && this.contextWallet !== normalizedWallet) {
           throw new Error("Wallet changed while invite recovery was in progress.");
         }
@@ -2198,7 +2204,7 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
     return this.queries.entityMedia(entityKind, entityId).read();
   }
 
-  private async runSignedMetadataMutation<T>(provider: Eip1193Provider, wallet: string, key: string, label: string, action: (options: SignedMetadataOptions) => Promise<T>): Promise<T> {
+  private async runSignedMetadataMutation<T>(provider: Eip1193Provider, wallet: string, signer: string, key: string, label: string, action: (options: SignedMetadataOptions) => Promise<T>): Promise<T> {
     const assertContext = () => {
       if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== wallet.toLowerCase())) {
         throw new Error("Wallet changed before metadata could be saved.");
@@ -2212,7 +2218,7 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
         signal: this.transactionAbort.signal,
         sign: async message => {
           assertContext();
-          const signature = await this.transactionGateFor(wallet.toLowerCase()).run(key, () => requestPersonalSignature(provider, wallet, message));
+          const signature = await this.transactionGateFor(signer.toLowerCase()).run(key, () => requestPersonalSignature(provider, signer, message));
           if (!signature) throw new Error("Another wallet prompt is already open.");
           assertContext();
           return signature;
@@ -2225,9 +2231,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
     return response;
   }
 
-  async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string): Promise<EntityMediaResponse> {
+  async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string, signer = wallet): Promise<EntityMediaResponse> {
     entityId = normalizeEntityMediaId(entityKind, entityId);
-    const response = await this.runSignedMetadataMutation(provider, wallet, `entity-media:${entityKind}:${entityId}`, "Save media",
+    const response = await this.runSignedMetadataMutation(provider, wallet, signer, `entity-media:${entityKind}:${entityId}`, "Save media",
       options => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl, options));
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
     await this.invalidateKeys([this.key("entity-media", entityKind, entityId)], {
@@ -2241,9 +2247,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
    * still use the shared mutation gate and invalidate every subscribed watched
    * view instead of patching one component's local page in place.
    */
-  async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean): Promise<WatchPlanetMutationResponse> {
+  async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean, signer = wallet): Promise<WatchPlanetMutationResponse> {
     const response = await this.runSignedMetadataMutation(
-      provider, wallet,
+      provider, wallet, signer,
       `watched-planet:${wallet.toLowerCase()}:${planetId}`,
       watched ? "Unwatch planet" : "Watch planet",
       options => watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId, options) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId, options),
@@ -2253,9 +2259,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
   }
 
   /** Signed profile updates share the store-owned mutation gate and refresh policy. */
-  async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null): Promise<PlayerProfile> {
+  async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null, signer = wallet): Promise<PlayerProfile> {
     const profile = await this.runSignedMetadataMutation(
-      provider, wallet,
+      provider, wallet, signer,
       `profile:${wallet.toLowerCase()}`,
       "Save profile",
       options => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description, options),

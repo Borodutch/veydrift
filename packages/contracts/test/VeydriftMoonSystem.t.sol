@@ -14,6 +14,7 @@ import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -128,6 +129,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
     address internal player = address(0xB0B);
     address internal fulfiller = address(0xF111);
     address internal reporter = address(0xBABB1E);
+    address internal delegate = address(0xD1E);
     VeydriftGame internal game;
     RandomnessEngine internal randomness;
     VeydriftMoonSystem internal moons;
@@ -245,6 +247,29 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         randomness.setRequesterAuthorization(address(moons), true);
         moons.setMoonChanceReporter(reporter);
         vm.deal(player, 1 ether);
+        vm.deal(delegate, 1 ether);
+    }
+
+    function _testDelegateAndMainCanManageMoonUntilRevoked() internal {
+        uint256 planetId = _startPlanet();
+        _createMoon(planetId);
+        _fundMoon(planetId, 100_000, 100_000, 100_000);
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+
+        vm.prank(delegate);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+        assertTrue(moons.activeMoonBuildingConstruction(planetId).active);
+
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+        vm.prank(delegate);
+        vm.expectRevert(VeydriftMoonSystem.NotMoonOwner.selector);
+        moons.finishMoonBuildingUpgrade(planetId);
+
+        vm.prank(player);
+        moons.finishMoonBuildingUpgrade(planetId);
     }
 
     function _testProxyInitializationAndOwnerUpgradeGate() internal {
@@ -2358,6 +2383,10 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 }
 
 contract VeydriftMoonSystemCoreTest is VeydriftMoonSystemTestBase {
+    function testDelegateAndMainCanManageMoonUntilRevoked() public {
+        _testDelegateAndMainCanManageMoonUntilRevoked();
+    }
+
     function testProxyInitializationAndOwnerUpgradeGate() public {
         _testProxyInitializationAndOwnerUpgradeGate();
     }

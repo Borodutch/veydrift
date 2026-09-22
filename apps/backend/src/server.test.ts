@@ -1567,6 +1567,31 @@ describe("Veydrift backend", () => {
     }
   });
 
+  test("returns uncached effective-player delegation state", async () => {
+    const delegate = "0x3333333333333333333333333333333333333333" as Address;
+    const chainReader = Object.assign(new MockChainReader(), {
+      async getDelegationState(wallet: Address) {
+        expect(wallet).toBe(delegate);
+        return { wallet, main: player, delegate, actingAsDelegate: true };
+      },
+    });
+    const handler = createRequestHandler({
+      chainReader,
+      config: configuredTestConfig,
+      indexer: testIndexer(),
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${delegate}/delegation`));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      wallet: delegate,
+      main: player,
+      delegate,
+      actingAsDelegate: true,
+    });
+  });
+
   test("cold callers share one peer wait while unrelated keys load independently", async () => {
     let waits = 0;
     let release!: (value: import("./sharedResponseCache").SharedCachedJsonResponse) => void;

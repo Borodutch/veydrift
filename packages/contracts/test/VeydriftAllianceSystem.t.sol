@@ -17,6 +17,7 @@ import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {
@@ -112,6 +113,7 @@ contract VeydriftAllianceSystemTest is Test {
     address internal recruit = address(0xBEEF);
     address internal fulfiller = address(0xF17F);
     address internal newCommander = address(0x818);
+    address internal delegate = address(0xD1E);
     uint256 internal inviteSignerKey = 0x818818;
 
     VeydriftGame internal game;
@@ -172,10 +174,37 @@ contract VeydriftAllianceSystemTest is Test {
         vm.deal(enemy, 1 ether);
         vm.deal(recruit, 1 ether);
         vm.deal(newCommander, 1 ether);
+        vm.deal(delegate, 1 ether);
         _start(leader);
         _start(member);
         _start(enemy);
         _start(recruit);
+    }
+
+    function testDelegateAndMainCanManageMainAllianceUntilRevoked() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        vm.prank(leader);
+        delegation.setDelegate(delegate);
+
+        vm.prank(delegate);
+        uint256 allianceId = alliances.createAlliance("DLGT", "Delegated", "created by delegate");
+        assertEq(alliances.allianceProfile(allianceId).owner, leader);
+        assertEq(alliances.allianceOf(leader).allianceId, allianceId);
+        assertEq(alliances.allianceOf(delegate).allianceId, 0);
+
+        vm.prank(leader);
+        alliances.updateAllianceProfile(allianceId, "MAIN", "Main Updated", "main still acts");
+        assertEq(alliances.allianceProfile(allianceId).tag, "MAIN");
+
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, delegate, allianceId
+            )
+        );
+        alliances.updateAllianceProfile(allianceId, "NOPE", "Denied", "revoked");
     }
 
     function testPaidInviteStartsInviteeForFreeAutoJoinsAndReusesStarterBonus() public {

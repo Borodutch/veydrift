@@ -20,6 +20,7 @@ export function EntityMediaPanel({
   entityId,
   entityKind,
   provider,
+  signer,
 }: {
   account?: string | undefined;
   apiBaseUrl?: string | undefined;
@@ -27,6 +28,7 @@ export function EntityMediaPanel({
   entityId: string;
   entityKind: EntityMediaKind;
   provider?: Eip1193Provider | undefined;
+  signer?: string | undefined;
 }) {
   const normalizedApiUrl = apiBaseUrl || playableApiUrl;
   const entityKey = `${entityKind}:${entityKind === "player" ? entityId.toLowerCase() : entityId}`;
@@ -66,7 +68,8 @@ export function EntityMediaPanel({
         account,
         entityKind,
         entityId,
-        nextUrl
+        nextUrl,
+        signer ?? account,
       );
       setMediaUrl(response.media?.media.canonicalUrl ?? "");
       setEditorOpen(false);

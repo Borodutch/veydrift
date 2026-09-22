@@ -5,7 +5,6 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftBatchTransportModule} from "./VeydriftBatchTransportModule.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
-import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -135,77 +134,44 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function settlePlanet(uint256 planetId) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _collectPlanetResources(planetId);
     }
 
     function collectResources(uint256 planetId) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _collectPlanetResources(planetId);
     }
 
-    function startBuildingUpgrade(uint256 planetId, Building building) external {
-        _touchPlayer(msg.sender);
-        _requirePlanetOwner(planetId);
-        // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active check so a construction
-        // whose `readyAt` has elapsed completes here and clears `active`, letting the owner immediately
-        // queue the next upgrade without a finish tx. Mirrors `startMoonBuildingUpgrade`. A construction
-        // that is genuinely still in progress stays active and correctly trips `ConstructionActive`.
-        _settleResources(planetId);
-        if (buildingConstructions[planetId].active) revert ConstructionActive();
-
-        uint16 currentLevel = _buildingLevels[planetId][building];
-        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
-        if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
-            revert LevelTooHigh();
-        }
-        if (_usedFields(planetId) >= _planets[planetId].fields) {
-            if (building != Building.Terraformer) revert FieldCapacityReached();
-        }
-
-        _requireBuildingDependencies(planetId, building);
-
-        Resources memory cost = buildingUpgradeCost(planetId, building);
-        _spend(planetId, cost);
-
-        uint64 readyAt = uint64(block.timestamp + _buildingDuration(planetId, cost));
-        uint16 targetLevel = currentLevel + 1;
-        buildingConstructions[planetId] = BuildingConstruction({
-            active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
-        });
-
-        emit BuildingStarted(
-            planetId, building, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
-        );
+    function startBuildingUpgrade(uint256, Building) external {
+        _delegateToFirstPlanetSettlementModule();
     }
 
     /// @notice Back-compat wrapper (VEY-KANEO-468): building upgrades auto-settle inside
     ///         `_settleResources` like every other completion, so this no longer gates on the
     ///         construction being ready — it simply runs the lazy reconcile, which completes the
     ///         upgrade once `readyAt` has elapsed (and is a no-op before then or when idle).
-    function finishBuildingUpgrade(uint256 planetId) external {
-        _touchPlayer(msg.sender);
-        _requirePlanetOwner(planetId);
-        _settleResources(planetId);
+    function finishBuildingUpgrade(uint256) external {
+        _delegateToFirstPlanetSettlementModule();
     }
 
     function startDefenseProduction(uint256, Defense, uint32) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToColonizationModule();
     }
 
     function finishDefenseProduction(uint256) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToColonizationModule();
     }
 
     function startShipProduction(uint256, Ship, uint32) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToColonizationModule();
     }
 
     function finishShipProduction(uint256) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToColonizationModule();
     }
 
@@ -244,12 +210,12 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function startResearch(uint256, Technology) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
     function finishResearch() external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
@@ -342,12 +308,12 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function renamePlanet(uint256, string calldata) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
     function abandonPlanet(uint256) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
@@ -359,7 +325,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources calldata,
         uint256
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         uint256 missionType;
         assembly ("memory-safe") {
             missionType := calldataload(0x44)
@@ -380,7 +346,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         bool,
         bool
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToDefenseHoldModule();
     }
 
@@ -395,7 +361,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         bool,
         LootRatio calldata
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlayModule();
     }
 
@@ -408,7 +374,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint16,
         uint256
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         uint256 missionType;
         assembly ("memory-safe") {
             missionType := calldataload(0x44)
@@ -431,7 +397,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256,
         LootRatio calldata
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlayModule();
     }
 
@@ -439,7 +405,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         external
         returns (uint256)
     {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToAcsAttackModule();
     }
 
@@ -451,7 +417,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         Resources calldata,
         bool
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToAcsAttackModule();
     }
 
@@ -465,12 +431,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint16,
         uint256
     ) external returns (uint256) {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToDefenseHoldModule();
     }
 
     function recallFleetMission(uint256 missionId) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.missionType == FleetMissionType.DefenseHold) {
             _delegateToDefenseHoldModule();
@@ -517,7 +483,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function completeFleetMissionReturn(uint256) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
@@ -543,17 +509,17 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function depositMarketResource(uint256, Resource, uint128) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
     function requestMarketResourceWithdrawal(uint256, Resource, uint128) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
     function finishMarketResourceWithdrawal(Resource) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
     }
 
@@ -566,7 +532,11 @@ contract VeydriftGame is VeydriftResourceReserves {
             // otherwise a regular caller could route arbitrary module calldata through it.
             if (msg.sender != address(this)) revert Unauthorized(msg.sender);
             _delegateToFirstPlanetSettlementModule(msg.data[4:]);
-        } else if (msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846) {
+        } else if (
+            msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846
+                || msg.sig == 0x8d22ea2a || msg.sig == 0x2222ef9f || msg.sig == 0x6d3498d8
+                || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38
+        ) {
             _delegateToFirstPlanetSettlementModule();
         } else if (msg.sig == 0x9c26e0be) {
             (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
@@ -849,21 +819,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
-    }
-
-    function _requireBuildingDependencies(uint256 planetId, Building building) private view {
-        VeydriftDependencies.requireBuilding(
-            building,
-            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
-            _buildingLevels[planetId][Building.RoboticsFactory],
-            _buildingLevels[planetId][Building.Shipyard],
-            _buildingLevels[planetId][Building.ResearchLab],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            _technologyLevels[msg.sender][Technology.Energy],
-            _technologyLevels[msg.sender][Technology.Computer],
-            _technologyLevels[msg.sender][Technology.Hyperspace]
-        );
+        if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
     function _settleResources(uint256 planetId) private {
@@ -913,44 +869,6 @@ contract VeydriftGame is VeydriftResourceReserves {
             }
         }
         emit BuildingCompleted(planetId, building, construction.targetLevel);
-    }
-
-    function _buildingDuration(uint256 planetId, Resources memory cost)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.buildingDuration(
-            _buildingLevels[planetId][Building.RoboticsFactory],
-            _buildingLevels[planetId][Building.NaniteFactory],
-            cost.metal,
-            cost.crystal,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _usedFields(uint256 planetId) private view returns (uint256 used) {
-        for (uint8 i = 0; i <= MAX_BUILDING_ID; i++) {
-            used += _buildingLevels[planetId][Building(i)];
-        }
-    }
-
-    function _spend(uint256 planetId, Resources memory cost) private {
-        _settleResources(planetId);
-        Resources storage available = _planets[planetId].resources;
-        if (
-            available.metal < cost.metal || available.crystal < cost.crystal
-                || available.deuterium < cost.deuterium
-        ) {
-            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
-        }
-
-        available.metal -= cost.metal;
-        available.crystal -= cost.crystal;
-        available.deuterium -= cost.deuterium;
-        _decreaseInternalResources(cost);
-        _emitPlanetSettled(planetId);
     }
 
     function _multiply(Resources memory resources, uint32 quantity)

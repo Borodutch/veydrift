@@ -72,6 +72,7 @@ import {
   type SettlementTransactionOptions,
   type VeydriftWalletChain,
   type WalletProviderSource,
+  type WalletDelegationState,
   type WalletSettlementResponse,
 } from "./walletFlow";
 import { walletRecoveryCopy, walletRecoveryDeviceForNavigator, walletRecoveryPageUrl, type WalletRecoveryDevice } from "./walletRecovery";
@@ -321,9 +322,15 @@ export function FirstPlanetSettlementApp() {
   const previousPlanetKind = useRef<PlanetState["kind"]>();
   const previousWalletKind = useRef<WalletState["kind"]>();
   const referralData = useMemo(() => (settlementConfigState.apiUrl ? backendDataStoreFor(settlementConfigState.apiUrl) : undefined), [settlementConfigState.apiUrl]);
+  const delegationQuery = useBackendDataQuery<WalletDelegationState>(
+    referralData && account ? referralData.queries.delegation(account) : undefined,
+    Boolean(referralData && account),
+  );
+  const delegation = delegationQuery.snapshot?.data;
+  const playerAccount = delegation?.main;
   useEffect(() => {
-    referralData?.setContext(account, undefined, requiredChain.chainIdHex);
-  }, [account, referralData, requiredChain.chainIdHex]);
+    referralData?.setContext(playerAccount, undefined, requiredChain.chainIdHex);
+  }, [playerAccount, referralData, requiredChain.chainIdHex]);
   useEffect(() => {
     const releaseRuntime = retainBackendDataStore("");
     const releaseApi = settlementConfigState.apiUrl ? retainBackendDataStore(settlementConfigState.apiUrl) : undefined;
@@ -334,7 +341,7 @@ export function FirstPlanetSettlementApp() {
   }, [settlementConfigState.apiUrl]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(
     referralData,
-    referralData && account ? referralData.writeTransactionKey(undefined, account) : undefined,
+    referralData && playerAccount ? referralData.writeTransactionKey(undefined, playerAccount) : undefined,
   );
   const writeTransactionState = writeTransactionSnapshot?.data;
   useEffect(() => {
@@ -372,15 +379,15 @@ export function FirstPlanetSettlementApp() {
   // carries only presentation/transaction phase; it is reconciled from this
   // snapshot instead of owning a second backend cache or poller.
   const settlementQuery = useBackendDataQuery<WalletSettlementResponse>(
-    referralData && account && !hasOverview ? referralData.queries.settlement(account) : undefined,
-    Boolean(referralData && account && !hasOverview),
+    referralData && playerAccount && !hasOverview ? referralData.queries.settlement(playerAccount) : undefined,
+    Boolean(referralData && playerAccount && !hasOverview),
   );
   useEffect(() => {
-    if (!referralData || !account || hasOverview) return;
-    return referralData.startGameplaySync(account);
-  }, [referralData, account, hasOverview]);
+    if (!referralData || !playerAccount || hasOverview) return;
+    return referralData.startGameplaySync(playerAccount);
+  }, [referralData, playerAccount, hasOverview]);
   useEffect(() => {
-    if (!account || !settlementQuery.snapshot?.data) return;
+    if (!playerAccount || !settlementQuery.snapshot?.data) return;
     const indexed = indexedSettlementState(settlementQuery.snapshot.data);
     if (indexed.kind === "settled") {
       setPlanet((current) => current.kind === "success" ? current : { kind: "already-settled", planet: indexed.planet });
@@ -391,14 +398,14 @@ export function FirstPlanetSettlementApp() {
       return;
     }
     setPlanet((current) => current.kind === "success" || current.kind === "pending" ? current : { kind: "not-settled" });
-  }, [account, settlementQuery.snapshot?.data]);
+  }, [playerAccount, settlementQuery.snapshot?.data]);
   const referralDashboardQuery = useBackendDataQuery(
-    referralData && account ? referralData.queries.referralDashboard(account) : undefined,
-    Boolean(referralData && hasOverview && account),
+    referralData && playerAccount ? referralData.queries.referralDashboard(playerAccount) : undefined,
+    Boolean(referralData && hasOverview && playerAccount),
   );
   const referralDashboard = referralDashboardQuery.snapshot?.data;
   const referralProgram: ReferralProgramState =
-    !hasOverview || !account
+    !hasOverview || !playerAccount
       ? { status: "idle" }
       : referralProgramPhase.status === "claiming" && referralDashboard
         ? { status: "claiming", dashboard: referralDashboard }
@@ -419,8 +426,8 @@ export function FirstPlanetSettlementApp() {
               : { status: "loading" };
   const referralClaimCode = referralClaimCodeInput.trim();
   const referralClaimInspectionQuery = useBackendDataQuery(
-    referralData && account && referralClaimCode ? referralData.queries.referralCodeInspection(account, referralClaimCode) : undefined,
-    Boolean(referralData && hasOverview && account && referralClaimCode),
+    referralData && playerAccount && referralClaimCode ? referralData.queries.referralCodeInspection(playerAccount, referralClaimCode) : undefined,
+    Boolean(referralData && hasOverview && playerAccount && referralClaimCode),
   );
   const referralClaimInspection: ReferralValidationState = !referralClaimCode
     ? { status: "idle" }
@@ -437,7 +444,7 @@ export function FirstPlanetSettlementApp() {
         : { status: "loading" };
   const referralCode = referralCodeInput.trim();
   const referralValidationQuery = useBackendDataQuery(
-    referralData && referralCode ? referralData.queries.referralCodeValidation(referralCode, account) : undefined,
+    referralData && referralCode ? referralData.queries.referralCodeValidation(referralCode, playerAccount) : undefined,
     Boolean(referralData && referralCode),
   );
   const referralValidation: ReferralValidationState = !referralCode
@@ -613,11 +620,11 @@ export function FirstPlanetSettlementApp() {
 
   useEffect(() => {
     const delay = referralInviteRefreshDelay(referralDashboard);
-    if (!referralData || !account || !hasOverview || delay === undefined) {
+    if (!referralData || !playerAccount || !hasOverview || delay === undefined) {
       return;
     }
-    return referralData.scheduleRefresh(referralData.queries.referralDashboard(account).key, delay);
-  }, [account, hasOverview, referralDashboard, referralData]);
+    return referralData.scheduleRefresh(referralData.queries.referralDashboard(playerAccount).key, delay);
+  }, [hasOverview, playerAccount, referralDashboard, referralData]);
 
   const refreshPaidAllianceInviteValidation = useCallback(() => paidAllianceInviteQuery.refetch(), [paidAllianceInviteQuery]);
 
@@ -1132,7 +1139,12 @@ export function FirstPlanetSettlementApp() {
     });
 
     try {
-      const settlement = await referralData?.queries.settlement(connectedAccount).read();
+      const resolvedDelegation = await referralData?.queries.delegation(connectedAccount, { fresh: true }).read();
+      const effectiveAccount = resolvedDelegation?.main;
+      if (!effectiveAccount) {
+        throw new Error("Wallet delegation is temporarily unavailable. Please try again later.");
+      }
+      const settlement = await referralData?.queries.settlement(effectiveAccount).read();
       if (!isCurrentIdentity()) return;
       const indexedSettlement = settlement ? indexedSettlementState(settlement) : undefined;
       if (!indexedSettlement) {
@@ -1317,7 +1329,7 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function settlePlanet() {
-    if (!provider || wallet.kind !== "connected") return;
+    if (!provider || wallet.kind !== "connected" || !playerAccount) return;
     const epoch = settlementIdentityEpoch.current;
     const isCurrentIdentity = () => epoch === settlementIdentityEpoch.current && currentAccount.current === wallet.account;
     const apiUrl = settlementConfigState.apiUrl;
@@ -1339,7 +1351,7 @@ export function FirstPlanetSettlementApp() {
       if (!resolution?.valid || !isCurrentIdentity()) return;
     }
 
-    const funding = await refreshSettlementLaunchInfo(wallet.account, planet);
+    const funding = await refreshSettlementLaunchInfo(playerAccount, wallet.account, planet);
     if (!funding || !isCurrentIdentity()) return;
 
     try {
@@ -1354,7 +1366,7 @@ export function FirstPlanetSettlementApp() {
         label,
         prepare: async () => {
           referralCode = paidAllianceInviteSecret ? undefined : referralCodeInput.trim() || undefined;
-          const redemptions = await data.prepareSettlementRedemptions(wallet.account, {
+          const redemptions = await data.prepareSettlementRedemptions(playerAccount, {
             paidAllianceInviteSecret,
             referralCode,
           });
@@ -1368,9 +1380,9 @@ export function FirstPlanetSettlementApp() {
           return sendSettlementTransaction(transactionWalletProvider(provider, beforeWalletSend), wallet.account, settlementConfig, transactionOptions);
         },
         chainId: requiredChain.chainIdHex,
-        indexing: data.indexing.settledPlanet(wallet.account, () => referralCode),
+        indexing: data.indexing.settledPlanet(playerAccount, () => referralCode),
         invalidateTags: [
-          `wallet:${wallet.account.toLowerCase()}`,
+          `wallet:${playerAccount.toLowerCase()}`,
           "kind:settlement",
           "kind:planets",
           "kind:queues",
@@ -1401,7 +1413,7 @@ export function FirstPlanetSettlementApp() {
 
       // The write cycle already refreshed the canonical settlement query.
       // Do not add a second request (or a second recovery loop) here.
-      const settlement = data.snapshot<WalletSettlementResponse>(data.queries.settlement(wallet.account).key)?.data;
+      const settlement = data.snapshot<WalletSettlementResponse>(data.queries.settlement(playerAccount).key)?.data;
       const indexedSettlement = indexedSettlementState(settlement);
       // A temporarily unavailable read is not a failed settlement. The active
       // canonical query will recover through normal gameplay synchronization.
@@ -1419,10 +1431,10 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function claimReferralInvite() {
-    if (!provider || wallet.kind !== "connected" || !settlementConfigState.apiUrl) return;
+    if (!provider || wallet.kind !== "connected" || !settlementConfigState.apiUrl || !playerAccount) return;
     const apiUrl = settlementConfigState.apiUrl;
     const inviteCode = normalizeReferralClaimCode(referralClaimCodeInput);
-    const commitment = referralCommitment(inviteCode, wallet.account);
+    const commitment = referralCommitment(inviteCode, playerAccount);
     let signature: string | undefined;
     let waitingForSignature = true;
     let terminalError = false;
@@ -1434,14 +1446,14 @@ export function FirstPlanetSettlementApp() {
       confirmRetry: confirmTransactionRetry,
       label: "Referral reward claim",
       prepare: async () => {
-        signature = await requestReferralWalletSignature(provider, wallet.account, "claim-transaction", commitment);
+        signature = await requestReferralWalletSignature(provider, playerAccount, "claim-transaction", commitment, wallet.account);
         waitingForSignature = false;
-        await data.persistReferralClaimIntent(wallet.account, inviteCode, commitment, signature);
+        await data.persistReferralClaimIntent(playerAccount, inviteCode, commitment, signature);
       },
       send: beforeWalletSend => sendReferralClaimTransaction(transactionWalletProvider(provider, beforeWalletSend), wallet.account, settlementConfig, inviteCode),
       chainId: requiredChain.chainIdHex,
-      indexing: data.indexing.referralClaim(wallet.account, inviteCode, commitment, () => signature ?? ""),
-      invalidateTags: [`wallet:${wallet.account.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"],
+      indexing: data.indexing.referralClaim(playerAccount, inviteCode, commitment, () => signature ?? ""),
+      invalidateTags: [`wallet:${playerAccount.toLowerCase()}`, "kind:referral-dashboard", "kind:referral-history"],
       errorLabel: (error) => (isUserRejected(error) ? referralRejectedRequestMessage(waitingForSignature ? "signature" : "claim-transaction") : referralClaimErrorMessage(error)),
       onStateChange: (state) => {
         if (state.phase === "success") {
@@ -1460,13 +1472,13 @@ export function FirstPlanetSettlementApp() {
     if (outcome.outcome === "not-submitted" && !terminalError) setReferralProgramPhase({ status: "idle" });
   }
 
-  async function refreshSettlementLaunchInfo(connectedAccount: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
+  async function refreshSettlementLaunchInfo(playerWallet: string, signerWallet: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
     const identityEpoch = settlementIdentityEpoch.current;
     const providerAtStart = provider;
     const currentIdentity = () =>
-      identityEpoch === settlementIdentityEpoch.current && provider === providerAtStart && currentAccount.current?.toLowerCase() === connectedAccount.toLowerCase();
+      identityEpoch === settlementIdentityEpoch.current && provider === providerAtStart && currentAccount.current?.toLowerCase() === signerWallet.toLowerCase();
     try {
-      const settlementSnapshot = await referralData?.queries.settlement(connectedAccount).read();
+      const settlementSnapshot = await referralData?.queries.settlement(playerWallet).read();
       if (!currentIdentity()) return undefined;
       const settlement = settlementSnapshot ? indexedSettlementState(settlementSnapshot) : undefined;
       if (!settlement) {
@@ -1498,7 +1510,7 @@ export function FirstPlanetSettlementApp() {
       }
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await fetchSettlementFundingWithMigration(provider, connectedAccount),
+        funding: await fetchSettlementFundingWithMigration(provider, signerWallet),
       };
       if (!currentIdentity()) return undefined;
 
@@ -1535,6 +1547,9 @@ export function FirstPlanetSettlementApp() {
         provider={provider}
         walletProviderSource={walletProviderSource}
         account={account}
+        playerAccount={playerAccount}
+        initialDelegation={delegation}
+        onDelegationChanged={() => provider && account ? refreshWallet(provider, account) : undefined}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
         referralProgramPanel={(onInspect) => (
@@ -1547,7 +1562,7 @@ export function FirstPlanetSettlementApp() {
             onInspect={onInspect}
             state={referralProgram}
             startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
-            wallet={account}
+            wallet={playerAccount}
           />
         )}
       />

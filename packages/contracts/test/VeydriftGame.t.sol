@@ -22,6 +22,7 @@ import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSet
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
 import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -245,6 +246,7 @@ contract VeydriftGameTest is Test {
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
+    address internal delegate = address(0xD1E);
     address internal fulfiller = address(0xF111);
     uint256 internal referralSignerKey = 0xA11CE1;
     VeydriftGame internal game;
@@ -257,6 +259,13 @@ contract VeydriftGameTest is Test {
     MockResourceToken internal metalToken;
     MockResourceToken internal crystalToken;
     MockResourceToken internal deuteriumToken;
+
+    event DelegateUpdated(
+        address indexed main,
+        address indexed previousDelegate,
+        address indexed delegate,
+        address actor
+    );
 
     event FirstPlanetSettled(
         address indexed player,
@@ -410,6 +419,129 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         randomness.setRequesterAuthorization(address(moons), true);
         vm.deal(player, 1 ether);
+        vm.deal(delegate, 1 ether);
+    }
+
+    function testDelegateAndMainCanActForMainAndEitherCanRevoke() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        assertEq(delegation.delegateOf(player), delegate);
+        assertEq(delegation.delegatorOf(delegate), player);
+        assertEq(delegation.effectivePlayer(delegate), player);
+
+        vm.prank(delegate);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        assertEq(game.homePlanetOf(player), planetId);
+        assertEq(game.homePlanetOf(delegate), 0);
+
+        vm.prank(delegate);
+        game.renamePlanet(planetId, "Delegate Name");
+        assertEq(game.planetNames(planetId), "Delegate Name");
+
+        vm.prank(player);
+        game.renamePlanet(planetId, "Main Name");
+        assertEq(game.planetNames(planetId), "Main Name");
+
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+        assertEq(delegation.delegateOf(player), address(0));
+        assertEq(delegation.delegatorOf(delegate), address(0));
+
+        vm.prank(delegate);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.renamePlanet(planetId, "Denied");
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        vm.prank(player);
+        delegation.revokeDelegate();
+        assertEq(delegation.delegateOf(player), address(0));
+    }
+
+    function testDelegationEventsIdentifyMainPreviousDelegateAndActor() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address replacement = address(0xD2E);
+
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateUpdated(player, address(0), delegate, player);
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateUpdated(player, delegate, replacement, player);
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateUpdated(player, replacement, address(0), replacement);
+        vm.prank(replacement);
+        delegation.revokeDelegate();
+    }
+
+    function testDelegationRejectsAmbiguousOrNestedAuthority() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address otherMain = address(0xC0FFEE);
+        address replacement = address(0xD2E);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, address(0))
+        );
+        delegation.setDelegate(address(0));
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, player)
+        );
+        delegation.setDelegate(player);
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+
+        vm.prank(otherMain);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateAlreadyAssigned.selector, delegate, player
+            )
+        );
+        delegation.setDelegate(delegate);
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegatedWalletCannotDelegate.selector, delegate, player
+            )
+        );
+        delegation.setDelegate(replacement);
+
+        vm.prank(otherMain);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateHasDelegate.selector, player, delegate
+            )
+        );
+        delegation.setDelegate(player);
+
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+        assertEq(delegation.delegateOf(player), replacement);
+        assertEq(delegation.delegatorOf(delegate), address(0));
+        assertEq(delegation.delegatorOf(replacement), player);
+    }
+
+    function testDelegationNeverGrantsAdministrativeAuthority() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        vm.prank(admin);
+        delegation.setDelegate(delegate);
+
+        vm.prank(delegate);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, delegate));
+        game.setStartPrice(0.01 ether);
+
+        vm.prank(admin);
+        game.setStartPrice(0.01 ether);
+        assertEq(game.startPrice(), 0.01 ether);
     }
 
     function testInitializationAndOwnerGuard() public {

@@ -62,6 +62,7 @@ interface Props {
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   provider?: Eip1193Provider | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
+  signerAccount?: string | undefined;
   transactionUnavailableReason?: string | undefined;
 }
 
@@ -160,6 +161,7 @@ export function PlanetDetail({
   onSelectMoon,
   provider,
   shipyardState = null,
+  signerAccount,
   transactionUnavailableReason,
 }: Props) {
   const trustedHomePlanet = useMemo(
@@ -446,6 +448,7 @@ export function PlanetDetail({
               entityId={planet.occupiedBy.planetId}
               entityKind="planet"
               provider={provider}
+              signer={signerAccount}
             />
           ) : null}
 

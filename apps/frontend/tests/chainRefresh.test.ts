@@ -157,7 +157,7 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(storeSource).toContain("readonly transactionGates = new Map<string, TransactionActionGate>()");
     expect(storeSource).not.toContain("this.transactionGateFor(walletScope).run(descriptor.key,");
     expect(storeSource).toContain("this.submissionAttempts.get(identity)");
-    expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract)");
+    expect(source).toContain("const gameContractTransactionInputsAvailable = Boolean(provider && signerAccount && account && gameContract)");
     expect(source).not.toContain("gameMaintenancePaused");
     expect(source).toContain("gameActionsAvailableForBody(");
     expect(source).toContain("activePlanetStateFresh");

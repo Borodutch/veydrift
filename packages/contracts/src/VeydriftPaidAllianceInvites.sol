@@ -6,6 +6,7 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 
 interface IVeydriftPaidInviteGame {
+    function effectivePlayer(address actor) external view returns (address);
     function depositPaidAllianceInviteFee() external payable;
     function resourceReserveAvailable() external view returns (VeydriftGameStorage.Resources memory);
 }
@@ -147,8 +148,9 @@ contract VeydriftPaidAllianceInvites {
     }
 
     function buy(bytes32 commitment) external payable {
-        (uint256 allianceId,,) = alliance.allianceOf(msg.sender);
-        if (allianceId == 0) revert Unauthorized(msg.sender);
+        address player = alliance.game().effectivePlayer(msg.sender);
+        (uint256 allianceId,,) = alliance.allianceOf(player);
+        if (allianceId == 0) revert Unauthorized(player);
         if (commitment == bytes32(0)) revert InvalidCommitment(commitment);
         if (_invites[commitment].allianceId != 0) revert InviteAlreadyExists(commitment);
         uint256 price = INVITE_PRICE;
@@ -159,14 +161,14 @@ contract VeydriftPaidAllianceInvites {
         uint64 purchasedAt = uint64(block.timestamp);
         _invites[commitment] = PaidInvite({
             allianceId: allianceId,
-            purchaser: msg.sender,
+            purchaser: player,
             // INVITE_PRICE is the fixed 0.006 ether constant, well below uint128 max.
             // forge-lint: disable-next-line(unsafe-typecast)
             settlementPrice: uint128(price),
             purchasedAt: purchasedAt,
             redeemed: false
         });
-        emit PaidAllianceInvitePurchased(commitment, allianceId, msg.sender, price, purchasedAt);
+        emit PaidAllianceInvitePurchased(commitment, allianceId, player, price, purchasedAt);
     }
 
     function redeem(
@@ -276,8 +278,9 @@ contract VeydriftPaidAllianceInvites {
         VeydriftGameStorage.Resources calldata amount
     ) external {
         if (_withdrawing) revert WithdrawalReentered();
-        (uint256 managerAllianceId, uint8 role,) = alliance.allianceOf(msg.sender);
-        if (managerAllianceId != allianceId || role < 2) revert Unauthorized(msg.sender);
+        address manager = alliance.game().effectivePlayer(msg.sender);
+        (uint256 managerAllianceId, uint8 role,) = alliance.allianceOf(manager);
+        if (managerAllianceId != allianceId || role < 2) revert Unauthorized(manager);
         if (amount.metal == 0 && amount.crystal == 0 && amount.deuterium == 0) {
             revert BonusUnavailable(allianceId);
         }
@@ -290,10 +293,10 @@ contract VeydriftPaidAllianceInvites {
         balance.metal -= amount.metal;
         balance.crystal -= amount.crystal;
         balance.deuterium -= amount.deuterium;
-        alliance.creditPaidInviteBonusToPlanet(planetId, msg.sender, amount);
+        alliance.creditPaidInviteBonusToPlanet(planetId, manager, amount);
         _withdrawing = false;
         emit AllianceBonusWithdrawn(
-            allianceId, msg.sender, planetId, amount.metal, amount.crystal, amount.deuterium
+            allianceId, manager, planetId, amount.metal, amount.crystal, amount.deuterium
         );
     }
 

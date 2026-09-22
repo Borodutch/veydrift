@@ -1436,6 +1436,10 @@ const GAME_SELECTORS = {
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2",
 } as const;
+const DELEGATION_SELECTORS = {
+  setDelegate: "0xca5eb5e1",
+  revokeDelegate: "0x55d1ef38",
+} as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
 // VEY-KANEO-440/441: FleetMissionType.DefenseHold (enum 9). DefenseHold has its own launch entrypoint
@@ -3407,8 +3411,8 @@ export async function storePaidAllianceInvite(apiUrl: string, purchaser: string,
   await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, "Alliance invite recovery storage", { purchaser, secret, signature });
 }
 
-export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string): Promise<Array<{ commitment: string; secret: string }>> {
-  const signature = await requestPersonalSignature(provider, viewer, paidAllianceInviteRecoveryMessage(viewer));
+export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string, signer = viewer): Promise<Array<{ commitment: string; secret: string }>> {
+  const signature = await requestPersonalSignature(provider, signer, paidAllianceInviteRecoveryMessage(viewer));
   const body = await fetchGameApiMutation<{ invites?: Array<{ commitment: string; secret: string }> }>(
     `${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, "Alliance invite recovery", { viewer, signature },
   );
@@ -4316,8 +4320,8 @@ export function referralWalletMessage(wallet: string, action: ReferralWalletActi
   return lines.join("\n");
 }
 
-export async function requestReferralWalletSignature(provider: Eip1193Provider, wallet: string, action: ReferralWalletAction, commitment?: string): Promise<string> {
-  return requestPersonalSignature(provider, wallet, referralWalletMessage(wallet, action, commitment));
+export async function requestReferralWalletSignature(provider: Eip1193Provider, wallet: string, action: ReferralWalletAction, commitment?: string, signer = wallet): Promise<string> {
+  return requestPersonalSignature(provider, signer, referralWalletMessage(wallet, action, commitment));
 }
 
 export async function fetchReferralDashboard(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<ReferralDashboard> {
@@ -4615,6 +4619,47 @@ export async function fetchAllianceState(apiUrl: string, wallet: string, options
 
 export async function fetchPlayerProfile(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<PlayerProfile> {
   return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile", options);
+}
+
+export type WalletDelegationState = Api.WalletDelegation;
+
+export async function fetchWalletDelegation(
+  apiUrl: string,
+  wallet: string,
+  options: WalletReadOptions = {},
+): Promise<WalletDelegationState> {
+  return fetchWalletJson<WalletDelegationState>(
+    apiUrl,
+    wallet,
+    "delegation",
+    "Wallet delegation",
+    options,
+  );
+}
+
+export async function sendSetDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  delegate: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeAddressCall(DELEGATION_SELECTORS.setDelegate, delegate),
+  });
+}
+
+export async function sendRevokeDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: DELEGATION_SELECTORS.revokeDelegate,
+  });
 }
 
 

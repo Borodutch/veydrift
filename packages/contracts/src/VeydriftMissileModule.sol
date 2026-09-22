@@ -24,24 +24,24 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         if (msg.sender == address(this) && quantity == 0) {
             return _prepareMissionArrivalOrder(originPlanetId, targetPlanetId) ? 1 : 0;
         }
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         Planet storage origin = _planets[originPlanetId];
         if (origin.owner == address(0)) revert NoPlanet();
-        if (origin.owner != msg.sender) revert NotPlanetOwner();
+        if (origin.owner != _actingPlayer()) revert NotPlanetOwner();
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         Planet storage target = _planets[targetPlanetId];
         if (target.owner == address(0)) revert NoPlanet();
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         // Complete ready origin production before checking inventory. Target interception and damage
         // are deliberately deferred until arrival, when queues are settled only through impactAt.
         _settleDuePlanet(originPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
-        _enforceAttackProtection(msg.sender, targetPlanetId);
+        _enforceAttackProtection(_actingPlayer(), targetPlanetId);
 
         uint256 systemDistance = _systemDistance(origin.system, target.system);
-        uint256 range = _interplanetaryMissileRange(msg.sender);
+        uint256 range = _interplanetaryMissileRange(_actingPlayer());
         if (range == 0 || origin.galaxy != target.galaxy || systemDistance > range) {
             revert InterplanetaryMissileOutOfRange(origin.system, target.system, range);
         }
@@ -57,7 +57,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: FleetMissionType.MissileAttack,
-            owner: msg.sender,
+            owner: _actingPlayer(),
             originPlanetId: originPlanetId,
             targetPlanetId: targetPlanetId,
             departureAt: departureAt,
@@ -92,7 +92,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
 
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            _actingPlayer(),
             FleetMissionType.MissileAttack,
             originPlanetId,
             targetPlanetId,

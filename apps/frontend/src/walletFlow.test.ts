@@ -44,6 +44,7 @@ import {
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
+  fetchWalletDelegation,
   fetchWalletSettlement,
   fetchWalletQueues,
   fetchWatchedPlanets,
@@ -106,6 +107,8 @@ import {
   readMigrationReservation,
   readWalletNativeBalance,
   sendSettlementTransaction,
+  sendSetDelegateTransaction,
+  sendRevokeDelegateTransaction,
   settlementFundingShortfallWei,
   settlementFundingWithWalletBalance,
   sendStartBuildingUpgradeTransaction,
@@ -3459,6 +3462,37 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits delegation changes from the connected signer wallet", async () => {
+    const requests: unknown[] = [];
+    const delegate = "0x3333333333333333333333333333333333333333";
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return method === "eth_sendTransaction" ? `0xtx${requests.length}` : null;
+    });
+
+    await expect(sendSetDelegateTransaction(provider, account, contract, delegate)).resolves.toBe("0xtx1");
+    await expect(sendRevokeDelegateTransaction(provider, account, contract)).resolves.toBe("0xtx2");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: encodeAddressCall("0xca5eb5e1", delegate),
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: contract,
+          data: "0x55d1ef38",
+        }],
+      },
+    ]);
+  });
+
   test("submits building start transactions after centralized eth_call simulation", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
@@ -3823,6 +3857,7 @@ describe("walletFlow", () => {
     try {
       await fetchWalletSettlement("https://api.example.test", account);
       await fetchWalletSettlement("https://api.example.test", account);
+      await fetchWalletDelegation("https://api.example.test", account);
       await fetchWalletPlanets("https://api.example.test///", account);
       await fetchWalletQueues("https://api.example.test///", account);
       await fetchWalletQueues("https://api.example.test///", account, "7");
@@ -3849,9 +3884,10 @@ describe("walletFlow", () => {
       globalThis.fetch = originalFetch;
     }
 
-    expect(calls).toHaveLength(19);
+    expect(calls).toHaveLength(20);
     expect(calls.every((call) => call.init.cache === "no-store" && call.init.signal && JSON.stringify(call.init.headers) === JSON.stringify({ accept: "application/json" }))).toBe(true);
     expect(calls.filter((call) => call.url.endsWith(`/settlement`))).toHaveLength(2);
+    expect(calls.filter((call) => call.url.endsWith(`/delegation`))).toHaveLength(1);
     expect(calls.filter((call) => call.url.endsWith(`/moon?planetId=7`))).toHaveLength(2);
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
   });

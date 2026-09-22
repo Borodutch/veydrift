@@ -45,6 +45,7 @@ export function PlayerInspectPage({
   onSelectPlanet,
   originCoords,
   provider,
+  signerAccount,
   wallet,
 }: {
   apiBaseUrl: string | undefined;
@@ -55,6 +56,7 @@ export function PlayerInspectPage({
   onSelectPlanet: (coords: Coordinates) => void;
   originCoords?: Coordinates | undefined;
   provider?: Eip1193Provider | undefined;
+  signerAccount?: string | undefined;
   wallet: string;
 }) {
   const backendData = useMemo(() => apiBaseUrl ? backendDataStoreFor(apiBaseUrl) : undefined, [apiBaseUrl]);
@@ -117,6 +119,7 @@ export function PlayerInspectPage({
             entityId={wallet}
             entityKind="player"
             provider={provider}
+            signer={signerAccount}
           />
 
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
@@ -281,6 +284,7 @@ export function AllianceInspectPage({
   onSetRole,
   onTransferOwnership,
   provider,
+  signerAccount,
   transactionUnavailableReason,
 }: {
   actionBusy: boolean;
@@ -303,6 +307,7 @@ export function AllianceInspectPage({
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onTransferOwnership: (playerAddress: string) => void;
   provider?: Eip1193Provider | undefined;
+  signerAccount?: string | undefined;
 }) {
   const [inviteAddress, setInviteAddress] = useState("");
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
@@ -348,6 +353,7 @@ export function AllianceInspectPage({
             entityId={allianceId}
             entityKind="alliance"
             provider={provider}
+            signer={signerAccount}
           />
 
           <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>

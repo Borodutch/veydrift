@@ -882,7 +882,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint64 nextReadyAt = (uint256(currentTime) + 1 hours).toUint64();
         _moons[originMoonPlanetId].jumpGateReadyAt = nextReadyAt;
         _moons[destinationMoonPlanetId].jumpGateReadyAt = nextReadyAt;
-        emit JumpGateJumped(msg.sender, originMoonPlanetId, destinationMoonPlanetId, nextReadyAt);
+        emit JumpGateJumped(
+            _actingPlayer(), originMoonPlanetId, destinationMoonPlanetId, nextReadyAt
+        );
     }
 
     function moon(uint256 planetId) external view returns (Moon memory) {
@@ -1120,7 +1122,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function _requireMoonOwner(uint256 planetId) private view {
         Moon storage moonRef = _moons[planetId];
         if (!moonRef.exists) revert NoMoon(planetId);
-        if (moonRef.owner != msg.sender) revert NotMoonOwner();
+        if (moonRef.owner != _actingPlayer()) revert NotMoonOwner();
     }
 
     function _spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources memory cost)
@@ -1162,7 +1164,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             }
         }
         if (shipTotal == 0) revert InvalidQuantity();
-        game.moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, msg.sender, ships);
+        game.moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, _actingPlayer(), ships);
     }
 
     function _setMoonDefenseCount(uint256 planetId, Defense defense, uint32 total) private {
@@ -1213,7 +1215,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             building,
             _moonBuildingLevels[planetId][MoonBuilding.LunarBase],
             _moonBuildingLevels[planetId][MoonBuilding.RoboticsFactory],
-            game.technologyLevel(msg.sender, Technology.Hyperspace)
+            game.technologyLevel(_actingPlayer(), Technology.Hyperspace)
         ) {}
         catch (bytes memory reason) {
             _bubbleMissingDependency(reason);
@@ -1242,17 +1244,18 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function _requireMoonDefenseDependencies(uint256 planetId, Defense defense) private view {
+        address player = _actingPlayer();
         VeydriftDependencies.requireDefense(
             defense,
             _moonBuildingLevels[planetId][MoonBuilding.Shipyard],
             0,
-            game.technologyLevel(msg.sender, Technology.Energy),
-            game.technologyLevel(msg.sender, Technology.Laser),
-            game.technologyLevel(msg.sender, Technology.Ion),
-            game.technologyLevel(msg.sender, Technology.Weapons),
-            game.technologyLevel(msg.sender, Technology.Shielding),
-            game.technologyLevel(msg.sender, Technology.ImpulseDrive),
-            game.technologyLevel(msg.sender, Technology.Plasma)
+            game.technologyLevel(player, Technology.Energy),
+            game.technologyLevel(player, Technology.Laser),
+            game.technologyLevel(player, Technology.Ion),
+            game.technologyLevel(player, Technology.Weapons),
+            game.technologyLevel(player, Technology.Shielding),
+            game.technologyLevel(player, Technology.ImpulseDrive),
+            game.technologyLevel(player, Technology.Plasma)
         );
     }
 
@@ -1425,4 +1428,15 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _actingPlayer() private view returns (address player) {
+        assembly ("memory-safe") {
+            mstore(0x00, shl(224, 0x6d3498d8))
+            mstore(0x04, caller())
+            if iszero(staticcall(gas(), sload(game.slot), 0x00, 0x24, 0x00, 0x20)) {
+                revert(0x00, 0x00)
+            }
+            player := mload(0x00)
+        }
+    }
 }

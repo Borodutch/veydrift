@@ -16,8 +16,8 @@ contract VeydriftShipProductionModule is VeydriftResourceReserves {
 
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueColonizeArrivals(_actingPlayer());
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _settleResources(planetId);
         _validateShipProduction(planetId, ship, quantity);
@@ -150,7 +150,7 @@ contract VeydriftShipProductionModule is VeydriftResourceReserves {
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
     function _validateShipProduction(uint256 planetId, Ship ship, uint32 quantity) private view {

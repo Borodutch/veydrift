@@ -445,6 +445,11 @@ abstract contract VeydriftGameStorage is Initializable {
     // legacy resolution array can contain arbitrarily many inbound missions from distinct players,
     // so a resolver advances this cursor in small chunks instead of scanning the array in one call.
     mapping(uint256 planetId => ArrivalOrderIndex index) internal _arrivalOrderIndexByPlanet;
+    // Append-only delegated-player authority. A main wallet may appoint one delegate and a
+    // delegate may represent only one main wallet. Gameplay modules resolve the transaction signer
+    // through these mappings; owner/admin and trusted-system authorization always use msg.sender.
+    mapping(address main => address delegate) internal _delegateOf;
+    mapping(address delegate => address main) internal _delegatorOf;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -516,6 +521,11 @@ abstract contract VeydriftGameStorage is Initializable {
         uint256 available
     );
     error UnsupportedGameplayModule();
+    error InvalidDelegate(address delegate);
+    error DelegateAlreadyAssigned(address delegate, address main);
+    error DelegatedWalletCannotDelegate(address wallet, address main);
+    error DelegateHasDelegate(address delegate, address nestedDelegate);
+    error NoDelegate(address account);
     error GameMustBePaused();
     error PlanetTemperatureMigrationPending();
     error PlanetTemperatureMigrationCompleted();
@@ -896,6 +906,12 @@ abstract contract VeydriftGameStorage is Initializable {
         uint8 position
     );
     event FeesWithdrawn(address indexed to, uint256 amount);
+    event DelegateUpdated(
+        address indexed main,
+        address indexed previousDelegate,
+        address indexed delegate,
+        address actor
+    );
 
     constructor(address admin) {
         _initializeGameStorage(admin);
@@ -956,6 +972,15 @@ abstract contract VeydriftGameStorage is Initializable {
         uint64 currentTime = uint64(block.timestamp);
         if (playerLastActiveAt[player] == currentTime) return;
         playerLastActiveAt[player] = currentTime;
+    }
+
+    function _actingPlayer() internal view returns (address player) {
+        assembly ("memory-safe") {
+            mstore(0x00, caller())
+            mstore(0x20, _delegatorOf.slot)
+            player := sload(keccak256(0x00, 0x40))
+            if iszero(player) { player := caller() }
+        }
     }
 
     function _activateInviteeProductionBoost(address player) internal {

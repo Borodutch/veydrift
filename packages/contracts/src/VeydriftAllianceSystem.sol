@@ -384,8 +384,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         });
         if (allianceId >= nextAllianceId) nextAllianceId = allianceId + 1;
 
-        bool ownerImported = false;
-        for (uint256 i = 0; i < members.length; i++) {
+        bool ownerImported;
+        for (uint256 i = 0; i < members.length;) {
             if (members[i] == address(0)) revert ZeroAddress();
             if (_memberships[members[i]].allianceId != 0) {
                 revert AlreadyInAlliance(members[i], _memberships[members[i]].allianceId);
@@ -403,6 +403,9 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
                 revert InvalidRole(roles[i]);
             }
             _importMember(allianceId, members[i], roles[i], joinedAts[i]);
+            unchecked {
+                ++i;
+            }
         }
         if (!ownerImported) revert NotAllianceMember(profile.owner, allianceId);
 
@@ -431,9 +434,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         external
         returns (uint256 allianceId)
     {
-        _requireSettledPlayer(msg.sender);
-        if (_memberships[msg.sender].allianceId != 0) {
-            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        address player = _actingPlayer();
+        _requireSettledPlayer(player);
+        if (_memberships[player].allianceId != 0) {
+            revert AlreadyInAlliance(player, _memberships[player].allianceId);
         }
         _requireProfile(tag, name);
 
@@ -443,13 +447,13 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
             tag: tag,
             name: name,
             description: description,
-            owner: msg.sender,
+            owner: player,
             createdAt: _now(),
             memberCount: 0
         });
-        _addMember(allianceId, msg.sender, AllianceRole.Owner);
+        _addMember(allianceId, player, AllianceRole.Owner);
 
-        emit AllianceCreated(allianceId, msg.sender, tag, name);
+        emit AllianceCreated(allianceId, player, tag, name);
         // AllianceCreated predates the public description field and intentionally keeps its
         // backwards-compatible topic. Emit the canonical full-profile event in the same
         // transaction so event-sourced readers materialize the description on creation just as
@@ -463,7 +467,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         string calldata name,
         string calldata description
     ) external {
-        _requireOwner(allianceId, msg.sender);
+        _requireOwner(allianceId, _actingPlayer());
         _requireProfile(tag, name);
 
         Alliance storage target = _requireAlliance(allianceId);
@@ -475,69 +479,75 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     }
 
     function inviteMember(uint256 allianceId, address player) external {
-        _requireOfficer(allianceId, msg.sender);
+        address actor = _actingPlayer();
+        _requireOfficer(allianceId, actor);
         _requireSettledPlayer(player);
         if (_memberships[player].allianceId != 0) {
             revert AlreadyInAlliance(player, _memberships[player].allianceId);
         }
 
         _invites[player][allianceId] =
-            Invite({active: true, allianceId: allianceId, inviter: msg.sender, invitedAt: _now()});
-        emit AllianceInviteCreated(allianceId, msg.sender, player);
+            Invite({active: true, allianceId: allianceId, inviter: actor, invitedAt: _now()});
+        emit AllianceInviteCreated(allianceId, actor, player);
     }
 
     function cancelInvite(uint256 allianceId, address player) external {
-        _requireOfficer(allianceId, msg.sender);
+        _requireOfficer(allianceId, _actingPlayer());
         delete _invites[player][allianceId];
         emit AllianceInviteCancelled(allianceId, player);
     }
 
     function acceptInvite(uint256 allianceId) external {
+        address player = _actingPlayer();
         _requireAlliance(allianceId);
-        Invite memory invite = _invites[msg.sender][allianceId];
-        if (!invite.active) revert InvalidInvite(msg.sender, allianceId);
-        if (_memberships[msg.sender].allianceId != 0) {
-            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        Invite memory invite = _invites[player][allianceId];
+        if (!invite.active) revert InvalidInvite(player, allianceId);
+        if (_memberships[player].allianceId != 0) {
+            revert AlreadyInAlliance(player, _memberships[player].allianceId);
         }
 
-        delete _invites[msg.sender][allianceId];
-        if (_joinRequestIndexes[allianceId][msg.sender] != 0) {
-            _removeJoinRequest(allianceId, msg.sender);
+        delete _invites[player][allianceId];
+        if (_joinRequestIndexes[allianceId][player] != 0) {
+            _removeJoinRequest(allianceId, player);
         }
-        _addMember(allianceId, msg.sender, AllianceRole.Member);
+        _addMember(allianceId, player, AllianceRole.Member);
     }
 
     function requestJoinAlliance(uint256 allianceId) external {
+        address player = _actingPlayer();
         _requireAlliance(allianceId);
-        _requireSettledPlayer(msg.sender);
-        if (_memberships[msg.sender].allianceId != 0) {
-            revert AlreadyInAlliance(msg.sender, _memberships[msg.sender].allianceId);
+        _requireSettledPlayer(player);
+        if (_memberships[player].allianceId != 0) {
+            revert AlreadyInAlliance(player, _memberships[player].allianceId);
         }
 
-        if (_joinRequestIndexes[allianceId][msg.sender] == 0) {
-            _joinRequestIndexes[allianceId][msg.sender] = _joinRequestLists[allianceId].length + 1;
-            _joinRequestLists[allianceId].push(msg.sender);
+        if (_joinRequestIndexes[allianceId][player] == 0) {
+            _joinRequestIndexes[allianceId][player] = _joinRequestLists[allianceId].length + 1;
+            _joinRequestLists[allianceId].push(player);
         }
         uint64 requestedAt = _now();
-        _joinRequests[allianceId][msg.sender] = JoinRequest({
-            active: true, allianceId: allianceId, requester: msg.sender, requestedAt: requestedAt
+        _joinRequests[allianceId][player] = JoinRequest({
+            active: true, allianceId: allianceId, requester: player, requestedAt: requestedAt
         });
-        emit AllianceJoinRequested(allianceId, msg.sender, requestedAt);
+        emit AllianceJoinRequested(allianceId, player, requestedAt);
     }
 
     function cancelJoinRequest(uint256 allianceId) external {
-        _removeJoinRequest(allianceId, msg.sender);
-        emit AllianceJoinRequestCancelled(allianceId, msg.sender);
+        address actor = _actingPlayer();
+        _removeJoinRequest(allianceId, actor);
+        emit AllianceJoinRequestCancelled(allianceId, actor);
     }
 
     function dismissJoinRequest(uint256 allianceId, address player) external {
-        _requireOfficer(allianceId, msg.sender);
+        address actor = _actingPlayer();
+        _requireOfficer(allianceId, actor);
         _removeJoinRequest(allianceId, player);
-        emit AllianceJoinRequestDismissed(allianceId, msg.sender, player);
+        emit AllianceJoinRequestDismissed(allianceId, actor, player);
     }
 
     function approveJoinRequest(uint256 allianceId, address player) external {
-        _requireOfficer(allianceId, msg.sender);
+        address actor = _actingPlayer();
+        _requireOfficer(allianceId, actor);
         JoinRequest memory request = _joinRequests[allianceId][player];
         if (!request.active) revert InvalidJoinRequest(player, allianceId);
         if (_memberships[player].allianceId != 0) {
@@ -546,55 +556,69 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
         _removeJoinRequest(allianceId, player);
         _addMember(allianceId, player, AllianceRole.Member);
-        emit AllianceJoinRequestApproved(allianceId, msg.sender, player);
+        emit AllianceJoinRequestApproved(allianceId, actor, player);
     }
 
     function kickMember(uint256 allianceId, address player) external {
-        _requireOfficer(allianceId, msg.sender);
-        Membership memory kicker = _memberships[msg.sender];
-        _kickMember(allianceId, kicker, player);
+        address actor = _actingPlayer();
+        _requireOfficer(allianceId, actor);
+        _kickMember(allianceId, _memberships[actor], player, actor);
     }
 
     function kickMembers(uint256 allianceId, address[] calldata players) external {
-        _requireOfficer(allianceId, msg.sender);
-        Membership memory kicker = _memberships[msg.sender];
-        for (uint256 i = 0; i < players.length; i++) {
-            _kickMember(allianceId, kicker, players[i]);
+        address actor = _actingPlayer();
+        _requireOfficer(allianceId, actor);
+        Membership memory kicker = _memberships[actor];
+        for (uint256 i = 0; i < players.length;) {
+            _kickMember(allianceId, kicker, players[i], actor);
+            unchecked {
+                ++i;
+            }
         }
     }
 
     function leaveAlliance() external {
-        Membership memory membership = _memberships[msg.sender];
-        if (membership.allianceId == 0) revert NoAlliance(msg.sender);
+        address player = _actingPlayer();
+        Membership memory membership = _memberships[player];
+        if (membership.allianceId == 0) revert NoAlliance(player);
         if (
             membership.role == AllianceRole.Owner
                 && _alliances[membership.allianceId].memberCount > 1
         ) {
-            revert NotAuthorized(msg.sender, membership.allianceId);
+            _revertNotAuthorized(player, membership.allianceId);
         }
 
-        _removeMember(membership.allianceId, msg.sender);
+        _removeMember(membership.allianceId, player);
     }
 
     function setMemberRole(uint256 allianceId, address player, AllianceRole role) external {
-        _requireOwner(allianceId, msg.sender);
-        _setMemberRole(allianceId, player, role);
+        address actor = _actingPlayer();
+        _requireOwner(allianceId, actor);
+        _setMemberRole(allianceId, player, role, actor);
     }
 
     function setMembersRole(uint256 allianceId, address[] calldata players, AllianceRole role)
         external
     {
-        _requireOwner(allianceId, msg.sender);
-        for (uint256 i = 0; i < players.length; i++) {
-            _setMemberRole(allianceId, players[i], role);
+        address actor = _actingPlayer();
+        _requireOwner(allianceId, actor);
+        for (uint256 i = 0; i < players.length;) {
+            _setMemberRole(allianceId, players[i], role, actor);
+            unchecked {
+                ++i;
+            }
         }
     }
 
-    function _setMemberRole(uint256 allianceId, address player, AllianceRole role) private {
+    function _setMemberRole(uint256 allianceId, address player, AllianceRole role, address actor)
+        private
+    {
         if (role != AllianceRole.Member && role != AllianceRole.Officer) revert InvalidRole(role);
         Membership storage membership = _memberships[player];
         if (membership.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
-        if (membership.role == AllianceRole.Owner) revert NotAuthorized(msg.sender, allianceId);
+        if (membership.role == AllianceRole.Owner) {
+            _revertNotAuthorized(actor, allianceId);
+        }
 
         membership.role = role;
         emit AllianceRoleUpdated(allianceId, player, role);
@@ -604,26 +628,28 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     /// demoting the previous owner to officer so the alliance always keeps
     /// exactly one owner.
     function transferAllianceOwnership(uint256 allianceId, address newOwner) external {
-        _requireOwner(allianceId, msg.sender);
-        if (newOwner == msg.sender) revert NotAuthorized(msg.sender, allianceId);
+        address actor = _actingPlayer();
+        _requireOwner(allianceId, actor);
+        if (newOwner == actor) _revertNotAuthorized(actor, allianceId);
         Membership storage incoming = _memberships[newOwner];
         if (incoming.allianceId != allianceId) revert NotAllianceMember(newOwner, allianceId);
         if (incoming.role != AllianceRole.Officer) {
             revert NewOwnerMustBeOfficer(newOwner, allianceId);
         }
 
-        _memberships[msg.sender].role = AllianceRole.Officer;
+        _memberships[actor].role = AllianceRole.Officer;
         incoming.role = AllianceRole.Owner;
         _alliances[allianceId].owner = newOwner;
 
-        emit AllianceRoleUpdated(allianceId, msg.sender, AllianceRole.Officer);
+        emit AllianceRoleUpdated(allianceId, actor, AllianceRole.Officer);
         emit AllianceRoleUpdated(allianceId, newOwner, AllianceRole.Owner);
-        emit AllianceOwnershipTransferred(allianceId, msg.sender, newOwner);
+        emit AllianceOwnershipTransferred(allianceId, actor, newOwner);
     }
 
     function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
         external
     {
+        address actor = _actingPlayer();
         _requireAlliance(allianceId);
         _requireAlliance(otherAllianceId);
         if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
@@ -631,7 +657,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         DiplomacyStatus currentStatus = _diplomacy[allianceId][otherAllianceId];
         DiplomacyStatus reciprocalStatus = _diplomacy[otherAllianceId][allianceId];
         if (status == DiplomacyStatus.War) {
-            _requireOwner(allianceId, msg.sender);
+            _requireOwner(allianceId, actor);
             if (address(warProtection) == address(0)) revert WarProtectionUnset();
             if (currentStatus == DiplomacyStatus.War || reciprocalStatus == DiplomacyStatus.War) {
                 revert WarAlreadyActive(allianceId, otherAllianceId);
@@ -647,16 +673,16 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
         if (currentStatus == DiplomacyStatus.War || reciprocalStatus == DiplomacyStatus.War) {
             if (status != DiplomacyStatus.None) {
-                revert NotAuthorized(msg.sender, allianceId);
+                _revertNotAuthorized(actor, allianceId);
             }
             uint256 declarerAllianceId = _warDeclarer(allianceId, otherAllianceId);
             if (declarerAllianceId == 0) {
                 revert WarDeclarerUnknown(allianceId, otherAllianceId);
             }
             if (allianceId != declarerAllianceId) {
-                revert NotAuthorized(msg.sender, allianceId);
+                _revertNotAuthorized(actor, allianceId);
             }
-            _requireOfficer(allianceId, msg.sender);
+            _requireOfficer(allianceId, actor);
             uint64 startedAt = _warStart(allianceId, otherAllianceId);
             uint64 unlocksAt = startedAt + WAR_MINIMUM_DURATION;
             // forge-lint: disable-next-line(block-timestamp)
@@ -666,7 +692,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
             return;
         }
 
-        _requireOfficer(allianceId, msg.sender);
+        _requireOfficer(allianceId, actor);
         _clearDiplomacyPair(allianceId, otherAllianceId);
         _diplomacy[allianceId][otherAllianceId] = status;
         _diplomacy[otherAllianceId][allianceId] = status;
@@ -677,12 +703,13 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         external
         returns (uint256 intentId)
     {
+        address actor = _actingPlayer();
         VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
         if (target.owner == address(0)) revert InvalidAlliance(defenderPlanetId);
-        if (target.owner != msg.sender) revert NotPlanetOwner(defenderPlanetId, msg.sender);
+        if (target.owner != actor) revert NotPlanetOwner(defenderPlanetId, actor);
 
-        Membership memory membership = _memberships[msg.sender];
-        if (membership.allianceId == 0) revert NoAlliance(msg.sender);
+        Membership memory membership = _memberships[actor];
+        if (membership.allianceId == 0) revert NoAlliance(actor);
 
         (
             VeydriftGameStorage.FleetMissionStatus status,
@@ -708,18 +735,13 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
             allianceId: membership.allianceId,
             defenderPlanetId: defenderPlanetId,
             hostileMissionId: hostileMissionId,
-            coordinator: msg.sender,
+            coordinator: actor,
             openedAt: _now(),
             joinCutoffAt: joinCutoffAt
         });
 
         emit AllianceDefenseIntentOpened(
-            intentId,
-            membership.allianceId,
-            defenderPlanetId,
-            hostileMissionId,
-            msg.sender,
-            joinCutoffAt
+            intentId, membership.allianceId, defenderPlanetId, hostileMissionId, actor, joinCutoffAt
         );
     }
 
@@ -742,8 +764,11 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function allianceIds() external view returns (uint256[] memory) {
         uint256 count = nextAllianceId - 1;
         uint256[] memory ids = new uint256[](count);
-        for (uint256 allianceId = 1; allianceId <= count; allianceId++) {
+        for (uint256 allianceId = 1; allianceId <= count;) {
             ids[allianceId - 1] = allianceId;
+            unchecked {
+                ++allianceId;
+            }
         }
         return ids;
     }
@@ -1020,14 +1045,19 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         emit AllianceJoined(allianceId, player, role);
     }
 
-    function _kickMember(uint256 allianceId, Membership memory kicker, address player) private {
+    function _kickMember(
+        uint256 allianceId,
+        Membership memory kicker,
+        address player,
+        address actor
+    ) private {
         Membership memory kicked = _memberships[player];
         if (kicked.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
         if (
             kicked.role == AllianceRole.Owner
                 || (kicker.role == AllianceRole.Officer && kicked.role != AllianceRole.Member)
         ) {
-            revert NotAuthorized(msg.sender, allianceId);
+            _revertNotAuthorized(actor, allianceId);
         }
 
         _removeMember(allianceId, player);
@@ -1080,7 +1110,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
                 || (membership.role != AllianceRole.Officer
                     && membership.role != AllianceRole.Owner)
         ) {
-            revert NotAuthorized(player, allianceId);
+            _revertNotAuthorized(player, allianceId);
         }
     }
 
@@ -1088,7 +1118,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         _requireAlliance(allianceId);
         Membership memory membership = _memberships[player];
         if (membership.allianceId != allianceId || membership.role != AllianceRole.Owner) {
-            revert NotAuthorized(player, allianceId);
+            _revertNotAuthorized(player, allianceId);
         }
     }
 
@@ -1179,6 +1209,27 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
     function _now() private view returns (uint64) {
         return uint64(block.timestamp);
+    }
+
+    function _revertNotAuthorized(address player, uint256 allianceId) private pure {
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, shl(224, 0x615e9ba0))
+            mstore(add(ptr, 0x04), player)
+            mstore(add(ptr, 0x24), allianceId)
+            revert(ptr, 0x44)
+        }
+    }
+
+    function _actingPlayer() private view returns (address player) {
+        assembly ("memory-safe") {
+            mstore(0x00, shl(224, 0x6d3498d8))
+            mstore(0x04, caller())
+            if iszero(staticcall(gas(), sload(game.slot), 0x00, 0x24, 0x00, 0x20)) {
+                revert(0x00, 0x00)
+            }
+            player := mload(0x00)
+        }
     }
 
     function _initializeAllianceSystem(IVeydriftAllianceGame gameContract, address initialOwner)

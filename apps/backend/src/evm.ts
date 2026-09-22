@@ -1400,6 +1400,7 @@ export type DebrisFieldEvent = {
 };
 
 export interface ChainReader {
+  getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getStartPrice(): Promise<string | null>;
   getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
@@ -1458,6 +1459,13 @@ export interface ChainReader {
   getTransactionReceipt?(transactionHash: string): Promise<RpcTransactionReceipt | null>;
   rpcMetrics?(): RpcMetrics;
 }
+
+export type WalletDelegationState = {
+  wallet: Address;
+  main: Address;
+  delegate: Address | null;
+  actingAsDelegate: boolean;
+};
 
 export type RpcTransactionReceipt = {
   blockNumber: string;
@@ -1972,6 +1980,22 @@ export class VeydriftGameReader implements ChainReader {
 
   failoverRpc(reason: string): boolean {
     return this.transport.failoverRpc?.(reason) ?? false;
+  }
+
+  async getDelegationState(wallet: Address): Promise<WalletDelegationState> {
+    assertAddress(wallet);
+    const main = decodeAddressWord(
+      wordAt(splitWords(await this.call("0x6d3498d8", [encodeAddress(wallet)])), 0)
+    );
+    const delegateAddress = decodeAddressWord(
+      wordAt(splitWords(await this.call("0x8d22ea2a", [encodeAddress(main)])), 0)
+    );
+    return {
+      wallet,
+      main,
+      delegate: delegateAddress === zeroAddress ? null : delegateAddress,
+      actingAsDelegate: main.toLowerCase() !== wallet.toLowerCase()
+    };
   }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
