@@ -1605,6 +1605,49 @@ test("Raid Finder runs unverified eligibility through mounted Confirm and a fina
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
+test("VEY-892 mounted mission disconnect releases unknown without resubmitting and recovers a late hash", async () => {
+  // Real composer/preflight/coordinator, simulated EIP-1193 provider only.
+  // This is not proof of a Windows Vivaldi Trust popup opening or closing.
+  await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
+  const attack = raidFinderAttackExpression("7:7:7");
+  await waitForExpression(`${attack} !== undefined`);
+  await clickExpression(attack);
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().length === 1`);
+  await waitForExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]:not(:disabled)') !== null`);
+  await clickExpression(`document.querySelector('button[aria-label="Increase Small Cargo"]')`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(0, 'allowed')`);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.inspectorProof.pendingAttackProtections().some(request => request.index === 1)`);
+  await evaluate(`window.inspectorProof.resolveAttackProtection(1, 'allowed')`);
+  const sends = `window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`;
+  await waitForExpression(`${sends} === 1`);
+  assert.equal(await evaluate(`${missionConfirmExpression(false)} !== undefined`), false);
+  await evaluate(`window.inspectorProof.disconnectWallet()`);
+  await waitForExpression(`document.body.textContent.includes('Your wallet disconnected without confirming the result.')`, 2_000);
+  await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
+  assert.ok(await evaluate(`document.body.textContent.includes('may already have been sent')`));
+  // Explicit retry is declined; repeated clicks cannot issue another send.
+  await evaluate(`window.confirm = () => { window.retryConsentAsked = true; return false; }`);
+  await clickExpression(missionConfirmExpression(false));
+  await waitForExpression(`window.retryConsentAsked === true`);
+  assert.equal(await evaluate(sends), 1);
+  await evaluate(`(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args) => {
+      if (String(args[0]).includes('/transactions/0x892/status')) {
+        window.lateHashRecovered = true;
+        return Response.json({ transactionHash: '0x892', phase: 'applied', events: [], indexedEventCount: 0, latestIndexedBlock: '20', receiptBlock: '20' });
+      }
+      return originalFetch(...args);
+    };
+    window.inspectorProof.resolveWalletSend('0x892');
+  })()`);
+  await waitForExpression(`window.lateHashRecovered === true`);
+  assert.equal(await evaluate(sends), 1);
+  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+});
+
 test("Raid Finder keeps a mounted canonical denial blocked", async () => {
   await loadInspectorFixture("/raid-finder", 1280, { raidEligibilityProbe: "true" });
   const attack = raidFinderAttackExpression("7:7:7");

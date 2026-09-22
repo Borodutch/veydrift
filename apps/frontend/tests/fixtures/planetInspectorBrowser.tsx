@@ -23,6 +23,8 @@ declare global {
       interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
       walletRequests: Array<{ method: string; params?: unknown[] }>;
+      disconnectWallet(): void;
+      resolveWalletSend(hash: string): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
       failAttackProtection(index: number): void;
@@ -160,6 +162,7 @@ const pendingAttackProtectionRequests: Array<{
   wallet: string;
 }> = [];
 const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
+let resolveWalletSend: (hash: string) => void = () => {};
 const originalConsoleError = console.error;
 console.error = (...values) => {
   fixtureErrors.push(values.map(String).join(" "));
@@ -207,7 +210,7 @@ const provider: Eip1193Provider = {
     if (method === "eth_sendTransaction") {
       // Keep the request pending like an open wallet confirmation. Browser tests
       // can prove the Build click reached the wallet without confirming/broadcasting.
-      return new Promise<string>(() => undefined);
+      return new Promise<string>(resolve => { resolveWalletSend = resolve; });
     }
     return null;
   },
@@ -655,6 +658,8 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  disconnectWallet() { for (const listener of providerListeners.get("disconnect") ?? []) listener({ code: 4900 }); },
+  resolveWalletSend(hash) { resolveWalletSend(hash); },
   failAttackProtection(index) {
     const request = pendingAttackProtectionRequests[index];
     if (!request || request.settled) throw new Error(`No pending attack-protection request ${index}`);

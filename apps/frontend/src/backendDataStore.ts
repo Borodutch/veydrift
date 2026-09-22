@@ -3,7 +3,7 @@ import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type Entit
 import { GameStateStore, type GameStateEntry } from "./gameStateStore";
 import { playerActivityAwaySince } from "./playerActivityPresence";
 import { createTransactionActionGate, type TransactionActionGate, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
-import type { Eip1193Provider } from "./walletFlow";
+import type { Eip1193Provider, WalletSendLifecycle } from "./walletFlow";
 import {
   fetchAllianceState,
   fetchAttackProtectionStatus,
@@ -149,7 +149,7 @@ export type BackendWriteTransactionDescriptor = {
   key: string;
   label: string;
   prepare?: () => Promise<void>;
-  send: (beforeWalletSend: () => void) => Promise<string>;
+  send: (beforeWalletSend: () => WalletSendLifecycle) => Promise<string>;
   /** Only an explicit repeat click may authorize retrying an uncertain send. */
   confirmRetry?: () => boolean;
   waitForIndexing?: boolean;
@@ -1521,23 +1521,31 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let stopObservingAbort: () => void = () => {};
+    const walletForeground = new AbortController();
+    let walletDisconnected: () => void = () => {};
     const foreground = new Promise<WriteTransactionOutcome>(resolve => {
-      const finish = () => {
+      const finish = (disconnected = false) => {
+        if (expired) return;
         expired = true;
+        walletForeground.abort();
         if (entry) {
           resolve({ outcome: entry.phase === "applied" ? "indexed" : entry.phase, txHash: entry.transactionHash });
         } else {
           attempt.unknown = walletSendStarted;
           if (!walletSendStarted && this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
           publish({ key: descriptor.key, phase: walletSendStarted ? "unknown" : "error", label: walletSendStarted
-            ? "Your wallet has not returned a result. Check its activity before retrying; this transaction may already have been sent. Other actions are available."
+            ? disconnected
+              ? "Your wallet disconnected without confirming the result. Open your wallet and check its activity; this transaction may already have been sent. Reconnect before choosing to retry."
+              : "Your wallet has not returned a result. Open your wallet and check its activity before choosing to retry; this transaction may already have been sent. Other actions are available."
             : "Preparation took too long. Please try again." });
           resolve({ outcome: walletSendStarted ? "unknown" : "not-submitted" });
         }
       };
-      timer = setTimeout(finish, this.transactionForegroundTimeoutMs);
-      this.transactionAbort.signal.addEventListener("abort", finish, { once: true });
-      stopObservingAbort = () => this.transactionAbort.signal.removeEventListener("abort", finish);
+      walletDisconnected = () => finish(true);
+      const timedOut = () => finish();
+      timer = setTimeout(timedOut, this.transactionForegroundTimeoutMs);
+      this.transactionAbort.signal.addEventListener("abort", timedOut, { once: true });
+      stopObservingAbort = () => this.transactionAbort.signal.removeEventListener("abort", timedOut);
     });
     const work = (async (): Promise<WriteTransactionOutcome> => {
       try {
@@ -1559,8 +1567,10 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         assertSubmissionContext();
         const transactionHash = await descriptor.send(() => {
           assertSubmissionContext();
+          if (walletSendStarted) throw new Error("This attempt already requested a wallet transaction. Check wallet activity before retrying.");
           walletSendStarted = true;
           publish({ key: descriptor.key, phase: "pending", label: descriptor.label + ": Awaiting wallet" });
+          return { signal: walletForeground.signal, disconnected: walletDisconnected };
         });
         const pending: PendingTransaction = {
           attemptId: attempt.id,
@@ -1598,7 +1608,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         }).catch(() => {});
         if (!expired || walletSendStarted) publish({
           error, key: descriptor.key, phase: uncertain ? "unknown" : "error",
-          label: uncertain ? "The wallet did not confirm the result. Check its activity before retrying; this transaction may already have been sent."
+          label: uncertain ? "The wallet did not confirm the result. Open your wallet and check its activity; this transaction may already have been sent. Reconnect if needed before choosing to retry."
             : descriptor.errorLabel?.(error) ?? (error instanceof Error ? error.message : "The action could not be submitted."),
         });
         return { error, outcome: uncertain ? "unknown" : "not-submitted" };
@@ -1606,7 +1616,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         if (!attempt.unknown && this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
       }
     })();
-    return Promise.race([work, foreground]).finally(() => { clearTimeout(timer); stopObservingAbort(); });
+    return Promise.race([work, foreground]).finally(() => { clearTimeout(timer); stopObservingAbort(); walletForeground.abort(); });
   }
 
   private async readBackendTransactionStatus(transactionHash: string): Promise<BackendTransactionStatus> {
