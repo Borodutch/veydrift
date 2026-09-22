@@ -1265,6 +1265,14 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
+    invalidateWalletBootstrap();
+    const identityEpoch = settlementIdentityEpoch.current;
+    const attemptState = { provider, account, chainChanged: false, networkSetup: true };
+    walletBootstrapActive.current = attemptState;
+    const isCurrent = () => identityEpoch === settlementIdentityEpoch.current
+      && provider === activeWalletProvider.current
+      && currentAccount.current?.toLowerCase() === account?.toLowerCase()
+      && walletBootstrapActive.current === attemptState;
     setNetworkSwitchPending(true);
     setPlanet({
       kind: "checking",
@@ -1273,16 +1281,21 @@ export function FirstPlanetSettlementApp() {
     let support: FarcasterMiniAppWalletSupport | undefined;
     try {
       support = await readFarcasterMiniAppWalletSupport(walletProviderSource);
+      if (!isCurrent()) return;
       if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
         return;
       }
       const context = walletProviderContext();
       await setupVeydriftNetworkForWallet(provider, context);
+      if (!isCurrent()) return;
       await waitForVeydriftNetwork(provider, requiredChain, {
         readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
       });
-      await refreshWallet(provider, account);
+      if (!isCurrent()) return;
+      walletBootstrapActive.current = undefined;
+      await refreshWalletHandler.current(provider, account);
     } catch (error) {
+      if (!isCurrent()) return;
       if (miniAppMode && wallet.kind === "wrong-network") {
         farcasterNetworkSetupAttempted.current = undefined;
         setWallet(wallet);
@@ -1298,6 +1311,7 @@ export function FirstPlanetSettlementApp() {
         message: isUserRejected(error) ? "Network switch was rejected." : walletRequestErrorMessage(error),
       });
     } finally {
+      if (walletBootstrapActive.current === attemptState) walletBootstrapActive.current = undefined;
       setNetworkSwitchPending(false);
     }
   }

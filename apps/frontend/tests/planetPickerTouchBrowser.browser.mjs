@@ -2429,6 +2429,40 @@ test("cold bootstrap Farcaster setup retains confirmation polling after chainCha
   assert.equal(await evaluate("document.body.textContent.includes('Wrong network')"), false);
 });
 
+for (const outcome of ["resolve", "reject"]) {
+  test(`wallet manual network switch cannot ${outcome} into an obsolete account`, async () => {
+    await loadInspectorFixture("/", 1280, { shell: "settlement", manualNetworkSwitch: "true", waitForPlanetSelectors: "false" });
+    const switchButton = `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Switch network')`;
+    await waitForExpression(`${switchButton} !== undefined`);
+    await clickExpression(switchButton);
+    await waitForExpression("window.inspectorProof.walletRequests.some(r => r.method === 'wallet_switchEthereumChain')");
+    await evaluate("window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount])");
+    await waitForExpression("window.inspectorProof.walletBindings.at(-1) === window.inspectorProof.alternateAccount && document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+    await evaluate(`window.manualStaleErrorSeen = false; window.manualErrorObserver = new MutationObserver(() => {
+      if (document.body.textContent.includes('obsolete switch failure')) window.manualStaleErrorSeen = true;
+    }); window.manualErrorObserver.observe(document.querySelector('#app'), { childList: true, subtree: true });
+    window.inspectorProof.completeWalletSwitch('${outcome}')`);
+    await delay(400);
+    await evaluate("window.manualErrorObserver.disconnect()");
+    assert.equal(await evaluate("window.inspectorProof.walletBindings.at(-1) === window.inspectorProof.alternateAccount"), true);
+    assert.equal(await evaluate("document.querySelectorAll('[data-planet-selector-item]').length >= 2"), true);
+    assert.equal(await evaluate("window.manualStaleErrorSeen"), false);
+  });
+}
+
+test("wallet manual network switch keeps confirmation polling through its own chain event", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", manualNetworkSwitch: "true", manualSwitchStaleChain: "true", waitForPlanetSelectors: "false" });
+  const switchButton = `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Switch network')`;
+  await waitForExpression(`${switchButton} !== undefined`);
+  await clickExpression(switchButton);
+  await waitForExpression("window.inspectorProof.walletRequests.some(r => r.method === 'wallet_switchEthereumChain')");
+  await evaluate("window.inspectorProof.completeWalletSwitch('resolve')");
+  await waitForExpression("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length >= 4");
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 4);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'wallet_switchEthereumChain').length"), 1);
+});
+
 test("cold bootstrap account disconnect invalidates an in-flight account read", async () => {
   await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
   await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_accounts')");
