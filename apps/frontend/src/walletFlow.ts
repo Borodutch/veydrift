@@ -1527,14 +1527,19 @@ export type WalletSendLifecycle = {
 
 // Only local object IDs and allowlisted booleans: never serialize the provider,
 // RPC params/results, account, error message/data, or extension-supplied metadata.
-function walletSubmissionDiagnostic(provider: Eip1193Provider) {
+function walletDiagnosticProvider(provider: Eip1193Provider) {
   let providerId = walletDiagnosticIds.get(provider);
   if (!providerId) walletDiagnosticIds.set(provider, providerId = ++nextWalletDiagnosticId);
-  const requestId = ++nextWalletRequestId;
   const source = walletTransactionTransports.get(provider)?.source ?? "unconfigured";
   const flags = ["isRabby", "isOkxWallet", "isOKExWallet", "isTrust", "isTrustWallet", "isMetaMask", "isCoinbaseWallet"].filter(flag => {
     try { return Reflect.get(provider, flag) === true; } catch { return false; }
   });
+  return { providerId, source, flags };
+}
+
+function walletSubmissionDiagnostic(provider: Eip1193Provider) {
+  const { providerId, source, flags } = walletDiagnosticProvider(provider);
+  const requestId = ++nextWalletRequestId;
   const started = performance.now();
   return (phase: "requested" | "disconnected" | "foreground_released" | "resolved" | "rejected") => {
     try { console.info(JSON.stringify({ event: "wallet_submission", providerId, requestId, source, flags, phase, elapsedMs: Math.round(performance.now() - started) })); }
@@ -3134,7 +3139,7 @@ function decodeAddressResult(hex: string): string {
   return `0x${address}`;
 }
 
-export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: number): Promise<string[]> {
+export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: number, bootstrapAttempt?: number): Promise<string[]> {
   return readWalletRequest<string[]>(
     provider,
     {
@@ -3142,6 +3147,7 @@ export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: 
     },
     "wallet accounts",
     timeoutMs,
+    bootstrapAttempt,
   );
 }
 
@@ -3160,7 +3166,7 @@ export async function requestAccounts(provider: Eip1193Provider): Promise<string
   return accounts;
 }
 
-export async function getChainId(provider: Eip1193Provider, timeoutMs?: number): Promise<string> {
+export async function getChainId(provider: Eip1193Provider, timeoutMs?: number, bootstrapAttempt?: number): Promise<string> {
   return readWalletRequest<string>(
     provider,
     {
@@ -3168,6 +3174,7 @@ export async function getChainId(provider: Eip1193Provider, timeoutMs?: number):
     },
     "wallet network",
     timeoutMs,
+    bootstrapAttempt,
   );
 }
 
@@ -4096,15 +4103,36 @@ export function planetFromTransaction(account: string, txHash: string): PlanetSu
   };
 }
 
-async function readWalletRequest<T>(provider: Eip1193Provider, args: { method: string; params?: unknown[] }, label: string, timeoutMs: number = WALLET_READ_TIMEOUT_MS): Promise<T> {
-  return timeoutPromise(provider.request<T>(args), timeoutMs, label);
+class WalletReadTimeoutError extends Error {}
+
+async function readWalletRequest<T>(provider: Eip1193Provider, args: { method: string; params?: unknown[] }, label: string, timeoutMs: number = WALLET_READ_TIMEOUT_MS, bootstrapAttempt?: number): Promise<T> {
+  const started = performance.now();
+  // Only the two passive bootstrap methods opt in. No request payloads, results,
+  // error data/messages or extension-supplied names/IDs leave this boundary.
+  const diagnostic = bootstrapAttempt !== undefined && (args.method === "eth_accounts" || args.method === "eth_chainId")
+    ? { event: "wallet/bootstrap", ...walletDiagnosticProvider(provider), method: args.method, attempt: bootstrapAttempt }
+    : undefined;
+  const log = (phase: "requested" | "resolved" | "timed_out" | "rejected") => {
+    if (!diagnostic) return;
+    try { console.info(JSON.stringify({ ...diagnostic, phase, elapsedMs: Math.round(performance.now() - started) })); }
+    catch { /* Diagnostics cannot change wallet recovery. */ }
+  };
+  log("requested");
+  try {
+    const result = await timeoutPromise(provider.request<T>(args), timeoutMs, label);
+    log("resolved");
+    return result;
+  } catch (error) {
+    log(error instanceof WalletReadTimeoutError ? "timed_out" : "rejected");
+    throw error;
+  }
 }
 
 async function timeoutPromise<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new Error(`Timed out reading ${label} from the wallet after ${Math.round(timeoutMs / 1_000)} seconds.`));
+      reject(new WalletReadTimeoutError(`Timed out reading ${label} from the wallet after ${Math.round(timeoutMs / 1_000)} seconds.`));
     }, timeoutMs);
   });
 

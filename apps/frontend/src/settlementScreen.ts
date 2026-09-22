@@ -2,6 +2,7 @@ import type { PlanetSummary } from "./walletFlow";
 
 export type WalletState =
   | { kind: "loading" }
+  | { kind: "bootstrap-delayed"; retrying: boolean }
   | { kind: "no-wallet" }
   | { kind: "disconnected" }
   | { kind: "connecting" }
@@ -22,6 +23,7 @@ export type PlanetState =
 
 export type PreSettlementMode =
   | "resolving"
+  | "wallet-retry"
   | "no-wallet"
   | "connect"
   | "wrong-network"
@@ -36,6 +38,8 @@ export function isWalletSettlementResolving(wallet: WalletState, planet: PlanetS
 }
 
 export function preSettlementMode(wallet: WalletState, planet: PlanetState): PreSettlementMode {
+  if (wallet.kind === "bootstrap-delayed") return "wallet-retry";
+
   if (isWalletSettlementResolving(wallet, planet)) {
     return "resolving";
   }

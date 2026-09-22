@@ -1,4 +1,5 @@
 import { h, render, options, type VNode } from "preact";
+import { sdk } from "@farcaster/miniapp-sdk";
 import { BackendDataStore, backendDataStoreFor } from "../../src/backendDataStore";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useBackendDataSnapshots } from "../../src/useBackendDataSnapshot";
@@ -23,7 +24,15 @@ declare global {
       interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
       walletRequests: Array<{ method: string; params?: unknown[] }>;
+      walletBindings: string[];
       disconnectWallet(): void;
+      wakeBootstrapWallet(): void;
+      resolveStaleBootstrap(): void;
+      emitWalletAccounts(accounts: string[]): void;
+      emitWalletConnect(): void;
+      emitWalletChain(chainId: string): void;
+      completeWalletSwitch(outcome: "resolve" | "reject"): void;
+      bootstrapDiagnostics: string[];
       resolveWalletSend(hash: string): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
@@ -154,6 +163,7 @@ const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const walletBindings: string[] = [];
 const pendingAttackProtectionRequests: Array<{
   resolve: (response: Response) => void;
   settled: boolean;
@@ -163,6 +173,23 @@ const pendingAttackProtectionRequests: Array<{
 }> = [];
 const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
 let resolveWalletSend: (hash: string) => void = () => {};
+let bootstrapStalled = true;
+let networkSwitchRequested = false;
+let staleChainReadsAfterSwitch = 1;
+const farcasterBootstrapSetup = fixtureParams.get("farcasterBootstrapSetup") === "true";
+const manualNetworkSwitch = fixtureParams.get("manualNetworkSwitch") === "true";
+let providerAccount = account;
+let manualWalletChain = "0x1";
+let manualSwitchComplete = false;
+let manualStaleChainReads = 0;
+let completeWalletSwitch: (outcome: "resolve" | "reject") => void = () => {};
+const staleBootstrapReads: Array<() => void> = [];
+const bootstrapDiagnostics: string[] = [];
+const originalConsoleInfo = console.info;
+console.info = (...values) => {
+  if (typeof values[0] === "string" && values[0].includes('"event":"wallet/bootstrap"')) bootstrapDiagnostics.push(values[0]);
+  originalConsoleInfo(...values);
+};
 const originalConsoleError = console.error;
 console.error = (...values) => {
   fixtureErrors.push(values.map(String).join(" "));
@@ -205,8 +232,32 @@ const provider: Eip1193Provider = {
   },
   request: async ({ method, params }) => {
     walletRequests.push({ method, ...(params ? { params } : {}) });
+    if (bootstrapStalled && method === fixtureParams.get("stallBootstrapMethod")) {
+      return new Promise(resolve => staleBootstrapReads.push(() => resolve(method === "eth_accounts" ? [alternateAccount] : "0x1")));
+    }
+    if (method === "wallet_switchEthereumChain" && manualNetworkSwitch) {
+      return new Promise((resolve, reject) => {
+        completeWalletSwitch = outcome => {
+          if (outcome === "reject") { reject(new Error("obsolete switch failure")); return; }
+          manualSwitchComplete = true;
+          manualWalletChain = "0x2105";
+          if (fixtureParams.get("manualSwitchStaleChain") === "true") {
+            manualStaleChainReads = 1;
+            for (const listener of providerListeners.get("chainChanged") ?? []) listener("0x2105");
+          }
+          resolve(null);
+        };
+      });
+    }
+    if (method === "eth_chainId" && manualNetworkSwitch) return manualStaleChainReads-- > 0 ? "0x1" : manualWalletChain;
+    if (method === "wallet_switchEthereumChain" && farcasterBootstrapSetup) {
+      networkSwitchRequested = true;
+      for (const listener of providerListeners.get("chainChanged") ?? []) listener("0x2105");
+      return null;
+    }
+    if (method === "eth_chainId" && farcasterBootstrapSetup && (!networkSwitchRequested || staleChainReadsAfterSwitch-- > 0)) return "0x1";
     if (method === "eth_chainId") return settlementShell ? "0x2105" : "0x14a34";
-    if (method === "eth_accounts" || method === "eth_requestAccounts") return [account];
+    if (method === "eth_accounts" || method === "eth_requestAccounts") return [providerAccount];
     if (method === "eth_sendTransaction") {
       // Keep the request pending like an open wallet confirmation. Browser tests
       // can prove the Build click reached the wallet without confirming/broadcasting.
@@ -247,7 +298,10 @@ globalThis.fetch = (async (input, init) => {
     }));
   }
 
-  if (raidEligibilityProbe && url.pathname.includes(`/wallet/${alternateAccount}/`)) {
+  if (manualNetworkSwitch && url.pathname.endsWith(`/wallet/${alternateAccount}/settlement`)) {
+    return Response.json({ ...walletOverview().settlement, wallet: alternateAccount });
+  }
+  if ((raidEligibilityProbe || manualNetworkSwitch) && url.pathname.includes(`/wallet/${alternateAccount}/`)) {
     const rewritten = new URL(url);
     rewritten.pathname = rewritten.pathname.replace(alternateAccount, account);
     const response = await globalThis.fetch(rewritten, init);
@@ -309,6 +363,7 @@ globalThis.fetch = (async (input, init) => {
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
+    if (manualNetworkSwitch && !manualSwitchComplete) return Response.json({ hasFirstPlanet: false, homePlanetId: null, planet: null, wallet: account });
     return Response.json(walletOverview().settlement);
   }
 
@@ -658,6 +713,18 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  walletBindings,
+  bootstrapDiagnostics,
+  wakeBootstrapWallet() { bootstrapStalled = false; },
+  resolveStaleBootstrap() { for (const resolve of staleBootstrapReads.splice(0)) resolve(); },
+  emitWalletAccounts(accounts) {
+    if (accounts[0]) providerAccount = accounts[0];
+    if (manualNetworkSwitch && providerAccount === alternateAccount) manualWalletChain = "0x2105";
+    for (const listener of providerListeners.get("accountsChanged") ?? []) listener(accounts);
+  },
+  completeWalletSwitch(outcome) { completeWalletSwitch(outcome); },
+  emitWalletChain(chainId) { for (const listener of providerListeners.get("chainChanged") ?? []) listener(chainId); },
+  emitWalletConnect() { for (const listener of providerListeners.get("connect") ?? []) listener({ chainId: "0x2105" }); },
   disconnectWallet() { for (const listener of providerListeners.get("disconnect") ?? []) listener({ code: 4900 }); },
   resolveWalletSend(hash) { resolveWalletSend(hash); },
   failAttackProtection(index) {
@@ -739,6 +806,14 @@ if (fixtureParams.get("profileRoot") === "true") {
   };
 }
 
+if (manualNetworkSwitch) {
+  const afterDiff = options.diffed;
+  options.diffed = vnode => {
+    afterDiff?.(vnode);
+    if (vnode.type === PlayableMvpApp) walletBindings.push(String(vnode.props.account));
+  };
+}
+
 history.replaceState({ fixture: true }, "", route);
 if (audioContextFailure) {
   Object.defineProperty(window, "AudioContext", {
@@ -756,6 +831,18 @@ if (fixtureParams.get("missionMemoProbe") === "true") {
   render(<SnapshotProbe />, appRoot);
 } else if (settlementShell) {
   Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+  if (farcasterBootstrapSetup) {
+    // Stub only the external Mini App host boundary; exercise the real shell,
+    // provider selection, network setup and confirmation polling unchanged.
+    Object.defineProperties(sdk, {
+      isInMiniApp: { value: async () => true },
+      context: { value: Promise.resolve({ client: { platformType: "web" } }) },
+      getCapabilities: { value: async () => ["wallet.getEthereumProvider"] },
+      getChains: { value: async () => ["eip155:8453", "eip155:84532"] },
+    });
+    Object.defineProperty(sdk.actions, "ready", { value: async () => {} });
+    Object.defineProperty(sdk.wallet, "getEthereumProvider", { value: async () => provider });
+  }
   render(<FirstPlanetSettlementApp />, appRoot);
 } else {
   render(<PlayableMvpApp account={account} provider={provider} />, appRoot);

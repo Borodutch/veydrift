@@ -2348,6 +2348,130 @@ test("wallet bootstrap completes after a pre-subscription lifecycle event withou
     "focus recovery must not restart wallet initialization");
 });
 
+for (const method of ["eth_accounts", "eth_chainId"]) {
+  test(`cold bootstrap bounds a hanging ${method} and recovers without refresh`, async () => {
+    await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: method, waitForPlanetSelectors: "false" });
+    await waitForExpression(`window.inspectorProof.walletRequests.some(request => request.method === '${method}')`);
+    const started = Date.now();
+    await waitForExpression(`document.body.textContent.includes('Wallet connection is taking longer than expected')`, 4_500);
+    assert.ok(Date.now() - started < 4_500, "wallet boundary must replace the unexplained skeleton promptly");
+    await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.some(line => { const d = JSON.parse(line); return d.method === '${method}' && d.phase === 'timed_out'; })`, 4_000);
+    assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Retry wallet connection' && !button.disabled)`), true);
+    const diagnostics = await evaluate("window.inspectorProof.bootstrapDiagnostics.map(JSON.parse)");
+    assert.ok(diagnostics.every(d => d.providerId > 0 && d.attempt === 1 && d.source === 'injected'));
+    assert.ok(diagnostics.every(d => Object.keys(d).sort().join(',') === 'attempt,elapsedMs,event,flags,method,phase,providerId,source'));
+    await evaluate(`window.inspectorProof.wakeBootstrapWallet(); window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('pageshow')); document.dispatchEvent(new Event('visibilitychange')); window.inspectorProof.emitWalletConnect()`);
+    await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+    const reads = await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === '${method}').length`);
+    assert.equal(reads, 2, "lifecycle burst must start only one recovery attempt");
+    await evaluate("window.inspectorProof.resolveStaleBootstrap(); window.dispatchEvent(new Event('focus'))");
+    await delay(200);
+    assert.equal(await evaluate("document.querySelectorAll('[data-planet-selector-item]').length >= 2"), true);
+    assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === '${method}').length`), reads);
+    assert.equal(await evaluate("document.body.textContent.includes('Wrong network')"), false);
+    assert.equal(await evaluate("window.inspectorProof.requests.some(path => path.includes(window.inspectorProof.alternateAccount))"), false);
+  });
+}
+
+for (const event of ["pageshow", "connect", "manual", "automatic"]) {
+  test(`cold bootstrap wakes on ${event} alone after a timeout`, async () => {
+    await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
+    await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.some(line => JSON.parse(line).phase === 'timed_out')`, 8_000);
+    await evaluate("window.inspectorProof.wakeBootstrapWallet()");
+    if (event === "manual") await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Retry wallet connection')`);
+    else if (event === "connect") await evaluate("window.inspectorProof.emitWalletConnect()");
+    else if (event === "pageshow") await evaluate("window.dispatchEvent(new Event('pageshow'))");
+    await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+    assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 2);
+  });
+}
+
+test("cold bootstrap preserves four automatic retries without returning to a skeleton", { timeout: 50_000 }, async () => {
+  await loadInspectorFixture("/", 390, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
+  await waitForExpression("document.body.textContent.includes('Wallet connection is taking longer than expected')", 5_000);
+  await evaluate(`window.bootstrapSkeletonReturned = false; window.bootstrapObserver = new MutationObserver(() => {
+    if (!document.body.textContent.includes('Wallet connection is taking longer than expected')) window.bootstrapSkeletonReturned = true;
+  }); window.bootstrapObserver.observe(document.querySelector('#app'), { childList: true, subtree: true });`);
+  await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.filter(line => JSON.parse(line).phase === 'timed_out').length === 5`, 36_000);
+  await evaluate("window.bootstrapObserver.disconnect()");
+  assert.equal(await evaluate("window.bootstrapSkeletonReturned"), false);
+  assert.deepEqual(await evaluate(`window.inspectorProof.bootstrapDiagnostics.map(JSON.parse).filter(d => d.method === 'eth_accounts' && d.phase === 'requested').map(d => d.attempt)`), [1, 2, 3, 4, 5]);
+  await delay(1_300);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 5);
+  await evaluate("window.inspectorProof.wakeBootstrapWallet()");
+  await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Retry wallet connection')`);
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+});
+
+test("cold bootstrap ignores an expired account response after a newer account event", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_accounts')");
+  await evaluate("window.inspectorProof.emitWalletAccounts([window.inspectorProof.account]); window.inspectorProof.resolveStaleBootstrap()");
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.requests.some(path => path.includes(window.inspectorProof.alternateAccount))"), false);
+});
+
+test("cold bootstrap coalesces duplicate chain events and discards the stale read", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_chainId", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_chainId')");
+  await evaluate(`window.inspectorProof.wakeBootstrapWallet(); window.inspectorProof.emitWalletChain('0x2105'); window.inspectorProof.emitWalletChain('0x2105'); window.inspectorProof.resolveStaleBootstrap()`);
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 2);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 2);
+});
+
+test("cold bootstrap Farcaster setup retains confirmation polling after chainChanged", async () => {
+  await loadInspectorFixture("/?miniApp=true", 1280, { shell: "settlement", farcasterBootstrapSetup: "true", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length >= 4");
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'wallet_switchEthereumChain').length"), 1);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 4);
+  assert.equal(await evaluate("document.body.textContent.includes('Wrong network')"), false);
+});
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`wallet manual network switch cannot ${outcome} into an obsolete account`, async () => {
+    await loadInspectorFixture("/", 1280, { shell: "settlement", manualNetworkSwitch: "true", waitForPlanetSelectors: "false" });
+    const switchButton = `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Switch network')`;
+    await waitForExpression(`${switchButton} !== undefined`);
+    await clickExpression(switchButton);
+    await waitForExpression("window.inspectorProof.walletRequests.some(r => r.method === 'wallet_switchEthereumChain')");
+    await evaluate("window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount])");
+    await waitForExpression("window.inspectorProof.walletBindings.at(-1) === window.inspectorProof.alternateAccount && document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+    await evaluate(`window.manualStaleErrorSeen = false; window.manualErrorObserver = new MutationObserver(() => {
+      if (document.body.textContent.includes('obsolete switch failure')) window.manualStaleErrorSeen = true;
+    }); window.manualErrorObserver.observe(document.querySelector('#app'), { childList: true, subtree: true });
+    window.inspectorProof.completeWalletSwitch('${outcome}')`);
+    await delay(400);
+    await evaluate("window.manualErrorObserver.disconnect()");
+    assert.equal(await evaluate("window.inspectorProof.walletBindings.at(-1) === window.inspectorProof.alternateAccount"), true);
+    assert.equal(await evaluate("document.querySelectorAll('[data-planet-selector-item]').length >= 2"), true);
+    assert.equal(await evaluate("window.manualStaleErrorSeen"), false);
+  });
+}
+
+test("wallet manual network switch keeps confirmation polling through its own chain event", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", manualNetworkSwitch: "true", manualSwitchStaleChain: "true", waitForPlanetSelectors: "false" });
+  const switchButton = `[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Switch network')`;
+  await waitForExpression(`${switchButton} !== undefined`);
+  await clickExpression(switchButton);
+  await waitForExpression("window.inspectorProof.walletRequests.some(r => r.method === 'wallet_switchEthereumChain')");
+  await evaluate("window.inspectorProof.completeWalletSwitch('resolve')");
+  await waitForExpression("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length >= 4");
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 4);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'wallet_switchEthereumChain').length"), 1);
+});
+
+test("cold bootstrap account disconnect invalidates an in-flight account read", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_accounts')");
+  await evaluate("window.inspectorProof.emitWalletAccounts([]); window.inspectorProof.resolveStaleBootstrap()");
+  await delay(200);
+  assert.equal(await evaluate("window.inspectorProof.requests.some(path => path.includes(window.inspectorProof.alternateAccount))"), false);
+  assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Connect wallet')`), true);
+});
+
 test("wallet shell does not let a repeated account event interrupt the Build gesture", async () => {
   await loadInspectorFixture("/", 1280, {
     shell: "settlement",
