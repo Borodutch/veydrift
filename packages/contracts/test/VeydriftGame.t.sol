@@ -181,6 +181,10 @@ contract RejectingReferralInviter {
         referralSystem.claimReferralCode(code);
     }
 
+    function setDelegate(VeydriftGame game, address delegate) external {
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+    }
+
     function withdrawReferralReward(
         VeydriftReferralSystem referralSystem,
         bytes32 commitment,
@@ -1809,6 +1813,38 @@ contract VeydriftGameTest is Test {
         assertEq(referralSystem.referralRewardCredits(commitment, invitee), 0);
         assertEq(referralSystem.totalReferralRewardsPaid(address(rejectingInviter)), 0.025 ether);
         assertEq(referralSystem.totalReferralRewardsClaimed(address(rejectingInviter)), 0.025 ether);
+    }
+
+    function testDelegateCannotRedirectMainWalletReferralReward() public {
+        RejectingReferralInviter rejectingInviter = new RejectingReferralInviter();
+        address invitee = address(0xCAFE6);
+        address referralDelegate = address(0xD311);
+        string memory code = "delegate-reward-code";
+        bytes32 codeHash = keccak256(bytes(code));
+        bytes32 commitment = referralSystem.referralCommitment(address(rejectingInviter), codeHash);
+        vm.deal(address(rejectingInviter), 1 ether);
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+        rejectingInviter.startPlanet{value: 0.05 ether}(game);
+        rejectingInviter.claimReferralCode(referralSystem, code);
+        rejectingInviter.setDelegate(game, referralDelegate);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        vm.prank(referralDelegate);
+        vm.expectRevert(VeydriftReferralSystem.ReferralRewardRecipientInvalid.selector);
+        referralSystem.withdrawReferralReward(commitment, invitee, payable(referralDelegate));
+        assertEq(referralSystem.referralRewardCredits(commitment, invitee), 0.025 ether);
+
+        uint256 recipientBalance = player.balance;
+        rejectingInviter.withdrawReferralReward(
+            referralSystem, commitment, invitee, payable(player)
+        );
+        assertEq(player.balance, recipientBalance + 0.025 ether);
     }
 
     function testReferralSettleFirstPlanetCompatibilityPathPaysInviter() public {
@@ -8302,6 +8338,29 @@ contract VeydriftGameTest is Test {
         vm.warp(holdArrivalAt + 1 hours);
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftGameStorage.DefenseHoldStillActive.selector, holdUntil)
+        );
+        game.resolveFleetMission(holdMissionId);
+    }
+
+    function testDefenseHoldResolutionFailsClosedWhileGamePaused() public {
+        (address ally,, uint256 targetPlanetId, uint256 allyPlanetId) = _seedDefenseHold();
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
+        );
+        (, uint64 holdArrivalAt,,) = _fleetMission(holdMissionId);
+        vm.warp(holdArrivalAt + 4 hours);
+
+        vm.prank(admin);
+        game.setGamePaused(true);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(this))
         );
         game.resolveFleetMission(holdMissionId);
     }

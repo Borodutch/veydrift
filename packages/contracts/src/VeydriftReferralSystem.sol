@@ -501,10 +501,13 @@ contract VeydriftReferralSystem {
     function withdrawReferralReward(bytes32 commitment, address invitee, address payable recipient)
         external
     {
-        address inviter = IVeydriftReferralGame(game).effectivePlayer(msg.sender);
+        address actor = msg.sender;
+        address inviter = IVeydriftReferralGame(game).effectivePlayer(actor);
         if (_withdrawingReferralReward) revert ReferralRewardWithdrawalReentered();
         if (referralInvites[commitment].inviter != inviter) revert Unauthorized(inviter);
-        if (recipient == address(0)) revert ReferralRewardRecipientInvalid();
+        if (recipient == address(0) || (actor != inviter && recipient != inviter)) {
+            revert ReferralRewardRecipientInvalid();
+        }
         uint256 amount = referralRewardCredits[commitment][invitee];
         if (amount == 0) revert ReferralRewardUnavailable();
 

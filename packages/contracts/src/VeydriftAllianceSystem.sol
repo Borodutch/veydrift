@@ -441,7 +441,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         }
         _requireProfile(tag, name);
 
-        allianceId = nextAllianceId++;
+        allianceId = nextAllianceId;
+        unchecked {
+            nextAllianceId = allianceId + 1;
+        }
         _alliances[allianceId] = Alliance({
             active: true,
             tag: tag,
@@ -727,7 +730,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
             revert InvalidAlliance(hostileMissionId);
         }
 
-        intentId = nextDefenseIntentId++;
+        intentId = nextDefenseIntentId;
+        unchecked {
+            nextDefenseIntentId = intentId + 1;
+        }
         uint64 joinCutoffAt =
             uint64(arrivalAt - VeydriftAntiRaidPrimitives.ACS_DEFEND_JOIN_CUTOFF_SECONDS);
         _defenseIntents[intentId] = DefenseIntent({

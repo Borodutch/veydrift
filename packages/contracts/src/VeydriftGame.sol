@@ -445,6 +445,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
+        _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         FleetMissionType missionType = mission.missionType;
         if (
