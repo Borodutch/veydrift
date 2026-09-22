@@ -182,7 +182,7 @@ export async function walletConnectionAccounts(provider: Eip1193Provider, contex
   if (context.miniAppMode && context.walletProviderSource === "farcaster") {
     if (context.miniAppPlatformType === "web") {
       try {
-        const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+        const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, 1);
         if (accounts[0]) {
           return accounts;
         }
@@ -297,7 +297,7 @@ export function FirstPlanetSettlementApp() {
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
   const currentChainId = useRef<string>();
   const activeWalletProvider = useRef<Eip1193Provider>();
-  const walletBootstrapActive = useRef<{ provider: Eip1193Provider; account: string | undefined }>();
+  const walletBootstrapActive = useRef<{ provider: Eip1193Provider; account: string | undefined; chainChanged: boolean; networkSetup: boolean }>();
   const walletBootstrapRecovery = useRef(false);
   const walletBootstrapFeedbackTimer = useRef<ReturnType<typeof setTimeout>>();
   // Every provider/account/chain refresh advances this epoch before it starts
@@ -876,7 +876,7 @@ export function FirstPlanetSettlementApp() {
         // A provider can repeat its exposed account while the user is starting
         // a wallet action. That is not a connection change and must not remount
         // the game between pointerdown and click.
-        if (currentAccount.current?.toLowerCase() === nextAccount.toLowerCase()) {
+        if (currentAccount.current?.toLowerCase() === nextAccount.toLowerCase() || walletBootstrapActive.current?.account?.toLowerCase() === nextAccount.toLowerCase()) {
           return;
         }
         invalidateWalletBootstrap();
@@ -897,6 +897,14 @@ export function FirstPlanetSettlementApp() {
       // MetaMask can repeat the already-active chain while a wallet action is
       // starting. Remounting the hydrated game between pointerdown and click
       // destroys the Build handler before it can submit the transaction.
+      const active = walletBootstrapActive.current;
+      if (active) {
+        // Network setup already owns canonical chain confirmation polling.
+        // Otherwise discard the in-flight read and coalesce events into one
+        // replacement after it settles; duplicate events cannot fan out reads.
+        if (!active.networkSetup) active.chainChanged = true;
+        return;
+      }
       if (isSameWalletChainId(currentChainId.current, nextChainId)) {
         return;
       }
@@ -957,13 +965,15 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
-    walletBootstrapActive.current = { provider: injected, account: preferredAccount };
+    const attemptState = { provider: injected, account: preferredAccount, chainChanged: false, networkSetup: false };
+    walletBootstrapActive.current = attemptState;
     if (walletBootstrapRecovery.current) setWallet({ kind: "bootstrap-delayed", retrying: true });
-    const isCurrent = () => identityEpoch === settlementIdentityEpoch.current && injected === activeWalletProvider.current;
+    const isCurrentIdentity = () => identityEpoch === settlementIdentityEpoch.current && injected === activeWalletProvider.current;
+    const isCurrent = () => isCurrentIdentity() && !attemptState.chainChanged;
     // Keep mobile cold-start retries, but never hide them behind a 35s skeleton.
     // This bounds the whole accounts+chain sequence, not each read separately.
     walletBootstrapFeedbackTimer.current = setTimeout(() => {
-      if (!isCurrent()) return;
+      if (!isCurrentIdentity()) return;
       walletBootstrapRecovery.current = true;
       setWallet({ kind: "bootstrap-delayed", retrying: true });
     }, WALLET_BOOTSTRAP_FEEDBACK_MS);
@@ -1017,6 +1027,7 @@ export function FirstPlanetSettlementApp() {
             walletProviderSource: context.walletProviderSource,
           })
         ) {
+          attemptState.networkSetup = true;
           farcasterNetworkSetupAttempted.current = chainId;
           setWallet({
             kind: "wrong-network",
@@ -1076,6 +1087,7 @@ export function FirstPlanetSettlementApp() {
         kind: "connected",
         account: accounts[0],
       });
+      walletBootstrapActive.current = undefined;
       await refreshPlanet(injected, accounts[0], identityEpoch);
     } catch (error) {
       if (!isCurrent()) return;
@@ -1103,10 +1115,11 @@ export function FirstPlanetSettlementApp() {
             : walletRequestErrorMessage(error),
       });
     } finally {
-      if (isCurrent()) {
+      if (isCurrentIdentity()) {
         clearTimeout(walletBootstrapFeedbackTimer.current);
         walletBootstrapFeedbackTimer.current = undefined;
         walletBootstrapActive.current = undefined;
+        if (attemptState.chainChanged) void refreshWalletHandler.current(injected);
       }
     }
   }

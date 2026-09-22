@@ -2411,6 +2411,24 @@ test("cold bootstrap ignores an expired account response after a newer account e
   assert.equal(await evaluate("window.inspectorProof.requests.some(path => path.includes(window.inspectorProof.alternateAccount))"), false);
 });
 
+test("cold bootstrap coalesces duplicate chain events and discards the stale read", async () => {
+  await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_chainId", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_chainId')");
+  await evaluate(`window.inspectorProof.wakeBootstrapWallet(); window.inspectorProof.emitWalletChain('0x2105'); window.inspectorProof.emitWalletChain('0x2105'); window.inspectorProof.resolveStaleBootstrap()`);
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 2);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 2);
+});
+
+test("cold bootstrap Farcaster setup retains confirmation polling after chainChanged", async () => {
+  await loadInspectorFixture("/?miniApp=true", 1280, { shell: "settlement", farcasterBootstrapSetup: "true", waitForPlanetSelectors: "false" });
+  await waitForExpression("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length >= 4");
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'wallet_switchEthereumChain').length"), 1);
+  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 4);
+  assert.equal(await evaluate("document.body.textContent.includes('Wrong network')"), false);
+});
+
 test("cold bootstrap account disconnect invalidates an in-flight account read", async () => {
   await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
   await waitForExpression("window.inspectorProof.walletRequests.some(request => request.method === 'eth_accounts')");
