@@ -3,6 +3,8 @@
 Wallet delegation adds a cross-contract dependency: Alliance, Moon and paid invites resolve a
 transaction signer through the Game proxy. The Game implementation therefore **must be upgraded
 first**. Never deploy a delegation-aware Alliance or Moon implementation against an older Game.
+Game/ProxyAdmin, Alliance/legacy paid invites, and Moon have distinct live owners: recheck each
+authority and use its own signer for that stage; a Game-owner key cannot run the paid-invite import.
 
 ## Guarded order
 
@@ -11,7 +13,10 @@ first**. Never deploy a delegation-aware Alliance or Moon implementation against
 2. Run `UpgradeGame.s.sol` without `--broadcast`, then broadcast the unchanged script and verify the
    Game proxy exposes `effectivePlayer(address)` while existing state and wiring remain unchanged.
 3. Pause Game through its owner. Verify `gamePaused() == true`. The upgraded pause guards freeze
-   legacy paid-invite purchase, redemption, production accrual and treasury withdrawal paths.
+   paid-invite purchases/redemptions, production accrual (including Alliance membership-boundary
+   settlement) and resource bonus withdrawals. Game owner `withdrawFees` remains callable while
+   paused; prohibit owner fee withdrawals between the snapshot and pointer switch, and monitor the
+   Game ETH balance against the manifest's expected balance before import and after switch.
 4. Generate a paid-invite snapshot with
    `scripts/generate-paid-alliance-invite-migration.mjs`. The generator requires a paused Game and
    reads all canonical purchase/redemption logs plus live invite, issuance, packed remainder,
@@ -22,7 +27,12 @@ first**. Never deploy a delegation-aware Alliance or Moon implementation against
    mismatched snapshot block hash, nonzero ETH stranded at the legacy contract, or an unpaused Game.
    The default log range is 1,000 blocks (compatible with Base's public RPC); only raise
    `PAID_ALLIANCE_INVITE_LOG_CHUNK_SIZE` up to 50,000 if an archive provider supports larger ranges.
-   Preserve the private manifest, including the expected Game treasury balance, for the dry run.
+   Write `PAID_ALLIANCE_INVITE_MIGRATION_MANIFEST_FILE` to
+   `manifests/private-paid-invite-migration.json` from `packages/contracts`: Foundry permits script
+   reads there, and Git ignores this exact file. Preserve it outside the PR, including the expected
+   Game treasury balance, for the dry run and recovery. Measure import calldata bytes and gas
+   against Base's transaction cap using this **exact frozen manifest**: public active-alliance
+   counts omit historical inactive alliances and cannot prove the full import fits.
 5. Dry-run and then broadcast `MigratePaidAllianceInvites.s.sol`. It commits the snapshot hash in a
    new UUPS proxy, imports exactly once, verifies every restored field and deliberately leaves the
    Alliance pointer on the frozen legacy contract.
@@ -30,7 +40,9 @@ first**. Never deploy a delegation-aware Alliance or Moon implementation against
    `MIGRATED_PAID_ALLIANCE_INVITE_ADDRESS`. The script refuses to proceed unless Game delegation is
    available, Game is paused, the migration is finalized and its source equals the current pointer.
    A configured legacy paid-invite pointer cannot be silently left in place by omitting the target.
-   It upgrades Alliance and switches the pointer in that order.
+   It upgrades Alliance and switches the pointer in that order. Re-verify the frozen source fields
+   against the snapshot and the Game ETH balance immediately before switch; any source or owner
+   balance drift halts the rollout while Game stays paused.
 7. Update backend paid-invite address and index-from-block to the new proxy deployment block. Its
    canonical import events rebuild the projection from the new address without adding legacy rows
    twice. Verify outstanding invites, redeemed history, balances, pending balances and secret

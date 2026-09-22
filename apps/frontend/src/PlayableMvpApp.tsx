@@ -2547,8 +2547,14 @@ export function PlayableMvpApp({
     backendData && signerAccount ? backendData.queries.delegation(signerAccount) : undefined,
     Boolean(backendData && signerAccount),
   );
-  const delegation = delegationQuery.snapshot?.data ?? initialDelegation;
-  const account = delegation?.main ?? providedPlayerAccount ?? signerAccount;
+  const delegation = delegationQuery.snapshot?.freshness === "failed"
+    ? undefined : delegationQuery.snapshot?.data ?? initialDelegation;
+  const account = delegationQuery.snapshot?.freshness === "failed"
+    ? undefined : delegation?.main ?? providedPlayerAccount ?? signerAccount;
+  useEffect(() => {
+    if (!backendData || !signerAccount) return;
+    return backendData.startSignerDelegationSync(signerAccount);
+  }, [backendData, signerAccount]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
   const [inspectRoute, setInspectRoute] = useState<InspectRoute>(initialInspectRoute);
   const page: Page = inspectRoute.kind === "page" ? inspectRoute.page

@@ -629,7 +629,9 @@ export class BackendDataStore {
     },
     delegation: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletDelegationState> => {
       const key = walletCacheKey("delegation", wallet);
-      return this.query(key, () => this.refresh(key, (signal) => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal }), { wallet }));
+      // Signer identity is independent of the gameplay context wallet. Keep its
+      // wallet-specific key alive when the delegate switches into the main's context.
+      return this.query(key, () => this.refresh(key, (signal) => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal })));
     },
     queues: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<PlayerQueuesResponse> => {
       const key = walletCacheKey("queues", wallet, planetId);
@@ -912,6 +914,12 @@ export class BackendDataStore {
     const stop = this.startPolling(`gameplay:${wallet.toLowerCase()}`, [], 10_000);
     // The shared poller calls the store policy, not page-supplied refresh trees.
     return () => { stop(); disconnect(); };
+  }
+
+  startSignerDelegationSync(signer: string): () => void {
+    // The effective main may differ from this signer. Never filter the signer
+    // delegation read through the main-scoped gameplay refresh policy.
+    return this.startPolling(`signer-delegation:${signer.toLowerCase()}`, ["kind:delegation"], 10_000);
   }
 
   private refreshGameplay(): void {

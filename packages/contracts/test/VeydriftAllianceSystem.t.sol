@@ -354,6 +354,201 @@ contract VeydriftAllianceSystemTest is Test {
         target.importMigration(invites, issuances, balances);
     }
 
+    function testPaidInviteMigrationKeepsBackedTreasuryWithdrawableWithoutDoubleAccounting()
+        public
+    {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("MIG", "Migration", "");
+        bytes32 commitment = keccak256("backed-before-migration");
+        uint256 inviteePlanet = _startPaidInvitee(allianceId, commitment);
+        _enableMetalProduction(inviteePlanet);
+        vm.warp(block.timestamp + 10 hours);
+        vm.prank(newCommander);
+        game.collectResources(inviteePlanet);
+
+        VeydriftGameStorage.Resources memory sourceBalance = paidInvites.bonusBalance(allianceId);
+        assertGt(sourceBalance.metal, 0, "source must have a backed liability");
+        VeydriftGameStorage.Resources memory requiredBefore = game.resourceReserveRequirement();
+        VeydriftGameStorage.Resources memory availableBefore = game.resourceReserveAvailable();
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](1);
+        invites[0] = VeydriftPaidAllianceInvites.InviteMigration({
+            commitment: commitment,
+            invite: paidInvites.invite(commitment),
+            invitee: newCommander,
+            redeemedAt: uint64(block.timestamp)
+        });
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](1);
+        issuances[0] = VeydriftPaidAllianceInvites.IssuanceMigration({
+            invitee: newCommander,
+            allianceId: allianceId,
+            remainder: paidInvites.productionRemainder(newCommander)
+        });
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](1);
+        balances[0] = VeydriftPaidAllianceInvites.BalanceMigration({
+            allianceId: allianceId,
+            balance: sourceBalance,
+            pendingBalance: paidInvites.pendingBonusBalance(allianceId)
+        });
+        VeydriftPaidAllianceInvites target =
+            _deployPaidInviteMigrationTarget(keccak256(abi.encode(invites, issuances, balances)));
+        vm.prank(admin);
+        target.importMigration(invites, issuances, balances);
+        alliances.setPaidInviteSystem(address(target));
+        assertEq(target.bonusBalance(allianceId).metal, sourceBalance.metal);
+        assertEq(game.resourceReserveRequirement().metal, requiredBefore.metal);
+        assertEq(game.resourceReserveAvailable().metal, availableBefore.metal);
+
+        vm.prank(admin);
+        game.setGamePaused(false);
+        uint256 managerPlanet = game.homePlanetOf(leader);
+        _setBuildingLevel(managerPlanet, Building.InterdimensionalRiftStabilizer, 1);
+        uint128 planetMetalBefore = game.planet(managerPlanet).resources.metal;
+        vm.prank(leader);
+        target.withdraw(
+            allianceId,
+            managerPlanet,
+            VeydriftGameStorage.Resources({metal: sourceBalance.metal, crystal: 0, deuterium: 0})
+        );
+        assertEq(target.bonusBalance(allianceId).metal, 0);
+        assertEq(
+            game.planet(managerPlanet).resources.metal, planetMetalBefore + sourceBalance.metal
+        );
+        assertEq(game.resourceReserveRequirement().metal, requiredBefore.metal);
+        assertEq(game.resourceReserveAvailable().metal, availableBefore.metal);
+    }
+
+    function testFrozenMembershipBoundaryCannotAccrueIntoLegacyTreasuryAfterSnapshot() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("FRZ", "Frozen", "");
+        bytes32 commitment = keccak256("frozen-invite");
+        uint256 inviteePlanet = _startPaidInvitee(allianceId, commitment);
+        _enableMetalProduction(inviteePlanet);
+        vm.warp(block.timestamp + 10 hours);
+        vm.prank(newCommander);
+        game.collectResources(inviteePlanet);
+        uint128 sourceBefore = paidInvites.bonusBalance(allianceId).metal;
+        assertGt(sourceBefore, 0);
+
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](1);
+        invites[0] = VeydriftPaidAllianceInvites.InviteMigration({
+            commitment: commitment,
+            invite: paidInvites.invite(commitment),
+            invitee: newCommander,
+            redeemedAt: uint64(block.timestamp)
+        });
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](1);
+        issuances[0] = VeydriftPaidAllianceInvites.IssuanceMigration({
+            invitee: newCommander,
+            allianceId: allianceId,
+            remainder: paidInvites.productionRemainder(newCommander)
+        });
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](1);
+        balances[0] = VeydriftPaidAllianceInvites.BalanceMigration({
+            allianceId: allianceId,
+            balance: paidInvites.bonusBalance(allianceId),
+            pendingBalance: paidInvites.pendingBonusBalance(allianceId)
+        });
+        VeydriftPaidAllianceInvites target =
+            _deployPaidInviteMigrationTarget(keccak256(abi.encode(invites, issuances, balances)));
+        vm.warp(block.timestamp + 5 hours);
+        vm.prank(newCommander);
+        vm.expectRevert();
+        alliances.leaveAlliance();
+        vm.prank(enemy);
+        vm.expectRevert();
+        alliances.createAlliance("NEW", "New", "");
+        assertEq(alliances.allianceOf(newCommander).allianceId, allianceId);
+        assertEq(paidInvites.bonusBalance(allianceId).metal, sourceBefore);
+
+        vm.prank(admin);
+        target.importMigration(invites, issuances, balances);
+        vm.prank(newCommander);
+        vm.expectRevert();
+        alliances.leaveAlliance();
+        assertEq(target.bonusBalance(allianceId).metal, sourceBefore);
+        assertEq(paidInvites.bonusBalance(allianceId).metal, sourceBefore);
+
+        alliances.setPaidInviteSystem(address(target));
+        vm.prank(newCommander);
+        vm.expectRevert();
+        alliances.leaveAlliance();
+        assertEq(target.bonusBalance(allianceId).metal, sourceBefore);
+        vm.prank(admin);
+        game.setGamePaused(false);
+        vm.prank(newCommander);
+        alliances.leaveAlliance();
+        assertEq(paidInvites.bonusBalance(allianceId).metal, sourceBefore);
+        assertGt(target.bonusBalance(allianceId).metal, sourceBefore);
+    }
+
+    function testPaidInviteObservedActiveDirectoryCountImportFitsBaseTransactionGasCap() public {
+        // Public active-alliance directory at Base block 51,665,444: 1 outstanding
+        // and 15 used invites across 11 active alliances. Inactive historical
+        // alliances may add entries; the frozen full manifest must be measured separately.
+        // Make all 11 observed balances nonzero to stress import writes.
+        VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
+            new VeydriftPaidAllianceInvites.InviteMigration[](16);
+        VeydriftPaidAllianceInvites.IssuanceMigration[] memory issuances =
+            new VeydriftPaidAllianceInvites.IssuanceMigration[](15);
+        VeydriftPaidAllianceInvites.BalanceMigration[] memory balances =
+            new VeydriftPaidAllianceInvites.BalanceMigration[](11);
+        for (uint256 i; i < invites.length; ++i) {
+            bool redeemed = i != 0;
+            address invitee = redeemed ? address(uint160(0x1000 + i)) : address(0);
+            uint256 allianceId = i % 11 + 1;
+            invites[i] = VeydriftPaidAllianceInvites.InviteMigration({
+                commitment: keccak256(abi.encode(i, "full-count")),
+                invite: VeydriftPaidAllianceInvites.PaidInvite({
+                    allianceId: allianceId,
+                    purchaser: leader,
+                    settlementPrice: uint128(paidInvites.INVITE_PRICE()),
+                    purchasedAt: 1,
+                    redeemed: redeemed
+                }),
+                invitee: invitee,
+                redeemedAt: redeemed ? 2 : 0
+            });
+            if (redeemed) {
+                issuances[i - 1] = VeydriftPaidAllianceInvites.IssuanceMigration({
+                    invitee: invitee,
+                    allianceId: allianceId,
+                    remainder: VeydriftPaidAllianceInvites.ProductionRemainder({
+                        metal: 1, crystal: 2, deuterium: 3
+                    })
+                });
+            }
+        }
+        for (uint256 i; i < balances.length; ++i) {
+            balances[i] = VeydriftPaidAllianceInvites.BalanceMigration({
+                allianceId: i + 1,
+                balance: VeydriftGameStorage.Resources({metal: 20, crystal: 20, deuterium: 20}),
+                pendingBalance: VeydriftGameStorage.Resources({metal: 3, crystal: 3, deuterium: 3})
+            });
+        }
+        VeydriftPaidAllianceInvites target =
+            _deployPaidInviteMigrationTarget(keccak256(abi.encode(invites, issuances, balances)));
+        bytes memory calldataPayload = abi.encodeCall(
+            VeydriftPaidAllianceInvites.importMigration, (invites, issuances, balances)
+        );
+        uint256 beforeGas = gasleft();
+        vm.prank(admin);
+        target.importMigration(invites, issuances, balances);
+        uint256 executionGas = beforeGas - gasleft();
+        emit log_named_uint("paid invite observed-count import execution gas", executionGas);
+        emit log_named_uint(
+            "paid invite observed-count import calldata bytes", calldataPayload.length
+        );
+        // 16 gas per calldata byte is conservative even for zero bytes.
+        assertLt(executionGas + calldataPayload.length * 16 + 21_000, 25_000_000);
+        assertTrue(target.migrationFinalized());
+    }
+
     function testPaidInviteMigrationRejectsWrongStateHash() public {
         VeydriftPaidAllianceInvites.InviteMigration[] memory invites =
             new VeydriftPaidAllianceInvites.InviteMigration[](0);

@@ -326,8 +326,12 @@ export function FirstPlanetSettlementApp() {
     referralData && account ? referralData.queries.delegation(account) : undefined,
     Boolean(referralData && account),
   );
-  const delegation = delegationQuery.snapshot?.data;
+  const delegation = delegationQuery.snapshot?.freshness === "failed" ? undefined : delegationQuery.snapshot?.data;
   const playerAccount = delegation?.main;
+  useEffect(() => {
+    if (!referralData || !account) return;
+    return referralData.startSignerDelegationSync(account);
+  }, [account, referralData]);
   useEffect(() => {
     referralData?.setContext(playerAccount, undefined, requiredChain.chainIdHex);
   }, [playerAccount, referralData, requiredChain.chainIdHex]);

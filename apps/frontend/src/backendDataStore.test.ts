@@ -748,6 +748,41 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("external revoke or replace refreshes signer delegation outside main-scoped gameplay", async () => {
+    const originalFetch = globalThis.fetch;
+    const signer = "0x3333333333333333333333333333333333333333";
+    const main = "0x1111111111111111111111111111111111111111";
+    const replacement = "0x4444444444444444444444444444444444444444";
+    const store = new BackendDataStore("https://api.test");
+    let current: { wallet: string; main: string; delegate: string | null; actingAsDelegate: boolean } =
+      { wallet: signer, main, delegate: signer, actingAsDelegate: true };
+    let reads = 0;
+    globalThis.fetch = (async () => {
+      reads++;
+      return Response.json(current);
+    }) as unknown as typeof fetch;
+    const query = store.queries.delegation(signer);
+    const unsubscribe = store.subscribeKey(query.key, () => {});
+    const stop = store.startSignerDelegationSync(signer);
+    try {
+      expect(await query.read()).toMatchObject({ main, actingAsDelegate: true });
+      store.setContext(main);
+      expect(store.snapshot<typeof current>(query.key)?.data?.main).toBe(main);
+
+      current = { wallet: signer, main: signer, delegate: null, actingAsDelegate: false };
+      await store.invalidate(["kind:delegation"], { activeOnly: true });
+      expect(store.snapshot<typeof current>(query.key)?.data).toEqual(current);
+      expect(store.snapshot<typeof current>(query.key)?.data?.main).not.toBe(main);
+
+      current = { wallet: signer, main: signer, delegate: replacement, actingAsDelegate: false };
+      await store.invalidate(["kind:delegation"], { activeOnly: true });
+      expect(store.snapshot<typeof current>(query.key)?.data).toEqual(current);
+      expect(reads).toBe(3);
+    } finally {
+      stop(); unsubscribe(); store.dispose(); globalThis.fetch = originalFetch;
+    }
+  });
+
   test("keeps a canonical Galaxy transport independent of route-local cancellation", async () => {
     const originalFetch = globalThis.fetch;
     let transportSignal: AbortSignal | undefined;

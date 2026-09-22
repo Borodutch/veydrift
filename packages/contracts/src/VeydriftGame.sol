@@ -205,6 +205,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     /// than membership at a later lazy collection.
     function settleAllianceMembershipBoundary(address player) external {
         if (msg.sender != _allianceSystem) revert Unauthorized(msg.sender);
+        _requireGameNotPaused();
         uint256[] storage planetIds = _ownedPlanetIds[player];
         uint64 settledAt = uint64(block.timestamp);
         for (uint256 i = 0; i < planetIds.length;) {

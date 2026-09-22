@@ -8,7 +8,9 @@ describe("wallet delegation", () => {
     expect(landingSource).toContain("referralData.queries.delegation(account)");
     expect(landingSource).toContain("const playerAccount = delegation?.main");
     expect(playableSource).toContain("const signerAccount = providedAccount ?? miniAppAccount");
-    expect(playableSource).toContain("const account = delegation?.main ?? providedPlayerAccount ?? signerAccount");
+    expect(playableSource).toContain('const account = delegationQuery.snapshot?.freshness === "failed"');
+    expect(playableSource).toContain('    ? undefined : delegation?.main ?? providedPlayerAccount ?? signerAccount;');
+    expect(playableSource).toContain("backendData.startSignerDelegationSync(signerAccount)");
     expect(playableSource).toContain("Boolean(provider && signerAccount && account && gameContract)");
   });
 
