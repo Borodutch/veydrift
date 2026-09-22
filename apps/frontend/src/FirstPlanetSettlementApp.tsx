@@ -259,6 +259,7 @@ type WalletProviderContext = {
 // the bootstrap automatically on transient failures instead.
 const WALLET_BOOTSTRAP_MAX_RETRIES = 4;
 const WALLET_BOOTSTRAP_RETRY_MS = 1_200;
+const WALLET_BOOTSTRAP_FEEDBACK_MS = 3_000;
 
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
@@ -295,6 +296,10 @@ export function FirstPlanetSettlementApp() {
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
   const currentChainId = useRef<string>();
+  const activeWalletProvider = useRef<Eip1193Provider>();
+  const walletBootstrapActive = useRef<{ provider: Eip1193Provider; account: string | undefined }>();
+  const walletBootstrapRecovery = useRef(false);
+  const walletBootstrapFeedbackTimer = useRef<ReturnType<typeof setTimeout>>();
   // Every provider/account/chain refresh advances this epoch before it starts
   // I/O. Settlement screens may keep UI-only animation/form state locally,
   // but an old identity must never publish an indexed backend projection into
@@ -665,12 +670,25 @@ export function FirstPlanetSettlementApp() {
 
     return () => {
       disposed = true;
+      invalidateWalletBootstrap();
       walletProviderCleanup.current?.();
       walletProviderCleanup.current = undefined;
-      if (walletBootstrapRetryTimer.current !== undefined) {
-        clearTimeout(walletBootstrapRetryTimer.current);
-        walletBootstrapRetryTimer.current = undefined;
-      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const recover = () => {
+      if (document.visibilityState === "hidden" || !walletBootstrapRecovery.current || walletBootstrapActive.current) return;
+      const active = activeWalletProvider.current;
+      if (active) void refreshWalletHandler.current(active);
+    };
+    window.addEventListener("focus", recover);
+    window.addEventListener("pageshow", recover);
+    document.addEventListener("visibilitychange", recover);
+    return () => {
+      window.removeEventListener("focus", recover);
+      window.removeEventListener("pageshow", recover);
+      document.removeEventListener("visibilitychange", recover);
     };
   }, []);
 
@@ -718,6 +736,8 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
+    // Publishing the account from this very bootstrap is not a second init.
+    if (account && currentAccount.current === account && currentChainId.current) return;
     void refreshWallet(provider, account);
   }, [account, miniAppMode, provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status, walletProviderSource]);
 
@@ -793,6 +813,8 @@ export function FirstPlanetSettlementApp() {
   }
 
   function showFarcasterWalletProviderUnavailable(): void {
+    invalidateWalletBootstrap();
+    activeWalletProvider.current = undefined;
     walletProviderCleanup.current?.();
     walletProviderCleanup.current = undefined;
     setProvider(undefined);
@@ -813,8 +835,23 @@ export function FirstPlanetSettlementApp() {
     await ensureVeydriftNetwork(walletProvider, requiredChain);
   }
 
+  function invalidateWalletBootstrap() {
+    ++settlementIdentityEpoch.current;
+    walletBootstrapActive.current = undefined;
+    walletBootstrapRecovery.current = false;
+    walletBootstrapAttempts.current = 0;
+    clearTimeout(walletBootstrapRetryTimer.current);
+    walletBootstrapRetryTimer.current = undefined;
+    clearTimeout(walletBootstrapFeedbackTimer.current);
+    walletBootstrapFeedbackTimer.current = undefined;
+  }
+
   function bindWalletProviderDetails(walletProvider: WalletProviderDetails) {
     const injected = walletProvider?.provider;
+    invalidateWalletBootstrap();
+    activeWalletProvider.current = injected;
+    currentAccount.current = undefined;
+    currentChainId.current = undefined;
     if (injected && walletProvider?.source) {
       configureWalletTransactionTransport(injected, walletProvider.source, requiredChain.rpcUrls[0], requiredChain);
     }
@@ -842,14 +879,16 @@ export function FirstPlanetSettlementApp() {
         if (currentAccount.current?.toLowerCase() === nextAccount.toLowerCase()) {
           return;
         }
+        invalidateWalletBootstrap();
+        currentAccount.current = nextAccount;
+        currentChainId.current = undefined;
         void refreshWalletHandler.current(injected, nextAccount);
       } else {
-        setWallet({
-          kind: "disconnected",
-        });
-        setPlanet({
-          kind: "idle",
-        });
+        invalidateWalletBootstrap();
+        currentAccount.current = undefined;
+        currentChainId.current = undefined;
+        setWallet({ kind: "disconnected" });
+        setPlanet({ kind: "idle" });
       }
     };
 
@@ -861,13 +900,33 @@ export function FirstPlanetSettlementApp() {
       if (isSameWalletChainId(currentChainId.current, nextChainId)) {
         return;
       }
+      invalidateWalletBootstrap();
+      currentChainId.current = undefined;
       void refreshWalletHandler.current(injected);
     };
+    const handleConnect = () => {
+      if (walletBootstrapRecovery.current && !walletBootstrapActive.current) void refreshWalletHandler.current(injected);
+    };
+    const handleDisconnect = () => {
+      // Established gameplay owns transaction disconnect recovery. Do not
+      // unmount its pending-send journal for a bootstrap-only concern.
+      if (!walletBootstrapActive.current && !walletBootstrapRecovery.current) return;
+      invalidateWalletBootstrap();
+      currentAccount.current = undefined;
+      currentChainId.current = undefined;
+      walletBootstrapRecovery.current = true;
+      setWallet({ kind: "bootstrap-delayed", retrying: false });
+      setPlanet({ kind: "idle" });
+    };
 
+    injected.on?.("connect", handleConnect);
+    injected.on?.("disconnect", handleDisconnect);
     injected.on?.("accountsChanged", handleAccountsChanged);
     injected.on?.("chainChanged", handleChainChanged);
 
     walletProviderCleanup.current = () => {
+      injected.removeListener?.("connect", handleConnect);
+      injected.removeListener?.("disconnect", handleDisconnect);
       injected.removeListener?.("accountsChanged", handleAccountsChanged);
       injected.removeListener?.("chainChanged", handleChainChanged);
     };
@@ -884,6 +943,11 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshWallet(injected = provider, preferredAccount?: string, context = walletProviderContext()) {
+    const active = walletBootstrapActive.current;
+    if (active && active.provider === injected && (!preferredAccount || active.account?.toLowerCase() === preferredAccount.toLowerCase())) return;
+    clearTimeout(walletBootstrapRetryTimer.current);
+    walletBootstrapRetryTimer.current = undefined;
+    clearTimeout(walletBootstrapFeedbackTimer.current);
     const identityEpoch = ++settlementIdentityEpoch.current;
     if (!injected) {
       walletBootstrapAttempts.current = 0;
@@ -893,11 +957,26 @@ export function FirstPlanetSettlementApp() {
       return;
     }
 
+    walletBootstrapActive.current = { provider: injected, account: preferredAccount };
+    if (walletBootstrapRecovery.current) setWallet({ kind: "bootstrap-delayed", retrying: true });
+    const isCurrent = () => identityEpoch === settlementIdentityEpoch.current && injected === activeWalletProvider.current;
+    // Keep mobile cold-start retries, but never hide them behind a 35s skeleton.
+    // This bounds the whole accounts+chain sequence, not each read separately.
+    walletBootstrapFeedbackTimer.current = setTimeout(() => {
+      if (!isCurrent()) return;
+      walletBootstrapRecovery.current = true;
+      setWallet({ kind: "bootstrap-delayed", retrying: true });
+    }, WALLET_BOOTSTRAP_FEEDBACK_MS);
     try {
-      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+      const attempt = walletBootstrapAttempts.current + 1;
+      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, attempt);
+      if (!isCurrent()) return;
+      walletBootstrapActive.current!.account = accounts[0];
 
       if (!accounts[0]) {
+        walletBootstrapRecovery.current = false;
         currentAccount.current = undefined;
+        currentChainId.current = undefined;
         walletBootstrapAttempts.current = 0;
         setWallet({
           kind: "disconnected",
@@ -919,8 +998,10 @@ export function FirstPlanetSettlementApp() {
         return;
       }
 
-      const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
-      if (identityEpoch !== settlementIdentityEpoch.current) return;
+      const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, attempt);
+      if (!isCurrent()) return;
+      clearTimeout(walletBootstrapFeedbackTimer.current);
+      walletBootstrapRecovery.current = false;
       currentChainId.current = chainId;
       // The flaky wallet reads (accounts + chain) both succeeded; stop counting
       // bootstrap retries.
@@ -949,16 +1030,20 @@ export function FirstPlanetSettlementApp() {
           let support: FarcasterMiniAppWalletSupport | undefined;
           try {
             support = await readFarcasterMiniAppWalletSupport(context.walletProviderSource);
+            if (!isCurrent()) return;
             if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
               return;
             }
             await setupVeydriftNetworkForWallet(injected, context);
+            if (!isCurrent()) return;
             await waitForVeydriftNetwork(injected, requiredChain, {
               readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
             });
-            await refreshWallet(injected, accounts[0], context);
+            if (!isCurrent()) return;
+            walletBootstrapActive.current = undefined;
+            await refreshWalletHandler.current(injected, accounts[0], context);
           } catch (error) {
-            console.error("Mini App Veydrift network setup failed", error);
+            if (!isCurrent()) return;
             setWallet({
               kind: "wrong-network",
               account: accounts[0],
@@ -993,27 +1078,23 @@ export function FirstPlanetSettlementApp() {
       });
       await refreshPlanet(injected, accounts[0], identityEpoch);
     } catch (error) {
-      console.error("Wallet bootstrap failed", error);
-
-      if (isTransientWalletBootstrapError(error) && walletBootstrapAttempts.current < WALLET_BOOTSTRAP_MAX_RETRIES) {
-        // A mobile wallet provider stalled an initial read. Keep the player on
-        // the "Reading wallet link" state and retry shortly instead of forcing
-        // a manual page refresh.
-        walletBootstrapAttempts.current += 1;
-        setWallet({ kind: "loading" });
-        if (walletBootstrapRetryTimer.current !== undefined) {
-          clearTimeout(walletBootstrapRetryTimer.current);
+      if (!isCurrent()) return;
+      if (isTransientWalletBootstrapError(error)) {
+        walletBootstrapRecovery.current = true;
+        setWallet({ kind: "bootstrap-delayed", retrying: false });
+        if (walletBootstrapAttempts.current < WALLET_BOOTSTRAP_MAX_RETRIES) {
+          walletBootstrapAttempts.current += 1;
+          walletBootstrapRetryTimer.current = setTimeout(() => {
+            if (!isCurrent()) return;
+            void refreshWalletHandler.current(injected, preferredAccount, context);
+          }, WALLET_BOOTSTRAP_RETRY_MS);
         }
-        walletBootstrapRetryTimer.current = setTimeout(() => {
-          void refreshWallet(injected, preferredAccount, context);
-        }, WALLET_BOOTSTRAP_RETRY_MS);
         return;
       }
 
+      walletBootstrapRecovery.current = false;
       walletBootstrapAttempts.current = 0;
-      setWallet({
-        kind: "disconnected",
-      });
+      setWallet({ kind: "disconnected" });
       setPlanet({
         kind: "error",
         message:
@@ -1021,6 +1102,12 @@ export function FirstPlanetSettlementApp() {
             ? farcasterMiniAppReportableWalletError(walletRequestErrorMessage(error))
             : walletRequestErrorMessage(error),
       });
+    } finally {
+      if (isCurrent()) {
+        clearTimeout(walletBootstrapFeedbackTimer.current);
+        walletBootstrapFeedbackTimer.current = undefined;
+        walletBootstrapActive.current = undefined;
+      }
     }
   }
 
@@ -1077,6 +1164,15 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function connectWallet() {
+    if (wallet.kind === "bootstrap-delayed" && provider) {
+      if (!walletBootstrapActive.current) {
+        walletBootstrapAttempts.current = 0;
+        await refreshWallet(provider);
+      }
+      return;
+    }
+    invalidateWalletBootstrap();
+    let connectionEpoch = settlementIdentityEpoch.current;
     setWallet({
       kind: "connecting",
     });
@@ -1088,9 +1184,11 @@ export function FirstPlanetSettlementApp() {
       : await loadWalletProviderDetails({
           waitForFarcasterProvider: miniAppMode || !provider,
         });
+    if (connectionEpoch !== settlementIdentityEpoch.current) return;
     if (!walletProvider?.provider && !miniAppMode && walletConnectEnabled(false)) {
       walletProvider = await connectWalletConnect();
     }
+    if (connectionEpoch !== settlementIdentityEpoch.current) return;
     const activeProvider =
       provider ??
       (shouldUseWalletProviderForSettlement({
@@ -1099,8 +1197,10 @@ export function FirstPlanetSettlementApp() {
       })
         ? bindWalletProviderDetails(walletProvider)
         : undefined);
+    connectionEpoch = settlementIdentityEpoch.current;
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
     const support = await supportPromise;
+    if (connectionEpoch !== settlementIdentityEpoch.current) return;
 
     if (providerContext.walletProviderSource === "farcaster" && blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
       return;
@@ -1129,8 +1229,10 @@ export function FirstPlanetSettlementApp() {
 
     try {
       const accounts = await walletConnectionAccounts(activeProvider, providerContext);
+      if (connectionEpoch !== settlementIdentityEpoch.current || activeProvider !== activeWalletProvider.current) return;
       await refreshWallet(activeProvider, accounts[0], providerContext);
     } catch (error) {
+      if (connectionEpoch !== settlementIdentityEpoch.current) return;
       setWallet({
         kind: "disconnected",
       });
@@ -2105,6 +2207,16 @@ function FlowBody({
   requiredChain: VeydriftWalletChain;
 }) {
   const networkName = requiredChain.chainName;
+  if (mode === "wallet-retry") {
+    return <StateMessage
+      title="Wallet connection is taking longer than expected"
+      body={wallet.kind === "bootstrap-delayed" && wallet.retrying
+        ? "Your wallet has not finished responding. Open or unlock it while we check the connection. No page refresh is needed."
+        : "Your wallet has not finished responding. Open or unlock it, then retry. No page refresh is needed."}
+      action={<PrimaryButton disabled={wallet.kind === "bootstrap-delayed" && wallet.retrying} onClick={onConnect}>Retry wallet connection</PrimaryButton>}
+      tone="warning"
+    />;
+  }
   if (mode === "resolving") {
     return <SettlementFormSkeleton />;
   }

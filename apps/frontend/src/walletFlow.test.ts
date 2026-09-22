@@ -543,6 +543,54 @@ describe("walletFlow", () => {
     expect(isTransientWalletBootstrapError(new Error("Settlement is temporarily unavailable. Please try again later."))).toBe(false);
   });
 
+  test("bootstrap diagnostics identify method/provider/attempt without wallet or extension data", async () => {
+    const logs: string[] = [];
+    const info = spyOn(console, "info").mockImplementation(value => { logs.push(String(value)); });
+    const secret = "DO-NOT-LOG-ACCOUNTS-ERRORS-OR-EXTENSION-METADATA";
+    const provider = {
+      isTrust: true,
+      isMetaMask: "not-a-boolean",
+      name: secret,
+      rdns: secret,
+      request: async ({ method }: { method: string }) => {
+        if (method === "eth_accounts") return [secret];
+        throw Object.assign(new Error(secret), { data: secret });
+      },
+    } as unknown as Eip1193Provider;
+    configureWalletTransactionTransport(provider, "injected", "https://example.invalid", BASE_MAINNET);
+    try {
+      expect(await getCurrentAccounts(provider, 50, 1)).toEqual([secret]);
+      await expect(getChainId(provider, 50, 2)).rejects.toThrow(secret);
+      expect(logs.join(" ")).not.toContain(secret);
+      const entries = logs.map(line => JSON.parse(line));
+      expect(entries.map(d => [d.method, d.attempt, d.phase])).toEqual([
+        ["eth_accounts", 1, "requested"], ["eth_accounts", 1, "resolved"],
+        ["eth_chainId", 2, "requested"], ["eth_chainId", 2, "rejected"],
+      ]);
+      expect(new Set(entries.map(d => d.providerId)).size).toBe(1);
+      for (const d of entries) {
+        expect(Object.keys(d).sort()).toEqual(["attempt", "elapsedMs", "event", "flags", "method", "phase", "providerId", "source"]);
+        expect(d.event).toBe("wallet/bootstrap");
+        expect(d.source).toBe("injected");
+        expect(d.flags).toEqual(["isTrust"]);
+      }
+    } finally { info.mockRestore(); }
+  });
+
+  test("bootstrap timeout diagnostics finish once even if the provider resolves late", async () => {
+    const logs: string[] = [];
+    const info = spyOn(console, "info").mockImplementation(value => { logs.push(String(value)); });
+    let resolve!: (accounts: string[]) => void;
+    const provider = { request: () => new Promise<string[]>(done => { resolve = done; }) } as Eip1193Provider;
+    try {
+      await expect(getCurrentAccounts(provider, 10, 3)).rejects.toThrow(/timed out/i);
+      resolve(["private-account"]);
+      await Promise.resolve();
+      expect(logs.map(line => JSON.parse(line).phase)).toEqual(["requested", "timed_out"]);
+      expect(logs.join(" ")).not.toContain("private-account");
+    } finally { info.mockRestore(); }
+  });
+
   test("applies a custom shorter timeout to bootstrap account and chain reads", async () => {
     const stalledProvider = mockProvider(
       async () => {

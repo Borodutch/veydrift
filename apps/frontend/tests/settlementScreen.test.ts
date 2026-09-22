@@ -28,6 +28,11 @@ const connected = {
 } satisfies WalletState;
 
 describe("settlement screen mode", () => {
+  test("keeps delayed wallet retries actionable regardless of stale planet presentation", () => {
+    expect(preSettlementMode({ kind: "bootstrap-delayed", retrying: false }, { kind: "checking" })).toBe("wallet-retry");
+    expect(preSettlementMode({ kind: "bootstrap-delayed", retrying: false }, { kind: "error", message: "old" })).toBe("wallet-retry");
+  });
+
   test("keeps connected wallets in neutral loading until settlement state is known", () => {
     expect(preSettlementMode(connected, { kind: "idle" })).toBe("resolving");
     expect(preSettlementMode(connected, { kind: "checking" })).toBe("resolving");

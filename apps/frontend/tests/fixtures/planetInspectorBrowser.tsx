@@ -24,6 +24,11 @@ declare global {
       requests: string[];
       walletRequests: Array<{ method: string; params?: unknown[] }>;
       disconnectWallet(): void;
+      wakeBootstrapWallet(): void;
+      resolveStaleBootstrap(): void;
+      emitWalletAccounts(accounts: string[]): void;
+      emitWalletConnect(): void;
+      bootstrapDiagnostics: string[];
       resolveWalletSend(hash: string): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
@@ -163,6 +168,14 @@ const pendingAttackProtectionRequests: Array<{
 }> = [];
 const providerListeners = new Map<string, Set<(...args: unknown[]) => void>>();
 let resolveWalletSend: (hash: string) => void = () => {};
+let bootstrapStalled = true;
+const staleBootstrapReads: Array<() => void> = [];
+const bootstrapDiagnostics: string[] = [];
+const originalConsoleInfo = console.info;
+console.info = (...values) => {
+  if (typeof values[0] === "string" && values[0].includes('"event":"wallet/bootstrap"')) bootstrapDiagnostics.push(values[0]);
+  originalConsoleInfo(...values);
+};
 const originalConsoleError = console.error;
 console.error = (...values) => {
   fixtureErrors.push(values.map(String).join(" "));
@@ -205,6 +218,9 @@ const provider: Eip1193Provider = {
   },
   request: async ({ method, params }) => {
     walletRequests.push({ method, ...(params ? { params } : {}) });
+    if (bootstrapStalled && method === fixtureParams.get("stallBootstrapMethod")) {
+      return new Promise(resolve => staleBootstrapReads.push(() => resolve(method === "eth_accounts" ? [alternateAccount] : "0x1")));
+    }
     if (method === "eth_chainId") return settlementShell ? "0x2105" : "0x14a34";
     if (method === "eth_accounts" || method === "eth_requestAccounts") return [account];
     if (method === "eth_sendTransaction") {
@@ -658,6 +674,11 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  bootstrapDiagnostics,
+  wakeBootstrapWallet() { bootstrapStalled = false; },
+  resolveStaleBootstrap() { for (const resolve of staleBootstrapReads.splice(0)) resolve(); },
+  emitWalletAccounts(accounts) { for (const listener of providerListeners.get("accountsChanged") ?? []) listener(accounts); },
+  emitWalletConnect() { for (const listener of providerListeners.get("connect") ?? []) listener({ chainId: "0x2105" }); },
   disconnectWallet() { for (const listener of providerListeners.get("disconnect") ?? []) listener({ code: 4900 }); },
   resolveWalletSend(hash) { resolveWalletSend(hash); },
   failAttackProtection(index) {
