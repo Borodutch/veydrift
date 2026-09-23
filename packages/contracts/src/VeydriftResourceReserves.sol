@@ -101,6 +101,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
             allianceSystem == address(0)
                 || (produced.metal == 0 && produced.crystal == 0 && produced.deuterium == 0)
         ) return;
+        _requireGameNotPaused();
         address invitee = _planets[planetId].owner;
         Resources memory bonus;
         assembly ("memory-safe") {

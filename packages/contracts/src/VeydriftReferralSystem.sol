@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 interface IVeydriftReferralGame {
+    function effectivePlayer(address actor) external view returns (address);
     function gamePaused() external view returns (bool);
     function homePlanetOf(address player) external view returns (uint256);
     function startPrice() external view returns (uint256);
@@ -15,6 +16,9 @@ contract VeydriftReferralSystem {
     uint8 public constant REFERRAL_MIGRATION_KIND_VALID = 1;
     uint8 public constant REFERRAL_MIGRATION_KIND_HASH_ONLY = 2;
     uint8 public constant REFERRAL_MIGRATION_KIND_REDEMPTION = 3;
+    uint8 public constant REFERRAL_MIGRATION_KIND_REWARD_STATS = 4;
+    uint8 public constant REFERRAL_MIGRATION_KIND_REWARD_CLAIM = 5;
+    uint8 public constant REFERRAL_MIGRATION_KIND_REDEMPTION_HISTORY = 6;
     uint64 public constant REFERRAL_TOP_UP_COOLDOWN = 1 days;
     // Kept for ABI compatibility with existing clients and deployment smoke checks.
     uint64 public constant REFERRAL_CLAIM_WINDOW = REFERRAL_TOP_UP_COOLDOWN;
@@ -46,6 +50,19 @@ contract VeydriftReferralSystem {
     bytes32 public referralMigrationImportedRedemptionHash;
     uint32 public referralMigrationExpectedRedemptionCount;
     uint32 public referralMigrationImportedRedemptionCount;
+    bool public referralRewardMigrationConfigured;
+    bytes32 public referralMigrationExpectedRewardStatsHash;
+    bytes32 public referralMigrationImportedRewardStatsHash;
+    uint32 public referralMigrationExpectedRewardStatsCount;
+    uint32 public referralMigrationImportedRewardStatsCount;
+    mapping(address inviter => bool imported) public referralRewardStatsImported;
+    bool public referralRewardClaimMigrationConfigured;
+    bytes32 public referralMigrationExpectedRewardClaimHash;
+    bytes32 public referralMigrationImportedRewardClaimHash;
+    uint32 public referralMigrationExpectedRewardClaimCount;
+    uint32 public referralMigrationImportedRewardClaimCount;
+    mapping(bytes32 commitment => mapping(address invitee => bool imported)) public
+        referralRewardClaimHistoryImported;
     mapping(bytes32 codeHash => address codeOwner) public referralCodeOwner;
     mapping(bytes32 codeHash => uint8 migrationKind) public referralCodeMigrationKind;
     mapping(address codeOwner => mapping(bytes32 codeHash => bool owned)) public
@@ -112,6 +129,13 @@ contract VeydriftReferralSystem {
     error ReferralRedemptionMigrationManifestMismatch(
         bytes32 expectedHash, bytes32 importedHash, uint32 expectedCount, uint32 importedCount
     );
+    error ReferralRewardStatsMigrationInvalid(address inviter);
+    error ReferralRewardStatsMigrationManifestMismatch(
+        bytes32 expectedHash, bytes32 importedHash, uint32 expectedCount, uint32 importedCount
+    );
+    error ReferralRewardClaimMigrationManifestMismatch(
+        bytes32 expectedHash, bytes32 importedHash, uint32 expectedCount, uint32 importedCount
+    );
 
     event ReferralGameUpdated(address indexed oldGame, address indexed newGame);
     event ReferralSignerUpdated(address indexed oldSigner, address indexed newSigner);
@@ -139,6 +163,15 @@ contract VeydriftReferralSystem {
     );
     event ReferralRedemptionMigrationConfigured(
         bytes32 indexed expectedRedemptionHash, uint32 expectedRedemptionCount
+    );
+    event ReferralRewardStatsMigrationConfigured(
+        bytes32 indexed expectedHash, uint32 expectedCount
+    );
+    event ReferralRewardClaimMigrationConfigured(
+        bytes32 indexed expectedHash, uint32 expectedCount
+    );
+    event ReferralRewardStatsImported(
+        address indexed inviter, uint256 accrued, uint256 paid, uint256 claimed
     );
     event ReferralRedemptionImported(
         address indexed inviter,
@@ -243,6 +276,123 @@ contract VeydriftReferralSystem {
         referralMigrationExpectedRedemptionHash = expectedRedemptionHash;
         referralMigrationExpectedRedemptionCount = expectedRedemptionCount;
         emit ReferralRedemptionMigrationConfigured(expectedRedemptionHash, expectedRedemptionCount);
+    }
+
+    function configureReferralRewardMigration(bytes32 expectedHash, uint32 expectedCount)
+        external
+        onlyOwner
+    {
+        if (referralMigrationFinalized) revert ReferralMigrationAlreadyFinalized();
+        if (referralRewardMigrationConfigured) revert ReferralMigrationAlreadyConfigured();
+        _validateMigrationManifest(expectedHash, expectedCount);
+        referralRewardMigrationConfigured = true;
+        referralMigrationExpectedRewardStatsHash = expectedHash;
+        referralMigrationExpectedRewardStatsCount = expectedCount;
+        emit ReferralRewardStatsMigrationConfigured(expectedHash, expectedCount);
+    }
+
+    function configureReferralRewardClaimMigration(bytes32 expectedHash, uint32 expectedCount)
+        external
+        onlyOwner
+    {
+        if (referralMigrationFinalized) revert ReferralMigrationAlreadyFinalized();
+        if (referralRewardClaimMigrationConfigured) revert ReferralMigrationAlreadyConfigured();
+        _validateMigrationManifest(expectedHash, expectedCount);
+        referralRewardClaimMigrationConfigured = true;
+        referralMigrationExpectedRewardClaimHash = expectedHash;
+        referralMigrationExpectedRewardClaimCount = expectedCount;
+        emit ReferralRewardClaimMigrationConfigured(expectedHash, expectedCount);
+    }
+
+    /// @notice Re-emits receipt-verified settled claims so an address-scoped index rebuild
+    /// preserves public history without creating any new credit or ETH transfer.
+    function migrateReferralRewardClaimHistory(
+        address[] calldata inviters,
+        address[] calldata invitees,
+        bytes32[] calldata commitments,
+        address[] calldata recipients,
+        uint256[] calldata amounts,
+        uint64[] calldata claimedAts
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralRewardClaimMigrationConfigured) revert ReferralMigrationNotConfigured();
+        uint256 length = inviters.length;
+        if (
+            invitees.length != length || commitments.length != length || recipients.length != length
+                || amounts.length != length || claimedAts.length != length
+        ) revert ReferralMigrationLengthMismatch();
+        uint64 nowTimestamp = uint64(block.timestamp);
+        for (uint256 i; i < length; ++i) {
+            address inviter = inviters[i];
+            address invitee = invitees[i];
+            bytes32 commitment = commitments[i];
+            if (
+                inviter == address(0) || invitee == address(0) || recipients[i] == address(0)
+                    || referralInvites[commitment].inviter != inviter
+                    || !referralRedemptions[commitment][invitee]
+                    || referralRewardClaimHistoryImported[commitment][invitee] || amounts[i] == 0
+                    || claimedAts[i] == 0 || claimedAts[i] > nowTimestamp
+            ) {
+                revert ReferralMigrationRedemptionInvalid(
+                    inviter, invitee, commitment, claimedAts[i]
+                );
+            }
+            referralRewardClaimHistoryImported[commitment][invitee] = true;
+            uint32 count = referralMigrationImportedRewardClaimCount + 1;
+            if (count > referralMigrationExpectedRewardClaimCount) {
+                revert ReferralMigrationCountExceeded(
+                    REFERRAL_MIGRATION_KIND_REWARD_CLAIM, referralMigrationExpectedRewardClaimCount
+                );
+            }
+            referralMigrationImportedRewardClaimCount = count;
+            referralMigrationImportedRewardClaimHash ^= referralMigrationLeafRewardClaim(
+                inviter, invitee, commitment, recipients[i], amounts[i], claimedAts[i]
+            );
+            emit ReferralRewardClaimed(
+                inviter, invitee, commitment, recipients[i], amounts[i], claimedAts[i]
+            );
+        }
+    }
+
+    /// @notice Outstanding credits are unsupported: source escrow must be zero before the switch.
+    function migrateReferralRewardStats(
+        address[] calldata inviters,
+        uint256[] calldata accrued,
+        uint256[] calldata paid,
+        uint256[] calldata claimed
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralRewardMigrationConfigured) revert ReferralMigrationNotConfigured();
+        if (
+            inviters.length != accrued.length || inviters.length != paid.length
+                || inviters.length != claimed.length
+        ) revert ReferralMigrationLengthMismatch();
+        for (uint256 i; i < inviters.length; ++i) {
+            address inviter = inviters[i];
+            if (
+                inviter == address(0) || referralRewardStatsImported[inviter]
+                    || accrued[i] != paid[i] || claimed[i] > paid[i]
+            ) revert ReferralRewardStatsMigrationInvalid(inviter);
+            referralRewardStatsImported[inviter] = true;
+            totalReferralRewardsAccrued[inviter] = accrued[i];
+            totalReferralRewardsPaid[inviter] = paid[i];
+            totalReferralRewardsClaimed[inviter] = claimed[i];
+            uint32 nextCount = referralMigrationImportedRewardStatsCount + 1;
+            if (nextCount > referralMigrationExpectedRewardStatsCount) {
+                revert ReferralMigrationCountExceeded(
+                    REFERRAL_MIGRATION_KIND_REWARD_STATS, referralMigrationExpectedRewardStatsCount
+                );
+            }
+            referralMigrationImportedRewardStatsCount = nextCount;
+            referralMigrationImportedRewardStatsHash ^= referralMigrationLeafRewardStats(
+                inviter, accrued[i], paid[i], claimed[i]
+            );
+            emit ReferralRewardStatsImported(inviter, accrued[i], paid[i], claimed[i]);
+        }
     }
 
     function migrateReferralCodes(
@@ -371,10 +521,62 @@ contract VeydriftReferralSystem {
         }
     }
 
+    /// @notice Imports exact historical reward metadata and re-emits the canonical event
+    /// for a replacement-address index rebuild. This does not transfer or credit ETH.
+    function migrateReferralRedemptionsWithHistory(
+        address[] calldata inviters,
+        address[] calldata invitees,
+        bytes32[] calldata commitments,
+        uint64[] calldata redeemedAts,
+        uint256[] calldata rewardAmounts,
+        bool[] calldata paid,
+        bool[] calldata credited
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralRedemptionMigrationConfigured) revert ReferralMigrationNotConfigured();
+        uint256 length = inviters.length;
+        if (
+            invitees.length != length || commitments.length != length
+                || redeemedAts.length != length || rewardAmounts.length != length
+                || paid.length != length || credited.length != length
+        ) revert ReferralMigrationLengthMismatch();
+        uint64 nowTimestamp = uint64(block.timestamp);
+        for (uint256 i; i < length; ++i) {
+            address inviter = inviters[i];
+            address invitee = invitees[i];
+            bytes32 commitment = commitments[i];
+            uint64 redeemedAt = redeemedAts[i];
+            if (
+                inviter == address(0) || invitee == address(0)
+                    || referralInvites[commitment].inviter != inviter || redeemedAt == 0
+                    || redeemedAt > nowTimestamp || referralInviteeRedeemed[invitee]
+                    || referralRedemptions[commitment][invitee]
+                    || (rewardAmounts[i] == 0 && (paid[i] || credited[i]))
+                    || (rewardAmounts[i] != 0 && paid[i] == credited[i])
+            ) revert ReferralMigrationRedemptionInvalid(inviter, invitee, commitment, redeemedAt);
+            referralInviteeRedeemed[invitee] = true;
+            referralRedemptions[commitment][invitee] = true;
+            _importRedemptionWindowTimestamp(commitment, redeemedAt);
+            bytes32 leaf = referralMigrationLeafRedemptionHistory(
+                inviter, invitee, commitment, redeemedAt, rewardAmounts[i], paid[i], credited[i]
+            );
+            _recordMigrationRedemptionLeaf(leaf);
+            emit ReferralRedemptionImported(inviter, invitee, commitment, redeemedAt, leaf);
+            emit ReferralInviteRedeemed(
+                inviter, invitee, commitment, rewardAmounts[i], paid[i], credited[i], redeemedAt
+            );
+        }
+    }
+
     function finalizeReferralCodeMigration() external onlyOwner {
         if (referralMigrationFinalized) revert ReferralMigrationAlreadyFinalized();
         if (!referralMigrationConfigured) revert ReferralMigrationNotConfigured();
-        if (!referralRedemptionMigrationConfigured) {
+        if (
+            !referralRedemptionMigrationConfigured || !referralRewardMigrationConfigured
+                || !referralRewardClaimMigrationConfigured
+        ) {
             revert ReferralMigrationNotConfigured();
         }
         if (
@@ -406,27 +608,53 @@ contract VeydriftReferralSystem {
                 referralMigrationImportedRedemptionCount
             );
         }
+        if (
+            referralMigrationImportedRewardStatsHash != referralMigrationExpectedRewardStatsHash
+                || referralMigrationImportedRewardStatsCount
+                    != referralMigrationExpectedRewardStatsCount
+        ) {
+            revert ReferralRewardStatsMigrationManifestMismatch(
+                referralMigrationExpectedRewardStatsHash,
+                referralMigrationImportedRewardStatsHash,
+                referralMigrationExpectedRewardStatsCount,
+                referralMigrationImportedRewardStatsCount
+            );
+        }
+        if (
+            referralMigrationImportedRewardClaimHash != referralMigrationExpectedRewardClaimHash
+                || referralMigrationImportedRewardClaimCount
+                    != referralMigrationExpectedRewardClaimCount
+        ) {
+            revert ReferralRewardClaimMigrationManifestMismatch(
+                referralMigrationExpectedRewardClaimHash,
+                referralMigrationImportedRewardClaimHash,
+                referralMigrationExpectedRewardClaimCount,
+                referralMigrationImportedRewardClaimCount
+            );
+        }
         referralMigrationFinalized = true;
         emit ReferralCodeMigrationFinalized(uint64(block.timestamp));
     }
 
     function claimReferralCode(string calldata code) external {
         if (!referralMigrationFinalized) revert ReferralMigrationPending();
+        if (game == address(0)) revert Unauthorized(msg.sender);
+        address player = IVeydriftReferralGame(game).effectivePlayer(msg.sender);
         if (
-            game == address(0) || IVeydriftReferralGame(game).gamePaused()
-                || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0
+            IVeydriftReferralGame(game).gamePaused()
+                || IVeydriftReferralGame(game).homePlanetOf(player) == 0
         ) {
-            revert Unauthorized(msg.sender);
+            revert Unauthorized(player);
         }
 
         (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(code);
         if (referralCodeMigrationKind[codeHash] == REFERRAL_MIGRATION_KIND_HASH_ONLY) {
             revert ReferralCodeInvalid();
         }
-        bytes32 commitment = referralCommitment(msg.sender, codeHash);
-        bytes32 existingCommitment = referralCommitmentOf[msg.sender];
+        bytes32 commitment = referralCommitment(player, codeHash);
+        bytes32 existingCommitment = referralCommitmentOf[player];
         if (existingCommitment != bytes32(0) && existingCommitment != commitment) {
-            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+            revert ReferralInviteAlreadyClaimed(player, existingCommitment);
         }
         uint64 nowTimestamp = uint64(block.timestamp);
         if (existingCommitment != bytes32(0)) {
@@ -435,8 +663,8 @@ contract VeydriftReferralSystem {
                 revert ReferralInviteTopUpUnavailable(existingCommitment, availableAt);
             }
         }
-        _claimCodeOwnership(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
-        _recordActivation(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
+        _claimCodeOwnership(player, codeHash, normalizedCode, nowTimestamp, false);
+        _recordActivation(player, codeHash, normalizedCode, nowTimestamp, false);
     }
 
     function redeemReferralInvite(
@@ -498,27 +726,31 @@ contract VeydriftReferralSystem {
     function withdrawReferralReward(bytes32 commitment, address invitee, address payable recipient)
         external
     {
+        address actor = msg.sender;
+        address inviter = IVeydriftReferralGame(game).effectivePlayer(actor);
         if (_withdrawingReferralReward) revert ReferralRewardWithdrawalReentered();
-        if (referralInvites[commitment].inviter != msg.sender) revert Unauthorized(msg.sender);
-        if (recipient == address(0)) revert ReferralRewardRecipientInvalid();
+        if (referralInvites[commitment].inviter != inviter) revert Unauthorized(inviter);
+        if (recipient == address(0) || (actor != inviter && recipient != inviter)) {
+            revert ReferralRewardRecipientInvalid();
+        }
         uint256 amount = referralRewardCredits[commitment][invitee];
         if (amount == 0) revert ReferralRewardUnavailable();
 
         _withdrawingReferralReward = true;
         referralRewardCredits[commitment][invitee] = 0;
-        claimableReferralRewards[msg.sender] -= amount;
+        claimableReferralRewards[inviter] -= amount;
         (bool ok,) = recipient.call{value: amount}("");
         if (!ok) {
             referralRewardCredits[commitment][invitee] = amount;
-            claimableReferralRewards[msg.sender] += amount;
+            claimableReferralRewards[inviter] += amount;
             _withdrawingReferralReward = false;
             revert ReferralRewardWithdrawalFailed(recipient, amount);
         }
-        totalReferralRewardsPaid[msg.sender] += amount;
-        totalReferralRewardsClaimed[msg.sender] += amount;
+        totalReferralRewardsPaid[inviter] += amount;
+        totalReferralRewardsClaimed[inviter] += amount;
         _withdrawingReferralReward = false;
         emit ReferralRewardClaimed(
-            msg.sender, invitee, commitment, recipient, amount, uint64(block.timestamp)
+            inviter, invitee, commitment, recipient, amount, uint64(block.timestamp)
         );
     }
 
@@ -569,6 +801,61 @@ contract VeydriftReferralSystem {
     ) public pure returns (bytes32) {
         return keccak256(
             abi.encode(REFERRAL_MIGRATION_KIND_REDEMPTION, inviter, invitee, commitment, redeemedAt)
+        );
+    }
+
+    function referralMigrationLeafRedemptionHistory(
+        address inviter,
+        address invitee,
+        bytes32 commitment,
+        uint64 redeemedAt,
+        uint256 rewardAmount,
+        bool paid,
+        bool credited
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                REFERRAL_MIGRATION_KIND_REDEMPTION_HISTORY,
+                inviter,
+                invitee,
+                commitment,
+                redeemedAt,
+                rewardAmount,
+                paid,
+                credited
+            )
+        );
+    }
+
+    function referralMigrationLeafRewardStats(
+        address inviter,
+        uint256 accrued,
+        uint256 paid,
+        uint256 claimed
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(REFERRAL_MIGRATION_KIND_REWARD_STATS, inviter, accrued, paid, claimed)
+        );
+    }
+
+    function referralMigrationLeafRewardClaim(
+        address inviter,
+        address invitee,
+        bytes32 commitment,
+        address recipient,
+        uint256 amount,
+        uint64 claimedAt
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                REFERRAL_MIGRATION_KIND_REWARD_CLAIM,
+                inviter,
+                invitee,
+                commitment,
+                recipient,
+                amount,
+                claimedAt
+            )
         );
     }
 

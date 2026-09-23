@@ -1,6 +1,13 @@
 /** JSON wire contracts only. No runtime imports or backend implementation dependencies. */
 export type Resources = { metal: string; crystal: string; deuterium: string };
 
+export type WalletDelegation<Wallet extends string = string> = {
+  wallet: Wallet;
+  main: Wallet;
+  delegate: Wallet | null;
+  actingAsDelegate: boolean;
+};
+
 export type Pagination = {
   page: number;
   pageSize: number;

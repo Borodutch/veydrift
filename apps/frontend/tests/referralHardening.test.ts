@@ -208,8 +208,9 @@ describe("referral hardening", () => {
 
   test("keeps referral redemption enabled for migration-authorized first-planet starts", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    expect(appSource).toContain("const redemptions = await data.prepareSettlementRedemptions(wallet.account");
-    expect(appSource).toContain("settlementTransactionOptions(funding, redemptions.referral)");
+    expect(appSource).toContain("const redemptions = await data.prepareSettlementRedemptions(playerAccount");
+    expect(appSource).toContain("settlementTransactionOptions(funding, playerAccount, redemptions.referral)");
+    expect(appSource).toContain("migrationPlayerAccount: playerAccount");
     expect(appSource).not.toContain("funding.migrationContractAddress\n          ? undefined");
   });
 

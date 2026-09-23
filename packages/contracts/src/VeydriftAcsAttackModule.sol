@@ -86,8 +86,8 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         }
         if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
 
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueColonizeArrivals(_actingPlayer());
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(attack.targetPlanetId);
 
@@ -105,7 +105,9 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
                 )
         ) revert InvalidId();
         IVeydriftAcsAttackProtection(address(this))
-            .enforceBodyAttackProtection(msg.sender, attack.targetPlanetId, attack.targetIsMoon);
+            .enforceBodyAttackProtection(
+                _actingPlayer(), attack.targetPlanetId, attack.targetIsMoon
+            );
     }
 
     function _prepareJoinFleet(
@@ -116,13 +118,13 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         FleetMission storage attack
     ) private returns (AcsJoinTiming memory timing) {
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[_actingPlayer()][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+        if (activeFleetMissionCount[_actingPlayer()] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
 
-        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(_actingPlayer(), ships);
         if (capacity == 0) revert InvalidQuantity();
         _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
         if (!originIsMoon) _settleActionPlanet(originPlanetId);
@@ -133,9 +135,9 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         timing.fuelCost = _toUint128(
             VeydriftFleetFuel.ogameMissionFuelCost(
                 ships,
-                _technologyLevels[msg.sender][Technology.CombustionDrive],
-                _technologyLevels[msg.sender][Technology.ImpulseDrive],
-                _technologyLevels[msg.sender][Technology.HyperspaceDrive],
+                _technologyLevels[_actingPlayer()][Technology.CombustionDrive],
+                _technologyLevels[_actingPlayer()][Technology.ImpulseDrive],
+                _technologyLevels[_actingPlayer()][Technology.HyperspaceDrive],
                 travelDistance,
                 VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
                 slowestSpeed
@@ -182,11 +184,11 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         AcsJoinTiming memory timing
     ) private returns (uint256 missionId) {
         missionId = nextFleetId++;
-        activeFleetMissionCount[msg.sender] += 1;
+        activeFleetMissionCount[_actingPlayer()] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: FleetMissionType.AcsAttack,
-            owner: msg.sender,
+            owner: _actingPlayer(),
             originPlanetId: originPlanetId,
             targetPlanetId: attack.targetPlanetId,
             departureAt: timing.departureAt,
@@ -207,11 +209,11 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);
 
         emit AttackMissionJoined(
-            attackMissionId, missionId, msg.sender, originPlanetId, attack.targetPlanetId
+            attackMissionId, missionId, _actingPlayer(), originPlanetId, attack.targetPlanetId
         );
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            _actingPlayer(),
             FleetMissionType.AcsAttack,
             originPlanetId,
             attack.targetPlanetId,
@@ -229,7 +231,7 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
     function _requireOwnedBody(uint256 planetId, bool isMoon) private view {
         address owner_ = _planets[planetId].owner;
         if (owner_ == address(0)) revert NoPlanet();
-        if (owner_ != msg.sender) revert NotPlanetOwner();
+        if (owner_ != _actingPlayer()) revert NotPlanetOwner();
         if (isMoon && !_moonExistsForOwner(planetId, owner_)) revert NoPlanet();
     }
 

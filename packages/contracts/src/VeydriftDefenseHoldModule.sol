@@ -62,7 +62,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint16 speedPercent,
         uint256 holdSeconds
     ) external returns (uint256 missionId) {
-        _requirePlanetOwner(originPlanetId);
+        address player = _actingPlayer();
+        _requirePlanetOwner(originPlanetId, player);
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
         if (
@@ -75,27 +76,27 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         // arrivals BEFORE the pending-resolution gate, so a ready-but-unsettled arrival of the caller's
         // own fleet does not wrongly block launching a defense hold. Mirrors the prologue every other
         // mutating fleet path runs; genuinely pending (randomness-uncommitted) arrivals still revert.
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueColonizeArrivals(player);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         _settleResources(originPlanetId);
         _settleResources(targetPlanetId);
 
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[player][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+        if (activeFleetMissionCount[player] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
 
-        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(player, ships);
         if (capacity == 0) revert InvalidQuantity();
-        _requireMissionShips(originPlanetId, ships);
+        _requireMissionShips(originPlanetId, false, ships);
 
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
-            _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
+            _ogameMissionFuelCost(player, ships, travelDistance, speedPercent, slowestSpeed)
         );
         uint64 departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
@@ -107,7 +108,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (allianceSystem == address(0)) revert DefenseHoldNotAuthorized(targetPlanetId);
         (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) = IVeydriftDefenseHoldAllianceSystem(
                 allianceSystem
-            ).defenseHoldFuelContext(msg.sender, targetPlanetId, ships, holdSeconds);
+            ).defenseHoldFuelContext(player, targetPlanetId, ships, holdSeconds);
         if (!canCoordinate) revert DefenseHoldNotAuthorized(targetPlanetId);
         if (depotSupport != 0) {
             _settleResources(targetPlanetId);
@@ -135,11 +136,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 holdUntil = (uint256(arrivalAt) + holdSeconds).toUint64();
         uint64 returnAt = (uint256(holdUntil) + travelSeconds).toUint64();
         missionId = nextFleetId++;
-        activeFleetMissionCount[msg.sender] += 1;
+        activeFleetMissionCount[player] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: FleetMissionType.DefenseHold,
-            owner: msg.sender,
+            owner: player,
             originPlanetId: originPlanetId,
             targetPlanetId: targetPlanetId,
             departureAt: departureAt,
@@ -165,7 +166,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
 
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            player,
             FleetMissionType.DefenseHold,
             originPlanetId,
             targetPlanetId,
@@ -203,6 +204,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         bool originIsMoon,
         bool targetIsMoon
     ) external returns (uint256 missionId) {
+        address player = _actingPlayer();
         // Transport (0), Deploy (1), and Attack (3) are the only body-mission
         // kinds this compatibility entrypoint accepts; Colonize (2) is routed
         // through the dedicated colonization module.
@@ -211,35 +213,35 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         }
         bool isAttack = missionType == FleetMissionType.Attack;
         if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
-        _requireOwnedBody(originPlanetId, originIsMoon);
+        _requireOwnedBody(originPlanetId, originIsMoon, player);
         if (isAttack) {
             _requireAttackTargetBody(targetPlanetId, targetIsMoon);
             IVeydriftRiftAttackProtection(address(this))
-                .enforceBodyAttackProtection(msg.sender, targetPlanetId, targetIsMoon);
+                .enforceBodyAttackProtection(player, targetPlanetId, targetIsMoon);
         } else {
-            _requireOwnedBody(targetPlanetId, targetIsMoon);
+            _requireOwnedBody(targetPlanetId, targetIsMoon, player);
         }
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (!originIsMoon) _settleResources(originPlanetId);
         if (!targetIsMoon) _settleResources(targetPlanetId);
 
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[player][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+        if (activeFleetMissionCount[player] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
 
-        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(player, ships);
         if (capacity == 0) revert InvalidQuantity();
-        _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
+        _requireMissionShips(originPlanetId, originIsMoon, ships);
 
         uint256 travelDistance =
             originPlanetId == targetPlanetId ? 5 : _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
-            _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
+            _ogameMissionFuelCost(player, ships, travelDistance, speedPercent, slowestSpeed)
         );
         uint256 committedCapacity =
             uint256(cargo.metal) + cargo.crystal + cargo.deuterium + fuelCost;
@@ -270,11 +272,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (isAttack) {
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
-        activeFleetMissionCount[msg.sender] += 1;
+        activeFleetMissionCount[player] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: missionType,
-            owner: msg.sender,
+            owner: player,
             originPlanetId: originPlanetId,
             targetPlanetId: targetPlanetId,
             departureAt: departureAt,
@@ -299,7 +301,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
                 _attackProtectionExemptions,
                 playerLastActiveAt,
                 _moonAttackParityActivatedAt,
-                msg.sender,
+                player,
                 targetPlanetId,
                 targetIsMoon
             );
@@ -307,7 +309,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
 
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            player,
             missionType,
             originPlanetId,
             targetPlanetId,
@@ -342,12 +344,13 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function recallFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         _requireActiveMissionOwner(mission);
+        address player = mission.owner;
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
 
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
 
@@ -374,7 +377,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         );
 
         // Dispatch fuel already covers the mission. Recall has no refund and no extra fuel debit.
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, 0);
+        emit FleetMissionRecalled(missionId, player, mission.returnAt, 0);
         emit DefenseHoldEnded(missionId, mission.targetPlanetId, FleetMissionStatus.Recalled);
         emit FleetMissionReturnExposed(
             missionId,
@@ -392,13 +395,13 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     /// @notice Send a stationed DefenseHold fleet home once its hold window has elapsed. The facade
     ///         routes only DefenseHold missions here; surviving ships fly back with their cargo.
     function resolveFleetMission(uint256 missionId) external {
-        _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
-        if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+        uint64 currentTime = _currentTimestamp();
+        if (currentTime < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         uint64 holdUntil = _defenseHoldUntil[missionId];
-        if (_currentTimestamp() < holdUntil) revert DefenseHoldStillActive(holdUntil);
+        if (currentTime < holdUntil) revert DefenseHoldStillActive(holdUntil);
 
         // Planet DefenseHold resolution settles the target through the current timestamp. Do not
         // let it complete defenses ahead of an earlier missile's historical impact snapshot.
@@ -437,10 +440,20 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     // --- Shared launch/settlement helpers (mirrored from the gameplay module so this module is a
     //     self-contained delegatecall target with EIP-170 headroom). ---
 
-    function _requirePlanetOwner(uint256 planetId) private view {
+    function _requirePlanetOwner(uint256 planetId, address player) private view {
         Planet storage planetRef = _planets[planetId];
-        if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner == address(0)) {
+            assembly ("memory-safe") {
+                mstore(0x00, shl(224, 0x9a3d4eb9))
+                revert(0x00, 0x04)
+            }
+        }
+        if (planetRef.owner != player) {
+            assembly ("memory-safe") {
+                mstore(0x00, shl(224, 0xab2bcfd3))
+                revert(0x00, 0x04)
+            }
+        }
     }
 
     function _requireActiveMissionOwner(FleetMission storage mission) private view {
@@ -450,52 +463,37 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         ) {
             revert FleetInactive();
         }
-        if (mission.owner != msg.sender) revert FleetNotOwner();
+        if (mission.owner != _actingPlayer()) revert FleetNotOwner();
     }
 
-    function _requireOwnedBody(uint256 planetId, bool isMoon) private view {
-        _requirePlanetOwner(planetId);
-        if (isMoon && !_moonExistsForOwner(planetId, msg.sender)) revert NoPlanet();
+    function _requireOwnedBody(uint256 planetId, bool isMoon, address player) private view {
+        _requirePlanetOwner(planetId, player);
+        if (isMoon) {
+            if (!_moonExistsForOwner(planetId, player)) revert NoPlanet();
+        }
     }
 
     function _requireAttackTargetBody(uint256 planetId, bool isMoon) private view {
         if (_planets[planetId].owner == address(0)) revert NoPlanet();
-        if (isMoon && !_moonExistsForOwner(planetId, _planets[planetId].owner)) revert NoPlanet();
+        if (isMoon) {
+            if (!_moonExistsForOwner(planetId, _planets[planetId].owner)) revert NoPlanet();
+        }
     }
 
     function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
         return VeydriftMoonIncarnation.existsForOwner(_moonSystem, planetId, owner_);
     }
 
-    function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
-        uint32 available = _shipCounts[planetId][ship];
-        if (available < quantity) revert InsufficientShips(ship, available, quantity);
-    }
-
-    function _requireMissionShips(uint256 planetId, MissionShips calldata ships) private view {
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship ship = Ship(i);
-            uint32 quantity = _missionShipQuantity(ships, ship);
-            if (quantity != 0) _requireShips(planetId, ship, quantity);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function _requireBodyMissionShips(uint256 planetId, bool isMoon, MissionShips calldata ships)
+    function _requireMissionShips(uint256 planetId, bool isMoon, MissionShips calldata ships)
         private
         view
     {
-        if (!isMoon) {
-            _requireMissionShips(planetId, ships);
-            return;
-        }
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
             uint32 quantity = _missionShipQuantity(ships, ship);
             if (quantity != 0) {
-                uint32 available = _moonShipCounts[planetId][ship];
+                uint32 available =
+                    isMoon ? _moonShipCounts[planetId][ship] : _shipCounts[planetId][ship];
                 if (available < quantity) revert InsufficientShips(ship, available, quantity);
             }
             unchecked {

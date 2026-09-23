@@ -10,15 +10,27 @@ before using any migration script. This document does not authorize a new replac
 
 ## Build the migration manifest
 
-1. Use the backend recovery store only as a candidate transaction/code inventory. For every row
-   with a transaction hash, fetch the receipt, require status `1`, and decode the historical claim
-   event from the emitting legacy referral contract. Derive the owner, code hash/commitment, and
-   activation block timestamp from that receipt/event. JSON timestamps and owners are not
-   authoritative.
+1. Pause Game, then freeze the standalone source with `FreezeReferralSystem.s.sol` while paused.
+   Keep Game paused during snapshot/import; the source `game()` must remain zero. Pass a caught-up
+   backend index inventory with `indexFromBlock` at or before the verified source deployment,
+   `indexCursorBlock` at or beyond the frozen `snapshotBlock`, and exact `snapshotBlockHash` to
+   `scripts/veydrift-referral-migration-manifest.mjs`. The generator proves no code existed at
+   `indexFromBlock - 1`, scans all canonical source logs to the pinned block in bounded chunks
+   (`--historical-rpc-url` and `--log-chunk-size` when the verified archive provider supports it),
+   and compares the candidate claim/redemption/reward-claim references to the source inventory.
+   No unindexed event may be omitted. For each source event, fetch the status-1 receipt and require
+   matching contract, log index, block hash, and event fields. JSON-only timestamps/owners are not
+   authoritative. Generate only a mode-0600 private manifest under `packages/contracts/manifests`;
+   never include credentials or signing material.
 2. Exclude rows without a successful receipt or matching decoded claim event. Regenerate the complete
    inventory from the reviewed frozen source for every replacement; never reuse an old count or
    manifest. JSON-only rows are never migration entries.
-3. Preserve the exact decoded source commitment. The original legacy claim events used
+3. Preserve the exact decoded source commitment. Every current-source
+   `ReferralLegacyCodeOwnershipImported` event must have one 43-character preimage candidate;
+   require that candidate's `importTxHash` match the source event's successful receipt and that
+   its normalized hash, owner and raw-code commitment match. If a preimage is missing, stop—do
+   not substitute a backend JSON row or silently drop hash-only ownership. The original legacy
+   claim events used
    `keccak256(originalCaseSensitiveCodeBytes)`; replacement referral contracts use the canonical
    `keccak256(abi.encode(inviter, normalizedCodeHash))` commitment. The importer accepts only those
    two receipt-verifiable shapes. Separately normalize the code to lowercase and derive the
@@ -61,10 +73,17 @@ Configuration rejects zero/non-zero digest/count mismatches and cannot be replac
 code hash, commitment, timestamp, missing row, duplicate row, or extra row leaves the imported
 count/digest pair unequal to the reviewed pair, so finalization fails closed.
 
-For every replacement after referrals have gone live, build a third receipt/event-backed manifest
-from every successful `ReferralInviteRedeemed` emitted by the current canonical referral contract.
-Do not use backend JSON alone. Require the exact emitting address, a status-1 receipt, and decoded
-`inviter`, `invitee`, `commitment`, and `redeemedAt` values. The redemption leaf is:
+For every replacement after referrals have gone live, build a receipt/event-backed manifest
+from the complete frozen source log inventory. Do not use backend JSON alone. Require the exact
+emitting address, a status-1 receipt, and decoded event fields. Ordinary redemptions and reward
+claims must carry their emitting block timestamp; historical re-emissions need authenticated
+provenance. For a re-emitted redemption, match its immediately preceding
+`ReferralRedemptionImported` log in the same receipt and its full-history (kind 6) leaf. Count
+the paired logs only once. An unpaired legacy import is allowed only with the exact kind 3 leaf
+and contributes a zero-value, neither-paid-nor-credited redemption. A historical reward claim
+must match its source-address import transaction calldata and the complete receipt claim-log
+order; neither its amount nor its recipient can be inferred from backend JSON. The legacy
+redemption-only leaf is:
 
 ```text
 keccak256(abi.encode(uint8(3), inviter, invitee, commitment, redeemedAt))
@@ -77,11 +96,21 @@ zero/zero configuration when the source contract has no redemptions:
 configureReferralRedemptionMigration(redemptionDigest, redemptionCount)
 ```
 
-Before importing, audit every source redemption's `paid` / `credited` event values and the source
-contract's balance, `claimableReferralRewards`, and per-redemption credit state. The current replay
-migration preserves eligibility and quota state, not escrowed ETH or credit accounting. If any
-outstanding credit or unexplained contract balance exists, stop the rollout and add a separately
-audited credit migration; never strand funds by switching the game/runtime pointer.
+Before importing, audit *all* current-source redemption events (including earlier
+`ReferralRedemptionImported` rows) and reward-claim receipts, every `paid`/`credited` outcome,
+source `referralRewardCredits(commitment,invitee)`, per-inviter
+`claimableReferralRewards`/`totalReferralRewardsAccrued`/`Paid`/`Claimed`, and ETH balance at the
+frozen block. The replacement commits full redemption metadata and re-emits canonical historical
+redemption and settled-claim events so an address-scoped backend rebuild retains history.
+Historical reward counters have their own committed importer; credited redemptions with later
+matching paid claims are supported. Outstanding credit, claimable balance, inconsistent totals or
+unexplained ETH **block** release. Source balance zero by itself is not proof of zero liabilities.
+The reviewed reward-stat leaf is
+`keccak256(abi.encode(uint8(4),inviter,accrued,paid,claimed))`; the claim-history leaf uses
+`uint8(5),inviter,invitee,commitment,recipient,amount,claimedAt`; full redemption history uses
+`uint8(6),inviter,invitee,commitment,redeemedAt,rewardAmount,paid,credited`. Commit all three
+count/digest pairs exactly once, including explicit zero/zero where applicable. Do not submit an
+old three-class manifest to the five-class replacement.
 
 ## Import and verify
 
@@ -128,11 +157,14 @@ After all valid code activations have been imported, import the audited redempti
 batches:
 
 ```text
-migrateReferralRedemptions(
+migrateReferralRedemptionsWithHistory(
   address[] inviters,
   address[] invitees,
   bytes32[] commitments,
-  uint64[] redeemedAts
+  uint64[] redeemedAts,
+  uint256[] rewardAmounts,
+  bool[] paid,
+  bool[] credited
 )
 ```
 
@@ -150,53 +182,55 @@ For every manifest row, verify `referralCodeOwner(codeHash)` and
 activation through `referralInviteState(wallet)`. For every hash-only row, verify the dedicated
 `ReferralLegacyCodeOwnershipImported` event and confirm `referralCommitmentOf(owner)`,
 `referralClaimedAt(commitment)`, and `referralInvites(commitment)` were not populated by that row.
-Compare all four expected/imported count/digest getters before calling:
+Compare valid/hash-only/redemption/reward-claim/reward-stat expected/imported digests and counts,
+then verify historic receipts, active quotas, imported balances (zero escrow), emitted redemption
+and reward-claim history, and `totalReferralRewards*` counters before calling:
 
 ```text
 finalizeReferralCodeMigration()
 ```
 
-Also compare `referralMigrationExpectedRedemptionHash/Count` with
-`referralMigrationImportedRedemptionHash/Count`, verify every imported invitee through both replay
-getters, and compare each active commitment's `referralRedemptionQuota` with the source contract.
-Finalization requires an explicit redemption migration configuration and exact redemption
-count/digest equality in addition to the valid and hash-only code manifests.
+Verify each source-imported invitee through both replay getters, each active commitment's
+`referralRedemptionQuota`, every source `referralRewardCredits` zero, and exact
+`totalReferralRewardsAccrued/Paid/Claimed` parity. Require explicit code, redemption, settled
+reward-claim history and reward-stat configuration/import count+digest equality before finalization.
 
-Finalization is one-way and contract-enforced: it reverts unless all three configured count/digest
+Finalization is one-way and contract-enforced: it reverts unless all five configured count/digest
 pairs exactly match their imports. Use the complete current receipt-backed inventory, including
 all public claims and redemptions. Confirm `referralMigrationFinalized() == true`; the post-deploy smoke
 script also enforces this gate and `REFERRAL_CODE_MAX_LENGTH() == 24`.
 
 ## Cutover and rollback
 
-Both current Game and Moon upgrade scripts enforce
-[VeydriftLiveUpgradePolicy](../packages/contracts/src/libraries/VeydriftLiveUpgradePolicy.sol).
-They reject a paused Game. The Game upgrade additionally requires prior live moon-parity and
-temperature-migration readiness. Do not pause gameplay or remove these checks. Concurrent source writes can invalidate a migration
-manifest, so the plan must explicitly control them without assuming a paused Game.
+The Game upgrade script enforces
+[VeydriftLiveUpgradePolicy](../packages/contracts/src/libraries/VeydriftLiveUpgradePolicy.sol):
+it rejects a paused Game and requires live moon-parity/temperature readiness. The authorized
+staged order is **pause Game → freeze source `game` pointer → snapshot and import into an inert new
+standalone referral → verify all five committed classes and zero outstanding escrow → unpause
+Game while source remains frozen → upgrade Game with distinct source/target addresses**. Never
+remove the live policy guard to fit the freeze; between unpause and Game upgrade, referral actions
+remain unavailable while other gameplay continues. This visible interruption requires parent
+rollout approval and a bounded recovery checkpoint.
 
-A future referral replacement needs an explicitly approved, simulated live-compatible cutover
-plan before any freeze, deployment or pointer change. It must cover:
+`UpgradeGame.s.sol` refuses the old standalone address as target and requires a frozen source,
+matching owners/signers, zero source ETH, finalized target and committed reward/history classes.
+It embeds the **new** referral address in both Game settlement/state-migration modules. Before the
+Game switch, only an authorized owner may restore source `game` if a rollback is chosen and no
+replacement activity occurred. After target starts receiving claims/redemptions, never switch Game
+back to the frozen source without a separately audited reverse state migration: it would reopen
+eligibility or strand credits. The full Game→referral→Alliance→Moon order is in
+[Wallet delegate contract rollout](wallet-delegate-rollout.md).
 
-1. A stable source boundary and all writes during cutover. `FreezeReferralSystem.s.sol`
-   clears the source's Game pointer and blocks claims/top-ups/redemptions; that has user-visible
-   consequences even while the Game is unpaused. The plan must explicitly approve the freeze
-   behavior and restoration path rather than assuming it is transparent.
-2. A freshly generated `veydrift-referral-migration-manifest.mjs` artifact from a caught-up index at
-   that reviewed boundary, with every receipt/log, canonical hash, commitment, balance and credit
-   reverified. Earlier candidate manifests are evidence only, not broadcast inputs.
-3. The replacement's Game pointer remaining zero during import. `MigrateReferralSystem.s.sol`
-   consumes the final mode-0600 manifest, imports bounded batches, verifies all three count/digest
-   pairs and finalizes before claims/redemptions are enabled.
-4. Exact live-upgrade preconditions, storage layout, proxy/module wiring, Game/referral owners,
-   start price, moon-generation compatibility and resource invariants. Mixed versions must remain
-   safe for in-flight gameplay; this document does not supply a new live state-migration design.
-5. Backend referral-history replay, permanent ownership, latest top-up timestamps and capacity
-   parity, followed by matching frontend validation before declaring the cutover complete.
-6. Before-switch restoration of the source pointer if a freeze was performed. After a switch,
-   account for every new claim, redemption and credit before approving rollback: simply restoring
-   an old module can lose state or reopen already-consumed eligibility. Do not mutate application
-   pointers until the corresponding on-chain path is verified.
+After cutover, set backend `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` and
+`VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` to the replacement's address and safe deployment boundary.
+The importer emits canonical historical claim, redemption and settled reward-claim events. The
+writer replaces old-address referral projections only after the new backfill has been applied,
+then records the address/boundary marker. Confirm a restart with an interrupted marker does not
+double-count rows. Verify the backend's configured private referral signer resolves to the **same**
+address as source and replacement `referralSigner()`; signatures remain bound to the unchanged
+Game proxy and chain ID. Preserve the existing recovery/index database and check code-preimage
+ownership, main/delegate claim, payout recipient restriction, revocation, quotas and public
+history before enabling the new frontend.
 
 Use the [contract deployment runbook](veydrift-contract-redeploy-runbook.md) and
 [state-preservation policy](open-alpha-state-preservation.md) for the approval and evidence gates.
@@ -205,10 +239,9 @@ Use the [contract deployment runbook](veydrift-contract-redeploy-runbook.md) and
 
 Set `VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` on the Easypanel-managed backend service to the
 replacement referral deployment block (or another reviewed safe boundary at or before its first
-canonical event). Do not reuse a boundary from another address or migration. On the writer's first
-successful poll,
-the backend scans only the configured referral address and only `ReferralInviteWindowActivated`,
-`ReferralInviteRedeemed`, and `ReferralRewardClaimed` topics through the current head. It persists an
+canonical event). Do not reuse a boundary from another address or migration. On the writer's first successful poll, the backend scans only the configured referral address
+and the `ReferralInviteWindowActivated`, `ReferralInviteRedeemed`, and `ReferralRewardClaimed`
+topics (including the replacement's historic re-emissions) through the current head. It persists an
 address/boundary completion marker after every log is applied; the marker makes restarts cheap, while
 an address or boundary change deliberately reruns the idempotent scan. Inspect
 `chainSync.referralHistoryBackfill` on `/health` for the completed range or a readiness-blocking error.

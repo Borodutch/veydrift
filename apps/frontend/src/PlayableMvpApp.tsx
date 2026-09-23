@@ -180,6 +180,8 @@ import {
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
   sendResolveFleetMissionTransaction,
+  sendRevokeDelegateTransaction,
+  sendSetDelegateTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
@@ -225,6 +227,7 @@ import {
   type SupplySourcesResponse,
   type VeydriftWalletChain,
   type WalletPlanetsResponse,
+  type WalletDelegationState,
   type WalletProviderSource,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse
@@ -1505,6 +1508,9 @@ interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   walletProviderSource?: WalletProviderSource | undefined;
   account?: string | undefined;
+  playerAccount?: string | undefined;
+  initialDelegation?: WalletDelegationState | undefined;
+  onDelegationChanged?: (() => void | Promise<void>) | undefined;
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;
   planet?: PlanetSummary | undefined;
@@ -2401,6 +2407,9 @@ export function PlayableMvpApp({
   provider: providedProvider,
   walletProviderSource: providedWalletProviderSource,
   account: providedAccount,
+  playerAccount: providedPlayerAccount,
+  initialDelegation,
+  onDelegationChanged,
   miniAppMode: providedMiniAppMode = false,
   onConnectWallet,
   planet,
@@ -2413,9 +2422,9 @@ export function PlayableMvpApp({
   const miniAppWalletConnectAttempted = useRef(false);
   const provider = providedProvider ?? miniAppProvider;
   const walletProviderSource = providedWalletProviderSource ?? (providedProvider ? "injected" : miniAppProvider ? "farcaster" : undefined);
-  const account = providedAccount ?? miniAppAccount;
+  const signerAccount = providedAccount ?? miniAppAccount;
   const miniAppMode = providedMiniAppMode || detectedMiniAppMode;
-  const isWalletConnected = Boolean(provider && account);
+  const isWalletConnected = Boolean(provider && signerAccount);
   const showMiniAppWalletError = useCallback((message: string) => {
     setMiniAppProvider(undefined);
     setMiniAppAccount(undefined);
@@ -2534,6 +2543,18 @@ export function PlayableMvpApp({
       releaseRuntime();
     };
   }, [apiBaseUrl]);
+  const delegationQuery = useBackendDataQuery<WalletDelegationState>(
+    backendData && signerAccount ? backendData.queries.delegation(signerAccount) : undefined,
+    Boolean(backendData && signerAccount),
+  );
+  const delegation = delegationQuery.snapshot?.freshness === "failed"
+    ? undefined : delegationQuery.snapshot?.data ?? initialDelegation;
+  const account = delegationQuery.snapshot?.freshness === "failed"
+    ? undefined : delegation?.main ?? providedPlayerAccount ?? signerAccount;
+  useEffect(() => {
+    if (!backendData || !signerAccount) return;
+    return backendData.startSignerDelegationSync(signerAccount);
+  }, [backendData, signerAccount]);
   const writeTransactionSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey(undefined, account));
   const [inspectRoute, setInspectRoute] = useState<InspectRoute>(initialInspectRoute);
   const page: Page = inspectRoute.kind === "page" ? inspectRoute.page
@@ -2934,6 +2955,7 @@ export function PlayableMvpApp({
   const [planetManagementAction, setPlanetManagementAction] = useState<PlanetManagementActionState>({ status: "idle" });
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
+  const [delegationAction, setDelegationAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useTransactionAction<MissionActionState>(backendData, account, "mission", undefined);
   // The shareable battle-report URL currently shown in the share dialog; null when it is closed.
   const [shareDialogUrl, setShareDialogUrl] = useState<string | null>(null);
@@ -2970,6 +2992,7 @@ export function PlayableMvpApp({
   useActionNoticeAutoDismiss(planetManagementAction, setPlanetManagementAction);
   useActionNoticeAutoDismiss(planetRenameAction, setPlanetRenameAction);
   useActionNoticeAutoDismiss(playerProfileAction, setPlayerProfileAction);
+  useActionNoticeAutoDismiss(delegationAction, setDelegationAction);
   useActionNoticeAutoDismiss(missionAction, setMissionAction);
   useActionNoticeAutoDismiss(moonAction, setMoonAction);
   const [galaxyNav, setGalaxyNav] = useState<{
@@ -3316,11 +3339,11 @@ export function PlayableMvpApp({
 
   const handleToggleWatchPlanet = useCallback(
     async (planetId: string, watched: boolean) => {
-      if (!apiBaseUrl || !account || !provider) return;
+      if (!apiBaseUrl || !signerAccount || !account || !provider) return;
       setWatchBusyPlanetId(planetId);
       setWatchedPlanetsMutationError(undefined);
       try {
-        await backendData!.setPlanetWatched(provider, account, planetId, watched);
+        await backendData!.setPlanetWatched(provider, account, planetId, watched, signerAccount);
         const nextPage = nextWatchedPlanetsPageAfterToggle({
           currentPage: watchedPlanetsPage,
           currentPagePlanetCount: watchedPlanets?.planets.length ?? 0,
@@ -3338,7 +3361,7 @@ export function PlayableMvpApp({
         setWatchBusyPlanetId(undefined);
       }
     },
-    [account, apiBaseUrl, backendData, provider, refreshWatchedPlanets, watchedPlanets?.planets.length, watchedPlanetsPage],
+    [account, apiBaseUrl, backendData, provider, refreshWatchedPlanets, signerAccount, watchedPlanets?.planets.length, watchedPlanetsPage],
   );
 
   const onChainResources = resourcesFromChain(infrastructureChainState?.resourcesAsOfNow ?? infrastructureChainState?.resources ?? null);
@@ -3368,16 +3391,16 @@ export function PlayableMvpApp({
     return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
   const gameActionInputsAvailable = currentPlanetTransactionInputsAvailable(
-    gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId))),
+    gameActionsAvailableForBody(activeBodyKind, Boolean(provider && signerAccount && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId))),
     activePlanetStateFresh,
   );
   const missionActionInputsAvailable = currentPlanetTransactionInputsAvailable(
-    Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
+    Boolean(provider && signerAccount && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
     activePlanetStateFresh,
   );
-  const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
+  const allianceActionInputsAvailable = Boolean(provider && signerAccount && account && allianceContract);
   const moonActionInputsAvailable = currentPlanetTransactionInputsAvailable(
-    Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
+    Boolean(provider && signerAccount && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId)),
     activePlanetStateFresh,
   );
 
@@ -3836,7 +3859,7 @@ export function PlayableMvpApp({
     async (key: BuildingKey) => {
       const planetSwitchRequestId = planetSwitchGate.current;
       const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
-      if (!provider || !account || !gameContract || !planetId || !apiBaseUrl) {
+      if (!provider || !signerAccount || !account || !gameContract || !planetId || !apiBaseUrl) {
         setBuildingAction({
           status: "error",
           buildingKey: key,
@@ -3890,7 +3913,7 @@ export function PlayableMvpApp({
         await runCoordinatedWriteTransaction({
           key: `building:start:${key}`,
           label,
-          send: (provider: Eip1193Provider) => sendStartBuildingUpgradeTransaction(provider, account, gameContract, planetId, building),
+          send: (provider: Eip1193Provider) => sendStartBuildingUpgradeTransaction(provider, signerAccount, gameContract, planetId, building),
           indexing: backendData!.indexing.production(account, startedExpectation.planetId, "infrastructure"),
           errorLabel: (error) => {
             const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
@@ -3928,6 +3951,7 @@ export function PlayableMvpApp({
       refreshLiveInfrastructureState,
       runtimeConfig.status,
       selectedManagedPlanet?.isHomePlanet,
+      signerAccount,
       runCoordinatedWriteTransaction,
     ],
   );
@@ -4185,7 +4209,7 @@ export function PlayableMvpApp({
   const handleConfirmBatchSupply = useCallback(
     (orders: BatchSupplyOrder[]) => {
       const target = batchSupplyTarget;
-      if (!provider || !account || !backendData || !gameContract || !target) {
+      if (!provider || !signerAccount || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
         return;
       }
@@ -4202,7 +4226,7 @@ export function PlayableMvpApp({
           const outcome = await runGalaxyTransaction(
             `Supply ${orders.length} transport${orders.length === 1 ? "" : "s"}`,
             (provider: Eip1193Provider) =>
-              sendLaunchTransportBatchTransaction(provider, account, gameContract, {
+              sendLaunchTransportBatchTransaction(provider, signerAccount, gameContract, {
                 targetPlanetId: target.planetId,
                 orders: orders.map((order) => ({
                   originPlanetId: order.originPlanetId,
@@ -4251,7 +4275,7 @@ export function PlayableMvpApp({
         }
       })();
     },
-    [account, backendData, batchSupplyTarget, gameContract, provider, runGalaxyTransaction],
+    [account, backendData, batchSupplyTarget, gameContract, provider, runGalaxyTransaction, signerAccount],
   );
 
   const runMoonTransaction = useCallback(
@@ -4271,7 +4295,7 @@ export function PlayableMvpApp({
 
   const handleBurnChickenForMoon = useCallback(
     (tokenId: string) => {
-      if (!provider || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
+      if (!provider || !signerAccount || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
         setMoonAction({
           status: "error",
           label: "Wallet, Chicken burning, or selected planet is unavailable.",
@@ -4293,7 +4317,7 @@ export function PlayableMvpApp({
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) {
             throw new Error("Chicken burn was cancelled because the selected planet changed.");
           }
-          return sendBurningChickenMoonTransaction(provider, account, chickenBurnConfig, tokenId, activePlanetId, activePlanetCoords);
+          return sendBurningChickenMoonTransaction(provider, signerAccount, chickenBurnConfig, tokenId, activePlanetId, activePlanetCoords);
         },
         indexing: backendData!.indexing.moonExists(account, activePlanetId),
         onErrorRefresh: async () => {
@@ -4305,13 +4329,13 @@ export function PlayableMvpApp({
         },
       });
     },
-    [account, activePlanetId, activePlanetCoords, apiBaseUrl, chickenBurnConfig, gameWalletChain, provider, refreshOnChainState, runCoordinatedWriteTransaction],
+    [account, activePlanetId, activePlanetCoords, apiBaseUrl, chickenBurnConfig, gameWalletChain, provider, refreshOnChainState, runCoordinatedWriteTransaction, signerAccount],
   );
 
   const handleBuildShip = useCallback(
     (shipId: number, _key: ShipKey, quantity: number) => {
       const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
-      if (!provider || !account || !gameContract || !planetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !planetId) {
         setShipyardAction({
           status: "error",
           label: "Wallet, game connection, or home planet is unavailable.",
@@ -4323,16 +4347,16 @@ export function PlayableMvpApp({
       void runShipyardTransaction(
         "Ship production",
         `shipyard:start:${shipId}`,
-        (provider: Eip1193Provider) => sendStartShipProductionTransaction(provider, account, gameContract, planetId, shipId, quantity),
+        (provider: Eip1193Provider) => sendStartShipProductionTransaction(provider, signerAccount, gameContract, planetId, shipId, quantity),
         backendData!.indexing.production(account, planetId, "shipyard"),
       );
     },
-    [account, activeShipyardProductionQueue, gameContract, provider, backendData, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId, shipyardState?.resourceSnapshot],
+    [account, activeShipyardProductionQueue, gameContract, provider, backendData, runShipyardTransaction, shipyardState?.homePlanetId, shipyardState?.planetId, shipyardState?.resourceSnapshot, signerAccount],
   );
 
   const handleBuildDefense = useCallback(
     (defenseId: number, _key: DefenseKey, quantity: number) => {
-      if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !defenseState?.homePlanetId) {
         setDefenseAction({
           status: "error",
           label: "Wallet, game connection, or home planet is unavailable.",
@@ -4345,16 +4369,16 @@ export function PlayableMvpApp({
       void runDefenseTransaction(
         "Defense production",
         `defense:start:${defenseId}`,
-        (provider: Eip1193Provider) => sendStartDefenseProductionTransaction(provider, account, gameContract, planetId, defenseId, quantity),
+        (provider: Eip1193Provider) => sendStartDefenseProductionTransaction(provider, signerAccount, gameContract, planetId, defenseId, quantity),
         backendData!.indexing.production(account, planetId, "defenses"),
       );
     },
-    [account, defenseState?.homePlanetId, defenseState?.queue, defenseState?.resourceSnapshot, gameContract, provider, backendData, runDefenseTransaction],
+    [account, defenseState?.homePlanetId, defenseState?.queue, defenseState?.resourceSnapshot, gameContract, provider, backendData, runDefenseTransaction, signerAccount],
   );
 
   const handleCreateAlliance = useCallback(
     (tag: string, name: string, description: string) => {
-      if (!provider || !account || !allianceContract) {
+      if (!provider || !signerAccount || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4364,16 +4388,16 @@ export function PlayableMvpApp({
 
       void runAllianceTransaction(
         "Alliance creation",
-        (provider: Eip1193Provider) => sendCreateAllianceTransaction(provider, account, allianceContract, tag, name, description),
+        (provider: Eip1193Provider) => sendCreateAllianceTransaction(provider, signerAccount, allianceContract, tag, name, description),
         backendData!.indexing.alliance(account),
       );
     },
-    [account, allianceContract, backendData, provider, runAllianceTransaction],
+    [account, allianceContract, backendData, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleInviteAllianceMember = useCallback(
     (playerAddress: string) => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4381,14 +4405,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance invite", (provider: Eip1193Provider) => sendAllianceInviteTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddress));
+      void runAllianceTransaction("Alliance invite", (provider: Eip1193Provider) => sendAllianceInviteTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddress));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleBuyPaidAllianceInvite = useCallback(
     (secret: string) => {
-      if (!provider || !account || !paidAllianceInviteContract || !apiBaseUrl || !canPurchasePaidInvites) {
+      if (!provider || !signerAccount || !account || !paidAllianceInviteContract || !apiBaseUrl || !canPurchasePaidInvites) {
         setAllianceAction({
           status: "error",
           label: "Private alliance invitations are currently unavailable.",
@@ -4397,23 +4421,23 @@ export function PlayableMvpApp({
       }
       void runAllianceTransaction(
         "Paid alliance invite purchase",
-        (provider: Eip1193Provider) => sendBuyPaidAllianceInviteTransaction(provider, account, paidAllianceInviteContract, paidAllianceInviteCommitment(secret), PAID_ALLIANCE_INVITE_PRICE_WEI),
-        backendData!.indexing.paidAllianceInvite(account, provider, secret),
+        (provider: Eip1193Provider) => sendBuyPaidAllianceInviteTransaction(provider, signerAccount, paidAllianceInviteContract, paidAllianceInviteCommitment(secret), PAID_ALLIANCE_INVITE_PRICE_WEI),
+        backendData!.indexing.paidAllianceInvite(account, provider, secret, signerAccount),
       );
     },
-    [account, apiBaseUrl, paidAllianceInviteContract, provider, backendData, runAllianceTransaction, canPurchasePaidInvites],
+    [account, apiBaseUrl, paidAllianceInviteContract, provider, backendData, runAllianceTransaction, canPurchasePaidInvites, signerAccount],
   );
 
   const handleRecoverPaidAllianceInvites = useCallback(async () => {
-    if (!provider || !account || !apiBaseUrl || !canRecoverPaidInvites) return null;
-    const invites = await backendData!.recoverPaidAllianceInvites(account, provider);
+    if (!provider || !signerAccount || !account || !apiBaseUrl || !canRecoverPaidInvites) return null;
+    const invites = await backendData!.recoverPaidAllianceInvites(account, provider, signerAccount);
     const links = invites.map((invite) => paidAllianceInviteLink(invite.secret, window.location.origin));
     return links.length ? links.join("\n") : null;
-  }, [account, apiBaseUrl, backendData, provider, canRecoverPaidInvites]);
+  }, [account, apiBaseUrl, backendData, provider, canRecoverPaidInvites, signerAccount]);
 
   const handleWithdrawPaidAllianceBonus = useCallback(
     (amount: PaidAllianceBonusAmount) => {
-      if (!provider || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !allianceState.profile?.bonusBalance || allianceError || !activePlanetId) {
+      if (!provider || !signerAccount || !account || !paidAllianceInviteContract || !allianceState?.membership.allianceId || !allianceState.profile?.bonusBalance || allianceError || !activePlanetId) {
         setAllianceAction({
           status: "error",
           label: "Alliance treasury is currently unavailable.",
@@ -4430,17 +4454,17 @@ export function PlayableMvpApp({
       }
       void runAllianceTransaction(
         "Alliance production treasury withdrawal",
-        (provider: Eip1193Provider) => sendWithdrawPaidAllianceBonusTransaction(provider, account, paidAllianceInviteContract, allianceState.membership.allianceId, activePlanetId, amount),
+        (provider: Eip1193Provider) => sendWithdrawPaidAllianceBonusTransaction(provider, signerAccount, paidAllianceInviteContract, allianceState.membership.allianceId, activePlanetId, amount),
         undefined,
         activePlanetId,
       );
     },
-    [account, activePlanetId, allianceState?.membership.allianceId, allianceState?.profile?.bonusBalance, allianceError, infrastructureChainState?.buildings, paidAllianceInviteContract, provider, runAllianceTransaction],
+    [account, activePlanetId, allianceState?.membership.allianceId, allianceState?.profile?.bonusBalance, allianceError, infrastructureChainState?.buildings, paidAllianceInviteContract, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleUpdateAllianceProfile = useCallback(
     (tag: string, name: string, description: string) => {
-      if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4451,16 +4475,16 @@ export function PlayableMvpApp({
       const allianceId = allianceState.membership.allianceId;
       void runAllianceTransaction(
         "Alliance profile update",
-        (provider: Eip1193Provider) => sendAllianceProfileTransaction(provider, account, allianceContract, allianceId, tag, name, description),
+        (provider: Eip1193Provider) => sendAllianceProfileTransaction(provider, signerAccount, allianceContract, allianceId, tag, name, description),
         backendData!.indexing.alliance(account),
       );
     },
-    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction],
+    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleAcceptAllianceInvite = useCallback(
     (allianceId: string) => {
-      if (!provider || !account || !apiBaseUrl || !allianceContract) {
+      if (!provider || !signerAccount || !account || !apiBaseUrl || !allianceContract) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4494,7 +4518,7 @@ export function PlayableMvpApp({
             return;
           }
 
-          return runAllianceTransaction("Alliance invite acceptance", (provider: Eip1193Provider) => sendAcceptAllianceInviteTransaction(provider, account, allianceContract, invite.allianceId));
+          return runAllianceTransaction("Alliance invite acceptance", (provider: Eip1193Provider) => sendAcceptAllianceInviteTransaction(provider, signerAccount, allianceContract, invite.allianceId));
         })
         .catch((error) => {
           console.error(error);
@@ -4504,12 +4528,12 @@ export function PlayableMvpApp({
           });
         });
     },
-    [account, apiBaseUrl, allianceContract, provider, runAllianceTransaction],
+    [account, apiBaseUrl, allianceContract, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleRequestAllianceJoin = useCallback(
     (allianceId: string) => {
-      if (!provider || !account || !allianceContract) {
+      if (!provider || !signerAccount || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4517,14 +4541,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance join request", (provider: Eip1193Provider) => sendAllianceJoinRequestTransaction(provider, account, allianceContract, allianceId));
+      void runAllianceTransaction("Alliance join request", (provider: Eip1193Provider) => sendAllianceJoinRequestTransaction(provider, signerAccount, allianceContract, allianceId));
     },
-    [account, allianceContract, provider, runAllianceTransaction],
+    [account, allianceContract, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleCancelAllianceJoinRequest = useCallback(
     (allianceId: string) => {
-      if (!provider || !account || !allianceContract) {
+      if (!provider || !signerAccount || !account || !allianceContract) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4532,14 +4556,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance join request cancellation", (provider: Eip1193Provider) => sendCancelAllianceJoinRequestTransaction(provider, account, allianceContract, allianceId));
+      void runAllianceTransaction("Alliance join request cancellation", (provider: Eip1193Provider) => sendCancelAllianceJoinRequestTransaction(provider, signerAccount, allianceContract, allianceId));
     },
-    [account, allianceContract, provider, runAllianceTransaction],
+    [account, allianceContract, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleApproveAllianceJoinRequest = useCallback(
     (playerAddress: string) => {
-      if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4576,7 +4600,7 @@ export function PlayableMvpApp({
 
           return runAllianceTransaction(
             "Alliance join approval",
-            (provider: Eip1193Provider) => sendApproveAllianceJoinRequestTransaction(provider, account, allianceContract, next.membership.allianceId, playerAddress),
+            (provider: Eip1193Provider) => sendApproveAllianceJoinRequestTransaction(provider, signerAccount, allianceContract, next.membership.allianceId, playerAddress),
             backendData!.indexing.alliance(account),
           );
         })
@@ -4588,12 +4612,12 @@ export function PlayableMvpApp({
           });
         });
     },
-    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction],
+    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleDismissAllianceJoinRequest = useCallback(
     (playerAddress: string) => {
-      if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4630,7 +4654,7 @@ export function PlayableMvpApp({
 
           return runAllianceTransaction(
             "Alliance application dismissal",
-            (provider: Eip1193Provider) => sendDismissAllianceJoinRequestTransaction(provider, account, allianceContract, next.membership.allianceId, playerAddress),
+            (provider: Eip1193Provider) => sendDismissAllianceJoinRequestTransaction(provider, signerAccount, allianceContract, next.membership.allianceId, playerAddress),
             backendData!.indexing.alliance(account),
           );
         })
@@ -4642,12 +4666,12 @@ export function PlayableMvpApp({
           });
         });
     },
-    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction],
+    [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, backendData, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleKickAllianceMember = useCallback(
     (playerAddress: string) => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4655,14 +4679,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance roster removal", (provider: Eip1193Provider) => sendAllianceKickTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddress));
+      void runAllianceTransaction("Alliance roster removal", (provider: Eip1193Provider) => sendAllianceKickTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddress));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleBatchKickAllianceMembers = useCallback(
     (playerAddresses: string[]) => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4677,13 +4701,13 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance batch roster removal", (provider: Eip1193Provider) => sendAllianceBatchKickTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddresses));
+      void runAllianceTransaction("Alliance batch roster removal", (provider: Eip1193Provider) => sendAllianceBatchKickTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddresses));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleLeaveAlliance = useCallback(() => {
-    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+    if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({
         status: "error",
         label: "Alliance actions are unavailable.",
@@ -4692,12 +4716,12 @@ export function PlayableMvpApp({
     }
 
     const label = allianceState.membership.role === "owner" ? "Alliance deletion" : "Alliance leave";
-    void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceLeaveTransaction(provider, account, allianceContract));
-  }, [account, allianceContract, allianceState?.membership.allianceId, allianceState?.membership.role, provider, runAllianceTransaction]);
+    void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceLeaveTransaction(provider, signerAccount, allianceContract));
+  }, [account, allianceContract, allianceState?.membership.allianceId, allianceState?.membership.role, provider, runAllianceTransaction, signerAccount]);
 
   const handleSetAllianceRole = useCallback(
     (playerAddress: string, role: "member" | "officer") => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4705,14 +4729,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runAllianceTransaction("Alliance role update", (provider: Eip1193Provider) => sendAllianceRoleTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddress, role));
+      void runAllianceTransaction("Alliance role update", (provider: Eip1193Provider) => sendAllianceRoleTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddress, role));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleBatchSetAllianceRole = useCallback(
     (playerAddresses: string[], role: "member" | "officer") => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4728,14 +4752,14 @@ export function PlayableMvpApp({
       }
 
       const label = role === "officer" ? "Alliance batch officer promotion" : "Alliance batch member demotion";
-      void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceBatchRoleTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddresses, role));
+      void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceBatchRoleTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddresses, role));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleSetAllianceDiplomacy = useCallback(
     (otherAllianceId: string, status: "none" | "ally" | "non_aggression_pact" | "war") => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4744,14 +4768,14 @@ export function PlayableMvpApp({
       }
 
       const label = status === "war" ? "Alliance war declaration" : "Alliance diplomacy update";
-      void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceDiplomacyTransaction(provider, account, allianceContract, allianceState.membership.allianceId, otherAllianceId, status));
+      void runAllianceTransaction(label, (provider: Eip1193Provider) => sendAllianceDiplomacyTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, otherAllianceId, status));
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleTransferAllianceOwnership = useCallback(
     (playerAddress: string) => {
-      if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      if (!provider || !signerAccount || !account || !allianceContract || !allianceState?.membership.allianceId) {
         setAllianceAction({
           status: "error",
           label: "Alliance actions are unavailable.",
@@ -4760,15 +4784,15 @@ export function PlayableMvpApp({
       }
 
       void runAllianceTransaction("Alliance ownership transfer", (provider: Eip1193Provider) =>
-        sendAllianceTransferOwnershipTransaction(provider, account, allianceContract, allianceState.membership.allianceId, playerAddress),
+        sendAllianceTransferOwnershipTransaction(provider, signerAccount, allianceContract, allianceState.membership.allianceId, playerAddress),
       );
     },
-    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction],
+    [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction, signerAccount],
   );
 
   const handleResearch = useCallback(
     (technologyId: number, key: ResearchKey) => {
-      if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
         setResearchAction({
           status: "error",
           label: "Wallet, game connection, or home planet is unavailable.",
@@ -4812,7 +4836,7 @@ export function PlayableMvpApp({
 
           void runResearchTransaction(
             researchStartTransactionLabel(technologyId, key, latestResearchState),
-            (provider: Eip1193Provider) => sendStartResearchTransaction(provider, account, gameContract, transactionPlanetId, technologyId),
+            (provider: Eip1193Provider) => sendStartResearchTransaction(provider, signerAccount, gameContract, transactionPlanetId, technologyId),
             backendData!.indexing.production(account, transactionPlanetId, "research"),
           );
         })
@@ -4825,12 +4849,12 @@ export function PlayableMvpApp({
           });
         });
     },
-    [account, activePlanetId, apiBaseUrl, gameContract, effectiveResearchState, provider, backendData, runResearchTransaction],
+    [account, activePlanetId, apiBaseUrl, gameContract, effectiveResearchState, provider, backendData, runResearchTransaction, signerAccount],
   );
 
   const handleApproveRiftResource = useCallback(
     (resource: RiftResourceState, amount: string) => {
-      if (!provider || !account || !gameContract || !resource.tokenAddress) {
+      if (!provider || !signerAccount || !account || !gameContract || !resource.tokenAddress) {
         setRiftAction({
           status: "error",
           label: "Wallet, game connection, or resource token is unavailable.",
@@ -4849,14 +4873,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runRiftTransaction(`${resource.label} approval`, (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, account, resource.tokenAddress ?? "", gameContract, parsed));
+      void runRiftTransaction(`${resource.label} approval`, (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, signerAccount, resource.tokenAddress ?? "", gameContract, parsed));
     },
-    [account, gameContract, provider, runRiftTransaction],
+    [account, gameContract, provider, runRiftTransaction, signerAccount],
   );
 
   const handleDepositRiftResource = useCallback(
     (resource: RiftResourceState, amount: string) => {
-      if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
           label: playerNotice(riftState?.unavailableReason) ?? "Rift Stabilizer is unavailable.",
@@ -4876,17 +4900,17 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runRiftTransaction(`${resource.label} deposit`, (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, account, gameContract, homePlanetId, resource.resourceId, parsed), {
+      void runRiftTransaction(`${resource.label} deposit`, (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, parsed), {
         bodyKind: "planet",
         planetId: homePlanetId,
       });
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction, signerAccount],
   );
 
   const handleRequestRiftWithdrawal = useCallback(
     (resource: RiftResourceState, amount: string) => {
-      if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
           label: playerNotice(riftState?.unavailableReason) ?? "Rift Stabilizer is unavailable.",
@@ -4906,18 +4930,18 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runRiftTransaction(`${resource.label} extraction start`, (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, account, gameContract, homePlanetId, resource.resourceId, parsed), {
+      void runRiftTransaction(`${resource.label} extraction start`, (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, parsed), {
         bodyKind: "planet",
         planetId: homePlanetId,
       });
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction, signerAccount],
   );
 
   const handleFinishRiftWithdrawal = useCallback(
     (withdrawal: PendingWithdrawal) => {
       const resource = riftState?.resources.find((item) => item.key === withdrawal.resource);
-      if (!provider || !account || !gameContract || !resource) {
+      if (!provider || !signerAccount || !account || !gameContract || !resource) {
         setRiftAction({
           status: "error",
           label: "Wallet, game connection, or withdrawal resource is unavailable.",
@@ -4926,7 +4950,7 @@ export function PlayableMvpApp({
       }
 
       if (withdrawal.kind === "legacyMarketWithdrawal") {
-        void runRiftTransaction(`${resource.label} legacy withdrawal finalization`, (provider: Eip1193Provider) => sendFinishResourceWithdrawalTransaction(provider, account, gameContract, resource.resourceId));
+        void runRiftTransaction(`${resource.label} legacy withdrawal finalization`, (provider: Eip1193Provider) => sendFinishResourceWithdrawalTransaction(provider, signerAccount, gameContract, resource.resourceId));
         return;
       }
 
@@ -4938,9 +4962,9 @@ export function PlayableMvpApp({
         });
         return;
       }
-      void runRiftTransaction(`${resource.label} extraction finalization`, (provider: Eip1193Provider) => sendFinalizeRiftExtractionTransaction(provider, account, gameContract, riftPlanetId, resource.resourceId));
+      void runRiftTransaction(`${resource.label} extraction finalization`, (provider: Eip1193Provider) => sendFinalizeRiftExtractionTransaction(provider, signerAccount, gameContract, riftPlanetId, resource.resourceId));
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.resources, runRiftTransaction],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.resources, runRiftTransaction, signerAccount],
   );
 
   const handleSelectManagedPlanet = useCallback(
@@ -4988,7 +5012,7 @@ export function PlayableMvpApp({
 
   const handleRenamePlanet = useCallback(
     (name: string) => {
-      if (!provider || !account || !gameContract || !activePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !activePlanetId) {
         setPlanetRenameAction({
           status: "error",
           label: "Wallet, game connection, or planet is unavailable.",
@@ -5002,7 +5026,7 @@ export function PlayableMvpApp({
       void runCoordinatedWriteTransaction({
         key: "planet:rename",
         label: "Planet rename",
-        send: (provider: Eip1193Provider) => sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName),
+        send: (provider: Eip1193Provider) => sendRenamePlanetTransaction(provider, signerAccount, gameContract, activePlanetId, trimmedName),
         indexing: backendData!.indexing.planetRename(account),
         errorLabel: (error) => (error instanceof Error ? error.message : "Rename transaction failed."),
         onStateChange: (state) => {
@@ -5011,12 +5035,12 @@ export function PlayableMvpApp({
         },
       });
     },
-    [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction],
+    [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction, signerAccount],
   );
 
   const handleUpdatePlayerProfile = useCallback(
     (displayName: string, description: string | null) => {
-      if (!provider || !account || !apiBaseUrl) {
+      if (!provider || !signerAccount || !account || !apiBaseUrl) {
         setPlayerProfileAction({
           status: "error",
           label: "Wallet or game connection is unavailable.",
@@ -5030,7 +5054,7 @@ export function PlayableMvpApp({
           label: "Waiting for wallet signature",
         });
         try {
-          await backendData!.savePlayerProfile(provider, account, displayName, description);
+          await backendData!.savePlayerProfile(provider, account, displayName, description, signerAccount);
 
           try {
             await backendData!.profile(account);
@@ -5053,11 +5077,63 @@ export function PlayableMvpApp({
         }
       });
     },
-    [account, apiBaseUrl, backendData, page, provider, refreshAllianceState, runGatedTransaction],
+    [account, apiBaseUrl, backendData, page, provider, refreshAllianceState, runGatedTransaction, signerAccount],
   );
 
+  const refreshDelegation = useCallback(async () => {
+    await delegationQuery.refetch();
+    await onDelegationChanged?.();
+  }, [delegationQuery.refetch, onDelegationChanged]);
+
+  const handleSetDelegate = useCallback(async (delegateAddress: string) => {
+    const delegate = delegateAddress.trim();
+    if (!provider || !signerAccount || !account || !gameContract || signerAccount.toLowerCase() !== account.toLowerCase()) {
+      setDelegationAction({ status: "error", label: "Only the main wallet can set its delegate." });
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(delegate)) {
+      setDelegationAction({ status: "error", label: "Enter a valid delegate wallet address." });
+      return;
+    }
+    if (delegate.toLowerCase() === account.toLowerCase()) {
+      setDelegationAction({ status: "error", label: "The main wallet cannot delegate to itself." });
+      return;
+    }
+    try {
+      await runCoordinatedWriteTransaction({
+        key: "wallet-delegation:set",
+        label: delegation?.delegate ? "Replace wallet delegate" : "Set wallet delegate",
+        send: walletProvider => sendSetDelegateTransaction(walletProvider, signerAccount, gameContract, delegate),
+        invalidateTags: [`wallet:${account.toLowerCase()}`],
+        onStateChange: state => setDelegationAction(transactionActionNotice(state)),
+      });
+      await refreshDelegation();
+    } catch (error) {
+      setDelegationAction({ status: "error", label: walletRequestErrorMessage(error) });
+    }
+  }, [account, delegation?.delegate, gameContract, provider, refreshDelegation, runCoordinatedWriteTransaction, signerAccount]);
+
+  const handleRevokeDelegate = useCallback(async () => {
+    if (!provider || !signerAccount || !account || !gameContract || !delegation?.delegate) {
+      setDelegationAction({ status: "error", label: "No wallet delegate is available to revoke." });
+      return;
+    }
+    try {
+      await runCoordinatedWriteTransaction({
+        key: "wallet-delegation:revoke",
+        label: "Revoke wallet delegate",
+        send: walletProvider => sendRevokeDelegateTransaction(walletProvider, signerAccount, gameContract),
+        invalidateTags: [`wallet:${account.toLowerCase()}`],
+        onStateChange: state => setDelegationAction(transactionActionNotice(state)),
+      });
+      await refreshDelegation();
+    } catch (error) {
+      setDelegationAction({ status: "error", label: walletRequestErrorMessage(error) });
+    }
+  }, [account, delegation?.delegate, gameContract, provider, refreshDelegation, runCoordinatedWriteTransaction, signerAccount]);
+
   const handleAbandonPlanet = useCallback(() => {
-    if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
+    if (!provider || !signerAccount || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
       setPlanetManagementAction({
         status: "error",
         label: "Only non-home colonies can be abandoned.",
@@ -5071,7 +5147,7 @@ export function PlayableMvpApp({
     void runCoordinatedWriteTransaction({
       key: "planet:abandon",
       label: "Colony abandon",
-      send: (provider: Eip1193Provider) => sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId),
+      send: (provider: Eip1193Provider) => sendAbandonPlanetTransaction(provider, signerAccount, gameContract, activePlanetId),
       indexing: backendData!.indexing.planetAbsent(account),
       errorLabel: (error) => (error instanceof Error ? error.message : "Abandon transaction failed."),
       onStateChange: (state) => {
@@ -5079,7 +5155,7 @@ export function PlayableMvpApp({
         setPlanetManagementAction(transactionActionNotice(state));
       },
     });
-  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction, selectedManagedPlanet]);
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction, selectedManagedPlanet, signerAccount]);
 
   const missionComposerRefreshKey = pendingGalaxyMission
     ? `${pendingGalaxyMission.originPlanet?.planetId ?? activePlanetId ?? "unknown"}:${pendingGalaxyMission.bodySelectionDefaults?.originIsMoon === true ? "moon" : "planet"}`
@@ -5384,7 +5460,7 @@ export function PlayableMvpApp({
       const { action, target, coords } = pending;
       const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet;
       const originPlanetId = missionOriginPlanet?.planetId ?? activePlanetId ?? onChainSettlement?.homePlanetId;
-      if (!provider || !account || !gameContract || !originPlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
           label: "Wallet, game connection, or origin planet is unavailable.",
@@ -5487,7 +5563,7 @@ export function PlayableMvpApp({
         closeMissionCreationWhenComplete(
           runGalaxyTransaction(
             "Colony mission",
-            (provider: Eip1193Provider) => sendCreateColonyTransaction(provider, account, gameContract, originPlanetId, coords.galaxy, coords.system, coords.position, draft.speedPercent),
+            (provider: Eip1193Provider) => sendCreateColonyTransaction(provider, signerAccount, gameContract, originPlanetId, coords.galaxy, coords.system, coords.position, draft.speedPercent),
             pendingLaunchOptions({
               missionType: "Colonize",
               targetPlanetId: encodeColonizationTargetId(coords.galaxy, coords.system, coords.position),
@@ -5512,7 +5588,7 @@ export function PlayableMvpApp({
         closeMissionCreationWhenComplete(
           runGalaxyTransaction(
             "Missile attack",
-            (provider: Eip1193Provider) => sendLaunchInterplanetaryMissileAttackTransaction(provider, account, gameContract, {
+            (provider: Eip1193Provider) => sendLaunchInterplanetaryMissileAttackTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 targetPlanetId,
                 primaryTargetId: draft.primaryTargetId ?? action.primaryTargetId,
@@ -5538,7 +5614,7 @@ export function PlayableMvpApp({
           runGalaxyTransaction(
             "Stationed defense",
             (provider: Eip1193Provider) =>
-              sendLaunchDefenseHoldTransaction(provider, account, gameContract, {
+              sendLaunchDefenseHoldTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 targetPlanetId,
                 ships: draft.ships,
@@ -5576,7 +5652,7 @@ export function PlayableMvpApp({
         };
         const launchAttack = (provider: Eip1193Provider) =>
           originIsMoon || targetIsMoon
-            ? sendLaunchBodyAttackMissionTransaction(provider, account, gameContract, {
+            ? sendLaunchBodyAttackMissionTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 targetPlanetId,
                 ships: draft.ships,
@@ -5585,7 +5661,7 @@ export function PlayableMvpApp({
                 targetIsMoon,
                 lootRatio,
               })
-            : sendLaunchAttackMissionTransaction(provider, account, gameContract, {
+            : sendLaunchAttackMissionTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 targetPlanetId,
                 ships: draft.ships,
@@ -5632,12 +5708,12 @@ export function PlayableMvpApp({
           `${action.label} mission`,
           (provider: Eip1193Provider) =>
             originIsMoon || targetIsMoon
-              ? sendLaunchBodyFleetMissionTransaction(provider, account, gameContract, {
+              ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
                   ...launchParams,
                   originIsMoon,
                   targetIsMoon,
                 })
-              : sendLaunchFleetMissionTransaction(provider, account, gameContract, launchParams),
+              : sendLaunchFleetMissionTransaction(provider, signerAccount, gameContract, launchParams),
           pendingLaunchOptions({
             cargo,
             missionType: backendMissionTypeLabel(action.mission),
@@ -5671,13 +5747,14 @@ export function PlayableMvpApp({
       moonState,
       missionResourcesForOrigin,
       moonAttackParityEnabled,
+      signerAccount,
       walletPlanets.length,
     ],
   );
 
   const handleStartMoonBuilding = useCallback(
     (buildingId: number, label: string) => {
-      if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
           label: "Wallet, moon connection, or home planet is unavailable.",
@@ -5685,17 +5762,17 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runMoonTransaction(`Start ${label}`, (provider: Eip1193Provider) => sendStartMoonBuildingUpgradeTransaction(provider, account, moonContract, moonState.homePlanetId ?? "", buildingId), {
+      void runMoonTransaction(`Start ${label}`, (provider: Eip1193Provider) => sendStartMoonBuildingUpgradeTransaction(provider, signerAccount, moonContract, moonState.homePlanetId ?? "", buildingId), {
         bodyKind: "moon",
         planetId: moonState.homePlanetId,
       });
     },
-    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction],
+    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction, signerAccount],
   );
 
   const handleStartMoonDefense = useCallback(
     (defenseId: number, label: string, quantity: number) => {
-      if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
           label: "Wallet, moon connection, or home planet is unavailable.",
@@ -5703,17 +5780,17 @@ export function PlayableMvpApp({
         return;
       }
 
-      void runMoonTransaction(`Build ${label}`, (provider: Eip1193Provider) => sendStartMoonDefenseProductionTransaction(provider, account, moonContract, moonState.homePlanetId ?? "", defenseId, quantity), {
+      void runMoonTransaction(`Build ${label}`, (provider: Eip1193Provider) => sendStartMoonDefenseProductionTransaction(provider, signerAccount, moonContract, moonState.homePlanetId ?? "", defenseId, quantity), {
         bodyKind: "moon",
         planetId: moonState.homePlanetId,
       });
     },
-    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction],
+    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction, signerAccount],
   );
 
   const handleJumpGate = useCallback(
     (destinationPlanetId: string, ships?: Partial<MissionShips>) => {
-      if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) {
         setMoonAction({
           status: "error",
           label: "Wallet, moon connection, or home planet is unavailable.",
@@ -5728,14 +5805,14 @@ export function PlayableMvpApp({
           }
         : undefined;
       const transferShips = manifest && Object.values(manifest).some((quantity) => quantity > 0) ? manifest : undefined;
-      void runMoonTransaction("Jump Gate transfer", (provider: Eip1193Provider) => sendJumpGateJumpTransaction(provider, account, moonContract, moonState.homePlanetId ?? "", destinationPlanetId, transferShips));
+      void runMoonTransaction("Jump Gate transfer", (provider: Eip1193Provider) => sendJumpGateJumpTransaction(provider, signerAccount, moonContract, moonState.homePlanetId ?? "", destinationPlanetId, transferShips));
     },
-    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction],
+    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction, signerAccount],
   );
 
   const runMissionTransaction = useCallback(
     (label: string, request: (provider: Eip1193Provider) => Promise<string>, resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">) => {
-      if (!provider || !account || !gameContract) {
+      if (!provider || !signerAccount || !account || !gameContract) {
         setMissionAction({
           status: "error",
           label: "Wallet or game connection is unavailable.",
@@ -5758,12 +5835,12 @@ export function PlayableMvpApp({
         errorLabel: (error) => (error instanceof Error ? error.message : `${label} transaction failed.`),
       });
     },
-    [account, gameContract, provider, runCoordinatedWriteTransaction],
+    [account, gameContract, provider, runCoordinatedWriteTransaction, signerAccount],
   );
 
   const handleRecallMission = useCallback(
     (missionId: string) => {
-      if (!provider || !account || !gameContract) {
+      if (!provider || !signerAccount || !account || !gameContract) {
         setMissionAction({
           status: "error",
           label: "Wallet or game connection is unavailable.",
@@ -5774,7 +5851,7 @@ export function PlayableMvpApp({
       const mission = [...(displayFleetVisibility?.outgoing ?? []), ...(displayFleetVisibility?.returning ?? [])].find((candidate) => candidate.missionId === missionId);
       runMissionTransaction(
         `Recall mission #${missionId}`,
-        (provider: Eip1193Provider) => sendRecallFleetMissionTransaction(provider, account, gameContract, missionId),
+        (provider: Eip1193Provider) => sendRecallFleetMissionTransaction(provider, signerAccount, gameContract, missionId),
         mission
           ? {
               bodyKind: mission.originIsMoon ? "moon" : "planet",
@@ -5783,12 +5860,12 @@ export function PlayableMvpApp({
           : undefined,
       );
     },
-    [account, displayFleetVisibility, gameContract, provider, runMissionTransaction],
+    [account, displayFleetVisibility, gameContract, provider, runMissionTransaction, signerAccount],
   );
 
   const handleResolveMission = useCallback(
     (missionId: string, kind: ManualMissionResolutionKind) => {
-      if (!provider || !account || !gameContract) {
+      if (!provider || !signerAccount || !account || !gameContract) {
         setMissionAction({
           status: "error",
           label: "Wallet or game connection is unavailable.",
@@ -5815,11 +5892,11 @@ export function PlayableMvpApp({
       runMissionTransaction(
         `Resolve mission #${missionId}`,
         (provider: Eip1193Provider) =>
-          kind === "arrival" ? sendResolveFleetMissionTransaction(provider, account, gameContract, missionId) : sendCompleteFleetMissionReturnTransaction(provider, account, gameContract, missionId),
+          kind === "arrival" ? sendResolveFleetMissionTransaction(provider, signerAccount, gameContract, missionId) : sendCompleteFleetMissionReturnTransaction(provider, signerAccount, gameContract, missionId),
         changedBody,
       );
     },
-    [account, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, walletPlanets],
+    [account, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, signerAccount, walletPlanets],
   );
 
   // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +
@@ -5827,7 +5904,7 @@ export function PlayableMvpApp({
   // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
   const handleMissionCounterplay = useCallback(
     (mission: FleetMissionSummary, _mode: "acsDefend") => {
-      if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !onChainSettlement?.homePlanetId) {
         setMissionAction({
           status: "error",
           label: "Wallet, game connection, or home planet is unavailable.",
@@ -5860,7 +5937,7 @@ export function PlayableMvpApp({
         coordinationBlocker,
       });
     },
-    [account, allianceState, displayFleetVisibility, gameContract, onChainSettlement?.homePlanetId, provider],
+    [account, allianceState, displayFleetVisibility, gameContract, onChainSettlement?.homePlanetId, provider, signerAccount],
   );
 
   const handleConfirmAcsDefend = useCallback(
@@ -5868,7 +5945,7 @@ export function PlayableMvpApp({
       const pending = pendingAcsDefend;
       if (!pending) return;
       const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
-      if (!provider || !account || !gameContract || !originPlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
           label: "Wallet, game connection, or origin planet is unavailable.",
@@ -5895,7 +5972,7 @@ export function PlayableMvpApp({
         runGalaxyTransaction(
           "Group defense",
           (provider: Eip1193Provider) =>
-            sendLaunchFleetMissionTransaction(provider, account, gameContract, {
+            sendLaunchFleetMissionTransaction(provider, signerAccount, gameContract, {
               originPlanetId,
               targetPlanetId: pending.hostileMissionId,
               missionType: missionTypeId("acsDefend"),
@@ -5910,7 +5987,7 @@ export function PlayableMvpApp({
         ),
       );
     },
-    [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels],
+    [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels, signerAccount],
   );
 
   const handleShareMissionReport = useCallback((url: string) => {
@@ -5922,7 +5999,7 @@ export function PlayableMvpApp({
 
   const handleJoinAttack = useCallback(
     (mission: FleetMissionSummary, targetCoords: Coordinates | null) => {
-      if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !onChainSettlement?.homePlanetId) {
         setGalaxyAction({
           status: "error",
           label: "Wallet, game connection, or home planet is unavailable.",
@@ -5941,7 +6018,7 @@ export function PlayableMvpApp({
         mission,
       });
     },
-    [account, gameContract, onChainSettlement?.homePlanetId, provider],
+    [account, gameContract, onChainSettlement?.homePlanetId, provider, signerAccount],
   );
 
   const handleConfirmJoinAttack = useCallback(
@@ -5949,7 +6026,7 @@ export function PlayableMvpApp({
       const pending = pendingJoinAttack;
       if (!pending) return;
       const originPlanetId = activePlanetId ?? selectedManagedPlanet?.planetId;
-      if (!provider || !account || !gameContract || !originPlanetId) {
+      if (!provider || !signerAccount || !account || !gameContract || !originPlanetId) {
         setGalaxyAction({
           status: "error",
           label: "Wallet, game connection, or selected origin is unavailable.",
@@ -5973,7 +6050,7 @@ export function PlayableMvpApp({
         }
         const sendJoin = originIsMoon
           ? (provider: Eip1193Provider) =>
-              sendJoinBodyAttackMissionTransaction(provider, account, gameContract, {
+              sendJoinBodyAttackMissionTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 attackMissionId: pending.attackMissionId,
                 targetPlanetId: pending.targetPlanetId,
@@ -5981,7 +6058,7 @@ export function PlayableMvpApp({
                 originIsMoon: true,
               })
           : (provider: Eip1193Provider) =>
-              sendJoinAttackMissionTransaction(provider, account, gameContract, {
+              sendJoinAttackMissionTransaction(provider, signerAccount, gameContract, {
                 originPlanetId,
                 attackMissionId: pending.attackMissionId,
                 targetPlanetId: pending.targetPlanetId,
@@ -6006,7 +6083,7 @@ export function PlayableMvpApp({
         if (transactionWasSubmitted(outcome.outcome)) closeJoinAttack();
       })();
     },
-    [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, pendingJoinAttackTarget, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels],
+    [account, activePlanetId, gameContract, moonAttackParityEnabled, pendingJoinAttack, pendingJoinAttackTarget, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels, signerAccount],
   );
 
   const handleNavigate = useCallback(
@@ -6233,13 +6310,13 @@ export function PlayableMvpApp({
 
   const missionDetailShareUrl = typeof window === "undefined" || !missionDetailId ? "" : `${window.location.origin}/mission/${encodeURIComponent(missionDetailId)}`;
   const battleReportsShareUrl = typeof window === "undefined" ? "" : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
-  const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract);
+  const gameContractTransactionInputsAvailable = Boolean(provider && signerAccount && account && gameContract);
   const gameTransactionInputsAvailable =
     currentPlanetTransactionInputsAvailable(gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable), activePlanetStateFresh);
   const missionTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(gameContractTransactionInputsAvailable, activePlanetStateFresh);
-  const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
-  const moonTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && account && moonContract), activePlanetStateFresh);
-  const chickenBurnTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && account && chickenBurnConfig), activePlanetStateFresh);
+  const allianceTransactionInputsAvailable = Boolean(provider && signerAccount && account && allianceContract);
+  const moonTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && signerAccount && account && moonContract), activePlanetStateFresh);
+  const chickenBurnTransactionInputsAvailable = currentPlanetTransactionInputsAvailable(Boolean(provider && signerAccount && account && chickenBurnConfig), activePlanetStateFresh);
   const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel:
       pendingActionLabel(buildingAction, defenseAction, shipyardAction, galaxyAction, researchAction, riftAction, planetManagementAction, planetRenameAction, missionAction) ??
@@ -6268,14 +6345,14 @@ export function PlayableMvpApp({
     activeActionLabel: pendingActionLabel(moonAction) ?? writeTransactionState.label,
     inputsAvailable: moonTransactionInputsAvailable,
     transactionPending: false,
-    unavailableReason: Boolean(provider && account && moonContract) && !activePlanetStateFresh ? "Loading the selected planet's latest state." : "Wallet or moon connection unavailable.",
+    unavailableReason: Boolean(provider && signerAccount && account && moonContract) && !activePlanetStateFresh ? "Loading the selected planet's latest state." : "Wallet or moon connection unavailable.",
   });
   const canSubmitGameTransaction = gameTransactionInputsAvailable;
   const canSubmitMissionTransaction = missionTransactionInputsAvailable && !missionTransactionPending;
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !allianceTransactionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !isActionBusy(moonAction);
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !isActionBusy(moonAction);
-  const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl);
+  const canSubmitProfileMutation = Boolean(provider && signerAccount && account && apiBaseUrl);
   const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined);
   const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
   const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;
@@ -6308,7 +6385,7 @@ export function PlayableMvpApp({
       finishUnavailableReason: buildingFinishUnavailableReasonForDisplay({
         activeBuildingQueue,
         backendSyncPausedReason: infrastructureBackendSyncPausedReasonFor({ infrastructureChainState, infrastructureError }),
-        canTransact: currentPlanetTransactionInputsAvailable(Boolean(provider && account && gameContract), activePlanetStateFresh),
+        canTransact: currentPlanetTransactionInputsAvailable(Boolean(provider && signerAccount && account && gameContract), activePlanetStateFresh),
         infrastructureState: infrastructureChainState,
         isBuildingReadyToFinish: buildingCompletionReadyToFinishFlag({ fallbackBuildingQueue: activeBuildingQueue, infrastructureState: infrastructureChainState, now }),
         isDisplayedBuildingQueueReady: isBuildingQueueReadyToFinish(activeBuildingQueue, now),
@@ -6564,6 +6641,7 @@ export function PlayableMvpApp({
           onBack={handlePlanetDetailBack}
           onSelectMoon={handleSelectMoon}
           provider={provider}
+          signerAccount={signerAccount}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={missionTransactionUnavailableReason}
         />
@@ -6827,6 +6905,7 @@ export function PlayableMvpApp({
           onSetRole={handleSetAllianceRole}
           onTransferOwnership={handleTransferAllianceOwnership}
           provider={provider}
+          signerAccount={signerAccount}
         />
       );
     }
@@ -6842,6 +6921,7 @@ export function PlayableMvpApp({
           onSelectPlanet={handleSelectPlanet}
           originCoords={activePlanetCoords}
           provider={provider}
+          signerAccount={signerAccount}
           wallet={inspectedPlayerWallet}
         />
       );
@@ -7017,10 +7097,15 @@ export function PlayableMvpApp({
           onConnectWallet={effectiveConnectWallet}
           onNavigate={handleNavigate}
           onOpenActivity={() => setPlayerActivityOpen(true)}
+          onRevokeDelegate={handleRevokeDelegate}
+          onSetDelegate={handleSetDelegate}
           onUpdatePlayerProfile={handleUpdatePlayerProfile}
           planetPicker={mobilePlanetPicker}
           playerProfile={playerProfile}
           playerProfileAction={playerProfileAction}
+          delegation={delegation}
+          delegationAction={delegationAction}
+          signerAccount={signerAccount}
         />
 
         <main

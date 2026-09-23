@@ -137,6 +137,11 @@ async function main() {
       "scripts/veydrift-deployment-manifest.test.mjs",
       "scripts/veydrift-upgrade-receipt.test.mjs",
     ]);
+    await runLogged("referral-migration-manifest-test", "node", ["--test",
+      "scripts/veydrift-referral-migration-manifest.test.mjs",
+      "scripts/veydrift-referral-migration-live-shape.test.mjs",
+      "scripts/veydrift-referral-migration-repeat.test.mjs",
+    ]);
     await runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     await runLogged("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {

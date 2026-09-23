@@ -10,6 +10,8 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 interface IVeydriftMigrationGame {
+    function effectivePlayer(address actor) external view returns (address);
+
     function reserveMigrationCoordinates(
         uint16[] calldata galaxies,
         uint16[] calldata systems,
@@ -60,6 +62,7 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
     error FullStateMigrationRequired();
     error MigrationReservationMissing(address player);
     error MigrationReservationClaimed(address player);
+    error MigrationDelegateUnauthorized(address actor, address player);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -145,6 +148,21 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         return _claimFor(player, statePayload, signature);
     }
 
+    /// @notice Requires the Game's current on-chain delegation; the signed full-state payload
+    /// and reservation remain bound to the main wallet rather than the transaction signer.
+    function claimForDelegate(address player, bytes calldata statePayload, bytes calldata signature)
+        external
+        payable
+        returns (bytes32 stateHash)
+    {
+        _requireCurrentDelegate(player);
+        return _claimFor(player, statePayload, signature);
+    }
+
+    function supportsDelegatedClaim() external pure returns (bool) {
+        return true;
+    }
+
     function claimWithReferral(
         bytes calldata statePayload,
         bytes calldata signature,
@@ -153,13 +171,38 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         bytes32 r,
         bytes32 s
     ) external payable returns (bytes32 stateHash) {
-        Reservation storage reservation = reservations[msg.sender];
-        stateHash = _validateClaim(msg.sender, statePayload, signature, reservation);
+        return _claimWithReferralFor(msg.sender, statePayload, signature, commitment, v, r, s);
+    }
+
+    function claimWithReferralForDelegate(
+        address player,
+        bytes calldata statePayload,
+        bytes calldata signature,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable returns (bytes32 stateHash) {
+        _requireCurrentDelegate(player);
+        return _claimWithReferralFor(player, statePayload, signature, commitment, v, r, s);
+    }
+
+    function _claimWithReferralFor(
+        address player,
+        bytes calldata statePayload,
+        bytes calldata signature,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) private returns (bytes32 stateHash) {
+        Reservation storage reservation = reservations[player];
+        stateHash = _validateClaim(player, statePayload, signature, reservation);
         reservation.claimed = true;
         game.importMigratedStateWithReferral{value: msg.value}(
-            msg.sender, statePayload, commitment, v, r, s
+            player, statePayload, commitment, v, r, s
         );
-        emit FullStateMigrationClaimed(msg.sender, stateHash);
+        emit FullStateMigrationClaimed(player, stateHash);
     }
 
     function migrationStateHash(address player, bytes calldata statePayload)
@@ -196,6 +239,15 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _requireCurrentDelegate(address player) private view {
+        if (
+            player == address(0) || msg.sender == player
+                || game.effectivePlayer(msg.sender) != player
+        ) {
+            revert MigrationDelegateUnauthorized(msg.sender, player);
+        }
+    }
 
     function _claimFor(address player, bytes calldata statePayload, bytes calldata signature)
         private

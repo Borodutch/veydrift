@@ -2,15 +2,15 @@
 pragma solidity ^0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {
     IVeydriftPaidInviteAlliance,
     VeydriftPaidAllianceInvites
 } from "../src/VeydriftPaidAllianceInvites.sol";
 
-/// @notice Deploys the paid-invite treasury and atomically registers it with the
-/// upgraded alliance proxy. Run after UpgradeAllianceSystem and before UpgradeGame;
-/// the alliance bridge safely returns a zero bonus while this system is unset.
+/// @notice First-time deployment for an Alliance proxy that has never configured a paid-invite
+/// treasury. Existing stateful deployments must use the reviewed migration flow instead.
 contract DeployPaidAllianceInvites is Script {
     function run() external returns (address paidInviteSystem) {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
@@ -21,10 +21,20 @@ contract DeployPaidAllianceInvites is Script {
         VeydriftAllianceSystem alliances = VeydriftAllianceSystem(payable(allianceProxy));
         require(alliances.owner() == broadcaster, "BROADCASTER_MUST_BE_ALLIANCE_OWNER");
         require(address(alliances.game()) != address(0), "ALLIANCE_GAME_NOT_CONFIGURED");
+        require(alliances.paidInviteSystem() == address(0), "PAID_INVITES_ALREADY_CONFIGURED");
 
         vm.startBroadcast(privateKey);
-        VeydriftPaidAllianceInvites deployed = new VeydriftPaidAllianceInvites(
-            IVeydriftPaidInviteAlliance(allianceProxy), owner, signer
+        VeydriftPaidAllianceInvites implementation = new VeydriftPaidAllianceInvites();
+        VeydriftPaidAllianceInvites deployed = VeydriftPaidAllianceInvites(
+            address(
+                new ERC1967Proxy(
+                    address(implementation),
+                    abi.encodeCall(
+                        VeydriftPaidAllianceInvites.initialize,
+                        (IVeydriftPaidInviteAlliance(allianceProxy), owner, signer)
+                    )
+                )
+            )
         );
         paidInviteSystem = address(deployed);
         alliances.setPaidInviteSystem(paidInviteSystem);

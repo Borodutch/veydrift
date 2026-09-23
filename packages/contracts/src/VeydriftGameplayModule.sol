@@ -196,7 +196,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint16 speedPercent,
         uint256 randomnessRequestId
     ) private returns (uint256 missionId) {
-        _requirePlanetOwner(originPlanetId);
+        address player = _actingPlayer();
+        _requirePlanetOwner(originPlanetId, player);
         uint256 hostileMissionId;
         bool counterplayMission =
             missionType == FleetMissionType.AcsDefend || missionType == FleetMissionType.Intercept;
@@ -218,7 +219,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert SamePlanet();
         }
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         _settleActionPlanet(originPlanetId);
@@ -230,16 +231,16 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert InvalidMissionType(missionType);
         }
         if (missionType == FleetMissionType.Attack) {
-            _enforceAttackProtection(msg.sender, targetPlanetId, false);
+            _enforceAttackProtection(player, targetPlanetId, false);
         }
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[player][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+        if (activeFleetMissionCount[player] >= fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
 
-        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(player, ships);
         if (capacity == 0) revert InvalidQuantity();
         if (missionType == FleetMissionType.Harvest) {
             if (ships.recycler == 0) revert InvalidQuantity();
@@ -249,7 +250,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _requireMissionShips(originPlanetId, ships);
 
         if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
-            _requirePlanetOwner(targetPlanetId);
+            _requirePlanetOwner(targetPlanetId, player);
         }
 
         uint256 travelDistance = originPlanetId == targetPlanetId
@@ -257,7 +258,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             ? LOCAL_HARVEST_DISTANCE
             : _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
-            _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
+            _ogameMissionFuelCost(player, ships, travelDistance, speedPercent, slowestSpeed)
         );
         uint64 departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
@@ -273,11 +274,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                     _allianceSystem
                 )
                 .counterplayDefenseFuelContext(
-                    msg.sender,
-                    targetPlanetId,
-                    hostileMissionId,
-                    ships,
-                    hostile.arrivalAt - arrivalAt
+                    player, targetPlanetId, hostileMissionId, ships, hostile.arrivalAt - arrivalAt
                 );
             if (!canCoordinate) {
                 revert InvalidQuantity();
@@ -312,11 +309,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (missionType == FleetMissionType.Attack) {
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
-        activeFleetMissionCount[msg.sender] += 1;
+        activeFleetMissionCount[player] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
             missionType: missionType,
-            owner: msg.sender,
+            owner: player,
             originPlanetId: originPlanetId,
             targetPlanetId: targetPlanetId,
             departureAt: departureAt,
@@ -332,7 +329,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (missionType == FleetMissionType.Attack) {
-            _recordAttack(msg.sender, targetPlanetId);
+            _recordAttack(player, targetPlanetId);
         } else if (counterplayMission) {
             _fleetCounterplayMissions[hostileMissionId].push(missionId);
             _trackCounterplayMissionResolution(hostileMissionId, _fleetMissions[missionId]);
@@ -340,7 +337,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         emit FleetMissionLaunched(
             missionId,
-            msg.sender,
+            player,
             missionType,
             originPlanetId,
             targetPlanetId,
@@ -393,16 +390,17 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function recallFleetMission(uint256 missionId) external {
+        address player = _actingPlayer();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.missionType == FleetMissionType.MissileAttack) {
             revert InvalidMissionType(mission.missionType);
         }
-        _requireActiveMissionOwner(mission);
+        _requireActiveMissionOwner(mission, player);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
         uint64 currentTime = _currentTimestamp();
@@ -424,10 +422,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         // OGame parity: mission fuel is paid in full at dispatch. Recalling only turns the fleet
         // around; it neither refunds fuel nor charges the origin any additional deuterium.
-        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, 0);
+        emit FleetMissionRecalled(missionId, player, mission.returnAt, 0);
         emit FleetMissionReturnExposed(
             missionId,
-            msg.sender,
+            player,
             FleetMissionStatus.Recalled,
             mission.originPlanetId,
             mission.targetPlanetId,
@@ -623,10 +621,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         emit DebrisFieldUpdated(mission.targetPlanetId, field.metal, field.crystal);
     }
 
-    function _requirePlanetOwner(uint256 planetId) private view {
+    function _requirePlanetOwner(uint256 planetId, address player) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner != player) revert NotPlanetOwner();
     }
 
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
@@ -729,14 +727,14 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         return _toUint128(total > effectiveCap ? effectiveCap : total);
     }
 
-    function _requireActiveMissionOwner(FleetMission storage mission) private view {
+    function _requireActiveMissionOwner(FleetMission storage mission, address player) private view {
         if (
             mission.status == FleetMissionStatus.None
                 || mission.status == FleetMissionStatus.Returned
         ) {
             revert FleetInactive();
         }
-        if (mission.owner != msg.sender) revert FleetNotOwner();
+        if (mission.owner != player) revert FleetNotOwner();
     }
 
     function _requireMissionShips(uint256 planetId, MissionShips memory ships) private view {

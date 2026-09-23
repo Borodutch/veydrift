@@ -732,13 +732,14 @@ describe("settlement screen mode", () => {
   test("uses backend settlement state instead of Mini App read-provider fallbacks", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
-    expect(source).toContain("referralData.queries.settlement(account)");
-    expect(source).toContain("referralData.startGameplaySync(account)");
+    expect(source).toContain("referralData.queries.settlement(playerAccount)");
+    expect(source).toContain("referralData.startGameplaySync(playerAccount)");
     expect(source).not.toContain("waitForIndexedSettledPlanet");
     expect(source).not.toContain("POST_SETTLEMENT_READ_ATTEMPTS");
     expect(source).not.toContain("POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE");
     expect(source).toContain("queries.settlementFundingProjection(");
-    expect(source).toContain("settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)");
+    expect(source).toContain("settlementTransactionOptions(funding, playerAccount, redemptions.referral, redemptions.allianceInvite)");
+    expect(source).toContain("settlementFundingProjection(playerAccount, provider, settlementConfig.migrationAddress, currentChainId.current, account)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
     expect(source).not.toContain("isUnsupportedProviderMethodError(error)");

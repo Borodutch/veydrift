@@ -34,6 +34,7 @@ import {
   fetchSupplySources,
   fetchSystemData,
   fetchWalletOverviewSnapshot,
+  fetchWalletDelegation,
   fetchWalletPlanets,
   fetchWalletQueues,
   fetchWalletSettlement,
@@ -47,6 +48,7 @@ import {
   persistReferralClaimIntent,
   playerActivityPresenceUrl,
   readMigrationReservation,
+  readMigrationDelegatedClaimSupport,
   readWalletNativeBalance,
   recordPlayerActivityPresence,
   recordReferralClaimTransaction,
@@ -98,6 +100,7 @@ import {
   type SignedMetadataOptions,
   type WalletReadOptions,
   type WalletOverviewSnapshotResponse,
+  type WalletDelegationState,
   type WalletPlanetsResponse,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse,
@@ -183,9 +186,12 @@ function settlementFundingWithMigrationReservation(
   const migrationReservation = (chainReservation ?? funding.migrationReservation ?? null)?.claimed
     ? null
     : (chainReservation ?? funding.migrationReservation ?? null);
-  const activeMigration = Boolean(migrationReservation?.exists && !migrationReservation.claimed && migrationAddress);
+  const reserved = Boolean(migrationReservation?.exists && !migrationReservation.claimed);
+  const activeMigration = reserved && Boolean(migrationAddress);
   const migrationClaim = activeMigration ? (funding.migrationClaim ?? null) : null;
-  const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Your reserved planet is not ready to claim yet. Please try again later." : undefined);
+  const unavailableReason = funding.unavailableReason
+    ?? (reserved && !migrationAddress ? "The reserved planet's migration contract is unavailable." : undefined)
+    ?? (activeMigration && !migrationClaim ? "Your reserved planet is not ready to claim yet. Please try again later." : undefined);
   return {
     ...funding,
     ...(activeMigration
@@ -625,6 +631,12 @@ export class BackendDataStore {
       const key = walletCacheKey("profile", wallet);
       return this.query(key, () => this.refresh(key, (signal) => fetchPlayerProfile(this.apiBaseUrl, wallet, { signal }), { wallet }));
     },
+    delegation: (wallet: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<WalletDelegationState> => {
+      const key = walletCacheKey("delegation", wallet);
+      // Signer identity is independent of the gameplay context wallet. Keep its
+      // wallet-specific key alive when the delegate switches into the main's context.
+      return this.query(key, () => this.refresh(key, (signal) => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal })));
+    },
     queues: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<PlayerQueuesResponse> => {
       const key = walletCacheKey("queues", wallet, planetId);
       return this.query(key, () => this.refresh(
@@ -733,25 +745,31 @@ export class BackendDataStore {
       const key = walletCacheKey("settlement-funding", wallet);
       return this.query(key, () => this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet }));
     },
-    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): BackendDataQueryDescriptor<SettlementFundingState> => {
-      const key = walletCacheKey("settlement-funding-projection", wallet, migrationAddress?.toLowerCase(), providerIdentity);
+    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined, signer = wallet): BackendDataQueryDescriptor<SettlementFundingState> => {
+      const key = walletCacheKey("settlement-funding-projection", wallet, signer.toLowerCase(), migrationAddress?.toLowerCase(), providerIdentity);
       return this.query(key, () => this.refresh(
         key,
         async () => {
+          const delegated = signer.toLowerCase() !== wallet.toLowerCase();
           const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
             this.settlementFunding(wallet),
-            readWalletNativeBalance(provider, wallet),
-            readMigrationReservation(provider, migrationAddress, wallet),
+            readWalletNativeBalance(provider, signer),
+            readMigrationReservation(provider, migrationAddress, wallet, delegated && Boolean(migrationAddress)),
           ]);
-          return settlementFundingWithMigrationReservation(
+          const funding = settlementFundingWithMigrationReservation(
             settlementFundingWithWalletBalance(backendFunding, walletBalanceWei),
             chainMigrationReservation,
             migrationAddress,
           );
+          if (!delegated || !funding.migrationContractAddress) return funding;
+          const supported = await readMigrationDelegatedClaimSupport(provider, funding.migrationContractAddress);
+          return {
+            ...funding,
+            delegatedMigrationAvailable: supported,
+            ...(supported ? {} : { unavailableReason: "The reserved planet needs the verified delegated-migration upgrade before this wallet can claim it." }),
+          };
         },
-        {
-          wallet,
-        },
+        { wallet },
       ));
     },
     system: <T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}): BackendDataQueryDescriptor<T> => {
@@ -808,10 +826,10 @@ export class BackendDataStore {
     missionLaunch: (wallet: string, tags: readonly BackendDataTag[] = []): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey("fleet-visibility", wallet, false), this.key("global-active-missions"), ...this.keysForScope(tags)]),
     alliance: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("alliance", wallet)]),
-    paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string): BackendIndexingPlan =>
+    paidAllianceInvite: (wallet: string, provider: Eip1193Provider, secret: string, signer = wallet): BackendIndexingPlan =>
       this.createIndexingPlan([walletCacheKey("alliance", wallet)], async () => [{
         kind: "paid-alliance-invite", secret,
-        signature: await requestPersonalSignature(provider, wallet, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
+        signature: await requestPersonalSignature(provider, signer, paidAllianceInviteStoreMessage(wallet, paidAllianceInviteCommitment(secret))),
       }]),
     planetRename: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet)]),
     planetAbsent: (wallet: string): BackendIndexingPlan => this.createIndexingPlan([walletCacheKey("planets", wallet), walletCacheKey("settlement", wallet)]),
@@ -906,6 +924,12 @@ export class BackendDataStore {
     const stop = this.startPolling(`gameplay:${wallet.toLowerCase()}`, [], 10_000);
     // The shared poller calls the store policy, not page-supplied refresh trees.
     return () => { stop(); disconnect(); };
+  }
+
+  startSignerDelegationSync(signer: string): () => void {
+    // The effective main may differ from this signer. Never filter the signer
+    // delegation read through the main-scoped gameplay refresh policy.
+    return this.startPolling(`signer-delegation:${signer.toLowerCase()}`, ["kind:delegation"], 10_000);
   }
 
   private refreshGameplay(): void {
@@ -1699,7 +1723,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
   /** Recover paid-invite secrets through the same wallet-scoped action gate
    * as contract writes. The response is a short-lived canonical snapshot and
    * is cleared with its wallet context. */
-  async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider): Promise<Array<{ commitment: string; secret: string }>> {
+  async recoverPaidAllianceInvites(wallet: string, provider: Eip1193Provider, signer = wallet): Promise<Array<{ commitment: string; secret: string }>> {
     const normalizedWallet = wallet.toLowerCase();
     const recovered = await this.runExclusiveTransaction(
       "paid-alliance-invite-recovery",
@@ -1708,7 +1732,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         if (this.contextWallet && this.contextWallet !== normalizedWallet) {
           throw new Error("Wallet changed before invite recovery could begin.");
         }
-        const invites = await recoverPaidAllianceInvites(this.apiBaseUrl, provider, wallet);
+        const invites = await recoverPaidAllianceInvites(this.apiBaseUrl, provider, wallet, signer);
         if (this.contextWallet && this.contextWallet !== normalizedWallet) {
           throw new Error("Wallet changed while invite recovery was in progress.");
         }
@@ -2014,8 +2038,8 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
    * wallet's chain-only balance/reservation are committed under one canonical
    * identity so an old provider/network result cannot overwrite a newer
    * wallet session in the settlement UI. */
-  settlementFundingForProvider(wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): Promise<SettlementFundingState> {
-    return this.queries.settlementFundingProjection(wallet, provider, migrationAddress, providerIdentity).read();
+  settlementFundingForProvider(wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined, signer = wallet): Promise<SettlementFundingState> {
+    return this.queries.settlementFundingProjection(wallet, provider, migrationAddress, providerIdentity, signer).read();
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {
@@ -2198,7 +2222,7 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
     return this.queries.entityMedia(entityKind, entityId).read();
   }
 
-  private async runSignedMetadataMutation<T>(provider: Eip1193Provider, wallet: string, key: string, label: string, action: (options: SignedMetadataOptions) => Promise<T>): Promise<T> {
+  private async runSignedMetadataMutation<T>(provider: Eip1193Provider, wallet: string, signer: string, key: string, label: string, action: (options: SignedMetadataOptions) => Promise<T>): Promise<T> {
     const assertContext = () => {
       if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== wallet.toLowerCase())) {
         throw new Error("Wallet changed before metadata could be saved.");
@@ -2212,7 +2236,7 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
         signal: this.transactionAbort.signal,
         sign: async message => {
           assertContext();
-          const signature = await this.transactionGateFor(wallet.toLowerCase()).run(key, () => requestPersonalSignature(provider, wallet, message));
+          const signature = await this.transactionGateFor(signer.toLowerCase()).run(key, () => requestPersonalSignature(provider, signer, message));
           if (!signature) throw new Error("Another wallet prompt is already open.");
           assertContext();
           return signature;
@@ -2225,9 +2249,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
     return response;
   }
 
-  async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string): Promise<EntityMediaResponse> {
+  async saveEntityMedia(provider: Eip1193Provider, wallet: string, entityKind: EntityMediaKind, entityId: string, mediaUrl: string, signer = wallet): Promise<EntityMediaResponse> {
     entityId = normalizeEntityMediaId(entityKind, entityId);
-    const response = await this.runSignedMetadataMutation(provider, wallet, `entity-media:${entityKind}:${entityId}`, "Save media",
+    const response = await this.runSignedMetadataMutation(provider, wallet, signer, `entity-media:${entityKind}:${entityId}`, "Save media",
       options => updateEntityMedia(this.apiBaseUrl, provider, wallet, entityKind, entityId, mediaUrl, options));
     this.commitBackendSnapshot("entity-media", response, [entityKind, entityId]);
     await this.invalidateKeys([this.key("entity-media", entityKind, entityId)], {
@@ -2241,9 +2265,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
    * still use the shared mutation gate and invalidate every subscribed watched
    * view instead of patching one component's local page in place.
    */
-  async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean): Promise<WatchPlanetMutationResponse> {
+  async setPlanetWatched(provider: Eip1193Provider, wallet: string, planetId: string, watched: boolean, signer = wallet): Promise<WatchPlanetMutationResponse> {
     const response = await this.runSignedMetadataMutation(
-      provider, wallet,
+      provider, wallet, signer,
       `watched-planet:${wallet.toLowerCase()}:${planetId}`,
       watched ? "Unwatch planet" : "Watch planet",
       options => watched ? unwatchPlanet(this.apiBaseUrl, provider, wallet, planetId, options) : watchPlanet(this.apiBaseUrl, provider, wallet, planetId, options),
@@ -2253,9 +2277,9 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
   }
 
   /** Signed profile updates share the store-owned mutation gate and refresh policy. */
-  async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null): Promise<PlayerProfile> {
+  async savePlayerProfile(provider: Eip1193Provider, wallet: string, displayName: string, description: string | null, signer = wallet): Promise<PlayerProfile> {
     const profile = await this.runSignedMetadataMutation(
-      provider, wallet,
+      provider, wallet, signer,
       `profile:${wallet.toLowerCase()}`,
       "Save profile",
       options => updatePlayerProfile(this.apiBaseUrl, provider, wallet, displayName, description, options),

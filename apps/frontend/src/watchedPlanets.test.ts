@@ -114,7 +114,7 @@ describe("watched planets UI", () => {
     expect(appSource).toContain("backendData!.watchedPlanets(account, { page, pageSize: 25 })");
     expect(appSource).toContain("onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}");
     expect(appSource).toContain("nextWatchedPlanetsPageAfterToggle");
-    expect(appSource).toContain("backendData!.setPlanetWatched(provider, account, planetId, watched)");
+    expect(appSource).toContain("backendData!.setPlanetWatched(provider, account, planetId, watched, signerAccount)");
     expect(overviewSource).toContain("onWatchedPlanetsPageChange");
     expect(overviewSource).toContain("onRefresh");
     expect(overviewSource).toContain("Retry");

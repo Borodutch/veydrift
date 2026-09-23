@@ -27,6 +27,7 @@ apps/frontend/public/assets/game/sizes/
 # Blockchain / zk generated artifacts
 broadcast/
 artifacts/
+packages/contracts/manifests/private-paid-invite-migration.json
 typechain-types/
 proofs/
 !packages/circuits/proofs/

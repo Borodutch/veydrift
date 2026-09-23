@@ -1348,6 +1348,29 @@ export class SettlementIndexer {
     return marker;
   }
 
+  /** A replacement emits its complete migrated referral history. Retain only rows whose
+   * canonical log belongs to that contract; re-entry after an interrupted marker write
+   * leaves already applied new rows intact rather than replaying duplicate old history. */
+  reconcileReferralHistory(contractAddress: `0x${string}`): void {
+    const reconcile = this.db.transaction(() => {
+      let changed = 0;
+      for (const table of ["indexed_referral_claims", "indexed_referral_redemptions", "indexed_referral_reward_claims"] as const) {
+        const result = this.db.query(`
+          DELETE FROM ${table}
+          WHERE NOT EXISTS (
+            SELECT 1 FROM indexed_event_logs raw
+            WHERE raw.event_id = ${table}.event_id
+              AND raw.removed = 0
+              AND lower(json_extract(raw.event_json, '$.address')) = lower(?)
+          )
+        `).run(contractAddress);
+        changed += result.changes;
+      }
+      return changed;
+    });
+    if (reconcile() > 0) this.advanceIndexedRevision();
+  }
+
   paidAllianceInviteHistoryBackfillStatus(
     contractAddress: `0x${string}`,
     fromBlock: bigint

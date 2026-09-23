@@ -2972,6 +2972,54 @@ const readerConfig: BackendConfig = {
   wsRpcSource: "missing"
 };
 
+describe("wallet delegation reads", () => {
+  test("resolves a delegate wallet to its main wallet and returns the main delegate", async () => {
+    const delegate = "0x3333333333333333333333333333333333333333" as Address;
+    const main = "0x4444444444444444444444444444444444444444" as Address;
+    const calls: string[] = [];
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        expect(method).toBe("eth_call");
+        const data = (params[0] as { data: string }).data;
+        calls.push(data);
+        if (data.startsWith("0x6d3498d8")) return dataWords([addressWord(main)]) as T;
+        if (data.startsWith("0x8d22ea2a")) return dataWords([addressWord(delegate)]) as T;
+        throw new Error(`Unexpected call ${data}`);
+      }
+    });
+
+    await expect(reader.getDelegationState(delegate)).resolves.toEqual({
+      wallet: delegate,
+      main,
+      delegate,
+      actingAsDelegate: true
+    });
+    expect(calls).toEqual([
+      `0x6d3498d8${addressWord(delegate)}`,
+      `0x8d22ea2a${addressWord(main)}`
+    ]);
+  });
+
+  test("returns null when a main wallet has no delegate", async () => {
+    const main = "0x5555555555555555555555555555555555555555" as Address;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const data = (params[0] as { data: string }).data;
+        return (data.startsWith("0x6d3498d8")
+          ? dataWords([addressWord(main)])
+          : dataWords([addressWord("0x0000000000000000000000000000000000000000")])) as T;
+      }
+    });
+
+    await expect(reader.getDelegationState(main)).resolves.toEqual({
+      wallet: main,
+      main,
+      delegate: null,
+      actingAsDelegate: false
+    });
+  });
+});
+
 function makeLog(overrides: Pick<RpcLog, "topics" | "data">): RpcLog {
   return {
     blockNumber: "0x10",

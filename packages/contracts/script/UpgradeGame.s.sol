@@ -39,14 +39,15 @@ import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePol
 ///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
 ///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
 ///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
-///        MOON_PROXY_ADDRESS the already-upgraded MoonSystem proxy
+///        MOON_PROXY_ADDRESS the configured MoonSystem proxy (its delegation-aware upgrade must
+///                           run only after this Game upgrade)
 ///      Optional env:
 ///        ADMIN_ADDRESS      module-admin arg for the new impl (defaults to broadcaster; only
 ///                           affects the impl's own storage, never the proxy)
 ///
-///      Gameplay remains live for the entire upgrade. Any future state migration must therefore be
-///      designed as a backward-compatible, resumable live migration; this script must never pause
-///      the Game or add a pause precondition.
+///      Gameplay remains live for this Game implementation switch. The paid-invite migration is a
+///      separate, explicitly paused and resumable operation that runs only after this script, then
+///      upgrades Alliance and finally Moon in dependency order.
 ///
 ///      Dry run (no broadcast):
 ///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet>
@@ -61,7 +62,9 @@ contract UpgradeGame is Script {
         address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
         address moduleAdmin = vm.envOr("ADMIN_ADDRESS", broadcaster);
         address referralSystemAddress = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
+        address sourceReferralAddress = vm.envAddress("VEYDRIFT_SOURCE_REFERRAL_SYSTEM_ADDRESS");
         VeydriftReferralSystem referralSystem = VeydriftReferralSystem(referralSystemAddress);
+        VeydriftReferralSystem sourceReferral = VeydriftReferralSystem(sourceReferralAddress);
 
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
@@ -78,9 +81,27 @@ contract UpgradeGame is Script {
             "MOON_GAME_MISMATCH"
         );
         require(referralSystemAddress.code.length > 0, "REFERRAL_SYSTEM_NOT_CONTRACT");
+        require(
+            sourceReferralAddress != referralSystemAddress && sourceReferralAddress.code.length > 0,
+            "REFERRAL_REPLACEMENT_REQUIRED"
+        );
+        require(sourceReferral.owner() == broadcaster, "BROADCASTER_NOT_SOURCE_REFERRAL_OWNER");
+        require(sourceReferral.game() == address(0), "SOURCE_REFERRAL_NOT_FROZEN");
+        require(sourceReferralAddress.balance == 0, "SOURCE_REFERRAL_ESCROW_NONZERO");
         require(referralSystem.owner() == broadcaster, "BROADCASTER_NOT_REFERRAL_OWNER");
         require(referralSystem.referralMigrationFinalized(), "REFERRAL_MIGRATION_PENDING");
+        require(
+            referralSystem.referralRewardMigrationConfigured(), "REFERRAL_REWARD_MIGRATION_REQUIRED"
+        );
+        require(
+            referralSystem.referralRewardClaimMigrationConfigured(),
+            "REFERRAL_CLAIM_HISTORY_REQUIRED"
+        );
         require(referralSystem.referralSigner() != address(0), "REFERRAL_SIGNER_REQUIRED");
+        require(
+            sourceReferral.referralSigner() == referralSystem.referralSigner(),
+            "REFERRAL_SIGNER_MISMATCH"
+        );
         address configuredReferralGame = referralSystem.game();
         require(
             configuredReferralGame == address(0) || configuredReferralGame == proxy,

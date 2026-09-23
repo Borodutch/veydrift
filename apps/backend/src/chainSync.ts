@@ -54,6 +54,7 @@ type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
   | "recoverProjectionAnchor"
   | "recordReferralHistoryBackfill"
   | "referralHistoryBackfillStatus"
+  | "reconcileReferralHistory"
   | "recordPaidAllianceInviteHistoryBackfill"
   | "paidAllianceInviteHistoryBackfillStatus"
   | "reconcilePaidAllianceInviteHistory"
@@ -694,7 +695,8 @@ export class ChainSyncService {
     const listReferralLogs = backfiller.listReferralLogs;
     const status = this.indexer?.referralHistoryBackfillStatus;
     const record = this.indexer?.recordReferralHistoryBackfill;
-    if (!contractAddress || !listReferralLogs || !status || !record) return;
+    const reconcile = this.indexer?.reconcileReferralHistory;
+    if (!contractAddress || !listReferralLogs || !status || !record || !reconcile) return;
 
     const fromBlock = this.config.referralIndexFromBlock ?? this.config.indexFromBlock;
     const current = status.call(this.indexer, contractAddress, fromBlock);
@@ -713,6 +715,7 @@ export class ChainSyncService {
       const logs = await listReferralLogs.call(backfiller, fromBlock, head);
       return () => {
         this.applyLogs(logs, applyLog);
+        reconcile.call(this.indexer, contractAddress);
         const marker = record.call(this.indexer, contractAddress, fromBlock, head);
         this.referralHistoryBackfill = {
           completedAt: marker.completedAt,

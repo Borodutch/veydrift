@@ -22,10 +22,25 @@ contract MigrateReferralSystem is Script {
         VeydriftReferralSystem target =
             VeydriftReferralSystem(vm.envAddress("REFERRAL_SYSTEM_ADDRESS"));
         uint256 batchSize = vm.envOr("REFERRAL_MIGRATION_BATCH_SIZE", uint256(20));
-        require(batchSize > 0, "BATCH_SIZE_REQUIRED");
+        require(batchSize > 0 && batchSize <= 20, "BATCH_SIZE_OUT_OF_BOUNDS");
 
         string memory manifest = vm.readFile(vm.envString("REFERRAL_MIGRATION_MANIFEST_FILE"));
+        require(vm.parseJsonUint(manifest, ".version") == 2, "MANIFEST_VERSION_MISMATCH");
         require(vm.parseJsonUint(manifest, ".chainId") == block.chainid, "CHAIN_ID_MISMATCH");
+        uint256 snapshotBlock = vm.parseUint(vm.parseJsonString(manifest, ".snapshotBlock"));
+        require(
+            vm.parseUint(vm.parseJsonString(manifest, ".indexFromBlock")) <= snapshotBlock
+                && snapshotBlock <= block.number
+                && vm.parseJsonBytes32(manifest, ".snapshotBlockHash") != bytes32(0),
+            "SNAPSHOT_BOUNDARY_INVALID"
+        );
+        require(
+            vm.parseJsonAddress(manifest, ".sourceGame") == address(0), "MANIFEST_SOURCE_NOT_FROZEN"
+        );
+        require(
+            vm.parseUint(vm.parseJsonString(manifest, ".sourceBalanceWei")) == 0,
+            "MANIFEST_SOURCE_BALANCE_NONZERO"
+        );
         address sourceAddress = vm.parseJsonAddress(manifest, ".sourceReferral");
         VeydriftReferralSystem source = VeydriftReferralSystem(sourceAddress);
         require(sourceAddress != address(target), "SOURCE_EQUALS_TARGET");
@@ -43,6 +58,10 @@ contract MigrateReferralSystem is Script {
         uint32 hashOnlyCount = _uint32(vm.parseJsonUint(manifest, ".hashOnlyManifest.count"));
         bytes32 redemptionDigest = vm.parseJsonBytes32(manifest, ".redemptionManifest.digest");
         uint32 redemptionCount = _uint32(vm.parseJsonUint(manifest, ".redemptionManifest.count"));
+        bytes32 rewardDigest = vm.parseJsonBytes32(manifest, ".rewardStatsManifest.digest");
+        uint32 rewardCount = _uint32(vm.parseJsonUint(manifest, ".rewardStatsManifest.count"));
+        bytes32 rewardClaimDigest = vm.parseJsonBytes32(manifest, ".rewardClaimManifest.digest");
+        uint32 rewardClaimCount = _uint32(vm.parseJsonUint(manifest, ".rewardClaimManifest.count"));
 
         address[] memory validInviters =
             vm.parseJsonAddressArray(manifest, ".calldata.validInviters");
@@ -64,6 +83,28 @@ contract MigrateReferralSystem is Script {
             vm.parseJsonBytes32Array(manifest, ".calldata.redemptionCommitments");
         uint64[] memory redemptionRedeemedAts =
             _uint64Array(vm.parseJsonUintArray(manifest, ".calldata.redemptionRedeemedAts"));
+        uint256[] memory redemptionRewardAmounts =
+            vm.parseJsonUintArray(manifest, ".calldata.redemptionRewardAmounts");
+        bool[] memory redemptionPaid = vm.parseJsonBoolArray(manifest, ".calldata.redemptionPaid");
+        bool[] memory redemptionCredited =
+            vm.parseJsonBoolArray(manifest, ".calldata.redemptionCredited");
+        address[] memory rewardClaimInviters =
+            vm.parseJsonAddressArray(manifest, ".calldata.rewardClaimInviters");
+        address[] memory rewardClaimInvitees =
+            vm.parseJsonAddressArray(manifest, ".calldata.rewardClaimInvitees");
+        bytes32[] memory rewardClaimCommitments =
+            vm.parseJsonBytes32Array(manifest, ".calldata.rewardClaimCommitments");
+        address[] memory rewardClaimRecipients =
+            vm.parseJsonAddressArray(manifest, ".calldata.rewardClaimRecipients");
+        uint256[] memory rewardClaimAmounts =
+            vm.parseJsonUintArray(manifest, ".calldata.rewardClaimAmounts");
+        uint64[] memory rewardClaimAts =
+            _uint64Array(vm.parseJsonUintArray(manifest, ".calldata.rewardClaimAts"));
+        address[] memory rewardInviters =
+            vm.parseJsonAddressArray(manifest, ".calldata.rewardInviters");
+        uint256[] memory rewardAccrued = vm.parseJsonUintArray(manifest, ".calldata.rewardAccrued");
+        uint256[] memory rewardPaid = vm.parseJsonUintArray(manifest, ".calldata.rewardPaid");
+        uint256[] memory rewardClaimed = vm.parseJsonUintArray(manifest, ".calldata.rewardClaimed");
 
         require(validInviters.length == validCount, "VALID_COUNT_MISMATCH");
         require(validCodes.length == validCount, "VALID_CODE_COUNT_MISMATCH");
@@ -78,6 +119,52 @@ contract MigrateReferralSystem is Script {
             redemptionCommitments.length == redemptionCount, "REDEMPTION_COMMITMENT_COUNT_MISMATCH"
         );
         require(redemptionRedeemedAts.length == redemptionCount, "REDEMPTION_TIME_COUNT_MISMATCH");
+        require(
+            redemptionRewardAmounts.length == redemptionCount
+                && redemptionPaid.length == redemptionCount
+                && redemptionCredited.length == redemptionCount,
+            "REDEMPTION_HISTORY_COUNT_MISMATCH"
+        );
+        require(
+            rewardClaimInviters.length == rewardClaimCount
+                && rewardClaimInvitees.length == rewardClaimCount
+                && rewardClaimCommitments.length == rewardClaimCount
+                && rewardClaimRecipients.length == rewardClaimCount
+                && rewardClaimAmounts.length == rewardClaimCount
+                && rewardClaimAts.length == rewardClaimCount,
+            "REWARD_CLAIM_COUNT_MISMATCH"
+        );
+        require(
+            rewardInviters.length == rewardCount && rewardAccrued.length == rewardCount
+                && rewardPaid.length == rewardCount && rewardClaimed.length == rewardCount,
+            "REWARD_STATS_COUNT_MISMATCH"
+        );
+        require(
+            source.owner() == vm.parseJsonAddress(manifest, ".sourceOwner"), "SOURCE_OWNER_DRIFT"
+        );
+        require(
+            source.referralSigner() == vm.parseJsonAddress(manifest, ".sourceReferralSigner"),
+            "SOURCE_SIGNER_DRIFT"
+        );
+        _verifyFrozenRewards(
+            source,
+            redemptionCommitments,
+            redemptionInvitees,
+            rewardInviters,
+            rewardAccrued,
+            rewardPaid,
+            rewardClaimed
+        );
+        _verifyFrozenCodes(
+            source,
+            validInviters,
+            validCodes,
+            validActivatedAts,
+            hashOnlyInviters,
+            hashOnlyCodes,
+            redemptionCommitments,
+            redemptionInvitees
+        );
 
         vm.startBroadcast(privateKey);
         if (!target.referralMigrationConfigured()) {
@@ -87,6 +174,12 @@ contract MigrateReferralSystem is Script {
         }
         if (!target.referralRedemptionMigrationConfigured()) {
             target.configureReferralRedemptionMigration(redemptionDigest, redemptionCount);
+        }
+        if (!target.referralRewardMigrationConfigured()) {
+            target.configureReferralRewardMigration(rewardDigest, rewardCount);
+        }
+        if (!target.referralRewardClaimMigrationConfigured()) {
+            target.configureReferralRewardClaimMigration(rewardClaimDigest, rewardClaimCount);
         }
         vm.stopBroadcast();
 
@@ -98,6 +191,21 @@ contract MigrateReferralSystem is Script {
             hashOnlyCount,
             redemptionDigest,
             redemptionCount
+        );
+        require(
+            target.referralMigrationExpectedRewardStatsHash() == rewardDigest,
+            "REWARD_DIGEST_CONFIG"
+        );
+        require(
+            target.referralMigrationExpectedRewardStatsCount() == rewardCount, "REWARD_COUNT_CONFIG"
+        );
+        require(
+            target.referralMigrationExpectedRewardClaimHash() == rewardClaimDigest,
+            "CLAIM_DIGEST_CONFIG"
+        );
+        require(
+            target.referralMigrationExpectedRewardClaimCount() == rewardClaimCount,
+            "CLAIM_COUNT_CONFIG"
         );
 
         _migrateValid(
@@ -119,9 +227,45 @@ contract MigrateReferralSystem is Script {
             redemptionInvitees,
             redemptionCommitments,
             redemptionRedeemedAts,
+            redemptionRewardAmounts,
+            redemptionPaid,
+            redemptionCredited,
+            batchSize
+        );
+        _migrateRewardClaimHistory(
+            target,
+            privateKey,
+            rewardClaimInviters,
+            rewardClaimInvitees,
+            rewardClaimCommitments,
+            rewardClaimRecipients,
+            rewardClaimAmounts,
+            rewardClaimAts,
             batchSize
         );
 
+        _migrateRewardStats(
+            target, privateKey, rewardInviters, rewardAccrued, rewardPaid, rewardClaimed, batchSize
+        );
+        _verifyFrozenRewards(
+            source,
+            redemptionCommitments,
+            redemptionInvitees,
+            rewardInviters,
+            rewardAccrued,
+            rewardPaid,
+            rewardClaimed
+        );
+        _verifyFrozenCodes(
+            source,
+            validInviters,
+            validCodes,
+            validActivatedAts,
+            hashOnlyInviters,
+            hashOnlyCodes,
+            redemptionCommitments,
+            redemptionInvitees
+        );
         _verifyImported(
             target,
             validDigest,
@@ -131,6 +275,30 @@ contract MigrateReferralSystem is Script {
             redemptionDigest,
             redemptionCount
         );
+        require(
+            target.referralMigrationImportedRewardStatsHash() == rewardDigest,
+            "REWARD_DIGEST_IMPORTED"
+        );
+        require(
+            target.referralMigrationImportedRewardStatsCount() == rewardCount,
+            "REWARD_COUNT_IMPORTED"
+        );
+        require(
+            target.referralMigrationImportedRewardClaimHash() == rewardClaimDigest,
+            "CLAIM_DIGEST_IMPORTED"
+        );
+        require(
+            target.referralMigrationImportedRewardClaimCount() == rewardClaimCount,
+            "CLAIM_COUNT_IMPORTED"
+        );
+        for (uint256 i; i < rewardCount; ++i) {
+            require(
+                target.totalReferralRewardsAccrued(rewardInviters[i]) == rewardAccrued[i]
+                    && target.totalReferralRewardsPaid(rewardInviters[i]) == rewardPaid[i]
+                    && target.totalReferralRewardsClaimed(rewardInviters[i]) == rewardClaimed[i],
+                "TARGET_REWARD_STATS_MISMATCH"
+            );
+        }
         if (!target.referralMigrationFinalized()) {
             vm.startBroadcast(privateKey);
             target.finalizeReferralCodeMigration();
@@ -140,6 +308,112 @@ contract MigrateReferralSystem is Script {
         require(target.game() == address(0), "TARGET_ACTIVATED_DURING_MIGRATION");
         console2.log("Referral migration finalized:", address(target));
         console2.log("Valid/hash-only/redemptions:", validCount, hashOnlyCount, redemptionCount);
+    }
+
+    function _verifyFrozenCodes(
+        VeydriftReferralSystem source,
+        address[] memory validInviters,
+        string[] memory validCodes,
+        uint64[] memory activatedAts,
+        address[] memory hashOnlyInviters,
+        string[] memory hashOnlyCodes,
+        bytes32[] memory redeemedCommitments,
+        address[] memory redeemedInvitees
+    ) private view {
+        require(source.game() == address(0), "SOURCE_NOT_FROZEN");
+        for (uint256 i; i < validCodes.length; ++i) {
+            bytes32 codeHash = source.referralCodeHash(validCodes[i]);
+            bytes32 commitment = source.referralCommitment(validInviters[i], codeHash);
+            require(
+                source.referralCodeOwner(codeHash) == validInviters[i]
+                    && source.referralInvites(commitment) == validInviters[i]
+                    && source.referralCodeHashOf(commitment) == codeHash
+                    && source.referralClaimedAt(commitment) == activatedAts[i]
+                    && source.referralCodeMigrationKind(codeHash) != 2,
+                "SOURCE_VALID_CODE_CHANGED"
+            );
+        }
+        for (uint256 i; i < hashOnlyCodes.length; ++i) {
+            bytes32 codeHash = _normalizedHashOnly(hashOnlyCodes[i]);
+            require(
+                source.referralCodeOwner(codeHash) == hashOnlyInviters[i]
+                    && source.referralCodeMigrationKind(codeHash) == 2,
+                "SOURCE_HASH_ONLY_CHANGED"
+            );
+        }
+        for (uint256 i; i < redeemedCommitments.length; ++i) {
+            require(
+                source.referralRedemptions(redeemedCommitments[i], redeemedInvitees[i])
+                    && source.referralInviteeRedeemed(redeemedInvitees[i]),
+                "SOURCE_REDEMPTION_CHANGED"
+            );
+        }
+    }
+
+    function _normalizedHashOnly(string memory code) private pure returns (bytes32) {
+        bytes memory original = bytes(code);
+        require(original.length == 43, "HASH_ONLY_LENGTH_MISMATCH");
+        bytes memory normalized = new bytes(original.length);
+        for (uint256 i; i < original.length; ++i) {
+            uint8 character = uint8(original[i]);
+            normalized[i] =
+                character >= 65 && character <= 90 ? bytes1(character + 32) : original[i];
+        }
+        return keccak256(normalized);
+    }
+
+    function _verifyFrozenRewards(
+        VeydriftReferralSystem source,
+        bytes32[] memory commitments,
+        address[] memory invitees,
+        address[] memory inviters,
+        uint256[] memory accrued,
+        uint256[] memory paid,
+        uint256[] memory claimed
+    ) private view {
+        require(source.game() == address(0), "SOURCE_NOT_FROZEN");
+        require(address(source).balance == 0, "SOURCE_BALANCE_NONZERO");
+        for (uint256 i; i < commitments.length; ++i) {
+            require(
+                source.referralRewardCredits(commitments[i], invitees[i]) == 0,
+                "SOURCE_CREDIT_NONZERO"
+            );
+        }
+        for (uint256 i; i < inviters.length; ++i) {
+            address inviter = inviters[i];
+            require(source.claimableReferralRewards(inviter) == 0, "SOURCE_ESCROW_NONZERO");
+            require(
+                source.totalReferralRewardsAccrued(inviter) == accrued[i]
+                    && source.totalReferralRewardsPaid(inviter) == paid[i]
+                    && source.totalReferralRewardsClaimed(inviter) == claimed[i],
+                "SOURCE_REWARD_STATS_CHANGED"
+            );
+        }
+    }
+
+    function _migrateRewardStats(
+        VeydriftReferralSystem target,
+        uint256 privateKey,
+        address[] memory inviters,
+        uint256[] memory accrued,
+        uint256[] memory paid,
+        uint256[] memory claimed,
+        uint256 batchSize
+    ) private {
+        uint256 offset = target.referralMigrationImportedRewardStatsCount();
+        require(offset <= inviters.length, "REWARD_OFFSET_INVALID");
+        while (offset < inviters.length) {
+            uint256 end = _min(offset + batchSize, inviters.length);
+            vm.startBroadcast(privateKey);
+            target.migrateReferralRewardStats(
+                _sliceAddress(inviters, offset, end),
+                _sliceUint256(accrued, offset, end),
+                _sliceUint256(paid, offset, end),
+                _sliceUint256(claimed, offset, end)
+            );
+            vm.stopBroadcast();
+            offset = end;
+        }
     }
 
     function _migrateValid(
@@ -197,6 +471,9 @@ contract MigrateReferralSystem is Script {
         address[] memory invitees,
         bytes32[] memory commitments,
         uint64[] memory redeemedAts,
+        uint256[] memory rewardAmounts,
+        bool[] memory paid,
+        bool[] memory credited,
         uint256 batchSize
     ) private {
         uint256 offset = target.referralMigrationImportedRedemptionCount();
@@ -204,11 +481,43 @@ contract MigrateReferralSystem is Script {
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
             vm.startBroadcast(privateKey);
-            target.migrateReferralRedemptions(
+            target.migrateReferralRedemptionsWithHistory(
                 _sliceAddress(inviters, offset, end),
                 _sliceAddress(invitees, offset, end),
                 _sliceBytes32(commitments, offset, end),
-                _sliceUint64(redeemedAts, offset, end)
+                _sliceUint64(redeemedAts, offset, end),
+                _sliceUint256(rewardAmounts, offset, end),
+                _sliceBool(paid, offset, end),
+                _sliceBool(credited, offset, end)
+            );
+            vm.stopBroadcast();
+            offset = end;
+        }
+    }
+
+    function _migrateRewardClaimHistory(
+        VeydriftReferralSystem target,
+        uint256 privateKey,
+        address[] memory inviters,
+        address[] memory invitees,
+        bytes32[] memory commitments,
+        address[] memory recipients,
+        uint256[] memory amounts,
+        uint64[] memory claimedAts,
+        uint256 batchSize
+    ) private {
+        uint256 offset = target.referralMigrationImportedRewardClaimCount();
+        require(offset <= inviters.length, "CLAIM_OFFSET_INVALID");
+        while (offset < inviters.length) {
+            uint256 end = _min(offset + batchSize, inviters.length);
+            vm.startBroadcast(privateKey);
+            target.migrateReferralRewardClaimHistory(
+                _sliceAddress(inviters, offset, end),
+                _sliceAddress(invitees, offset, end),
+                _sliceBytes32(commitments, offset, end),
+                _sliceAddress(recipients, offset, end),
+                _sliceUint256(amounts, offset, end),
+                _sliceUint64(claimedAts, offset, end)
             );
             vm.stopBroadcast();
             offset = end;
@@ -311,6 +620,28 @@ contract MigrateReferralSystem is Script {
         returns (uint64[] memory output)
     {
         output = new uint64[](end - start);
+        for (uint256 index = start; index < end; index++) {
+            output[index - start] = source[index];
+        }
+    }
+
+    function _sliceUint256(uint256[] memory source, uint256 start, uint256 end)
+        private
+        pure
+        returns (uint256[] memory output)
+    {
+        output = new uint256[](end - start);
+        for (uint256 index = start; index < end; index++) {
+            output[index - start] = source[index];
+        }
+    }
+
+    function _sliceBool(bool[] memory source, uint256 start, uint256 end)
+        private
+        pure
+        returns (bool[] memory output)
+    {
+        output = new bool[](end - start);
         for (uint256 index = start; index < end; index++) {
             output[index - start] = source[index];
         }

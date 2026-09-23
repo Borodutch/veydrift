@@ -2,7 +2,7 @@ import { GameApiError } from "./gameApiError";
 import { diagnosticRoute } from "./requestDiagnostics";
 import type * as Api from "../../../packages/api-types/src/index";
 import { sdk } from "@farcaster/miniapp-sdk";
-import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
+import { encodeAbiParameters, keccak256, parseAbiParameters, toFunctionSelector, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType, PublicStationedDefender } from "./types";
@@ -105,6 +105,7 @@ export type SettlementFundingState = {
   migrationClaim?: MigrationClaimPayload | null;
   migrationContractAddress?: string;
   migrationReservation?: MigrationReservation | null;
+  delegatedMigrationAvailable?: boolean;
   startPriceWei: bigint | null;
   unavailableReason?: string;
 };
@@ -118,6 +119,9 @@ export type SettlementTransactionOptions = {
   allianceInvite?: PaidAllianceInviteRedemption | null;
   migrationClaim?: MigrationClaimPayload | null;
   migrationContractAddress?: string;
+  migrationPlayerAccount?: string;
+  migrationReservation?: MigrationReservation | null;
+  delegatedMigrationAvailable?: boolean;
   referral?: ReferralRedemption | null;
   startPriceWei?: bigint | null;
 };
@@ -1397,6 +1401,9 @@ const SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR = "0x2f7a1ec2";
 const START_PLANET_SELECTOR = "0xf45f1f18";
 const MIGRATION_CLAIM_SELECTOR = "0xbe27b22c";
 const MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR = "0x98bf164a";
+const MIGRATION_DELEGATE_SUPPORT_SELECTOR = toFunctionSelector("supportsDelegatedClaim()");
+const MIGRATION_DELEGATE_CLAIM_SELECTOR = toFunctionSelector("claimForDelegate(address,bytes,bytes)");
+const MIGRATION_DELEGATE_REFERRAL_SELECTOR = toFunctionSelector("claimWithReferralForDelegate(address,bytes,bytes,bytes32,uint8,bytes32,bytes32)");
 const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
 const CLAIM_REFERRAL_CODE_SELECTOR = "0x03b52c94";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
@@ -1435,6 +1442,10 @@ const GAME_SELECTORS = {
   startDefenseProduction: "0xfec06283",
   startResearch: "0x7f314b93",
   startShipProduction: "0x13aed9a2",
+} as const;
+const DELEGATION_SELECTORS = {
+  setDelegate: "0xca5eb5e1",
+  revokeDelegate: "0x55d1ef38",
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
@@ -2482,7 +2493,7 @@ export function migrationContractConfigured(config: SettlementConfig): config is
   return Boolean(config.migrationAddress && /^0x[a-fA-F0-9]{40}$/.test(config.migrationAddress));
 }
 
-export async function readMigrationReservation(provider: Eip1193Provider, migrationContractAddress: string | undefined, account: string): Promise<MigrationReservation | null> {
+export async function readMigrationReservation(provider: Eip1193Provider, migrationContractAddress: string | undefined, account: string, strict = false): Promise<MigrationReservation | null> {
   if (!migrationContractAddress || !/^0x[a-fA-F0-9]{40}$/.test(migrationContractAddress)) {
     return null;
   }
@@ -2500,10 +2511,14 @@ export async function readMigrationReservation(provider: Eip1193Provider, migrat
       ],
     });
   } catch {
+    if (strict) throw new Error("Cannot verify the main wallet's on-chain migration reservation.");
     return null;
   }
   const words = splitAbiWords(result);
-  if (words.length < 7) return null;
+  if (words.length < 7) {
+    if (strict) throw new Error("Cannot verify the main wallet's on-chain migration reservation.");
+    return null;
+  }
 
   const exists = decodeAbiBool(words[0]);
   const claimed = decodeAbiBool(words[1]);
@@ -2518,6 +2533,18 @@ export async function readMigrationReservation(provider: Eip1193Provider, migrat
     fields: Number(decodeAbiUint(words[5])),
     temperature: Number(BigInt.asIntN(256, decodeAbiUint(words[6]))),
   };
+}
+
+export async function readMigrationDelegatedClaimSupport(provider: Eip1193Provider, migrationContractAddress: string): Promise<boolean> {
+  try {
+    const result = await provider.request<string>({
+      method: "eth_call",
+      params: [{ to: migrationContractAddress, data: MIGRATION_DELEGATE_SUPPORT_SELECTOR }, "latest"],
+    });
+    return /^0x0{63}1$/i.test(result);
+  } catch {
+    return false;
+  }
 }
 
 function splitAbiWords(value: string): string[] {
@@ -2566,6 +2593,16 @@ export function encodeMigrationClaimWithReferralCall(statePayload: string, signa
     referral.r as `0x${string}`,
     referral.s as `0x${string}`,
   ]).slice(2)}`;
+}
+
+export function encodeDelegatedMigrationClaimCall(player: string, statePayload: string, signature: string, referral?: ReferralRedemption): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(player)) throw new Error("Main wallet address is invalid.");
+  const address = player as `0x${string}`;
+  const payload = statePayload as `0x${string}`;
+  const signed = signature as `0x${string}`;
+  return referral
+    ? `${MIGRATION_DELEGATE_REFERRAL_SELECTOR}${encodeAbiParameters(parseAbiParameters("address,bytes,bytes,bytes32,uint8,bytes32,bytes32"), [address, payload, signed, referral.commitment as `0x${string}`, referral.v, referral.r as `0x${string}`, referral.s as `0x${string}`]).slice(2)}`
+    : `${MIGRATION_DELEGATE_CLAIM_SELECTOR}${encodeAbiParameters(parseAbiParameters("address,bytes,bytes"), [address, payload, signed]).slice(2)}`;
 }
 
 function encodeHexWord(value: string, label: string): string {
@@ -3297,16 +3334,26 @@ export async function sendSettlementTransaction(provider: Eip1193Provider, accou
       throw new Error("Starting resources are currently unavailable. Please try again later.");
     }
 
+    const delegatedMain = options.migrationPlayerAccount && options.migrationPlayerAccount.toLowerCase() !== account.toLowerCase()
+      ? options.migrationPlayerAccount : undefined;
+    if (options.migrationReservation?.exists && !options.migrationReservation.claimed && !options.migrationContractAddress) {
+      throw new Error("The reserved planet requires a verified migration claim.");
+    }
     if (options.migrationContractAddress) {
       if (!options.migrationClaim?.statePayload || !options.migrationClaim.signature) {
         throw new Error("Your reserved planet is not ready to claim yet. Please try again later.");
       }
+      if (delegatedMain && options.delegatedMigrationAvailable !== true) {
+        throw new Error("Delegated reserved-planet claims require the verified migration upgrade.");
+      }
       return sendWalletTransaction(provider, account, {
         from: account,
         to: options.migrationContractAddress,
-        data: options.referral
-          ? encodeMigrationClaimWithReferralCall(options.migrationClaim.statePayload, options.migrationClaim.signature, options.referral)
-          : encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
+        data: delegatedMain
+          ? encodeDelegatedMigrationClaimCall(delegatedMain, options.migrationClaim.statePayload, options.migrationClaim.signature, options.referral ?? undefined)
+          : options.referral
+            ? encodeMigrationClaimWithReferralCall(options.migrationClaim.statePayload, options.migrationClaim.signature, options.referral)
+            : encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
         value: encodeQuantity(options.startPriceWei),
       });
     }
@@ -3407,8 +3454,8 @@ export async function storePaidAllianceInvite(apiUrl: string, purchaser: string,
   await fetchGameApiMutation(`${apiUrl.replace(/\/+$/, "")}/alliance-invites/store`, "Alliance invite recovery storage", { purchaser, secret, signature });
 }
 
-export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string): Promise<Array<{ commitment: string; secret: string }>> {
-  const signature = await requestPersonalSignature(provider, viewer, paidAllianceInviteRecoveryMessage(viewer));
+export async function recoverPaidAllianceInvites(apiUrl: string, provider: Eip1193Provider, viewer: string, signer = viewer): Promise<Array<{ commitment: string; secret: string }>> {
+  const signature = await requestPersonalSignature(provider, signer, paidAllianceInviteRecoveryMessage(viewer));
   const body = await fetchGameApiMutation<{ invites?: Array<{ commitment: string; secret: string }> }>(
     `${apiUrl.replace(/\/+$/, "")}/alliance-invites/recover`, "Alliance invite recovery", { viewer, signature },
   );
@@ -4316,8 +4363,8 @@ export function referralWalletMessage(wallet: string, action: ReferralWalletActi
   return lines.join("\n");
 }
 
-export async function requestReferralWalletSignature(provider: Eip1193Provider, wallet: string, action: ReferralWalletAction, commitment?: string): Promise<string> {
-  return requestPersonalSignature(provider, wallet, referralWalletMessage(wallet, action, commitment));
+export async function requestReferralWalletSignature(provider: Eip1193Provider, wallet: string, action: ReferralWalletAction, commitment?: string, signer = wallet): Promise<string> {
+  return requestPersonalSignature(provider, signer, referralWalletMessage(wallet, action, commitment));
 }
 
 export async function fetchReferralDashboard(apiUrl: string, wallet: string, signal?: AbortSignal): Promise<ReferralDashboard> {
@@ -4615,6 +4662,47 @@ export async function fetchAllianceState(apiUrl: string, wallet: string, options
 
 export async function fetchPlayerProfile(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<PlayerProfile> {
   return fetchWalletJson<PlayerProfile>(apiUrl, wallet, "profile", "Player profile", options);
+}
+
+export type WalletDelegationState = Api.WalletDelegation;
+
+export async function fetchWalletDelegation(
+  apiUrl: string,
+  wallet: string,
+  options: WalletReadOptions = {},
+): Promise<WalletDelegationState> {
+  return fetchWalletJson<WalletDelegationState>(
+    apiUrl,
+    wallet,
+    "delegation",
+    "Wallet delegation",
+    options,
+  );
+}
+
+export async function sendSetDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  delegate: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeAddressCall(DELEGATION_SELECTORS.setDelegate, delegate),
+  });
+}
+
+export async function sendRevokeDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: DELEGATION_SELECTORS.revokeDelegate,
+  });
 }
 
 

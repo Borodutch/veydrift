@@ -1392,8 +1392,12 @@ describe("ChainSyncService (polling)", () => {
     retry.stop();
   });
 
-  test("re-runs the bounded referral history gate when the configured referral address changes", async () => {
+  test("rebuilds referral history from only the replacement address without duplicate old rows", async () => {
     const indexer = makeIndexer();
+    for (const log of referralMigrationLogs()) indexer.applyLog(log);
+    expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
     indexer.recordReferralHistoryBackfill(referralAddress, 112n, 150n);
     const replacementAddress = "0x6666666666666666666666666666666666666666" as const;
     const replacementConfig: BackendConfig = {
@@ -1402,7 +1406,12 @@ describe("ChainSyncService (polling)", () => {
       referralSystemAddress: replacementAddress
     };
     const backfiller = new MockBackfiller(182n);
-    const logs = referralMigrationLogs().map((log) => ({ ...log, address: replacementAddress }));
+    const logs = referralMigrationLogs().map((log, index) => ({
+      ...log,
+      address: replacementAddress,
+      transactionHash: `0x${String(index + 31).padStart(2, "0").repeat(32)}`,
+      blockNumber: `0x${(144 + index).toString(16)}`,
+    }));
     backfiller.referralLogsFor = () => logs;
     const service = new ChainSyncService(replacementConfig, indexer, { logBackfiller: backfiller });
 
@@ -1410,11 +1419,25 @@ describe("ChainSyncService (polling)", () => {
 
     expect(backfiller.referralRanges).toEqual([{ from: 140n, to: 182n }]);
     expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralClaims(player)[0]?.transactionHash).toBe(logs[0]?.transactionHash);
     expect(indexer.referralHistoryBackfillStatus(replacementAddress, 140n)).toMatchObject({
       required: false,
       marker: { contractAddress: replacementAddress, fromBlock: "140", throughBlock: "182" }
     });
     service.stop();
+    // A crash before the new marker is durable replays the same import logs;
+    // the replacement projection must remain single-counted.
+    indexer.recordReferralHistoryBackfill(referralAddress, 112n, 150n);
+    const retryBackfiller = new MockBackfiller(182n);
+    retryBackfiller.referralLogsFor = () => logs;
+    const retry = new ChainSyncService(replacementConfig, indexer, { logBackfiller: retryBackfiller });
+    await retry.poll();
+    expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
+    retry.stop();
   });
 
   test("single-flights paid alliance invite history from its deployment block and persists completion", async () => {
@@ -1485,6 +1508,56 @@ describe("ChainSyncService (polling)", () => {
       deuterium: "30"
     });
     restarted.stop();
+  });
+
+  test("rebuilds paid invite projections from only the migrated contract after an address switch", async () => {
+    const indexer = makeIndexer();
+    const legacyBackfiller = new MockBackfiller(182n);
+    legacyBackfiller.paidAllianceInviteLogsFor = () => [{
+      address: paidAllianceInviteAddress,
+      blockNumber: "0x98",
+      transactionHash: "0xlegacy-accrue",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topicWord(7n), ownerTopic(player)],
+      data: abiWords(10n, 20n, 30n)
+    }];
+    const legacy = new ChainSyncService({
+      ...config,
+      paidAllianceInviteAddress,
+      paidAllianceInviteIndexFromBlock: 150n
+    }, indexer, { logBackfiller: legacyBackfiller });
+    await legacy.poll();
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance.metal).toBe("10");
+    legacy.stop();
+
+    const migratedAddress = "0x6666666666666666666666666666666666666666" as const;
+    const migratedBackfiller = new MockBackfiller(190n);
+    migratedBackfiller.paidAllianceInviteLogsFor = () => [{
+      address: migratedAddress,
+      blockNumber: "0xb8",
+      transactionHash: "0xmigrated-accrue",
+      logIndex: "0x0",
+      topics: [allianceProductionBonusAccruedTopic, topicWord(7n), ownerTopic(player)],
+      data: abiWords(10n, 20n, 30n)
+    }];
+    const migrated = new ChainSyncService({
+      ...config,
+      paidAllianceInviteAddress: migratedAddress,
+      paidAllianceInviteIndexFromBlock: 184n
+    }, indexer, { logBackfiller: migratedBackfiller });
+    await migrated.poll();
+
+    expect(migratedBackfiller.paidAllianceInviteRanges).toEqual([{ from: 184n, to: 190n }]);
+    expect(indexer.paidAllianceInviteSummaries().get("7")?.bonusBalance).toEqual({
+      metal: "10",
+      crystal: "20",
+      deuterium: "30"
+    });
+    expect(indexer.paidAllianceInviteHistoryBackfillStatus(migratedAddress, 184n)).toMatchObject({
+      required: false,
+      marker: { contractAddress: migratedAddress, fromBlock: "184", throughBlock: "190" }
+    });
+    migrated.stop();
   });
 
   test("periodically reconciles paid alliance overlap and removes orphaned projections", async () => {

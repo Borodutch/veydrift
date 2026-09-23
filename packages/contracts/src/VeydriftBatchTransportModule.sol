@@ -28,12 +28,12 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
 
         Planet storage target = _planets[targetPlanetId];
         if (target.owner == address(0)) revert NoPlanet();
-        if (target.owner != msg.sender) revert NotPlanetOwner();
+        if (target.owner != _actingPlayer()) revert NotPlanetOwner();
 
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[msg.sender][Technology.Computer]
+            _technologyLevels[_actingPlayer()][Technology.Computer]
         );
-        if (activeFleetMissionCount[msg.sender] + count > fleetSlots) {
+        if (activeFleetMissionCount[_actingPlayer()] + count > fleetSlots) {
             revert FleetSlotLimitReached(fleetSlots);
         }
 

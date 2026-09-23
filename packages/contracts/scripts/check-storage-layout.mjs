@@ -185,6 +185,18 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(uint256 => struct ArrivalOrderIndex)",
   },
+  {
+    label: "_delegateOf",
+    slot: "75",
+    offset: 0,
+    type: "mapping(address => address)",
+  },
+  {
+    label: "_delegatorOf",
+    slot: "76",
+    offset: 0,
+    type: "mapping(address => address)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

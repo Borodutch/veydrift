@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
-import type { SettledPlanetEvent } from "./evm";
+import type { ChainReader, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import {
   playerDescriptionMaxLength,
@@ -195,6 +195,36 @@ describe("player profile display names", () => {
 
     expect(response.status).toBe(200);
     expect(verifierCalls).toBe(1);
+  });
+
+  test("accepts a delegate signature for the main wallet profile", async () => {
+    const delegate = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+    const displayName = "Delegated Pilot";
+    const description = "Managed by burner";
+    const signature = await delegate.signMessage({
+      message: playerProfileMessage(wallet, displayName, description)
+    });
+    const chainReader = {
+      async getDelegationState(requestedWallet: typeof wallet) {
+        expect(requestedWallet).toBe(wallet);
+        return { wallet: requestedWallet, main: wallet, delegate: delegate.address, actingAsDelegate: false };
+      }
+    } as ChainReader;
+    const handler = createRequestHandler({
+      chainReader,
+      config,
+      configProblems: [{ field: "rpc", message: "skip live chain services in profile tests" }],
+      indexer: testIndexer()
+    });
+
+    const response = await handler(new Request(`https://api.test/wallet/${wallet}/profile`, {
+      body: JSON.stringify({ description, displayName, signature }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ wallet: wallet.toLowerCase(), displayName, description });
   });
 
   test("returns a retryable error when Base smart-wallet verification is unavailable", async () => {

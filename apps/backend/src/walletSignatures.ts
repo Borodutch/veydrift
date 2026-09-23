@@ -13,6 +13,8 @@ export type WalletMessageVerifier = (input: {
   signature: Hex;
 }) => Promise<boolean>;
 
+export type WalletDelegateResolver = (main: Address) => Promise<Address | null>;
+
 export const walletMessageSignatureMaxBytes = 16_384;
 export const walletMessageVerificationGas = 300_000n;
 const defaultMaximumConcurrentSmartWalletVerifications = 4;
@@ -96,6 +98,27 @@ export function createWalletMessageVerifier(
     } finally {
       activeSmartWalletVerifications -= 1;
     }
+  };
+}
+
+export function createDelegationAwareWalletMessageVerifier(
+  verifyWalletMessage: WalletMessageVerifier,
+  resolveDelegate: WalletDelegateResolver,
+): WalletMessageVerifier {
+  return async (input) => {
+    // Check both EOA identities locally before invoking the bounded RPC-backed
+    // smart-wallet verifier. A normal burner delegate must not consume the
+    // main wallet's ERC-1271 rate limit on every signed metadata action.
+    if (await verifyEoaWalletMessage(input)) return true;
+    let delegate: Address | null;
+    try {
+      delegate = await resolveDelegate(input.address);
+    } catch (error) {
+      throw new WalletMessageVerificationUnavailableError({ cause: error });
+    }
+    if (delegate && await verifyEoaWalletMessage({ ...input, address: delegate })) return true;
+    if (await verifyWalletMessage(input)) return true;
+    return delegate ? verifyWalletMessage({ ...input, address: delegate }) : false;
   };
 }
 

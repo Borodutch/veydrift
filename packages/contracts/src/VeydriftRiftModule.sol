@@ -26,9 +26,9 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     }
 
     function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _requirePlanetOwner(planetId);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -46,13 +46,15 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         riftExtractions[planetId][resource] = RiftExtraction({
             active: true, amount: amount, startedAt: startedAt, unlocksAt: unlocksAt
         });
-        emit RiftExtractionStarted(msg.sender, planetId, resource, amount, startedAt, unlocksAt);
+        emit RiftExtractionStarted(
+            _actingPlayer(), planetId, resource, amount, startedAt, unlocksAt
+        );
     }
 
     function finalizeRiftExtraction(uint256 planetId, Resource resource) external {
-        _touchPlayer(msg.sender);
+        _touchPlayer(_actingPlayer());
         _requirePlanetOwner(planetId);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         RiftExtraction memory extraction = riftExtractions[planetId][resource];
         if (!extraction.active) revert RiftExtractionInactive(planetId, resource);
@@ -65,13 +67,13 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         _riftLockedResources[planetId] = _subtract(_riftLockedResources[planetId], resourceAmount);
         if (
             extraction.amount != 0
-                && !_requireReserveResource(resource).transfer(msg.sender, extraction.amount)
+                && !_requireReserveResource(resource).transfer(_actingPlayer(), extraction.amount)
         ) {
             revert ResourceTransferFailed(
                 resource, address(_resourceTokens[resource]), extraction.amount
             );
         }
-        emit RiftExtractionFinalized(msg.sender, planetId, resource, extraction.amount);
+        emit RiftExtractionFinalized(_actingPlayer(), planetId, resource, extraction.amount);
     }
 
     function riftLockedResources(uint256 planetId) external view returns (Resources memory) {
@@ -147,7 +149,7 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
     function _requireRiftUnlocked(uint256 planetId) private view {

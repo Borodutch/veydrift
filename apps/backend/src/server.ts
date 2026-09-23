@@ -41,6 +41,7 @@ import {
   type SettledPlanetEvent,
   type ShipyardState,
   type StationedDefenderSummary,
+  type WalletDelegationState,
   HttpJsonRpcTransport,
   VeydriftGameReader
 } from "./evm";
@@ -112,6 +113,7 @@ import {
   type EntityMediaKind
 } from "./entityMedia";
 import {
+  createDelegationAwareWalletMessageVerifier,
   createRpcWalletMessageVerifier,
   verifyEoaWalletMessage,
   WalletMessageVerificationUnavailableError,
@@ -634,11 +636,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
-  const walletMessageVerifier = dependencies.walletMessageVerifier ?? (
+  const directWalletMessageVerifier = dependencies.walletMessageVerifier ?? (
     usesProductionDependencies && loaded.problems.length === 0
       ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
       : verifyEoaWalletMessage
   );
+  const walletMessageVerifier = !dependencies.walletMessageVerifier && rawChainReader?.getDelegationState
+    ? createDelegationAwareWalletMessageVerifier(
+        directWalletMessageVerifier,
+        async (main) => (await rawChainReader.getDelegationState!(main)).delegate
+      )
+    : directWalletMessageVerifier;
   const paidAllianceInviteReader = dependencies.paidAllianceInviteReader
     ?? createPaidAllianceInviteReader(loaded.config);
   const paidAllianceInviteSecretStore = dependencies.paidAllianceInviteSecretStore
@@ -921,6 +929,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (!indexer) return playerProfilesUnavailableResponse();
         return Response.json(indexer.playerProfile(wallet), {
           headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/delegation$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!rawChainReader?.getDelegationState) {
+          return Response.json({
+            error: "delegation_unavailable",
+            message: "Wallet delegation state is temporarily unavailable."
+          }, { headers: corsHeaders, status: 503 });
+        }
+        const delegation: WalletDelegationState = await rawChainReader.getDelegationState(wallet);
+        return Response.json(delegation, {
+          headers: { ...corsHeaders, "cache-control": "no-store" }
         });
       } catch (error) {
         return errorResponse(error, 400);

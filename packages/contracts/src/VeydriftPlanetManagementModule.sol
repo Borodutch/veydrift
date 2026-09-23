@@ -91,21 +91,21 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function renamePlanet(uint256 planetId, string calldata name) external {
         _requirePlanetOwner(planetId);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         uint256 length = bytes(name).length;
         if (length == 0 || length > 32) revert InvalidPlanetName();
 
         planetNames[planetId] = name;
-        emit PlanetRenamed(msg.sender, planetId, name);
+        emit PlanetRenamed(_actingPlayer(), planetId, name);
     }
 
     function abandonPlanet(uint256 planetId) external {
         _requirePlanetOwner(planetId);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireNoInboundMissionForPlanet(planetId);
-        if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
+        if (homePlanetOf[_actingPlayer()] == planetId) revert CannotAbandonHomePlanet();
         // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active-queue check so ready
         // ship/defense production queues complete (via `_settleDuePlanet`) and stop reading as active —
         // a planet whose construction already finished must not be falsely blocked from abandon.
@@ -126,7 +126,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         ) {
             revert PlanetHasActiveQueues();
         }
-        if (activeFleetMissionCount[msg.sender] != 0) revert PlanetHasActiveFleetMissions();
+        if (activeFleetMissionCount[_actingPlayer()] != 0) revert PlanetHasActiveFleetMissions();
 
         Planet memory planetRef = _planets[planetId];
         // The ordinary balance and any live Rift lock are both reserve-backed claims tied to this
@@ -149,7 +149,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         // locked reserve claim unraidable.
         for (uint8 resource; resource < 3;) {
             ResourceWithdrawal storage withdrawal =
-                resourceWithdrawals[msg.sender][Resource(resource)];
+                resourceWithdrawals[_actingPlayer()][Resource(resource)];
             if (withdrawal.active && withdrawal.planetId == planetId) revert PlanetHasResources();
             unchecked {
                 ++resource;
@@ -161,14 +161,14 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         occupiedCoordinates[
             _coordinateKey(planetRef.galaxy, planetRef.system, planetRef.position)
         ] = false;
-        planetCountOf[msg.sender] -= 1;
-        _unregisterOwnedPlanet(msg.sender, planetId);
+        planetCountOf[_actingPlayer()] -= 1;
+        _unregisterOwnedPlanet(_actingPlayer(), planetId);
     }
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueColonizeArrivals(_actingPlayer());
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -176,7 +176,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _transferReserveIn(resource, amount);
         Resources memory resourceAmount = _resourceAmount(resource, amount);
         _increaseInternalResources(resourceAmount);
-        emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
+        emit MarketResourceDeposited(_actingPlayer(), planetId, resource, amount);
         _creditResources(planetId, resourceAmount);
     }
 
@@ -191,28 +191,28 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function finishMarketResourceWithdrawal(Resource resource) external {
-        ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
+        ResourceWithdrawal memory withdrawal = resourceWithdrawals[_actingPlayer()][resource];
         if (!withdrawal.active) revert WithdrawalInactive(resource);
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(withdrawal.planetId);
         if (_currentTimestamp() < withdrawal.unlocksAt) {
             revert WithdrawalNotReady(withdrawal.unlocksAt);
         }
 
-        delete resourceWithdrawals[msg.sender][resource];
+        delete resourceWithdrawals[_actingPlayer()][resource];
         Resources memory amount = _resourceAmount(resource, withdrawal.amount);
         _lockedWithdrawalResources = Resources({
             metal: _lockedWithdrawalResources.metal - amount.metal,
             crystal: _lockedWithdrawalResources.crystal - amount.crystal,
             deuterium: _lockedWithdrawalResources.deuterium - amount.deuterium
         });
-        if (!_requireReserveResource(resource).transfer(msg.sender, withdrawal.amount)) {
+        if (!_requireReserveResource(resource).transfer(_actingPlayer(), withdrawal.amount)) {
             revert ResourceTransferFailed(
                 resource, address(_resourceTokens[resource]), withdrawal.amount
             );
         }
         emit MarketResourceWithdrawalFinished(
-            msg.sender, withdrawal.planetId, resource, withdrawal.amount
+            _actingPlayer(), withdrawal.planetId, resource, withdrawal.amount
         );
     }
 
@@ -249,7 +249,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         ) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
-        _settleDueCombatArrivals(msg.sender);
+        _settleDueCombatArrivals(_actingPlayer());
         // The prologue settle runs the lazy return settler, which may already have landed this very
         // mission (VEY-KANEO-468 Phase 2c). If so the leg is Returned — the credit happened this tx,
         // so report success rather than double-crediting (which would underflow activeFleetMissionCount).
@@ -284,31 +284,31 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function startResearch(uint256 planetId, Technology technology) external {
         _requirePlanetOwner(planetId);
-        _settleDueColonizeArrivals(msg.sender);
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        _settleDueColonizeArrivals(_actingPlayer());
+        _settleDueCombatArrivals(_actingPlayer());
+        _requireNoPendingMissionResolutionForPlayer(_actingPlayer());
         // VEY-KANEO-480: settle a ready-but-unsettled research queue BEFORE the active check, mirroring
         // the start*/action settle-before-check fixes in #852 (VEY-KANEO-477). A research whose readyAt
         // has elapsed but was never observed would otherwise still report active and falsely revert
         // QueueActive(), blocking the owner from queueing the next research without a separate finish tx.
         // A due research now completes and clears active here; a genuinely in-progress one stays active
         // and still trips QueueActive().
-        _settleResearchDue(msg.sender, _currentTimestamp());
-        if (researchQueues[msg.sender].active) revert QueueActive();
+        _settleResearchDue(_actingPlayer(), _currentTimestamp());
+        if (researchQueues[_actingPlayer()].active) revert QueueActive();
 
-        uint16 currentLevel = _technologyLevels[msg.sender][technology];
+        uint16 currentLevel = _technologyLevels[_actingPlayer()][technology];
         if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
 
         _settleResources(planetId);
-        _requireResearchDependencies(planetId, msg.sender, technology, currentLevel);
+        _requireResearchDependencies(planetId, _actingPlayer(), technology, currentLevel);
 
-        Resources memory cost = _researchCost(msg.sender, technology);
+        Resources memory cost = _researchCost(_actingPlayer(), technology);
         _spend(planetId, cost);
 
         uint64 readyAt =
             uint64(uint256(_currentTimestamp()) + _researchDuration(planetId, technology, cost));
         uint16 targetLevel = currentLevel + 1;
-        researchQueues[msg.sender] = ResearchQueue({
+        researchQueues[_actingPlayer()] = ResearchQueue({
             active: true,
             technology: technology,
             targetLevel: targetLevel,
@@ -317,10 +317,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         });
 
         emit ResearchQueued(
-            msg.sender, technology, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+            _actingPlayer(),
+            technology,
+            targetLevel,
+            readyAt,
+            cost.metal,
+            cost.crystal,
+            cost.deuterium
         );
         emit ResearchQueuedV2(
-            msg.sender,
+            _actingPlayer(),
             planetId,
             technology,
             targetLevel,
@@ -332,21 +338,21 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function finishResearch() external {
-        _settleDueCombatArrivals(msg.sender);
-        _requireNoPendingMissionResolutionForPlayer(msg.sender);
-        ResearchQueue memory queue = researchQueues[msg.sender];
+        _settleDueCombatArrivals(_actingPlayer());
+        _requireNoPendingMissionResolutionForPlayer(_actingPlayer());
+        ResearchQueue memory queue = researchQueues[_actingPlayer()];
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
-        delete researchQueues[msg.sender];
-        _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
-        emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
+        delete researchQueues[_actingPlayer()];
+        _technologyLevels[_actingPlayer()][queue.technology] = queue.targetLevel;
+        emit ResearchCompleted(_actingPlayer(), queue.technology, queue.targetLevel);
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
-        if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+        if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
     function _requireRiftUnlocked(uint256 planetId) private view {

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
+import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -27,6 +29,10 @@ interface IVeydriftPaidAllianceInviteSystem {
     ) external returns (address purchaser, uint256 allianceId);
 }
 
+interface IVeydriftBuildingProductionSettler {
+    function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
+}
+
 /// @notice Delegatecall target for first-planet settlement and referral settlement.
 contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     uint256 private constant TEMPERATURE_MIGRATION_BATCH_SIZE = 64;
@@ -39,6 +45,90 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     {
         _referralSystem = referralSystemAddress;
         _migrationColonizationModule = colonizationModule;
+    }
+
+    function delegateOf(address main) external view returns (address) {
+        return _delegateOf[main];
+    }
+
+    function delegatorOf(address delegate) external view returns (address) {
+        return _delegatorOf[delegate];
+    }
+
+    function effectivePlayer(address actor) external view returns (address) {
+        address main = _delegatorOf[actor];
+        return main == address(0) ? actor : main;
+    }
+
+    function setDelegate(address delegate) external {
+        address main = msg.sender;
+        address delegatedMain = _delegatorOf[main];
+        if (delegatedMain != address(0)) {
+            revert DelegatedWalletCannotDelegate(main, delegatedMain);
+        }
+        if (delegate == address(0) || delegate == main) revert InvalidDelegate(delegate);
+        address assignedMain = _delegatorOf[delegate];
+        if (assignedMain != address(0) && assignedMain != main) {
+            revert DelegateAlreadyAssigned(delegate, assignedMain);
+        }
+        address nestedDelegate = _delegateOf[delegate];
+        if (nestedDelegate != address(0)) {
+            revert DelegateHasDelegate(delegate, nestedDelegate);
+        }
+
+        address previous = _delegateOf[main];
+        if (previous == delegate) revert DelegateAlreadyAssigned(delegate, main);
+        if (previous != address(0)) delete _delegatorOf[previous];
+        _delegateOf[main] = delegate;
+        _delegatorOf[delegate] = main;
+        emit DelegateUpdated(main, previous, delegate, main);
+    }
+
+    function revokeDelegate() external {
+        address main = _delegatorOf[msg.sender];
+        if (main == address(0)) main = msg.sender;
+        address delegate = _delegateOf[main];
+        if (delegate == address(0)) revert NoDelegate(msg.sender);
+        delete _delegateOf[main];
+        delete _delegatorOf[delegate];
+        emit DelegateUpdated(main, delegate, address(0), msg.sender);
+    }
+
+    function startBuildingUpgrade(uint256 planetId, Building building) external {
+        address player = _actingPlayer();
+        _touchPlayer(player);
+        _requirePlanetOwner(planetId, player);
+        _settleBuildingResources(planetId);
+        if (buildingConstructions[planetId].active) revert ConstructionActive();
+
+        uint16 currentLevel = _buildingLevels[planetId][building];
+        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
+        if (building == Building.InterdimensionalRiftStabilizer && currentLevel != 0) {
+            revert LevelTooHigh();
+        }
+        if (_usedFields(planetId) >= _planets[planetId].fields) {
+            if (building != Building.Terraformer) revert FieldCapacityReached();
+        }
+
+        _requireBuildingDependencies(planetId, building, player);
+        Resources memory cost = _buildingUpgradeCost(planetId, building);
+        _spendBuildingResources(planetId, cost);
+
+        uint64 readyAt = uint64(block.timestamp + _buildingDuration(planetId, cost));
+        uint16 targetLevel = currentLevel + 1;
+        buildingConstructions[planetId] = BuildingConstruction({
+            active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
+        });
+        emit BuildingStarted(
+            planetId, building, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
+    }
+
+    function finishBuildingUpgrade(uint256 planetId) external {
+        address player = _actingPlayer();
+        _touchPlayer(player);
+        _requirePlanetOwner(planetId, player);
+        _settleBuildingResources(planetId);
     }
 
     /// @dev Kept on the Game proxy ABI but delegated here to leave upgrade bytecode headroom.
@@ -270,7 +360,7 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
-        planetId = _startPlanet(msg.sender, msg.value, address(0));
+        planetId = _startPlanet(_actingPlayer(), msg.value, address(0));
     }
 
     function startPlanetWithReferral(bytes32 commitment, uint8 v, bytes32 r, bytes32 s)
@@ -281,13 +371,13 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
         address inviter = IVeydriftReferralSystem(_referralSystem)
         .redeemReferralInvite{value: inviterReward}(
-            msg.sender, commitment, v, r, s
+            _actingPlayer(), commitment, v, r, s
         );
-        planetId = _startPlanet(msg.sender, msg.value, inviter);
+        planetId = _startPlanet(_actingPlayer(), msg.value, inviter);
     }
 
     function settleFirstPlanet() external payable returns (FirstPlanet memory settledPlanet) {
-        uint256 planetId = _startPlanet(msg.sender, msg.value, address(0));
+        uint256 planetId = _startPlanet(_actingPlayer(), msg.value, address(0));
         return _firstPlanetFrom(planetId);
     }
 
@@ -299,9 +389,9 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
         address inviter = IVeydriftReferralSystem(_referralSystem)
         .redeemReferralInvite{value: inviterReward}(
-            msg.sender, commitment, v, r, s
+            _actingPlayer(), commitment, v, r, s
         );
-        uint256 planetId = _startPlanet(msg.sender, msg.value, inviter);
+        uint256 planetId = _startPlanet(_actingPlayer(), msg.value, inviter);
         return _firstPlanetFrom(planetId);
     }
 
@@ -346,8 +436,8 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
             revert BadStartPayment();
         }
         (address purchaser,) = IVeydriftPaidAllianceInviteSystem(_allianceSystem)
-            .redeemPaidInvite(msg.sender, commitment, expiresAt, v, r, s);
-        planetId = _startPlanetFromPaidAllianceInvite(msg.sender, purchaser);
+            .redeemPaidInvite(_actingPlayer(), commitment, expiresAt, v, r, s);
+        planetId = _startPlanetFromPaidAllianceInvite(_actingPlayer(), purchaser);
     }
 
     function _startPlanetFromPaidAllianceInvite(address player, address inviter)
@@ -359,6 +449,121 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         // purchase through `redeemPaidInvite`, so it intentionally supplies the canonical price
         // without receiving a second payment from the invited wallet.
         planetId = _startPlanet(player, startPrice, inviter);
+    }
+
+    function _requirePlanetOwner(uint256 planetId, address player) private view {
+        Planet storage planetRef = _planets[planetId];
+        if (planetRef.owner == address(0)) revert NoPlanet();
+        if (planetRef.owner != player) revert NotPlanetOwner();
+    }
+
+    function _requireBuildingDependencies(uint256 planetId, Building building, address player)
+        private
+        view
+    {
+        VeydriftDependencies.requireBuilding(
+            building,
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.Shipyard],
+            _buildingLevels[planetId][Building.ResearchLab],
+            _buildingLevels[planetId][Building.NaniteFactory],
+            _technologyLevels[player][Technology.Energy],
+            _technologyLevels[player][Technology.Computer],
+            _technologyLevels[player][Technology.Hyperspace]
+        );
+    }
+
+    function _settleBuildingResources(uint256 planetId) private {
+        _requireNoPendingMissionResolutionForPlanet(planetId);
+        _settleBuildingResourcesUpTo(planetId, uint64(block.timestamp));
+        _settleDuePlanet(planetId);
+    }
+
+    function _settleBuildingResourcesUpTo(uint256 planetId, uint64 ceiling) private {
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (construction.active && ceiling >= construction.readyAt) {
+            _settleBuildingResourcesUntil(planetId, construction.readyAt);
+            _completeBuilding(planetId, construction);
+            _settleBuildingResourcesUntil(planetId, ceiling);
+            return;
+        }
+        _settleBuildingResourcesUntil(planetId, ceiling);
+    }
+
+    function _settleBuildingResourcesUntil(uint256 planetId, uint64 settledAt) private {
+        IVeydriftBuildingProductionSettler(address(this)).settleProductionUntil(planetId, settledAt);
+    }
+
+    function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
+        Building building = construction.building;
+        delete buildingConstructions[planetId];
+        _buildingLevels[planetId][building] = construction.targetLevel;
+        if (building == Building.Terraformer) {
+            unchecked {
+                _planets[planetId].fields += 5;
+            }
+        }
+        emit BuildingCompleted(planetId, building, construction.targetLevel);
+    }
+
+    function _buildingDuration(uint256 planetId, Resources memory cost)
+        private
+        view
+        returns (uint256)
+    {
+        return VeydriftFormulas.buildingDuration(
+            _buildingLevels[planetId][Building.RoboticsFactory],
+            _buildingLevels[planetId][Building.NaniteFactory],
+            cost.metal,
+            cost.crystal,
+            QUEUE_UNIVERSE_SPEED,
+            MIN_QUEUE_SECONDS
+        );
+    }
+
+    function _usedFields(uint256 planetId) private view returns (uint256 used) {
+        for (uint8 i = 0; i <= MAX_BUILDING_ID; i++) {
+            used += _buildingLevels[planetId][Building(i)];
+        }
+    }
+
+    function _spendBuildingResources(uint256 planetId, Resources memory cost) private {
+        _settleBuildingResources(planetId);
+        Resources storage available = _planets[planetId].resources;
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
+        available.metal -= cost.metal;
+        available.crystal -= cost.crystal;
+        available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
+    }
+
+    function _buildingUpgradeCost(uint256 planetId, Building building)
+        private
+        view
+        returns (Resources memory)
+    {
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.buildingBaseCost(building);
+        (uint8 numerator, uint8 denominator) = VeydriftCatalog.buildingCostFactor(building);
+        uint16 currentLevel = _buildingLevels[planetId][building];
+        return Resources({
+            metal: _toUint128(
+                VeydriftFormulas.scaleByFactor(metal, currentLevel, numerator, denominator)
+            ),
+            crystal: _toUint128(
+                VeydriftFormulas.scaleByFactor(crystal, currentLevel, numerator, denominator)
+            ),
+            deuterium: _toUint128(
+                VeydriftFormulas.scaleByFactor(deuterium, currentLevel, numerator, denominator)
+            )
+        });
     }
 
     function _startPlanet(address player, uint256 payment, address inviter)

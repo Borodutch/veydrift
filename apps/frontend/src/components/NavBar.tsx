@@ -12,6 +12,7 @@ import {
   validatePlayerDescription,
   validatePlayerDisplayName,
   type PlayerProfile,
+  type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
 
@@ -42,9 +43,14 @@ interface NavBarProps {
   onNavigate: (page: Page) => void;
   onConnectWallet?: (() => void) | undefined;
   onOpenActivity?: (() => void) | undefined;
+  onRevokeDelegate?: (() => void) | undefined;
+  onSetDelegate?: ((delegate: string) => void) | undefined;
   onUpdatePlayerProfile?: ((name: string, description: string | null) => void) | undefined;
   playerProfile?: PlayerProfile | undefined;
   playerProfileAction?: PlayerProfileActionState | undefined;
+  delegation?: WalletDelegationState | undefined;
+  delegationAction?: PlayerProfileActionState | undefined;
+  signerAccount?: string | undefined;
   canEditPlayerProfile?: boolean | undefined;
   planetPicker?: ComponentChildren;
 }
@@ -102,15 +108,21 @@ export function NavBar({
   onConnectWallet,
   onNavigate,
   onOpenActivity,
+  onRevokeDelegate,
+  onSetDelegate,
   onUpdatePlayerProfile,
   playerProfile,
   playerProfileAction = { status: "idle" },
+  delegation,
+  delegationAction = { status: "idle" },
+  signerAccount,
   canEditPlayerProfile = false,
   planetPicker,
 }: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
+  const [delegateDraft, setDelegateDraft] = useState(delegation?.delegate ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
   const [commanderSummaryExpanded, setCommanderSummaryExpanded] = useState(commanderSummaryInitiallyExpanded);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
@@ -123,12 +135,26 @@ export function NavBar({
     || playerProfile?.fallbackName?.trim()
     || undefined;
   const playerProfileBusy = playerProfileAction.status === "pending";
+  const delegationBusy = delegationAction.status === "pending";
   const playerStatusTone = playerProfileAction.status === "error"
     ? "text-amber-200"
     : playerProfileAction.status === "success"
       ? "text-emerald-200"
       : "text-slate-300";
   const playerStatusLabel = playerProfileAction.status === "idle" ? undefined : playerProfileAction.label;
+  const delegationStatusTone = delegationAction.status === "error"
+    ? "text-amber-200"
+    : delegationAction.status === "success"
+      ? "text-emerald-200"
+      : "text-slate-300";
+  const delegationStatusLabel = delegationAction.status === "idle" ? undefined : delegationAction.label;
+  const canSetDelegate = Boolean(
+    signerAccount
+      && account
+      && signerAccount.toLowerCase() === account.toLowerCase()
+      && !delegation?.actingAsDelegate
+      && onSetDelegate,
+  );
 
   const closeMobileMenu = () => {
     if (mobileNavigationDetails.current) {
@@ -179,9 +205,10 @@ export function NavBar({
     if (!playerPanelOpen) {
       setPlayerDraft(playerProfile?.displayName ?? "");
       setPlayerDescriptionDraft(playerProfile?.description ?? "");
+      setDelegateDraft(delegation?.delegate ?? "");
       setPlayerValidation(undefined);
     }
-  }, [playerPanelOpen, playerProfile?.description, playerProfile?.displayName]);
+  }, [delegation?.delegate, playerPanelOpen, playerProfile?.description, playerProfile?.displayName]);
 
   useEffect(() => {
     if (playerProfileAction.status === "success") {
@@ -193,12 +220,12 @@ export function NavBar({
     if (!playerPanelOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !playerProfileBusy) setPlayerPanelOpen(false);
+      if (event.key === "Escape" && !playerProfileBusy && !delegationBusy) setPlayerPanelOpen(false);
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [playerPanelOpen, playerProfileBusy]);
+  }, [delegationBusy, playerPanelOpen, playerProfileBusy]);
 
   const handlePlayerSubmit = (event: Event) => {
     event.preventDefault();
@@ -302,7 +329,7 @@ export function NavBar({
     <div
       className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
       onClick={(event) => {
-        if (event.target === event.currentTarget && !playerProfileBusy) setPlayerPanelOpen(false);
+        if (event.target === event.currentTarget && !playerProfileBusy && !delegationBusy) setPlayerPanelOpen(false);
       }}
     >
       <form
@@ -325,7 +352,7 @@ export function NavBar({
           <button
             aria-label="Cancel player display name edit"
             className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy}
+            disabled={playerProfileBusy || delegationBusy}
             onClick={() => setPlayerPanelOpen(false)}
             title="Cancel"
             type="button"
@@ -367,6 +394,59 @@ export function NavBar({
         <p className="text-[11px] leading-4 text-slate-300">
           Free wallet signature; no transaction or gas.
         </p>
+        <section className="grid gap-2 rounded border border-cyan-300/15 bg-cyan-300/5 p-3" aria-label="Wallet delegation">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-200/80">Wallet delegate</p>
+            {delegation?.actingAsDelegate && signerAccount && account ? (
+              <p className="mt-1 text-[11px] leading-4 text-slate-300">
+                Connected as {shortAddress(signerAccount)} and acting for {shortAddress(account)}.
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] leading-4 text-slate-300">
+                {delegation?.delegate
+                  ? `${shortAddress(delegation.delegate)} can perform gameplay actions for this wallet.`
+                  : "Allow one burner wallet to perform gameplay actions for this wallet."}
+              </p>
+            )}
+          </div>
+          {canSetDelegate ? (
+            <label className="grid gap-1 text-xs font-medium text-slate-200">
+              Delegate address
+              <input
+                className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 font-mono text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+                disabled={delegationBusy}
+                onInput={(event) => setDelegateDraft(event.currentTarget.value)}
+                placeholder="0x…"
+                value={delegateDraft}
+              />
+            </label>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            {delegation?.delegate && onRevokeDelegate ? (
+              <button
+                className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={delegationBusy}
+                onClick={onRevokeDelegate}
+                type="button"
+              >
+                Revoke delegate
+              </button>
+            ) : null}
+            {canSetDelegate ? (
+              <button
+                className="h-8 rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={delegationBusy || !delegateDraft.trim()}
+                onClick={() => onSetDelegate?.(delegateDraft)}
+                type="button"
+              >
+                {delegation?.delegate ? "Replace delegate" : "Set delegate"}
+              </button>
+            ) : null}
+          </div>
+          {delegationStatusLabel ? (
+            <p className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
+          ) : null}
+        </section>
         {(playerValidation || playerStatusLabel) && (
           <p className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
             {playerValidation ?? playerStatusLabel}
@@ -376,7 +456,7 @@ export function NavBar({
           <button
             aria-label="Cancel player display name edit"
             className="inline-grid h-8 w-8 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy}
+            disabled={playerProfileBusy || delegationBusy}
             onClick={() => setPlayerPanelOpen(false)}
             title="Cancel"
             type="button"
@@ -386,7 +466,7 @@ export function NavBar({
           <button
             aria-label="Save player profile"
             className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={!canEditPlayerProfile || playerProfileBusy}
+            disabled={!canEditPlayerProfile || playerProfileBusy || delegationBusy}
             title={playerProfileBusy ? "Signing" : "Save profile"}
             type="submit"
           >
