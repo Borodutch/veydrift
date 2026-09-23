@@ -11,7 +11,7 @@ import {
 import type { ComponentChildren } from "preact";
 import { useMemo } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
-import { formatPlanetType, planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
+import { planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
@@ -369,7 +369,6 @@ export function moonRecordRows(planet: Planet): Array<{ label: string; value: st
   return [
     { label: "Fields", value: moon?.fields === undefined ? "Unknown" : moon.fields.toLocaleString("en-US") },
     { label: "Diameter", value: moon?.diameterKm === undefined ? "Unknown" : `${moon.diameterKm.toLocaleString("en-US")} km` },
-    { label: "Parent art family", value: formatPlanetType(planet.type) },
   ];
 }
 

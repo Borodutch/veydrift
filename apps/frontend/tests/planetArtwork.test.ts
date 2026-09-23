@@ -59,7 +59,7 @@ describe("slot-aware artwork without climate changes (VEY-890)", () => {
         expect(planet.resources).toEqual({ metal: 200, crystal: 204, deuterium: 217, energy: 0 });
         expect(planet.deuteriumMultiplierBps).toBe(10840);
         expect(publicPlanetDataRows(planet)).toContainEqual({ label: "Climate", value: "Scorching Molten" });
-        expect(publicPlanetDataRows(planet)).toContainEqual({ label: "Art family", value: formatPlanetType(type) });
+        expect(publicPlanetDataRows(planet).map(row => row.label)).not.toContain("Art family");
       }
       expect(overviewHeroImage(owned, undefined, undefined)).toBe(image);
       expect(planetImageForManagedPlanet(live)).toBe(image);

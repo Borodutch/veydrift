@@ -360,7 +360,6 @@ export function PlanetDetail({
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
               <PlanetFact icon={<MapPin aria-hidden="true" size={14} />} label="Open system" onClick={onBack} value={planetCoords} mono />
-              <PlanetFact icon={<Globe2 aria-hidden="true" size={14} />} label="Art family" value={formatPlanetType(planet.type)} />
               <PlanetFact icon={<Orbit aria-hidden="true" size={14} />} label="Diameter" value={`${planet.diameter.toLocaleString()} km`} />
               <PlanetFact icon={<Database aria-hidden="true" size={14} />} label="Fields" value={planet.fields.toLocaleString()} />
               <PlanetFact icon={<Thermometer aria-hidden="true" size={14} />} label="Climate" value={`${planet.temperature.min}° to ${planet.temperature.max}°C`} />
@@ -669,7 +668,6 @@ export function publicCommanderRows(planet: Planet, isHome: boolean): PlanetReco
 export function publicPlanetDataRows(planet: Planet): PlanetRecordRow[] {
   return [
     { label: "Coordinates", value: `[${planet.galaxy}:${planet.system}:${planet.position}]` },
-    { label: "Art family", value: formatPlanetType(planet.type) },
     { label: "Climate", value: formatPlanetType(planetTypeFromTemperature((planet.temperature.min + planet.temperature.max) / 2)) },
     { label: "Fields", value: planet.fields.toLocaleString() },
     { label: "Diameter", value: `${planet.diameter.toLocaleString()} km` },
