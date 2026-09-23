@@ -82,7 +82,13 @@ test("allows ANSI-colored Foundry contract size table rows", () => {
   assert.equal(outputContainsFlaggedOutput(output), false);
 });
 
-test("still flags warnings and errors", () => {
+test("allows only the exact Vite chunk-size explanation, not other diagnostics", () => {
+  const viteLine = "- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.";
+  assert.equal(outputContainsFlaggedOutput(viteLine), false);
+  assert.equal(outputContainsFlaggedOutput(`${viteLine}\u001b[39m`), false); // Captured CI build output.
+  assert.equal(outputContainsFlaggedOutput(`${viteLine} warning: unexpected`), true);
+  assert.equal(outputContainsFlaggedOutput("- warning: unexpected diagnostic"), true);
+  assert.equal(outputContainsFlaggedOutput(`${viteLine}\nwarning: unexpected diagnostic`), true);
   assert.equal(outputContainsFlaggedOutput("warning: unused variable"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
 });

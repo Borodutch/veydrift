@@ -500,6 +500,8 @@ contract VeydriftAllianceSystemTest is Test {
             new VeydriftPaidAllianceInvites.BalanceMigration[](11);
         for (uint256 i; i < invites.length; ++i) {
             bool redeemed = i != 0;
+            // i < invites.length (16), so 0x1000 + i <= 0x100f and fits uint160.
+            // forge-lint: disable-next-line(unsafe-typecast)
             address invitee = redeemed ? address(uint160(0x1000 + i)) : address(0);
             uint256 allianceId = i % 11 + 1;
             invites[i] = VeydriftPaidAllianceInvites.InviteMigration({
