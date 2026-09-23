@@ -96,6 +96,7 @@ const audioContextFailure = fixtureParams.get("audioContextFailure") === "true";
 const shortResources = fixtureParams.get("shortResources") === "true";
 const publicTreasury = fixtureParams.get("publicTreasury") === "true";
 const moonOverview = fixtureParams.get("moonOverview") === "true";
+const batchPlanProbe = fixtureParams.get("batchPlanProbe") === "true";
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 let constructionPhase = fixtureParams.get("construction") ?? "idle";
 const constructionStartedAt = Math.floor(Date.now() / 1000) - 60;
@@ -199,8 +200,9 @@ window.addEventListener("error", (event) => fixtureErrors.push(`window-error:${e
 window.addEventListener("unhandledrejection", (event) => fixtureErrors.push(`unhandled:${event.reason?.stack ?? String(event.reason)}`));
 for (const type of ["pointerdown", "click"] as const) {
   window.addEventListener(type, (event) => {
-    const target = event.target instanceof Element
-      ? `${event.target.tagName.toLowerCase()}:${event.target.textContent?.trim() ?? ""}`
+    const element = event.target instanceof Element ? event.target.closest("button") ?? event.target : undefined;
+    const target = element
+      ? `${element.tagName.toLowerCase()}:${element.getAttribute("aria-label") ?? element.textContent?.trim() ?? ""}`
       : "unknown";
     fixtureInteractions.push({
       isTrusted: event.isTrusted,
@@ -342,7 +344,7 @@ globalThis.fetch = (async (input, init) => {
         allianceConfigured: publicTreasury,
         gameConfigured: true,
         highscoresEndpoint: true,
-        moonConfigured: false,
+        moonConfigured: batchPlanProbe,
         ...(raidEligibilityProbe || moonOverview ? { moonAttackParity: true } : {}),
         referralsConfigured: false,
         researchEndpoint: true,
@@ -351,7 +353,7 @@ globalThis.fetch = (async (input, init) => {
       },
       gameContractAddress: "0x2222222222222222222222222222222222222222",
       graphqlUrl: `${window.location.origin}/graphql`,
-      moonContractAddress: null,
+      moonContractAddress: batchPlanProbe ? "0x3333333333333333333333333333333333333333" : null,
       network: settlementShell ? "base" : "base-sepolia",
       resourceTokenAddresses: { crystal: null, deuterium: null, metal: null },
       rpcProvider: "unknown",
@@ -589,14 +591,15 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.endsWith(`/wallet/${account}/moon`)) {
     return Response.json({
-      buildings: [],
+      buildings: batchPlanProbe ? [{ id: 3, key: "shipyard", label: "Shipyard", level: 5, cost: { metal: "100", crystal: "0", deuterium: "0" } }] : [],
       defenseQueue: null,
-      defenses: [],
+      defenses: batchPlanProbe ? [{ id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 60 }] : [],
       homePlanetId: "101",
       moon: moonOverview ? { exists: true, planetId: "101" } : null,
       ...(moonOverview ? {
-        resources: { metal: "1234", crystal: "567", deuterium: "890" },
+        resources: batchPlanProbe ? { metal: "10000", crystal: "5000", deuterium: "890" } : { metal: "1234", crystal: "567", deuterium: "890" },
         launchableShips: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        ...(batchPlanProbe ? { ships: [{ id: 0, count: 3, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 60 }], technologyLevels: { "3": 6, "6": 2 } } : {}),
       } : {}),
       queue: null,
       wallet: account,
@@ -691,11 +694,11 @@ globalThis.fetch = (async (input, init) => {
 }) as typeof fetch;
 
 document.addEventListener("pointerdown", (event) => {
-  const target = event.target instanceof HTMLButtonElement ? event.target : undefined;
-  if (walletEventOnPointerDown === "accountsChanged" && target?.textContent?.trim() === "Build") {
+  const target = event.target instanceof Element ? event.target.closest("button") : null;
+  if (walletEventOnPointerDown === "accountsChanged" && target?.getAttribute("aria-label") === "Build Small Cargo now") {
     for (const listener of providerListeners.get("accountsChanged") ?? []) listener([account]);
   }
-  if (walletEventOnPointerDown === "chainChanged" && target?.textContent?.trim() === "Build") {
+  if (walletEventOnPointerDown === "chainChanged" && target?.getAttribute("aria-label") === "Build Small Cargo now") {
     for (const listener of providerListeners.get("chainChanged") ?? []) listener("0x2105");
   }
 }, { capture: true });

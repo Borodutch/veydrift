@@ -31,6 +31,7 @@ let pageTargetId;
 let recoveryFixtureUrl;
 let server;
 let routeChunkGate;
+let gatedRouteChunkRequests = [];
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
@@ -264,6 +265,7 @@ before(async () => {
       configureServer(vite) {
         vite.middlewares.use((request, _response, next) => {
           if (routeChunkGate && /\/components\/(MissionControlPage|ShipyardPage)\.tsx(?:\?|$)/.test(request.url ?? "")) {
+            gatedRouteChunkRequests.push(request.url);
             void routeChunkGate.then(() => next());
           } else next();
         });
@@ -2039,7 +2041,7 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
 
   const alignment = await evaluate(`(() => {
     const buttons = [...document.querySelectorAll('main button')];
-    const build = buttons.find((button) => button.textContent?.trim() === 'Build');
+    const build = buttons.find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now');
     const supply = document.querySelector('main button[aria-label^="Supply missing resources for"]');
     const buildRect = build?.getBoundingClientRect();
     const supplyRect = supply?.getBoundingClientRect();
@@ -2112,7 +2114,7 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
       && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
       && document.querySelector('summary[title^="Metal:"]') !== null
       && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: 3') === true
-      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build')`);
+      && document.querySelector('main button[aria-label="Build Rocket Launcher now"]') !== null`);
   } catch (error) {
     const diagnostics = await evaluate(`({
       bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
@@ -2135,6 +2137,36 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
   assert.doesNotMatch(rendered.bodyText ?? "", /Resources loading|Syncing planetfall/);
   assert.deepEqual(rendered.errors, []);
 });
+
+for (const body of ["planet", "moon"]) {
+  test(`${body} Shipyard and Defenses add to one real mounted build plan without an early wallet send`, async () => {
+    const moon = body === "moon";
+    await loadInspectorFixture(moon ? "/moon/1/2/3" : "/shipyard", 390, {
+      batchPlanProbe: "true", moonOverview: "true", shell: "settlement",
+    });
+    const addShip = 'main button[aria-label="Add Small Cargo to build plan"]:not(:disabled)';
+    const addDefense = 'main button[aria-label="Add Rocket Launcher to build plan"]:not(:disabled)';
+    await waitForExpression(`document.querySelector(${JSON.stringify(addShip)}) !== null`);
+    await clickExpression(`document.querySelector(${JSON.stringify(addShip)})`);
+    await waitForExpression(`document.querySelector('main [data-build-plan][aria-label="${body} build plan"] button[aria-label="Remove Small Cargo from build plan"]') !== null`);
+    if (!moon) {
+      await clickExpression('document.querySelector(\'summary[aria-label="Open navigation menu"]\')');
+      await clickExpression('document.querySelector(\'#mobile-navigation-menu a[href="/defenses"]\')');
+      await waitForExpression(`location.pathname === '/defenses' && document.querySelector('main [data-build-plan] button[aria-label="Remove Small Cargo from build plan"]') !== null`);
+    }
+    await waitForExpression(`document.querySelector(${JSON.stringify(addDefense)}) !== null`);
+    await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
+    await waitForExpression(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length === 2`);
+    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan]').length`), 1);
+    assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`), 0);
+    await waitForExpression(`document.querySelector('main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)') !== null`);
+    await clickExpression('document.querySelector(\'main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)\')');
+    await waitForExpression(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length === 1`);
+    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length`), 2, "pending wallet confirmation retains both rows");
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"]') === null`), true, "confirm must not open another review dialog");
+    assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  });
+}
 
 for (const width of [390, 1280]) {
   test(`established-account gameplay routes escape an incomplete overview snapshot at ${width}px`, async () => {
@@ -2227,6 +2259,7 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
   // Hold only route modules until assertions finish; elapsed network latency is not a gate.
   let releaseChunks;
+  gatedRouteChunkRequests = [];
   routeChunkGate = new Promise(resolve => { releaseChunks = resolve; });
   try {
     await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
@@ -2234,7 +2267,12 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
     assert.equal(await evaluate("document.querySelector('main')?.textContent.includes('Loading planet details')"), false);
     assert.equal(await evaluate("document.querySelector('nav.hidden') === window.routeShellProof"), true);
     await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
-    await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main')?.textContent.includes('Loading shipyard') === true");
+    try {
+      await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main .skeleton-region[role=status][aria-busy=true] .sr-only')?.textContent === 'Loading shipyard'");
+    } catch (error) {
+      const state = await evaluate(`({ path: location.pathname, status: document.querySelector('main [role=status]')?.textContent, errors: window.inspectorProof.errors })`);
+      throw new Error(`${error.message}\nRoute chunk gate: ${JSON.stringify(gatedRouteChunkRequests)}; visible route: ${JSON.stringify(state)}`);
+    }
   } finally {
     routeChunkGate = undefined;
     releaseChunks();
@@ -2507,14 +2545,14 @@ test("wallet shell does not let a repeated account event interrupt the Build ges
   });
   await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   await waitForExpression(`location.pathname === '/shipyard'
-    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+    && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
   const result = await evaluate(`({
-    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now'),
     path: location.pathname,
     syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
   })`);
@@ -2532,14 +2570,14 @@ test("wallet shell does not let a repeated chain event interrupt the Build gestu
   });
   await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   await waitForExpression(`location.pathname === '/shipyard'
-    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+    && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
   const result = await evaluate(`({
-    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now'),
     path: location.pathname,
     syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
   })`);
@@ -2561,10 +2599,10 @@ for (const width of [1280, 390]) {
       await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
     }
     await waitForExpression(`location.pathname === '/shipyard'
-      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+      && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
     await clickExpressionWithTrustedPointer(
-      "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+      "[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)",
       width < 768 ? "touch" : "mouse",
     );
     try {
@@ -2572,7 +2610,7 @@ for (const width of [1280, 390]) {
     } catch (error) {
       const diagnostics = await evaluate(`({
         buildButtons: [...document.querySelectorAll('main button')]
-          .filter((button) => button.textContent?.trim() === 'Build')
+          .filter((button) => button.getAttribute('aria-label') === 'Build Small Cargo now')
           .map((button) => ({ disabled: button.disabled, outerHTML: button.outerHTML })),
         errors: window.inspectorProof.errors,
         mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 3000),
@@ -2589,7 +2627,7 @@ for (const width of [1280, 390]) {
         chainId: request?.params?.[0]?.chainId ?? null,
         data: request?.params?.[0]?.data ?? null,
         from: request?.params?.[0]?.from ?? null,
-        interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build') ?? null,
+        interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build Small Cargo now') ?? null,
         path: location.pathname,
         syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
         to: request?.params?.[0]?.to ?? null,
@@ -2602,7 +2640,7 @@ for (const width of [1280, 390]) {
       interaction: {
         isTrusted: true,
         pointerType: width < 768 ? "touch" : "mouse",
-        target: "button:Build",
+        target: "button:Build Small Cargo now",
         type: "pointerdown",
       },
       path: "/shipyard",
