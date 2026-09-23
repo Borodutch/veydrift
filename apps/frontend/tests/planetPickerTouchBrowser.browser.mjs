@@ -2750,6 +2750,10 @@ for (const kind of ["planet", "moon"]) {
     await loadInspectorFixture("/planet/9/9/9", 1280);
     await evaluate(`window.inspectorProof.beginDetailRace('${kind}')`);
     await waitForExpression("JSON.stringify(window.inspectorProof.pendingDetailRequests()) === JSON.stringify(['7:1', '8:2'])");
+    assert.deepEqual(await evaluate(`window.inspectorProof.requests.filter(request => request.includes('/universe/galaxies/7/systems/1?') || request.includes('/universe/galaxies/8/systems/2?')).sort()`), [
+      "/local-api/universe/galaxies/7/systems/1?detail=full",
+      "/local-api/universe/galaxies/8/systems/2?detail=full",
+    ]);
 
     await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
     const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
@@ -2764,6 +2768,7 @@ for (const kind of ["planet", "moon"]) {
     assert.match(text, new RegExp(expectedHeading));
     assert.match(text, /8,002|8,003|8,004/);
     assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+    await evaluate("window.inspectorProof.endDetailRace()");
   });
 }
 

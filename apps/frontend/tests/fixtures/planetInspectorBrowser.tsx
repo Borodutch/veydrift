@@ -1,6 +1,6 @@
 import { h, render, options, type VNode } from "preact";
 import { sdk } from "@farcaster/miniapp-sdk";
-import { BackendDataStore, backendDataStoreFor } from "../../src/backendDataStore";
+import { BackendDataStore, backendDataStoreFor, retainBackendDataStore } from "../../src/backendDataStore";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useBackendDataSnapshots } from "../../src/useBackendDataSnapshot";
 import { apiBaseUrlForRuntimeConfig } from "../../src/runtimeConfig";
@@ -35,6 +35,7 @@ declare global {
       resolveWalletSend(hash: string): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
+      endDetailRace(): void;
       failAttackProtection(index: number): void;
       pendingAttackProtections(): Array<{ index: number; targetIsMoon: boolean; targetPlanetId: string; wallet: string }>;
       pendingDetailRequests(): string[];
@@ -159,6 +160,7 @@ if (fixtureParams.get("homeIdentityProbe") === "true") {
 
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;
+let releaseDetailRaceStore: (() => void) | undefined;
 const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
@@ -777,9 +779,17 @@ window.inspectorProof = {
   async beginDetailRace(kind) {
     detailRaceKind = kind;
     pendingDetailRequests.clear();
+    // Replacing the app drops its store lease; keep both deferred reads alive
+    // until the browser test has inspected the current and stale responses.
+    releaseDetailRaceStore = retainBackendDataStore(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` }));
     const oldCoords = { galaxy: 7, system: 1, position: 2 };
     await renderDetail(kind, oldCoords);
     queueMicrotask(() => { void renderDetail(kind, { galaxy: 8, system: 2, position: 4 }); });
+  },
+  endDetailRace() {
+    releaseDetailRaceStore?.();
+    releaseDetailRaceStore = undefined;
+    detailRaceKind = null;
   },
   pendingDetailRequests() {
     return [...pendingDetailRequests.keys()].sort();
@@ -923,7 +933,7 @@ async function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
     : (await import("../../src/components/PlanetDetail")).PlanetDetail;
   const props = {
     account,
-    apiBaseUrl: `${window.location.origin}/api`,
+    apiBaseUrl: apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` }),
     coords,
     onBack: () => undefined,
   };
