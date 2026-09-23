@@ -19,8 +19,8 @@ system is standalone and lacks `effectivePlayer(address)`; **never** pass its ad
    receipt/log-backed snapshot from the frozen address including legacy hash-only ownership,
    activations, replay/quota, paid and later-claimed rewards, and source counters. Source ETH,
    outstanding credits and per-inviter claimable balances must all be zero; nonzero blocks cutover.
-   Deploy a fresh delegation-aware standalone target with the same owner/signer, import the four
-   committed code/hash-only/redemption/reward-stat classes in bounded batches, finalize, and verify
+   Deploy a fresh delegation-aware standalone target with the same owner/signer, import the five
+   committed code/hash-only/redemption/reward-stat/reward-claim classes in bounded batches, finalize, and verify
    every imported getter. Keep the target Game pointer unset until the Game upgrade. If any step
    fails, keep Game paused and the source frozen; only an authorized recovery may restore the source.
 3. Game owner unpauses Game **only after** the replacement is fully verified. With source still
@@ -71,15 +71,17 @@ system is standalone and lacks `effectivePlayer(address)`; **never** pass its ad
    It upgrades Alliance and switches the pointer in that order. Re-verify the frozen source fields
    against the snapshot and the Game ETH balance immediately before switch; any source or owner
    balance drift halts the rollout while Game stays paused.
-9. Update backend referral and paid-invite addresses/index-from-block to each replacement's
-   deployment block, then verify historical replay, reward counters/quota, and paid-invite secret
-   recovery. Paid-invite canonical import events rebuild the projection from the new address
+9. While Game remains paused, deploy the matching reviewed backend code together with updated
+   referral and paid-invite addresses/index-from-block for each replacement's deployment block.
+   Verify the running commit and configuration before historical replay, reward counters/quota,
+   and paid-invite secret recovery; new addresses on an older backend are not release readiness. Paid-invite canonical import events rebuild the projection from the new address
    without adding legacy rows twice. Verify outstanding invites, redeemed history, balances and
    pending balances before unpausing.
 10. Unpause Game, then dry-run and broadcast `UpgradeMoonSystem.s.sol`. The Moon script also rejects
    an older Game without `effectivePlayer(address)`. Game accepts paid-invite fees only from the
    Alliance's current pointer, so stale clients cannot purchase orphaned invites at the old address.
-11. Deploy backend/frontend only after referral replacement and migration ABI gates, then prove
+11. Deploy the frontend only after referral replacement, migration ABI, and the step-9 backend
+   deployment/readiness gates, then prove
    main/delegate actions, both revocations, reserved-main settlement with/without referral, paid
    invites, Alliance, Moon, safe referral withdrawals and admin isolation.
 
