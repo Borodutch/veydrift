@@ -6,6 +6,7 @@ import process from "node:process";
 import {
   createPublicClient,
   decodeEventLog,
+  decodeFunctionData,
   encodeAbiParameters,
   getAddress,
   http,
@@ -32,6 +33,7 @@ const referralAbi = parseAbi([
   "event ReferralRedemptionImported(address indexed inviter,address indexed invitee,bytes32 indexed commitment,uint64 redeemedAt,bytes32 manifestLeaf)",
   "event ReferralRewardClaimed(address indexed inviter, address indexed invitee, bytes32 indexed commitment, address recipient, uint256 amount, uint64 claimedAt)",
   "event ReferralLegacyCodeOwnershipImported(address indexed owner, bytes32 indexed codeHash, bytes32 indexed legacyCommitment, bytes32 manifestLeaf)",
+  "function migrateReferralRewardClaimHistory(address[] inviters,address[] invitees,bytes32[] commitments,address[] recipients,uint256[] amounts,uint64[] claimedAts)",
   "function referralInvites(bytes32 commitment) view returns (address inviter)",
   "function referralCodeHashOf(bytes32 commitment) view returns (bytes32)",
   "function referralClaimedAt(bytes32 commitment) view returns (uint64)",
@@ -200,8 +202,63 @@ async function verifiedEvent(client, sourceReferral, event, eventName) {
   const timestamp = eventName === "ReferralInviteWindowActivated" && !decoded.args.migrated ? decoded.args.activatedAt
     : eventName === "ReferralInviteRedeemed" ? decoded.args.redeemedAt
       : eventName === "ReferralRewardClaimed" ? decoded.args.claimedAt : undefined;
-  if (timestamp !== undefined && timestamp !== block.timestamp) throw new Error(`${transactionHash} event timestamp is not canonical`);
+  if (timestamp !== undefined && timestamp !== block.timestamp) {
+    if (timestamp === 0n || timestamp > block.timestamp) throw new Error(`${transactionHash} event timestamp is not canonical`);
+    if (eventName === "ReferralInviteRedeemed") {
+      const marker = receipt.logs.find((candidate) => candidate.address.toLowerCase() === sourceReferral.toLowerCase()
+        && candidate.logIndex === expectedLogIndex - 1
+        && candidate.topics[0]?.toLowerCase() === trackedTopic("ReferralRedemptionImported"));
+      if (!marker) throw new Error(`${transactionHash} event timestamp is not canonical: missing import marker`);
+      const imported = decodeEventLog({ abi: referralAbi, eventName: "ReferralRedemptionImported", data: marker.data, topics: marker.topics }).args;
+      if (imported.inviter.toLowerCase() !== decoded.args.inviter.toLowerCase()
+        || imported.invitee.toLowerCase() !== decoded.args.invitee.toLowerCase()
+        || imported.commitment.toLowerCase() !== decoded.args.commitment.toLowerCase()
+        || imported.redeemedAt !== decoded.args.redeemedAt
+        || imported.manifestLeaf.toLowerCase() !== redemptionLeaf(decoded.args).toLowerCase()) {
+        throw new Error(`${transactionHash} imported redemption metadata mismatch`);
+      }
+    } else if (eventName === "ReferralRewardClaimed") {
+      const transaction = await rpcWithRetry(() => client.getTransaction({ hash: transactionHash }));
+      if (transaction.to?.toLowerCase() !== sourceReferral.toLowerCase()
+        || transaction.blockNumber !== receipt.blockNumber
+        || transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase()) {
+        throw new Error(`${transactionHash} imported reward claim transaction mismatch`);
+      }
+      let calldata;
+      try {
+        calldata = decodeFunctionData({ abi: referralAbi, data: transaction.input });
+      } catch {
+        throw new Error(`${transactionHash} event timestamp is not canonical: no verified import calldata`);
+      }
+      if (calldata.functionName !== "migrateReferralRewardClaimHistory") {
+        throw new Error(`${transactionHash} event timestamp is not canonical: no verified import calldata`);
+      }
+      const claimLogs = receipt.logs.filter((candidate) => candidate.address.toLowerCase() === sourceReferral.toLowerCase()
+        && candidate.topics[0]?.toLowerCase() === trackedTopic("ReferralRewardClaimed"));
+      const position = claimLogs.findIndex((candidate) => candidate.logIndex === expectedLogIndex);
+      const [inviters, invitees, commitments, recipients, amounts, claimedAts] = calldata.args;
+      if (position < 0 || claimLogs.length !== inviters.length || [invitees, commitments, recipients, amounts, claimedAts].some((rows) => rows.length !== inviters.length)) {
+        throw new Error(`${transactionHash} imported reward claim inventory mismatch`);
+      }
+      for (let index = 0; index < claimLogs.length; index++) {
+        const claim = decodeEventLog({ abi: referralAbi, eventName: "ReferralRewardClaimed", data: claimLogs[index].data, topics: claimLogs[index].topics }).args;
+        if (claim.inviter.toLowerCase() !== inviters[index].toLowerCase()
+          || claim.invitee.toLowerCase() !== invitees[index].toLowerCase()
+          || claim.commitment.toLowerCase() !== commitments[index].toLowerCase()
+          || claim.recipient.toLowerCase() !== recipients[index].toLowerCase()
+          || claim.amount !== amounts[index] || claim.claimedAt !== claimedAts[index]) {
+          throw new Error(`${transactionHash} imported reward claim calldata mismatch`);
+        }
+      }
+    } else {
+      throw new Error(`${transactionHash} event timestamp is not canonical`);
+    }
+  }
   return decoded.args;
+}
+
+function trackedTopic(name) {
+  return toEventSelector(referralAbi.find((item) => item.type === "event" && item.name === name)).toLowerCase();
 }
 
 const trackedReferralEvents = [
@@ -470,12 +527,14 @@ async function main() {
   });
 
   const redemptions = [];
+  const redemptionEventsByRef = new Map(canonicalEvents.filter((event) => event.eventName === "ReferralInviteRedeemed")
+    .map((event) => [`${event.transactionHash.toLowerCase()}:${BigInt(event.logIndex)}`, event]));
   for (const event of canonicalEvents
     .filter((row) => row.eventName === "ReferralInviteRedeemed")
     .filter((row) => BigInt(row.blockNumber) <= snapshotBlock)
     .sort((left, right) => (chainOrder(left) < chainOrder(right) ? -1 : 1))) {
     const decoded = await verifiedEvent(historicalClient, sourceReferral, event, "ReferralInviteRedeemed");
-    if (decoded.paid === decoded.credited || decoded.rewardAmount === 0n) {
+    if (decoded.rewardAmount === 0n ? decoded.paid || decoded.credited : decoded.paid === decoded.credited) {
       throw new Error(`Invalid referral reward status in ${event.transactionHash}`);
     }
     redemptions.push({
@@ -491,8 +550,29 @@ async function main() {
       logIndex: BigInt(event.logIndex).toString()
     });
   }
+  const redemptionsByRef = new Map(redemptions.map((row) => [`${row.transactionHash}:${BigInt(row.logIndex)}`, row]));
   for (const event of canonicalEvents.filter((row) => row.eventName === "ReferralRedemptionImported")) {
     const decoded = await verifiedEvent(historicalClient, sourceReferral, event, "ReferralRedemptionImported");
+    const paired = redemptionEventsByRef.get(`${event.transactionHash.toLowerCase()}:${BigInt(event.logIndex) + 1n}`);
+    if (paired) {
+      const redemption = redemptionsByRef.get(`${paired.transactionHash.toLowerCase()}:${BigInt(paired.logIndex)}`);
+      if (!redemption || decoded.inviter.toLowerCase() !== redemption.inviter.toLowerCase()
+        || decoded.invitee.toLowerCase() !== redemption.invitee.toLowerCase()
+        || decoded.commitment.toLowerCase() !== redemption.commitment
+        || decoded.redeemedAt !== BigInt(redemption.redeemedAt)
+        || decoded.manifestLeaf.toLowerCase() !== redemptionLeaf(redemption).toLowerCase()) {
+        throw new Error(`Paired referral redemption import metadata mismatch ${event.transactionHash}`);
+      }
+      continue;
+    }
+    const legacyLeaf = keccak256(encodeAbiParameters(
+      [{ type: "uint8" }, { type: "address" }, { type: "address" }, { type: "bytes32" }, { type: "uint64" }],
+      [migrationKindRedemption, decoded.inviter, decoded.invitee, decoded.commitment, decoded.redeemedAt]
+    ));
+    if (decoded.redeemedAt === 0n || decoded.redeemedAt > (await rpcWithRetry(() => historicalClient.getBlock({ blockNumber: BigInt(event.blockNumber) }))).timestamp
+      || decoded.manifestLeaf.toLowerCase() !== legacyLeaf.toLowerCase()) {
+      throw new Error(`Unpaired referral redemption import metadata mismatch ${event.transactionHash}`);
+    }
     redemptions.push({
       inviter: getAddress(decoded.inviter), invitee: getAddress(decoded.invitee),
       commitment: normalizeHex(decoded.commitment, 32, "imported commitment"),

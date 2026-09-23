@@ -73,10 +73,17 @@ Configuration rejects zero/non-zero digest/count mismatches and cannot be replac
 code hash, commitment, timestamp, missing row, duplicate row, or extra row leaves the imported
 count/digest pair unequal to the reviewed pair, so finalization fails closed.
 
-For every replacement after referrals have gone live, build a third receipt/event-backed manifest
-from every successful `ReferralInviteRedeemed` emitted by the current canonical referral contract.
-Do not use backend JSON alone. Require the exact emitting address, a status-1 receipt, and decoded
-`inviter`, `invitee`, `commitment`, and `redeemedAt` values. The redemption leaf is:
+For every replacement after referrals have gone live, build a receipt/event-backed manifest
+from the complete frozen source log inventory. Do not use backend JSON alone. Require the exact
+emitting address, a status-1 receipt, and decoded event fields. Ordinary redemptions and reward
+claims must carry their emitting block timestamp; historical re-emissions need authenticated
+provenance. For a re-emitted redemption, match its immediately preceding
+`ReferralRedemptionImported` log in the same receipt and its full-history (kind 6) leaf. Count
+the paired logs only once. An unpaired legacy import is allowed only with the exact kind 3 leaf
+and contributes a zero-value, neither-paid-nor-credited redemption. A historical reward claim
+must match its source-address import transaction calldata and the complete receipt claim-log
+order; neither its amount nor its recipient can be inferred from backend JSON. The legacy
+redemption-only leaf is:
 
 ```text
 keccak256(abi.encode(uint8(3), inviter, invitee, commitment, redeemedAt))
