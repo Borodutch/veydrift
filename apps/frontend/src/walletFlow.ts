@@ -1,4 +1,5 @@
 import { GameApiError } from "./gameApiError";
+import { defenseCatalog, shipyardCatalog } from "./playableMvp";
 import { diagnosticRoute } from "./requestDiagnostics";
 import type * as Api from "../../../packages/api-types/src/index";
 import { sdk } from "@farcaster/miniapp-sdk";
@@ -978,6 +979,7 @@ export type ChainMoonState = {
     cost: OnChainResources;
     durationSeconds?: number;
   }>;
+  shipQueue?: QueueStateResponse | null;
   defenseQueue?: QueueStateResponse | null;
   jumpGateDestinations?: Array<{
     planetId: string;
@@ -2189,6 +2191,7 @@ async function sendWalletTransaction(
   transaction: TransactionRequest,
   options: {
     accountProbeReadyChecked?: boolean;
+    maxEstimatedGas?: bigint;
     fleetMissionContext?: FleetMissionRevertContext;
     requiredChain?: VeydriftWalletChain;
     simulationRpcUrl?: string;
@@ -2249,6 +2252,15 @@ async function sendWalletTransaction(
       }
       const message = walletRequestErrorMessage(error);
       throw new Error(`Transaction simulation failed: ${message}`);
+    }
+  }
+
+  if (options.maxEstimatedGas) {
+    const estimate = simulateThroughAppRpc
+      ? await transactionRpcRequest<string>(simulationRpcUrl ?? "", "eth_estimateGas", [transaction])
+      : await provider.request<string>({ method: "eth_estimateGas", params: [transaction] });
+    if (!/^0x[0-9a-fA-F]+$/.test(estimate) || BigInt(estimate) > options.maxEstimatedGas) {
+      throw new Error("Build plan exceeds the safe gas limit. Remove some items and try again.");
     }
   }
 
@@ -3544,6 +3556,32 @@ export async function sendStartShipProductionTransaction(provider: Eip1193Provid
   });
 }
 
+/** The typed production ABI is shared by Game and MoonSystem; no arbitrary-call payloads. */
+export function encodeProductionBatchCall(body: "planet" | "moon", planetId: string, orders: readonly { kind: "ship" | "defense"; id: number; quantity: number }[]): string {
+  if (!/^(0|[1-9]\d*)$/.test(planetId) || orders.length < 1 || orders.length > 4) throw new Error("Invalid build plan");
+  const encodedOrders = orders.map(order => {
+    if ((order.kind !== "ship" && order.kind !== "defense") || !Number.isInteger(order.id) || order.id < 0 || order.id > 255
+      || !Number.isInteger(order.quantity) || order.quantity < 1 || order.quantity > 0xffffffff
+      || !(order.kind === "ship" ? shipyardCatalog : defenseCatalog).some(item => item.id === order.id)
+      || (body === "moon" && order.kind === "ship" && !shipyardCatalog.some(item => item.id === order.id && item.key !== "solarSatellite" && item.key !== "crawler"))
+      || (body === "moon" && order.kind === "defense" && defenseCatalog.some(item => item.id === order.id && item.group === "missile"))) throw new Error("Invalid build plan order");
+    return [order.kind === "ship" ? 0 : 1, order.id, order.quantity] as const;
+  });
+  const signature = body === "moon"
+    ? "startMoonProductionBatch(uint256,(uint8,uint8,uint32)[])"
+    : "startProductionBatch(uint256,(uint8,uint8,uint32)[])";
+  return `${toFunctionSelector(signature)}${encodeAbiParameters(parseAbiParameters("uint256,(uint8,uint8,uint32)[]"), [BigInt(planetId), encodedOrders]).slice(2)}`;
+}
+
+export async function sendProductionBatchTransaction(
+  provider: Eip1193Provider, account: string, contractAddress: string, body: "planet" | "moon", planetId: string,
+  orders: readonly { kind: "ship" | "defense"; id: number; quantity: number }[],
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account, to: contractAddress, data: encodeProductionBatchCall(body, planetId, orders),
+  }, { maxEstimatedGas: 12_000_000n });
+}
+
 export async function sendApproveResourceTokenTransaction(provider: Eip1193Provider, account: string, tokenAddress: string, spenderAddress: string, amount: bigint | number | string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -3829,6 +3867,15 @@ export async function sendStartMoonBuildingUpgradeTransaction(provider: Eip1193P
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId]),
+  });
+}
+
+export async function sendStartMoonShipProductionTransaction(
+  provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, shipId: number, quantity: number,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account, to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("startMoonShipProduction(uint256,uint8,uint32)"), [planetId, shipId, quantity]),
   });
 }
 

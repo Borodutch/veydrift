@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { PackagePlus } from "lucide-preact";
+import { Check, ChevronsUp, Hammer, ListPlus, PackagePlus, X } from "lucide-preact";
+import { evaluateProductionPlan, maxAddableProduction, type ProductionBody, type ProductionOrder, type ProductionPlanContext } from "../productionBuildPlan";
 import { useState } from "preact/hooks";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
@@ -53,6 +54,7 @@ export type ProductionCatalogItem<Key extends string = string> = {
   // The prominently displayed amount charged for the currently selected quantity.
   cost: Resources | undefined;
   unitCost?: Resources | undefined;
+  unitCostRaw?: { metal: string; crystal: string; deuterium: string } | undefined;
   costAffordable?: boolean | undefined;
   maxQuantity?: number | undefined;
   // Predicted build time for the selected quantity (VEY-KANEO-472). Backend-sourced
@@ -175,6 +177,9 @@ export type ProductionCatalogProps<Key extends string> = {
   items: ProductionCatalogItem<Key>[];
   now?: number | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
+  onAdd?: ((item: ProductionCatalogItem<Key>) => void) | undefined;
+  planMax?: number | undefined;
+  planBusy?: boolean | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
   onRefreshQueue?: (() => void) | undefined;
@@ -184,6 +189,20 @@ export type ProductionCatalogProps<Key extends string> = {
   queueProgress?: ConstructionProgress | undefined;
   queueTone?: QueueProgressTone | undefined;
   selectedKey: Key | undefined;
+  buildPlan?: {
+    body: ProductionBody;
+    context: ProductionPlanContext;
+    rows: readonly ProductionOrder[];
+    busy: boolean;
+    ready: boolean;
+    error?: string | undefined;
+    onAdd: (order: ProductionOrder) => void;
+    onRemove: (index: number) => void;
+    onClear: () => void;
+    onConfirm: () => void;
+  } | undefined;
+  productionKind?: ProductionOrder["kind"] | undefined;
+  showPlan?: boolean | undefined;
 };
 
 export function ProductionSection<Key extends string>({
@@ -212,6 +231,7 @@ export function ProductionSection<Key extends string>({
 
 export function ProductionCatalog<Key extends string>({
   actionPending,
+  buildPlan,
   canTransact,
   emptyLabel,
   items,
@@ -225,6 +245,8 @@ export function ProductionCatalog<Key extends string>({
   queueProgress,
   queueTone = "cyan",
   selectedKey,
+  productionKind,
+  showPlan = true,
 }: ProductionCatalogProps<Key>) {
   const selected = selectedProductionItem(items, selectedKey);
   const groups = Array.from(new Map(items.map((item) => [item.group, item.groupLabel])).entries());
@@ -250,12 +272,17 @@ export function ProductionCatalog<Key extends string>({
         />
       )}
 
+      {buildPlan && showPlan && <ProductionBuildPlan {...buildPlan} now={now} />}
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] xl:items-start">
         <SelectedProductionPanel
           emptyLabel={emptyLabel}
           id={selectedPanelId}
           item={selected}
           onBuild={onBuild}
+          onAdd={buildPlan && productionKind ? (item) => buildPlan.onAdd({ kind: productionKind, id: item.id, quantity: item.quantity }) : undefined}
+          planMax={buildPlan && productionKind && selected ? maxAddableProduction(buildPlan.context, buildPlan.rows, productionKind, selected.id) : undefined}
+          planBusy={buildPlan?.busy}
           onOpenRequirement={onOpenRequirement}
           onQuantity={onQuantity}
           onSupply={onSupply}
@@ -364,6 +391,41 @@ export function ProductionQueuePanel({
   );
 }
 
+function ProductionBuildPlan({ body, context, rows, busy, ready, error, onRemove, onClear, onConfirm, now }: NonNullable<ProductionCatalogProps<string>["buildPlan"]> & { now: number }) {
+  if (!rows.length) return null;
+  const plan = evaluateProductionPlan(rows, context, now);
+  const estimated = Math.max(0, Math.ceil(plan.durationSeconds));
+  return (
+    <section aria-label={`${body} build plan`} className="rounded border border-cyan-300/20 bg-[#111c26] px-3 py-2" data-build-plan>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <h3 className="font-semibold uppercase tracking-[0.15em] text-slate-200">Build plan</h3>
+        <span className="text-amber-300">M {plan.cost.metal.toLocaleString("en-US")}</span>
+        <span className="text-cyan-300">C {plan.cost.crystal.toLocaleString("en-US")}</span>
+        <span className="text-emerald-300">D {plan.cost.deuterium.toLocaleString("en-US")}</span>
+        <span className="text-slate-400">{formatDuration(estimated)} total left</span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {plan.lines.map(({ index, item, order, durationSeconds }) => (
+          <div className="inline-flex items-center gap-1" key={index}>
+            <div className="relative h-10 w-10 shrink-0">
+              <OptimizedImage alt="" className="h-full w-full rounded border border-white/10 object-cover" sizes="icon" src={item.asset} style={item.thumbnailStyle} />
+              <button aria-label={`Remove ${item.label} from build plan`} title={`Remove ${item.label} from build plan`}
+                className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full border border-slate-400 bg-[#17212d] text-white disabled:opacity-50"
+                disabled={busy} onClick={() => onRemove(index)} type="button"><X aria-hidden="true" size={13} /></button>
+            </div>
+            <span className="grid gap-0.5 text-[10px] leading-none text-slate-300" title={item.label}><span>×{order.quantity.toLocaleString("en-US")}</span><span className="text-slate-500">{formatDuration(durationSeconds)}</span></span>
+          </div>
+        ))}
+        <div className="ml-auto flex gap-1">
+          <button aria-label="Confirm build plan" title="Confirm build plan" className="grid h-11 w-11 place-items-center rounded border border-cyan-300/30 text-cyan-200 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy || !ready || Boolean(plan.reason)} onClick={onConfirm} type="button"><Check aria-hidden="true" size={18} /></button>
+          <button aria-label="Clear build plan" title="Clear build plan" className="grid h-11 w-11 place-items-center rounded border border-white/10 text-slate-300 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy} onClick={onClear} type="button"><X aria-hidden="true" size={18} /></button>
+        </div>
+      </div>
+      {plan.reason || error ? <p role="status" className="mt-1 text-xs text-rose-300">{error ?? plan.reason}</p> : null}
+    </section>
+  );
+}
+
 function CatalogButton<Key extends string>({
   controls,
   item,
@@ -432,6 +494,9 @@ function SelectedProductionPanel<Key extends string>({
   id,
   item,
   onBuild,
+  onAdd,
+  planMax,
+  planBusy,
   onOpenRequirement,
   onQuantity,
   onSupply,
@@ -440,6 +505,9 @@ function SelectedProductionPanel<Key extends string>({
   id: string;
   item: ProductionCatalogItem<Key> | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
+  onAdd?: ((item: ProductionCatalogItem<Key>) => void) | undefined;
+  planMax?: number | undefined;
+  planBusy?: boolean | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
@@ -539,13 +607,23 @@ function SelectedProductionPanel<Key extends string>({
             </button>
           </div>
           <div className="flex flex-none gap-2">
+            {onAdd ? <button
+              aria-label={`Add ${item.label} to build plan`}
+              title={`Add ${item.label} to build plan`}
+              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-cyan-200 disabled:opacity-40 sm:h-9 sm:w-9"
+              disabled={Boolean(planBusy) || quantityInvalid || Boolean(item.missing.length) || planMax === undefined || planMax < item.quantity}
+              onClick={() => onAdd(item)}
+              type="button"
+            ><ListPlus aria-hidden="true" size={18} /></button> : null}
             <button
-              className="h-11 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9"
+              aria-label={`Build ${item.label} now`}
+              title={`Build ${item.label} now`}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-signal/40 bg-signal/10 text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500 sm:h-9 sm:w-9"
               disabled={item.disabled || quantityInvalid}
               onClick={() => onBuild(item)}
               type="button"
             >
-              {item.actionLabel}
+              <Hammer aria-hidden="true" size={17} />
             </button>
             {item.supplyRequest && onSupply ? (
               <button
@@ -561,23 +639,26 @@ function SelectedProductionPanel<Key extends string>({
           </div>
           <button
             aria-label={`${item.label} maximum affordable quantity`}
-            className="h-11 rounded border border-white/10 bg-white/[0.03] px-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
-            disabled={item.maxQuantity === undefined || item.maxQuantity < 1 || (!quantityInvalid && item.quantity === item.maxQuantity)}
+            title={`${item.label} maximum affordable quantity`}
+            className="inline-flex h-11 w-11 items-center justify-center rounded border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
+            disabled={(planMax ?? item.maxQuantity) === undefined || (planMax ?? item.maxQuantity)! < 1 || (!quantityInvalid && item.quantity === (planMax ?? item.maxQuantity))}
             onClick={() => {
-              if (item.maxQuantity !== undefined && item.maxQuantity >= 1) onQuantity(item.key, item.maxQuantity);
+              const maximum = planMax ?? item.maxQuantity;
+              if (maximum !== undefined && maximum >= 1) onQuantity(item.key, maximum);
             }}
             type="button"
           >
-            Max
+            <ChevronsUp aria-hidden="true" size={17} />
           </button>
           <button
             aria-label={`${item.label} reset quantity`}
-            className="h-11 rounded border border-white/10 bg-white/[0.03] px-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+            title={`${item.label} reset quantity`}
+            className="inline-flex h-11 w-11 items-center justify-center rounded border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
             disabled={!quantityInvalid && item.quantity === 1}
             onClick={() => onQuantity(item.key, 1)}
             type="button"
           >
-            Reset
+            <X aria-hidden="true" size={17} />
           </button>
         </div>
         {quantityInvalid || item.blockedReason ? (

@@ -209,7 +209,7 @@ const PLANET_SCOPED_EVENTS = new Set([
   "BuildingStarted", "BuildingCompleted", "DefenseQueued", "DefenseCompleted",
   "ShipQueued", "ShipCompleted", "ShipQueueTimingSet", "PlanetShipCountChanged",
   "PlanetDefenseCountChanged", "MoonShipCountChanged", "MoonBuildingStarted",
-  "MoonBuildingCompleted", "MoonDefenseQueued", "MoonDefenseCompleted", "PlanetTemperatureChanged"
+  "MoonBuildingCompleted", "MoonDefenseQueued", "MoonDefenseCompleted", "MoonShipQueued", "MoonShipCompleted", "PlanetTemperatureChanged"
 ]);
 
 // Consecutive failed polls before /health readiness is downgraded. A single transient getLogs /

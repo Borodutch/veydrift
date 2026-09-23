@@ -7,10 +7,21 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
-import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {
+    Building,
+    Defense,
+    Resource,
+    Ship,
+    Technology,
+    ProductionOrder
+} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftGameProductionSettler {
     function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
+}
+
+interface IVeydriftMoonShipProductionSettler {
+    function settleMoonShipProductionUntil(uint256 planetId, uint64 cutoffAt) external;
 }
 
 interface IVeydriftGamePaidInvitePointer {
@@ -91,6 +102,10 @@ contract VeydriftGame is VeydriftResourceReserves {
     /// MoonSystem also rejects generation-changing writes during the mixed-version interval.
     function gamePaused() external view returns (bool) {
         return _gamePaused != 0;
+    }
+
+    function moonShipProductionVersion() external pure returns (uint8) {
+        return 1;
     }
 
     function planetTemperatureGenerationVersion() external view returns (uint8) {
@@ -181,6 +196,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToColonizationModule();
     }
 
+    /// @notice ABI-visible typed batch; implementation lives in the embedded module.
+    function startProductionBatch(uint256, ProductionOrder[] calldata) external {
+        (bool ok, bytes memory reason) = _batchTransportModule.delegatecall(msg.data);
+        if (!ok) assembly ("memory-safe") { revert(add(reason, 32), mload(reason)) }
+    }
+
     function finishShipProduction(uint256) external {
         _touchPlayer(_actingPlayer());
         _delegateToColonizationModule();
@@ -191,6 +212,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (cutoffAt == type(uint64).max) {
             _settleResources(planetId);
         } else {
+            _settleMoonShipsIfSupported(planetId, cutoffAt);
             _delegateToColonizationModule();
         }
     }
@@ -349,16 +371,17 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function launchBodyFleetMission(
-        uint256,
+        uint256 originPlanetId,
         uint256,
         FleetMissionType,
         MissionShips calldata,
         Resources calldata,
         uint16,
-        bool,
+        bool originIsMoon,
         bool
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
+        if (originIsMoon) _settleMoonShipsIfSupported(originPlanetId, uint64(block.timestamp));
         _delegateToDefenseHoldModule();
     }
 
@@ -422,14 +445,15 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function joinBodyAttackMission(
-        uint256,
+        uint256 originPlanetId,
         uint256,
         uint256,
         MissionShips calldata,
         Resources calldata,
-        bool
+        bool originIsMoon
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
+        if (originIsMoon) _settleMoonShipsIfSupported(originPlanetId, uint64(block.timestamp));
         _delegateToAcsAttackModule();
     }
 
@@ -997,6 +1021,18 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
         missionId = abi.decode(result, (uint256));
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
+    }
+
+    function _settleMoonShipsIfSupported(uint256 planetId, uint64 cutoffAt) private {
+        if (_moonSystem == address(0)) return;
+        (bool ok, bytes memory version) =
+            _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
+        // Legacy Moon cannot manufacture ships. A versioned Moon must settle or abort atomically.
+        if (ok && version.length >= 32) {
+            if (abi.decode(version, (uint8)) != 1) revert InvalidQuantity();
+            IVeydriftMoonShipProductionSettler(_moonSystem)
+                .settleMoonShipProductionUntil(planetId, cutoffAt);
+        }
     }
 
     function _delegateToColonizationModule() private {

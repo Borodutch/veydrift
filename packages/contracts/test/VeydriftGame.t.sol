@@ -44,7 +44,8 @@ import {
     MoonBuilding,
     Resource,
     Ship,
-    Technology
+    Technology,
+    ProductionOrder
 } from "../src/libraries/VeydriftTypes.sol";
 
 interface IRiftSettlementEntrypoints {
@@ -5259,6 +5260,145 @@ contract VeydriftGameTest is Test {
 
         assertFalse(game.shipQueue(planetId).active);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+    }
+
+    function testProductionBatchMixedCumulativeBudgetAndAtomicRollback() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 5_000, 5_000, 0);
+        ProductionOrder[] memory orders = new ProductionOrder[](2);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 2);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 2);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientResources.selector, 1_000, 1_000, 0
+            )
+        );
+        game.startProductionBatch(planetId, orders);
+        assertFalse(game.shipQueue(planetId).active);
+        assertFalse(game.defenseQueue(planetId).active);
+        assertEq(game.planet(planetId).resources.metal, 5_000);
+
+        orders[0].quantity = 1;
+        orders[1].quantity = 1;
+        vm.prank(player);
+        game.startProductionBatch(planetId, orders);
+        assertEq(game.shipQueue(planetId).quantity, 1);
+        assertEq(game.defenseQueue(planetId).quantity, 1);
+        assertEq(game.planet(planetId).resources.metal, 1_000);
+        assertEq(game.planet(planetId).resources.crystal, 3_000);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientResources.selector, 1_000, 3_000, 0
+            )
+        );
+        game.startProductionBatch(planetId, orders);
+        assertEq(game.shipQueueBacklog(planetId).length, 0);
+    }
+
+    function testProductionBatchRejectsUnauthorizedPausedAndMalformed() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 100_000, 100_000, 0);
+        ProductionOrder[] memory orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.startProductionBatch(planetId, orders);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        game.startProductionBatch(planetId, orders);
+        vm.prank(admin);
+        game.setGamePaused(true);
+        vm.prank(player);
+        vm.expectRevert();
+        game.startProductionBatch(planetId, orders);
+        vm.prank(admin);
+        game.setGamePaused(false);
+        orders[0].quantity = 0;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        game.startProductionBatch(planetId, orders);
+        orders[0].quantity = 1;
+        orders[0].kind = 2;
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidId.selector);
+        game.startProductionBatch(planetId, orders);
+    }
+
+    function testProductionBatchMeasuredAtLoadedBacklogs() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.startPrank(player);
+        for (uint256 i; i < 12; ++i) {
+            game.startShipProduction(planetId, Ship.SmallCargo, 1);
+            game.startDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        }
+        vm.stopPrank();
+        ProductionOrder[] memory orders = new ProductionOrder[](4);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        orders[2] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        orders[3] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        game.startProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("planet 4-order batch with 11+11 backlogs", used);
+        assertLt(used, 12_000_000);
+        assertEq(game.shipQueueBacklog(planetId).length, 13);
+        assertEq(game.defenseQueueBacklog(planetId).length, 13);
+    }
+
+    function testProductionBatchDuplicateDomeRevertsAllChildQueues() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _seedDefensePrerequisites(planetId);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 5_000_000, 5_000_000, 5_000_000);
+        ProductionOrder[] memory orders = new ProductionOrder[](3);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.SmallShieldDome), 1);
+        orders[2] = ProductionOrder(1, uint8(Defense.SmallShieldDome), 1);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DefenseLimitReached.selector, Defense.SmallShieldDome
+            )
+        );
+        game.startProductionBatch(planetId, orders);
+        assertFalse(game.shipQueue(planetId).active);
+        assertFalse(game.defenseQueue(planetId).active);
+        assertEq(game.planet(planetId).resources.metal, 5_000_000);
+    }
+
+    function testProductionBatchRefusesFullShipBacklogWithoutAffectingPaidQueue() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 0);
+        vm.startPrank(player);
+        for (uint256 i; i < 17; ++i) {
+            game.startShipProduction(planetId, Ship.SmallCargo, 1);
+        }
+        vm.stopPrank();
+        assertEq(game.shipQueueBacklog(planetId).length, 16);
+        ProductionOrder[] memory orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
+        game.startProductionBatch(planetId, orders);
+        assertEq(game.shipQueueBacklog(planetId).length, 16);
     }
 
     // VEY-KANEO-468: lazy on-chain reconciliation. A production queue whose `readyAt` has elapsed is

@@ -7,10 +7,21 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftMoonDefenseBacklog} from "./libraries/VeydriftMoonDefenseBacklog.sol";
+import {VeydriftMoonShipBacklog} from "./libraries/VeydriftMoonShipBacklog.sol";
+import {VeydriftMoonProductionBatch} from "./libraries/VeydriftMoonProductionBatch.sol";
+import {VeydriftMoonShipProduction} from "./libraries/VeydriftMoonShipProduction.sol";
+import {VeydriftMoonDefenseProduction} from "./libraries/VeydriftMoonDefenseProduction.sol";
+import {VeydriftMoonGateShips} from "./libraries/VeydriftMoonGateShips.sol";
 import {VeydriftMoonMath} from "./libraries/VeydriftMoonMath.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
-import {Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {
+    Defense,
+    MoonBuilding,
+    Ship,
+    Technology,
+    ProductionOrder
+} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
@@ -20,6 +31,7 @@ interface IVeydriftMoonGame {
         view
         returns (VeydriftGameStorage.Resources memory);
     function moonShipCount(uint256 planetId, Ship ship) external view returns (uint32);
+    function moonShipProductionVersion() external view returns (uint8);
     function requireNoPendingMoonAttackResolution(uint256 planetId) external view;
     function spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources calldata cost)
         external;
@@ -210,6 +222,18 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     event MoonDefenseCompleted(
         uint256 indexed planetId, Defense indexed defense, uint32 quantity, uint32 total
     );
+    event MoonShipQueued(
+        uint256 indexed planetId,
+        Ship indexed ship,
+        uint32 quantity,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event MoonShipCompleted(
+        uint256 indexed planetId, Ship indexed ship, uint32 quantity, uint32 total
+    );
     event MoonResourcesSettled(
         uint256 indexed planetId,
         uint128 metal,
@@ -334,7 +358,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         external
     {
         if (msg.sender != address(game)) revert NotOwner(msg.sender);
-        _settleMoonStateDue(planetId);
+        // Combat may be resolving a historical impact over multiple transactions. Crediting moon
+        // ships produced *after* that impact here would put them into subsequent battle rounds.
+        _settleMoonBuildingDue(planetId);
+        _settleMoonDefenseDue(planetId);
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
             Defense defense = Defense(i);
             uint32 current = _moonDefenseCounts[planetId][defense];
@@ -783,6 +810,19 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function _settleMoonStateDue(uint256 planetId) internal {
         _settleMoonBuildingDue(planetId);
         _settleMoonDefenseDue(planetId);
+        // A delayed multi-round moon battle must not gain ships built after its impact through a
+        // finish/owner-admin path that otherwise has no production-specific pending-combat gate.
+        if (VeydriftMoonShipBacklog.active(planetId).active) {
+            game.requireNoPendingMoonAttackResolution(planetId);
+        }
+        VeydriftMoonShipBacklog.settle(planetId, _currentTimestamp(), address(game));
+    }
+
+    /// @notice Game arrival resolver credits only ships finished by historical impact time.
+    function settleMoonShipProductionUntil(uint256 planetId, uint64 cutoffAt) external {
+        if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        if (!_moons[planetId].exists) return;
+        VeydriftMoonShipBacklog.settle(planetId, cutoffAt, address(game));
     }
 
     /// @dev Lazy on-chain reconciliation (VEY-KANEO-468): apply a moon-building construction whose
@@ -807,29 +847,79 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function startMoonDefenseProduction(uint256 planetId, Defense defense, uint32 quantity)
         external
     {
+        _startMoonDefenseProduction(planetId, defense, quantity);
+    }
+
+    function _startMoonDefenseProduction(uint256 planetId, Defense defense, uint32 quantity)
+        private
+    {
+        _requireGameActive();
         _requireMoonOwner(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
         _settleMoonStateDue(planetId);
-        if (quantity == 0) revert InvalidQuantity();
-
-        _requireMoonDefenseDependencies(planetId, defense);
-        VeydriftMoonDefenseBacklog.requireCapacity(
-            moonDefenseQueues, _moonDefenseCounts, planetId, defense, quantity
-        );
-        VeydriftGameStorage.Resources memory unitCost = moonDefenseCost(defense);
-        VeydriftGameStorage.Resources memory totalCost =
-            VeydriftMoonDefenseBacklog.multiply(unitCost, quantity);
-        _spendMoonResources(planetId, totalCost);
-
-        VeydriftMoonDefenseBacklog.enqueue(
+        VeydriftMoonDefenseProduction.start(
             moonDefenseQueues,
+            _moonDefenseCounts,
+            address(game),
+            _actingPlayer(),
             planetId,
+            _moonBuildingLevels[planetId][MoonBuilding.Shipyard],
             defense,
             quantity,
-            _moonDefenseDuration(planetId, unitCost, quantity),
-            _currentTimestamp(),
-            totalCost
+            _currentTimestamp()
         );
+    }
+
+    function startMoonShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
+        _startMoonShipProduction(planetId, ship, quantity);
+    }
+
+    /// @notice One atomic body budget and ordered entries across ship and defense lanes.
+    function startMoonProductionBatch(uint256 planetId, ProductionOrder[] calldata orders)
+        external
+    {
+        VeydriftMoonProductionBatch.execute(
+            planetId, orders, VeydriftMoonDefenseBacklog.entries(planetId).length
+        );
+    }
+
+    function _startMoonShipProduction(uint256 planetId, Ship ship, uint32 quantity) private {
+        _requireGameActive();
+        // A rolling Moon upgrade cannot manufacture ships before Game handles combat cutoffs.
+        if (game.moonShipProductionVersion() != 1) revert InvalidQuantity();
+        _requireMoonOwner(planetId);
+        game.requireNoPendingMoonAttackResolution(planetId);
+        _settleMoonStateDue(planetId);
+        VeydriftMoonShipProduction.start(
+            address(game),
+            _actingPlayer(),
+            planetId,
+            _moonBuildingLevels[planetId][MoonBuilding.Shipyard],
+            ship,
+            quantity,
+            _currentTimestamp()
+        );
+    }
+
+    function finishMoonShipProduction(uint256 planetId) external {
+        _requireMoonOwner(planetId);
+        _settleMoonStateDue(planetId);
+    }
+
+    function activeMoonShipQueue(uint256 planetId)
+        external
+        view
+        returns (VeydriftMoonShipBacklog.Entry memory)
+    {
+        return VeydriftMoonShipBacklog.active(planetId);
+    }
+
+    function moonShipQueueBacklog(uint256 planetId)
+        external
+        view
+        returns (VeydriftMoonShipBacklog.Entry[] memory)
+    {
+        return VeydriftMoonShipBacklog.entries(planetId);
     }
 
     function finishMoonDefenseProduction(uint256 planetId) external {
@@ -853,7 +943,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         VeydriftGameStorage.MissionShips calldata ships
     ) external {
         _prepareJumpGateJump(originMoonPlanetId, destinationMoonPlanetId);
-        _moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, ships);
+        VeydriftMoonGateShips.move(
+            address(game), originMoonPlanetId, destinationMoonPlanetId, _actingPlayer(), ships
+        );
     }
 
     function _prepareJumpGateJump(uint256 originMoonPlanetId, uint256 destinationMoonPlanetId)
@@ -893,6 +985,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function moonGeneration(uint256 planetId) external view returns (uint64) {
         return _moonGenerations[planetId];
+    }
+
+    function moonShipProductionVersion() external pure returns (uint8) {
+        return 1;
     }
 
     function moonResources(uint256 planetId)
@@ -1141,32 +1237,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _emitMoonResourcesSettled(planetId);
     }
 
-    function _moveMoonGateShips(
-        uint256 originMoonPlanetId,
-        uint256 destinationMoonPlanetId,
-        VeydriftGameStorage.MissionShips calldata ships
-    ) private {
-        uint256 shipTotal;
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship ship = Ship(i);
-            if (ship != Ship.SolarSatellite) {
-                uint32 quantity = _missionShipQuantity(ships, ship);
-                if (quantity != 0) {
-                    uint32 available = game.moonShipCount(originMoonPlanetId, ship);
-                    if (available < quantity) {
-                        revert VeydriftGameStorage.InsufficientShips(ship, available, quantity);
-                    }
-                    shipTotal += quantity;
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        if (shipTotal == 0) revert InvalidQuantity();
-        game.moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, _actingPlayer(), ships);
-    }
-
     function _setMoonDefenseCount(uint256 planetId, Defense defense, uint32 total) private {
         _moonDefenseCounts[planetId][defense] = total;
         emit MoonDefenseCountChanged(planetId, defense, total);
@@ -1179,28 +1249,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         );
     }
 
-    function _missionShipQuantity(VeydriftGameStorage.MissionShips calldata ships, Ship ship)
-        private
-        pure
-        returns (uint32)
-    {
-        if (ship == Ship.SmallCargo) return ships.smallCargo;
-        if (ship == Ship.LightFighter) return ships.lightFighter;
-        if (ship == Ship.Recycler) return ships.recycler;
-        if (ship == Ship.ColonyShip) return ships.colonyShip;
-        if (ship == Ship.LargeCargo) return ships.largeCargo;
-        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
-        if (ship == Ship.Cruiser) return ships.cruiser;
-        if (ship == Ship.Battleship) return ships.battleship;
-        if (ship == Ship.Bomber) return ships.bomber;
-        if (ship == Ship.Destroyer) return ships.destroyer;
-        if (ship == Ship.Deathstar) return ships.deathstar;
-        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
-        if (ship == Ship.Reaper) return ships.reaper;
-        if (ship == Ship.Pathfinder) return ships.pathfinder;
-        return 0;
-    }
-
     function _requireJumpGate(uint256 planetId) private view {
         if (_moonBuildingLevels[planetId][MoonBuilding.JumpGate] == 0) {
             revert JumpGateMissing(planetId);
@@ -1211,51 +1259,12 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         private
         view
     {
-        try VeydriftDependencies.requireMoonBuilding(
+        // The linked library already uses the same MissingDependency(bytes32) ABI error.
+        VeydriftDependencies.requireMoonBuilding(
             building,
             _moonBuildingLevels[planetId][MoonBuilding.LunarBase],
             _moonBuildingLevels[planetId][MoonBuilding.RoboticsFactory],
             game.technologyLevel(_actingPlayer(), Technology.Hyperspace)
-        ) {}
-        catch (bytes memory reason) {
-            _bubbleMissingDependency(reason);
-        }
-    }
-
-    function _bubbleMissingDependency(bytes memory reason) private pure {
-        if (reason.length < 68) {
-            assembly {
-                revert(add(reason, 32), mload(reason))
-            }
-        }
-
-        bytes4 selector;
-        bytes32 dependency;
-        assembly {
-            selector := mload(add(reason, 32))
-            dependency := mload(add(reason, 68))
-        }
-        if (selector == VeydriftDependencies.MissingDependency.selector) {
-            revert MissingDependency(dependency);
-        }
-        assembly {
-            revert(add(reason, 32), mload(reason))
-        }
-    }
-
-    function _requireMoonDefenseDependencies(uint256 planetId, Defense defense) private view {
-        address player = _actingPlayer();
-        VeydriftDependencies.requireDefense(
-            defense,
-            _moonBuildingLevels[planetId][MoonBuilding.Shipyard],
-            0,
-            game.technologyLevel(player, Technology.Energy),
-            game.technologyLevel(player, Technology.Laser),
-            game.technologyLevel(player, Technology.Ion),
-            game.technologyLevel(player, Technology.Weapons),
-            game.technologyLevel(player, Technology.Shielding),
-            game.technologyLevel(player, Technology.ImpulseDrive),
-            game.technologyLevel(player, Technology.Plasma)
         );
     }
 
@@ -1269,23 +1278,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             0,
             cost.metal,
             cost.crystal,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _moonDefenseDuration(
-        uint256 planetId,
-        VeydriftGameStorage.Resources memory unitCost,
-        uint32 quantity
-    ) private view returns (uint256) {
-        return VeydriftFormulas.unitDuration(
-            _moonBuildingLevels[planetId][MoonBuilding.Shipyard],
-            0,
-            unitCost.metal,
-            unitCost.crystal,
-            unitCost.deuterium,
-            quantity,
             QUEUE_UNIVERSE_SPEED,
             MIN_QUEUE_SECONDS
         );
@@ -1371,6 +1363,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         delete moonBuildingConstructions[planetId];
         delete moonDefenseQueues[planetId];
         VeydriftMoonDefenseBacklog.clear(planetId);
+        VeydriftMoonShipBacklog.clear(planetId);
         game.clearMoonState(planetId);
         for (uint8 i = 0; i <= uint8(type(MoonBuilding).max);) {
             delete _moonBuildingLevels[planetId][MoonBuilding(i)];

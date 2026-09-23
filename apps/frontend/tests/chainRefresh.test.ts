@@ -109,7 +109,7 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(shouldRefreshShipyardStateForPage("galaxy")).toBe(true);
     expect(shouldRefreshShipyardStateForPage("mission-control")).toBe(false);
     expect(shouldRefreshShipyardStateForPage("research")).toBe(false);
-    expect(source).toContain("shipyardQuery, shouldRefreshShipyardStateForPage(page) || composingMission");
+    expect(source).toContain('shipyardQuery, shouldRefreshShipyardStateForPage(page) || page === "defenses" || composingMission');
   });
 
 
@@ -133,7 +133,9 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(source).not.toContain("{ readProvider }");
     expect(source).not.toContain("receiptProvider");
     expect(source).not.toContain("waitForReceipt(");
-    expect(walletFlowSource).not.toContain("eth_estimateGas");
+    // Production batches alone estimate gas against the exact calldata with a 12M ceiling.
+    expect(walletFlowSource).toContain('method: "eth_estimateGas"');
+    expect(walletFlowSource).toContain("maxEstimatedGas: 12_000_000n");
     expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(walletFlowSource).not.toContain("eth_getTransactionReceipt");
     expect(source).not.toContain("confirm: confirmSubmittedTransaction");

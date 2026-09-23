@@ -1,6 +1,6 @@
 import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
-import { encodeAbiParameters, keccak256 } from "viem";
+import { encodeAbiParameters, keccak256, stringToHex, toFunctionSelector } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import {
@@ -168,10 +168,10 @@ export type QueueState = Api.QueueState;
 export type PlayerQueues = Api.PlayerQueues<Address>;
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued";
+  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued" | "MoonShipQueued";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense" | "moon-ship";
   planetId?: string;
   owner?: Address;
   itemId: number;
@@ -184,10 +184,10 @@ export type IndexedQueueStartedEvent = {
 };
 
 export type IndexedQueueCompletedEvent = {
-  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted" | "MoonBuildingCompleted" | "MoonDefenseCompleted";
+  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted" | "MoonBuildingCompleted" | "MoonDefenseCompleted" | "MoonShipCompleted";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense" | "moon-ship";
   planetId?: string;
   owner?: Address;
   itemId: number;
@@ -998,6 +998,7 @@ export type MoonState = {
   completionQueue?: QueueState | null;
   technologyLevels: Record<string, number>;
   defenseQueue: QueueState | null;
+  shipQueue?: QueueState | null;
   jumpGateDestinations?: Array<{
     planetId: string;
     label?: string | null;
@@ -2484,16 +2485,22 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [resources, ships, defenses, buildings, queue, defenseQueue, technologyLevels] = await Promise.all([
+      const [resources, ships, defenses, buildings, queue, defenseQueue, shipQueue, technologyLevels] = await Promise.all([
         this.readMoonResourcesCall("0x1f20b321", [encodeUint(planetId)]),
         this.readMoonShipRows(planetId),
         this.readMoonDefenseRows(planetId),
         this.readMoonBuildingRows(planetId),
         this.readMoonQueue(planetId),
         this.readMoonDefenseQueue(planetId),
+        this.readMoonShipQueue(planetId),
         this.readTechnologyLevels(wallet)
       ]);
 
+      const manufacturingShips = deriveShipRows(
+        (id) => ships.find((ship) => ship.id === id)?.count ?? 0,
+        undefined,
+        { shipyardLevel: buildings.find((building) => building.id === 3)?.level ?? 0, naniteLevel: 0 }
+      );
       return {
         wallet,
         bodyKind: "moon",
@@ -2502,14 +2509,15 @@ export class VeydriftGameReader implements ChainReader {
         moonAvailable: true,
         resources,
         resourcesAsOfNow: resources,
-        ships,
+        ships: manufacturingShips,
         defenses,
         moon,
-        fleet: ships,
+        fleet: manufacturingShips,
         buildings,
         queue,
         technologyLevels,
-        defenseQueue
+        defenseQueue,
+        shipQueue
       };
     } catch (error) {
       if (isRpcRevert(error)) {
@@ -4090,10 +4098,10 @@ export class VeydriftGameReader implements ChainReader {
   private async readProductionQueueBacklog(
     selector: string,
     planetId: bigint,
-    kind: "defense" | "ship" | "moon-defense"
+    kind: "defense" | "ship" | "moon-defense" | "moon-ship"
   ): Promise<QueueState[]> {
     try {
-      const result = kind === "moon-defense"
+      const result = kind === "moon-defense" || kind === "moon-ship"
         ? await this.moonCall(selector, [encodeUint(planetId)])
         : await this.call(selector, [encodeUint(planetId)]);
       return this.decodeProductionQueueBacklogResult(result, kind);
@@ -4105,22 +4113,32 @@ export class VeydriftGameReader implements ChainReader {
 
   private decodeProductionQueueBacklogResult(
     result: string,
-    kind: "defense" | "ship" | "moon-defense"
+    kind: "defense" | "ship" | "moon-defense" | "moon-ship"
   ): QueueState[] {
     const words = splitWords(result);
     const length = Number(decodeUintWord(wordAt(words, 1)));
     const backlog: QueueState[] = [];
     for (let index = 0; index < length; index += 1) {
-      const offset = 2 + index * 7;
+      const offset = 2 + index * (kind === "moon-ship" ? 11 : 7);
       const active = decodeBoolWord(wordAt(words, offset));
-      backlog.push({
+      const entry: QueueState = {
         active,
         kind: active ? kind : null,
         ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
         quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
         readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
         cost: decodeResources(words.slice(offset + 4, offset + 7))
-      });
+      };
+      if (kind === "moon-ship" && active) {
+        entry.startedAt = decodeUintWord(wordAt(words, offset + 7)).toString();
+        entry.productionTiming = {
+          startedAt: entry.startedAt,
+          originalQuantity: Number(decodeUintWord(wordAt(words, offset + 8))),
+          unitWorkSeconds: decodeUintWord(wordAt(words, offset + 9)).toString(),
+          rate: decodeUintWord(wordAt(words, offset + 10)).toString()
+        };
+      }
+      backlog.push(entry);
     }
     return backlog;
   }
@@ -4157,6 +4175,38 @@ export class VeydriftGameReader implements ChainReader {
       planetId,
       "moon-defense"
     );
+    if (backlog.length > 0) queue.backlog = backlog;
+    return queue;
+  }
+
+  private async readMoonShipQueue(planetId: bigint): Promise<QueueState> {
+    // Optional during the rolling Moon proxy upgrade; a missing selector means no queue.
+    let words: string[];
+    try {
+      words = splitWords(await this.moonCall(MOON_SHIP_ACTIVE_SELECTOR, [encodeUint(planetId)]));
+    } catch (error) {
+      if (isRpcRevert(error)) return { active: false, kind: null, readyAt: null, cost: zeroResources() };
+      throw error;
+    }
+    const active = decodeBoolWord(wordAt(words, 0));
+    const queue: QueueState = {
+      active,
+      kind: active ? "moon-ship" : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+      quantity: Number(decodeUintWord(wordAt(words, 2))),
+      readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+      cost: decodeResources(words.slice(4, 7))
+    };
+    if (active) {
+      queue.startedAt = decodeUintWord(wordAt(words, 7)).toString();
+      queue.productionTiming = {
+        startedAt: queue.startedAt,
+        originalQuantity: Number(decodeUintWord(wordAt(words, 8))),
+        unitWorkSeconds: decodeUintWord(wordAt(words, 9)).toString(),
+        rate: decodeUintWord(wordAt(words, 10)).toString()
+      };
+    }
+    const backlog = await this.readProductionQueueBacklog(MOON_SHIP_BACKLOG_SELECTOR, planetId, "moon-ship");
     if (backlog.length > 0) queue.backlog = backlog;
     return queue;
   }
@@ -5911,6 +5961,10 @@ export const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8
 export const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const MOON_SHIP_ACTIVE_SELECTOR = toFunctionSelector("activeMoonShipQueue(uint256)");
+const MOON_SHIP_BACKLOG_SELECTOR = toFunctionSelector("moonShipQueueBacklog(uint256)");
+const moonShipQueuedTopic = keccak256(stringToHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)"));
+const moonShipCompletedTopic = keccak256(stringToHex("MoonShipCompleted(uint256,uint8,uint32,uint32)"));
 const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
 export const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
@@ -6005,6 +6059,8 @@ const eventNamesByTopic = new Map<string, string>([
   [moonBuildingStartedTopic, "MoonBuildingStarted"],
   [moonBuildingCompletedTopic, "MoonBuildingCompleted"],
   [moonDefenseQueuedTopic, "MoonDefenseQueued"],
+  [moonShipQueuedTopic, "MoonShipQueued"],
+  [moonShipCompletedTopic, "MoonShipCompleted"],
   [moonDefenseCompletedTopic, "MoonDefenseCompleted"],
   [jumpGateJumpedTopic, "JumpGateJumped"],
   [allianceCreatedTopic, "AllianceCreated"],
@@ -6087,7 +6143,8 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
     })),
     queue: null,
     technologyLevels: {},
-    defenseQueue: null
+    defenseQueue: null,
+    shipQueue: null
   };
 }
 
@@ -6225,7 +6282,8 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
     || topic === researchQueuedTopic
     || topic === researchQueuedV2Topic
     || topic === moonBuildingStartedTopic
-    || topic === moonDefenseQueuedTopic;
+    || topic === moonDefenseQueuedTopic
+    || topic === moonShipQueuedTopic;
 }
 
 export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
@@ -6235,7 +6293,8 @@ export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
     || topic === shipCompletedTopic
     || topic === researchCompletedTopic
     || topic === moonBuildingCompletedTopic
-    || topic === moonDefenseCompletedTopic;
+    || topic === moonDefenseCompletedTopic
+    || topic === moonShipCompletedTopic;
 }
 
 export function isProductionQueueTimingLog(log: RpcLog): boolean {
@@ -6722,11 +6781,11 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     };
   }
 
-  if (topic === moonDefenseQueuedTopic) {
+  if (topic === moonDefenseQueuedTopic || topic === moonShipQueuedTopic) {
     return {
       ...base,
-      eventName: "MoonDefenseQueued",
-      queueKind: "moon-defense",
+      eventName: topic === moonShipQueuedTopic ? "MoonShipQueued" : "MoonDefenseQueued",
+      queueKind: topic === moonShipQueuedTopic ? "moon-ship" : "moon-defense",
       planetId: decodeUint(topicAt(log.topics, 1)).toString(),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
       quantity: Number(decodeUintWord(wordAt(words, 0)))
@@ -6817,11 +6876,11 @@ export function decodeIndexedQueueCompletedLog(log: RpcLog): IndexedQueueComplet
     };
   }
 
-  if (topic === moonDefenseCompletedTopic) {
+  if (topic === moonDefenseCompletedTopic || topic === moonShipCompletedTopic) {
     return {
       ...base,
-      eventName: "MoonDefenseCompleted",
-      queueKind: "moon-defense",
+      eventName: topic === moonShipCompletedTopic ? "MoonShipCompleted" : "MoonDefenseCompleted",
+      queueKind: topic === moonShipCompletedTopic ? "moon-ship" : "moon-defense",
       planetId: decodeUint(topicAt(log.topics, 1)).toString(),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
       quantity: Number(decodeUintWord(wordAt(words, 0))),

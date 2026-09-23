@@ -59,6 +59,13 @@ enum Ship {
     Crawler
 }
 
+/// @dev kind 0 = ship, 1 = defense; IDs retain the existing enum ordinals.
+struct ProductionOrder {
+    uint8 kind;
+    uint8 itemId;
+    uint32 quantity;
+}
+
 enum Technology {
     Energy,
     Laser,

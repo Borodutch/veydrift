@@ -3744,7 +3744,8 @@ export class SettlementIndexer {
     const counts = this.indexedLevelsById("contract_moon_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
       (id) => counts.get(id) ?? 0,
-      this.planet(planetId)?.temperature
+      this.planet(planetId)?.temperature,
+      { shipyardLevel: this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, 3), naniteLevel: 0 }
     );
   }
 
@@ -4210,7 +4211,7 @@ export class SettlementIndexer {
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
-      WHERE queue_kind IN ('ship', 'defense', 'moon-defense')
+      WHERE queue_kind IN ('ship', 'defense', 'moon-defense', 'moon-ship')
     `).all() as QueueRow[];
 
     let completed = 0;
@@ -4367,6 +4368,10 @@ export class SettlementIndexer {
     return this.queueSettlement(`moon-defense:${planetId}`).queue;
   }
 
+  moonShipQueue(planetId: string): QueueState | null {
+    return this.queueSettlement(`moon-ship:${planetId}`).queue;
+  }
+
   researchQueue(wallet: `0x${string}`): QueueState | null {
     return this.queueSettlement(`research:${wallet.toLowerCase()}`).queue;
   }
@@ -4398,6 +4403,7 @@ export class SettlementIndexer {
         technologyLevels: this.technologyLevels(wallet),
         defenses: moonDefenseRows.map((defense) => ({ ...defense, count: 0 })),
         defenseQueue: null,
+        shipQueue: null,
         jumpGateDestinations: []
       };
     }
@@ -4405,6 +4411,7 @@ export class SettlementIndexer {
       ? this.queueSettlement(`moon-building:${planetId}`)
       : { queue: null, completed: [] };
     const defenseQueue = planetId ? this.moonDefenseQueue(planetId) : null;
+    const shipQueue = planetId ? this.moonShipQueue(planetId) : null;
     const resources = this.moonResources(planetId);
     const jumpGateDestinations = this.moonJumpGateDestinations(wallet, planetId);
     const buildings = planetId
@@ -4450,6 +4457,7 @@ export class SettlementIndexer {
         count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0
       })),
       defenseQueue,
+      shipQueue,
       jumpGateDestinations
     };
   }
@@ -7166,7 +7174,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_moon_defense_counts WHERE planet_id = ?").run(planetId);
     this.db.query("DELETE FROM contract_moon_building_levels WHERE planet_id = ?").run(planetId);
     this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(planetId);
-    for (const queueKeyValue of [`moon-building:${planetId}`, `moon-defense:${planetId}`]) {
+    for (const queueKeyValue of [`moon-building:${planetId}`, `moon-defense:${planetId}`, `moon-ship:${planetId}`]) {
       this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKeyValue);
       this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKeyValue);
     }
@@ -8160,6 +8168,8 @@ export class SettlementIndexer {
       researchQueues: new Map(),
       moonBuildings: new Map(),
       moonDefenses: new Map(),
+      moonShips: new Map(),
+      moonShipQueues: new Map(),
       moonQueues: new Map(),
       moonDefenseQueues: new Map(),
       fleetMissions: new Map(),
@@ -8233,12 +8243,19 @@ export class SettlementIndexer {
       if (moon?.moon?.exists && moon.homePlanetId) {
         state.moonBuildings.set(moon.homePlanetId, moon.buildings);
         state.moonDefenses.set(moon.homePlanetId, moon.defenses);
+        state.moonShips.set(moon.homePlanetId, moon.ships);
         if (moon.queue?.active) state.moonQueues.set(moon.homePlanetId, moon.queue);
         if (moon.defenseQueue?.active) {
           state.moonDefenseQueues.set(moon.homePlanetId, moon.defenseQueue);
           state.verifiedEmptyQueues.delete(`moon-defense:${moon.homePlanetId}`);
         } else {
           state.verifiedEmptyQueues.add(`moon-defense:${moon.homePlanetId}`);
+        }
+        if (moon.shipQueue?.active) {
+          state.moonShipQueues.set(moon.homePlanetId, moon.shipQueue);
+          state.verifiedEmptyQueues.delete(`moon-ship:${moon.homePlanetId}`);
+        } else {
+          state.verifiedEmptyQueues.add(`moon-ship:${moon.homePlanetId}`);
         }
       }
       }));
@@ -8286,6 +8303,8 @@ export class SettlementIndexer {
       researchQueues: new Map(),
       moonBuildings: new Map(),
       moonDefenses: new Map(),
+      moonShips: new Map(),
+      moonShipQueues: new Map(),
       moonQueues: new Map(),
       moonDefenseQueues: new Map(),
       fleetMissions: new Map(),
@@ -8316,12 +8335,19 @@ export class SettlementIndexer {
         if (moon?.moon?.exists && moon.homePlanetId) {
           state.moonBuildings.set(moon.homePlanetId, moon.buildings);
           state.moonDefenses.set(moon.homePlanetId, moon.defenses);
+          state.moonShips.set(moon.homePlanetId, moon.ships);
           if (moon.queue?.active) state.moonQueues.set(moon.homePlanetId, moon.queue);
           if (moon.defenseQueue?.active) {
             state.moonDefenseQueues.set(moon.homePlanetId, moon.defenseQueue);
             state.verifiedEmptyQueues.delete(`moon-defense:${moon.homePlanetId}`);
           } else {
             state.verifiedEmptyQueues.add(`moon-defense:${moon.homePlanetId}`);
+          }
+          if (moon.shipQueue?.active) {
+            state.moonShipQueues.set(moon.homePlanetId, moon.shipQueue);
+            state.verifiedEmptyQueues.delete(`moon-ship:${moon.homePlanetId}`);
+          } else {
+            state.verifiedEmptyQueues.add(`moon-ship:${moon.homePlanetId}`);
           }
         }
       }
@@ -8526,6 +8552,7 @@ export class SettlementIndexer {
   private async healPlanetMoon(planetId: string, moon: MoonState): Promise<void> {
     await this.runHealWrite(`planet ${planetId} moon`, () => {
       const queueKeyValue = `moon-defense:${planetId}`;
+      const shipQueueKey = `moon-ship:${planetId}`;
       const existingDefenseQueue = this.queueState(queueKeyValue);
       let canonicalDefenseQueue = moon.defenseQueue;
       if (
@@ -8548,6 +8575,10 @@ export class SettlementIndexer {
       }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(planetId);
       this.db.query("DELETE FROM contract_moon_defense_counts WHERE planet_id = ?").run(planetId);
+      this.db.query("DELETE FROM contract_moon_ship_counts WHERE planet_id = ?").run(planetId);
+      for (const ship of moon.ships) {
+        this.upsertIndexedLevel("contract_moon_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+      }
       for (const defense of moon.defenses) {
         this.upsertIndexedLevel("contract_moon_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
       }
@@ -8559,6 +8590,9 @@ export class SettlementIndexer {
       if (canonicalDefenseQueue?.active) {
         this.upsertCanonicalQueue("moon-defense", planetId, null, canonicalDefenseQueue);
       }
+      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(shipQueueKey);
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(shipQueueKey);
+      if (moon.shipQueue?.active) this.upsertCanonicalQueue("moon-ship", planetId, null, moon.shipQueue);
       this.touch();
     });
   }
@@ -8675,6 +8709,11 @@ export class SettlementIndexer {
         );
       }
     }
+    for (const [planetId, ships] of state.moonShips) {
+      for (const ship of ships) {
+        this.upsertIndexedLevel("contract_moon_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+      }
+    }
     for (const key of state.verifiedEmptyQueues) {
       this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
       this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
@@ -8692,6 +8731,9 @@ export class SettlementIndexer {
     }
     for (const [planetId, queue] of state.moonDefenseQueues) {
       this.upsertCanonicalQueue("moon-defense", planetId, null, queue);
+    }
+    for (const [planetId, queue] of state.moonShipQueues) {
+      this.upsertCanonicalQueue("moon-ship", planetId, null, queue);
     }
     let fleetMissionRowsChanged = 0;
     for (const mission of state.fleetMissions.values()) {
@@ -8990,7 +9032,7 @@ export class SettlementIndexer {
   }
 
   private upsertCanonicalQueue(
-    kind: "building" | "defense" | "ship" | "research" | "moon-defense",
+    kind: "building" | "defense" | "ship" | "research" | "moon-defense" | "moon-ship",
     planetId: string | null,
     owner: `0x${string}` | null,
     queue: QueueState
@@ -9007,6 +9049,8 @@ export class SettlementIndexer {
             ? "ShipQueued"
             : kind === "moon-defense"
               ? "MoonDefenseQueued"
+              : kind === "moon-ship"
+                ? "MoonShipQueued"
               : "ResearchQueued",
       transactionHash: "0x",
       queueKind: kind,
@@ -9571,6 +9615,7 @@ export class SettlementIndexer {
     if (
       options.settleResources !== false
       && event.queueKind !== "research"
+      && !event.queueKind.startsWith("moon-")
       && event.planetId
     ) {
       this.subtractPlanetResources(
@@ -10128,7 +10173,7 @@ export class SettlementIndexer {
     const remainingQuantity = queue?.quantity ?? 0;
     const partialProductionCompletion =
       matchesActiveQueue
-      && (event.queueKind === "ship" || event.queueKind === "defense")
+      && (event.queueKind === "ship" || event.queueKind === "defense" || event.queueKind === "moon-ship")
       && completedQuantity > 0
       && completedQuantity < remainingQuantity;
     if (partialProductionCompletion && queue) {
@@ -10172,7 +10217,7 @@ export class SettlementIndexer {
     if (
       (event.queueKind !== "defense"
         && event.queueKind !== "ship"
-        && event.queueKind !== "moon-defense")
+        && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship")
       || !event.planetId
     ) return false;
 
@@ -10187,6 +10232,8 @@ export class SettlementIndexer {
         ? "ShipQueued"
         : event.queueKind === "moon-defense"
           ? "MoonDefenseQueued"
+          : event.queueKind === "moon-ship"
+            ? "MoonShipQueued"
           : "DefenseQueued",
       transactionHash: event.transactionHash,
       blockNumber: event.blockNumber,
@@ -10241,6 +10288,8 @@ export class SettlementIndexer {
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
       this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
+    } else if (event.queueKind === "moon-ship" && event.planetId && event.total !== undefined) {
+      this.upsertIndexedLevel("contract_moon_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "moon-defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("contract_moon_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
@@ -10411,7 +10460,7 @@ export class SettlementIndexer {
     if (
       (event.queueKind !== "defense"
         && event.queueKind !== "ship"
-        && event.queueKind !== "moon-defense")
+        && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship")
       || !event.planetId
     ) {
       return false;
@@ -10438,7 +10487,7 @@ export class SettlementIndexer {
     if (
       !hasPerUnitTiming
       && row.item_id === event.itemId
-      && event.queueKind !== "moon-defense"
+      && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship"
       && (event.queueKind !== "defense" || !row.backlog_json)
     ) {
       return false;
@@ -10455,12 +10504,16 @@ export class SettlementIndexer {
     if (
       !hasPerUnitTiming
       && row.item_id === event.itemId
-      && event.queueKind !== "moon-defense"
+      && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship"
       && (event.queueKind !== "defense" || nextBacklog.length === 0)
     ) {
       return false;
     }
     const nextEntry = queueStateFromEvent(event);
+    if (event.queueKind === "moon-ship") {
+      const backlogStartedAt = nextBacklog.at(-1)?.readyAt ?? activeQueue.readyAt;
+      if (backlogStartedAt !== null && backlogStartedAt !== undefined) nextEntry.startedAt = backlogStartedAt;
+    }
     this.mergeProductionBacklogEntry(nextBacklog, nextEntry);
     const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, nextBacklog);
     this.db.query(`
@@ -10475,7 +10528,7 @@ export class SettlementIndexer {
     if (
       (event.queueKind !== "defense"
         && event.queueKind !== "ship"
-        && event.queueKind !== "moon-defense")
+        && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship")
       || !event.planetId
     ) {
       return false;
@@ -10504,7 +10557,7 @@ export class SettlementIndexer {
     if (
       (event.queueKind !== "defense"
         && event.queueKind !== "ship"
-        && event.queueKind !== "moon-defense")
+        && event.queueKind !== "moon-defense" && event.queueKind !== "moon-ship")
       || !event.planetId
     ) {
       return null;
@@ -10759,7 +10812,7 @@ export class SettlementIndexer {
   }
 
   private sanitizedProductionBacklog(kind: string | null, activeQueue: QueueState, backlog: readonly QueueState[]): QueueState[] {
-    if (kind !== "defense" && kind !== "ship" && kind !== "moon-defense") {
+    if (kind !== "defense" && kind !== "ship" && kind !== "moon-defense" && kind !== "moon-ship") {
       return [...backlog];
     }
 
@@ -12622,7 +12675,7 @@ export class SettlementIndexer {
          OR EXISTS (SELECT 1 FROM contract_moon_resources WHERE planet_id = ?)
          OR EXISTS (
            SELECT 1 FROM contract_production_queues
-           WHERE planet_id = ? AND queue_kind IN ('moon-building', 'moon-defense')
+           WHERE planet_id = ? AND queue_kind IN ('moon-building', 'moon-defense', 'moon-ship')
          )
     `).get(planetId, planetId, planetId, planetId, planetId) as { present: number } | null;
     return row !== null;
@@ -13767,8 +13820,8 @@ export class SettlementIndexer {
     if (!isIndexedQueueCompletedLog(log)) return;
     const event = decodeIndexedQueueCompletedLog(log);
     if (event.total === undefined || !event.planetId) return;
-    const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, false);
-    if (event.eventName === "ShipCompleted") {
+    const snapshot = unitCountSnapshotForBody(snapshots, event.planetId, event.eventName.startsWith("Moon"));
+    if (event.eventName === "ShipCompleted" || event.eventName === "MoonShipCompleted") {
       if (event.total > 0) snapshot.fleet.set(event.itemId, event.total);
       else snapshot.fleet.delete(event.itemId);
     } else if (event.eventName === "DefenseCompleted") {
@@ -14650,6 +14703,8 @@ type CanonicalReconciliationState = {
   // Seeded per indexed planet so colony moons are not collapsed into the wallet's home planet.
   moonBuildings: Map<string, MoonState["buildings"]>;
   moonDefenses: Map<string, MoonState["defenses"]>;
+  moonShips: Map<string, MoonState["ships"]>;
+  moonShipQueues: Map<string, QueueState>;
   moonQueues: Map<string, QueueState>;
   moonDefenseQueues: Map<string, QueueState>;
   verifiedEmptyQueues: Set<string>;
@@ -14725,8 +14780,8 @@ function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueS
   if ((event.queueKind === "building" || event.queueKind === "moon-building" || event.queueKind === "research") && event.level !== undefined) {
     return queue.targetLevel === event.level;
   }
-  if ((event.queueKind === "defense" || event.queueKind === "ship") && event.quantity !== undefined) {
-    return queue.productionTiming
+  if ((event.queueKind === "defense" || event.queueKind === "ship" || event.queueKind === "moon-ship") && event.quantity !== undefined) {
+    return queue.productionTiming || event.queueKind === "moon-ship"
       ? event.quantity > 0 && event.quantity <= (queue.quantity ?? 0)
       : queue.quantity === event.quantity;
   }
@@ -14739,7 +14794,7 @@ function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueS
 function queueActivityCategory(kind: string): PlayerActivityCategory {
   if (kind === "building" || kind === "moon-building") return kind === "building" ? "infrastructure" : "moon";
   if (kind === "research") return "research";
-  if (kind === "moon-defense") return "moon";
+  if (kind === "moon-defense" || kind === "moon-ship") return "moon";
   return "production";
 }
 
@@ -14763,7 +14818,7 @@ function queueActivityLabel(kind: string, itemId: number): string {
       ? contractEnumName("MoonBuilding", itemId)
       : kind === "research"
         ? contractEnumName("Technology", itemId)
-        : kind === "ship"
+        : kind === "ship" || kind === "moon-ship"
           ? contractEnumName("Ship", itemId)
           : contractEnumName("Defense", itemId);
   return contractName ? humanizeContractName(contractName) : `Item #${itemId}`;

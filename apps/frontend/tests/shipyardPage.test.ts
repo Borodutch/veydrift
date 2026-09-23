@@ -126,7 +126,8 @@ describe("Shipyard page display helpers", () => {
     expect(source).toContain('label: "Per unit"');
     expect(source).toContain("sm:h-9");
     expect(source).toContain("Max");
-    expect(source).toContain("Reset");
+    expect(source).toContain("reset quantity");
+    expect(source).toContain("<X aria-hidden=\"true\"");
   });
 
   test("reports a per-ship deployment mismatch without treating the whole page as unloaded", () => {
