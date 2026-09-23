@@ -26,7 +26,7 @@ import {
 } from "../buildingActionNotice";
 import { researchQueueForDisplay } from "../chainState";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
-import { formatPlanetType, planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import { planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import type { GalaxyAction } from "../galaxyActions";
 import { isImageReady } from "../imageLoadState";
@@ -338,8 +338,8 @@ export function OverviewPage({
     setRenamePanelOpen(false);
   }, [selectedBodyKind]);
   const planetSubhead = homePlanet
-    ? `Art: ${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
-    : "Home planet";
+    ? `${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
+    : planet?.coordinates?.trim() || (selectedBodyKind === "moon" ? "Moon" : "Planet");
   const currentPlanetKey = homePlanet
     ? planetKeyFromCoordinates(homePlanet)
     : onChainSettlement?.planet

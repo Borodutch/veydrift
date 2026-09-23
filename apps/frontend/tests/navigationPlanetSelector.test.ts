@@ -26,10 +26,11 @@ describe("navigation and planet selector UI source contracts", () => {
     { galaxy: 4, system: 5, position: 6, planetId: "owned-b", moon: null },
   ];
 
-  test("keeps art-family copy separate from canonical climate on every hydrated surface", () => {
-    expect(overviewSource).toContain("Art: ${formatPlanetType(homePlanet.type)}");
+  test("keeps internal art metadata out of player copy without changing climate or art selection", () => {
+    expect(overviewSource).not.toContain("Art: ${formatPlanetType(homePlanet.type)}");
     expect(overviewSource).toContain("overviewHeroImage(homePlanet,");
-    expect(planetDetailSource).toContain('label="Art family"');
+    expect(planetDetailSource).not.toContain('label="Art family"');
+    expect(planetDetailSource).not.toContain('label: "Art family"');
     expect(planetDetailSource).toContain('label: "Climate"');
     expect(galaxySource).toContain("Climate: ${formatGalaxyHeatLabel(planet.temperature)}");
     expect(rankingsSource).toContain("planetArtTypeForCoordinates(planet.coordinates)");

@@ -447,6 +447,34 @@ async function loadInspectorFixture(route, width, options = {}) {
   }
 }
 
+test("Overview and planet/moon detail hide art diagnostics while retaining named and fallback coordinates", async () => {
+  for (const [route, options, expected] of [
+    ["/", { shell: "settlement" }, "Owned Alpha"],
+    ["/", { shell: "settlement", incompleteOverview: "true", waitForPlanetSelectors: "false" }, "Owned Alpha"],
+    ["/planet/1/2/3", {}, "Owned Alpha"],
+    ["/planet/4/5/6", {}, "Owned Beta"],
+    ["/moon/1/2/3", {}, "Open coordinates:"],
+  ]) {
+    await loadInspectorFixture(route, 1280, options);
+    await waitForExpression(`document.querySelector('main')?.textContent?.includes(${JSON.stringify(expected)}) === true`);
+    const copy = await evaluate(`({
+      text: document.querySelector('main')?.textContent ?? '',
+      aria: [...document.querySelectorAll('main [aria-label], main [title]')]
+        .map(node => [node.getAttribute('aria-label'), node.getAttribute('title')].filter(Boolean).join(' ')).join(' '),
+      errors: window.inspectorProof.errors,
+    })`);
+    assert.doesNotMatch(`${copy.text} ${copy.aria}`, /\bart(?:\s+family)?\s*:\s*|\b(?:parent\s+)?art\s+family\b|warm terracotta/i, route);
+    assert.deepEqual(copy.errors, [], route);
+    if (route === "/" || route === "/planet/1/2/3") assert.match(copy.text, /1:2:3/, route);
+    if (route === "/planet/4/5/6") assert.match(copy.text, /4:5:6/, route);
+  }
+  await loadInspectorFixture("/", 1280, { shell: "settlement" });
+  await clickExpression('document.querySelector(\'aside[aria-label="Select planet"] [data-planet-selector-item="102"] button[data-planet-selector-long-press]\')');
+  await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Beta'");
+  const colonyHeader = await evaluate("document.querySelector('main h2')?.parentElement?.previousElementSibling?.textContent");
+  assert.equal(colonyHeader?.trim(), "4:5:6");
+});
+
 function missionConfirmExpression(disabled) {
   return `[...document.querySelectorAll('[data-mission-actions] button')].find(button => button.textContent.trim() === 'Confirm Mission' && button.disabled === ${disabled})`;
 }
