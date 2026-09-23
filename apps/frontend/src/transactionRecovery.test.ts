@@ -578,6 +578,35 @@ describe("automatic transaction recovery", () => {
     await expect(write).resolves.toMatchObject({ outcome: "indexed" });
   });
 
+  for (const switchedSigner of [false, true]) test(`delegation recovery survives effective-main change but fences signer switch (${switchedSigner})`, async () => {
+    browser();
+    const receipt = deferred<ReturnType<typeof status>>();
+    let reads = 0;
+    let sameSigner = true;
+    const phases: string[] = [];
+    const data = store({ transactionStatusReader: async () => { reads++; return receipt.promise; } });
+    data.setContext("0xabc", "7", "0x2105");
+    await data.runWriteTransaction({ ...action(), waitForIndexing: false,
+      recoveryIdentity: () => sameSigner,
+      onStateChange: state => phases.push(state.phase),
+    });
+    await until(() => reads === 1);
+    sameSigner = !switchedSigner;
+    data.setContext("0xdef", "8", "0x2105");
+    receipt.resolve(status("0xnew"));
+    if (switchedSigner) {
+      await Bun.sleep(10);
+      expect(phases).not.toContain("success");
+      expect(data.isTransactionPending("0xabc")).toBe(true);
+    } else {
+      await until(() => phases.includes("success"), "self-revoke completion after effective-main change");
+      expect(data.isTransactionPending("0xabc")).toBe(false);
+    }
+    // Old-main transaction state never leaks into the new gameplay context.
+    expect(data.snapshot(data.writeTransactionKey(undefined, "0xabc"))).toBeUndefined();
+    expect(data.snapshot(data.writeTransactionKey(undefined, "0xdef"))).toBeUndefined();
+  });
+
   test("storage failure still preserves in-memory recovery and duplicate protection", async () => {
     const { events } = browser();
     events.localStorage.setItem = () => { throw new Error("storage disabled"); };
