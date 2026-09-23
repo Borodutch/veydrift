@@ -635,7 +635,16 @@ export class BackendDataStore {
       const key = walletCacheKey("delegation", wallet);
       // Signer identity is independent of the gameplay context wallet. Keep its
       // wallet-specific key alive when the delegate switches into the main's context.
-      return this.query(key, () => this.refresh(key, (signal) => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal })));
+      return this.query(key, () => {
+        this.registerResource(key, signal => fetchWalletDelegation(this.apiBaseUrl, wallet, { ...options, signal }), {});
+        const resource = this.resources.get(key)!;
+        return (options.fresh
+          ? this.refreshInvalidatedResource(resource, { activeOnly: false }, true).then(result => {
+              if (result === undefined) throw new Error("Delegate refresh was cancelled. Please try again.");
+              return result;
+            })
+          : this.readRegisteredResource(resource)) as Promise<WalletDelegationState>;
+      });
     },
     queues: (wallet: string, planetId?: string, options: WalletReadOptions = {}): BackendDataQueryDescriptor<PlayerQueuesResponse> => {
       const key = walletCacheKey("queues", wallet, planetId);
