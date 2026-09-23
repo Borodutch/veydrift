@@ -156,6 +156,9 @@ export type BackendWriteTransactionDescriptor = {
   /** Only an explicit repeat click may authorize retrying an uncertain send. */
   confirmRetry?: () => boolean;
   waitForIndexing?: boolean;
+  /** Signer/provider fence for delegation recovery across an effective-main change.
+   * Does not relax submission context or publish old-wallet cache state. */
+  recoveryIdentity?: () => boolean;
   errorLabel?: (error: unknown) => string;
   onErrorRefresh?: (error: unknown) => Promise<void> | void;
   onStateChange?: (state: WriteTransactionState) => void;
@@ -256,6 +259,7 @@ type BackendTransactionStatus = {
 export type PendingTransaction = {
   attemptId?: number;
   actionId: string;
+  recoveryIdentity?: () => boolean;
   chainId: string;
   submittedAt: number;
   transactionHash: string;
@@ -1324,7 +1328,7 @@ export class BackendDataStore {
     return !this.transactionAbort.signal.aborted
       && (typeof navigator === "undefined" || navigator.onLine !== false)
       && (typeof document === "undefined" || document.visibilityState !== "hidden")
-      && (!this.hasContext || this.contextWallet === entry.wallet)
+      && (entry.recoveryIdentity ? entry.recoveryIdentity() : !this.hasContext || this.contextWallet === entry.wallet)
       && this.pendingTransactionMatchesChain(entry);
   }
 
@@ -1545,6 +1549,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     let walletSendStarted = false;
     let entry: PendingTransaction | undefined;
     const isCurrent = () => !this.transactionAbort.signal.aborted
+      && (!descriptor.recoveryIdentity || descriptor.recoveryIdentity())
       && (!this.hasContext || this.contextWallet === walletScope)
       && (this.state.value<WriteTransactionState>(actionKey)?.attemptId ?? attempt.id) <= attempt.id;
     const publish = (state: WriteTransactionState) => {
@@ -1584,7 +1589,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
       try {
         const assertSubmissionContext = () => {
           if (expired || Date.now() >= deadline) throw new Error("This preparation attempt has expired. Please try again.");
-          if (this.transactionAbort.signal.aborted || (this.hasContext && this.contextWallet !== walletScope)) {
+          if (this.transactionAbort.signal.aborted || descriptor.recoveryIdentity?.() === false || (this.hasContext && this.contextWallet !== walletScope)) {
             throw new Error("Wallet changed before submission. Please try again.");
           }
           if (this.contextChainId && descriptor.chainId && !sameChainId(this.contextChainId, descriptor.chainId)) {
@@ -1607,6 +1612,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         });
         const pending: PendingTransaction = {
           attemptId: attempt.id,
+          ...(descriptor.recoveryIdentity ? { recoveryIdentity: descriptor.recoveryIdentity } : {}),
           phase: "submitted",
           actionId: descriptor.key, chainId: descriptor.chainId ?? this.contextChainId ?? "unknown",
           submittedAt: this.now(), transactionHash, wallet: walletScope,
@@ -1624,7 +1630,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
         if (this.submissionAttempts.get(identity) === attempt) this.submissionAttempts.delete(identity);
         publish({ key: descriptor.key, phase: "confirming", txHash: transactionHash, label: descriptor.label + ": Processing…" });
         const recovery = this.trackPendingTransaction(entry, state => {
-          if (isCurrent()) descriptor.onStateChange?.(state);
+          if (descriptor.recoveryIdentity ? descriptor.recoveryIdentity() : isCurrent()) descriptor.onStateChange?.(state);
         });
         if (descriptor.waitForIndexing === false) {
           void recovery.catch(() => {});

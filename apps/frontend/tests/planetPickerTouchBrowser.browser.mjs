@@ -2975,18 +2975,23 @@ test("wallet delegation set replace revoke refresh the open dialog only after ca
   }
 });
 
-test("wallet delegation reverted transaction never claims success and read retry never sends", async () => {
+for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcome} transaction stays failed after read-only retry`, async () => {
   await openDelegationDialog();
   await fillDelegate("0x3333333333333333333333333333333333333333");
   await clickExpression(delegateButton("Set delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
-  await evaluate(`window.inspectorProof.setDelegation(null, 'reverted'); window.inspectorProof.resolveWalletSend('0xdelegatereverted')`);
-  await waitForExpression(`${delegateSection}.textContent.includes('reverted')`);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  await evaluate(outcome === "reverted"
+    ? `window.inspectorProof.setDelegation(null, 'reverted'); window.inspectorProof.resolveWalletSend('0xdelegatereverted')`
+    : `window.inspectorProof.rejectWalletSend()`);
+  await waitForExpression(`${delegateSection}.textContent.includes('${outcome}')`);
+  const before = await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`);
   await clickExpression(delegateButton("Refresh delegate status"));
-  await waitForExpression(`${delegateSection}.textContent.includes('Current delegate updated.')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Current delegate refreshed.')`);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('${outcome}')`), true);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.ok(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`) > before);
+  assert.equal(await evaluate(`${delegateButton("Set delegate")}.disabled`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
-  assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "0x3333333333333333333333333333333333333333");
 });
 
 test("wallet delegation bounded lag offers read-only retry and fences a late read after account switch", { timeout: 40_000 }, async () => {
@@ -3024,6 +3029,39 @@ test("wallet delegation self revoke updates effective identity without closing t
   assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('acting for')`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
+});
+
+
+test("wallet delegation self revoke keeps recovery when effective main changes before applied", async () => {
+  await openDelegationDialog(1280, "self");
+  await clickExpression(delegateButton("Revoke my access"));
+  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
+  await evaluate(`window.inspectorProof.resolveWalletSend('0xdelegateselfearly')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed')`);
+  await waitForExpression(`${delegateSection}.querySelector('input') !== null`, 15_000);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('acting for')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Current delegate updated.')`, 15_000);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
+});
+
+
+test("wallet delegation self revoke fences a true signer switch before applied", async () => {
+  await openDelegationDialog(1280, "self");
+  await clickExpression(delegateButton("Revoke my access"));
+  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
+  await evaluate(`window.inspectorProof.resolveWalletSend('0xdelegateselfswitch')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
+  await evaluate(`window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount]); window.inspectorProof.setPlayableAccount(window.inspectorProof.alternateAccount)`);
+  await waitForExpression(`${delegateSection}.querySelector('input') !== null`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied')`);
+  await delay(500);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Processing')`), false);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
 

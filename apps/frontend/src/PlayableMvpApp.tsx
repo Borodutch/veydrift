@@ -3443,6 +3443,7 @@ export function PlayableMvpApp({
       onErrorRefresh,
       onStateChange,
       prepare,
+      recoveryIdentity,
       send,
     }: {
       conflictKeys?: readonly string[];
@@ -3455,11 +3456,13 @@ export function PlayableMvpApp({
       onErrorRefresh?: (error: unknown) => Promise<void> | void;
       onStateChange?: (state: WriteTransactionState) => void;
       prepare?: () => Promise<void>;
+      recoveryIdentity?: () => boolean;
       send: (provider: Eip1193Provider) => Promise<string>;
     }) => {
       if (!backendData || !provider) throw new Error("Game state or wallet is unavailable. Please refresh and retry.");
       return backendData.runWriteTransaction({
         waitForIndexing: false,
+        ...(recoveryIdentity ? { recoveryIdentity } : {}),
         confirmRetry: confirmTransactionRetry,
         ...(conflictKeys ? { conflictKeys } : {}),
         ...(planetIds ? { planetIds } : {}),
@@ -5090,10 +5093,12 @@ export function PlayableMvpApp({
   const delegationAttempt = useRef(0);
   const delegationReadRunning = useRef(false);
   const delegationSubmitting = useRef(false);
+  const delegationFailure = useRef<string>();
   const delegationExpected = useRef<{ identity: typeof delegationIdentity.current; main: string; delegate: string | null; confirmed: boolean }>();
   useEffect(() => {
     setDelegationAction({ status: "idle" });
     delegationExpected.current = undefined;
+    delegationFailure.current = undefined;
     delegationReadRunning.current = false;
     delegationSubmitting.current = false;
     delegationAttempt.current++;
@@ -5102,6 +5107,7 @@ export function PlayableMvpApp({
 
   const refreshDelegation = useCallback(async () => {
     const expected = delegationExpected.current;
+    const failure = delegationFailure.current;
     if (!backendData || !signerAccount || delegationReadRunning.current) return;
     const identity = delegationIdentity.current;
     const attempt = delegationAttempt.current;
@@ -5109,7 +5115,9 @@ export function PlayableMvpApp({
     const current = () => !expired && delegationIdentity.current === identity && delegationAttempt.current === attempt;
     delegationReadRunning.current = true;
     setDelegationAction({ status: "pending", label: "Checking current delegate…" });
-    const unavailable = () => setDelegationAction({ status: "error", autoDismiss: false, label: expected?.confirmed
+    const unavailable = () => setDelegationAction({ status: "error", autoDismiss: false, label: failure
+      ? `${failure} Current delegate is unavailable. Refresh delegate status to try again.`
+      : expected?.confirmed
       ? "Transaction confirmed, but current delegate is not yet available. Refresh delegate status; do not resend the transaction."
       : "Current delegate is unavailable. Refresh delegate status to try again." });
     const deadline = setTimeout(() => {
@@ -5130,6 +5138,10 @@ export function PlayableMvpApp({
             && (!expected || (expected.identity === identity
               && next.main.toLowerCase() === expected.main.toLowerCase()
               && (next.delegate?.toLowerCase() ?? null) === (expected.delegate?.toLowerCase() ?? null)))) {
+            if (failure) {
+              setDelegationAction({ status: "error", autoDismiss: false, label: `${failure} Current delegate refreshed.` });
+              return;
+            }
             if (expected && !expected.confirmed) {
               setDelegationAction({ status: "error", autoDismiss: false, label: "Current delegate read. Transaction outcome is still unknown; check wallet activity before retrying." });
               return;
@@ -5151,12 +5163,14 @@ export function PlayableMvpApp({
   const runDelegationChange = useCallback(async (delegate: string | null) => {
     if (!provider || !signerAccount || !account || !gameContract || delegationAction.status === "pending" || delegationReadRunning.current || delegationSubmitting.current) return;
     delegationSubmitting.current = true;
+    delegationFailure.current = undefined;
     const identity = delegationIdentity.current;
     const attempt = ++delegationAttempt.current;
     const current = () => delegationIdentity.current === identity && delegationAttempt.current === attempt;
     delegationExpected.current = { identity, main: delegate === null ? signerAccount : account, delegate, confirmed: false };
     try {
       await runCoordinatedWriteTransaction({
+        recoveryIdentity: current,
         key: delegate === null ? "wallet-delegation:revoke" : "wallet-delegation:set",
         label: delegate === null ? "Revoke wallet delegate" : delegation?.delegate ? "Replace wallet delegate" : "Set wallet delegate",
         send: walletProvider => {
@@ -5172,13 +5186,20 @@ export function PlayableMvpApp({
             if (delegationExpected.current?.identity === identity) delegationExpected.current.confirmed = true;
             void refreshDelegation();
           } else {
-            if (state.phase === "error") delegationExpected.current = undefined;
+            if (state.phase === "error") {
+              delegationExpected.current = undefined;
+              delegationFailure.current = state.label ?? "Delegate change failed.";
+            }
             setDelegationAction(transactionActionNotice(state));
           }
         },
       });
     } catch (error) {
-      if (current()) setDelegationAction({ status: "error", label: walletRequestErrorMessage(error) });
+      if (current()) {
+        delegationFailure.current = walletRequestErrorMessage(error);
+        delegationExpected.current = undefined;
+        setDelegationAction({ status: "error", label: delegationFailure.current });
+      }
     } finally {
       if (delegationIdentity.current === identity) delegationSubmitting.current = false;
     }
