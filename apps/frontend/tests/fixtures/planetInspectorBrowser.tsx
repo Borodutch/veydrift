@@ -595,7 +595,10 @@ globalThis.fetch = (async (input, init) => {
       defenseQueue: null,
       defenses: batchPlanProbe ? [{ id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 60 }] : [],
       homePlanetId: "101",
-      moon: moonOverview ? { exists: true, planetId: "101" } : null,
+      moon: moonOverview ? {
+        exists: true, planetId: "101",
+        ...(batchPlanProbe ? { owner: account, fields: 9, diameterKm: 8774, createdAt: "1700000000", jumpGateReadyAt: "0" } : {}),
+      } : null,
       ...(moonOverview ? {
         resources: batchPlanProbe ? { metal: "10000", crystal: "5000", deuterium: "890" } : { metal: "1234", crystal: "567", deuterium: "890" },
         launchableShips: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],

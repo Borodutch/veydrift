@@ -2141,9 +2141,17 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
 for (const body of ["planet", "moon"]) {
   test(`${body} Shipyard and Defenses add to one real mounted build plan without an early wallet send`, async () => {
     const moon = body === "moon";
-    await loadInspectorFixture(moon ? "/moon/1/2/3" : "/shipyard", 390, {
+    await loadInspectorFixture(moon ? "/" : "/shipyard", 390, {
       batchPlanProbe: "true", moonOverview: "true", shell: "settlement",
     });
+    if (moon) {
+      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]') !== null`);
+      await clickExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')`);
+      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')?.classList.contains('border-cyan-300/50') === true`);
+      await clickExpression('document.querySelector(\'summary[aria-label="Open navigation menu"]\')');
+      await clickExpression('document.querySelector(\'#mobile-navigation-menu a[href="/moon"]\')');
+      await waitForExpression(`location.pathname === '/moon' && document.querySelector('main [data-production-catalog]') !== null`);
+    }
     const addShip = 'main button[aria-label="Add Small Cargo to build plan"]:not(:disabled)';
     const addDefense = 'main button[aria-label="Add Rocket Launcher to build plan"]:not(:disabled)';
     await waitForExpression(`document.querySelector(${JSON.stringify(addShip)}) !== null`);
