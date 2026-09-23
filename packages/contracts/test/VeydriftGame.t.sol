@@ -5359,6 +5359,36 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseQueueBacklog(planetId).length, 13);
     }
 
+    function testProductionBatchDrainsMaximumReadyPreexistingBacklogsWithinGasCeiling() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 10_000_000, 10_000_000, 1_000_000);
+        vm.startPrank(player);
+        for (uint256 i; i < 16; ++i) {
+            game.startShipProduction(planetId, Ship.SmallCargo, 100);
+            game.startDefenseProduction(planetId, Defense.RocketLauncher, 100);
+        }
+        vm.stopPrank();
+        uint64 shipsReady = game.shipQueueBacklog(planetId)[14].readyAt;
+        uint64 defensesReady = game.defenseQueueBacklog(planetId)[14].readyAt;
+        vm.warp(shipsReady > defensesReady ? shipsReady : defensesReady);
+        ProductionOrder[] memory orders = new ProductionOrder[](4);
+        orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        orders[2] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
+        orders[3] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        game.startProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("planet 4-order batch with 15+15 ready backlogs of 100", used);
+        assertLt(used, 12_000_000);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1_600);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 1_600);
+    }
+
     function testProductionBatchDuplicateDomeRevertsAllChildQueues() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

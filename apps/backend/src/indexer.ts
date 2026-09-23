@@ -3745,7 +3745,7 @@ export class SettlementIndexer {
     return deriveShipRows(
       (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature,
-      { shipyardLevel: this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, 3), naniteLevel: 0 }
+      { shipyardLevel: this.moonBuildingLevelAsOfNow(planetId, 3), naniteLevel: 0 }
     );
   }
 
@@ -4452,7 +4452,10 @@ export class SettlementIndexer {
         ? { completionQueue: moonQueueSettlement.completed[0] }
         : {}),
       technologyLevels: this.technologyLevels(wallet),
-      defenses: moonDefenseRows.map((defense) => ({
+      defenses: deriveDefenseRows(() => 0, {
+        shipyardLevel: planetId ? this.moonBuildingLevelAsOfNow(planetId, 3) : 0,
+        naniteLevel: 0
+      }).slice(0, 8).map((defense) => ({
         ...defense,
         count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0
       })),

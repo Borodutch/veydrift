@@ -1,5 +1,6 @@
 import { playerNotice } from "./playerNotice";
-import { evaluateProductionPlan, maxAddableProduction, productionDraftAfterReceipt, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
+import { evaluateProductionPlan, maxAddableProduction, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
+import { useProductionBuildPlan } from "./useProductionBuildPlan";
 import { productionPlanContext } from "./productionBuildPlanContext";
 import { UiClock, useUiClock } from "./useUiClock";
 import { AlertTriangle } from "lucide-preact";
@@ -6367,24 +6368,21 @@ export function PlayableMvpApp({
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !isActionBusy(moonAction);
 
   // One draft per account, chain, planet and body; both production lanes share its budget.
-  const [productionDrafts, setProductionDrafts] = useState<Record<string, ProductionOrder[]>>({});
-  const [productionPlanError, setProductionPlanError] = useState<Record<string, string>>({});
-  const [productionPlanBusy, setProductionPlanBusy] = useState<Record<string, boolean>>({});
-  const productionBusyRef = useRef(new Set<string>());
+  const productionPlan = useProductionBuildPlan();
   const draftKey = productionDraftKey(account, gameWalletChain.chainIdHex, activePlanetId, activeBodyKind);
   const selectedDraftKeyRef = useRef(draftKey);
   selectedDraftKeyRef.current = draftKey;
-  const draftRows = draftKey ? productionDrafts[draftKey] ?? [] : [];
+  const draftRows = draftKey ? productionPlan.drafts[draftKey] ?? [] : [];
   const planContext = productionPlanContext(activeBodyKind, {
     defense: defenseState, shipyard: shipyardState, infrastructure: infrastructureChainState, moon: moonState,
   });
-  const setPlanError = (key: string, message: string) => setProductionPlanError(previous => ({ ...previous, [key]: message }));
+  const setPlanError = productionPlan.setError;
   const buildPlan = draftKey ? {
     body: activeBodyKind, context: planContext, rows: draftRows,
-    busy: Boolean(productionPlanBusy[draftKey]), ready: activeBodyKind === "moon" ? canSubmitMoonTransaction : canSubmitGameTransaction, error: productionPlanError[draftKey],
+    busy: Boolean(productionPlan.busy[draftKey]), unknown: Boolean(productionPlan.unknown[draftKey]), ready: activeBodyKind === "moon" ? canSubmitMoonTransaction : canSubmitGameTransaction, error: productionPlan.errors[draftKey],
     onAdd: (order: ProductionOrder) => {
-      if (productionBusyRef.current.has(draftKey)) return;
-      setProductionDrafts(previous => {
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => {
         const current = previous[draftKey] ?? [];
         const max = maxAddableProduction(planContext, current, order.kind, order.id);
         if (order.quantity < 1 || order.quantity > max) return previous;
@@ -6393,17 +6391,17 @@ export function PlayableMvpApp({
       setPlanError(draftKey, "");
     },
     onRemove: (index: number) => {
-      if (productionBusyRef.current.has(draftKey)) return;
-      setProductionDrafts(previous => ({ ...previous, [draftKey]: (previous[draftKey] ?? []).filter((_, position) => position !== index) }));
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => ({ ...previous, [draftKey]: (previous[draftKey] ?? []).filter((_, position) => position !== index) }));
       setPlanError(draftKey, "");
     },
     onClear: () => {
-      if (productionBusyRef.current.has(draftKey)) return;
-      setProductionDrafts(previous => ({ ...previous, [draftKey]: [] }));
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => ({ ...previous, [draftKey]: [] }));
       setPlanError(draftKey, "");
     },
     onConfirm: () => {
-      if (productionBusyRef.current.has(draftKey)) return;
+      if (productionPlan.busyRef.current.has(draftKey)) return;
       const submitted = [...draftRows];
       const body = activeBodyKind;
       const planetId = activePlanetId;
@@ -6416,15 +6414,12 @@ export function PlayableMvpApp({
         const selected = productionDraftKey(account, gameWalletChain.chainIdHex, planetId, body);
         if (selected !== contextKey || selectedDraftKeyRef.current !== contextKey) throw new Error("Selected body changed before submission.");
       };
-      productionBusyRef.current.add(draftKey);
-      setProductionPlanBusy(previous => ({ ...previous, [draftKey]: true }));
-      setPlanError(draftKey, "");
+      if (!productionPlan.start(draftKey)) return;
       void (async () => {
         try {
           const indexing = body === "moon"
             ? backendData.indexing.all([backendData.indexing.resourceChange(account, planetId, "moon"), backendData.indexing.refresh(backendScopeTags(account, planetId, "kind:moon", "kind:queues"))])
             : backendData.indexing.all([backendData.indexing.production(account, planetId, "shipyard"), backendData.indexing.production(account, planetId, "defenses")]);
-          let snapshotCleared = false;
           const outcome = await runCoordinatedWriteTransaction({
             key: `production-batch:${body}:${planetId}`, conflictKeys: [`planet:${planetId}`], planetIds: [planetId],
             label: "Build plan", indexing,
@@ -6444,31 +6439,11 @@ export function PlayableMvpApp({
               }
             },
             send: wallet => sendProductionBatchTransaction(wallet, signerAccount, contractAddress, body, planetId, submitted),
-            onStateChange: state => {
-              if (state.phase === "confirmed" || state.phase === "applied" || state.phase === "success") {
-                if (!snapshotCleared) {
-                  snapshotCleared = true;
-                  setProductionDrafts(previous => ({ ...previous, [draftKey]: productionDraftAfterReceipt(previous[draftKey] ?? [], submitted, state.phase) }));
-                }
-                if (state.phase === "applied" || state.phase === "success") {
-                  productionBusyRef.current.delete(draftKey);
-                  setProductionPlanBusy(previous => ({ ...previous, [draftKey]: false }));
-                }
-              } else if (state.phase === "error") {
-                productionBusyRef.current.delete(draftKey);
-                setProductionPlanBusy(previous => ({ ...previous, [draftKey]: false }));
-                setPlanError(draftKey, state.label ?? "Build plan failed.");
-              }
-            },
+            onStateChange: state => productionPlan.onState(draftKey, submitted, state),
           });
-          if (outcome.outcome === "not-submitted" || outcome.outcome === "reverted") {
-            productionBusyRef.current.delete(draftKey);
-            setProductionPlanBusy(previous => ({ ...previous, [draftKey]: false }));
-            setPlanError(draftKey, outcome.error instanceof Error ? outcome.error.message : "Build plan was not submitted.");
-          }
+          productionPlan.onOutcome(draftKey, submitted, outcome);
         } catch (error) {
-          productionBusyRef.current.delete(draftKey);
-          setProductionPlanBusy(previous => ({ ...previous, [draftKey]: false }));
+          productionPlan.release(draftKey);
           setPlanError(draftKey, error instanceof Error ? error.message : "Build plan failed.");
         }
       })();

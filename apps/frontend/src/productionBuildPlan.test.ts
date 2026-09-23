@@ -17,7 +17,7 @@ const item = (source: typeof ship | typeof defense, cost: string): ProductionCat
 const context = (balance = "90071992547409999", body: "planet" | "moon" = "planet"): ProductionPlanContext => ({
   body, resources: { metal: balance, crystal: "0", deuterium: "0" },
   ships: [item(ship, "50000000000000000")], defenses: [item(defense, "50000000000000000")],
-  defenseCounts: [], missileSiloLevel: 0, available: true,
+  defenseCounts: [], missileSiloLevel: 0, shipyardLevel: 0, naniteLevel: 0, available: true,
 });
 
 describe("production build plan", () => {
@@ -41,9 +41,10 @@ describe("production build plan", () => {
   test("ETA includes the already-paid queue tail without charging it again", () => {
     const ctx = context("100000000000000000");
     ctx.shipQueue = { label: "Cargo", readyAt: "1700000060", backlog: [{ label: "Cargo", readyAt: "1700000120" }] };
+    ctx.ships = [item(ship, "100")];
     const plan = evaluateProductionPlan([{ kind: "ship", id: ship.id, quantity: 1 }], ctx, 1_700_000_000_000);
-    expect(plan.durationSeconds).toBe(240);
-    expect(plan.cost.metal).toBe(50000000000000000n);
+    expect(plan.durationSeconds).toBe(264);
+    expect(plan.cost.metal).toBe(100n);
   });
   test("pending and rejected transactions retain every draft row until confirmed receipt", () => {
     const row = { kind: "ship" as const, id: ship.id, quantity: 1 };
@@ -52,6 +53,9 @@ describe("production build plan", () => {
       expect(productionDraftAfterReceipt(rows, [row], phase)).toEqual(rows);
     }
     expect(productionDraftAfterReceipt(rows, [row], "confirmed")).toEqual([rows[1]!]);
+    // Unknown outcomes permit editing: a newly added identical row is not the sent snapshot.
+    const replacement = { ...row };
+    expect(productionDraftAfterReceipt([replacement], [row], "confirmed")).toEqual([replacement]);
   });
   test("defense capacity counts queued and draft domes and missile slots", () => {
     const dome = defenseCatalog.find(entry => entry.key === "smallShieldDome")!;

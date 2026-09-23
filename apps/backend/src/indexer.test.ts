@@ -5436,6 +5436,32 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("indexed lunar defense duration tracks current canonical lunar Shipyard", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xshipyard", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(3n)], data: abiWords(9n) });
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xfunded", logIndex: "0x0",
+      topics: [moonResourcesSettledTopic, topic(7n)], data: abiWords(100000n, 100000n, 100000n, 1770000300n) });
+    const indexed = indexer.moonState(player, planet.planetId);
+    const row = indexed.defenses.find(defense => defense.id === 0)!;
+    expect(row.durationSeconds).toBe(288);
+    expect(indexed.defenses).toHaveLength(8);
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xdue-shipyard", logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(7n), topic(3n)], data: abiWords(10n, 1767225500n, 100n, 100n, 0n) });
+    // A batch settles due building work before it prices its production lanes.
+    const projected = indexer.moonState(player, planet.planetId);
+    expect(projected.buildings.find(building => building.id === 3)?.level).toBe(10);
+    expect(projected.defenses.find(defense => defense.id === 0)?.durationSeconds).toBe(262);
+    expect(projected.ships.find(ship => ship.id === 0)?.durationSeconds).toBe(524);
+  });
+
   test("indexes moon creation and moon building queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

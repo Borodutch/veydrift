@@ -240,6 +240,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function settleDuePlayerCombatArrivals(address) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        (bool ok, bytes memory reason) = _batchTransportModule.delegatecall(msg.data);
+        if (!ok) assembly ("memory-safe") { revert(add(reason, 32), mload(reason)) }
         _delegateToPlanetManagementModule();
     }
 
@@ -484,6 +486,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         FleetMissionType missionType = mission.missionType;
+        // Planet-target attacks also enter the shared snapshot hook; order every hostile attack on
+        // this planet before a later cutoff can advance its Moon's manufactured ship inventory.
+        if (
+            missionType == FleetMissionType.Attack && mission.status == FleetMissionStatus.Outbound
+                // forge-lint: disable-next-line(block-timestamp)
+                && block.timestamp >= mission.arrivalAt
+        ) {
+            (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
+                abi.encodeWithSignature("prepareMoonAttackArrival(uint256)", missionId)
+            );
+            if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+            if (!abi.decode(result, (bool))) return;
+        }
         if (
             missionType == FleetMissionType.Colonize
                 || ((missionType == FleetMissionType.Transport

@@ -878,9 +878,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function startMoonProductionBatch(uint256 planetId, ProductionOrder[] calldata orders)
         external
     {
-        VeydriftMoonProductionBatch.execute(
-            planetId, orders, VeydriftMoonDefenseBacklog.entries(planetId).length
-        );
+        VeydriftMoonProductionBatch.execute(planetId, orders);
     }
 
     function _startMoonShipProduction(uint256 planetId, Ship ship, uint32 quantity) private {

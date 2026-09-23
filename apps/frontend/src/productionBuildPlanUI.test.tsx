@@ -28,7 +28,7 @@ function flatten(value: unknown): Array<VNode<Record<string, unknown>>> {
 
 test("compact plan uses an in-page queue-adjacent strip and accessible exact icons", () => {
   const context: ProductionPlanContext = {
-    body: "planet", resources: { metal: "1000", crystal: "0", deuterium: "0" }, ships: [item], defenses: [], available: true, defenseCounts: [],
+    body: "planet", resources: { metal: "1000", crystal: "0", deuterium: "0" }, ships: [item], defenses: [], available: true, defenseCounts: [], shipyardLevel: 0, naniteLevel: 0,
   };
   const noop = () => undefined;
   const nodes = flatten(ProductionCatalog({

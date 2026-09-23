@@ -41,9 +41,23 @@ export type ProductionPlanContext = {
   defenseBacklogLength?: number | undefined;
   capacityQueue?: QueueStateResponse | null | undefined;
   defenseCounts: readonly { id: number; count: number }[];
+  shipyardLevel: number;
+  naniteLevel: number;
+  defenseShipyardLevel?: number;
+  defenseNaniteLevel?: number;
   missileSiloLevel?: number | undefined;
   available: boolean;
 };
+
+// VeydriftFormulas.unitDuration: ceil the whole order, then clamp to one second.
+function batchDuration(context: ProductionPlanContext, unit: Budget, quantity: number, kind: ProductionOrder["kind"]): number | undefined {
+  const shipyardLevel = kind === "defense" ? context.defenseShipyardLevel ?? context.shipyardLevel : context.shipyardLevel;
+  const naniteLevel = kind === "defense" ? context.defenseNaniteLevel ?? context.naniteLevel : context.naniteLevel;
+  if (!Number.isSafeInteger(shipyardLevel) || shipyardLevel < 0 || !Number.isSafeInteger(naniteLevel) || naniteLevel < 0 || naniteLevel > 255) return undefined;
+  const denominator = 2500n * BigInt(shipyardLevel + 1) * (2n ** BigInt(naniteLevel));
+  const numerator = (unit.metal + unit.crystal) * BigInt(quantity) * 3600n;
+  return Number((numerator + denominator - 1n) / denominator || 1n);
+}
 
 function queuedCount(queue: QueueStateResponse | null | undefined, id: number): number {
   const entries = [queue, ...(queue?.backlog ?? [])];
@@ -88,9 +102,11 @@ export function evaluateProductionPlan(rows: readonly ProductionOrder[], context
       continue;
     }
     if (item.missing.length) reason ??= item.missing[0];
-    if (!Number.isFinite(item.durationSeconds) || !item.durationSeconds || item.durationSeconds < 0) reason ??= "Production timing is unavailable";
+    const durationSeconds = Number.isFinite(item.durationSeconds) && (item.durationSeconds ?? 0) > 0
+      ? batchDuration(context, unit, row.quantity, row.kind) : undefined;
+    if (durationSeconds === undefined) reason ??= "Production timing is unavailable";
     for (const field of fields) cost[field] += unit[field] * BigInt(row.quantity);
-    lines.push({ index, order: row, item, durationSeconds: (item.durationSeconds ?? 0) * row.quantity });
+    lines.push({ index, order: row, item, durationSeconds: durationSeconds ?? 0 });
   }
   reason ??= capacityBlocker(context, rows);
   for (const kind of ["ship", "defense"] as const) {
@@ -116,7 +132,8 @@ export function maxAddableProduction(context: ProductionPlanContext, rows: reado
   const item = (kind === "ship" ? context.ships : context.defenses).find(candidate => candidate.id === id);
   const unit = budget(item?.unitCostRaw);
   const balance = budget(context.resources);
-  if (!item || !unit || !balance || !context.available || item.missing.length || item.status === "unavailable" || !item.durationSeconds) return 0;
+  if (!item || !unit || !balance || !context.available || item.missing.length || item.status === "unavailable"
+    || !Number.isFinite(item.durationSeconds) || (item.durationSeconds ?? 0) <= 0 || batchDuration(context, unit, 1, kind) === undefined) return 0;
   const used = evaluateProductionPlan(rows, context).cost;
   let limit = MAX_QUANTITY;
   for (const field of fields) if (unit[field] > 0n) {
@@ -138,7 +155,7 @@ export function maxAddableProduction(context: ProductionPlanContext, rows: reado
 export function removeSubmittedSnapshot(current: readonly ProductionOrder[], submitted: readonly ProductionOrder[]): ProductionOrder[] {
   const remaining = [...current];
   for (const row of submitted) {
-    const index = remaining.findIndex(candidate => candidate.kind === row.kind && candidate.id === row.id && candidate.quantity === row.quantity);
+    const index = remaining.findIndex(candidate => candidate === row);
     if (index >= 0) remaining.splice(index, 1);
   }
   return remaining;
