@@ -7,8 +7,6 @@ import { apiBaseUrlForRuntimeConfig } from "../../src/runtimeConfig";
 import { FirstPlanetSettlementApp } from "../../src/FirstPlanetSettlementApp";
 import { PlayableMvpApp } from "../../src/PlayableMvpApp";
 import { UiClock } from "../../src/useUiClock";
-import { PlanetDetail } from "../../src/components/PlanetDetail";
-import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
 import { initSfx } from "../../src/sfx";
 import { TopBar } from "../../src/components/TopBar";
 import type { Coordinates } from "../../src/types";
@@ -23,6 +21,7 @@ declare global {
       errors: string[];
       interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
+      rpcRequests: Array<{ method: string; params?: unknown[] }>;
       walletRequests: Array<{ method: string; params?: unknown[] }>;
       walletBindings: string[];
       disconnectWallet(): void;
@@ -164,6 +163,7 @@ const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const rpcRequests: Array<{ method: string; params?: unknown[] }> = [];
 const walletBindings: string[] = [];
 const pendingAttackProtectionRequests: Array<{
   resolve: (response: Response) => void;
@@ -275,11 +275,15 @@ globalThis.fetch = (async (input, init) => {
   const systemMatch = url.pathname.match(/\/universe\/galaxies\/(\d+)\/systems\/(\d+)/);
 
   if (url.origin !== window.location.origin) {
-    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown };
+    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown; params?: unknown[] };
+    rpcRequests.push({ method: String(body.method), params: body.params });
     if (body.method === "eth_chainId") {
       return Response.json({ id: body.id, jsonrpc: "2.0", result: settlementShell ? "0x2105" : "0x14a34" });
     }
     if (body.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x" });
+    if (body.method === "eth_estimateGas" && batchPlanProbe
+      && JSON.stringify(body.params?.[0]) === JSON.stringify(rpcRequests.at(-2)?.params?.[0])
+      && rpcRequests.at(-2)?.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x7a120" });
     return Response.json({
       error: { code: -32601, message: `Fixture JSON-RPC method not implemented: ${String(body.method)}` },
       id: body.id,
@@ -723,6 +727,7 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  rpcRequests,
   walletBindings,
   bootstrapDiagnostics,
   wakeBootstrapWallet() { bootstrapStalled = false; },
@@ -769,12 +774,12 @@ window.inspectorProof = {
   setPlayableAccount(wallet) {
     render(<PlayableMvpApp account={wallet} provider={provider} />, appRoot);
   },
-  beginDetailRace(kind) {
+  async beginDetailRace(kind) {
     detailRaceKind = kind;
     pendingDetailRequests.clear();
     const oldCoords = { galaxy: 7, system: 1, position: 2 };
-    renderDetail(kind, oldCoords);
-    queueMicrotask(() => renderDetail(kind, { galaxy: 8, system: 2, position: 4 }));
+    await renderDetail(kind, oldCoords);
+    queueMicrotask(() => { void renderDetail(kind, { galaxy: 8, system: 2, position: 4 }); });
   },
   pendingDetailRequests() {
     return [...pendingDetailRequests.keys()].sort();
@@ -910,14 +915,19 @@ function SnapshotProbe() {
   </div>;
 }
 
-function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
+async function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
+  // Detail-race probes load their page only on demand; an eager moon-detail
+  // import pulls MoonPage -> ShipyardPage into every route-gate fixture.
+  const Detail = kind === "moon"
+    ? (await import("../../src/components/PublicMoonDetail")).PublicMoonDetail
+    : (await import("../../src/components/PlanetDetail")).PlanetDetail;
   const props = {
     account,
     apiBaseUrl: `${window.location.origin}/api`,
     coords,
     onBack: () => undefined,
   };
-  render(kind === "moon" ? <PublicMoonDetail {...props} /> : <PlanetDetail {...props} />, appRoot);
+  render(<Detail {...props} />, appRoot);
 }
 
 function managedPlanet(overrides: Partial<ManagedPlanetResponse>): ManagedPlanetResponse {

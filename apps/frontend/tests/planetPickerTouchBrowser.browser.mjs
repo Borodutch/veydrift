@@ -2051,6 +2051,7 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
       supplyTop: Math.round(supplyRect?.top ?? -1),
       supplyHeight: Math.round(supplyRect?.height ?? -1),
       supplyWidth: Math.round(supplyRect?.width ?? -1),
+      supplyRight: Math.round(supplyRect?.right ?? -1),
       buildRight: Math.round(buildRect?.right ?? -1),
       buildWidth: Math.round(buildRect?.width ?? -1),
     };
@@ -2058,9 +2059,11 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
   assert.equal(alignment.supplyTop, alignment.buildTop);
   assert.ok(alignment.supplyLeft >= alignment.buildRight, JSON.stringify(alignment));
   assert.ok(Math.abs(alignment.supplyWidth - alignment.supplyHeight) <= 1, JSON.stringify(alignment));
-  assert.ok(alignment.supplyWidth < alignment.buildWidth, JSON.stringify(alignment));
+  assert.equal(alignment.supplyWidth, alignment.buildWidth, JSON.stringify(alignment));
+  assert.ok(alignment.supplyWidth >= 44 && alignment.supplyHeight >= 44, JSON.stringify(alignment));
+  assert.ok(alignment.supplyRight <= 390, JSON.stringify(alignment));
 
-  await clickExpression("document.querySelector('main button[aria-label^=\"Supply missing resources for\"]')");
+  await clickExpressionWithTrustedPointer("document.querySelector('main button[aria-label^=\"Supply missing resources for\"]')", "touch");
   await waitForExpression("document.querySelector('[role=dialog][aria-label=\"Supply Owned Alpha\"]') !== null");
   const request = await evaluate(`({
     crystal: document.querySelector('input[aria-label="crystal to send"]')?.value,
@@ -2170,6 +2173,20 @@ for (const body of ["planet", "moon"]) {
     await waitForExpression(`document.querySelector('main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)') !== null`);
     await clickExpression('document.querySelector(\'main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)\')');
     await waitForExpression(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length === 1`);
+    const preflight = await evaluate(`(() => {
+      const requests = window.inspectorProof.rpcRequests.slice(-3);
+      const call = requests[1], estimate = requests[2];
+      const sent = window.inspectorProof.walletRequests.find(request => request.method === 'eth_sendTransaction')?.params?.[0];
+      return {
+        methods: requests.map(request => request.method),
+        pendingSimulation: call?.params?.[1] === 'pending',
+        validCalldata: typeof sent?.data === 'string' && /^0x[0-9a-f]+$/i.test(sent.data) && sent.data.length > 10,
+        sameCalldata: call?.params?.[0]?.data === estimate?.params?.[0]?.data && estimate?.params?.[0]?.data === sent?.data,
+        sameAccountAndContract: estimate?.params?.[0]?.from === sent?.from && estimate?.params?.[0]?.to === sent?.to,
+        expectedAccountAndContract: sent?.from === '0x1111111111111111111111111111111111111111' && sent?.to === '${moon ? "0x3333333333333333333333333333333333333333" : "0x2222222222222222222222222222222222222222"}',
+      };
+    })()`);
+    assert.deepEqual(preflight, { methods: ['eth_chainId', 'eth_call', 'eth_estimateGas'], pendingSimulation: true, validCalldata: true, sameCalldata: true, sameAccountAndContract: true, expectedAccountAndContract: true });
     assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length`), 2, "pending wallet confirmation retains both rows");
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') === null`), true, "confirm must not open another review dialog");
     assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
