@@ -49,7 +49,8 @@ const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
 const allowedFlaggedOutputLines = [
   /^\((?:pass|skip)\) /,
   /^Missing dependencies found\. Installing now\.\.\.$/,
-  /^[╭╮╰╯├┤┬┴┼─│╞╪╡═+|\-]/,
+  /^[╭╮╰╯├┤┬┴┼─│╞╪╡═+|]/,
+  /^- Adjust chunk size limit for this warning via build\.chunkSizeWarningLimit\.$/,
 ];
 
 export function outputContainsFlaggedOutput(output) {
