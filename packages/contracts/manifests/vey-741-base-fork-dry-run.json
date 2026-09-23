@@ -278,7 +278,7 @@
   "resourceStableSeededByDryRun": false,
   "resourceWethSeededByDryRun": false,
   "schema": "veydrift.uniswap-launch-manifest.v2",
-  "sourceCommit": "114560794772116266c2d8d5be54b94fa4ade1c3",
+  "sourceCommit": "d7ee5def8ece13052d4a1b4bf7a1e335f39be479",
   "statusPassed": true,
   "task": "VEY-KANEO-741",
   "testResult": "1 passed; 0 failed",
