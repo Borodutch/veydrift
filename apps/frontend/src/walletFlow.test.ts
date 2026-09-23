@@ -105,6 +105,8 @@ import {
   persistReferralClaimIntent,
   recordReferralClaimTransaction,
   readMigrationReservation,
+  readMigrationDelegatedClaimSupport,
+  encodeDelegatedMigrationClaimCall,
   readWalletNativeBalance,
   sendSettlementTransaction,
   sendSetDelegateTransaction,
@@ -3136,6 +3138,49 @@ describe("walletFlow", () => {
       },
     ]);
     expect((requests[0] as { params: Array<{ data: string }> }).params[0]?.data.slice(0, 10)).toBe("0x98bf164a");
+  });
+
+  test("delegate sends only the main's signed reserved claim, including referral redemption", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const delegate = "0x4444444444444444444444444444444444444444";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+    const reservation = { exists: true, claimed: false, galaxy: 2, system: 99, position: 7, fields: 211, temperature: -14 };
+    const common = {
+      migrationPlayerAccount: account,
+      migrationReservation: reservation,
+      migrationClaim: { statePayload: "0x1234", signature: "0xabcd" },
+      migrationContractAddress: migrationContract,
+      delegatedMigrationAvailable: true,
+      startPriceWei: 50_000_000_000_000_000n,
+    };
+    await sendSettlementTransaction(provider, delegate, { address: contract }, common);
+    await sendSettlementTransaction(provider, delegate, { address: contract }, { ...common, referral: referralRedemption });
+    const sends = requests.filter((request) => (request as { method: string }).method === "eth_sendTransaction") as Array<{ params: Array<{ from: string; to: string; data: string }> }>;
+    expect(sends).toHaveLength(2);
+    expect(sends[0]?.params[0]).toMatchObject({ from: delegate, to: migrationContract, data: encodeDelegatedMigrationClaimCall(account, "0x1234", "0xabcd") });
+    expect(sends[1]?.params[0]).toMatchObject({ from: delegate, to: migrationContract, data: encodeDelegatedMigrationClaimCall(account, "0x1234", "0xabcd", referralRedemption) });
+    expect(sends.every((send) => send.params[0]?.to !== contract)).toBe(true);
+  });
+
+  test("unupgraded or unconfigured migration never falls through to ordinary delegated start", async () => {
+    const delegate = "0x4444444444444444444444444444444444444444";
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const provider = mockProvider(async ({ method }) => { throw new Error(`Unexpected ${method}`); });
+    const options = {
+      migrationPlayerAccount: account,
+      migrationReservation: { exists: true, claimed: false, galaxy: 2, system: 99, position: 7, fields: 211, temperature: -14 },
+      migrationClaim: { statePayload: "0x1234", signature: "0xabcd" },
+      startPriceWei: 50_000_000_000_000_000n,
+    };
+    await expect(sendSettlementTransaction(provider, delegate, { address: contract }, options))
+      .rejects.toThrow("requires a verified migration claim");
+    await expect(sendSettlementTransaction(provider, delegate, { address: contract }, { ...options, migrationContractAddress: migrationContract }))
+      .rejects.toThrow("require the verified migration upgrade");
+    await expect(readMigrationDelegatedClaimSupport(provider, migrationContract)).resolves.toBe(false);
   });
 
   test("submits a value-bearing VeydriftGame startPlanetWithReferral transaction", async () => {

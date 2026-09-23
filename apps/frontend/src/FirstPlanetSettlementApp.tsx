@@ -484,10 +484,10 @@ export function FirstPlanetSettlementApp() {
   const runtimeData = useMemo(() => backendDataStoreFor(""), []);
   const runtimeConfigQuery = useBackendDataQuery<RuntimeConfig>(runtimeData.queries.runtimeConfig<RuntimeConfig>(runtimeConfigUrl()));
   const settlementFundingQuery = useBackendDataQuery<SettlementFundingState>(
-    referralData && account && provider
-      ? referralData.queries.settlementFundingProjection(account, provider, settlementConfig.migrationAddress, currentChainId.current)
+    referralData && playerAccount && account && provider
+      ? referralData.queries.settlementFundingProjection(playerAccount, provider, settlementConfig.migrationAddress, currentChainId.current, account)
       : undefined,
-    Boolean(referralData && account && provider),
+    Boolean(referralData && playerAccount && account && provider),
   );
   const settlementFunding: SettlementFunding = useMemo(() => {
     if (!account || !provider) return { status: "idle" };
@@ -1170,7 +1170,7 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "not-settled",
         });
-        await refreshSettlementFunding(injected, connectedAccount);
+        await refreshSettlementFunding(injected, effectiveAccount, connectedAccount);
       }
     } catch (error) {
       if (!isCurrentIdentity()) return;
@@ -1183,13 +1183,13 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshSettlementFunding(walletProvider: Eip1193Provider | undefined, connectedAccount: string) {
+  async function refreshSettlementFunding(walletProvider: Eip1193Provider | undefined, playerWallet: string, signerWallet: string) {
     if (!settlementConfigState.apiUrl) {
       throw new Error("Settlement pricing is temporarily unavailable. Please try again later.");
     }
     // The descriptor owns loading/error/identity lifecycle. This explicit
     // refresh only asks it to re-read after a wallet/network transition.
-    await fetchSettlementFundingWithMigration(walletProvider, connectedAccount);
+    await fetchSettlementFundingWithMigration(walletProvider, playerWallet, signerWallet);
   }
 
   async function connectWallet() {
@@ -1375,8 +1375,8 @@ export function FirstPlanetSettlementApp() {
             referralCode,
           });
           transactionOptions = redemptions.allianceInvite
-            ? settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)
-            : settlementTransactionOptions(funding, redemptions.referral);
+            ? settlementTransactionOptions(funding, playerAccount, redemptions.referral, redemptions.allianceInvite)
+            : settlementTransactionOptions(funding, playerAccount, redemptions.referral);
         },
         send: async beforeWalletSend => {
           if (!isCurrentIdentity()) throw new Error("Wallet changed before settlement submission.");
@@ -1514,7 +1514,7 @@ export function FirstPlanetSettlementApp() {
       }
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await fetchSettlementFundingWithMigration(provider, signerWallet),
+        funding: await fetchSettlementFundingWithMigration(provider, playerWallet, signerWallet),
       };
       if (!currentIdentity()) return undefined;
 
@@ -1526,7 +1526,7 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function fetchSettlementFundingWithMigration(walletProvider: Eip1193Provider | undefined, connectedAccount: string): Promise<SettlementFundingState> {
+  async function fetchSettlementFundingWithMigration(walletProvider: Eip1193Provider | undefined, playerWallet: string, signerWallet: string): Promise<SettlementFundingState> {
     if (!walletProvider) {
       throw new Error("Wallet provider is unavailable. Reconnect your wallet, then retry.");
     }
@@ -1535,10 +1535,11 @@ export function FirstPlanetSettlementApp() {
     }
     return backendDataStoreFor(settlementConfigState.apiUrl)
       .queries.settlementFundingProjection(
-        connectedAccount,
+        playerWallet,
         walletProvider,
         settlementConfig.migrationAddress,
         currentChainId.current,
+        signerWallet,
       )
       .read();
   }
@@ -2512,8 +2513,11 @@ export function referralSettlementBlocker(code: string, validation: ReferralVali
   return validation.resolution.valid ? undefined : validation.resolution.message;
 }
 
-function settlementTransactionOptions(funding: SettlementFundingState, referral?: ReferralRedemption, allianceInvite?: PaidAllianceInviteRedemption): SettlementTransactionOptions {
+function settlementTransactionOptions(funding: SettlementFundingState, playerAccount: string, referral?: ReferralRedemption, allianceInvite?: PaidAllianceInviteRedemption): SettlementTransactionOptions {
   return {
+    migrationPlayerAccount: playerAccount,
+    ...(funding.migrationReservation !== undefined ? { migrationReservation: funding.migrationReservation } : {}),
+    ...(funding.delegatedMigrationAvailable !== undefined ? { delegatedMigrationAvailable: funding.delegatedMigrationAvailable } : {}),
     ...(funding.migrationClaim ? { migrationClaim: funding.migrationClaim } : {}),
     ...(funding.migrationContractAddress ? { migrationContractAddress: funding.migrationContractAddress } : {}),
     ...(referral ? { referral } : {}),

@@ -48,6 +48,7 @@ import {
   persistReferralClaimIntent,
   playerActivityPresenceUrl,
   readMigrationReservation,
+  readMigrationDelegatedClaimSupport,
   readWalletNativeBalance,
   recordPlayerActivityPresence,
   recordReferralClaimTransaction,
@@ -185,9 +186,12 @@ function settlementFundingWithMigrationReservation(
   const migrationReservation = (chainReservation ?? funding.migrationReservation ?? null)?.claimed
     ? null
     : (chainReservation ?? funding.migrationReservation ?? null);
-  const activeMigration = Boolean(migrationReservation?.exists && !migrationReservation.claimed && migrationAddress);
+  const reserved = Boolean(migrationReservation?.exists && !migrationReservation.claimed);
+  const activeMigration = reserved && Boolean(migrationAddress);
   const migrationClaim = activeMigration ? (funding.migrationClaim ?? null) : null;
-  const unavailableReason = funding.unavailableReason ?? (activeMigration && !migrationClaim ? "Your reserved planet is not ready to claim yet. Please try again later." : undefined);
+  const unavailableReason = funding.unavailableReason
+    ?? (reserved && !migrationAddress ? "The reserved planet's migration contract is unavailable." : undefined)
+    ?? (activeMigration && !migrationClaim ? "Your reserved planet is not ready to claim yet. Please try again later." : undefined);
   return {
     ...funding,
     ...(activeMigration
@@ -741,25 +745,31 @@ export class BackendDataStore {
       const key = walletCacheKey("settlement-funding", wallet);
       return this.query(key, () => this.refresh(key, (signal) => fetchSettlementFundingState(this.apiBaseUrl, wallet, signal), { wallet }));
     },
-    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): BackendDataQueryDescriptor<SettlementFundingState> => {
-      const key = walletCacheKey("settlement-funding-projection", wallet, migrationAddress?.toLowerCase(), providerIdentity);
+    settlementFundingProjection: (wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined, signer = wallet): BackendDataQueryDescriptor<SettlementFundingState> => {
+      const key = walletCacheKey("settlement-funding-projection", wallet, signer.toLowerCase(), migrationAddress?.toLowerCase(), providerIdentity);
       return this.query(key, () => this.refresh(
         key,
         async () => {
+          const delegated = signer.toLowerCase() !== wallet.toLowerCase();
           const [backendFunding, walletBalanceWei, chainMigrationReservation] = await Promise.all([
             this.settlementFunding(wallet),
-            readWalletNativeBalance(provider, wallet),
-            readMigrationReservation(provider, migrationAddress, wallet),
+            readWalletNativeBalance(provider, signer),
+            readMigrationReservation(provider, migrationAddress, wallet, delegated && Boolean(migrationAddress)),
           ]);
-          return settlementFundingWithMigrationReservation(
+          const funding = settlementFundingWithMigrationReservation(
             settlementFundingWithWalletBalance(backendFunding, walletBalanceWei),
             chainMigrationReservation,
             migrationAddress,
           );
+          if (!delegated || !funding.migrationContractAddress) return funding;
+          const supported = await readMigrationDelegatedClaimSupport(provider, funding.migrationContractAddress);
+          return {
+            ...funding,
+            delegatedMigrationAvailable: supported,
+            ...(supported ? {} : { unavailableReason: "The reserved planet needs the verified delegated-migration upgrade before this wallet can claim it." }),
+          };
         },
-        {
-          wallet,
-        },
+        { wallet },
       ));
     },
     system: <T = unknown>(galaxy: number, system: number, options: SystemReadOptions = {}): BackendDataQueryDescriptor<T> => {
@@ -2028,8 +2038,8 @@ overview(wallet: string, planetId?: string, options: WalletReadOptions = {}): Pr
    * wallet's chain-only balance/reservation are committed under one canonical
    * identity so an old provider/network result cannot overwrite a newer
    * wallet session in the settlement UI. */
-  settlementFundingForProvider(wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined): Promise<SettlementFundingState> {
-    return this.queries.settlementFundingProjection(wallet, provider, migrationAddress, providerIdentity).read();
+  settlementFundingForProvider(wallet: string, provider: Eip1193Provider, migrationAddress: string | undefined, providerIdentity: string | undefined, signer = wallet): Promise<SettlementFundingState> {
+    return this.queries.settlementFundingProjection(wallet, provider, migrationAddress, providerIdentity, signer).read();
   }
 
   referralDashboard(wallet: string): Promise<ReferralDashboard> {

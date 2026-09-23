@@ -783,6 +783,43 @@ describe("BackendDataStore", () => {
     }
   });
 
+  test("reserved main funding reads main claim and reservation but signer ETH and upgraded ABI", async () => {
+    const originalFetch = globalThis.fetch;
+    const main = "0x1111111111111111111111111111111111111111";
+    const signer = "0x4444444444444444444444444444444444444444";
+    const migration = "0x3333333333333333333333333333333333333333";
+    const store = new BackendDataStore("https://api.test");
+    const urls: string[] = [];
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    const reservation = { exists: true, claimed: false, galaxy: 2, system: 99, position: 7, fields: 211, temperature: -14 };
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json({ affordable: true, balanceWei: null, contractKind: "game", startPriceWei: "5000", migrationClaim: { statePayload: "0x1234", signature: "0xabcd" }, migrationReservation: reservation });
+    }) as unknown as typeof fetch;
+    const words = [1n, 0n, 2n, 99n, 7n, 211n, BigInt.asUintN(256, -14n)]
+      .map(value => value.toString(16).padStart(64, "0")).join("");
+    const provider = { async request<T>(input: { method: string; params?: unknown[] }): Promise<T> {
+      requests.push(input);
+      if (input.method === "eth_getBalance") return "0x2710" as T;
+      if (input.method === "eth_call") {
+        const call = input.params?.[0] as { data?: string } | undefined;
+        return (call?.data?.startsWith("0xcd48c907") ? `0x${words}` : `0x${"0".repeat(63)}1`) as T;
+      }
+      throw new Error("Unexpected wallet request");
+    } };
+    try {
+      const funding = await store.queries.settlementFundingProjection(main, provider, migration, "0x2105", signer).read();
+      expect(urls).toEqual([`https://api.test/wallet/${main}/settlement-funding`]);
+      expect(requests.find(call => call.method === "eth_getBalance")?.params).toEqual([signer, "latest"]);
+      expect((requests.find(call => call.method === "eth_call")?.params?.[0] as { data: string }).data)
+        .toBe(`0xcd48c907${main.slice(2).padStart(64, "0")}`);
+      expect(funding.migrationReservation).toEqual(reservation);
+      expect(funding.delegatedMigrationAvailable).toBe(true);
+      expect(funding.balanceWei).toBe(10_000n);
+      expect(funding.migrationContractAddress).toBe(migration);
+    } finally { store.dispose(); globalThis.fetch = originalFetch; }
+  });
+
   test("keeps a canonical Galaxy transport independent of route-local cancellation", async () => {
     const originalFetch = globalThis.fetch;
     let transportSignal: AbortSignal | undefined;

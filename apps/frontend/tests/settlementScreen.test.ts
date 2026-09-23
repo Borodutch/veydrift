@@ -738,7 +738,8 @@ describe("settlement screen mode", () => {
     expect(source).not.toContain("POST_SETTLEMENT_READ_ATTEMPTS");
     expect(source).not.toContain("POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE");
     expect(source).toContain("queries.settlementFundingProjection(");
-    expect(source).toContain("settlementTransactionOptions(funding, redemptions.referral, redemptions.allianceInvite)");
+    expect(source).toContain("settlementTransactionOptions(funding, playerAccount, redemptions.referral, redemptions.allianceInvite)");
+    expect(source).toContain("settlementFundingProjection(playerAccount, provider, settlementConfig.migrationAddress, currentChainId.current, account)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
     expect(source).not.toContain("isUnsupportedProviderMethodError(error)");

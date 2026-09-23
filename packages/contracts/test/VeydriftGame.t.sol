@@ -800,6 +800,128 @@ contract VeydriftGameTest is Test {
         assertTrue(claimed);
     }
 
+    function testMigrationUupsUpgradeKeepsReservedMainAndSignedStateForDelegate() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+        _reserveMigrationFor(migration, player);
+        (bytes memory payload, bytes memory signature) =
+            _signedMigrationPayload(migration, signerKey, player, 42);
+        bytes32 beforeStateHash = migration.migrationStateHash(player, payload);
+        (bool existsBefore, bool claimedBefore,,,,,) = migration.migrationReservation(player);
+        assertTrue(existsBefore);
+        assertFalse(claimedBefore);
+        VeydriftMigrationSettlement nextImplementation = new VeydriftMigrationSettlement();
+        vm.prank(admin);
+        migration.upgradeToAndCall(address(nextImplementation), "");
+        assertEq(migration.owner(), admin);
+        assertEq(migration.stateSigner(), vm.addr(signerKey));
+        assertEq(address(migration.game()), address(game));
+        assertEq(migration.migrationStateHash(player, payload), beforeStateHash);
+        assertTrue(migration.supportsDelegatedClaim());
+        (bool existsAfter, bool claimedAfter,,,,,) = migration.migrationReservation(player);
+        assertEq(existsAfter, existsBefore);
+        assertEq(claimedAfter, claimedBefore);
+        vm.deal(delegate, 1 ether);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
+        assertEq(game.homePlanetOf(player), 42);
+        assertEq(game.homePlanetOf(delegate), 0);
+    }
+
+    function testDelegateClaimsMainReservedFullStateOnlyWhileCurrentlyAuthorized() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+        _reserveMigrationFor(migration, player);
+        (bytes memory payload, bytes memory signature) =
+            _signedMigrationPayload(migration, signerKey, player, 42);
+        vm.deal(delegate, 1 ether);
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMigrationSettlement.MigrationDelegateUnauthorized.selector, delegate, player
+            )
+        );
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
+
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        (, bytes memory wrongSignature) = _signedMigrationPayload(migration, 0x6161, player, 42);
+        vm.prank(delegate);
+        vm.expectRevert(VeydriftMigrationSettlement.BadMigrationSignature.selector);
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, wrongSignature);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).revokeDelegate();
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMigrationSettlement.MigrationDelegateUnauthorized.selector, delegate, player
+            )
+        );
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
+        assertEq(game.homePlanetOf(player), 42);
+        assertEq(game.homePlanetOf(delegate), 0);
+        assertEq(game.planet(42).owner, player);
+        (, bool claimed,,,,,) = migration.migrationReservation(player);
+        assertTrue(claimed);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMigrationSettlement.MigrationReservationClaimed.selector, player
+            )
+        );
+        migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
+    }
+
+    function testDelegateReferralMigrationCreditsMainAndBlocksPostRevocation() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+        address inviter = address(0xCAFE728);
+        vm.deal(inviter, 1 ether);
+        vm.prank(inviter);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(inviter);
+        referralSystem.claimReferralCode("delegated-start");
+        bytes32 commitment =
+            referralSystem.referralCommitment(inviter, keccak256(bytes("delegated-start")));
+        _reserveMigrationFor(migration, player);
+        (bytes memory payload, bytes memory signature) =
+            _signedMigrationPayload(migration, signerKey, player, 42);
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(player, commitment);
+        vm.deal(delegate, 1 ether);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        migration.claimWithReferralForDelegate{value: 0.05 ether}(
+            player, payload, signature, commitment, v, r, s
+        );
+        assertEq(game.homePlanetOf(player), 42);
+        assertEq(game.homePlanetOf(delegate), 0);
+        assertTrue(referralSystem.referralInviteeRedeemed(player));
+        assertFalse(referralSystem.referralInviteeRedeemed(delegate));
+        assertTrue(referralSystem.referralRedemptions(commitment, player));
+    }
+
     function testMigrationClaimReplacesAccidentalSingleStartedPlanet() public {
         VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
         vm.prank(admin);
@@ -1253,6 +1375,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(validManifestHash, 1, hashOnlyManifestHash, 1);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
 
         _importValidMigrationRow(migrating, player, validCode, activatedAt, validReceiptCommitment);
         _importHashOnlyMigrationRow(
@@ -1285,6 +1411,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(manifestHash, 1, bytes32(0), 0);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
         _importValidMigrationRow(migrating, player, code, activatedAt, sourceCommitment);
         vm.prank(admin);
         migrating.finalizeReferralCodeMigration();
@@ -1292,6 +1422,138 @@ contract VeydriftGameTest is Test {
         assertEq(migrating.referralCommitmentOf(player), sourceCommitment);
         assertEq(migrating.referralClaimedAt(sourceCommitment), activatedAt);
         assertEq(migrating.referralInvites(sourceCommitment), player);
+    }
+
+    function testReferralRewardStatsMigrationRequiresExactReviewedCountersAndZeroEscrow() public {
+        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        bytes32 digest = migrating.referralMigrationLeafRewardStats(
+            player, 0.025 ether, 0.025 ether, 0.01 ether
+        );
+        vm.startPrank(admin);
+        migrating.configureReferralCodeMigration(bytes32(0), 0, bytes32(0), 0);
+        migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        migrating.configureReferralRewardMigration(digest, 1);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralRewardStatsMigrationManifestMismatch.selector,
+                digest,
+                bytes32(0),
+                uint32(1),
+                uint32(0)
+            )
+        );
+        migrating.finalizeReferralCodeMigration();
+        address[] memory inviters = new address[](1);
+        uint256[] memory accrued = new uint256[](1);
+        uint256[] memory paid = new uint256[](1);
+        uint256[] memory claimed = new uint256[](1);
+        inviters[0] = player;
+        accrued[0] = 0.025 ether;
+        paid[0] = 0;
+        claimed[0] = 0;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralRewardStatsMigrationInvalid.selector, player
+            )
+        );
+        migrating.migrateReferralRewardStats(inviters, accrued, paid, claimed);
+        paid[0] = 0.025 ether;
+        claimed[0] = 0.01 ether;
+        migrating.migrateReferralRewardStats(inviters, accrued, paid, claimed);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralRewardStatsMigrationInvalid.selector, player
+            )
+        );
+        migrating.migrateReferralRewardStats(inviters, accrued, paid, claimed);
+        migrating.finalizeReferralCodeMigration();
+        vm.stopPrank();
+        assertEq(migrating.totalReferralRewardsAccrued(player), accrued[0]);
+        assertEq(migrating.totalReferralRewardsPaid(player), paid[0]);
+        assertEq(migrating.totalReferralRewardsClaimed(player), claimed[0]);
+        assertEq(migrating.claimableReferralRewards(player), 0);
+    }
+
+    function testReferralHistoryMigrationReemitsSettledCreditAndPreservesTotals() public {
+        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        vm.warp(10 days);
+        address invitee = address(0xBEEF);
+        address recipient = address(0xCAFE);
+        bytes32 codeHash = keccak256(bytes("history-ref"));
+        bytes32 commitment = migrating.referralCommitment(player, codeHash);
+        uint64 activatedAt = uint64(block.timestamp - 1 days);
+        uint64 redeemedAt = activatedAt + 1;
+        uint64 claimedAt = redeemedAt + 1;
+        bytes32 validDigest =
+            migrating.referralMigrationLeafValid(player, codeHash, commitment, activatedAt);
+        bytes32 redemptionDigest = migrating.referralMigrationLeafRedemptionHistory(
+            player, invitee, commitment, redeemedAt, 0.01 ether, false, true
+        );
+        bytes32 claimDigest = migrating.referralMigrationLeafRewardClaim(
+            player, invitee, commitment, recipient, 0.01 ether, claimedAt
+        );
+        bytes32 rewardDigest =
+            migrating.referralMigrationLeafRewardStats(player, 0.01 ether, 0.01 ether, 0.01 ether);
+        vm.startPrank(admin);
+        migrating.configureReferralCodeMigration(validDigest, 1, bytes32(0), 0);
+        migrating.configureReferralRedemptionMigration(redemptionDigest, 1);
+        migrating.configureReferralRewardClaimMigration(claimDigest, 1);
+        migrating.configureReferralRewardMigration(rewardDigest, 1);
+        vm.stopPrank();
+        _importValidMigrationRow(migrating, player, "history-ref", activatedAt, commitment);
+        address[] memory inviters = new address[](1);
+        address[] memory invitees = new address[](1);
+        bytes32[] memory commitments = new bytes32[](1);
+        uint64[] memory redeemedAts = new uint64[](1);
+        uint256[] memory amounts = new uint256[](1);
+        bool[] memory paid = new bool[](1);
+        bool[] memory credited = new bool[](1);
+        inviters[0] = player;
+        invitees[0] = invitee;
+        commitments[0] = commitment;
+        redeemedAts[0] = redeemedAt;
+        amounts[0] = 0.01 ether;
+        credited[0] = true;
+        vm.prank(admin);
+        migrating.migrateReferralRedemptionsWithHistory(
+            inviters, invitees, commitments, redeemedAts, amounts, paid, credited
+        );
+        address[] memory recipients = new address[](1);
+        recipients[0] = recipient;
+        uint64[] memory claimedAts = new uint64[](1);
+        claimedAts[0] = claimedAt;
+        vm.prank(admin);
+        migrating.migrateReferralRewardClaimHistory(
+            inviters, invitees, commitments, recipients, amounts, claimedAts
+        );
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralMigrationRedemptionInvalid.selector,
+                player,
+                invitee,
+                commitment,
+                claimedAt
+            )
+        );
+        migrating.migrateReferralRewardClaimHistory(
+            inviters, invitees, commitments, recipients, amounts, claimedAts
+        );
+        uint256[] memory accrued = new uint256[](1);
+        uint256[] memory claimed = new uint256[](1);
+        accrued[0] = amounts[0];
+        claimed[0] = amounts[0];
+        vm.prank(admin);
+        migrating.migrateReferralRewardStats(inviters, accrued, amounts, claimed);
+        vm.prank(admin);
+        migrating.finalizeReferralCodeMigration();
+        assertTrue(migrating.referralInviteeRedeemed(invitee));
+        assertTrue(migrating.referralRewardClaimHistoryImported(commitment, invitee));
+        assertEq(migrating.totalReferralRewardsAccrued(player), amounts[0]);
+        assertEq(migrating.totalReferralRewardsPaid(player), amounts[0]);
+        assertEq(migrating.totalReferralRewardsClaimed(player), amounts[0]);
+        assertEq(migrating.claimableReferralRewards(player), 0);
     }
 
     function testReferralMigrationFinalizesReviewedSixTenThreeInventoryOutOfOrder() public {
@@ -1345,6 +1607,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(validManifestHash, 6, hashOnlyManifestHash, 10);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
 
         // The production receipt inventory is allowed to arrive in bounded, out-of-order batches.
         for (uint256 index = hashOnlyCodeHashes.length; index > 0; index--) {
@@ -1453,6 +1719,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(validManifestHash, 1, bytes32(0), 0);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(redemptionManifestHash, 1);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
         _importValidMigrationRow(migrating, player, code, activatedAt, legacyCommitment);
         _importRedemptionMigrationRow(migrating, player, invitee, commitment, redeemedAt);
         vm.prank(admin);
@@ -1493,6 +1763,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(validManifestHash, 1, bytes32(0), 0);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(redemptionManifestHash, 1);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
         _importValidMigrationRow(migrating, player, code, activatedAt, legacyCommitment);
 
         vm.prank(admin);
@@ -1563,6 +1837,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(expectedManifestHash, 1, bytes32(0), 0);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
 
         address[] memory inviters = new address[](1);
         string[] memory codes = new string[](1);
@@ -1626,6 +1904,10 @@ contract VeydriftGameTest is Test {
         migrating.configureReferralCodeMigration(expectedManifestHash, 1, bytes32(0), 0);
         vm.prank(admin);
         migrating.configureReferralRedemptionMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(admin);
+        migrating.configureReferralRewardClaimMigration(bytes32(0), 0);
         _importValidMigrationRow(migrating, player, code, alteredActivatedAt, receiptCommitment);
 
         bytes32 alteredManifestHash = migrating.referralMigrationLeafValid(
@@ -11724,6 +12006,10 @@ contract VeydriftGameTest is Test {
         vm.prank(owner);
         deployedReferralSystem.configureReferralRedemptionMigration(bytes32(0), 0);
         vm.prank(owner);
+        deployedReferralSystem.configureReferralRewardMigration(bytes32(0), 0);
+        vm.prank(owner);
+        deployedReferralSystem.configureReferralRewardClaimMigration(bytes32(0), 0);
+        vm.prank(owner);
         deployedReferralSystem.finalizeReferralCodeMigration();
         referralSystem = deployedReferralSystem;
         return deployedGame;
@@ -11739,6 +12025,25 @@ contract VeydriftGameTest is Test {
                 )
             )
         );
+    }
+
+    function _reserveMigrationFor(VeydriftMigrationSettlement migration, address recipient)
+        internal
+    {
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = recipient;
+        galaxies[0] = 2;
+        systems[0] = 99;
+        positions[0] = 7;
+        fields[0] = 211;
+        temperatures[0] = -14;
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
     }
 
     function _signedMigrationPayload(
