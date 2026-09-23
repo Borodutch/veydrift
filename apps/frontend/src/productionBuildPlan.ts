@@ -117,10 +117,12 @@ export function evaluateProductionPlan(rows: readonly ProductionOrder[], context
   if (!available) reason ??= "Resources are unavailable";
   else if (fields.some(field => cost[field] > available[field])) reason ??= "Insufficient resources for build plan";
   const durationSeconds = Math.max(0, ...(["ship", "defense"] as const).map(kind => {
+    const drafted = lines.filter(line => line.order.kind === kind);
+    if (!drafted.length) return 0;
     const queue = kind === "ship" ? context.shipQueue : context.defenseQueue;
     const tail = queue?.backlog?.at(-1)?.readyAt ?? queue?.readyAt;
     const waiting = tail ? Math.max(0, ((timestampToMs(tail) ?? now) - now) / 1000) : 0;
-    return (Number.isFinite(waiting) ? waiting : 0) + lines.filter(line => line.order.kind === kind).reduce((sum, line) => sum + line.durationSeconds, 0);
+    return (Number.isFinite(waiting) ? waiting : 0) + drafted.reduce((sum, line) => sum + line.durationSeconds, 0);
   }));
   return { cost, reason, lines, durationSeconds };
 }

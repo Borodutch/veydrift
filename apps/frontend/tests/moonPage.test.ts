@@ -420,7 +420,7 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("MoonStructuresSection");
     expect(moonPageSource).toContain("MoonShipyardSection");
     expect(moonPageSource).toContain("MoonDefenseSection");
-    expect(moonPageSource).not.toContain("showPlan={false}");
+    expect(moonPageSource).toContain("showPlan={false}");
     expect(moonPageSource).toContain("Structures");
     expect(moonPageSource).toContain("Shipyard");
     expect(moonPageSource).toContain("Defenses");

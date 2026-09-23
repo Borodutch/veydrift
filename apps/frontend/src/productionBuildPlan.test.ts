@@ -46,6 +46,17 @@ describe("production build plan", () => {
     expect(plan.durationSeconds).toBe(264);
     expect(plan.cost.metal).toBe(100n);
   });
+  test.each(["ship", "defense"] as const)("%s-only ETA excludes the opposite long queue", kind => {
+    const ctx = context("100000000000000000");
+    ctx.ships = [item(ship, "100")];
+    ctx.defenses = [item(defense, "100")];
+    const oppositeQueue = { label: "Already paid", readyAt: "1700010000" };
+    if (kind === "ship") ctx.defenseQueue = oppositeQueue;
+    else ctx.shipQueue = oppositeQueue;
+    const plan = evaluateProductionPlan([{ kind, id: kind === "ship" ? ship.id : defense.id, quantity: 1 }], ctx, 1_700_000_000_000);
+    expect(plan.durationSeconds).toBe(144);
+    expect(plan.cost.metal).toBe(100n);
+  });
   test("pending and rejected transactions retain every draft row until confirmed receipt", () => {
     const row = { kind: "ship" as const, id: ship.id, quantity: 1 };
     const rows = [row, { kind: "defense" as const, id: defense.id, quantity: 1 }];

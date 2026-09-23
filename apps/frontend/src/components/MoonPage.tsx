@@ -898,6 +898,7 @@ function MoonDefenseSection({
       actionPending={actionPending}
       buildPlan={buildPlan}
       productionKind="defense"
+      showPlan={false}
       canTransact={canTransact}
       emptyLabel="No moon defenses are available yet."
       items={(quantities) => moonDefenseProductionItems({

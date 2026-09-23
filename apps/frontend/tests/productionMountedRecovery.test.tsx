@@ -3,9 +3,12 @@ import { h, render } from "preact";
 import { useEffect } from "preact/hooks";
 import { BackendDataStore } from "../src/backendDataStore";
 import { ProductionCatalog, type ProductionCatalogItem } from "../src/components/ProductionCatalog";
-import { shipyardCatalog } from "../src/playableMvp";
+import { MoonPage } from "../src/components/MoonPage";
+import { defenseCatalog, shipyardCatalog } from "../src/playableMvp";
 import { useProductionBuildPlan } from "../src/useProductionBuildPlan";
 import type { ProductionPlanContext } from "../src/productionBuildPlan";
+import { productionPlanContext } from "../src/productionBuildPlanContext";
+import type { ChainMoonState } from "../src/walletFlow";
 import { confirmTransactionRetry } from "../src/transactionActionGate";
 
 class TestNode {
@@ -37,6 +40,10 @@ class TestNode {
   dispatchEvent(event: { type: string }) { this.listeners.get(event.type)?.call(this, event); }
   query(name: string): TestNode | undefined { return this.attributes.some(attr => attr.name === "aria-label" && attr.value === name)
     ? this : this.childNodes.map(child => child.query(name)).find(Boolean); }
+  matching(name: string, value: string): TestNode[] { return [
+    ...(this.attributes.some(attr => attr.name === name && attr.value === value) ? [this] : []),
+    ...this.childNodes.flatMap(child => child.matching(name, value)),
+  ]; }
   get ownerDocument() { return document; }
 }
 const document = Object.assign(new EventTarget(), {
@@ -132,6 +139,33 @@ function click(name: string) {
   expect(node).toBeDefined();
   node!.dispatchEvent({ type: "click", timeStamp: performance.now() });
 }
+
+test("mounted MoonPage shows one shared plan and both populated catalogs keep Add with a shared budget", () => {
+  Object.defineProperty(globalThis, "document", { configurable: true, value: document });
+  const defense = defenseCatalog.find(entry => entry.key === "rocketLauncher")!;
+  const moon: ChainMoonState = {
+    wallet: "0x1111111111111111111111111111111111111111", homePlanetId: "7",
+    moon: { exists: true, planetId: "7", owner: "0x1111111111111111111111111111111111111111", fields: 9, diameterKm: 8774, createdAt: "1700000000", jumpGateReadyAt: "0" },
+    buildings: [{ id: 3, key: "shipyard", label: "Shipyard", level: 3, cost: { metal: "100", crystal: "0", deuterium: "0" } }],
+    queue: null, resources: { metal: "150", crystal: "0", deuterium: "0" },
+    ships: [{ id: ship.id, count: 0, cost: { metal: "100", crystal: "0", deuterium: "0" }, durationSeconds: 60 }],
+    defenses: [{ id: defense.id, count: 0, cost: { metal: "100", crystal: "0", deuterium: "0" }, durationSeconds: 60 }],
+    defenseQueue: null,
+  };
+  const context = productionPlanContext("moon", { moon, defense: null, shipyard: null, infrastructure: null });
+  const noop = () => {};
+  render(<MoonPage moonState={moon} canTransact buildPlan={{ body: "moon", context,
+    rows: [{ kind: "ship", id: ship.id, quantity: 1 }], busy: false, ready: true,
+    onAdd: noop, onRemove: noop, onClear: noop, onConfirm: noop }} />, root as unknown as Element);
+  expect(root.matching("data-production-catalog", "true")).toHaveLength(2);
+  expect(root.matching("data-build-plan", "true")).toHaveLength(1);
+  expect(root.matching("aria-label", "Confirm build plan")).toHaveLength(1);
+  expect(root.matching("aria-label", "Clear build plan")).toHaveLength(1);
+  expect(root.query(`Add ${ship.label} to build plan`)).toBeDefined();
+  const defenseAdd = root.query(`Add ${defense.label} to build plan`);
+  expect(defenseAdd).toBeDefined();
+  expect(defenseAdd?.disabled).toBe(true); // Ship draft has spent 100 of the moon's 150 metal.
+});
 
 test.each(["timeout", "disconnect"] as const)("mounted plan recovers from %s, preserves draft and clears on late receipt", async mode => {
   const flow = mountFlow(mode);
