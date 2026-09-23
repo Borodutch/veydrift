@@ -208,7 +208,7 @@ async function waitForExpression(expression, timeoutMs = 5_000) {
     if (await evaluate(expression)) return;
     await delay(25);
   }
-  const diagnostics = await evaluate(`({ path: location.pathname, main: document.querySelector('main')?.innerText.slice(0, 1500), errors: window.inspectorProof?.errors, requests: window.inspectorProof?.requests?.slice(-10) })`).catch(() => null);
+  const diagnostics = await evaluate(`({ path: location.pathname, main: document.querySelector('main')?.innerText.slice(0, 1500), errors: window.inspectorProof?.errors, requests: window.inspectorProof?.requests?.slice(-10), pendingDetailRequests: window.inspectorProof?.pendingDetailRequests?.() })`).catch(() => null);
   throw new Error(`Timed out waiting for browser expression: ${expression}\n${JSON.stringify(diagnostics)}`);
 }
 
@@ -2749,26 +2749,34 @@ for (const kind of ["planet", "moon"]) {
   test(`late ${kind} detail responses cannot replace the currently rendered body`, async () => {
     await loadInspectorFixture("/planet/9/9/9", 1280);
     await evaluate(`window.inspectorProof.beginDetailRace('${kind}')`);
-    await waitForExpression("JSON.stringify(window.inspectorProof.pendingDetailRequests()) === JSON.stringify(['7:1', '8:2'])");
-    assert.deepEqual(await evaluate(`window.inspectorProof.requests.filter(request => request.includes('/universe/galaxies/7/systems/1?') || request.includes('/universe/galaxies/8/systems/2?')).sort()`), [
-      "/local-api/universe/galaxies/7/systems/1?detail=full",
-      "/local-api/universe/galaxies/8/systems/2?detail=full",
-    ]);
+    try {
+      await waitForExpression("window.inspectorProof.pendingDetailRequests().includes('7:1') && window.inspectorProof.pendingDetailRequests().includes('8:2')");
+      // Force an unrelated old-app system read during the race: it must get
+      // the normal fixture payload without consuming either deferred response.
+      const unrelated = await evaluate("fetch('/local-api/universe/galaxies/9/systems/9?detail=full').then(response => response.json()).then(system => system.planets[0].name)");
+      assert.equal(unrelated, "Unrelated Gamma");
+      assert.deepEqual(await evaluate("window.inspectorProof.pendingDetailRequests()"), ["7:1", "8:2"]);
+      assert.deepEqual(await evaluate(`window.inspectorProof.requests.filter(request => request.includes('/universe/galaxies/7/systems/1?') || request.includes('/universe/galaxies/8/systems/2?')).sort()`), [
+        "/local-api/universe/galaxies/7/systems/1?detail=full",
+        "/local-api/universe/galaxies/8/systems/2?detail=full",
+      ]);
 
-    await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
-    const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
-    await waitForExpression(`document.querySelector('#app h2')?.textContent === '${expectedHeading}'`);
-    let text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
-    assert.match(text, kind === "moon" ? /8,002|8,003|8,004/ : /8,002|8,003|8,004|Level 8/);
-    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+      await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
+      const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
+      await waitForExpression(`document.querySelector('#app h2')?.textContent === '${expectedHeading}'`);
+      let text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+      assert.match(text, kind === "moon" ? /8,002|8,003|8,004/ : /8,002|8,003|8,004|Level 8/);
+      assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
 
-    await evaluate("window.inspectorProof.resolveDetailRequest('7:1')");
-    await delay(100);
-    text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
-    assert.match(text, new RegExp(expectedHeading));
-    assert.match(text, /8,002|8,003|8,004/);
-    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
-    await evaluate("window.inspectorProof.endDetailRace()");
+      await evaluate("window.inspectorProof.resolveDetailRequest('7:1')");
+      await delay(100);
+      text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+      assert.match(text, new RegExp(expectedHeading));
+      assert.match(text, /8,002|8,003|8,004/);
+      assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+    } finally {
+      await evaluate("window.inspectorProof.endDetailRace()");
+    }
   });
 }
 

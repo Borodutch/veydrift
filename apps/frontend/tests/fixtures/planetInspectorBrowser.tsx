@@ -330,7 +330,11 @@ globalThis.fetch = (async (input, init) => {
 
   if (detailRaceKind && systemMatch) {
     const key = `${systemMatch[1]}:${systemMatch[2]}`;
-    return new Promise<Response>((resolve) => pendingDetailRequests.set(key, resolve));
+    // The old app can still read 9:9 while the detail component imports.
+    // Defer only the two requests this race explicitly controls.
+    if (key === "7:1" || key === "8:2") {
+      return new Promise<Response>((resolve) => pendingDetailRequests.set(key, resolve));
+    }
   }
 
   if (url.pathname.endsWith("/runtime-config")) {
@@ -782,9 +786,14 @@ window.inspectorProof = {
     // Replacing the app drops its store lease; keep both deferred reads alive
     // until the browser test has inspected the current and stale responses.
     releaseDetailRaceStore = retainBackendDataStore(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` }));
-    const oldCoords = { galaxy: 7, system: 1, position: 2 };
-    await renderDetail(kind, oldCoords);
-    queueMicrotask(() => { void renderDetail(kind, { galaxy: 8, system: 2, position: 4 }); });
+    try {
+      const oldCoords = { galaxy: 7, system: 1, position: 2 };
+      await renderDetail(kind, oldCoords);
+      queueMicrotask(() => { void renderDetail(kind, { galaxy: 8, system: 2, position: 4 }); });
+    } catch (error) {
+      window.inspectorProof.endDetailRace();
+      throw error;
+    }
   },
   endDetailRace() {
     releaseDetailRaceStore?.();
