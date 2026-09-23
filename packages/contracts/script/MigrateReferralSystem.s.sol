@@ -351,13 +351,15 @@ contract MigrateReferralSystem is Script {
     }
 
     function _normalizedHashOnly(string memory code) private pure returns (bytes32) {
-        bytes memory value = bytes(code);
-        require(value.length == 43, "HASH_ONLY_LENGTH_MISMATCH");
-        for (uint256 i; i < value.length; ++i) {
-            uint8 character = uint8(value[i]);
-            if (character >= 65 && character <= 90) value[i] = bytes1(character + 32);
+        bytes memory original = bytes(code);
+        require(original.length == 43, "HASH_ONLY_LENGTH_MISMATCH");
+        bytes memory normalized = new bytes(original.length);
+        for (uint256 i; i < original.length; ++i) {
+            uint8 character = uint8(original[i]);
+            normalized[i] =
+                character >= 65 && character <= 90 ? bytes1(character + 32) : original[i];
         }
-        return keccak256(value);
+        return keccak256(normalized);
     }
 
     function _verifyFrozenRewards(
