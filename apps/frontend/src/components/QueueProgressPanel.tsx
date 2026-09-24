@@ -39,6 +39,18 @@ export interface QueueProgressPanelProps {
   tone?: QueueProgressTone | undefined;
 }
 
+// The active Queue is the sizing authority for the adjacent production draft.
+export const queueStripClasses = {
+  panel: "grid gap-1 rounded border border-cyan-300/20 px-2.5 py-1.5",
+  heading: "text-[10px] font-semibold uppercase tracking-[0.14em]",
+  row: "flex min-h-7 flex-wrap items-center gap-x-2.5 gap-y-1.5",
+  item: "inline-flex items-center gap-1.5",
+  thumbnail: "h-7 w-7 shrink-0 rounded object-contain",
+  details: "grid gap-0.5 leading-none",
+  quantity: "text-[11px] font-medium tabular-nums",
+  eta: "text-[9px] tabular-nums",
+} as const;
+
 const toneClasses = {
   amber: {
     background: "bg-amber-300/[0.08]",
@@ -228,37 +240,37 @@ export function QueueProgressPanel({
   return (
     <section
       aria-label={`${title}: ${label}`}
-      className={`grid gap-1 rounded border border-cyan-300/20 px-2.5 py-1.5 ${classes.background} ${
+      className={`${queueStripClasses.panel} ${classes.background} ${
         !progressBar.indeterminate && percent >= 100 ? "queue-ready-pulse" : ""
       }`}
     >
-      <span className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${classes.text}`}>
+      <span className={`${queueStripClasses.heading} ${classes.text}`}>
         {title}
       </span>
 
-      <span className="flex min-h-7 flex-wrap items-center gap-x-2.5 gap-y-1.5">
-        <span className="inline-flex items-center gap-1.5" title={itemTitle}>
+      <span className={queueStripClasses.row}>
+        <span className={queueStripClasses.item} title={itemTitle}>
           {asset ? (
             <OptimizedImage
               alt=""
-              className="h-7 w-7 shrink-0 rounded object-contain"
+              className={queueStripClasses.thumbnail}
               sizes="icon"
               src={asset}
             />
           ) : (
             <span className="h-7 w-7 shrink-0 rounded bg-white/5" />
           )}
-          <span className="grid gap-0.5 leading-none">
+          <span className={queueStripClasses.details}>
             {itemText ? (
               <span className="text-[11px] font-medium text-slate-200">
                 {itemText}
               </span>
             ) : quantity === undefined ? null : (
-              <span className="text-[11px] font-medium tabular-nums text-slate-200">
+              <span className={`${queueStripClasses.quantity} text-slate-200`}>
                 ×{formatQuantity(quantity)}
               </span>
             )}
-            <span className="text-[9px] tabular-nums text-slate-500">
+            <span className={`${queueStripClasses.eta} text-slate-500`}>
               {totalQueueRemaining === undefined
                 ? formatQueueEta(readyAt)
                 : totalQueueRemaining === "Ready"
