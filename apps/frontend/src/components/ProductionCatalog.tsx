@@ -12,6 +12,7 @@ import { OptimizedImage } from "./OptimizedImage";
 import {
   formatQueueEta,
   QueueProgressPanel,
+  queueStripClasses,
   type QueueProgressTone,
 } from "./QueueProgressPanel";
 import {
@@ -397,29 +398,29 @@ function ProductionBuildPlan({ body, context, rows, busy, unknown, ready, error,
   const plan = evaluateProductionPlan(rows, context, now);
   const estimated = Math.max(0, Math.ceil(plan.durationSeconds));
   return (
-    <section aria-label={`${body} build plan`} className="rounded border border-cyan-300/20 bg-[#111c26] px-3 py-2" data-build-plan>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <h3 className="font-semibold uppercase tracking-[0.15em] text-slate-200">Build plan</h3>
+    <section aria-label={`${body} build plan`} className={`${queueStripClasses.panel} bg-[#111c26]`} data-build-plan>
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] tabular-nums">
+        <h3 className={`${queueStripClasses.heading} text-slate-200`}>Build plan</h3>
         <span className="text-amber-300">M {plan.cost.metal.toLocaleString("en-US")}</span>
         <span className="text-cyan-300">C {plan.cost.crystal.toLocaleString("en-US")}</span>
         <span className="text-emerald-300">D {plan.cost.deuterium.toLocaleString("en-US")}</span>
-        <span className="text-slate-400">{formatDuration(estimated)} total left</span>
+        <span className={`${queueStripClasses.eta} text-slate-400`}>{formatDuration(estimated)} total left</span>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
+      <div className={queueStripClasses.row}>
         {plan.lines.map(({ index, item, order, durationSeconds }) => (
-          <div className="inline-flex items-center gap-1" key={index}>
-            <div className="relative h-10 w-10 shrink-0">
-              <OptimizedImage alt="" className="h-full w-full rounded border border-white/10 object-cover" sizes="icon" src={item.asset} style={item.thumbnailStyle} />
+          <div className={queueStripClasses.item} key={index}>
+            <div className="relative h-7 w-7 shrink-0">
+              <OptimizedImage alt="" className={queueStripClasses.thumbnail} sizes="icon" src={item.asset} style={item.thumbnailStyle} />
               <button aria-label={`Remove ${item.label} from build plan`} title={`Remove ${item.label} from build plan`}
-                className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full border border-slate-400 bg-[#17212d] text-white disabled:opacity-50"
-                disabled={busy} onClick={() => onRemove(index)} type="button"><X aria-hidden="true" size={13} /></button>
+                className="absolute right-0 top-0 grid h-6 w-6 place-items-start justify-items-end text-white disabled:opacity-50"
+                disabled={busy} onClick={() => onRemove(index)} type="button"><span className="grid h-4 w-4 place-items-center rounded-full border border-slate-400 bg-[#17212d]"><X aria-hidden="true" size={11} /></span></button>
             </div>
-            <span className="grid gap-0.5 text-[10px] leading-none text-slate-300" title={item.label}><span>×{order.quantity.toLocaleString("en-US")}</span><span className="text-slate-500">{formatDuration(durationSeconds)}</span></span>
+            <span className={queueStripClasses.details} title={item.label}><span className={`${queueStripClasses.quantity} text-slate-300`}>×{order.quantity.toLocaleString("en-US")}</span><span className={`${queueStripClasses.eta} text-slate-500`}>{formatDuration(durationSeconds)}</span></span>
           </div>
         ))}
         <div className="ml-auto flex gap-1">
-          <button aria-label={unknown ? "Retry build plan after checking wallet activity" : "Confirm build plan"} title={unknown ? "Check wallet activity first. Another request may duplicate this build." : "Confirm build plan"} className="grid h-11 w-11 place-items-center rounded border border-cyan-300/30 text-cyan-200 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy || !ready || Boolean(plan.reason)} onClick={onConfirm} type="button"><Check aria-hidden="true" size={18} /></button>
-          <button aria-label="Clear build plan" title="Clear build plan" className="grid h-11 w-11 place-items-center rounded border border-white/10 text-slate-300 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy} onClick={onClear} type="button"><X aria-hidden="true" size={18} /></button>
+          <button aria-label={unknown ? "Retry build plan after checking wallet activity" : "Confirm build plan"} title={unknown ? "Check wallet activity first. Another request may duplicate this build." : "Confirm build plan"} className="grid h-7 w-7 place-items-center rounded border border-cyan-300/30 text-cyan-200 disabled:opacity-40" disabled={busy || !ready || Boolean(plan.reason)} onClick={onConfirm} type="button"><Check aria-hidden="true" size={18} /></button>
+          <button aria-label="Clear build plan" title="Clear build plan" className="grid h-7 w-7 place-items-center rounded border border-white/10 text-slate-300 disabled:opacity-40" disabled={busy} onClick={onClear} type="button"><X aria-hidden="true" size={18} /></button>
         </div>
       </div>
       {unknown ? <p role="alert" className="mt-1 text-xs text-amber-300">The previous request may have been sent. Check wallet activity and reconnect if needed before retrying; retry asks for consent and could duplicate the build.</p> : null}
