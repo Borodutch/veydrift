@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Check, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -45,6 +45,7 @@ interface NavBarProps {
   onOpenActivity?: (() => void) | undefined;
   onRevokeDelegate?: (() => void) | undefined;
   onSetDelegate?: ((delegate: string) => void) | undefined;
+  onRefreshDelegation?: (() => void) | undefined;
   onUpdatePlayerProfile?: ((name: string, description: string | null) => void) | undefined;
   playerProfile?: PlayerProfile | undefined;
   playerProfileAction?: PlayerProfileActionState | undefined;
@@ -110,6 +111,7 @@ export function NavBar({
   onOpenActivity,
   onRevokeDelegate,
   onSetDelegate,
+  onRefreshDelegation,
   onUpdatePlayerProfile,
   playerProfile,
   playerProfileAction = { status: "idle" },
@@ -205,10 +207,13 @@ export function NavBar({
     if (!playerPanelOpen) {
       setPlayerDraft(playerProfile?.displayName ?? "");
       setPlayerDescriptionDraft(playerProfile?.description ?? "");
-      setDelegateDraft(delegation?.delegate ?? "");
       setPlayerValidation(undefined);
     }
-  }, [delegation?.delegate, playerPanelOpen, playerProfile?.description, playerProfile?.displayName]);
+  }, [playerPanelOpen, playerProfile?.description, playerProfile?.displayName]);
+
+  useEffect(() => {
+    setDelegateDraft(delegation?.delegate ?? "");
+  }, [delegation?.delegate, signerAccount]);
 
   useEffect(() => {
     if (playerProfileAction.status === "success") {
@@ -229,6 +234,7 @@ export function NavBar({
 
   const handlePlayerSubmit = (event: Event) => {
     event.preventDefault();
+    if (!canEditPlayerProfile || playerProfileBusy || delegationBusy) return;
     const nextName = playerDraft.trim().replace(/ {2,}/g, " ");
     const validation = validatePlayerDisplayName(nextName);
     if (validation) {
@@ -304,6 +310,7 @@ export function NavBar({
             setPlayerPanelOpen(true);
             setPlayerDraft(playerProfile?.displayName ?? "");
             setPlayerDescriptionDraft(playerProfile?.description ?? "");
+            setDelegateDraft(delegation?.delegate ?? "");
             setPlayerValidation(undefined);
           }
           : undefined}
@@ -332,12 +339,11 @@ export function NavBar({
         if (event.target === event.currentTarget && !playerProfileBusy && !delegationBusy) setPlayerPanelOpen(false);
       }}
     >
-      <form
+      <div
         aria-labelledby="commander-name-editor-title"
         aria-modal="true"
         className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
         id="commander-name-editor"
-        onSubmit={handlePlayerSubmit}
         role="dialog"
       >
         <div className="flex items-start justify-between gap-3">
@@ -360,43 +366,56 @@ export function NavBar({
             <X aria-hidden="true" size={14} strokeWidth={2} />
           </button>
         </div>
-        <label className="grid gap-1 text-xs font-medium text-slate-200">
-          Display name
-          <input
-            className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy}
-            maxLength={32}
-            onInput={(event) => {
-              setPlayerDraft(event.currentTarget.value);
-              setPlayerValidation(undefined);
-            }}
-            placeholder="Enter display name"
-            value={playerDraft}
-          />
-        </label>
-        <label className="grid gap-1 text-xs font-medium text-slate-200">
-          Description
-          <textarea
-            className="min-h-28 resize-y rounded border border-white/10 bg-[#050b14]/95 px-3 py-2 text-sm leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy}
-            maxLength={playerDescriptionMaxLength}
-            onInput={(event) => {
-              setPlayerDescriptionDraft(event.currentTarget.value);
-              setPlayerValidation(undefined);
-            }}
-            placeholder="Public commander bio; plain URLs become links on your profile"
-            value={playerDescriptionDraft}
-          />
-        </label>
-        <p className={`text-right text-[10px] leading-3 ${descriptionCountTone}`}>
-          {descriptionRemaining} / {playerDescriptionMaxLength}
-        </p>
-        <p className="text-[11px] leading-4 text-slate-300">
-          Free wallet signature; no transaction or gas.
-        </p>
+        <form aria-labelledby="profile-details-title" className="grid gap-3 rounded border border-white/10 p-3" onSubmit={handlePlayerSubmit}>
+          <h3 className="text-xs font-semibold text-slate-200" id="profile-details-title">Profile details</h3>
+          <label className="grid gap-1 text-xs font-medium text-slate-200">
+            Display name
+            <input
+              className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={playerProfileBusy}
+              maxLength={32}
+              onInput={(event) => {
+                setPlayerDraft(event.currentTarget.value);
+                setPlayerValidation(undefined);
+              }}
+              placeholder="Enter display name"
+              value={playerDraft}
+            />
+          </label>
+          <label className="grid gap-1 text-xs font-medium text-slate-200">
+            Description
+            <textarea
+              className="min-h-28 resize-y rounded border border-white/10 bg-[#050b14]/95 px-3 py-2 text-sm leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={playerProfileBusy}
+              maxLength={playerDescriptionMaxLength}
+              onInput={(event) => {
+                setPlayerDescriptionDraft(event.currentTarget.value);
+                setPlayerValidation(undefined);
+              }}
+              placeholder="Public commander bio; plain URLs become links on your profile"
+              value={playerDescriptionDraft}
+            />
+          </label>
+          <p className={`text-right text-[10px] leading-3 ${descriptionCountTone}`}>
+            {descriptionRemaining} / {playerDescriptionMaxLength}
+          </p>
+          {(playerValidation || playerStatusLabel) && (
+            <p role="status" className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
+              {playerValidation ?? playerStatusLabel}
+            </p>
+          )}
+          <button
+            aria-label="Save player profile"
+            className="h-9 justify-self-end rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!canEditPlayerProfile || playerProfileBusy || delegationBusy}
+            type="submit"
+          >
+            {playerProfileBusy ? "Signing…" : "Save profile"}
+          </button>
+        </form>
         <section className="grid gap-2 rounded border border-cyan-300/15 bg-cyan-300/5 p-3" aria-label="Wallet delegation">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-200/80">Wallet delegate</p>
+            <h3 className="text-xs font-semibold text-cyan-200/80">Wallet delegate</h3>
             {delegation?.actingAsDelegate && signerAccount && account ? (
               <p className="mt-1 text-[11px] leading-4 text-slate-300">
                 Connected as {shortAddress(signerAccount)} and acting for {shortAddress(account)}.
@@ -405,16 +424,22 @@ export function NavBar({
               <p className="mt-1 text-[11px] leading-4 text-slate-300">
                 {delegation?.delegate
                   ? `${shortAddress(delegation.delegate)} can perform gameplay actions for this wallet.`
-                  : "Allow one burner wallet to perform gameplay actions for this wallet."}
+                  : "No delegate is currently set."}
               </p>
             )}
           </div>
+          <p className="text-[11px] leading-4 text-slate-300">
+            Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can set or replace a delegate.
+          </p>
+          <p className="text-[11px] leading-4 text-slate-300">
+            Setting, replacing, or revoking a delegate is an on-chain transaction with network gas fees.
+          </p>
           {canSetDelegate ? (
             <label className="grid gap-1 text-xs font-medium text-slate-200">
               Delegate address
               <input
                 className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 font-mono text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={delegationBusy}
+                disabled={delegationBusy || playerProfileBusy}
                 onInput={(event) => setDelegateDraft(event.currentTarget.value)}
                 placeholder="0x…"
                 value={delegateDraft}
@@ -425,17 +450,17 @@ export function NavBar({
             {delegation?.delegate && onRevokeDelegate ? (
               <button
                 className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={delegationBusy}
+                disabled={delegationBusy || playerProfileBusy}
                 onClick={onRevokeDelegate}
                 type="button"
               >
-                Revoke delegate
+                {delegation?.actingAsDelegate ? "Revoke my access" : "Revoke delegate"}
               </button>
             ) : null}
             {canSetDelegate ? (
               <button
                 className="h-8 rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={delegationBusy || !delegateDraft.trim()}
+                disabled={delegationBusy || playerProfileBusy || !delegateDraft.trim()}
                 onClick={() => onSetDelegate?.(delegateDraft)}
                 type="button"
               >
@@ -444,36 +469,15 @@ export function NavBar({
             ) : null}
           </div>
           {delegationStatusLabel ? (
-            <p className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
+            <p role="status" className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
+          ) : null}
+          {onRefreshDelegation && delegationAction.status === "error" ? (
+            <button type="button" className="justify-self-end text-xs text-cyan-200 underline" onClick={onRefreshDelegation}>
+              Refresh delegate status
+            </button>
           ) : null}
         </section>
-        {(playerValidation || playerStatusLabel) && (
-          <p className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
-            {playerValidation ?? playerStatusLabel}
-          </p>
-        )}
-        <div className="flex justify-end gap-2">
-          <button
-            aria-label="Cancel player display name edit"
-            className="inline-grid h-8 w-8 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy || delegationBusy}
-            onClick={() => setPlayerPanelOpen(false)}
-            title="Cancel"
-            type="button"
-          >
-            <X aria-hidden="true" size={14} strokeWidth={2} />
-          </button>
-          <button
-            aria-label="Save player profile"
-            className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={!canEditPlayerProfile || playerProfileBusy || delegationBusy}
-            title={playerProfileBusy ? "Signing" : "Save profile"}
-            type="submit"
-          >
-            <Check aria-hidden="true" size={14} strokeWidth={2} />
-          </button>
-        </div>
-      </form>
+      </div>
     </div>
   ) : null;
 

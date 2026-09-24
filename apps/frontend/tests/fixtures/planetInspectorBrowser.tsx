@@ -33,6 +33,11 @@ declare global {
       completeWalletSwitch(outcome: "resolve" | "reject"): void;
       bootstrapDiagnostics: string[];
       resolveWalletSend(hash: string): void;
+      rejectWalletSend(): void;
+      failWalletSend(): void;
+      setDelegation(delegate: string | null, phase: string, staleReads?: number): void;
+      holdDelegationRead(): void;
+      releaseDelegationRead(): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
       endDetailRace(): void;
@@ -99,6 +104,15 @@ const moonOverview = fixtureParams.get("moonOverview") === "true";
 const batchPlanProbe = fixtureParams.get("batchPlanProbe") === "true";
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 let constructionPhase = fixtureParams.get("construction") ?? "idle";
+const delegationProbe = fixtureParams.has("delegation");
+let delegateValue: string | null = fixtureParams.get("delegation") === "self" ? account : null;
+let delegationPhase = "confirmed";
+let delegationStaleReads = 0;
+let previousDelegate = delegateValue;
+let holdDelegation = false;
+let releaseDelegationRead = () => {};
+let rejectWalletSend = () => {};
+let failWalletSend = () => {};
 const constructionStartedAt = Math.floor(Date.now() / 1000) - 60;
 function constructionQueue(planetId: string): QueueStateResponse | null {
   if (planetId !== "101" || !["active", "complete"].includes(constructionPhase)) return null;
@@ -262,10 +276,11 @@ const provider: Eip1193Provider = {
     if (method === "eth_chainId" && farcasterBootstrapSetup && (!networkSwitchRequested || staleChainReadsAfterSwitch-- > 0)) return "0x1";
     if (method === "eth_chainId") return settlementShell ? "0x2105" : "0x14a34";
     if (method === "eth_accounts" || method === "eth_requestAccounts") return [providerAccount];
+    if (delegationProbe && method === "personal_sign") throw Object.assign(new Error("User rejected profile signature."), { code: 4001 });
     if (method === "eth_sendTransaction") {
       // Keep the request pending like an open wallet confirmation. Browser tests
       // can prove the Build click reached the wallet without confirming/broadcasting.
-      return new Promise<string>(resolve => { resolveWalletSend = resolve; });
+      return new Promise<string>((resolve, reject) => { resolveWalletSend = resolve; rejectWalletSend = () => reject(Object.assign(new Error("User rejected the request."), { code: 4001 })); failWalletSend = () => reject(new Error("Wallet transport disconnected.")); });
     }
     return null;
   },
@@ -374,8 +389,17 @@ globalThis.fetch = (async (input, init) => {
     return Response.json(incompleteOverview ? incompleteWalletOverview() : walletOverview());
   }
 
-  if (url.pathname.endsWith(`/wallet/${account}/delegation`)) {
-    return Response.json({ wallet: account, main: account, delegate: null, actingAsDelegate: false });
+  if (url.pathname.match(/\/wallet\/[^/]+\/delegation$/)) {
+    const wallet = url.pathname.split("/").at(-2)!;
+    const value = delegationStaleReads-- > 0 ? previousDelegate : delegateValue;
+    const actingAsDelegate = delegationProbe && fixtureParams.get("delegation") === "self" && wallet === account && value === account;
+    const response = Response.json({ wallet, main: actingAsDelegate ? unrelatedOwner : wallet, delegate: wallet === account ? value : null, actingAsDelegate });
+    if (holdDelegation) { holdDelegation = false; await new Promise<void>(resolve => { releaseDelegationRead = resolve; }); }
+    return response;
+  }
+  if (delegationProbe && url.pathname.includes("/transactions/0xdelegate")) {
+    return Response.json({ transactionHash: url.pathname.split("/").at(-2), phase: delegationPhase,
+      events: [], indexedEventCount: delegationPhase === "applied" ? 1 : 0, latestIndexedBlock: "20", receiptBlock: "20" });
   }
 
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
@@ -748,6 +772,14 @@ window.inspectorProof = {
   emitWalletConnect() { for (const listener of providerListeners.get("connect") ?? []) listener({ chainId: "0x2105" }); },
   disconnectWallet() { for (const listener of providerListeners.get("disconnect") ?? []) listener({ code: 4900 }); },
   resolveWalletSend(hash) { resolveWalletSend(hash); },
+  rejectWalletSend() { rejectWalletSend(); },
+  failWalletSend() { failWalletSend(); },
+  holdDelegationRead() { holdDelegation = true; },
+  releaseDelegationRead() { releaseDelegationRead(); },
+  setDelegation(delegate, phase, staleReads = 0) {
+    previousDelegate = delegateValue; delegateValue = delegate; delegationPhase = phase; delegationStaleReads = staleReads;
+    window.dispatchEvent(new Event("focus"));
+  },
   failAttackProtection(index) {
     const request = pendingAttackProtectionRequests[index];
     if (!request || request.settled) throw new Error(`No pending attack-protection request ${index}`);

@@ -26,3 +26,30 @@ describe("wallet delegation", () => {
     expect(playableSource).toContain("sendRevokeDelegateTransaction(walletProvider, signerAccount, gameContract)");
   });
 });
+
+test("confirmed delegate read crosses an older in-flight read and updates the canonical signer query", async () => {
+  const { BackendDataStore } = await import("../src/backendDataStore");
+  const originalFetch = globalThis.fetch;
+  const signer = "0x1111111111111111111111111111111111111111";
+  const delegate = "0x3333333333333333333333333333333333333333";
+  const store = new BackendDataStore("https://api.test");
+  let release!: () => void;
+  let reads = 0;
+  globalThis.fetch = (async () => {
+    const read = ++reads;
+    if (read === 1) await new Promise<void>(resolve => { release = resolve; });
+    return Response.json({ wallet: signer, main: signer, delegate: read === 1 ? null : delegate, actingAsDelegate: false });
+  }) as typeof fetch;
+  try {
+    const query = store.queries.delegation(signer);
+    const stale = query.read();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const confirmed = store.queries.delegation(signer, { fresh: true }).read();
+    expect(reads).toBe(1);
+    release();
+    expect((await stale).delegate).toBeNull();
+    expect((await confirmed).delegate).toBe(delegate);
+    expect(store.snapshot<{ delegate: string }>(query.key)?.data?.delegate).toBe(delegate);
+    expect(reads).toBe(2);
+  } finally { release?.(); store.dispose(); globalThis.fetch = originalFetch; }
+});
