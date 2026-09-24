@@ -1,14 +1,12 @@
 import { h, render, options, type VNode } from "preact";
 import { sdk } from "@farcaster/miniapp-sdk";
-import { BackendDataStore, backendDataStoreFor } from "../../src/backendDataStore";
+import { BackendDataStore, backendDataStoreFor, retainBackendDataStore } from "../../src/backendDataStore";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { useBackendDataSnapshots } from "../../src/useBackendDataSnapshot";
 import { apiBaseUrlForRuntimeConfig } from "../../src/runtimeConfig";
 import { FirstPlanetSettlementApp } from "../../src/FirstPlanetSettlementApp";
 import { PlayableMvpApp } from "../../src/PlayableMvpApp";
 import { UiClock } from "../../src/useUiClock";
-import { PlanetDetail } from "../../src/components/PlanetDetail";
-import { PublicMoonDetail } from "../../src/components/PublicMoonDetail";
 import { initSfx } from "../../src/sfx";
 import { TopBar } from "../../src/components/TopBar";
 import type { Coordinates } from "../../src/types";
@@ -23,6 +21,7 @@ declare global {
       errors: string[];
       interactions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }>;
       requests: string[];
+      rpcRequests: Array<{ method: string; params?: unknown[] }>;
       walletRequests: Array<{ method: string; params?: unknown[] }>;
       walletBindings: string[];
       disconnectWallet(): void;
@@ -41,6 +40,7 @@ declare global {
       releaseDelegationRead(): void;
       alternateAccount: string;
       beginDetailRace(kind: "moon" | "planet"): void;
+      endDetailRace(): void;
       failAttackProtection(index: number): void;
       pendingAttackProtections(): Array<{ index: number; targetIsMoon: boolean; targetPlanetId: string; wallet: string }>;
       pendingDetailRequests(): string[];
@@ -101,6 +101,7 @@ const audioContextFailure = fixtureParams.get("audioContextFailure") === "true";
 const shortResources = fixtureParams.get("shortResources") === "true";
 const publicTreasury = fixtureParams.get("publicTreasury") === "true";
 const moonOverview = fixtureParams.get("moonOverview") === "true";
+const batchPlanProbe = fixtureParams.get("batchPlanProbe") === "true";
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 let constructionPhase = fixtureParams.get("construction") ?? "idle";
 const delegationProbe = fixtureParams.has("delegation");
@@ -173,10 +174,12 @@ if (fixtureParams.get("homeIdentityProbe") === "true") {
 
 const pendingDetailRequests = new Map<string, (response: Response) => void>();
 let detailRaceKind: "moon" | "planet" | null = null;
+let releaseDetailRaceStore: (() => void) | undefined;
 const fixtureErrors: string[] = [];
 const fixtureInteractions: Array<{ isTrusted: boolean; pointerType?: string; target: string; type: string }> = [];
 const fixtureRequests: string[] = [];
 const walletRequests: Array<{ method: string; params?: unknown[] }> = [];
+const rpcRequests: Array<{ method: string; params?: unknown[] }> = [];
 const walletBindings: string[] = [];
 const pendingAttackProtectionRequests: Array<{
   resolve: (response: Response) => void;
@@ -213,8 +216,9 @@ window.addEventListener("error", (event) => fixtureErrors.push(`window-error:${e
 window.addEventListener("unhandledrejection", (event) => fixtureErrors.push(`unhandled:${event.reason?.stack ?? String(event.reason)}`));
 for (const type of ["pointerdown", "click"] as const) {
   window.addEventListener(type, (event) => {
-    const target = event.target instanceof Element
-      ? `${event.target.tagName.toLowerCase()}:${event.target.textContent?.trim() ?? ""}`
+    const element = event.target instanceof Element ? event.target.closest("button") ?? event.target : undefined;
+    const target = element
+      ? `${element.tagName.toLowerCase()}:${element.getAttribute("aria-label") ?? element.textContent?.trim() ?? ""}`
       : "unknown";
     fixtureInteractions.push({
       isTrusted: event.isTrusted,
@@ -288,11 +292,15 @@ globalThis.fetch = (async (input, init) => {
   const systemMatch = url.pathname.match(/\/universe\/galaxies\/(\d+)\/systems\/(\d+)/);
 
   if (url.origin !== window.location.origin) {
-    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown };
+    const body = JSON.parse(String(init?.body ?? "{}")) as { id?: unknown; method?: unknown; params?: unknown[] };
+    rpcRequests.push({ method: String(body.method), params: body.params });
     if (body.method === "eth_chainId") {
       return Response.json({ id: body.id, jsonrpc: "2.0", result: settlementShell ? "0x2105" : "0x14a34" });
     }
     if (body.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x" });
+    if (body.method === "eth_estimateGas" && batchPlanProbe
+      && JSON.stringify(body.params?.[0]) === JSON.stringify(rpcRequests.at(-2)?.params?.[0])
+      && rpcRequests.at(-2)?.method === "eth_call") return Response.json({ id: body.id, jsonrpc: "2.0", result: "0x7a120" });
     return Response.json({
       error: { code: -32601, message: `Fixture JSON-RPC method not implemented: ${String(body.method)}` },
       id: body.id,
@@ -337,7 +345,11 @@ globalThis.fetch = (async (input, init) => {
 
   if (detailRaceKind && systemMatch) {
     const key = `${systemMatch[1]}:${systemMatch[2]}`;
-    return new Promise<Response>((resolve) => pendingDetailRequests.set(key, resolve));
+    // The old app can still read 9:9 while the detail component imports.
+    // Defer only the two requests this race explicitly controls.
+    if (key === "7:1" || key === "8:2") {
+      return new Promise<Response>((resolve) => pendingDetailRequests.set(key, resolve));
+    }
   }
 
   if (url.pathname.endsWith("/runtime-config")) {
@@ -357,7 +369,7 @@ globalThis.fetch = (async (input, init) => {
         allianceConfigured: publicTreasury,
         gameConfigured: true,
         highscoresEndpoint: true,
-        moonConfigured: false,
+        moonConfigured: batchPlanProbe,
         ...(raidEligibilityProbe || moonOverview ? { moonAttackParity: true } : {}),
         referralsConfigured: false,
         researchEndpoint: true,
@@ -366,7 +378,7 @@ globalThis.fetch = (async (input, init) => {
       },
       gameContractAddress: "0x2222222222222222222222222222222222222222",
       graphqlUrl: `${window.location.origin}/graphql`,
-      moonContractAddress: null,
+      moonContractAddress: batchPlanProbe ? "0x3333333333333333333333333333333333333333" : null,
       network: settlementShell ? "base" : "base-sepolia",
       resourceTokenAddresses: { crystal: null, deuterium: null, metal: null },
       rpcProvider: "unknown",
@@ -613,14 +625,18 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.endsWith(`/wallet/${account}/moon`)) {
     return Response.json({
-      buildings: [],
+      buildings: batchPlanProbe ? [{ id: 3, key: "shipyard", label: "Shipyard", level: 5, cost: { metal: "100", crystal: "0", deuterium: "0" } }] : [],
       defenseQueue: null,
-      defenses: [],
+      defenses: batchPlanProbe ? [{ id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 60 }] : [],
       homePlanetId: "101",
-      moon: moonOverview ? { exists: true, planetId: "101" } : null,
+      moon: moonOverview ? {
+        exists: true, planetId: "101",
+        ...(batchPlanProbe ? { owner: account, fields: 9, diameterKm: 8774, createdAt: "1700000000", jumpGateReadyAt: "0" } : {}),
+      } : null,
       ...(moonOverview ? {
-        resources: { metal: "1234", crystal: "567", deuterium: "890" },
+        resources: batchPlanProbe ? { metal: "10000", crystal: "5000", deuterium: "890" } : { metal: "1234", crystal: "567", deuterium: "890" },
         launchableShips: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        ...(batchPlanProbe ? { ships: [{ id: 0, count: 3, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 60 }], technologyLevels: { "3": 6, "6": 2 } } : {}),
       } : {}),
       queue: null,
       wallet: account,
@@ -715,11 +731,11 @@ globalThis.fetch = (async (input, init) => {
 }) as typeof fetch;
 
 document.addEventListener("pointerdown", (event) => {
-  const target = event.target instanceof HTMLButtonElement ? event.target : undefined;
-  if (walletEventOnPointerDown === "accountsChanged" && target?.textContent?.trim() === "Build") {
+  const target = event.target instanceof Element ? event.target.closest("button") : null;
+  if (walletEventOnPointerDown === "accountsChanged" && target?.getAttribute("aria-label") === "Build Small Cargo now") {
     for (const listener of providerListeners.get("accountsChanged") ?? []) listener([account]);
   }
-  if (walletEventOnPointerDown === "chainChanged" && target?.textContent?.trim() === "Build") {
+  if (walletEventOnPointerDown === "chainChanged" && target?.getAttribute("aria-label") === "Build Small Cargo now") {
     for (const listener of providerListeners.get("chainChanged") ?? []) listener("0x2105");
   }
 }, { capture: true });
@@ -741,6 +757,7 @@ window.inspectorProof = {
   interactions: fixtureInteractions,
   requests: fixtureRequests,
   walletRequests,
+  rpcRequests,
   walletBindings,
   bootstrapDiagnostics,
   wakeBootstrapWallet() { bootstrapStalled = false; },
@@ -795,12 +812,25 @@ window.inspectorProof = {
   setPlayableAccount(wallet) {
     render(<PlayableMvpApp account={wallet} provider={provider} />, appRoot);
   },
-  beginDetailRace(kind) {
+  async beginDetailRace(kind) {
     detailRaceKind = kind;
     pendingDetailRequests.clear();
-    const oldCoords = { galaxy: 7, system: 1, position: 2 };
-    renderDetail(kind, oldCoords);
-    queueMicrotask(() => renderDetail(kind, { galaxy: 8, system: 2, position: 4 }));
+    // Replacing the app drops its store lease; keep both deferred reads alive
+    // until the browser test has inspected the current and stale responses.
+    releaseDetailRaceStore = retainBackendDataStore(apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` }));
+    try {
+      const oldCoords = { galaxy: 7, system: 1, position: 2 };
+      await renderDetail(kind, oldCoords);
+      queueMicrotask(() => { void renderDetail(kind, { galaxy: 8, system: 2, position: 4 }); });
+    } catch (error) {
+      window.inspectorProof.endDetailRace();
+      throw error;
+    }
+  },
+  endDetailRace() {
+    releaseDetailRaceStore?.();
+    releaseDetailRaceStore = undefined;
+    detailRaceKind = null;
   },
   pendingDetailRequests() {
     return [...pendingDetailRequests.keys()].sort();
@@ -936,14 +966,19 @@ function SnapshotProbe() {
   </div>;
 }
 
-function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
+async function renderDetail(kind: "moon" | "planet", coords: Coordinates) {
+  // Detail-race probes load their page only on demand; an eager moon-detail
+  // import pulls MoonPage -> ShipyardPage into every route-gate fixture.
+  const Detail = kind === "moon"
+    ? (await import("../../src/components/PublicMoonDetail")).PublicMoonDetail
+    : (await import("../../src/components/PlanetDetail")).PlanetDetail;
   const props = {
     account,
-    apiBaseUrl: `${window.location.origin}/api`,
+    apiBaseUrl: apiBaseUrlForRuntimeConfig({ apiUrl: `${window.location.origin}/api` }),
     coords,
     onBack: () => undefined,
   };
-  render(kind === "moon" ? <PublicMoonDetail {...props} /> : <PlanetDetail {...props} />, appRoot);
+  render(<Detail {...props} />, appRoot);
 }
 
 function managedPlanet(overrides: Partial<ManagedPlanetResponse>): ManagedPlanetResponse {

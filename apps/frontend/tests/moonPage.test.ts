@@ -131,7 +131,7 @@ describe("Moon page helpers", () => {
   });
 
   test("keeps moon resources compact and leaves units to shipyard and defense surfaces", () => {
-    expect(moonPageSource).toContain("moonState?.ships ?? moonState?.fleet ?? []");
+    expect(moonPageSource).toContain("ships: moonState.ships ?? []");
     expect(moonPageSource).toContain("MoonShipyardSection");
     expect(moonPageSource).toContain("MoonDefenseSection");
     expect(moonPageSource).not.toContain("Stationed Units");
@@ -172,7 +172,7 @@ describe("Moon page helpers", () => {
   test("omits the redundant page title and section helper copy", () => {
     expect(moonPageSource).not.toContain("<PageHeader");
     expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Structures</h3>');
-    expect(moonPageSource).toContain('title="Stationed fleet"');
+    expect(moonPageSource).toContain('title="Shipyard"');
     expect(moonPageSource).toContain('title="Defenses"');
     expect(moonPageSource).not.toContain("Lunar Base expands fields. Jump Gate supports fleet movement between owned moons.");
     expect(moonPageSource).not.toContain("Enter a Chicken ID to burn it on Base mainnet");
@@ -414,14 +414,15 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("ProductionSection");
     expect(shipyardPageSource).toContain("ProductionSection");
     expect(defensePageSource).toContain("ProductionSection");
-    expect(moonPageSource).toContain("adaptProductionItems");
+    expect(moonPageSource).toContain("shipProductionItems");
     expect(shipyardPageSource).toContain("adaptProductionItems");
     expect(defensePageSource).toContain("adaptProductionItems");
     expect(moonPageSource).toContain("MoonStructuresSection");
     expect(moonPageSource).toContain("MoonShipyardSection");
     expect(moonPageSource).toContain("MoonDefenseSection");
+    expect(moonPageSource).toContain("showPlan={false}");
     expect(moonPageSource).toContain("Structures");
-    expect(moonPageSource).toContain("Stationed fleet");
+    expect(moonPageSource).toContain("Shipyard");
     expect(moonPageSource).toContain("Defenses");
     expect(moonPageSource).not.toContain("Moon Shipyard and Defenses");
     expect(moonPageSource).toContain('sizes="(min-width: 1024px) 288px, 100vw"');
@@ -701,7 +702,7 @@ describe("Moon page helpers", () => {
     expect(visibleText(shipyardModal)).toContain("Shipyard levels");
     expect(visibleText(shipyardModal)).not.toContain("Requirements");
     expect(visibleText(shipyardModal)).not.toContain("Robotics Factory level 2");
-    expect(visibleText(shipyardModal)).toContain("Defense production speed x2");
+    expect(visibleText(shipyardModal)).toContain("Production speed x2");
   });
 
   test("omits Lunar Base requirements and portals the shared popup above detail cards", () => {

@@ -1,0 +1,679 @@
+{
+  "source": "Unlinked optimized Foundry artifact templates and complete linked-library closure for this candidate source tree. Independently review/pin SHA and deployed library addresses/code hashes; SHA-256 here hashes unlinked text templates, not linked on-chain bytecode.",
+  "rootContracts": [
+    "VeydriftGame",
+    "VeydriftBatchTransportModule",
+    "VeydriftMoonSystem"
+  ],
+  "contracts": [
+    {
+      "contract": "VeydriftGame",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "260b70d9a6d8051ef72c80bedc6b2453a75a98df539fd99abac6632f1bef30a9",
+      "creationBytes": 36004,
+      "runtimeBytes": 23899,
+      "unlinkedCreationTemplateSha256": "a3bdc3565bd3bcfdf2b8e572956b40500dc7aacd0fd5bffd1822e9f95315a39b",
+      "unlinkedRuntimeTemplateSha256": "b19c16c733236f428d0eda39130c611164f64b4371586c0ef7e08333a8b0ea11",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            6623,
+            11666,
+            14059
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            11258,
+            11891,
+            14286
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            5725,
+            10768,
+            13161
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            10360,
+            10993,
+            13388
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog",
+        "VeydriftFormulas"
+      ]
+    },
+    {
+      "contract": "VeydriftBatchTransportModule",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "71f89364bcddcfd62198c7ba7bdeee7d559e076d9fbc5a0c209ce4bfb6c85e35",
+      "creationBytes": 11175,
+      "runtimeBytes": 10890,
+      "unlinkedCreationTemplateSha256": "9dd0d1718f8da40b513dadc26fa25a3798be13de9c200f984247b90f9447e92f",
+      "unlinkedRuntimeTemplateSha256": "acc92522bff594e9e0ced02618a76bee3336e0ae99b66718febda48dc1d80688",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftMoonSystem",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "f63d07a575506e9232641453361913a638439c85f52dcc4c0bbf1bc9cf9e99b1",
+      "creationBytes": 24510,
+      "runtimeBytes": 23937,
+      "unlinkedCreationTemplateSha256": "67e1d6a9f3108dd233ba293e829621048ab96519923ea4835436dc1e43c2db8f",
+      "unlinkedRuntimeTemplateSha256": "dfcd524d322c0a8ea23d57f22b8fcf8cc72314c94f4ca4efb2acca3c26497f51",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            16872,
+            20326
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            8130
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            8661
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            2966,
+            10211,
+            13799,
+            23324
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseProduction.sol",
+          "library": "VeydriftMoonDefenseProduction",
+          "offsets": [
+            12941
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonGateShips.sol",
+          "library": "VeydriftMoonGateShips",
+          "offsets": [
+            13222
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonMath.sol",
+          "library": "VeydriftMoonMath",
+          "offsets": [
+            19320,
+            19850,
+            19960,
+            20114,
+            21638
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonProductionBatch.sol",
+          "library": "VeydriftMoonProductionBatch",
+          "offsets": [
+            12638
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            2113,
+            9508,
+            10284,
+            19046,
+            22109
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipProduction.sol",
+          "library": "VeydriftMoonShipProduction",
+          "offsets": [
+            2599
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            16331,
+            19785
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            7589
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            8120
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            2425,
+            9670,
+            13258,
+            22783
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseProduction.sol",
+          "library": "VeydriftMoonDefenseProduction",
+          "offsets": [
+            12400
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonGateShips.sol",
+          "library": "VeydriftMoonGateShips",
+          "offsets": [
+            12681
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonMath.sol",
+          "library": "VeydriftMoonMath",
+          "offsets": [
+            18779,
+            19309,
+            19419,
+            19573,
+            21097
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonProductionBatch.sol",
+          "library": "VeydriftMoonProductionBatch",
+          "offsets": [
+            12097
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            1572,
+            8967,
+            9743,
+            18505,
+            21568
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipProduction.sol",
+          "library": "VeydriftMoonShipProduction",
+          "offsets": [
+            2058
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog",
+        "VeydriftDependencies",
+        "VeydriftFormulas",
+        "VeydriftMoonDefenseBacklog",
+        "VeydriftMoonDefenseProduction",
+        "VeydriftMoonGateShips",
+        "VeydriftMoonMath",
+        "VeydriftMoonProductionBatch",
+        "VeydriftMoonShipBacklog",
+        "VeydriftMoonShipProduction"
+      ]
+    },
+    {
+      "contract": "VeydriftCatalog",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "6cde5bceef654b8947ff64558df798ff7468e08863311ae4ea61eb3af160f9d7",
+      "creationBytes": 9622,
+      "runtimeBytes": 9592,
+      "unlinkedCreationTemplateSha256": "adf02f292fc583dcc2d579edfd6deb1225a90387ebef907f78f18ac312b7e433",
+      "unlinkedRuntimeTemplateSha256": "df47c11bc365b3ab0be89782439f8e975a8ec20ed9355a7e1ad1d71abaac0df1",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftDependencies",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "910309da51ec0e1966bb3d20c8e76eccd92e4842e08dc315eb840d85e3e0992a",
+      "creationBytes": 7071,
+      "runtimeBytes": 7041,
+      "unlinkedCreationTemplateSha256": "8b6489e0606aa9fd5cfb91105dcb699c848ab7dd0b63703802d9a4b70626e2ba",
+      "unlinkedRuntimeTemplateSha256": "65a076ec6f448cb5733af19cd80291ef7953aca1a14973d48608182a54c7fc5b",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            245
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            215
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog"
+      ]
+    },
+    {
+      "contract": "VeydriftFormulas",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "e8937cb82462bb777ca437e9f443615a0546d7f12ccd9cfd679571757faa600e",
+      "creationBytes": 3718,
+      "runtimeBytes": 3688,
+      "unlinkedCreationTemplateSha256": "58bb1053df720611222112c78a1777fb396be085a4eb03fd63ce581e974a1b20",
+      "unlinkedRuntimeTemplateSha256": "2cae6bab232d408189bc14ff26815fda5574e16f6ff88855b0d5acb454c2977f",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftMoonDefenseBacklog",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "ae4b5f7dc1fcdc9ba93e8ab9f0633d66eff7d07f04636a101f56318b584a782f",
+      "creationBytes": 4528,
+      "runtimeBytes": 4496,
+      "unlinkedCreationTemplateSha256": "0ca0ab005dff5783d682bfe46a3e6dec07a6e42fccd548486c4932867e58feb2",
+      "unlinkedRuntimeTemplateSha256": "2623914b5ba61b5bb9c233c8b926990620e79cffaafaec5f102e2d838d7baf69",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            3150
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            3118
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog"
+      ]
+    },
+    {
+      "contract": "VeydriftMoonDefenseProduction",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "5642674b9f25b9fc193ab3d2be9a50e0922515fc26f87dc21b06e2bc2f7916d7",
+      "creationBytes": 2651,
+      "runtimeBytes": 2619,
+      "unlinkedCreationTemplateSha256": "bc7410e784a94d33dd1e58c5d25b0d9447934703e9256988bc621b5edc013698",
+      "unlinkedRuntimeTemplateSha256": "b7a6afd82407ae4f4b7b197ddca8c02913ee91ba8a5d5402d88bbb0e069dbb9c",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            905
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            276
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            1406
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            769
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            873
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            244
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftFormulas.sol",
+          "library": "VeydriftFormulas",
+          "offsets": [
+            1374
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            737
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog",
+        "VeydriftDependencies",
+        "VeydriftFormulas",
+        "VeydriftMoonDefenseBacklog"
+      ]
+    },
+    {
+      "contract": "VeydriftMoonGateShips",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "b38a6b458dbc928e53fec2d704778c88af47445902bd3004163c419c329b2f18",
+      "creationBytes": 1407,
+      "runtimeBytes": 1375,
+      "unlinkedCreationTemplateSha256": "e58613f7e9f44f0d3688b581821aa8dbebf0ceef78335653dd1421db6dd51d79",
+      "unlinkedRuntimeTemplateSha256": "fa56a2d6de6b0d8a58383d53b7887662ec1286b6ec0845d3968882d10a467a96",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftMoonMath",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "c785741bb6bd6bcdb918fb6b654d9f09b8a3086e9b33bb1f86cbe1a9f0bd4fcd",
+      "creationBytes": 1481,
+      "runtimeBytes": 1451,
+      "unlinkedCreationTemplateSha256": "10d53be4d93d2f6773e707ab2a19cc409fdf8910ce7437bd469a470da56e2bba",
+      "unlinkedRuntimeTemplateSha256": "ed7062d3f29d855aeec98ae37e91795c0cf763b2255649d9b04d5e28ab05614c",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftMoonProductionBatch",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "b762d1566eab6d5cbe4a8da593ad0aca51d97f38deae4a6d6f2daf582469ba67",
+      "creationBytes": 1412,
+      "runtimeBytes": 1380,
+      "unlinkedCreationTemplateSha256": "8489cdc3625ad7838d9c2ab6c5a14999243ddc73ec316c3f98318555bcd3b9a6",
+      "unlinkedRuntimeTemplateSha256": "25a59e0f153784884d333fad199155beb2654dbf848977935163513c53baa343",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            529
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            1012
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            497
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            980
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftMoonDefenseBacklog",
+        "VeydriftMoonShipBacklog"
+      ]
+    },
+    {
+      "contract": "VeydriftMoonShipBacklog",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "41ec3f1e0bf3d8790502b8cd8694357f5043cff6179e2cd64faea4d72649c381",
+      "creationBytes": 4598,
+      "runtimeBytes": 4566,
+      "unlinkedCreationTemplateSha256": "0d080706ba6f3a009059b04768560a3f25aeae66ebe87973c3ff40c4fc44a1b0",
+      "unlinkedRuntimeTemplateSha256": "79669e2eccb651609c188c72359f2e91fd47f66181550b88c29e30b908ce3dc4",
+      "creationLinkReferences": [],
+      "runtimeLinkReferences": [],
+      "linkedLibraries": []
+    },
+    {
+      "contract": "VeydriftMoonShipDependencies",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "ff27f8c01da0e33a90c1641a227cb9d2ea1c6304f9e3a99f35e7dce839879269",
+      "creationBytes": 1384,
+      "runtimeBytes": 1354,
+      "unlinkedCreationTemplateSha256": "d6f56fdcb6557c4d17bf53ed2366b3a17992fca8bac70c2041a3ef3d137a152c",
+      "unlinkedRuntimeTemplateSha256": "d6f5b47815670d67f34f054dcfa69a1639dcd85a178612dcdeee2a804b29d715",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            178
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftDependencies.sol",
+          "library": "VeydriftDependencies",
+          "offsets": [
+            148
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftDependencies"
+      ]
+    },
+    {
+      "contract": "VeydriftMoonShipProduction",
+      "compilerVersion": "0.8.28+commit.7893614a",
+      "viaIR": true,
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "abiSha256": "5642674b9f25b9fc193ab3d2be9a50e0922515fc26f87dc21b06e2bc2f7916d7",
+      "creationBytes": 1762,
+      "runtimeBytes": 1730,
+      "unlinkedCreationTemplateSha256": "6587164be96d37b92e7147af35a8a51c3425aaa14893a5045a55426a37262e3a",
+      "unlinkedRuntimeTemplateSha256": "5950fb0887e273a850eb38d026cdf965c30828e512de63d6b18584431097856b",
+      "creationLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            390
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            512
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            841
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipDependencies.sol",
+          "library": "VeydriftMoonShipDependencies",
+          "offsets": [
+            267
+          ]
+        }
+      ],
+      "runtimeLinkReferences": [
+        {
+          "source": "src/libraries/VeydriftCatalog.sol",
+          "library": "VeydriftCatalog",
+          "offsets": [
+            358
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonDefenseBacklog.sol",
+          "library": "VeydriftMoonDefenseBacklog",
+          "offsets": [
+            480
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipBacklog.sol",
+          "library": "VeydriftMoonShipBacklog",
+          "offsets": [
+            809
+          ]
+        },
+        {
+          "source": "src/libraries/VeydriftMoonShipDependencies.sol",
+          "library": "VeydriftMoonShipDependencies",
+          "offsets": [
+            235
+          ]
+        }
+      ],
+      "linkedLibraries": [
+        "VeydriftCatalog",
+        "VeydriftMoonDefenseBacklog",
+        "VeydriftMoonShipBacklog",
+        "VeydriftMoonShipDependencies"
+      ]
+    }
+  ]
+}

@@ -32,6 +32,7 @@ type DefenseActionState =
   | { status: "error"; label: string };
 
 interface DefensePageProps {
+  buildPlan?: import("./ProductionCatalog").ProductionCatalogProps<DefenseKey>["buildPlan"];
   actionState: DefenseActionState;
   canTransact: boolean;
   defenseState: ChainDefenseState | null;
@@ -71,6 +72,7 @@ export function shouldShowDefenseInitialLoader({
 
 export function DefensePage({
   actionState,
+  buildPlan,
   canTransact,
   defenseState,
   error,
@@ -111,6 +113,8 @@ export function DefensePage({
       ) : (
         <ProductionSection
           actionPending={isActionBusy(actionState)}
+          buildPlan={buildPlan}
+          productionKind="defense"
           canTransact={canTransact}
           emptyLabel="Select a defense to review costs, requirements, and production controls."
           items={(quantities) => defenseProductionItems({
@@ -268,6 +272,8 @@ export function defenseProductionItems({
       cost: totalCost,
       costAffordable: totalCost === undefined ? undefined : affordable,
       unitCost: baseCost,
+      unitCostRaw: chainDefense?.cost && (["metal", "crystal", "deuterium"] as const).some(resource => Number(chainDefense.cost[resource]) > 0)
+        ? chainDefense.cost : { metal: String(defense.baseCost.metal), crystal: String(defense.baseCost.crystal), deuterium: String(defense.baseCost.deuterium) },
       maxQuantity: boundedDefenseMaxQuantity(
         maxAffordableProductionQuantity(resources, baseCost),
         defense.key,

@@ -23,6 +23,7 @@ import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
+import {VeydriftMoonShipBacklog} from "../src/libraries/VeydriftMoonShipBacklog.sol";
 import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftBodyAttackWindow} from "../src/libraries/VeydriftBodyAttackWindow.sol";
 import {
@@ -31,7 +32,8 @@ import {
     MoonBuilding,
     Resource,
     Ship,
-    Technology
+    Technology,
+    ProductionOrder
 } from "../src/libraries/VeydriftTypes.sol";
 
 contract MoonMockResourceToken {
@@ -2631,5 +2633,504 @@ contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
 
     function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
         _testMoonBuildingSettlesLazilyWithoutFinishTx();
+    }
+}
+
+contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
+    function _readyMoonShipyard() private returns (uint256 planetId) {
+        planetId = _startPlanet();
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+    }
+
+    function _twoMoonAttacksAroundPaidProduction(bool lateTargetsMoon, bool mature)
+        private
+        returns (uint256 earlyId, uint256 lateId, uint256 target, address defender)
+    {
+        (uint256 origin, uint256 moonPlanet, address owner_) = _seedMoonAttackPlanets();
+        target = moonPlanet;
+        defender = owner_;
+        bytes32 outer = keccak256(abi.encode(target, uint256(7)));
+        vm.store(
+            address(moons),
+            keccak256(abi.encode(uint256(uint8(MoonBuilding.Shipyard)), outer)),
+            bytes32(uint256(1))
+        );
+        _setTechnologyLevel(defender, Technology.CombustionDrive, 2);
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        _fundMoon(target, 1_000_000, 1_000_000, 100_000);
+        vm.prank(defender);
+        moons.startMoonShipProduction(target, Ship.LightFighter, 4);
+        VeydriftMoonShipBacklog.Entry memory queue = moons.activeMoonShipQueue(target);
+        _fundPlanet(origin, 1_000_000, 1_000_000, 1_000_000);
+        _setShipCount(origin, Ship.Battleship, 2);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        vm.prank(player);
+        lateId = game.launchBodyFleetMission(
+            origin,
+            target,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            false,
+            lateTargetsMoon
+        );
+        vm.prank(player);
+        earlyId = game.launchBodyFleetMission(
+            origin,
+            target,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            false,
+            true
+        );
+        // Two real launches and combat seeds; fix the arrival window around a paid manufacturing
+        // interval so battle/cutoff behavior is independent of the map's travel speed.
+        _storeFleetMission(
+            lateId,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            player,
+            origin,
+            target,
+            queue.startedAt,
+            queue.readyAt + 1,
+            queue.readyAt + 1
+        );
+        _storeFleetMission(
+            earlyId,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            player,
+            origin,
+            target,
+            queue.startedAt,
+            queue.startedAt + 1,
+            queue.startedAt + 1
+        );
+        _fulfillAttackBattleRandomness(earlyId, 659);
+        _fulfillAttackBattleRandomness(lateId, 660);
+        if (mature) vm.warp(queue.readyAt + 2);
+    }
+
+    function _battleDefenderMetalLoss(Vm.Log[] memory logs, uint256 missionId)
+        private
+        pure
+        returns (uint128)
+    {
+        bytes32 topic =
+            keccak256("CombatLosses(uint256,uint128,uint128,uint128,uint128,uint128,uint128)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].topics.length < 2 || logs[i].topics[0] != topic
+                    || uint256(logs[i].topics[1]) != missionId
+            ) continue;
+            (,,, uint128 metal,,) =
+                abi.decode(logs[i].data, (uint128, uint128, uint128, uint128, uint128, uint128));
+            return metal;
+        }
+        revert("combat loss event missing");
+    }
+
+    function testTwoMoonAttacksReverseExplicitResolvePreservesHistoricalDefenders() public {
+        (uint256 earlyId, uint256 lateId, uint256 target,) =
+            _twoMoonAttacksAroundPaidProduction(true, true);
+        (, uint64 earlyAt,,) = _fleetMission(earlyId);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, earlyAt)
+        );
+        game.resolveFleetMission(lateId);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        vm.recordLogs();
+        _resolveAttackFully(earlyId);
+        Vm.Log[] memory earlyLogs = vm.getRecordedLogs();
+        assertEq(_battleDefenderMetalLoss(earlyLogs, earlyId), 0);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        vm.recordLogs();
+        _resolveAttackFully(lateId);
+        assertGt(_battleDefenderMetalLoss(vm.getRecordedLogs(), lateId), 0);
+    }
+
+    function testEarlierMoonArrivalAlsoBlocksLaterParentPlanetAttack() public {
+        (uint256 earlyId, uint256 lateId, uint256 target,) =
+            _twoMoonAttacksAroundPaidProduction(false, true);
+        (, uint64 earlyAt,,) = _fleetMission(earlyId);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, earlyAt)
+        );
+        game.resolveFleetMission(lateId);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        _resolveAttackFully(earlyId);
+        game.resolveFleetMission(lateId);
+        assertTrue(game.moonShipCount(target, Ship.LightFighter) > 0);
+    }
+
+    function testLazyMoonCombatLandsEarlierDeployBeforeLaterMoonAttack() public {
+        (uint256 earlyId, uint256 lateId, uint256 target, address defender) =
+            _twoMoonAttacksAroundPaidProduction(true, false);
+        (, uint64 earlyAt,,) = _fleetMission(earlyId);
+        (, uint64 lateAt,,) = _fleetMission(lateId);
+        _fundPlanet(target, 100_000, 100_000, 100_000);
+        _setShipCount(target, Ship.SmallCargo, 1);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(defender);
+        uint256 deployId = game.launchBodyFleetMission(
+            target,
+            target,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            false,
+            true
+        );
+        _storeFleetMission(
+            deployId,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            defender,
+            target,
+            target,
+            earlyAt - 1,
+            earlyAt - 1,
+            earlyAt - 1
+        );
+        vm.warp(lateAt + 2);
+        vm.recordLogs();
+        vm.prank(defender);
+        game.renamePlanet(target, "arrivals first");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertGt(_battleDefenderMetalLoss(logs, earlyId), 0);
+        assertGt(_battleDefenderMetalLoss(logs, lateId), 0);
+    }
+
+    function testLazyMoonCombatResolvesEarlierImpactBeforeLaterLaunchOrder() public {
+        (uint256 earlyId, uint256 lateId, uint256 target, address defender) =
+            _twoMoonAttacksAroundPaidProduction(true, true);
+        vm.recordLogs();
+        vm.prank(defender);
+        game.renamePlanet(target, "chronological");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(_battleDefenderMetalLoss(logs, earlyId), 0);
+        assertGt(_battleDefenderMetalLoss(logs, lateId), 0);
+        (VeydriftGameStorage.FleetMissionStatus earlyStatus,,,) = _fleetMission(earlyId);
+        (VeydriftGameStorage.FleetMissionStatus lateStatus,,,) = _fleetMission(lateId);
+        assertTrue(earlyStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
+        assertTrue(lateStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
+    }
+
+    function testMixedMoonBatchCumulativeOverspendRollsBackBothLanes() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 5_000, 5_000, 0);
+        ProductionOrder[] memory orders = new ProductionOrder[](2);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 2);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientResources.selector, 2_000, 4_000, 0
+            )
+        );
+        moons.startMoonProductionBatch(planetId, orders);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertFalse(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(_moonResources(planetId).metal, 5_000);
+
+        orders[1].quantity = 1;
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        assertEq(moons.activeMoonShipQueue(planetId).quantity, 1);
+        assertEq(moons.activeMoonDefenseQueue(planetId).quantity, 1);
+        assertEq(_moonResources(planetId).metal, 0);
+        assertEq(_moonResources(planetId).crystal, 4_000);
+    }
+
+    function testMoonShipQueueHistoricalCutoffPartialAndSeparateInventory() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 0);
+        vm.prank(player);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 4);
+        VeydriftMoonShipBacklog.Entry memory queued = moons.activeMoonShipQueue(planetId);
+        vm.warp(queued.readyAt + 100);
+        vm.prank(address(game));
+        moons.settleMoonShipProductionUntil(planetId, queued.startedAt + 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 0);
+        vm.prank(address(game));
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 0);
+        vm.prank(address(game));
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
+        vm.prank(player);
+        moons.finishMoonShipProduction(planetId);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 4);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+    }
+
+    function testMoonShipsFailClosedBeforeGameCutoffUpgrade() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 0);
+        vm.mockCall(
+            address(game),
+            abi.encodeWithSignature("moonShipProductionVersion()"),
+            abi.encode(uint8(0))
+        );
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 1);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+    }
+
+    function testGameCombatSnapshotSettlesMoonShipsAtImpactNotResolverTime() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 0);
+        vm.prank(player);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 4);
+        VeydriftMoonShipBacklog.Entry memory queued = moons.activeMoonShipQueue(planetId);
+        vm.warp(queued.readyAt + 200);
+        vm.prank(address(game));
+        game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
+        vm.prank(address(game));
+        game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
+    }
+
+    function testMoonBatchRejectsUnauthorizedPausedAndPlanetOnlyShip() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 100_000);
+        ProductionOrder[] memory orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        vm.expectRevert(VeydriftMoonSystem.NotMoonOwner.selector);
+        moons.startMoonProductionBatch(planetId, orders);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        moons.startMoonProductionBatch(planetId, orders);
+        vm.prank(admin);
+        game.setGamePaused(true);
+        vm.prank(player);
+        vm.expectRevert();
+        moons.startMoonProductionBatch(planetId, orders);
+        vm.prank(admin);
+        game.setGamePaused(false);
+        orders[0].itemId = uint8(Ship.SolarSatellite);
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonProductionBatch(planetId, orders);
+        orders[0].quantity = 0;
+        vm.prank(player);
+        vm.expectRevert();
+        moons.startMoonProductionBatch(planetId, orders);
+    }
+
+    function testMoonDestructionClearsPaidShipBacklogAndReplacementGeneration() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 0);
+        uint64 generation = moons.moonGeneration(planetId);
+        vm.startPrank(player);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 5);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 2);
+        vm.stopPrank();
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 1);
+
+        VeydriftMoonSystem.Moon memory moonRef = moons.moon(planetId);
+        uint16 chance = moons.moonDestructionChanceBps(moonRef.diameterKm, 1);
+        vm.prank(reporter);
+        (uint256 outcomeId, uint256 requestId) =
+            moons.requestMoonDestructionFromBattle(12_897, planetId, reporter, 1);
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, uint256(chance - 1) + uint256(9_999) * 10_000);
+        (bool destroyed,) = moons.finalizeMoonDestruction(outcomeId);
+        assertTrue(destroyed);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 0);
+        _createMoon(planetId);
+        assertGt(moons.moonGeneration(planetId), generation);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 0);
+    }
+
+    function testMoonBatchRejectsPendingCombatBeforeSpending() public {
+        (uint256 origin, uint256 target, address defender) = _seedMoonAttackPlanets();
+        _fundPlanet(origin, 100_000, 100_000, 100_000);
+        _setShipCount(origin, Ship.SmallCargo, 1);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            origin,
+            target,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            false,
+            true
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        ProductionOrder[] memory orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        vm.prank(defender);
+        vm.expectRevert();
+        moons.startMoonProductionBatch(target, orders);
+        assertFalse(moons.activeMoonShipQueue(target).active);
+    }
+
+    function testMoonFinishCannotCreditPostImpactShipsDuringPendingCombat() public {
+        (uint256 origin, uint256 target, address defender) = _seedMoonAttackPlanets();
+        // This fixture starts the defender as another player; provision its Moon Shipyard directly.
+        bytes32 outer = keccak256(abi.encode(target, uint256(7)));
+        bytes32 shipyardSlot = keccak256(abi.encode(uint256(uint8(MoonBuilding.Shipyard)), outer));
+        vm.store(address(moons), shipyardSlot, bytes32(uint256(1)));
+        _setTechnologyLevel(defender, Technology.CombustionDrive, 2);
+        _fundMoon(target, 1_000_000, 1_000_000, 100_000);
+        vm.prank(defender);
+        moons.startMoonShipProduction(target, Ship.LightFighter, 100);
+        uint64 readyAt = moons.activeMoonShipQueue(target).readyAt;
+
+        _fundPlanet(origin, 100_000, 100_000, 100_000);
+        _setShipCount(origin, Ship.SmallCargo, 1);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            origin,
+            target,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            false,
+            true
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(readyAt > arrivalAt ? readyAt : arrivalAt + 1);
+        vm.prank(defender);
+        vm.expectRevert();
+        moons.finishMoonShipProduction(target);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        assertTrue(moons.activeMoonShipQueue(target).active);
+    }
+
+    function testMoonBatchMeasuredAtLoadedBacklogs() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.startPrank(player);
+        for (uint256 i; i < 12; ++i) {
+            moons.startMoonShipProduction(planetId, Ship.LightFighter, 1);
+            moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        }
+        vm.stopPrank();
+        ProductionOrder[] memory orders = new ProductionOrder[](4);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        orders[2] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[3] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("moon 4-order batch with 11+11 backlogs", used);
+        assertLt(used, 12_000_000);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 13);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 13);
+    }
+
+    function testMoonBatchDrainsMaximumReadyPreexistingBacklogsWithinGasCeiling() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 10_000_000, 10_000_000, 1_000_000);
+        vm.startPrank(player);
+        for (uint256 i; i < 16; ++i) {
+            moons.startMoonShipProduction(planetId, Ship.LightFighter, 100);
+            moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 100);
+        }
+        vm.stopPrank();
+        uint64 shipsReady = moons.moonShipQueueBacklog(planetId)[14].readyAt;
+        uint64 defensesReady = moons.moonDefenseQueueBacklog(planetId)[14].readyAt;
+        vm.warp(shipsReady > defensesReady ? shipsReady : defensesReady);
+        ProductionOrder[] memory orders = new ProductionOrder[](4);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        orders[2] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[3] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("moon 4-order batch with 15+15 ready backlogs of 100", used);
+        assertLt(used, 12_000_000);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 1_600);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 1_600);
+    }
+
+    function testMoonBatchDuplicateDomeRevertsShipAndDefense() public {
+        uint256 planetId = _readyMoonShipyard();
+        _setTechnologyLevel(player, Technology.Shielding, 2);
+        _fundMoon(planetId, 100_000, 100_000, 100_000);
+        ProductionOrder[] memory orders = new ProductionOrder[](3);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        orders[1] = ProductionOrder(1, uint8(Defense.SmallShieldDome), 1);
+        orders[2] = ProductionOrder(1, uint8(Defense.SmallShieldDome), 1);
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.LevelTooHigh.selector);
+        moons.startMoonProductionBatch(planetId, orders);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertFalse(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(_moonResources(planetId).metal, 100_000);
+    }
+
+    function testMoonOriginLaunchCanUseShipFinishingOnThisInteraction() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 100_000, 100_000, 100_000);
+        vm.prank(player);
+        moons.startMoonShipProduction(planetId, Ship.LightFighter, 1);
+        uint64 readyAt = moons.activeMoonShipQueue(planetId).readyAt;
+        vm.warp(readyAt);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.lightFighter = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            planetId,
+            planetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            100,
+            true,
+            false
+        );
+        assertGt(missionId, 0);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 0);
+    }
+
+    function testMoonBatchRefusesFullShipBacklogWithoutAffectingPaidQueue() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 1_000_000, 1_000_000, 0);
+        vm.startPrank(player);
+        for (uint256 i; i < 17; ++i) {
+            moons.startMoonShipProduction(planetId, Ship.LightFighter, 1);
+        }
+        vm.stopPrank();
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 16);
+        ProductionOrder[] memory orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonProductionBatch(planetId, orders);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 16);
     }
 }

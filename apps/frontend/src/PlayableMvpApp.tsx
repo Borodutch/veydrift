@@ -1,4 +1,7 @@
 import { playerNotice } from "./playerNotice";
+import { evaluateProductionPlan, maxAddableProduction, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
+import { useProductionBuildPlan } from "./useProductionBuildPlan";
+import { productionPlanContext } from "./productionBuildPlanContext";
 import { UiClock, useUiClock } from "./useUiClock";
 import { AlertTriangle } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
@@ -186,6 +189,8 @@ import {
   sendStartDefenseProductionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
+  sendStartMoonShipProductionTransaction,
+  sendProductionBatchTransaction,
   sendStartResearchTransaction,
   sendStartRiftExtractionTransaction,
   sendStartShipProductionTransaction,
@@ -726,6 +731,7 @@ export function productionQueueCompletionCandidates({
   defense,
   moonBuilding,
   moonDefense,
+  moonShip,
   research,
   shipyard,
 }: {
@@ -733,10 +739,11 @@ export function productionQueueCompletionCandidates({
   defense?: QueueStateResponse | null | undefined;
   moonBuilding?: QueueStateResponse | null | undefined;
   moonDefense?: QueueStateResponse | null | undefined;
+  moonShip?: QueueStateResponse | null | undefined;
   research?: QueueStateResponse | null | undefined;
   shipyard?: QueueStateResponse | null | undefined;
 }): ReadonlyArray<QueueStateResponse | null | undefined> {
-  return [building, defense, shipyard, research, moonBuilding, moonDefense];
+  return [building, defense, shipyard, research, moonBuilding, moonDefense, moonShip];
 }
 
 export function planetScopedFleetVisibility(
@@ -2858,7 +2865,7 @@ export function PlayableMvpApp({
   const moonError = moonSnapshot?.error;
 
   const defenseQuery = backendData && account && activePlanetId ? backendData.queries.defenses(account, activePlanetId) : undefined;
-  const { snapshot: defenseSnapshot, isInitialLoading: defenseLoading } = useBackendDataQuery<ChainDefenseState>(defenseQuery, page === "defenses" || shouldRefreshMissionActionStateForPage(page) || composingMission);
+  const { snapshot: defenseSnapshot, isInitialLoading: defenseLoading } = useBackendDataQuery<ChainDefenseState>(defenseQuery, page === "defenses" || page === "shipyard" || shouldRefreshMissionActionStateForPage(page) || composingMission);
   const defenseState = defenseSnapshot?.data ? { ...defenseSnapshot.data, resources: infrastructureChainState?.resources ?? null, resourcesAsOfNow: infrastructureChainState?.resourcesAsOfNow ?? null } : null;
 
   const defenseError = defenseSnapshot?.error;
@@ -2872,7 +2879,7 @@ export function PlayableMvpApp({
   const [allianceAction, setAllianceAction] = useTransactionAction<AllianceActionState>(backendData, account, "alliance", undefined);
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
   const shipyardQuery = backendData && account && activePlanetId ? backendData.queries.shipyard(account, activePlanetId) : undefined;
-  const { snapshot: shipyardSnapshot, isInitialLoading: shipyardLoading } = useBackendDataQuery<ChainShipyardState>(shipyardQuery, shouldRefreshShipyardStateForPage(page) || composingMission);
+  const { snapshot: shipyardSnapshot, isInitialLoading: shipyardLoading } = useBackendDataQuery<ChainShipyardState>(shipyardQuery, shouldRefreshShipyardStateForPage(page) || page === "defenses" || composingMission);
   const shipyardState = shipyardSnapshot?.data ? { ...shipyardSnapshot.data, resources: infrastructureChainState?.resources ?? null, resourcesAsOfNow: infrastructureChainState?.resourcesAsOfNow ?? null } : null;
 
   const shipyardError = shipyardSnapshot?.error;
@@ -3749,6 +3756,12 @@ export function PlayableMvpApp({
             planetId: managedPlanet.planetId,
             queue: section.moonState.defenseQueue?.active ? section.moonState.defenseQueue : null,
           },
+          {
+            bodyKind: "moon",
+            kind: "ship",
+            planetId: managedPlanet.planetId,
+            queue: section.moonState.shipQueue?.active ? section.moonState.shipQueue : null,
+          },
         );
       }
     }
@@ -3783,6 +3796,7 @@ export function PlayableMvpApp({
         defense: activeDefenseProductionQueue,
         moonBuilding: moonState?.queue,
         moonDefense: moonState?.defenseQueue,
+        moonShip: moonState?.shipQueue,
         research: effectiveResearchState?.queue,
         shipyard: activeShipyardProductionQueue,
       }),
@@ -3801,7 +3815,7 @@ export function PlayableMvpApp({
     );
 
     return () => window.clearTimeout(timer);
-  }, [activeBuildingQueue, activeDefenseProductionQueue, activeShipyardProductionQueue, effectiveResearchState?.queue, moonState?.defenseQueue, moonState?.queue, pageStateHydrationReady]);
+  }, [activeBuildingQueue, activeDefenseProductionQueue, activeShipyardProductionQueue, effectiveResearchState?.queue, moonState?.defenseQueue, moonState?.shipQueue, moonState?.queue, pageStateHydrationReady]);
 
   const attackerCombatTechLevels = useMemo(
     () =>
@@ -6450,6 +6464,89 @@ export function PlayableMvpApp({
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !allianceTransactionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !isActionBusy(moonAction);
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !isActionBusy(moonAction);
+
+  // One draft per account, chain, planet and body; both production lanes share its budget.
+  const productionPlan = useProductionBuildPlan();
+  const draftKey = productionDraftKey(account, gameWalletChain.chainIdHex, activePlanetId, activeBodyKind);
+  const selectedDraftKeyRef = useRef(draftKey);
+  selectedDraftKeyRef.current = draftKey;
+  const draftRows = draftKey ? productionPlan.drafts[draftKey] ?? [] : [];
+  const planContext = productionPlanContext(activeBodyKind, {
+    defense: defenseState, shipyard: shipyardState, infrastructure: infrastructureChainState, moon: moonState,
+  });
+  const setPlanError = productionPlan.setError;
+  const buildPlan = draftKey ? {
+    body: activeBodyKind, context: planContext, rows: draftRows,
+    busy: Boolean(productionPlan.busy[draftKey]), unknown: Boolean(productionPlan.unknown[draftKey]), ready: activeBodyKind === "moon" ? canSubmitMoonTransaction : canSubmitGameTransaction, error: productionPlan.errors[draftKey],
+    onAdd: (order: ProductionOrder) => {
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => {
+        const current = previous[draftKey] ?? [];
+        const max = maxAddableProduction(planContext, current, order.kind, order.id);
+        if (order.quantity < 1 || order.quantity > max) return previous;
+        return { ...previous, [draftKey]: [...current, order] };
+      });
+      setPlanError(draftKey, "");
+    },
+    onRemove: (index: number) => {
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => ({ ...previous, [draftKey]: (previous[draftKey] ?? []).filter((_, position) => position !== index) }));
+      setPlanError(draftKey, "");
+    },
+    onClear: () => {
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      productionPlan.setDrafts(previous => ({ ...previous, [draftKey]: [] }));
+      setPlanError(draftKey, "");
+    },
+    onConfirm: () => {
+      if (productionPlan.busyRef.current.has(draftKey)) return;
+      const submitted = [...draftRows];
+      const body = activeBodyKind;
+      const planetId = activePlanetId;
+      const contractAddress = body === "moon" ? moonContract : gameContract;
+      if (!provider || !backendData || !account || !signerAccount || !contractAddress || !planetId || !submitted.length) {
+        setPlanError(draftKey, "Wallet or selected body is unavailable."); return;
+      }
+      const contextKey = draftKey;
+      const checkIdentity = () => {
+        const selected = productionDraftKey(account, gameWalletChain.chainIdHex, planetId, body);
+        if (selected !== contextKey || selectedDraftKeyRef.current !== contextKey) throw new Error("Selected body changed before submission.");
+      };
+      if (!productionPlan.start(draftKey)) return;
+      void (async () => {
+        try {
+          const indexing = body === "moon"
+            ? backendData.indexing.all([backendData.indexing.resourceChange(account, planetId, "moon"), backendData.indexing.refresh(backendScopeTags(account, planetId, "kind:moon", "kind:queues"))])
+            : backendData.indexing.all([backendData.indexing.production(account, planetId, "shipyard"), backendData.indexing.production(account, planetId, "defenses")]);
+          const outcome = await runCoordinatedWriteTransaction({
+            key: `production-batch:${body}:${planetId}`, conflictKeys: [`planet:${planetId}`], planetIds: [planetId],
+            label: "Build plan", indexing,
+            prepare: async () => {
+              checkIdentity();
+              const [freshMoon, freshShipyard, freshDefense, freshInfrastructure] = body === "moon"
+                ? [await backendData.moon(account, planetId, { fresh: true }), null, null, null] as const
+                : await Promise.all([Promise.resolve(null), backendData.shipyard(account, planetId, { fresh: true }),
+                    backendData.defenses(account, planetId, { fresh: true }), backendData.infrastructure(account, planetId, { fresh: true })]);
+              checkIdentity();
+              const fresh = productionPlanContext(body, { moon: freshMoon, shipyard: freshShipyard, defense: freshDefense, infrastructure: freshInfrastructure });
+              const checked = evaluateProductionPlan(submitted, fresh);
+              if (checked.reason || checked.lines.length !== submitted.length) throw new Error(checked.reason ?? "Build plan items changed. Refresh and retry.");
+              const shown = evaluateProductionPlan(submitted, planContext);
+              if (checked.cost.metal !== shown.cost.metal || checked.cost.crystal !== shown.cost.crystal || checked.cost.deuterium !== shown.cost.deuterium) {
+                throw new Error("Production costs changed. Review the updated build plan and retry.");
+              }
+            },
+            send: wallet => sendProductionBatchTransaction(wallet, signerAccount, contractAddress, body, planetId, submitted),
+            onStateChange: state => productionPlan.onState(draftKey, submitted, state),
+          });
+          productionPlan.onOutcome(draftKey, submitted, outcome);
+        } catch (error) {
+          productionPlan.release(draftKey);
+          setPlanError(draftKey, error instanceof Error ? error.message : "Build plan failed.");
+        }
+      })();
+    },
+  } : undefined;
   const canSubmitProfileMutation = Boolean(provider && signerAccount && account && apiBaseUrl);
   const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined);
   const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
@@ -6817,6 +6914,8 @@ export function PlayableMvpApp({
           canTransact={canSubmitMoonTransaction}
           constructionProgress={progressFor(activePlanetId, "moon", "moon-building")}
           defenseProgress={progressFor(activePlanetId, "moon", "defense")}
+          shipProgress={progressFor(activePlanetId, "moon", "ship")}
+          buildPlan={buildPlan}
           error={moonError}
           loading={moonLoading || (isWalletConnected && !moonState && !moonError)}
           moonActions={moonOverviewActions}
@@ -6828,6 +6927,12 @@ export function PlayableMvpApp({
           onRefresh={refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}
+          onStartShip={(shipId, label, quantity) => {
+            if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) return;
+            void runMoonTransaction(`Build ${label}`, wallet => sendStartMoonShipProductionTransaction(wallet, signerAccount, moonContract, moonState.homePlanetId!, shipId, quantity), {
+              bodyKind: "moon", planetId: moonState.homePlanetId,
+            });
+          }}
           parentPlanetLabel={selectedManagedPlanet?.name ?? selectedManagedPlanet?.coordinates}
           parentPlanetType={selectedManagedPlanet ? planetArtTypeForCoordinates(selectedManagedPlanet) : undefined}
           transactionUnavailableReason={moonTransactionUnavailableReason}
@@ -6915,6 +7020,7 @@ export function PlayableMvpApp({
     if (page === "defenses") {
       return (
         <DefensePage
+          buildPlan={buildPlan}
           actionState={defenseAction}
           canTransact={canSubmitGameTransaction}
           defenseState={defenseState}
@@ -7028,6 +7134,7 @@ export function PlayableMvpApp({
     if (page === "shipyard") {
       return (
         <ShipyardPage
+          buildPlan={buildPlan}
           actionState={shipyardAction}
           canTransact={canSubmitGameTransaction}
           error={shipyardError ?? walletRecoveryReadError}

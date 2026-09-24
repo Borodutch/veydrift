@@ -737,6 +737,11 @@ describe("SettlementIndexer", () => {
       topics: [moonDefenseQueuedTopic, topic(7n), topic(0n)],
       data: abiWords(3n, 1_770_001_800n, 6_000n, 0n, 0n)
     });
+    indexer.applyLog({
+      blockNumber: "0x87", transactionHash: "0xmoon-ship-queue-before-destruction", logIndex: "0x6",
+      topics: [keccak256(toHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)")), topic(7n), topic(1n)],
+      data: abiWords(2n, 1_770_001_900n, 4_000n, 2_000n, 0n)
+    });
     const destructionTransactionHash = `0x${"93".repeat(32)}`;
     const zeroResourcesLog = {
       blockNumber: "0x88",
@@ -768,6 +773,7 @@ describe("SettlementIndexer", () => {
       resources: { metal: "0", crystal: "0", deuterium: "0" },
       queue: null,
       defenseQueue: null,
+      shipQueue: null,
       buildings: expect.arrayContaining([expect.objectContaining({ id: 2, level: 0 })]),
       fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 0 })]),
       defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 0 })])
@@ -810,6 +816,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.moonState(player, "7")).toMatchObject({
       resources: { metal: "123", crystal: "456", deuterium: "789" },
       defenseQueue: expect.objectContaining({ kind: "moon-defense", itemId: 0, quantity: 3 }),
+      shipQueue: expect.objectContaining({ kind: "moon-ship", itemId: 1, quantity: 2 }),
       buildings: expect.arrayContaining([expect.objectContaining({ id: 2, level: 1 })]),
       fleet: expect.arrayContaining([expect.objectContaining({ id: 1, count: 5 })]),
       defenses: expect.arrayContaining([expect.objectContaining({ id: 2, count: 7 })])
@@ -5429,6 +5436,32 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("indexed lunar defense duration tracks current canonical lunar Shipyard", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xshipyard", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(3n)], data: abiWords(9n) });
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xfunded", logIndex: "0x0",
+      topics: [moonResourcesSettledTopic, topic(7n)], data: abiWords(100000n, 100000n, 100000n, 1770000300n) });
+    const indexed = indexer.moonState(player, planet.planetId);
+    const row = indexed.defenses.find(defense => defense.id === 0)!;
+    expect(row.durationSeconds).toBe(288);
+    expect(indexed.defenses).toHaveLength(8);
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xdue-shipyard", logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(7n), topic(3n)], data: abiWords(10n, 1767225500n, 100n, 100n, 0n) });
+    // A batch settles due building work before it prices its production lanes.
+    const projected = indexer.moonState(player, planet.planetId);
+    expect(projected.buildings.find(building => building.id === 3)?.level).toBe(10);
+    expect(projected.defenses.find(defense => defense.id === 0)?.durationSeconds).toBe(262);
+    expect(projected.ships.find(ship => ship.id === 0)?.durationSeconds).toBe(524);
+  });
+
   test("indexes moon creation and moon building queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -5831,7 +5864,7 @@ describe("SettlementIndexer", () => {
       moonAvailable: true,
       resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
       resourcesAsOfNow: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      ships: [],
+      ships: [{ id: 1, count: 8, cost: { metal: "2000", crystal: "1000", deuterium: "0" } }],
       launchableShips: [],
       defenses: [{
         id: 0,
@@ -5864,6 +5897,12 @@ describe("SettlementIndexer", () => {
         cost: { metal: "400", crystal: "120", deuterium: "200" },
       },
       technologyLevels: {},
+      shipQueue: {
+        active: true, kind: "moon-ship", itemId: 1, quantity: 2, readyAt: "1770001900",
+        cost: { metal: "4000", crystal: "2000", deuterium: "0" },
+        backlog: [{ active: true, kind: "moon-ship", itemId: 2, quantity: 1,
+          readyAt: "1770002900", cost: { metal: "2000", crystal: "1000", deuterium: "0" } }]
+      },
       defenseQueue: {
         active: true,
         kind: "moon-defense",
@@ -5923,6 +5962,8 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
       defenses: expect.arrayContaining([expect.objectContaining({ id: 0, count: 4 })]),
+      ships: expect.arrayContaining([expect.objectContaining({ id: 1, count: 8 })]),
+      shipQueue: { itemId: 1, quantity: 2, backlog: [expect.objectContaining({ itemId: 2, quantity: 1 })] },
       defenseQueue: {
         itemId: 0,
         quantity: 2,
@@ -13842,6 +13883,55 @@ describe("attack needsResolution is gated on battle randomness (VEY-KANEO-479)",
     const indexer = newIndexer(false);
     applyArrivedAttack(indexer, 72n, 42n);
     expect(activeAttack(indexer, "72")?.needsResolution).toBe(true);
+  });
+});
+
+describe("moon ship manufacturing replay", () => {
+  const queued = keccak256(toHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)"));
+  const completed = keccak256(toHex("MoonShipCompleted(uint256,uint8,uint32,uint32)"));
+  test("applies mixed same-transaction lunar queue logs in order, partial completion and moon-only debit", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const originalPlanetResources = indexer.planet("7")?.resources;
+    indexer.applyLog({ blockNumber: "0x90", transactionHash: "0xcreate-lunar", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    const tx = "0xbatch-lunar";
+    const emit = (logIndex: number, signature: string, itemId: bigint, ...values: bigint[]) => indexer.applyLog({
+      blockNumber: "0x91", transactionHash: tx, logIndex: `0x${logIndex.toString(16)}`,
+      topics: [signature, topic(7n), topic(itemId)], data: abiWords(...values)
+    });
+    emit(0, queued, 1n, 3n, 1770001000n, 6000n, 3000n, 0n);
+    emit(1, moonDefenseQueuedTopic, 0n, 2n, 1770001100n, 4000n, 0n, 0n);
+    emit(2, queued, 1n, 2n, 1770002000n, 4000n, 2000n, 0n);
+    emit(3, queued, 2n, 1n, 1770003000n, 2000n, 1000n, 0n);
+    expect(indexer.planet("7")?.resources).toEqual(originalPlanetResources);
+    expect(indexer.moonState(player, "7")).toMatchObject({
+      shipQueue: { itemId: 1, quantity: 3, backlog: [
+        { itemId: 1, quantity: 2, readyAt: "1770002000", startedAt: "1770001000" },
+        { itemId: 2, quantity: 1, readyAt: "1770003000", startedAt: "1770002000" }
+      ] },
+      defenseQueue: { itemId: 0, quantity: 2 }
+    });
+    emit(4, moonShipCountChangedTopic, 1n, 1n);
+    emit(5, completed, 1n, 1n, 1n);
+    expect(indexer.moonShipQueue("7")).toMatchObject({ itemId: 1, quantity: 2, cost: { metal: "4000" } });
+    emit(6, moonShipCountChangedTopic, 1n, 3n);
+    emit(7, completed, 1n, 2n, 3n);
+    emit(8, queued, 1n, 2n, 1770002000n, 4000n, 2000n, 0n);
+    expect(indexer.moonState(player, "7")).toMatchObject({
+      ships: expect.arrayContaining([expect.objectContaining({ id: 1, count: 3 })]),
+      shipQueue: { itemId: 1, quantity: 2, backlog: [{ itemId: 2, quantity: 1 }] }
+    });
+    // Reorg removes a completion: replay remaining canonical events rather than retaining its count.
+    indexer.applyLog({ blockNumber: "0x91", transactionHash: tx, logIndex: "0x6",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)], data: abiWords(3n), removed: true });
+    indexer.applyLog({ blockNumber: "0x91", transactionHash: tx, logIndex: "0x7",
+      topics: [completed, topic(7n), topic(1n)], data: abiWords(2n, 3n), removed: true });
+    expect(indexer.moonState(player, "7").ships.find((ship) => ship.id === 1)?.count).toBe(1);
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { encodeAbiParameters, keccak256 } from "viem";
+import { encodeAbiParameters, keccak256, stringToHex, toFunctionSelector } from "viem";
 
 import type { BackendConfig } from "./config";
 import {
@@ -23,6 +23,11 @@ import {
   fleetMissionNeedsResolution,
   RpcResponseParseError,
   decodeDefenseCountChangedLog,
+  decodeIndexedQueueStartedLog,
+  decodeIndexedQueueCompletedLog,
+  eventNameForTopic,
+  isIndexedQueueStartedLog,
+  isIndexedQueueCompletedLog,
   isDefenseCountChangedLog,
   VeydriftGameReader,
   type Address,
@@ -735,6 +740,54 @@ describe("attack protection reads", () => {
     expect(calls[0]?.slice(0, 10)).toBe("0x8a6b2246");
     expect(calls[1]?.slice(0, 10)).toBe("0xdca08aaf");
     expect(calls[1]?.slice(-64)).toBe(word(1n));
+  });
+});
+
+describe("Moon ship manufacturing events and queue reads", () => {
+  test("decodes the canonical indexed MoonShipQueued/Completed signatures", () => {
+    const queued = makeLog({
+      topics: [keccak256(stringToHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)")), topic(7n), topic(1n)],
+      data: dataWords([word(3n), word(1770001200n), word(6000n), word(3000n), word(0n)])
+    });
+    const completed = makeLog({
+      topics: [keccak256(stringToHex("MoonShipCompleted(uint256,uint8,uint32,uint32)")), topic(7n), topic(1n)],
+      data: dataWords([word(2n), word(5n)])
+    });
+    expect(eventNameForTopic(queued.topics[0])).toBe("MoonShipQueued");
+    expect(isIndexedQueueStartedLog(queued)).toBe(true);
+    expect(decodeIndexedQueueStartedLog(queued)).toMatchObject({ queueKind: "moon-ship", planetId: "7", itemId: 1, quantity: 3, readyAt: "1770001200", cost: { metal: "6000", crystal: "3000", deuterium: "0" } });
+    expect(isIndexedQueueCompletedLog(completed)).toBe(true);
+    expect(decodeIndexedQueueCompletedLog(completed)).toMatchObject({ queueKind: "moon-ship", itemId: 1, quantity: 2, total: 5 });
+  });
+
+  test("reads active partial-production timing and ordered 11-word lunar backlog", async () => {
+    const moonAddress = "0x2222222222222222222222222222222222222222" as Address;
+    const reader = new VeydriftGameReader({ ...readerConfig, moonContractAddress: moonAddress }, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        expect(method).toBe("eth_call");
+        const [call] = params as [{ data: string }];
+        if (call.data.startsWith(toFunctionSelector("activeMoonShipQueue(uint256)"))) {
+          return dataWords([word(1n), word(1n), word(2n), word(1770001200n), word(4000n), word(2000n), word(0n), word(1770000000n), word(3n), word(4_000_000n), word(5000n)]) as T;
+        }
+        expect(call.data.startsWith(toFunctionSelector("moonShipQueueBacklog(uint256)"))).toBe(true);
+        return dataWords([word(32n), word(2n),
+          word(1n), word(1n), word(3n), word(1770002400n), word(6000n), word(3000n), word(0n), word(1770001200n), word(3n), word(4_000_000n), word(5000n),
+          word(1n), word(2n), word(1n), word(1770003000n), word(2000n), word(1000n), word(0n), word(1770002400n), word(1n), word(2_000_000n), word(5000n)
+        ]) as T;
+      }
+    });
+    const queue = await (reader as any).readMoonShipQueue(7n);
+    expect(queue).toMatchObject({ kind: "moon-ship", itemId: 1, quantity: 2, productionTiming: { originalQuantity: 3, rate: "5000" }, backlog: [
+      { itemId: 1, quantity: 3, startedAt: "1770001200", readyAt: "1770002400" },
+      { itemId: 2, quantity: 1, startedAt: "1770002400", readyAt: "1770003000" }
+    ] });
+  });
+
+  test("treats a missing pre-upgrade active selector as no moon ship queue", async () => {
+    const reader = new VeydriftGameReader({ ...readerConfig, moonContractAddress: "0x2222222222222222222222222222222222222222" }, {
+      async request<T>(): Promise<T> { throw new Error("execution reverted"); }
+    });
+    await expect((reader as any).readMoonShipQueue(7n)).resolves.toMatchObject({ active: false, kind: null });
   });
 });
 

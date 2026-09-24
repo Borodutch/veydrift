@@ -31,6 +31,7 @@ let pageTargetId;
 let recoveryFixtureUrl;
 let server;
 let routeChunkGate;
+let gatedRouteChunkRequests = [];
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
@@ -207,7 +208,7 @@ async function waitForExpression(expression, timeoutMs = 5_000) {
     if (await evaluate(expression)) return;
     await delay(25);
   }
-  const diagnostics = await evaluate(`({ path: location.pathname, main: document.querySelector('main')?.innerText.slice(0, 1500), errors: window.inspectorProof?.errors, requests: window.inspectorProof?.requests?.slice(-10) })`).catch(() => null);
+  const diagnostics = await evaluate(`({ path: location.pathname, main: document.querySelector('main')?.innerText.slice(0, 1500), errors: window.inspectorProof?.errors, requests: window.inspectorProof?.requests?.slice(-10), pendingDetailRequests: window.inspectorProof?.pendingDetailRequests?.() })`).catch(() => null);
   throw new Error(`Timed out waiting for browser expression: ${expression}\n${JSON.stringify(diagnostics)}`);
 }
 
@@ -264,6 +265,7 @@ before(async () => {
       configureServer(vite) {
         vite.middlewares.use((request, _response, next) => {
           if (routeChunkGate && /\/components\/(MissionControlPage|ShipyardPage)\.tsx(?:\?|$)/.test(request.url ?? "")) {
+            gatedRouteChunkRequests.push(request.url);
             void routeChunkGate.then(() => next());
           } else next();
         });
@@ -2039,7 +2041,7 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
 
   const alignment = await evaluate(`(() => {
     const buttons = [...document.querySelectorAll('main button')];
-    const build = buttons.find((button) => button.textContent?.trim() === 'Build');
+    const build = buttons.find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now');
     const supply = document.querySelector('main button[aria-label^="Supply missing resources for"]');
     const buildRect = build?.getBoundingClientRect();
     const supplyRect = supply?.getBoundingClientRect();
@@ -2049,6 +2051,7 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
       supplyTop: Math.round(supplyRect?.top ?? -1),
       supplyHeight: Math.round(supplyRect?.height ?? -1),
       supplyWidth: Math.round(supplyRect?.width ?? -1),
+      supplyRight: Math.round(supplyRect?.right ?? -1),
       buildRight: Math.round(buildRect?.right ?? -1),
       buildWidth: Math.round(buildRect?.width ?? -1),
     };
@@ -2056,9 +2059,11 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
   assert.equal(alignment.supplyTop, alignment.buildTop);
   assert.ok(alignment.supplyLeft >= alignment.buildRight, JSON.stringify(alignment));
   assert.ok(Math.abs(alignment.supplyWidth - alignment.supplyHeight) <= 1, JSON.stringify(alignment));
-  assert.ok(alignment.supplyWidth < alignment.buildWidth, JSON.stringify(alignment));
+  assert.equal(alignment.supplyWidth, alignment.buildWidth, JSON.stringify(alignment));
+  assert.ok(alignment.supplyWidth >= 44 && alignment.supplyHeight >= 44, JSON.stringify(alignment));
+  assert.ok(alignment.supplyRight <= 390, JSON.stringify(alignment));
 
-  await clickExpression("document.querySelector('main button[aria-label^=\"Supply missing resources for\"]')");
+  await clickExpressionWithTrustedPointer("document.querySelector('main button[aria-label^=\"Supply missing resources for\"]')", "touch");
   await waitForExpression("document.querySelector('[role=dialog][aria-label=\"Supply Owned Alpha\"]') !== null");
   const request = await evaluate(`({
     crystal: document.querySelector('input[aria-label="crystal to send"]')?.value,
@@ -2112,7 +2117,7 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
       && document.querySelector('main')?.textContent?.includes('Syncing planetfall') === false
       && document.querySelector('summary[title^="Metal:"]') !== null
       && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: 3') === true
-      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build')`);
+      && document.querySelector('main button[aria-label="Build Rocket Launcher now"]') !== null`);
   } catch (error) {
     const diagnostics = await evaluate(`({
       bodyText: document.body.textContent?.replace(/\\s+/g, ' ').trim(),
@@ -2135,6 +2140,58 @@ test("mobile Defenses renders its indexed planet snapshot while wallet overview 
   assert.doesNotMatch(rendered.bodyText ?? "", /Resources loading|Syncing planetfall/);
   assert.deepEqual(rendered.errors, []);
 });
+
+for (const body of ["planet", "moon"]) {
+  test(`${body} Shipyard and Defenses add to one real mounted build plan without an early wallet send`, async () => {
+    const moon = body === "moon";
+    await loadInspectorFixture(moon ? "/" : "/shipyard", 390, {
+      batchPlanProbe: "true", moonOverview: "true", shell: "settlement",
+    });
+    if (moon) {
+      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]') !== null`);
+      await clickExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')`);
+      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')?.classList.contains('border-cyan-300/50') === true`);
+      await clickExpression('document.querySelector(\'summary[aria-label="Open navigation menu"]\')');
+      await clickExpression('document.querySelector(\'#mobile-navigation-menu a[href="/moon"]\')');
+      await waitForExpression(`location.pathname === '/moon' && document.querySelector('main [data-production-catalog]') !== null`);
+    }
+    const addShip = 'main button[aria-label="Add Small Cargo to build plan"]:not(:disabled)';
+    const addDefense = 'main button[aria-label="Add Rocket Launcher to build plan"]:not(:disabled)';
+    await waitForExpression(`document.querySelector(${JSON.stringify(addShip)}) !== null`);
+    await clickExpression(`document.querySelector(${JSON.stringify(addShip)})`);
+    await waitForExpression(`document.querySelector('main [data-build-plan][aria-label="${body} build plan"] button[aria-label="Remove Small Cargo from build plan"]') !== null`);
+    if (!moon) {
+      await clickExpression('document.querySelector(\'summary[aria-label="Open navigation menu"]\')');
+      await clickExpression('document.querySelector(\'#mobile-navigation-menu a[href="/defenses"]\')');
+      await waitForExpression(`location.pathname === '/defenses' && document.querySelector('main [data-build-plan] button[aria-label="Remove Small Cargo from build plan"]') !== null`);
+    }
+    await waitForExpression(`document.querySelector(${JSON.stringify(addDefense)}) !== null`);
+    await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
+    await waitForExpression(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length === 2`);
+    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan]').length`), 1);
+    assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`), 0);
+    await waitForExpression(`document.querySelector('main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)') !== null`);
+    await clickExpression('document.querySelector(\'main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)\')');
+    await waitForExpression(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length === 1`);
+    const preflight = await evaluate(`(() => {
+      const requests = window.inspectorProof.rpcRequests.slice(-3);
+      const call = requests[1], estimate = requests[2];
+      const sent = window.inspectorProof.walletRequests.find(request => request.method === 'eth_sendTransaction')?.params?.[0];
+      return {
+        methods: requests.map(request => request.method),
+        pendingSimulation: call?.params?.[1] === 'pending',
+        validCalldata: typeof sent?.data === 'string' && /^0x[0-9a-f]+$/i.test(sent.data) && sent.data.length > 10,
+        sameCalldata: call?.params?.[0]?.data === estimate?.params?.[0]?.data && estimate?.params?.[0]?.data === sent?.data,
+        sameAccountAndContract: estimate?.params?.[0]?.from === sent?.from && estimate?.params?.[0]?.to === sent?.to,
+        expectedAccountAndContract: sent?.from === '0x1111111111111111111111111111111111111111' && sent?.to === '${moon ? "0x3333333333333333333333333333333333333333" : "0x2222222222222222222222222222222222222222"}',
+      };
+    })()`);
+    assert.deepEqual(preflight, { methods: ['eth_chainId', 'eth_call', 'eth_estimateGas'], pendingSimulation: true, validCalldata: true, sameCalldata: true, sameAccountAndContract: true, expectedAccountAndContract: true });
+    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length`), 2, "pending wallet confirmation retains both rows");
+    assert.equal(await evaluate(`document.querySelector('[role="dialog"]') === null`), true, "confirm must not open another review dialog");
+    assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  });
+}
 
 for (const width of [390, 1280]) {
   test(`established-account gameplay routes escape an incomplete overview snapshot at ${width}px`, async () => {
@@ -2227,6 +2284,7 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
   // Hold only route modules until assertions finish; elapsed network latency is not a gate.
   let releaseChunks;
+  gatedRouteChunkRequests = [];
   routeChunkGate = new Promise(resolve => { releaseChunks = resolve; });
   try {
     await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
@@ -2234,7 +2292,12 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
     assert.equal(await evaluate("document.querySelector('main')?.textContent.includes('Loading planet details')"), false);
     assert.equal(await evaluate("document.querySelector('nav.hidden') === window.routeShellProof"), true);
     await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
-    await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main')?.textContent.includes('Loading shipyard') === true");
+    try {
+      await waitForExpression("location.pathname === '/shipyard' && document.querySelector('main .skeleton-region[role=status][aria-busy=true] .sr-only')?.textContent === 'Loading shipyard'");
+    } catch (error) {
+      const state = await evaluate(`({ path: location.pathname, status: document.querySelector('main [role=status]')?.textContent, errors: window.inspectorProof.errors })`);
+      throw new Error(`${error.message}\nRoute chunk gate: ${JSON.stringify(gatedRouteChunkRequests)}; visible route: ${JSON.stringify(state)}`);
+    }
   } finally {
     routeChunkGate = undefined;
     releaseChunks();
@@ -2507,14 +2570,14 @@ test("wallet shell does not let a repeated account event interrupt the Build ges
   });
   await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   await waitForExpression(`location.pathname === '/shipyard'
-    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+    && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
   const result = await evaluate(`({
-    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now'),
     path: location.pathname,
     syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
   })`);
@@ -2532,14 +2595,14 @@ test("wallet shell does not let a repeated chain event interrupt the Build gestu
   });
   await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   await waitForExpression(`location.pathname === '/shipyard'
-    && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+    && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
-  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)");
+  await clickExpressionWithTrustedPointer("[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)");
   await waitForExpression("window.inspectorProof.walletRequests.some((request) => request.method === 'eth_sendTransaction')");
   await delay(100);
 
   const result = await evaluate(`({
-    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build'),
+    buildVisible: [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now'),
     path: location.pathname,
     syncingPlanetfall: document.body.textContent?.includes('Syncing planetfall') ?? false,
   })`);
@@ -2561,10 +2624,10 @@ for (const width of [1280, 390]) {
       await clickExpression("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
     }
     await waitForExpression(`location.pathname === '/shipyard'
-      && [...document.querySelectorAll('main button')].some((button) => button.textContent?.trim() === 'Build' && !button.disabled)`);
+      && [...document.querySelectorAll('main button')].some((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)`);
 
     await clickExpressionWithTrustedPointer(
-      "[...document.querySelectorAll('main button')].find((button) => button.textContent?.trim() === 'Build' && !button.disabled)",
+      "[...document.querySelectorAll('main button')].find((button) => button.getAttribute('aria-label') === 'Build Small Cargo now' && !button.disabled)",
       width < 768 ? "touch" : "mouse",
     );
     try {
@@ -2572,7 +2635,7 @@ for (const width of [1280, 390]) {
     } catch (error) {
       const diagnostics = await evaluate(`({
         buildButtons: [...document.querySelectorAll('main button')]
-          .filter((button) => button.textContent?.trim() === 'Build')
+          .filter((button) => button.getAttribute('aria-label') === 'Build Small Cargo now')
           .map((button) => ({ disabled: button.disabled, outerHTML: button.outerHTML })),
         errors: window.inspectorProof.errors,
         mainText: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim().slice(0, 3000),
@@ -2589,7 +2652,7 @@ for (const width of [1280, 390]) {
         chainId: request?.params?.[0]?.chainId ?? null,
         data: request?.params?.[0]?.data ?? null,
         from: request?.params?.[0]?.from ?? null,
-        interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build') ?? null,
+        interaction: window.inspectorProof.interactions.findLast((event) => event.type === 'pointerdown' && event.target === 'button:Build Small Cargo now') ?? null,
         path: location.pathname,
         syncingPlanetfall: document.querySelector('main')?.textContent?.includes('Syncing planetfall') ?? false,
         to: request?.params?.[0]?.to ?? null,
@@ -2602,7 +2665,7 @@ for (const width of [1280, 390]) {
       interaction: {
         isTrusted: true,
         pointerType: width < 768 ? "touch" : "mouse",
-        target: "button:Build",
+        target: "button:Build Small Cargo now",
         type: "pointerdown",
       },
       path: "/shipyard",
@@ -2686,21 +2749,34 @@ for (const kind of ["planet", "moon"]) {
   test(`late ${kind} detail responses cannot replace the currently rendered body`, async () => {
     await loadInspectorFixture("/planet/9/9/9", 1280);
     await evaluate(`window.inspectorProof.beginDetailRace('${kind}')`);
-    await waitForExpression("JSON.stringify(window.inspectorProof.pendingDetailRequests()) === JSON.stringify(['7:1', '8:2'])");
+    try {
+      await waitForExpression("window.inspectorProof.pendingDetailRequests().includes('7:1') && window.inspectorProof.pendingDetailRequests().includes('8:2')");
+      // Force an unrelated old-app system read during the race: it must get
+      // the normal fixture payload without consuming either deferred response.
+      const unrelated = await evaluate("fetch('/local-api/universe/galaxies/9/systems/9?detail=full').then(response => response.json()).then(system => system.planets[0].name)");
+      assert.equal(unrelated, "Unrelated Gamma");
+      assert.deepEqual(await evaluate("window.inspectorProof.pendingDetailRequests()"), ["7:1", "8:2"]);
+      assert.deepEqual(await evaluate(`window.inspectorProof.requests.filter(request => request.includes('/universe/galaxies/7/systems/1?') || request.includes('/universe/galaxies/8/systems/2?')).sort()`), [
+        "/local-api/universe/galaxies/7/systems/1?detail=full",
+        "/local-api/universe/galaxies/8/systems/2?detail=full",
+      ]);
 
-    await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
-    const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
-    await waitForExpression(`document.querySelector('#app h2')?.textContent === '${expectedHeading}'`);
-    let text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
-    assert.match(text, kind === "moon" ? /8,002|8,003|8,004/ : /8,002|8,003|8,004|Level 8/);
-    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+      await evaluate("window.inspectorProof.resolveDetailRequest('8:2')");
+      const expectedHeading = kind === "moon" ? "Moon" : "Current Planet";
+      await waitForExpression(`document.querySelector('#app h2')?.textContent === '${expectedHeading}'`);
+      let text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+      assert.match(text, kind === "moon" ? /8,002|8,003|8,004/ : /8,002|8,003|8,004|Level 8/);
+      assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
 
-    await evaluate("window.inspectorProof.resolveDetailRequest('7:1')");
-    await delay(100);
-    text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
-    assert.match(text, new RegExp(expectedHeading));
-    assert.match(text, /8,002|8,003|8,004/);
-    assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+      await evaluate("window.inspectorProof.resolveDetailRequest('7:1')");
+      await delay(100);
+      text = await evaluate("document.querySelector('#app')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''");
+      assert.match(text, new RegExp(expectedHeading));
+      assert.match(text, /8,002|8,003|8,004/);
+      assert.doesNotMatch(text, /Stale|7,001|7,002|7,003/);
+    } finally {
+      await evaluate("window.inspectorProof.endDetailRace()");
+    }
   });
 }
 

@@ -35,6 +35,7 @@ type ShipyardActionState =
   | { status: "error"; label: string };
 
 interface ShipyardPageProps {
+  buildPlan?: import("./ProductionCatalog").ProductionCatalogProps<ShipKey>["buildPlan"];
   actionState: ShipyardActionState;
   canTransact: boolean;
   error: string | undefined;
@@ -74,6 +75,7 @@ export function shouldShowShipyardInitialLoader({
 
 export function ShipyardPage({
   actionState,
+  buildPlan,
   canTransact,
   error,
   loading,
@@ -116,6 +118,8 @@ export function ShipyardPage({
       ) : (
         <ProductionSection
           actionPending={isActionBusy(actionState)}
+          buildPlan={buildPlan}
+          productionKind="ship"
           canTransact={canTransact}
           emptyLabel="Select a ship to review costs, requirements, and production controls."
           items={(quantities) => shipProductionItems({
@@ -282,6 +286,7 @@ export function shipProductionItems({
       cost: totalCost,
       costAffordable: totalCost === undefined ? undefined : affordable,
       unitCost: baseCost,
+      unitCostRaw: chainShip?.cost,
       maxQuantity: maxAffordableProductionQuantity(resources, baseCost),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "At planet",

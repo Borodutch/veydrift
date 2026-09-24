@@ -33,7 +33,7 @@ describe("ProductionCatalog selected panel", () => {
       selectedKey: "rocketLauncher",
     });
     const actionButtons = elementNodes(catalog).filter((node) => node.type === "button");
-    const buildButton = actionButtons.find((node) => visibleText(node) === "Build");
+    const buildButton = actionButtons.find((node) => node.props["aria-label"] === "Build Rocket Launcher now");
     const supplyButton = actionButtons.find((node) => node.props["aria-label"] === "Supply missing resources for Rocket Launcher");
 
     expect(buildButton).toBeDefined();
@@ -113,7 +113,7 @@ describe("ProductionCatalog selected panel", () => {
       selectedKey: "rocketLauncher",
     });
 
-    const button = elementNodes(catalog).find((node) => node.type === "button" && visibleText(node) === "Build");
+    const button = elementNodes(catalog).find((node) => node.type === "button" && node.props["aria-label"] === "Build Rocket Launcher now");
 
     expect(button?.props.disabled).toBe(true);
     expect(visibleText(catalog)).toContain(productionQuantityValidationMessage);

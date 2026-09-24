@@ -9,7 +9,7 @@ import type { ChainMoonState } from "../walletFlow";
 import type { PlanetType } from "../types";
 import { formatCost, MAX_BUILDING_LEVEL } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
-import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
+import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -21,16 +21,13 @@ import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { MoonImage } from "./PlanetMoonIndicator";
 import {
-  adaptProductionItems,
-  maxAffordableProductionQuantity,
   ProductionSection,
   type ProductionCatalogItem,
-  type ProductionDetailSection,
   type ProductionQuantityInput,
   productionQueueViewModel,
-  scaleProductionCost,
 } from "./ProductionCatalog";
 import { defenseProductionItems } from "./DefensePage";
+import { shipProductionItems } from "./ShipyardPage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
 import { QueueProgressPanel } from "./QueueProgressPanel";
@@ -48,6 +45,8 @@ interface MoonPageProps {
   canBurnChicken?: boolean | undefined;
   constructionProgress?: ConstructionProgress | undefined;
   defenseProgress?: ConstructionProgress | undefined;
+  shipProgress?: ConstructionProgress | undefined;
+  buildPlan?: import("./ProductionCatalog").ProductionCatalogProps<string>["buildPlan"] | undefined;
   error?: string | undefined;
   loading?: boolean | undefined;
   moonActions?: MoonOverviewAction[] | undefined;
@@ -59,6 +58,7 @@ interface MoonPageProps {
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
+  onStartShip?: ((shipId: number, label: string, quantity: number) => void) | undefined;
   parentPlanetLabel?: string | undefined;
   parentPlanetType?: PlanetType | null | undefined;
   transactionUnavailableReason?: string | undefined;
@@ -78,6 +78,8 @@ export function MoonPage({
   canBurnChicken,
   constructionProgress,
   defenseProgress,
+  shipProgress,
+  buildPlan,
   error,
   loading,
   moonActions,
@@ -88,6 +90,7 @@ export function MoonPage({
   onOpenRequirement,
   onStartBuilding,
   onStartDefense,
+  onStartShip,
   parentPlanetLabel,
   parentPlanetType,
   transactionUnavailableReason,
@@ -119,6 +122,8 @@ export function MoonPage({
             canTransact={canTransact}
             constructionProgress={constructionProgress}
             defenseProgress={defenseProgress}
+            shipProgress={shipProgress}
+            buildPlan={buildPlan}
             moon={moon}
             moonActions={moonActions}
             moonState={moonState}
@@ -127,6 +132,7 @@ export function MoonPage({
             onOpenRequirement={onOpenRequirement}
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
+            onStartShip={onStartShip}
             parentPlanetLabel={parentPlanetLabel}
             parentPlanetType={parentPlanetType}
             transactionUnavailableReason={transactionUnavailableReason}
@@ -330,6 +336,8 @@ function MoonSystemsPanel({
   canTransact,
   constructionProgress,
   defenseProgress,
+  shipProgress,
+  buildPlan,
   moon,
   moonActions,
   moonState,
@@ -338,6 +346,7 @@ function MoonSystemsPanel({
   onOpenRequirement,
   onStartBuilding,
   onStartDefense,
+  onStartShip,
   parentPlanetLabel,
   parentPlanetType,
   transactionUnavailableReason,
@@ -346,6 +355,9 @@ function MoonSystemsPanel({
   canTransact?: boolean | undefined;
   constructionProgress?: ConstructionProgress | undefined;
   defenseProgress?: ConstructionProgress | undefined;
+  shipProgress?: ConstructionProgress | undefined;
+  buildPlan?: MoonPageProps["buildPlan"];
+  onStartShip?: MoonPageProps["onStartShip"];
   moon: NonNullable<ChainMoonState["moon"]>;
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
@@ -422,6 +434,11 @@ function MoonSystemsPanel({
       </section>
 
       <MoonShipyardSection
+        actionPending={pending}
+        canTransact={Boolean(canTransact)}
+        buildPlan={buildPlan}
+        progressState={shipProgress}
+        onStartShip={onStartShip}
         moonState={moonState}
         onSelectShip={setSelectedShipKey}
         selectedShipKey={selectedShipKey}
@@ -442,6 +459,7 @@ function MoonSystemsPanel({
       />
 
       <MoonDefenseSection
+        buildPlan={buildPlan}
         actionPending={pending}
         canTransact={Boolean(canTransact)}
         progressState={defenseProgress}
@@ -823,30 +841,37 @@ export function moonStructureLevelInfoColumns(_key: MoonBuilding["key"]): LevelI
   ];
 }
 
-function MoonShipyardSection({
-  moonState,
-  onSelectShip,
-  selectedShipKey,
-}: {
+function MoonShipyardSection({ actionPending, canTransact, buildPlan, moonState, onSelectShip, onStartShip, progressState, selectedShipKey }: {
+  actionPending: boolean;
+  canTransact: boolean;
+  buildPlan?: MoonPageProps["buildPlan"];
   moonState?: ChainMoonState | null | undefined;
   onSelectShip: (key: ShipKey) => void;
+  onStartShip?: MoonPageProps["onStartShip"];
+  progressState?: ConstructionProgress | undefined;
   selectedShipKey: ShipKey;
 }) {
   return (
     <ProductionSection
-      actionPending={false}
-      canTransact={false}
-      emptyLabel="No ships are stationed on this moon."
-      items={(quantities) => moonShipProductionItems({ moonState, quantities })}
-      onBuild={() => undefined}
+      actionPending={actionPending}
+      buildPlan={buildPlan}
+      productionKind="ship"
+      canTransact={canTransact}
+      emptyLabel="No moon ships are available yet."
+      items={(quantities) => moonShipProductionItems({ moonState, quantities, canTransact, actionPending })}
+      onBuild={(item) => onStartShip?.(item.id, item.label, item.quantity)}
       onSelect={onSelectShip}
+      queue={productionQueueViewModel(moonState?.shipQueue, shipyardCatalog)}
+      queueProgress={progressState}
+      queueTone="sky"
       selectedKey={selectedShipKey}
-      title="Stationed fleet"
+      title="Shipyard"
     />
   );
 }
 
 function MoonDefenseSection({
+  buildPlan,
   actionPending,
   canTransact,
   moonState,
@@ -858,6 +883,7 @@ function MoonDefenseSection({
   transactionUnavailableReason,
 }: {
   actionPending: boolean;
+  buildPlan?: MoonPageProps["buildPlan"];
   canTransact: boolean;
   moonState?: ChainMoonState | null | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -870,6 +896,9 @@ function MoonDefenseSection({
   return (
     <ProductionSection
       actionPending={actionPending}
+      buildPlan={buildPlan}
+      productionKind="defense"
+      showPlan={false}
       canTransact={canTransact}
       emptyLabel="No moon defenses are available yet."
       items={(quantities) => moonDefenseProductionItems({
@@ -900,46 +929,38 @@ function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<
   ];
 }
 
-export function moonShipProductionItems({
-  moonState,
-  quantities,
-}: {
+export function moonShipProductionItems({ moonState, quantities, canTransact = true, actionPending = false }: {
   moonState?: ChainMoonState | null | undefined;
   quantities: Record<string, ProductionQuantityInput>;
+  canTransact?: boolean;
+  actionPending?: boolean;
 }): ProductionCatalogItem<ShipKey>[] {
-  const moonShips = moonState?.ships ?? moonState?.fleet ?? [];
-
   const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
-  return adaptProductionItems<ShipKey, (typeof shipyardCatalog)[number]>(shipyardCatalog, quantities, (ship, { quantity, quantityValid }) => {
-    const chainShip = moonShips.find((item) => item.id === ship.id);
-    const count = chainShip?.count ?? 0;
-    const unitCost = toResources(chainShip?.cost);
-    const totalCost = unitCost && quantityValid ? scaleProductionCost(unitCost, quantity) : undefined;
-    const durationSeconds = chainShip?.durationSeconds === undefined
-      ? undefined
-      : chainShip.durationSeconds * quantity;
-
-    return {
-      actionLabel: "Stationed",
-      blockedReason: "Moon shipyard is a stationed fleet view. Build ships from a planet Shipyard.",
-      cost: totalCost,
-      unitCost,
-      maxQuantity: maxAffordableProductionQuantity(resources, unitCost),
-      ...(durationSeconds === undefined ? {} : { durationSeconds }),
-      countLabel: "On moon",
-      countValue: count,
-      detailSections: moonShipDetailSections({ count, durationSeconds, ship, totalCost, unitCost }),
-      detailNote: ship.description,
-      disabled: true,
-      groupLabel: moonShipGroupLabel(ship.group),
-      labelTone: count > 0 ? "normal" : "muted",
-      missing: [],
-      readOnly: true,
-      requirements: [],
-      status: count > 0 ? "ready" : "unavailable",
-      statusLabel: count > 0 ? "Stationed" : undefined,
-    };
-  }).filter((item) => (item.countValue ?? 0) > 0);
+  const levels = moonBuildingLevels(moonState);
+  const chainState = moonState ? {
+    wallet: moonState.wallet,
+    homePlanetId: moonState.moon?.exists ? moonState.homePlanetId : null,
+    productionAvailable: moonState.moonAvailable !== false,
+    resources: moonState.resources ?? null,
+    shipyardLevel: levels.shipyard,
+    naniteLevel: 0,
+    technologyLevels: moonState.technologyLevels ?? {},
+    ships: moonState.ships ?? [],
+    queue: moonState.shipQueue ?? null,
+  } : null;
+  return shipProductionItems({
+    actionPending, canTransact, productionAvailable: moonState?.moonAvailable !== false,
+    quantities, queue: moonState?.shipQueue, resources, shipyardLevel: levels.shipyard,
+    shipyardState: chainState,
+  }).filter(item => item.key !== "solarSatellite" && item.key !== "crawler").map(item => ({
+    ...item,
+    countLabel: "On moon",
+    detailSections: item.detailSections?.map(section => ({ ...section,
+      stats: section.stats.map(stat => stat.label === "At planet" ? { ...stat, label: "On moon" } : stat),
+    })),
+    blockedReason: !moonState?.moon?.exists ? "No selected moon" : item.blockedReason,
+    disabled: !moonState?.moon?.exists || item.disabled,
+  }));
 }
 
 export function moonDefenseProductionItems({
@@ -997,37 +1018,6 @@ export function moonDefenseProductionItems({
       labelTone: blockedReason ? "muted" : item.labelTone,
     };
   });
-}
-
-function moonShipDetailSections({
-  count,
-  durationSeconds,
-  ship,
-  totalCost,
-  unitCost,
-}: {
-  count: number;
-  durationSeconds: number | undefined;
-  ship: (typeof shipCatalog)[number];
-  totalCost: Resources | undefined;
-  unitCost: Resources | undefined;
-}): ProductionDetailSection[] {
-  return [{
-    title: "Stationed",
-    stats: [
-      { label: "On moon", value: count.toLocaleString("en-US") },
-      { label: "Unit", value: ship.group === "civil" ? "Civil ship" : ship.group === "combat" ? "Combat ship" : "Special unit" },
-      { label: "Total cost", value: totalCost ? formatCost(totalCost) : "-", wide: true },
-      { label: "Per unit", value: unitCost ? formatCost(unitCost) : "-", wide: true },
-      ...(durationSeconds === undefined ? [] : [{ label: "Build time", value: formatDuration(durationSeconds), wide: true }]),
-    ],
-  }];
-}
-
-function moonShipGroupLabel(group: (typeof shipCatalog)[number]["group"]): string {
-  if (group === "civil") return "Civil and economy";
-  if (group === "combat") return "Combat ships";
-  return "Satellites and specials";
 }
 
 function toResources(resources: ChainMoonState["resources"] | ChainMoonState["defenses"][number]["cost"] | null | undefined): Resources | undefined {
@@ -1096,7 +1086,7 @@ function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undef
   const descriptions = new Map([
     ["Lunar Base", "Adds moon fields so more lunar structures can be built."],
     ["Robotics Factory", "Speeds moon facilities and unlocks the moon Shipyard."],
-    ["Shipyard", "Builds moon defenses from the lunar queue."],
+    ["Shipyard", "Builds moon ships and defenses from lunar queues."],
     ["Jump Gate", "Moves fleets between owned moons when the gate is ready."],
   ]);
   const labels = [
@@ -1458,7 +1448,7 @@ function moonStructureLevelText(building: MoonBuilding): string {
 function moonBuildingEffect(key: ChainMoonState["buildings"][number]["key"]): string {
   if (key === "lunarBase") return "Adds 3 gross fields and consumes 1 field.";
   if (key === "roboticsFactory") return "Reduces moon facility build time and unlocks the moon Shipyard.";
-  if (key === "shipyard") return "Unlocks and speeds moon defense construction.";
+  if (key === "shipyard") return "Unlocks and speeds moon ship and defense construction.";
   return "Enables fleet jumps between owned moons.";
 }
 
@@ -1466,7 +1456,7 @@ function moonStructureLevelEffect(key: ChainMoonState["buildings"][number]["key"
   if (level <= 0) return "Not built";
   if (key === "lunarBase") return `+${level * 3} gross fields`;
   if (key === "roboticsFactory") return `Construction speed x${level + 1}`;
-  if (key === "shipyard") return `Defense production speed x${level + 1}`;
+  if (key === "shipyard") return `Production speed x${level + 1}`;
   return "Moon-to-moon fleet jumps enabled";
 }
 
