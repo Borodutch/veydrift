@@ -419,8 +419,8 @@ function ProductionBuildPlan({ body, context, rows, busy, unknown, ready, error,
           </div>
         ))}
         <div className="ml-auto flex gap-1">
-          <button aria-label={unknown ? "Retry build plan after checking wallet activity" : "Confirm build plan"} title={unknown ? "Check wallet activity first. Another request may duplicate this build." : "Confirm build plan"} className="grid h-7 w-7 place-items-center rounded border border-cyan-300/30 text-cyan-200 disabled:opacity-40" disabled={busy || !ready || Boolean(plan.reason)} onClick={onConfirm} type="button"><Check aria-hidden="true" size={18} /></button>
-          <button aria-label="Clear build plan" title="Clear build plan" className="grid h-7 w-7 place-items-center rounded border border-white/10 text-slate-300 disabled:opacity-40" disabled={busy} onClick={onClear} type="button"><X aria-hidden="true" size={18} /></button>
+          <button aria-label={unknown ? "Retry build plan after checking wallet activity" : "Confirm build plan"} title={unknown ? "Check wallet activity first. Another request may duplicate this build." : "Confirm build plan"} className="grid h-11 w-11 place-items-center rounded text-cyan-200 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy || !ready || Boolean(plan.reason)} onClick={onConfirm} type="button"><span className="grid h-7 w-7 place-items-center rounded border border-cyan-300/30"><Check aria-hidden="true" size={18} /></span></button>
+          <button aria-label="Clear build plan" title="Clear build plan" className="grid h-11 w-11 place-items-center rounded text-slate-300 disabled:opacity-40 sm:h-9 sm:w-9" disabled={busy} onClick={onClear} type="button"><span className="grid h-7 w-7 place-items-center rounded border border-white/10"><X aria-hidden="true" size={18} /></span></button>
         </div>
       </div>
       {unknown ? <p role="alert" className="mt-1 text-xs text-amber-300">The previous request may have been sent. Check wallet activity and reconnect if needed before retrying; retry asks for consent and could duplicate the build.</p> : null}

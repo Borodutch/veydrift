@@ -79,7 +79,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
       const pair = (q, p, props) => ({ queue: styles(q, props), plan: styles(p, props) });
       const buttons = [...plan.querySelectorAll('button')].map(button => {
         const box = rect(button);
-        return { ...box, label: button.getAttribute('aria-label'), hit: document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button };
+        return { ...box, visual: rect(button.firstElementChild), label: button.getAttribute('aria-label'), hit: document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button };
       });
       const children = [...plan.children[1].children].map(rect);
       return {
@@ -94,33 +94,54 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
         text: plan.textContent,
       };
     };
-    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 390, 320]) {
-      await load(new URLSearchParams({ body, kind }), width);
-      const result = await evaluate('(' + inspect.toString() + ')()');
-      const label = body + '-' + kind + '-' + width;
-      measurements.push({ label, ...result });
+    function assertSizing(result, label, width) {
       for (const field of ['heading', 'quantity', 'eta', 'thumbnail', 'panel', 'row', 'item']) {
         assert.deepEqual(result[field].plan, result[field].queue, label + ': ' + field);
       }
       assert.equal(result.overflow, false, label + ': horizontal overflow');
-      if (width === 1280) assert.equal(result.plan.height, result.queue.height, label + ': panel height');
+      // Larger accessible targets add 8px to the otherwise Queue-sized desktop row.
+      if (width === 1280) assert.equal(result.plan.height, result.queue.height + 8, label + ': panel height');
       for (const button of result.buttons) {
-        assert.ok(button.width >= 24 && button.height >= 24, label + ': minimum 24px hit target');
+        const action = !button.label.startsWith('Remove ');
+        const size = action ? (width < 640 ? 44 : 36) : 24;
+        assert.equal(button.width, size, label + ': target width ' + button.label);
+        assert.equal(button.height, size, label + ': target height ' + button.label);
+        if (action) {
+          assert.equal(button.visual.width, 28, label + ': compact action visual width');
+          assert.equal(button.visual.height, 28, label + ': compact action visual height');
+        }
         assert.ok(button.hit, label + ': unobstructed ' + button.label);
+        assert.ok(button.x >= result.plan.x && button.y >= result.plan.y
+          && button.x + button.width <= result.plan.x + result.plan.width
+          && button.y + button.height <= result.plan.y + result.plan.height, label + ': target inside panel ' + button.label);
       }
-      for (let i = 0; i < result.children.length; i++) for (let j = i + 1; j < result.children.length; j++) {
-        const a = result.children[i], b = result.children[j];
-        assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, label + ': items/actions overlap');
+      // Top-level items vs action group, and every individual button vs its siblings.
+      for (const boxes of [result.children, result.buttons]) {
+        for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i], b = boxes[j];
+          assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, label + ': items/actions overlap');
+        }
       }
+    }
+    async function record(label, width) {
+      const result = await evaluate('(' + inspect.toString() + ')()');
+      measurements.push({ label, ...result });
+      assertSizing(result, label, width);
       if (artifacts) {
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
-    // Maximum quantities/durations/costs wrap, without losing controls or overflowing.
-    await load('body=moon&kind=ship&large=1', 320);
-    assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
-    if (artifacts) writeFileSync(join(artifacts, 'moon-ship-320-large.png'), Buffer.from((await send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 390, 320]) for (const count of [1, 4]) {
+      await load(new URLSearchParams({ body, kind, count: String(count) }), width);
+      assert.equal(await evaluate('document.querySelectorAll("[data-build-plan] button[aria-label^=Remove]").length'), count);
+      await record(body + '-' + kind + '-' + width + (count === 1 ? '-one' : ''), width);
+    }
+    // Apply the same style and complete hit-geometry checks to maximum-size content.
+    for (const width of [320, 390, 1280]) {
+      await load('body=moon&kind=ship&large=1', width);
+      await record('moon-ship-' + width + '-large', width);
+    }
     // Real pointer hit-testing and keyboard activation, with all submission disconnected.
     await load('body=planet&kind=defense', 390);
     const remove = await evaluate('(() => { const b = document.querySelector("[data-build-plan] button").getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })()');
