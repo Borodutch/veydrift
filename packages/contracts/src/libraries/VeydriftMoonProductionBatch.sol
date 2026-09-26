@@ -8,7 +8,7 @@ import {VeydriftMoonDefenseBacklog} from "./VeydriftMoonDefenseBacklog.sol";
 /// @notice Typed, bounded MoonSystem self-delegation preserves the original acting player.
 library VeydriftMoonProductionBatch {
     error InvalidQuantity();
-    uint8 private constant MAX_ORDERS = 4;
+    uint8 private constant MAX_ORDERS = 15;
     uint8 private constant MAX_BACKLOG = 16;
 
     function execute(uint256 planetId, ProductionOrder[] calldata orders) public {

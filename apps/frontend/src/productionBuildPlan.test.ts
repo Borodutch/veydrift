@@ -81,6 +81,23 @@ describe("production build plan", () => {
     expect(maxAddableProduction(ctx, [], "defense", anti.id)).toBe(10);
     expect(maxAddableProduction(ctx, [{ kind: "defense", id: anti.id, quantity: 7 }], "defense", anti.id)).toBe(3);
   });
+  test.each(["planet", "moon"] as const)("%s accepts 15 rows, counts shared lanes and rejects row 16", body => {
+    const ctx = context("1000000000000000000", body);
+    ctx.ships = [item(ship, "1")];
+    ctx.defenses = [item(defense, "1")];
+    const rows = Array.from({ length: 15 }, (_, index) => ({ kind: index % 2 ? "defense" as const : "ship" as const, id: index % 2 ? defense.id : ship.id, quantity: 1 }));
+    expect(evaluateProductionPlan(rows, ctx).reason).toBeUndefined();
+    expect(encodeProductionBatchCall(body, "7", rows)).toMatch(/^0x[0-9a-f]+$/);
+    expect(maxAddableProduction(ctx, rows, "ship", ship.id)).toBe(0);
+    expect(evaluateProductionPlan([...rows, rows[0]!], ctx).reason).toMatch(/Maximum 15 orders/);
+    expect(() => encodeProductionBatchCall(body, "7", [...rows, rows[0]!])).toThrow("Invalid build plan");
+    expect(maxAddableProduction(ctx, rows.slice(1), "ship", ship.id)).toBeGreaterThan(0);
+    ctx.shipBacklogLength = 9;
+    expect(evaluateProductionPlan(rows, ctx).reason).toMatch(/backlog is full/);
+    expect(maxAddableProduction(ctx, rows.slice(1), "ship", ship.id)).toBe(0);
+    ctx.shipBacklogLength = 8;
+    expect(evaluateProductionPlan(rows, ctx).reason).toBeUndefined();
+  });
   test("malformed, non-buildable moon units and empty plan cannot encode", () => {
     const ctx = context();
     expect(evaluateProductionPlan([{ kind: "ship", id: ship.id, quantity: 0 }], ctx).reason).toBe("Invalid production order");

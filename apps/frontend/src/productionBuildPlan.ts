@@ -7,7 +7,7 @@ import type { WriteTransactionPhase } from "./transactionActionGate";
 export type ProductionOrder = { kind: "ship" | "defense"; id: number; quantity: number };
 export type ProductionBody = "planet" | "moon";
 type PlanItem = Pick<ProductionCatalogItem, "id" | "label" | "asset" | "unitCostRaw" | "durationSeconds" | "missing" | "status" | "thumbnailStyle">;
-export const MAX_PRODUCTION_ORDERS = 4; // Must match the on-chain bound; verify measured gas before release.
+export const MAX_PRODUCTION_ORDERS = 15; // Must match the on-chain bound; verify measured gas before release.
 const MAX_QUANTITY = 0xffffffff;
 type Budget = { metal: bigint; crystal: bigint; deuterium: bigint };
 const zero = (): Budget => ({ metal: 0n, crystal: 0n, deuterium: 0n });
