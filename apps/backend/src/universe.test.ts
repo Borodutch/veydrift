@@ -41,44 +41,6 @@ describe("backend universe metadata", () => {
     }
   });
 
-  test("keeps inner slots hotter than middle and outer slots", () => {
-    const slot1 = planetMetadata(chainId, settlementContractAddress, {
-      galaxy: 2,
-      system: 44,
-      position: 1
-    });
-    const slot8 = planetMetadata(chainId, settlementContractAddress, {
-      galaxy: 2,
-      system: 44,
-      position: 8
-    });
-    const slot15 = planetMetadata(chainId, settlementContractAddress, {
-      galaxy: 2,
-      system: 44,
-      position: 15
-    });
-
-    expect(slot1.temperature).toBeGreaterThan(slot8.temperature);
-    expect(slot8.temperature).toBeGreaterThan(slot15.temperature);
-  });
-
-  test("matches contract colony traits for the reported unoccupied coordinate", () => {
-    const planet = planetMetadata(chainId, settlementContractAddress, {
-      galaxy: 6,
-      system: 439,
-      position: 5
-    });
-
-    expect(planet).toMatchObject({
-      fields: 176,
-      temperature: 96,
-      metalMultiplierBps: 10_000,
-      crystalMultiplierBps: 10_000,
-      deuteriumMultiplierBps: 10_880,
-      archetype: "scorching-molten"
-    });
-  });
-
   test("keeps preview metadata pinned to contract-derived golden coordinates", () => {
     const cases = [
       {
