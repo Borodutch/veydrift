@@ -12,7 +12,9 @@ describe("authoritative mission eligibility", () => {
   test("uses the exact permissionless entrypoint and never sends a transaction", async () => {
     const calls: Array<[string, unknown[]]> = [];
     const transport = { async request(method: string, params: unknown[]) {
-      calls.push([method, params]); return "0x";
+      calls.push([method, params]);
+      return (params[0] as { data: string }).data.startsWith("0xce02abe2")
+        ? "0x" + [1n, 0n, 1n].map(n => n.toString(16).padStart(64, "0")).join("") : "0x";
     } } as Pick<HttpJsonRpcTransport, "request">;
     const config: BackendConfig = {
       chainId: 84532, deploymentMode: "test", qaSyntheticStationedDefenders: false,
@@ -25,9 +27,30 @@ describe("authoritative mission eligibility", () => {
     expect(await reader.canResolveFleetMission(93790n, "arrival")).toBe(true);
     expect(await reader.canResolveFleetMission(93742n, "return")).toBe(true);
     expect(calls).toEqual([
+      ["eth_call", [{ to: config.gameContractAddress, data: "0xce02abe2" + 93790n.toString(16).padStart(64, "0") }, "latest"]],
       ["eth_call", [{ to: "0x1111111111111111111111111111111111111111", data: "0xde09e7cf" + 93790n.toString(16).padStart(64, "0") }, "latest"]],
+      ["eth_call", [{ to: config.gameContractAddress, data: "0xce02abe2" + 93742n.toString(16).padStart(64, "0") }, "latest"]],
       ["eth_call", [{ to: "0x1111111111111111111111111111111111111111", data: "0xc2472852" + 93742n.toString(16).padStart(64, "0") }, "latest"]]
     ]);
+  });
+
+  test("ordering proof fails closed even when the settlement simulation would succeed", async () => {
+    const config: BackendConfig = {
+      chainId: 84532, deploymentMode: "test", qaSyntheticStationedDefenders: false,
+      gameContractAddress: "0x1111111111111111111111111111111111111111", indexDbPath: ":memory:",
+      randomnessCommitmentStorePath: ".data/test-randomness.json", indexFromBlock: 0n,
+      missionResolutionEnabled: false, resourceTokenAddresses: {}, rpcSource: "custom-url",
+      rpcUrl: "https://rpc.invalid", wsRpcSource: "missing"
+    };
+    for (const proof of ["0x", "0x01", ...[[0n, 42n, 1n], [0n, 0n, 1n], [1n, 0n, 0n]].map(words =>
+      "0x" + words.map(n => n.toString(16).padStart(64, "0")).join(""))]) {
+      for (const leg of ["arrival", "return"] as const) {
+        let calls = 0;
+        const reader = new VeydriftGameReader(config, { async request<T>() { calls++; return proof as T; } });
+        expect(await reader.canResolveFleetMission(42n, leg)).toBe(false);
+        expect(calls).toBe(1);
+      }
+    }
   });
 
   test("reverted earlier-event dependencies, unknown readers and transport errors fail closed", async () => {

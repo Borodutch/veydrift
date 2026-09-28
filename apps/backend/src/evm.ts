@@ -2208,13 +2208,26 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async canResolveFleetMission(missionId: bigint, leg: "arrival" | "return"): Promise<boolean> {
-    // Execute the actual permissionless guard without signing or changing state.
+    // An empty successful simulation may only prepare a bounded chronology scan.
+    // Require the authoritative ordering proof before checking runtime/randomness guards.
+    const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
+    if (!/^0x[0-9a-fA-F]{192}$/.test(proof)) return false;
+    const words = splitWords(proof);
+    if (decodeUintWord(wordAt(words, 0)) !== 1n || decodeUintWord(wordAt(words, 2)) !== 1n) return false;
     const result = await this.call(leg === "arrival" ? "0xde09e7cf" : "0xc2472852", [encodeUint(missionId)]);
     return result === "0x";
   }
 
+  async isFleetChronologyInventoryReady(missionId: bigint): Promise<boolean> {
+    // Legacy backfill belongs to the release owner. Do not burn resolver gas scanning it four
+    // historical IDs at a time; unfinished body scans, however, must be allowed to progress.
+    const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
+    return /^0x[0-9a-fA-F]{192}$/.test(proof)
+      && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n;
+  }
+
   async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
-    const summaries = await this.readFleetMissionSummaries();
+    const summaries = await this.readFleetMissionSummaries(false);
     return summaries
       .filter((mission) =>
         mission.needsResolution
@@ -2238,12 +2251,11 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listReturnableFleetMissions(): Promise<ReturnableFleetMission[]> {
-    const summaries = await this.readFleetMissionSummaries();
+    const summaries = await this.readFleetMissionSummaries(false);
     const nowSeconds = Math.floor(Date.now() / 1_000);
     return summaries
       .filter((mission) =>
         (mission.status === "Returning" || mission.status === "Recalled")
-          && mission.resolutionEligible === true
           && Number(mission.returnAt) > 0
           && Number(mission.returnAt) <= nowSeconds
       )
@@ -5107,7 +5119,7 @@ export class VeydriftGameReader implements ChainReader {
     return this.callContract(this.settlementContractAddress, selector, args);
   }
 
-  private async readFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
+  private async readFleetMissionSummaries(publicReadiness = true): Promise<FleetMissionSummary[]> {
     const missionLogs = await this.getLogs({
       address: this.gameContractAddress,
       fromBlock: toQuantity(this.indexFromBlock),
@@ -5139,7 +5151,9 @@ export class VeydriftGameReader implements ChainReader {
       ...mission,
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
-    await applyMissionEligibility({ missions: summaries }, this, nowSeconds);
+    // Funded resolver candidates include bounded preparation work, not just UI-ready legs.
+    // Preserve due-time/randomness filtering above; the write boundary enforces migration readiness.
+    if (publicReadiness) await applyMissionEligibility({ missions: summaries }, this, nowSeconds);
     return summaries;
   }
 

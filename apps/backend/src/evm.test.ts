@@ -2321,16 +2321,33 @@ describe("fleet mission resolution scheduling", () => {
     });
   }
 
-  function readerFor(logs: RpcLog[]): VeydriftGameReader {
+  function readerFor(logs: RpcLog[], eligible = true, inventoryReady = true): VeydriftGameReader {
     return new VeydriftGameReader(readerConfig, {
-      async request<T>(method: string): Promise<T> {
-        if (method === "eth_call") return "0x" as T; // fixture legs pass the authoritative simulation
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_call") return ((params[0] as { data: string }).data.startsWith("0xce02abe2")
+          ? dataWords([word(BigInt(eligible)), word(0n), word(BigInt(inventoryReady))]) : "0x") as T; // fixture proof and runtime simulation
         if (method === "eth_blockNumber") return "0x200" as T;
         expect(method).toBe("eth_getLogs");
         return logs as T;
       }
     });
   }
+
+  test("discovers due preparation legs without advertising public readiness or skipping legacy migration", async () => {
+    for (const inventoryReady of [false, true]) {
+      const reader = readerFor([
+        ...outboundMissionLogs({ missionId: 1n, missionType: 0n, arrivalAt: pastSeconds }),
+        ...outboundMissionLogs({ missionId: 2n, missionType: 0n, arrivalAt: pastSeconds }),
+        returningMissionLog({ missionId: 2n, missionType: 0n, returnAt: pastSeconds })
+      ], false, inventoryReady);
+      expect((await reader.listResolvableFleetMissions()).map(m => m.missionId)).toEqual(["1"]);
+      expect((await reader.listReturnableFleetMissions()).map(m => m.missionId)).toEqual(["2"]);
+      for (const mission of await reader.listFleetMissionSummaries()) {
+        expect(mission).toMatchObject({ needsResolution: false, resolutionEligible: false });
+        expect(await reader.isFleetChronologyInventoryReady(BigInt(mission.missionId))).toBe(inventoryReady);
+      }
+    }
+  });
 
   test("includes transport, deploy, missile, and DefenseHold arrivals while excluding unsupported and not-yet-due missions", async () => {
     const reader = readerFor([
@@ -2418,6 +2435,7 @@ describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () =
       {
         async request<T>(method: string, params?: unknown): Promise<T> {
           if (method === "eth_call") {
+            if ((params as [{ data: string }])[0].data.startsWith("0xce02abe2")) return dataWords([word(1n), word(0n), word(1n)]) as T;
             if (engineLogs.some(log => log.topics[1] === topic(42n))) return "0x" as T;
             throw new Error("PendingRandomness");
           }
