@@ -143,3 +143,51 @@ test("allows only the exact Vite chunk-size explanation, not other diagnostics",
   assert.equal(outputContainsFlaggedOutput("warning[unsafe-typecast]: typecasts that can truncate values should be checked"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
 });
+
+test("tolerates only the Vite dev-proxy noise from backend-less browser tests", () => {
+  const noise = [
+    "\u001b[2m10:42:55 AM\u001b[22m \u001b[31m\u001b[1m[vite]\u001b[22m\u001b[39m \u001b[31mhttp proxy error: /missions?status=active&live=1\u001b[39m",
+    "Error: connect ECONNREFUSED 127.0.0.1:4000",
+    "✔ desktop sidebar commits the reported Overview (422.66ms)",
+  ].join("\n");
+  assert.equal(outputContainsFlaggedOutput(noise), false);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: connect ECONNREFUSED 127.0.0.1:5432"), true);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: request failed with status 500"), true);
+});
+
+import { planChecks, CHECK_GROUPS } from "./ci-run-scoped-checks.mjs";
+import { shardTestFiles, parseShard } from "../packages/contracts/scripts/run-tests-separately.mjs";
+
+const FULL_SCOPE = { frontend: true, backend: true, universe: true, contracts: true, storage_layout: true, full_build: true };
+const labels = (plan) => plan.map((step) => step.label);
+
+test("parallel check groups partition the full sequential plan", () => {
+  const all = labels(planChecks(FULL_SCOPE));
+  const grouped = CHECK_GROUPS.filter((group) => group !== "all")
+    .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
+    .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
+  assert.deepEqual([...grouped].sort(), [...all].sort());
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-test")), ["contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "build")), ["frontend-precheck", "build"]);
+  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => ["build", "contracts-test", "frontend-touch-browser"].includes(label)));
+  assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
+});
+
+test("groups with nothing in scope plan no checks", () => {
+  const docsOnly = { frontend: false, backend: false, universe: false, contracts: false, storage_layout: false, full_build: false };
+  assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
+  for (const group of ["build", "browser", "contracts-test"]) assert.deepEqual(planChecks(docsOnly, group), []);
+});
+
+test("contract test shards cover every file exactly once and isolate the largest file", () => {
+  const counts = { "Game.t.sol": 306, "Moon.t.sol": 82, "Alliance.t.sol": 51, "A.t.sol": 17, "B.t.sol": 16, "C.t.sol": 14, "D.t.sol": 1 };
+  const files = Object.keys(counts);
+  const shards = [1, 2, 3].map((index) => shardTestFiles(files, counts, index, 3));
+  assert.deepEqual(shards.flat().sort(), [...files].sort());
+  assert.deepEqual(shards[0], ["Game.t.sol"]);
+  assert.deepEqual(parseShard("2/3"), { index: 2, count: 3 });
+  assert.equal(parseShard(""), null);
+  assert.throws(() => shardTestFiles(files, counts, 4, 3), /invalid contract test shard/);
+  assert.throws(() => parseShard("two"), /must look like/);
+});
