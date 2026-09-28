@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PublicClient, WalletClient } from "viem";
+import { createPublicClient, custom, encodeFunctionData, parseAbi, type PublicClient, type WalletClient } from "viem";
 import type { BackendConfig } from "./config";
 import { VeydriftGameReader } from "./evm";
 import {
@@ -384,6 +384,7 @@ describe("MissionResolutionService", () => {
     const broadcasts: string[] = [];
     let pendingNonce = 7;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async getTransactionReceipt() { return { status: "success" }; },
@@ -742,6 +743,129 @@ describe("MissionResolutionService", () => {
 
 describe("ViemMissionResolutionChainClient", () => {
   for (const leg of ["arrival", "return"] as const) {
+    for (const mode of ["private-key", "unlocked"] as const) {
+      test(`${leg} ${mode} simulates exact latest entrypoint before submit/replacement and fails closed`, async () => {
+        const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+        const from = mode === "private-key" ? account.address : config.missionResolverAddress!;
+        const functionName = leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
+        const data = encodeFunctionData({
+          abi: parseAbi(["function resolveFleetMission(uint256)", "function completeFleetMissionReturn(uint256)"]),
+          functionName, args: [77n]
+        });
+        const firstHash = `0x${"a".repeat(64)}`;
+        const replacementHash = `0x${"b".repeat(64)}`;
+        let blocked = true;
+        let inventoryReady = false;
+        let settled = false;
+        let latestNonce = 7;
+        let pendingNonce = 7;
+        const simulations: unknown[][] = [];
+        const writes: number[] = [];
+        const events: string[] = [];
+        // A real Viem call action proves account -> RPC from and explicit latest serialization,
+        // without depending on a reader's optional/custom transport or any signing action.
+        const rpcClient = createPublicClient({ transport: custom({
+          async request({ method, params }) {
+            expect(method).toBe("eth_call");
+            events.push("simulate");
+            simulations.push(params as unknown[]);
+            if (blocked) throw new Error("execution reverted: earlier attack randomness unavailable");
+            return "0x";
+          }
+        }, { retryCount: 0 }) });
+        const publicClient = {
+          call: rpcClient.call,
+          async getStorageAt() { return "0x00"; },
+          async getTransactionCount({ blockTag }: { blockTag: string }) {
+            return blockTag === "latest" ? latestNonce : pendingNonce;
+          },
+          async getTransaction() { return { maxFeePerGas: 80n, maxPriorityFeePerGas: 8n }; },
+          async getBlock() { return { baseFeePerGas: 90n }; },
+          async estimateFeesPerGas() { return { maxFeePerGas: 90n, maxPriorityFeePerGas: 12n }; },
+          async getTransactionReceipt() { return { status: "success" }; },
+          async waitForTransactionReceipt({ hash }: { hash: string }) {
+            if (hash === firstHash) throw new Error("receipt RPC timed out");
+            latestNonce = pendingNonce;
+            return { status: "success" };
+          }
+        };
+        const broadcast = (nonce: number) => {
+          events.push("broadcast");
+          writes.push(nonce);
+          pendingNonce = nonce + 1;
+          return writes.length === 1 ? firstHash : replacementHash;
+        };
+        const walletClient = { async writeContract(input: { nonce: number }) { return broadcast(input.nonce); } };
+        const reader = {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async isFleetChronologyInventoryReady() { events.push("migration"); return inventoryReady; },
+          async getCanonicalFleetMission() {
+            return { status: settled ? "Returned" : leg === "arrival" ? "Outbound" : "Returning" } as never;
+          }
+        };
+        const coordinator = new ResolverTransactionCoordinator(":memory:");
+        const makeClient = () => new ViemMissionResolutionChainClient(
+          reader, config.gameContractAddress!, mode === "private-key" ? account : from,
+          publicClient as unknown as PublicClient, walletClient as unknown as WalletClient,
+          { id: config.chainId } as never, config.rpcUrl, coordinator
+        );
+        // Recreate the client on each retry to exercise durable attempt reuse.
+        const submit = () => makeClient()[functionName]("77");
+        const previousFetch = globalThis.fetch;
+        if (mode === "unlocked") globalThis.fetch = (async (_input, init) => {
+          const payload = JSON.parse(String(init?.body));
+          expect(payload.method).toBe("eth_sendTransaction");
+          expect(payload.params[0]).toMatchObject({ from, to: config.gameContractAddress, data });
+          return new Response(JSON.stringify({ result: broadcast(Number(BigInt(payload.params[0].nonce))) }));
+        }) as typeof fetch;
+        try {
+          await expect(submit()).rejects.toThrow("release migration required");
+          expect(simulations).toHaveLength(0);
+          inventoryReady = true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([]);
+          expect([latestNonce, pendingNonce]).toEqual([7, 7]);
+          const call = publicClient.call;
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).rejects.toThrow("receipt RPC timed out");
+          expect(writes).toEqual([7]);
+          blocked = true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([7]); // no replacement broadcast or extra nonce
+          expect([latestNonce, pendingNonce]).toEqual([7, 8]);
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([7]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(false);
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]); // empty simulation/receipt only progressed a scan
+          settled = true;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
+          expect(simulations).toHaveLength(6);
+          for (const params of simulations) expect(params).toEqual([
+            { from, to: config.gameContractAddress, data }, "latest"
+          ]);
+          for (let i = 0; i < events.length; i++) {
+            if (events[i] === "simulate") expect(events[i - 1]).toBe("migration");
+            if (events[i] === "broadcast") expect(events[i - 1]).toBe("simulate");
+          }
+        } finally { globalThis.fetch = previousFetch; }
+      });
+    }
+  }
+  for (const leg of ["arrival", "return"] as const) {
     test(`${leg} canonical completion rejects missing/unknown status and retains active legs`, async () => {
       let status: string | null = null;
       const client = new ViemMissionResolutionChainClient({
@@ -787,6 +911,7 @@ describe("ViemMissionResolutionChainClient", () => {
         status: settled ? (leg === "arrival" ? "Returning" : "Returned") : (leg === "arrival" ? "Outbound" : "Returning")
       } as never);
       const publicClient = {
+        async call() { return { data: "0x" }; },
         async getTransactionCount() { return pendingNonce; },
         async getStorageAt() { return "0x00"; },
         async getTransactionReceipt() { return { status: "success" }; },
@@ -850,6 +975,7 @@ describe("ViemMissionResolutionChainClient", () => {
       }
     };
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async getTransactionReceipt() { return { status: "success" }; },
@@ -888,6 +1014,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let peakBroadcasts = 0;
     let pendingNonce = 7;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -947,6 +1074,7 @@ describe("ViemMissionResolutionChainClient", () => {
     });
     expect(await reader.canResolveFleetMission(45237n, "arrival")).toBe(false);
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount(input: { blockTag: "latest" | "pending" }) {
         return input.blockTag === "latest" ? latestNonce : pendingNonce;
       },
@@ -1011,6 +1139,7 @@ describe("ViemMissionResolutionChainClient", () => {
 
     try {
       const publicClient = {
+        async call() { return { data: "0x" }; },
         async getTransactionCount() { return 7 + transactions.length; },
         async getStorageAt() { return `0x${"0".repeat(64)}`; },
         async waitForTransactionReceipt() { return { status: "success" }; }
@@ -1044,6 +1173,7 @@ describe("ViemMissionResolutionChainClient", () => {
   test("reads the canonical game pause from the fixed proxy storage slot", async () => {
     let requestedSlot: string | undefined;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt(input: { slot: string }) {
         requestedSlot = input.slot;
         return `0x${"1".padStart(64, "0")}`;
@@ -1072,6 +1202,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let nonceReads = 0;
     let broadcasts = 0;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt() { return `0x${"1".padStart(64, "0")}`; },
       async getTransactionCount() { nonceReads += 1; return 7; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -1202,6 +1333,7 @@ describe("moon chance resolution", () => {
     let nonceReads = 0;
     let pendingNonce = 4;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
         ? [16621n, purpose, finalized, 0n]
         : { requester, purposeHash: requestPurpose, createdAt: 1n, fulfilledAt, randomWord: 19n },

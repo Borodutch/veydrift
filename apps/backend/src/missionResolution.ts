@@ -796,11 +796,20 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       args: [BigInt(missionId)]
     });
     const preflight = async () => {
-      // UI eligibility is intentionally stricter: a successful receipt may only advance a body
-      // scan. Permit that progress, but never replace the mandatory release-owned legacy backfill.
-      if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyInventoryReady?.(
-        BigInt(missionId)
-      )) throw new Error(`fleet chronology inventory is not ready for ${missionId}; release migration required`);
+      if (functionName === "finalizeMoonChance") return;
+      if (!await this.reader.isFleetChronologyInventoryReady?.(BigInt(missionId))) {
+        throw new Error(`fleet chronology inventory is not ready for ${missionId}; release migration required`);
+      }
+      if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
+      // Migration readiness alone does not exclude a chronological/randomness revert. Simulate
+      // the exact funded entrypoint under the nonce lease before both submit and replacement.
+      // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
+      await this.publicClient.call({
+        account: typeof this.sender === "string" ? this.sender : this.sender.address,
+        to: targetAddress,
+        data,
+        blockTag: "latest"
+      });
     };
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
