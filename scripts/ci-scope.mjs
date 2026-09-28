@@ -125,7 +125,8 @@ export function computeScope(options = {}) {
     changed_count: files.length,
   };
 
-  if (eventName !== "pull_request" && eventName !== "local") {
+  // CI must validate the same full tree before and after merge; only local preflight is scoped.
+  if (eventName !== "local") {
     scope.frontend = true;
     scope.backend = true;
     scope.universe = true;
@@ -144,6 +145,7 @@ export function computeScope(options = {}) {
   }
 
   scope.storage_layout =
+    eventName !== "local" ||
     repoWide ||
     anyMatch(
       files,
