@@ -1,5 +1,6 @@
 import { GameApiError } from "./gameApiError";
 import { defenseCatalog, shipyardCatalog } from "./playableMvp";
+import { MAX_PRODUCTION_ORDERS } from "./productionBuildPlan";
 import { diagnosticRoute } from "./requestDiagnostics";
 import type * as Api from "../../../packages/api-types/src/index";
 import { sdk } from "@farcaster/miniapp-sdk";
@@ -3558,7 +3559,7 @@ export async function sendStartShipProductionTransaction(provider: Eip1193Provid
 
 /** The typed production ABI is shared by Game and MoonSystem; no arbitrary-call payloads. */
 export function encodeProductionBatchCall(body: "planet" | "moon", planetId: string, orders: readonly { kind: "ship" | "defense"; id: number; quantity: number }[]): string {
-  if (!/^(0|[1-9]\d*)$/.test(planetId) || orders.length < 1 || orders.length > 4) throw new Error("Invalid build plan");
+  if (!/^(0|[1-9]\d*)$/.test(planetId) || orders.length < 1 || orders.length > MAX_PRODUCTION_ORDERS) throw new Error("Invalid build plan");
   const encodedOrders = orders.map(order => {
     if ((order.kind !== "ship" && order.kind !== "defense") || !Number.isInteger(order.id) || order.id < 0 || order.id > 255
       || !Number.isInteger(order.quantity) || order.quantity < 1 || order.quantity > 0xffffffff

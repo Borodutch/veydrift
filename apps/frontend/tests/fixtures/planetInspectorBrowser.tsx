@@ -102,6 +102,7 @@ const shortResources = fixtureParams.get("shortResources") === "true";
 const publicTreasury = fixtureParams.get("publicTreasury") === "true";
 const moonOverview = fixtureParams.get("moonOverview") === "true";
 const batchPlanProbe = fixtureParams.get("batchPlanProbe") === "true";
+const batchPlanResources = { metal: "100000", crystal: "100000", deuterium: "100000" };
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 let constructionPhase = fixtureParams.get("construction") ?? "idle";
 const delegationProbe = fixtureParams.has("delegation");
@@ -123,7 +124,7 @@ function constructionQueue(planetId: string): QueueStateResponse | null {
     asOfNow: { complete: constructionPhase === "complete", secondsRemaining: constructionPhase === "complete" ? 0 : 3540 },
   };
 }
-const selectedPlanetResources = shortResources
+const selectedPlanetResources = batchPlanProbe ? batchPlanResources : shortResources
   ? { crystal: "5", deuterium: "2", metal: "10" }
   : raidEligibilityProbe
     ? { crystal: "3873", deuterium: "10000", metal: "10313" }
@@ -574,8 +575,8 @@ globalThis.fetch = (async (input, init) => {
       homePlanetId: "1",
       planetId: "1",
       productionAvailable: true,
-      resources: shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
-      resourcesAsOfNow: shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
+      resources: batchPlanProbe ? batchPlanResources : shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
+      resourcesAsOfNow: batchPlanProbe ? batchPlanResources : shortResources ? selectedPlanetResources : { crystal: "3873", deuterium: "0", metal: "10313" },
       fleetSlots: { active: 0, limit: 1 },
       shipyardLevel: 5,
       naniteLevel: 0,
@@ -634,7 +635,7 @@ globalThis.fetch = (async (input, init) => {
         ...(batchPlanProbe ? { owner: account, fields: 9, diameterKm: 8774, createdAt: "1700000000", jumpGateReadyAt: "0" } : {}),
       } : null,
       ...(moonOverview ? {
-        resources: batchPlanProbe ? { metal: "10000", crystal: "5000", deuterium: "890" } : { metal: "1234", crystal: "567", deuterium: "890" },
+        resources: batchPlanProbe ? batchPlanResources : { metal: "1234", crystal: "567", deuterium: "890" },
         launchableShips: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
         ...(batchPlanProbe ? { ships: [{ id: 0, count: 3, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 60 }], technologyLevels: { "3": 6, "6": 2 } } : {}),
       } : {}),
@@ -657,8 +658,8 @@ globalThis.fetch = (async (input, init) => {
       naniteLevel: 0,
       productionAvailable: true,
       queue: null,
-      resources: { crystal: "3873", deuterium: "102", metal: "10313" },
-      resourcesAsOfNow: { crystal: "3873", deuterium: "102", metal: "10313" },
+      resources: batchPlanProbe ? batchPlanResources : { crystal: "3873", deuterium: "102", metal: "10313" },
+      resourcesAsOfNow: batchPlanProbe ? batchPlanResources : { crystal: "3873", deuterium: "102", metal: "10313" },
       shipyardLevel: 5,
       technologyLevels: { "3": 6, "6": 2 },
       wallet: account,

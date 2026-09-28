@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { Check, ChevronsUp, Hammer, ListPlus, PackagePlus, X } from "lucide-preact";
-import { evaluateProductionPlan, maxAddableProduction, type ProductionBody, type ProductionOrder, type ProductionPlanContext } from "../productionBuildPlan";
+import { evaluateProductionPlan, maxAddableProduction, MAX_PRODUCTION_ORDERS, type ProductionBody, type ProductionOrder, type ProductionPlanContext } from "../productionBuildPlan";
 import { useState } from "preact/hooks";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
@@ -401,6 +401,7 @@ function ProductionBuildPlan({ body, context, rows, busy, unknown, ready, error,
     <section aria-label={`${body} build plan`} className={`${queueStripClasses.panel} bg-[#111c26]`} data-build-plan>
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] tabular-nums">
         <h3 className={`${queueStripClasses.heading} text-slate-200`}>Build plan</h3>
+        <span aria-label={`Build plan ${rows.length} of ${MAX_PRODUCTION_ORDERS} orders`} className="text-slate-400">{rows.length}/{MAX_PRODUCTION_ORDERS}</span>
         <span className="text-amber-300">M {plan.cost.metal.toLocaleString("en-US")}</span>
         <span className="text-cyan-300">C {plan.cost.crystal.toLocaleString("en-US")}</span>
         <span className="text-emerald-300">D {plan.cost.deuterium.toLocaleString("en-US")}</span>

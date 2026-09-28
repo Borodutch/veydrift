@@ -1,7 +1,57 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
+
+test("PR and push CI select every check, while local preflight stays scoped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "veydrift-ci-parity-"));
+  const scopeScript = new URL("./ci-scope.mjs", import.meta.url).pathname;
+  const env = { ...process.env };
+  for (const key of ["BASE_REF", "HEAD_REF", "BEFORE_SHA", "GITHUB_SHA", "GITHUB_EVENT_PATH"]) {
+    delete env[key];
+  }
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
+  const scope = (event, base) => JSON.parse(execFileSync(process.execPath, [
+    scopeScript, "--event", event, "--base", base, "--head", "HEAD", "--json",
+  ], { cwd: dir, encoding: "utf8", env }));
+  try {
+    git("init", "--initial-branch=main");
+    git("config", "user.name", "CI fixture");
+    git("config", "user.email", "ci@example.invalid");
+    git("commit", "--allow-empty", "-m", "base");
+    const base = git("rev-parse", "HEAD").trim();
+    git("remote", "add", "origin", dir);
+    git("checkout", "-b", "change");
+    for (const file of ["README.md", "apps/frontend/src/example.ts", "packages/contracts/test/Example.t.sol", "packages/contracts/src/Example.sol", "package.json"]) {
+      git("reset", "--hard", base);
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), "fixture\n");
+      git("add", file);
+      git("commit", "-m", "fixture change");
+      const pr = scope("pull_request", "main");
+      const push = scope("push", base);
+      assert.deepEqual(pr, push, file);
+      for (const key of ["frontend", "backend", "universe", "contracts", "storage_layout", "full_build", "any_package_check"]) {
+        assert.equal(pr[key], true, file + ": " + key);
+      }
+      if (file === "README.md") {
+        assert.equal(scope("local", base).any_package_check, false);
+      }
+      if (file === "packages/contracts/test/Example.t.sol") {
+        const local = scope("local", base);
+        assert.equal(local.contracts, true);
+        assert.equal(local.frontend, false);
+        assert.equal(local.full_build, false);
+        assert.equal(local.storage_layout, false);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
@@ -90,5 +140,6 @@ test("allows only the exact Vite chunk-size explanation, not other diagnostics",
   assert.equal(outputContainsFlaggedOutput("- warning: unexpected diagnostic"), true);
   assert.equal(outputContainsFlaggedOutput(`${viteLine}\nwarning: unexpected diagnostic`), true);
   assert.equal(outputContainsFlaggedOutput("warning: unused variable"), true);
+  assert.equal(outputContainsFlaggedOutput("warning[unsafe-typecast]: typecasts that can truncate values should be checked"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
 });
