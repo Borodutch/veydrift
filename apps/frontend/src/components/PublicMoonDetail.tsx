@@ -226,7 +226,7 @@ export function PublicMoonDetail({
 
       <PlanetFleetActivityPanel
         loading={activeMissions === null}
-        rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [], "moon")}
+        rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [], "moon", planet.occupiedBy?.owner)}
       />
 
       <div className="grid gap-3 xl:grid-cols-2">

@@ -52,6 +52,7 @@ import {
   publicSignalRows,
   shouldShowPlanetDetailInitialLoader
 } from "../src/components/PlanetDetail";
+import { formatUserTimestamp } from "../src/timestampFormat";
 import type { FleetMissionSummary } from "../src/walletFlow";
 import {
   moonQueueRows,
@@ -414,12 +415,58 @@ describe("tester universe display data", () => {
         asset: shipCatalog[1]?.asset,
         direction: "Inbound",
         missionId: "82",
-        missionLabel: "Attack",
+        missionLabel: "Attack returning",
         routeLabel: "From Planet 10",
         shipCountLabel: "3 ships",
       }),
     ]);
     expect(planetFleetActivityRows("99", [outbound, returning])).toEqual([]);
+  });
+
+  test.each(["Returning", "Recalled"] as const)("own %s raid stays visible and safe when switching planets", (status) => {
+    const owner = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    const other = "0x2222222222222222222222222222222222222222";
+    const raid = activeFleetMission({ missionId: "93902", missionType: "Attack", status,
+      owner, originPlanetId: "83", targetPlanetId: "70", ships: { smallCargo: "4" } });
+    const home = () => planetFleetActivityRows("83", [raid], "planet", owner.toUpperCase());
+    expect(home()[0]).toMatchObject({ direction: "Inbound", tone: "accent",
+      missionLabel: status === "Recalled" ? "Own Attack recalled · returning" : "Own Attack returning",
+      routeLabel: "From Planet 70", shipCountLabel: "4 ships" });
+    expect(home()[0]?.eventLabel).toBe(
+      `Lands ${formatUserTimestamp(raid.returnAt)}`
+    );
+    expect(planetFleetActivityRows("70", [raid], "planet", other)[0]).toMatchObject({
+      direction: "Outbound", tone: "accent", routeLabel: "To Planet 83",
+      missionLabel: status === "Recalled" ? "Third-party Attack recalled · returning" : "Third-party Attack returning",
+    });
+    expect(planetFleetActivityRows("99", [raid], "planet", owner)).toEqual([]);
+    expect(home()[0]?.missionLabel).toStartWith("Own Attack");
+    expect(planetFleetActivityRows("83", [raid], "moon", owner)).toEqual([]);
+    expect(planetFleetActivityRows("83", [{ ...raid, originIsMoon: true }], "moon", owner)[0]).toMatchObject({
+      direction: "Inbound", tone: "accent", missionLabel: home()[0]?.missionLabel,
+    });
+  });
+
+  test("activity separates own raids, friendly arrivals, and hostile inbound attacks", () => {
+    const owner = "0x1111111111111111111111111111111111111111";
+    const other = "0x2222222222222222222222222222222222222222";
+    const raid = activeFleetMission({ missionId: "1", missionType: "Attack", originPlanetId: "7", targetPlanetId: "9" });
+    expect(planetFleetActivityRows("7", [raid], "planet", owner)[0]).toMatchObject({
+      direction: "Outbound", missionLabel: "Own Attack", tone: "accent", routeLabel: "To Planet 9",
+    });
+    for (const missionType of ["Attack", "AcsAttack", "MissileAttack"] as const) {
+      const mission = { ...raid, missionType };
+      const row = planetFleetActivityRows("9", [mission], "planet", other)[0];
+      expect(row).toMatchObject({ direction: "Inbound", tone: "danger", routeLabel: "From Planet 7" });
+      expect(row?.missionLabel).toStartWith("Hostile ");
+    }
+    const transport = { ...raid, missionType: "Transport" as const };
+    expect(planetFleetActivityRows("9", [transport], "planet", owner)[0]).toMatchObject({
+      direction: "Inbound", missionLabel: "Own Transport arriving", tone: "accent",
+    });
+    expect(planetFleetActivityRows("9", [transport], "planet", other)[0]).toMatchObject({
+      direction: "Inbound", missionLabel: "Third-party Transport", tone: "accent",
+    });
   });
 
   test("planet mission activity shows timed missiles as hostile ordnance instead of a zero-ship fleet", () => {
@@ -437,7 +484,7 @@ describe("tester universe display data", () => {
       expect.objectContaining({
         direction: "Inbound",
         missionId: "85",
-        missionLabel: "Missile Attack",
+        missionLabel: "Hostile Missile Attack",
         routeLabel: "From Planet 12",
         shipCountLabel: "6 missiles",
         tone: "danger",
