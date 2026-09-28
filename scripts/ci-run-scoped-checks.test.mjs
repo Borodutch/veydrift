@@ -1,7 +1,57 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
+
+test("PR and push CI select every check, while local preflight stays scoped", () => {
+  const dir = mkdtempSync(join(tmpdir(), "veydrift-ci-parity-"));
+  const scopeScript = new URL("./ci-scope.mjs", import.meta.url).pathname;
+  const env = { ...process.env };
+  for (const key of ["BASE_REF", "HEAD_REF", "BEFORE_SHA", "GITHUB_SHA", "GITHUB_EVENT_PATH"]) {
+    delete env[key];
+  }
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
+  const scope = (event, base) => JSON.parse(execFileSync(process.execPath, [
+    scopeScript, "--event", event, "--base", base, "--head", "HEAD", "--json",
+  ], { cwd: dir, encoding: "utf8", env }));
+  try {
+    git("init", "--initial-branch=main");
+    git("config", "user.name", "CI fixture");
+    git("config", "user.email", "ci@example.invalid");
+    git("commit", "--allow-empty", "-m", "base");
+    const base = git("rev-parse", "HEAD").trim();
+    git("remote", "add", "origin", dir);
+    git("checkout", "-b", "change");
+    for (const file of ["README.md", "apps/frontend/src/example.ts", "packages/contracts/test/Example.t.sol", "packages/contracts/src/Example.sol", "package.json"]) {
+      git("reset", "--hard", base);
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), "fixture\n");
+      git("add", file);
+      git("commit", "-m", "fixture change");
+      const pr = scope("pull_request", "main");
+      const push = scope("push", base);
+      assert.deepEqual(pr, push, file);
+      for (const key of ["frontend", "backend", "universe", "contracts", "storage_layout", "full_build", "any_package_check"]) {
+        assert.equal(pr[key], true, file + ": " + key);
+      }
+      if (file === "README.md") {
+        assert.equal(scope("local", base).any_package_check, false);
+      }
+      if (file === "packages/contracts/test/Example.t.sol") {
+        const local = scope("local", base);
+        assert.equal(local.contracts, true);
+        assert.equal(local.frontend, false);
+        assert.equal(local.full_build, false);
+        assert.equal(local.storage_layout, false);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
@@ -90,5 +140,54 @@ test("allows only the exact Vite chunk-size explanation, not other diagnostics",
   assert.equal(outputContainsFlaggedOutput("- warning: unexpected diagnostic"), true);
   assert.equal(outputContainsFlaggedOutput(`${viteLine}\nwarning: unexpected diagnostic`), true);
   assert.equal(outputContainsFlaggedOutput("warning: unused variable"), true);
+  assert.equal(outputContainsFlaggedOutput("warning[unsafe-typecast]: typecasts that can truncate values should be checked"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
+});
+
+test("tolerates only the Vite dev-proxy noise from backend-less browser tests", () => {
+  const noise = [
+    "\u001b[2m10:42:55 AM\u001b[22m \u001b[31m\u001b[1m[vite]\u001b[22m\u001b[39m \u001b[31mhttp proxy error: /missions?status=active&live=1\u001b[39m",
+    "Error: connect ECONNREFUSED 127.0.0.1:4000",
+    "✔ desktop sidebar commits the reported Overview (422.66ms)",
+  ].join("\n");
+  assert.equal(outputContainsFlaggedOutput(noise), false);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: connect ECONNREFUSED 127.0.0.1:5432"), true);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: request failed with status 500"), true);
+});
+
+import { planChecks, CHECK_GROUPS } from "./ci-run-scoped-checks.mjs";
+import { shardTestFiles, parseShard } from "../packages/contracts/scripts/run-tests-separately.mjs";
+
+const FULL_SCOPE = { frontend: true, backend: true, universe: true, contracts: true, storage_layout: true, full_build: true };
+const labels = (plan) => plan.map((step) => step.label);
+
+test("parallel check groups partition the full sequential plan", () => {
+  const all = labels(planChecks(FULL_SCOPE));
+  const grouped = CHECK_GROUPS.filter((group) => group !== "all")
+    .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
+    .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
+  assert.deepEqual([...grouped].sort(), [...all].sort());
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-test")), ["contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "build")), ["frontend-precheck", "build"]);
+  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => ["build", "contracts-test", "frontend-touch-browser"].includes(label)));
+  assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
+});
+
+test("groups with nothing in scope plan no checks", () => {
+  const docsOnly = { frontend: false, backend: false, universe: false, contracts: false, storage_layout: false, full_build: false };
+  assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
+  for (const group of ["build", "browser", "contracts-test"]) assert.deepEqual(planChecks(docsOnly, group), []);
+});
+
+test("contract test shards cover every file exactly once and isolate the largest file", () => {
+  const counts = { "Game.t.sol": 306, "Moon.t.sol": 82, "Alliance.t.sol": 51, "A.t.sol": 17, "B.t.sol": 16, "C.t.sol": 14, "D.t.sol": 1 };
+  const files = Object.keys(counts);
+  const shards = [1, 2, 3].map((index) => shardTestFiles(files, counts, index, 3));
+  assert.deepEqual(shards.flat().sort(), [...files].sort());
+  assert.deepEqual(shards[0], ["Game.t.sol"]);
+  assert.deepEqual(parseShard("2/3"), { index: 2, count: 3 });
+  assert.equal(parseShard(""), null);
+  assert.throws(() => shardTestFiles(files, counts, 4, 3), /invalid contract test shard/);
+  assert.throws(() => parseShard("two"), /must look like/);
 });

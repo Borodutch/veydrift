@@ -51,6 +51,10 @@ const allowedFlaggedOutputLines = [
   /^Missing dependencies found\. Installing now\.\.\.$/,
   /^[╭╮╰╯├┤┬┴┼─│╞╪╡═+|]/,
   /^- Adjust chunk size limit for this warning via build\.chunkSizeWarningLimit\.$/,
+  // Frontend browser tests run the Vite dev server without a backend; its dev proxy logs
+  // each unanswered API request. Only these exact local-proxy lines are tolerated.
+  /^\d{1,2}:\d{2}:\d{2}(?: [AP]M)? \[vite\] http proxy error: \/\S*$/,
+  /^Error: connect ECONNREFUSED 127\.0\.0\.1:4000$/,
 ];
 
 export function outputContainsFlaggedOutput(output) {
@@ -103,61 +107,89 @@ async function runLogged(label, command, args) {
   console.log(`${label} passed.`);
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  const scope = scopeFromEnvOrGit(args);
+// Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
+// Without a group (local preflight) every applicable check runs in one process, as before.
+export const CHECK_GROUPS = ["all", "rest", "build", "browser", "contracts-test"];
+const HEAVY = { build: "build", "frontend-touch-browser": "browser", "contracts-test": "contracts-test" };
+
+export function planChecks(scope, group = "all") {
+  if (!CHECK_GROUPS.includes(group)) throw new Error(`unknown check group "${group}" (use ${CHECK_GROUPS.join(", ")})`);
+  const plan = [];
+  const add = (label, command, args) => plan.push({ label, command, args });
+  const note = (label, message) => plan.push({ label, note: message });
 
   // Documentation-only changes must run these too; neither needs Bun or installed packages.
-  await runLogged("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
-  await runLogged("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
+  add("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
+  add("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
 
   if (scope.universe) {
-    await runLogged("universe-check", "bun", ["run", "check:universe"]);
-    await runLogged("universe-test", "bun", ["run", "test:universe"]);
+    add("universe-check", "bun", ["run", "check:universe"]);
+    add("universe-test", "bun", ["run", "test:universe"]);
   }
 
   if (scope.backend) {
-    await runLogged("backend-check", "bun", ["run", "check:backend"]);
-    await runLogged("backend-test", "bun", ["run", "test:backend"]);
-    await runLogged("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
-    await runLogged("release-diagnostics-test", "node", ["--test", "scripts/veydrift-safe-diagnostics.test.mjs"]);
+    add("backend-check", "bun", ["run", "check:backend"]);
+    add("backend-test", "bun", ["run", "test:backend"]);
+    add("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
+    add("release-diagnostics-test", "node", ["--test", "scripts/veydrift-safe-diagnostics.test.mjs"]);
   }
 
   if (scope.frontend) {
-    await runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
-    await runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
-    await runLogged("frontend-test", "bun", ["run", "test:frontend"]);
-    await runLogged("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
-    await runLogged("stats-check", "bun", ["run", "check:stats"]);
+    add("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
+    add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
+    add("frontend-test", "bun", ["run", "test:frontend"]);
+    add("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
+    add("stats-check", "bun", ["run", "check:stats"]);
   }
 
-
   if (scope.contracts) {
-    await runLogged("deployment-manifest-test", "node", [
+    add("deployment-manifest-test", "node", [
       "--test",
       "scripts/veydrift-deployment-manifest.test.mjs",
       "scripts/veydrift-upgrade-receipt.test.mjs",
     ]);
-    await runLogged("referral-migration-manifest-test", "node", ["--test",
+    add("referral-migration-manifest-test", "node", ["--test",
       "scripts/veydrift-referral-migration-manifest.test.mjs",
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",
     ]);
-    await runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
-    await runLogged("contracts-test", "bun", ["run", "test:contracts"]);
+    add("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
+    add("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {
-      await runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
+      add("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
     } else {
-      console.log("\n== contracts-storage-check ==\nSkipped: no storage-relevant contract files changed.");
+      note("contracts-storage-check", "Skipped: no storage-relevant contract files changed.");
     }
   }
 
   if (scope.full_build) {
-    await runLogged("build", "bun", ["run", "build"]);
+    add("build", "bun", ["run", "build"]);
   }
 
-  if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.full_build) {
-    console.log("No package checks needed for this change.");
+  if (group === "all") return plan;
+  const selected = plan.filter(({ label }) => (HEAVY[label] || "rest") === group);
+  // Heavy groups run in their own job, so they repeat the cheap frontend asset preparation they rely on.
+  const precheck = plan.find(({ label }) => label === "frontend-precheck");
+  if (precheck && ["browser", "build"].includes(group) && selected.length) selected.unshift(precheck);
+  return selected;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const scope = scopeFromEnvOrGit(args);
+  const group = args.group || process.env.CI_CHECK_GROUP || "all";
+  const plan = planChecks(scope, group);
+
+  if (args.list) {
+    for (const step of plan) console.log(step.note ? `${step.label} (${step.note})` : step.label);
+    return;
+  }
+  for (const step of plan) {
+    if (step.note) console.log(`\n== ${step.label} ==\n${step.note}`);
+    else await runLogged(step.label, step.command, step.args);
+  }
+  if (!plan.some((step) => !step.note && !step.label.startsWith("docs-"))) {
+    console.log(group === "all" ? "No package checks needed for this change." : `No ${group} checks needed for this change.`);
   }
 }
 
