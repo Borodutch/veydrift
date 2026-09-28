@@ -5295,8 +5295,12 @@ contract VeydriftGameTest is Test {
         ];
         for (uint256 i; i < 13; ++i) {
             orders[i] = ProductionOrder(
+                // i % 2 is either 0 or 1 and fits uint8.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 uint8(i % 2),
                 i % 2 == 0 ? uint8(ships[i / 2]) : uint8(_batchDefense(i / 2)),
+                // This loop has i < 13, so i + 1 is at most 13 and fits uint32.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 uint32(i + 1)
             );
         }
@@ -5399,6 +5403,8 @@ contract VeydriftGameTest is Test {
         ProductionOrder[] memory orders = new ProductionOrder[](15);
         for (uint256 i; i < 15; ++i) {
             orders[i] = ProductionOrder(
+                // i % 2 is either 0 or 1 and fits uint8.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 uint8(i % 2),
                 i % 2 == 0
                     ? (i % 4 == 0 ? uint8(Ship.SmallCargo) : uint8(Ship.LightFighter))
