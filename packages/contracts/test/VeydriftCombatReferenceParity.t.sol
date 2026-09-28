@@ -464,16 +464,41 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
-        for (uint256 calls = 0; calls < 6; calls++) {
+        _syncFixtureChronology();
+        (, uint8 totalRounds) = game.battleResolutionProgress(missionId);
+        // At most one scan operation per fixture mission, then one call per combat round.
+        // Successful preparer calls need not resolve the battle; reconcile canonical status.
+        uint256 maximumCalls = game.nextFleetId() - 1 + totalRounds;
+        VeydriftGameStorage.FleetMissionStatus status;
+        for (uint256 calls = 0; calls < maximumCalls; calls++) {
             game.resolveFleetMission(missionId);
-            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+            (status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
         }
+        assertTrue(
+            status != VeydriftGameStorage.FleetMissionStatus.Outbound, "bounded battle resolution"
+        );
         actual = _actualBattleFromLogs(vm.getRecordedLogs(), missionId);
 
         assertTrue(actual.battleFound, "battle event");
         assertTrue(actual.lossesFound, "losses event");
         assertTrue(actual.debrisFound, "debris event");
+    }
+
+    function _syncFixtureChronology() private {
+        uint256 missionCount = game.nextFleetId() - 1;
+        uint256 previousThrough;
+        bool ready;
+        // Sync one ID per call so the bound follows the fixture inventory, not a retry constant.
+        for (uint256 calls = 0; calls < missionCount; calls++) {
+            uint256 through;
+            (through, ready) = game.syncFleetChronology(1);
+            assertGt(through, previousThrough, "chronology indexing advances");
+            previousThrough = through;
+            if (ready) break;
+        }
+        assertTrue(ready, "fixture chronology fully indexed");
+        assertEq(previousThrough, missionCount, "chronology covers all fixture missions");
     }
 
     function _actualBattleFromLogs(Vm.Log[] memory entries, uint256 missionId)
@@ -482,7 +507,8 @@ contract VeydriftCombatReferenceParityTest is Test {
         returns (ActualBattle memory actual)
     {
         for (uint256 i = 0; i < entries.length;) {
-            if (entries[i].topics.length != 0 && uint256(entries[i].topics[1]) == missionId) {
+            // Preparatory chronology events have no indexed fields (only the signature topic).
+            if (entries[i].topics.length > 1 && uint256(entries[i].topics[1]) == missionId) {
                 if (entries[i].topics[0] == ATTACK_BATTLE_RESOLVED_TOPIC) {
                     (actual.outcome, actual.rounds, actual.seed,,,) = abi.decode(
                         entries[i].data,
@@ -526,8 +552,19 @@ contract VeydriftCombatReferenceParityTest is Test {
         (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
             _fleetMission(missionId);
         if (status == VeydriftGameStorage.FleetMissionStatus.Returning) {
-            vm.warp(returnAt);
-            game.completeFleetMissionReturn(missionId);
+            if (block.timestamp < returnAt) vm.warp(returnAt);
+            // The fully indexed fixture has at most one scan operation per mission.
+            uint256 maximumCalls = game.nextFleetId() - 1;
+            for (uint256 calls = 0; calls < maximumCalls; calls++) {
+                game.completeFleetMissionReturn(missionId);
+                (status,,,) = _fleetMission(missionId);
+                if (status != VeydriftGameStorage.FleetMissionStatus.Returning) break;
+            }
+            assertEq(
+                uint8(status),
+                uint8(VeydriftGameStorage.FleetMissionStatus.Returned),
+                "bounded return completion"
+            );
         }
     }
 
