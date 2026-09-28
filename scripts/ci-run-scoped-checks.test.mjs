@@ -143,3 +143,14 @@ test("allows only the exact Vite chunk-size explanation, not other diagnostics",
   assert.equal(outputContainsFlaggedOutput("warning[unsafe-typecast]: typecasts that can truncate values should be checked"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
 });
+
+test("tolerates only the Vite dev-proxy noise from backend-less browser tests", () => {
+  const noise = [
+    "\u001b[2m10:42:55 AM\u001b[22m \u001b[31m\u001b[1m[vite]\u001b[22m\u001b[39m \u001b[31mhttp proxy error: /missions?status=active&live=1\u001b[39m",
+    "Error: connect ECONNREFUSED 127.0.0.1:4000",
+    "✔ desktop sidebar commits the reported Overview (422.66ms)",
+  ].join("\n");
+  assert.equal(outputContainsFlaggedOutput(noise), false);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: connect ECONNREFUSED 127.0.0.1:5432"), true);
+  assert.equal(outputContainsFlaggedOutput(noise + "\nError: request failed with status 500"), true);
+});

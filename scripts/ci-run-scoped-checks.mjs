@@ -51,6 +51,10 @@ const allowedFlaggedOutputLines = [
   /^Missing dependencies found\. Installing now\.\.\.$/,
   /^[╭╮╰╯├┤┬┴┼─│╞╪╡═+|]/,
   /^- Adjust chunk size limit for this warning via build\.chunkSizeWarningLimit\.$/,
+  // Frontend browser tests run the Vite dev server without a backend; its dev proxy logs
+  // each unanswered API request. Only these exact local-proxy lines are tolerated.
+  /^\d{1,2}:\d{2}:\d{2}(?: [AP]M)? \[vite\] http proxy error: \/\S*$/,
+  /^Error: connect ECONNREFUSED 127\.0\.0\.1:4000$/,
 ];
 
 export function outputContainsFlaggedOutput(output) {
