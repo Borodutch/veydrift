@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -2733,7 +2734,9 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
             if (
                 logs[i].topics.length < 2 || logs[i].topics[0] != topic
                     || uint256(logs[i].topics[1]) != missionId
-            ) continue;
+            ) {
+                continue;
+            }
             (,,, uint128 metal,,) =
                 abi.decode(logs[i].data, (uint128, uint128, uint128, uint128, uint128, uint128));
             return metal;
@@ -2827,6 +2830,68 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         (VeydriftGameStorage.FleetMissionStatus lateStatus,,,) = _fleetMission(lateId);
         assertTrue(earlyStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
         assertTrue(lateStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
+    }
+
+    function _seedBatchPrerequisites(uint256 planetId) private {
+        bytes32 outer = keccak256(abi.encode(planetId, uint256(7)));
+        vm.store(
+            address(moons),
+            keccak256(abi.encode(uint256(uint8(MoonBuilding.Shipyard)), outer)),
+            bytes32(uint256(12))
+        );
+        for (uint8 i; i <= uint8(Technology.Graviton); ++i) {
+            _setTechnologyLevel(player, Technology(i), 12);
+        }
+    }
+
+    function _batchDefense(uint256 i) private pure returns (Defense) {
+        Defense[6] memory types_ = [
+            Defense.PlasmaTurret,
+            Defense.GaussCannon,
+            Defense.IonCannon,
+            Defense.HeavyLaser,
+            Defense.LightLaser,
+            Defense.RocketLauncher
+        ];
+        return types_[i % types_.length];
+    }
+
+    function _costlyBatchOrders() private pure returns (ProductionOrder[] memory orders) {
+        orders = new ProductionOrder[](15);
+        Ship[7] memory ships = [
+            Ship.Deathstar,
+            Ship.Reaper,
+            Ship.Battlecruiser,
+            Ship.Destroyer,
+            Ship.Bomber,
+            Ship.Battleship,
+            Ship.Cruiser
+        ];
+        for (uint256 i; i < 13; ++i) {
+            orders[i] = ProductionOrder(
+                uint8(i % 2),
+                i % 2 == 0 ? uint8(ships[i / 2]) : uint8(_batchDefense(i / 2)),
+                uint32(i + 1)
+            );
+        }
+        // Both singleton guards run after a long heterogeneous defense backlog.
+        orders[13] = ProductionOrder(1, uint8(Defense.SmallShieldDome), 1);
+        orders[14] = ProductionOrder(1, uint8(Defense.LargeShieldDome), 1);
+    }
+
+    function _batchCost(ProductionOrder[] memory orders)
+        private
+        pure
+        returns (VeydriftGameStorage.Resources memory total)
+    {
+        for (uint256 i; i < orders.length; ++i) {
+            (uint128 metal, uint128 crystal, uint128 deuterium) = orders[i].kind == 0
+                ? VeydriftCatalog.shipCost(Ship(orders[i].itemId))
+                : VeydriftCatalog.defenseCost(Defense(orders[i].itemId));
+            total.metal += metal * orders[i].quantity;
+            total.crystal += crystal * orders[i].quantity;
+            total.deuterium += deuterium * orders[i].quantity;
+        }
     }
 
     function testMixedMoonBatchCumulativeOverspendRollsBackBothLanes() public {
@@ -3025,6 +3090,158 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertTrue(moons.activeMoonShipQueue(target).active);
     }
 
+    function testMoonBatchFifteenMixedOrdersAndSixteenthRejected() public {
+        uint256 planetId = _readyMoonShipyard();
+        _setTechnologyLevel(player, Technology.Shielding, 2);
+        _fundMoon(planetId, 1_000_000, 1_000_000, 1_000_000);
+        ProductionOrder[] memory orders = new ProductionOrder[](15);
+        for (uint256 i; i < 15; ++i) {
+            orders[i] = ProductionOrder(
+                uint8(i % 2),
+                i % 2 == 0
+                    ? uint8(Ship.LightFighter)
+                    : (i == 13 ? uint8(Defense.SmallShieldDome) : uint8(Defense.RocketLauncher)),
+                i % 4 == 3 && i != 13 ? 10 : 1
+            );
+        }
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint("moon 15 mixed rows execution gas", used);
+        assertLt(
+            used + 21_000 + 16
+                * abi.encodeCall(moons.startMoonProductionBatch, (planetId, orders)).length,
+            12_000_000
+        );
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 7);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 6);
+        ProductionOrder[] memory tooMany = new ProductionOrder[](16);
+        for (uint256 i; i < 16; ++i) {
+            tooMany[i] = orders[i % 15];
+        }
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonProductionBatch(planetId, tooMany);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 7);
+    }
+
+    function testMoonBatchFifteenShipsLastRowOverspendRollsBack() public {
+        uint256 planetId = _readyMoonShipyard();
+        _fundMoon(planetId, 44_999, 14_999, 0);
+        ProductionOrder[] memory orders = new ProductionOrder[](15);
+        for (uint256 i; i < 15; ++i) {
+            orders[i] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        }
+        vm.prank(player);
+        vm.expectRevert();
+        moons.startMoonProductionBatch(planetId, orders);
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 0);
+        assertEq(_moonResources(planetId).metal, 44_999);
+        _fundMoon(planetId, 45_000, 15_000, 0);
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        emit log_named_uint("moon 15 ship rows execution gas", beforeGas - gasleft());
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 14);
+        orders = new ProductionOrder[](1);
+        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
+        for (uint256 i; i < 2; ++i) {
+            _fundMoon(planetId, 3_000, 1_000, 0);
+            vm.prank(player);
+            moons.startMoonProductionBatch(planetId, orders);
+        }
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 16);
+        _fundMoon(planetId, 3_000, 1_000, 0);
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonProductionBatch(planetId, orders);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 16);
+    }
+
+    function testMoonBatchFifteenDefensesFIFOAndLastRowCapacityRollback() public {
+        uint256 planetId = _readyMoonShipyard();
+        _seedBatchPrerequisites(planetId);
+        _fundMoon(planetId, 100_000_000, 100_000_000, 100_000_000);
+        ProductionOrder[] memory orders = new ProductionOrder[](15);
+        for (uint256 i; i < orders.length; ++i) {
+            orders[i] = ProductionOrder(1, uint8(_batchDefense(i)), uint32(i + 1));
+        }
+        VeydriftGameStorage.Resources memory cost = _batchCost(orders);
+        vm.cool(address(game));
+        vm.cool(address(moons));
+        uint256 beforeGas = gasleft();
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, orders);
+        uint256 used = beforeGas - gasleft();
+        uint256 upper = used + 21_000 + 16
+            * abi.encodeCall(moons.startMoonProductionBatch, (planetId, orders)).length;
+        emit log_named_uint("moon 15 defense-only execution gas", used);
+        emit log_named_uint("moon 15 defense-only intrinsic/calldata upper bound", upper);
+        assertLt(upper, 12_000_000);
+        assertLt(upper, 16_777_216);
+        assertEq(_moonResources(planetId).metal, 100_000_000 - cost.metal);
+        assertEq(_moonResources(planetId).crystal, 100_000_000 - cost.crystal);
+        assertEq(_moonResources(planetId).deuterium, 100_000_000 - cost.deuterium);
+        VeydriftMoonDefenseBacklog.Entry memory active = moons.activeMoonDefenseQueue(planetId);
+        VeydriftMoonDefenseBacklog.Entry[] memory pending = moons.moonDefenseQueueBacklog(planetId);
+        assertTrue(active.active);
+        assertEq(uint8(active.defense), orders[0].itemId);
+        assertEq(active.quantity, orders[0].quantity);
+        assertEq(pending.length, 14);
+        uint64 previousReady = active.readyAt;
+        for (uint256 i; i < pending.length; ++i) {
+            assertTrue(pending[i].active);
+            assertEq(uint8(pending[i].defense), orders[i + 1].itemId);
+            assertEq(pending[i].quantity, orders[i + 1].quantity);
+            assertGt(pending[i].readyAt, previousReady);
+            previousReady = pending[i].readyAt;
+        }
+        assertFalse(moons.activeMoonShipQueue(planetId).active);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 0);
+
+        // At active + 14 pending, two rows fit; ONLY the third (last) row overflows.
+        // Snapshot complete paid queues and all resource/reserve components, not just lengths.
+        bytes32 beforeState = keccak256(
+            abi.encode(
+                _moonResources(planetId),
+                game.resourceReserveRequirement(),
+                moons.activeMoonDefenseQueue(planetId),
+                moons.moonDefenseQueueBacklog(planetId),
+                moons.activeMoonShipQueue(planetId),
+                moons.moonShipQueueBacklog(planetId)
+            )
+        );
+        ProductionOrder[] memory overflow = new ProductionOrder[](3);
+        for (uint256 i; i < overflow.length; ++i) {
+            overflow[i] = ProductionOrder(1, uint8(_batchDefense(i)), uint32(i + 1));
+        }
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        moons.startMoonProductionBatch(planetId, overflow);
+        assertEq(
+            keccak256(
+                abi.encode(
+                    _moonResources(planetId),
+                    game.resourceReserveRequirement(),
+                    moons.activeMoonDefenseQueue(planetId),
+                    moons.moonDefenseQueueBacklog(planetId),
+                    moons.activeMoonShipQueue(planetId),
+                    moons.moonShipQueueBacklog(planetId)
+                )
+            ),
+            beforeState
+        );
+        // The same prefix succeeds and reaches the actual active + 16 pending boundary.
+        ProductionOrder[] memory fits = new ProductionOrder[](2);
+        fits[0] = overflow[0];
+        fits[1] = overflow[1];
+        vm.prank(player);
+        moons.startMoonProductionBatch(planetId, fits);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 16);
+    }
+
     function testMoonBatchMeasuredAtLoadedBacklogs() public {
         uint256 planetId = _readyMoonShipyard();
         _fundMoon(planetId, 1_000_000, 1_000_000, 1_000_000);
@@ -3049,31 +3266,76 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertEq(moons.moonDefenseQueueBacklog(planetId).length, 13);
     }
 
+    /// forge-config: default.isolate = true
     function testMoonBatchDrainsMaximumReadyPreexistingBacklogsWithinGasCeiling() public {
         uint256 planetId = _readyMoonShipyard();
-        _fundMoon(planetId, 10_000_000, 10_000_000, 1_000_000);
+        _seedBatchPrerequisites(planetId);
+        _fundMoon(planetId, 10_000_000_000, 10_000_000_000, 10_000_000_000);
+        Ship[7] memory ships = [
+            Ship.Deathstar,
+            Ship.Reaper,
+            Ship.Battlecruiser,
+            Ship.Destroyer,
+            Ship.Bomber,
+            Ship.Battleship,
+            Ship.Cruiser
+        ];
         vm.startPrank(player);
-        for (uint256 i; i < 16; ++i) {
-            moons.startMoonShipProduction(planetId, Ship.LightFighter, 100);
-            moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 100);
+        // Actual maximum: one active AND sixteen pending in EACH lane.
+        // Heterogeneous rows force differing inventory keys and non-identical FIFO shifts.
+        for (uint256 i; i < 17; ++i) {
+            moons.startMoonShipProduction(planetId, ships[i % 7], 100);
+            moons.startMoonDefenseProduction(planetId, _batchDefense(i), 100);
         }
         vm.stopPrank();
-        uint64 shipsReady = moons.moonShipQueueBacklog(planetId)[14].readyAt;
-        uint64 defensesReady = moons.moonDefenseQueueBacklog(planetId)[14].readyAt;
+        assertTrue(moons.activeMoonShipQueue(planetId).active);
+        assertTrue(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 16);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 16);
+        uint64 shipsReady = moons.moonShipQueueBacklog(planetId)[15].readyAt;
+        uint64 defensesReady = moons.moonDefenseQueueBacklog(planetId)[15].readyAt;
         vm.warp(shipsReady > defensesReady ? shipsReady : defensesReady);
-        ProductionOrder[] memory orders = new ProductionOrder[](4);
-        orders[0] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
-        orders[1] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
-        orders[2] = ProductionOrder(0, uint8(Ship.LightFighter), 1);
-        orders[3] = ProductionOrder(1, uint8(Defense.RocketLauncher), 1);
-        uint256 beforeGas = gasleft();
+        ProductionOrder[] memory orders = _costlyBatchOrders();
+        // Isolation executes every top-level CALL in a fresh EVM transaction:
+        // committed original storage, cleared transient storage, and cold modules/libraries.
+        // Check that semantic boundary rather than relying on vm.cool (warmth only).
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGe(storageGas, 5_000, "requires clean committed storage: enable isolation");
+        assertEq(transientValue, 0, "requires a fresh transaction transient store");
+
+        bytes memory callData = abi.encodeCall(moons.startMoonProductionBatch, (planetId, orders));
+        uint256 intrinsic = 21_000;
+        for (uint256 i; i < callData.length; ++i) {
+            intrinsic += callData[i] == 0 ? 4 : 16;
+        }
         vm.prank(player);
-        moons.startMoonProductionBatch(planetId, orders);
-        uint256 used = beforeGas - gasleft();
-        emit log_named_uint("moon 4-order batch with 15+15 ready backlogs of 100", used);
-        assertLt(used, 12_000_000);
-        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 1_600);
-        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 1_600);
+        // Forge isolation adds 21k to this call allowance: a real 12m transaction.
+        moons.startMoonProductionBatch{gas: 12_000_000 - 21_000}(planetId, orders);
+        Vm.Gas memory measured = vm.lastCallGas();
+        // Isolated lastCallGas includes intrinsic and deducts refunds. Add refunds
+        // back: they cannot finance execution or avoid the transaction gas limit.
+        assertGe(measured.gasRefunded, 0);
+        uint256 upper = measured.gasTotalUsed + uint256(uint64(measured.gasRefunded));
+        emit log_named_uint("moon committed settlement execution gas", upper - intrinsic);
+        emit log_named_uint("moon committed settlement intrinsic/calldata gas", intrinsic);
+        emit log_named_uint("moon committed settlement gross transaction gas", upper);
+        emit log_named_uint(
+            "moon committed settlement charged transaction gas", measured.gasTotalUsed
+        );
+        assertLt(upper, 12_000_000);
+        assertLt(upper, 16_777_216);
+        for (uint256 i; i < 7; ++i) {
+            assertEq(game.moonShipCount(planetId, ships[i]), (i < 3 ? 300 : 200));
+        }
+        for (uint256 i; i < 6; ++i) {
+            assertEq(moons.moonDefenseCount(planetId, _batchDefense(i)), (i < 5 ? 300 : 200));
+        }
+        assertEq(uint8(moons.activeMoonShipQueue(planetId).ship), orders[0].itemId);
+        assertEq(uint8(moons.activeMoonDefenseQueue(planetId).defense), orders[1].itemId);
+        assertEq(moons.moonShipQueueBacklog(planetId).length, 6);
+        assertEq(moons.moonDefenseQueueBacklog(planetId).length, 7);
     }
 
     function testMoonBatchDuplicateDomeRevertsShipAndDefense() public {

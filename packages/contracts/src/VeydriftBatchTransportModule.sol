@@ -18,7 +18,7 @@ interface IVeydriftMoonArrivalResolver {
 ///      exactly the same settlement, ship, fuel, resolution, and event semantics as a normal launch.
 contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     uint8 private constant MAX_TRANSPORT_BATCH_ORDERS = 15;
-    uint8 private constant MAX_PRODUCTION_ORDERS = 4;
+    uint8 private constant MAX_PRODUCTION_ORDERS = 15;
     uint8 private constant MAX_PRODUCTION_BACKLOG = 16;
     bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
         keccak256(

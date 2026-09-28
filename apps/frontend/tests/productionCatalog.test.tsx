@@ -438,6 +438,31 @@ describe("ProductionCatalog selected panel", () => {
     expect(progressBar?.props["aria-valuenow"]).toBe(20);
     expect(progressBar?.props["aria-valuetext"]).toBe("20%");
   });
+  test("shows the draft count immediately after Build plan, not paid backlog", () => {
+    const item = catalogItem({ unitCostRaw: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 60 });
+    const row = { kind: "defense" as const, id: item.id, quantity: 1 };
+    const context = {
+      body: "planet" as const, resources: { metal: "100000", crystal: "0", deuterium: "0" },
+      ships: [], defenses: [item], defenseCounts: [], shipyardLevel: 2, naniteLevel: 0, available: true,
+      defenseBacklogLength: 1,
+    };
+    const render = (count: number) => ProductionCatalog({
+      actionPending: false, canTransact: true, emptyLabel: "Select an item.", items: [item],
+      onBuild: () => undefined, onQuantity: () => undefined, onSelect: () => undefined,
+      selectedKey: "rocketLauncher", productionKind: "defense",
+      buildPlan: { body: "planet", context, rows: Array.from({ length: count }, () => row),
+        busy: false, ready: true, onAdd: () => undefined, onRemove: () => undefined,
+        onClear: () => undefined, onConfirm: () => undefined },
+    });
+    for (const count of [1, 5, 15]) {
+      const plan = elementNodes(render(count)).find(node => node.props["data-build-plan"]);
+      const nodes = elementNodes(plan);
+      const headingIndex = nodes.findIndex(node => node.type === "h3" && visibleText(node) === "Build plan");
+      expect(headingIndex).toBeGreaterThan(0);
+      expect(nodes[headingIndex + 1]?.props["aria-label"]).toBe("Build plan " + count + " of 15 orders");
+      expect(visibleText(nodes[headingIndex + 1]).replace(/\s+/g, "")).toBe(count + "/15");
+    }
+  });
 });
 
 function catalogItem(overrides: Partial<ProductionCatalogItem<"rocketLauncher">> = {}): ProductionCatalogItem<"rocketLauncher"> {

@@ -2169,6 +2169,27 @@ for (const body of ["planet", "moon"]) {
     await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
     await waitForExpression(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length === 2`);
     assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan]').length`), 1);
+    const countIs = count => `document.querySelector('main [aria-label="Build plan ${count} of 15 orders"]')?.textContent === '${count}/15'`;
+    await waitForExpression(countIs(2));
+    for (let count = 3; count <= 15; count++) {
+      await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
+      await waitForExpression(countIs(count));
+    }
+    assert.equal(await evaluate(`document.querySelector('main button[aria-label="Add Rocket Launcher to build plan"]')?.disabled`), true);
+    await evaluate(`document.querySelector('main button[aria-label="Add Rocket Launcher to build plan"]').click()`);
+    assert.equal(await evaluate(countIs(15)), true, "disabled sixteenth Add preserves 15 rows");
+    await clickExpression(`document.querySelector('main button[aria-label="Remove Rocket Launcher from build plan"]')`);
+    await waitForExpression(countIs(14));
+    await waitForExpression(`document.querySelector(${JSON.stringify(addDefense)}) !== null`);
+    await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
+    await waitForExpression(countIs(15));
+    await clickExpression(`document.querySelector('main button[aria-label="Clear build plan"]')`);
+    await waitForExpression(`document.querySelector('main [data-build-plan]') === null`);
+    // Rebuild a valid 15-row plan through the real app handler, then verify one exact-calldata send.
+    for (let count = 1; count <= 15; count++) {
+      await clickExpression(`document.querySelector(${JSON.stringify(addDefense)})`);
+      await waitForExpression(countIs(count));
+    }
     assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`), 0);
     await waitForExpression(`document.querySelector('main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)') !== null`);
     await clickExpression('document.querySelector(\'main [data-build-plan] button[aria-label="Confirm build plan"]:not(:disabled)\')');
@@ -2181,13 +2202,15 @@ for (const body of ["planet", "moon"]) {
         methods: requests.map(request => request.method),
         pendingSimulation: call?.params?.[1] === 'pending',
         validCalldata: typeof sent?.data === 'string' && /^0x[0-9a-f]+$/i.test(sent.data) && sent.data.length > 10,
+        orderCount: Number.parseInt(sent?.data?.slice(138, 202), 16), // selector + two head words, then array length
         sameCalldata: call?.params?.[0]?.data === estimate?.params?.[0]?.data && estimate?.params?.[0]?.data === sent?.data,
         sameAccountAndContract: estimate?.params?.[0]?.from === sent?.from && estimate?.params?.[0]?.to === sent?.to,
         expectedAccountAndContract: sent?.from === '0x1111111111111111111111111111111111111111' && sent?.to === '${moon ? "0x3333333333333333333333333333333333333333" : "0x2222222222222222222222222222222222222222"}',
       };
     })()`);
-    assert.deepEqual(preflight, { methods: ['eth_chainId', 'eth_call', 'eth_estimateGas'], pendingSimulation: true, validCalldata: true, sameCalldata: true, sameAccountAndContract: true, expectedAccountAndContract: true });
-    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length`), 2, "pending wallet confirmation retains both rows");
+    assert.deepEqual(preflight, { methods: ['eth_chainId', 'eth_call', 'eth_estimateGas'], pendingSimulation: true, validCalldata: true, orderCount: 15, sameCalldata: true, sameAccountAndContract: true, expectedAccountAndContract: true });
+    assert.equal(await evaluate(`document.querySelectorAll('main [data-build-plan] button[aria-label^="Remove "]').length`), 15, "pending wallet confirmation retains all fifteen rows");
+    assert.equal(await evaluate(countIs(15)), true);
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') === null`), true, "confirm must not open another review dialog");
     assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
   });
