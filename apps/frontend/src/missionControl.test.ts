@@ -768,7 +768,7 @@ describe("Mission Control battle reports", () => {
     const requests: Array<[string, "arrival" | "return"]> = [];
     const page = MissionControlPage({
       ...missionControlProps(now, {
-        outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true }],
+        outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true, resolutionEligible: true }],
       }),
       onResolve: (missionId, kind) => requests.push([missionId, kind]),
     });
@@ -1039,7 +1039,7 @@ describe("Mission Control battle reports", () => {
     // same emergency fallback after the funded resolver misses its grace period.
     const other = {
       ...mission("90", "Attack", "Outbound", "0x9999999999999999999999999999999999999999", "5", "6", now - 180_000),
-      needsResolution: true,
+      needsResolution: true, resolutionEligible: true,
     };
     const text = collectText(MissionControlPage({
       ...missionControlProps(now, { outgoing: [mine] }),
@@ -1536,7 +1536,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [{
         ...mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
-        needsResolution: true,
+        needsResolution: true, resolutionEligible: true,
         combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
       }],
       joinableAttacks: [
@@ -1554,7 +1554,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
         ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 180_000),
-        needsResolution: true,
+        needsResolution: true, resolutionEligible: true,
         combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
       },
       battleReport: null,
@@ -1574,7 +1574,7 @@ describe("Mission Control battle reports", () => {
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 180_000),
-          needsResolution: true,
+          needsResolution: true, resolutionEligible: true,
           originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
           targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
         },
@@ -1908,7 +1908,7 @@ describe("Mission Control battle reports", () => {
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
-          needsResolution: true,
+          needsResolution: true, resolutionEligible: true,
         },
         battleReport: {
           ...battleReport("42"),
@@ -2266,7 +2266,7 @@ describe("Mission Control battle reports", () => {
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
         ...mission("62", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
-        needsResolution: true,
+        needsResolution: true, resolutionEligible: true,
       },
       battleReport: null,
     }))).join(" ");
@@ -2306,7 +2306,7 @@ describe("Mission Control battle reports", () => {
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
-          needsResolution: true,
+          needsResolution: true, resolutionEligible: true,
         },
         battleReport: battleReport("42"),
       },
@@ -3122,6 +3122,45 @@ function battleReport(missionId: string): BattleReport {
   };
 }
 
+describe("VEY-905 ordered manual eligibility", () => {
+  const now = Date.parse("2026-06-05T12:00:00.000Z");
+  for (const status of ["Outbound", "Returning", "Recalled"]) {
+    for (const resolutionEligible of [false, undefined]) {
+      test(status + " hides Resolve on both screens when eligibility is " + resolutionEligible, () => {
+        const blocked: FleetMissionSummary = {
+          ...mission("42", "Transport", status, undefined, "7", "9", now - 600_000),
+          // A stale time-only flag must not resurrect the manual control.
+          needsResolution: true,
+          ...(resolutionEligible === undefined ? {} : { resolutionEligible }),
+          asOfNow: { arrived: true, returned: true, secondsUntilArrival: 0, secondsUntilReturn: 0 },
+        };
+        const control = MissionControlPage(missionControlProps(now, status === "Outbound"
+          ? { outgoing: [blocked] } : { returning: [blocked] }));
+        const detail = MissionDetailPage(missionDetailProps(now, { mission: blocked, battleReport: null }));
+        for (const tree of [control, detail]) {
+          expect(findElements(tree, "button").some(button => collectText(button).includes("Resolve"))).toBe(false);
+          const text = collectText(tree).join(" ");
+          expect(text).not.toContain("Ready to resolve");
+          expect(text).not.toContain("blocked");
+        }
+        expect(missionReport(blocked, now, new Map()).outcome).not.toBe("Ready to resolve.");
+      });
+    }
+  }
+  test("an authoritative eligible overdue return renders the correct action on both screens", () => {
+    const ready: FleetMissionSummary = {
+      ...mission("42", "Transport", "Returning", undefined, "7", "9", now - 600_000),
+      needsResolution: false, resolutionEligible: true,
+      asOfNow: { arrived: true, returned: true, secondsUntilArrival: 0, secondsUntilReturn: 0 },
+    };
+    const control = MissionControlPage(missionControlProps(now, { returning: [ready] }));
+    const detail = MissionDetailPage(missionDetailProps(now, { mission: ready, battleReport: null }));
+    for (const tree of [control, detail]) {
+      expect(findElements(tree, "button").some(button => collectText(button).includes("Resolve"))).toBe(true);
+    }
+  });
+});
+
 describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO-479)", () => {
   const planetLookup = new Map();
   // Arrival one minute in the past relative to `now` so the local clock alone would read "due".
@@ -3139,20 +3178,20 @@ describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO
   });
 
   test("an attack the backend marks resolvable reads 'Ready to resolve'", () => {
-    const attack = { ...mission("92", "Attack", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: true };
+    const attack = { ...mission("92", "Attack", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: true, resolutionEligible: true };
     expect(missionReport(attack, now, planetLookup).outcome).toBe("Ready to resolve.");
   });
 
   test("a non-combat arrival also requires backend-confirmed resolution state", () => {
     const transport = { ...mission("93", "Transport", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
     expect(missionReport(transport, now, planetLookup).outcome).toBe("en route");
-    expect(missionReport({ ...transport, needsResolution: true }, now, planetLookup).outcome).toBe("Ready to resolve.");
+    expect(missionReport({ ...transport, needsResolution: true, resolutionEligible: true }, now, planetLookup).outcome).toBe("Ready to resolve.");
   });
 
   test("keeps mission actions available when legacy maintenance telemetry says paused", () => {
     const dueAttack = {
       ...mission("94", "Attack", "Outbound", undefined, "7", "9", now - 4 * 60_000),
-      needsResolution: true,
+      needsResolution: true, resolutionEligible: true,
     };
     const baseProps = missionControlProps(now, { outgoing: [dueAttack] });
     const text = collectText(MissionControlPage({

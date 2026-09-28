@@ -2,6 +2,7 @@ import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256, stringToHex, toFunctionSelector } from "viem";
 import type { BackendConfig } from "./config";
+import { applyMissionEligibility } from "./missionEligibility";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import {
   buildingDurationSeconds,
@@ -656,6 +657,8 @@ export type FleetMissionSummary = {
   // missions reconstructed without a launch event.
   launchBlockNumber: string;
   needsResolution: boolean;
+  // Read-only simulation of the current permissionless leg, including event ordering.
+  resolutionEligible?: boolean;
   // Canonical progress while a large Attack is resolving across gas-bounded transactions.
   // Omitted before round 1 and after the terminal battle settlement clears contract progress.
   combatResolutionProgress?: {
@@ -1401,6 +1404,7 @@ export type DebrisFieldEvent = {
 };
 
 export interface ChainReader {
+  canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
   getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getStartPrice(): Promise<string | null>;
@@ -2203,6 +2207,12 @@ export class VeydriftGameReader implements ChainReader {
     return this.readBattleReports();
   }
 
+  async canResolveFleetMission(missionId: bigint, leg: "arrival" | "return"): Promise<boolean> {
+    // Execute the actual permissionless guard without signing or changing state.
+    const result = await this.call(leg === "arrival" ? "0xde09e7cf" : "0xc2472852", [encodeUint(missionId)]);
+    return result === "0x";
+  }
+
   async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
     const summaries = await this.readFleetMissionSummaries();
     return summaries
@@ -2233,6 +2243,7 @@ export class VeydriftGameReader implements ChainReader {
     return summaries
       .filter((mission) =>
         (mission.status === "Returning" || mission.status === "Recalled")
+          && mission.resolutionEligible === true
           && Number(mission.returnAt) > 0
           && Number(mission.returnAt) <= nowSeconds
       )
@@ -5124,10 +5135,12 @@ export class VeydriftGameReader implements ChainReader {
     // listResolvableFleetMissions it feeds) never surfaces a phantom-ready attack. Skipped entirely
     // when no Attack has arrived, so the common path adds no extra RPC round trip.
     const fulfilledRandomnessRequestIds = await this.readFulfilledRandomnessRequestIds(missions, nowSeconds);
-    return missions.map((mission) => ({
+    const summaries = missions.map((mission) => ({
       ...mission,
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
+    await applyMissionEligibility({ missions: summaries }, this, nowSeconds);
+    return summaries;
   }
 
   private decodeCanonicalFleetMission(missionId: bigint, result: string): CanonicalFleetMissionSnapshot | null {

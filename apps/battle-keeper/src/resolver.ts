@@ -64,7 +64,7 @@ export type MissionResolver = {
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
   resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
-  /** Canonical post-receipt state; bounded missile settlement can require several receipts. */
+  /** Canonical post-receipt state; bounded arrival preparation/combat can require several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
 };

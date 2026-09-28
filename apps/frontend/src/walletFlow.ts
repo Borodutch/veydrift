@@ -479,6 +479,8 @@ export type FleetMissionSummary = {
   // can avoid a phantom "Ready to resolve" before the keeper can settle. The backend leaves it
   // unset/false while a combat fleet is still mid-flight or awaiting randomness.
   needsResolution?: boolean;
+  // Fail-closed eligibility from a read-only simulation of the exact current contract leg.
+  resolutionEligible?: boolean;
   combatResolutionProgress?: {
     roundsCompleted: number;
     totalRounds: number;

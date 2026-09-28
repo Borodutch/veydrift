@@ -295,7 +295,7 @@ describe("MissionControlPage", () => {
         wallet: "0x1111111111111111111111111111111111111111",
         homePlanetId: "7",
         incoming: [mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" })],
-        outgoing: [mission({ missionId: "9", missionType: "Transport", needsResolution: true })],
+        outgoing: [mission({ missionId: "9", missionType: "Transport", needsResolution: true, resolutionEligible: true })],
         returning: [mission({ missionId: "10", status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } })],
         joinableAttacks: [],
         completedMissions: [],
@@ -303,7 +303,7 @@ describe("MissionControlPage", () => {
       },
       allActiveMissions: [
         mission({ missionId: "8", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333" }),
-        mission({ missionId: "9", missionType: "Transport", needsResolution: true }),
+        mission({ missionId: "9", missionType: "Transport", needsResolution: true, resolutionEligible: true }),
         mission({ missionId: "10", status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }),
       ],
       initialView: { activePage: 0, activeTab: "all", pastPage: 0, pastTab: "mine" },
@@ -657,7 +657,7 @@ describe("MissionControlPage", () => {
         wallet: "0x1111111111111111111111111111111111111111",
         homePlanetId: "7",
         incoming: [],
-        outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack", needsResolution: true })],
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Attack", needsResolution: true, resolutionEligible: true })],
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
@@ -686,7 +686,7 @@ describe("MissionControlPage", () => {
           pauseAgeSeconds: 120
         },
         incoming: [],
-        outgoing: [mission({ arrivalAt: "1770000000", missionId: "27543", missionType: "Transport", needsResolution: true })],
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "27543", missionType: "Transport", needsResolution: true, resolutionEligible: true })],
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
@@ -702,7 +702,7 @@ describe("MissionControlPage", () => {
   });
 
   test("stacks the overdue Resolve action below Resolving without changing disabled or terminal states", () => {
-    const overdue = mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Transport", needsResolution: true });
+    const overdue = mission({ arrivalAt: "1770000000", missionId: "12", missionType: "Transport", needsResolution: true, resolutionEligible: true });
     const visibility = {
       wallet: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
@@ -1581,7 +1581,7 @@ describe("backend-authoritative mission status", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionStatusPill(fleet, beforeArrival).label).toBe("En route");
     expect(missionStatusPill(fleet, afterArrival).label).toBe("En route");
-    expect(missionStatusPill(mission({ status: "Outbound", needsResolution: true }), beforeArrival).label).toBe("Resolving");
+    expect(missionStatusPill(mission({ status: "Outbound", needsResolution: true, resolutionEligible: true }), beforeArrival).label).toBe("Resolving");
   });
 
   test("uses backend return freshness instead of the browser clock", () => {
@@ -1591,7 +1591,7 @@ describe("backend-authoritative mission status", () => {
     expect(missionStatusPill(returning, afterReturn).label).toBe("Returning");
     expect(missionStatusPill(recalled, afterArrival).label).toBe("Recalled");
     expect(missionStatusPill(recalled, afterReturn).label).toBe("Recalled");
-    expect(missionStatusPill(mission({ status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival).label).toBe("Resolving");
+    expect(missionStatusPill(mission({ status: "Returning", resolutionEligible: true, asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival).label).toBe("Resolving");
   });
 
   test("terminal backend statuses pass through unchanged", () => {
@@ -1603,15 +1603,15 @@ describe("backend-authoritative mission status", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionDisplayStatusLabel(fleet, beforeArrival)).toBe("en route");
     expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("en route");
-    expect(missionDisplayStatusLabel(mission({ status: "Outbound", needsResolution: true }), beforeArrival)).toBe("resolving");
-    expect(missionDisplayStatusLabel(mission({ status: "Returning", asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival)).toBe("resolving");
+    expect(missionDisplayStatusLabel(mission({ status: "Outbound", needsResolution: true, resolutionEligible: true }), beforeArrival)).toBe("resolving");
+    expect(missionDisplayStatusLabel(mission({ status: "Returning", resolutionEligible: true, asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true } }), beforeArrival)).toBe("resolving");
   });
 });
 
 describe("manual mission resolution fallback", () => {
   test("appears only after a backend-confirmed mission leg has exceeded the grace period", () => {
-    const outbound = mission({ arrivalAt: "1770000300", missionType: "Transport", needsResolution: true, status: "Outbound" });
-    const returning = mission({ asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true }, returnAt: "1770000600", status: "Returning" });
+    const outbound = mission({ arrivalAt: "1770000300", missionType: "Transport", needsResolution: true, resolutionEligible: true, status: "Outbound" });
+    const returning = mission({ resolutionEligible: true, asOfNow: { secondsUntilArrival: 0, secondsUntilReturn: 0, arrived: true, returned: true }, returnAt: "1770000600", status: "Returning" });
 
     expect(manualMissionResolutionKind(outbound, 1_770_000_479_999)).toBeUndefined();
     expect(manualMissionResolutionKind(outbound, 1_770_000_480_000)).toBe("arrival");
@@ -1621,7 +1621,7 @@ describe("manual mission resolution fallback", () => {
 
   test("stays hidden while combat randomness is pending and after terminal settlement", () => {
     expect(manualMissionResolutionKind(
-      mission({ arrivalAt: "1770000300", needsResolution: true, resolutionBlocker: "randomness_pending", status: "Outbound" }),
+      mission({ arrivalAt: "1770000300", needsResolution: true, resolutionEligible: true, resolutionBlocker: "randomness_pending", status: "Outbound" }),
       1_770_001_000_000,
     )).toBeUndefined();
     expect(manualMissionResolutionKind(

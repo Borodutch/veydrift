@@ -1638,7 +1638,7 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
   if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
-  if (mission.needsResolution === true) {
+  if (isMissionReadyToResolve(mission)) {
     const progress = mission.combatResolutionProgress;
     return {
       label: progress ? `Resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "Resolving",
@@ -1652,7 +1652,7 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
     return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
   }
   if (mission.status === "Returning" || mission.status === "Recalled") {
-    if (mission.asOfNow?.returned === true) {
+    if (mission.asOfNow?.returned === true && mission.resolutionEligible === true) {
       return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
     }
     return mission.status === "Returning"
@@ -2829,14 +2829,10 @@ function Notice({ children, tone }: { children: preact.ComponentChildren; tone: 
   return <div className={`notice-enter rounded-lg border p-3 text-sm ${className}`}>{children}</div>;
 }
 
-// VEY-KANEO-479: an Attack/Harvest fleet's resolution is keeper-driven and, for attacks, gated on the
-// battle randomness being committed on-chain — so its arrival clock passing does NOT mean it can be
-// settled yet. Rely solely on the backend's `needsResolution` (which already encodes that gate) for
-// combat missions instead of inferring "Ready to resolve" from the local clock, which would surface a
-// phantom CTA in the window between arrival and the randomness commitment the keeper waits on. Other
-// mission types stay on the existing clock fallback, where arrival is sufficient to resolve.
+// Neither arrival nor return clocks prove readiness. The backend simulates the exact permissionless
+// leg, including earlier same-body events and randomness dependencies invisible in this fleet feed.
 function isMissionReadyToResolve(mission: FleetMissionSummary): boolean {
-  return mission.needsResolution === true;
+  return mission.needsResolution === true && mission.resolutionEligible === true;
 }
 
 // The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
@@ -2875,7 +2871,7 @@ export function manualMissionResolutionKind(
   mission: FleetMissionSummary,
   now: number,
 ): ManualMissionResolutionKind | undefined {
-  if (mission.resolutionBlocker === "randomness_pending") {
+  if (mission.resolutionEligible !== true || mission.resolutionBlocker === "randomness_pending") {
     return undefined;
   }
 
@@ -3199,7 +3195,7 @@ function missionStatusLabel(status: string): string {
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
   if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
-  if (mission.needsResolution === true) {
+  if (isMissionReadyToResolve(mission)) {
     const progress = mission.combatResolutionProgress;
     return progress ? `resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "resolving";
   }
@@ -3209,7 +3205,7 @@ export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: nu
     && mission.asOfNow?.arrived === true
     && mission.asOfNow.returned !== true
   ) return "stationed";
-  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true) {
+  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true && mission.resolutionEligible === true) {
     return "resolving";
   }
   return missionStatusLabel(mission.status);

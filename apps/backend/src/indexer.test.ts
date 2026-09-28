@@ -3897,7 +3897,7 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("projects elapsed returning missions as returned while future returns stay active", () => {
+  test("retains matured returns as active until the ordered on-chain credit settles", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -3925,17 +3925,23 @@ describe("SettlementIndexer", () => {
       });
     }
 
-    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["83"]);
-    expect(indexer.allCompletedFleetMissions().find((mission) => mission.missionId === "82")).toMatchObject({
-      status: "Returned",
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["82", "83"]);
+    expect(indexer.fleetMission("82")).toMatchObject({
+      status: "Returning",
       asOfNow: expect.objectContaining({ returned: true })
     });
-    expect(indexer.fleetMissionVisibility(player).returning.map((mission) => mission.missionId)).toEqual(["83"]);
-    expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toMatchObject({
-      status: "Returned"
-    });
+    expect(indexer.allCompletedFleetMissions().find((mission) => mission.missionId === "82")).toBeUndefined();
+    expect(indexer.fleetMissionVisibility(player).returning.map((mission) => mission.missionId)).toEqual(["82", "83"]);
+    expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toBeUndefined();
     expect(indexer.fleetSlots(player)).toEqual({ active: 1, limit: 1 });
     expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual([]);
+    indexer.applyLog({
+      blockNumber: "0x92", transactionHash: "0xreturned905", logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(82n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+    expect(indexer.fleetMission("82")?.status).toBe("Returned");
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["83"]);
   });
 
   test("frees due transport arrivals from projected fleet slots because launch lazily settles them (VEY-590)", () => {

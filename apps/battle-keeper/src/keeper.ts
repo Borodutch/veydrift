@@ -456,17 +456,15 @@ export class BattleKeeper {
       // Our submit succeeded. The authoritative event (FleetMissionResolved / FleetMissionReturned)
       // is the backstop, but advance the state machine now so we don't keep re-submitting.
       if (leg === "arrival") {
-        if (mission.missionType === MissionType.MissileAttack) {
-          // A successful receipt may have completed only one bounded queue/order chunk. Read the
-          // canonical mission after every receipt and retain Outbound missiles for the next tick.
-          // Without a reader, fail closed and let the authoritative event/sweep advance it.
+        if (mission.missionType === MissionType.MissileAttack || mission.missionType === MissionType.Attack) {
+          // A receipt may only advance a bounded return scan, production queue, or combat round.
+          // Retain Outbound missions until canonical state proves arrival settlement. Without a
+          // reader, fail closed and let the authoritative event/sweep advance the leg.
           const status = await this.resolver.missionStatus?.(missionId);
           if (!status || status.status === FleetMissionStatus.Outbound) return;
-          this.recordArrivalResolved({
-            missionId,
-            missionType: status.missionType,
-            returnAt: status.returnAt
-          });
+          // Reconcile terminal/return states exactly; a late receipt may already be Returned.
+          this.inFlight.delete(missionId);
+          this.reconcileMissionStatus(status);
           return;
         }
         this.recordArrivalResolved({

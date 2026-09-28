@@ -2324,6 +2324,7 @@ describe("fleet mission resolution scheduling", () => {
   function readerFor(logs: RpcLog[]): VeydriftGameReader {
     return new VeydriftGameReader(readerConfig, {
       async request<T>(method: string): Promise<T> {
+        if (method === "eth_call") return "0x" as T; // fixture legs pass the authoritative simulation
         if (method === "eth_blockNumber") return "0x200" as T;
         expect(method).toBe("eth_getLogs");
         return logs as T;
@@ -2416,6 +2417,10 @@ describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () =
       { ...readerConfig, randomnessEngineAddress: engineAddress },
       {
         async request<T>(method: string, params?: unknown): Promise<T> {
+          if (method === "eth_call") {
+            if (engineLogs.some(log => log.topics[1] === topic(42n))) return "0x" as T;
+            throw new Error("PendingRandomness");
+          }
           if (method === "eth_blockNumber") return "0x200" as T;
           expect(method).toBe("eth_getLogs");
           const filter = (params as [{ address: string | string[] }])[0];

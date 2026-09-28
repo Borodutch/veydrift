@@ -172,6 +172,47 @@ describe("BattleKeeper pending tracking", () => {
     expect(resolver.calls).toEqual(["70:arrival", "70:arrival"]);
   });
 
+  test("attack preparation receipts retain arrival until canonical settlement", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      statusBehavior: async (missionId, callIndex) => ({
+        missionId,
+        status: callIndex === 0 ? FleetMissionStatus.Outbound : FleetMissionStatus.Returning,
+        missionType: MissionType.Attack,
+        arrivalAt: 900,
+        returnAt: 1_200,
+        randomnessRequestId: "0"
+      })
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 1_100));
+    await keeper.tick();
+    expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ leg: "arrival", dueAt: 900 })]);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["93790:arrival", "93790:arrival"]);
+    expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ leg: "return", dueAt: 1_200 })]);
+  });
+
+  test("already returned attack does not invent another return leg after a late receipt", async () => {
+    const { keeper } = makeKeeper(async () => "0xhash", {
+      statusBehavior: async (missionId) => ({ missionId, status: FleetMissionStatus.Returned,
+        missionType: MissionType.Attack, arrivalAt: 900, returnAt: 950, randomnessRequestId: "0" })
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 950));
+    await keeper.tick();
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("attack receipt without canonical reader stays pending for authoritative events", async () => {
+    const keeper = new BattleKeeper({
+      keeperAddress: () => "0xkeeper",
+      resolveMission: async () => "0xhash"
+    }, { now: () => 1_000, logger: silentLogger });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 1_100));
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+    keeper.recordArrivalResolved({ missionId: "93790", missionType: MissionType.Attack, returnAt: 1_100 });
+    expect(keeper.snapshot().awaitingReturnCount).toBe(1);
+  });
+
   test("status reconciliation reopens a missile whose terminal impact was reorged out", async () => {
     const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
     keeper.recordLaunched(launch("8", MissionType.MissileAttack, 900, 900));
