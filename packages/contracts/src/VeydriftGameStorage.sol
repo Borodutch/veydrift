@@ -473,6 +473,8 @@ abstract contract VeydriftGameStorage is Initializable {
 
     mapping(address player => uint256[] missionIds) internal _chronologyMissionsByPlayer;
     mapping(address player => uint256 cursor) internal _chronologyPlayerCursor;
+    // Durable legacy migration completion; later launches still require bounded current-ID catch-up.
+    bool internal _chronologyMigrationComplete;
 
     error AlreadyStarted();
     error BadStartPayment();

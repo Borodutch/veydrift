@@ -150,6 +150,84 @@ contract VeydriftFleetChronologyTest is Test {
         assertTrue(ready);
     }
 
+    function testEmptyInventoryRequiresInitialSyncAndCompletionSurvivesCatchUp() public {
+        (bool eligible,, bool migrationReady) = h.fleetMissionEligibility(1);
+        assertFalse(eligible);
+        assertFalse(migrationReady, "even an empty legacy inventory needs initial sync");
+        h.syncFleetChronology(1);
+        for (uint256 id = 1; id <= 9; ++id) {
+            _seed(
+                id,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                VeydriftGameStorage.FleetMissionStatus.Outbound,
+                1,
+                2,
+                900,
+                1200
+            );
+        }
+        (eligible,, migrationReady) = h.fleetMissionEligibility(1);
+        assertFalse(eligible, "strict controls stay closed for unindexed new launches");
+        assertTrue(migrationReady, "keepers must remain enabled after migration");
+        assertFalse(h.prepareFleetChronology(1, false));
+        assertEq(h.entries(2), 4, "one preparer indexes only four IDs");
+        (eligible,, migrationReady) = h.fleetMissionEligibility(1);
+        assertFalse(eligible);
+        assertTrue(migrationReady);
+        h.settleDuePlayerCombatArrivals(address(1));
+        assertEq(h.entries(2), 8, "lazy entrypoint also indexes only four IDs");
+        assertEq(uint8(h.status(1)), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        (eligible,, migrationReady) = h.fleetMissionEligibility(1);
+        assertFalse(eligible);
+        assertTrue(migrationReady);
+        h.resolveFleetMission(1);
+        assertEq(h.entries(2), 9);
+        assertEq(uint8(h.status(1)), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        (eligible,, migrationReady) = h.fleetMissionEligibility(2);
+        assertTrue(eligible);
+        assertTrue(migrationReady);
+    }
+
+    function testPostMigrationIdleReturnProgressesThroughNewIdBacklog() public {
+        _seed(
+            1,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            VeydriftGameStorage.FleetMissionStatus.Returning,
+            1,
+            2,
+            700,
+            800
+        );
+        h.syncFleetChronology(1);
+        for (uint256 id = 2; id <= 10; ++id) {
+            _seed(
+                id,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                VeydriftGameStorage.FleetMissionStatus.Outbound,
+                3,
+                4,
+                1100,
+                1400
+            );
+        }
+        for (uint256 attempt; attempt < 3; ++attempt) {
+            (bool eligible,, bool migrationReady) = h.fleetMissionEligibility(1);
+            assertFalse(eligible);
+            assertTrue(migrationReady);
+            h.completeFleetMissionReturn(1);
+            assertEq(
+                uint8(h.status(1)),
+                uint8(
+                    attempt == 2
+                        ? VeydriftGameStorage.FleetMissionStatus.Returned
+                        : VeydriftGameStorage.FleetMissionStatus.Returning
+                )
+            );
+        }
+        (,, bool ready) = h.fleetMissionEligibility(1);
+        assertTrue(ready, "settlement cannot clear durable migration completion");
+    }
+
     function testAllLegacyReturnTypesBlockLaterEvents() public {
         for (uint8 kind; kind <= uint8(VeydriftGameStorage.FleetMissionType.DefenseHold); ++kind) {
             if (kind == uint8(VeydriftGameStorage.FleetMissionType.MissileAttack)) continue;

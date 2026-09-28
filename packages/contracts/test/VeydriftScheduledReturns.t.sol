@@ -217,6 +217,48 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         }
     }
 
+    function testPostMigrationLaunchThenIdlePermissionlessArrivalAndReturn() public {
+        vm.warp(RETURN_AT - 1 days);
+        (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setPlanetOwner(away, player);
+        _fundPlanet(home, 100_000, 100_000, 100_000);
+        _setShipCount(home, Ship.SmallCargo, 3);
+        game.syncFleetChronology(256);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+        vm.prank(player);
+        uint256 id = game.launchFleetMission(
+            home,
+            away,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(id);
+        // No player action or explicit sync after launch: only the funded resolver drives progress.
+        vm.warp(arrivalAt);
+        (bool eligible,, bool migrationReady) = game.fleetMissionEligibility(id);
+        assertFalse(eligible, "UI must not offer an unindexed mission");
+        assertTrue(migrationReady, "idle launch must not disable funded resolution");
+        vm.prank(address(0xBEEF));
+        game.resolveFleetMission(id);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(id);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.shipCount(home, Ship.SmallCargo), 0);
+        vm.warp(returnAt);
+        (eligible,, migrationReady) = game.fleetMissionEligibility(id);
+        assertTrue(eligible);
+        assertTrue(migrationReady);
+        vm.prank(address(0xBEEF));
+        game.completeFleetMissionReturn(id);
+        (status,,,) = _fleetMission(id);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        assertEq(game.shipCount(home, Ship.SmallCargo), 3);
+        assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
     function testRecalledFleetRemainsTrackedUntilScheduledReturn() public {
         vm.warp(RETURN_AT - 1 days);
         (uint256 home, uint256 away,) = _seedMoonAttackPlanets();

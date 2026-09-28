@@ -174,10 +174,14 @@ export class ViemMissionResolver implements MissionResolver {
         to: this.to,
         data: encodeFunctionData({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", args: [BigInt(missionId)] })
       }, "latest"]);
-      const [eligible, , inventoryReady] = decodeFunctionResult({
+      const [, , legacyMigrationComplete] = decodeFunctionResult({
         abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", data: proof
       });
-      if (!eligible || !inventoryReady) throw new Error("fleet chronology eligibility is not proven");
+      // The first bool is strict player-facing settlement eligibility: it remains false while
+      // current-ID inventory/body scans need bounded preparation. Only the third bool is the
+      // durable legacy-migration proof; after migration, simulate the existing entrypoint so
+      // progress-only calls can run without bypassing its chronology/randomness guards.
+      if (!legacyMigrationComplete) throw new Error("fleet chronology legacy migration is not proven");
       await this.transport.request<string>("eth_call", [{ from, to: this.to, data }, "latest"]);
     } catch (error) {
       throw new MissionNotResolvableError(missionId, error);

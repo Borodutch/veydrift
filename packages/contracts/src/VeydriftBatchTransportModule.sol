@@ -90,7 +90,9 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             _chronologyIndexedThrough = end;
             emit FleetChronologyIndexed(end, nextFleetId, end + 1 == nextFleetId);
         }
-        return (end, end + 1 == nextFleetId);
+        ready = end + 1 == nextFleetId;
+        if (ready && !_chronologyMigrationComplete) _chronologyMigrationComplete = true;
+        return (end, ready);
     }
 
     /// @dev One ordering implementation serves permissionless arrivals, returns, and lazy callers.
@@ -195,14 +197,18 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     }
 
     /// @notice Ordering eligibility only; callers additionally simulate for randomness/gas gates.
-    /// A bounded view fails closed for large inventories until the preparer has completed its scan.
+    /// A bounded view fails closed until current-ID inventory and body proof are complete.
+    /// migrationReady is durable legacy completion, not current inventory/proof readiness.
+    /// Funded keepers may progress when migrationReady; user controls require eligible too.
     function fleetMissionEligibility(uint256 id)
         external
         view
-        returns (bool eligible, uint256 blocker, bool inventoryReady)
+        returns (bool eligible, uint256 blocker, bool migrationReady)
     {
-        inventoryReady = _chronologyIndexedThrough + 1 == nextFleetId;
-        if (!inventoryReady) return (false, 0, false);
+        migrationReady = _chronologyMigrationComplete;
+        if (!migrationReady || _chronologyIndexedThrough + 1 != nextFleetId) {
+            return (false, 0, migrationReady);
+        }
         FleetMission storage m = _fleetMissions[id];
         if (!_active(m)) return (false, 0, true);
         bool returning = m.status != FleetMissionStatus.Outbound;
