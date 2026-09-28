@@ -6,7 +6,7 @@ import { ProductionCatalog, type ProductionCatalogItem } from "../src/components
 import { MoonPage } from "../src/components/MoonPage";
 import { defenseCatalog, shipyardCatalog } from "../src/playableMvp";
 import { useProductionBuildPlan } from "../src/useProductionBuildPlan";
-import type { ProductionPlanContext } from "../src/productionBuildPlan";
+import { maxAddableProduction, type ProductionOrder, type ProductionPlanContext } from "../src/productionBuildPlan";
 import { productionPlanContext } from "../src/productionBuildPlanContext";
 import type { ChainMoonState } from "../src/walletFlow";
 import { confirmTransactionRetry } from "../src/transactionActionGate";
@@ -66,9 +66,9 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "document");
 });
 
-async function until(predicate: () => boolean) {
+async function until(predicate: () => boolean, label = "condition") {
   for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(2);
-  expect(predicate()).toBe(true);
+  if (!predicate()) throw new Error(`Timed out: ${label}; rendered: ${root.textContent}`);
 }
 const ship = shipyardCatalog[0]!;
 const item: ProductionCatalogItem = {
@@ -78,22 +78,25 @@ const item: ProductionCatalogItem = {
   durationSeconds: 144, requirements: [], missing: [], quantity: 1,
   disabled: false, actionLabel: "Build", detailNote: "Ship",
 };
+const defense = defenseCatalog.find(entry => entry.key === "rocketLauncher")!;
+const defenseItem: ProductionCatalogItem = { ...item, ...defense, groupLabel: defense.group };
 const context: ProductionPlanContext = {
-  body: "planet", resources: { metal: "1000", crystal: "0", deuterium: "0" },
-  ships: [item], defenses: [], available: true, defenseCounts: [], shipyardLevel: 0, naniteLevel: 0,
+  body: "planet", resources: { metal: "10000", crystal: "0", deuterium: "0" },
+  ships: [item], defenses: [defenseItem], available: true, defenseCounts: [], shipyardLevel: 0, naniteLevel: 0,
 };
-const key = "0x2105:0xabc:7:planet";
 const order = { kind: "ship" as const, id: ship.id, quantity: 1 };
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
 }
-function mountFlow(mode: "timeout" | "disconnect" | "reject" | "revert") {
+function mountFlow(mode: "timeout" | "disconnect" | "reject" | "revert", body: "planet" | "moon" = "planet", initialRows: ProductionOrder[] = [order]) {
+  const key = `0x2105:0xabc:7:${body}`;
   Object.defineProperty(globalThis, "document", { configurable: true, value: document });
   const storage = new Map<string, string>();
   let consent = false;
   let sends = 0;
+  let initialized = false;
   const first = deferred<string>();
   Object.defineProperty(globalThis, "window", { configurable: true, value: Object.assign(new EventTarget(), {
     confirm: () => consent,
@@ -106,12 +109,12 @@ function mountFlow(mode: "timeout" | "disconnect" | "reject" | "revert") {
   });
   function MountedPlan() {
     const plan = useProductionBuildPlan();
-    useEffect(() => plan.setDrafts({ [key]: [order] }), []);
+    useEffect(() => { plan.setDrafts({ [key]: initialRows }); initialized = true; }, []);
     const rows = plan.drafts[key] ?? [];
     const confirm = () => {
       if (!plan.start(key)) return;
       const submitted = [...rows];
-      void data.runWriteTransaction({ key: "production-batch:planet:7", chainId: "0x2105", planetIds: ["7"],
+      void data.runWriteTransaction({ key: `production-batch:${body}:7`, chainId: "0x2105", planetIds: ["7"],
         label: "Build plan", waitForIndexing: false, confirmRetry: confirmTransactionRetry,
         onStateChange: state => plan.onState(key, submitted, state),
         send: async beforeSend => {
@@ -125,20 +128,101 @@ function mountFlow(mode: "timeout" | "disconnect" | "reject" | "revert") {
         },
       }).then(result => plan.onOutcome(key, submitted, result)).catch(error => { plan.release(key); plan.setError(key, String(error)); });
     };
-    return <ProductionCatalog actionPending={false} canTransact emptyLabel="" items={[item]}
-      onBuild={() => {}} onQuantity={() => {}} onSelect={() => {}} selectedKey={ship.key} productionKind="ship"
-      buildPlan={{ body: "planet", context, rows, busy: Boolean(plan.busy[key]), unknown: Boolean(plan.unknown[key]), ready: true,
-        error: plan.errors[key], onAdd: () => {}, onRemove: index => plan.setDrafts(previous => ({ ...previous, [key]: (previous[key] ?? []).filter((_, position) => position !== index) })),
-        onClear: () => plan.setDrafts(previous => ({ ...previous, [key]: [] })), onConfirm: confirm }} />;
+    const planContext = { ...context, body };
+    const buildPlan = { body, context: planContext, rows, busy: Boolean(plan.busy[key]), unknown: Boolean(plan.unknown[key]), ready: true,
+      error: plan.errors[key],
+      // Same state/eligibility path used by PlayableMvpApp; no fixture-only cap.
+      onAdd: (next: ProductionOrder) => {
+        if (plan.busyRef.current.has(key)) return;
+        plan.setDrafts(previous => {
+          const current = previous[key] ?? [];
+          const max = maxAddableProduction(planContext, current, next.kind, next.id);
+          if (next.quantity < 1 || next.quantity > max) return previous;
+          return { ...previous, [key]: [...current, next] };
+        });
+      },
+      onRemove: (index: number) => plan.setDrafts(previous => ({ ...previous, [key]: (previous[key] ?? []).filter((_, position) => position !== index) })),
+      onClear: () => plan.setDrafts(previous => ({ ...previous, [key]: [] })), onConfirm: confirm };
+    return <>
+      <ProductionCatalog actionPending={false} canTransact emptyLabel="" items={[item]}
+        onBuild={() => {}} onQuantity={() => {}} onSelect={() => {}} selectedKey={ship.key} productionKind="ship" buildPlan={buildPlan} />
+      <ProductionCatalog actionPending={false} canTransact emptyLabel="" items={[defenseItem]}
+        onBuild={() => {}} onQuantity={() => {}} onSelect={() => {}} selectedKey={defense.key} productionKind="defense" showPlan={false} buildPlan={buildPlan} />
+    </>;
   }
   render(<MountedPlan />, root as unknown as Element);
-  return { data, first, get sends() { return sends; }, allow: () => { consent = true; } };
+  return { data, first, get initialized() { return initialized; }, get sends() { return sends; }, allow: () => { consent = true; } };
 }
 function click(name: string) {
   const node = root.query(name);
   expect(node).toBeDefined();
   node!.dispatchEvent({ type: "click", timeStamp: performance.now() });
 }
+
+function expectCount(count: number) {
+  const panels = root.matching("data-build-plan", "true");
+  expect(panels).toHaveLength(count ? 1 : 0);
+  if (count) expect(root.query(`Build plan ${count} of 15 orders`)?.textContent).toBe(`${count}/15`);
+  else expect(root.query("Build plan 0 of 15 orders")).toBeUndefined();
+}
+
+test.each(["planet", "moon"] as const)("mounted %s shared catalogs count Add, cap, Remove and Clear transitions", async body => {
+  const flow = mountFlow("timeout", body, []);
+  try {
+    // Let the initial effect settle before interacting with the empty plan.
+    await until(() => flow.initialized);
+    expectCount(0);
+    for (let count = 1; count <= 15; count++) {
+      const label = count % 2 ? ship.label : defense.label;
+      expect(root.query(`Add ${label} to build plan`)?.disabled).toBe(false);
+      click(`Add ${label} to build plan`);
+      await until(() => Boolean(root.query(`Build plan ${count} of 15 orders`)), `add ${count}`);
+      expectCount(count);
+    }
+    expect(root.query("Confirm build plan")?.disabled).toBe(false);
+    for (const label of [ship.label, defense.label]) {
+      expect(root.query(`Add ${label} to build plan`)?.disabled).toBe(true);
+      // Even a synthetic event bypassing native disabled-button handling cannot add row 16.
+      click(`Add ${label} to build plan`);
+      await Bun.sleep(2);
+      expectCount(15);
+    }
+    click(`Remove ${ship.label} from build plan`);
+    await until(() => Boolean(root.query("Build plan 14 of 15 orders")));
+    expectCount(14);
+    expect(root.query(`Add ${ship.label} to build plan`)?.disabled).toBe(false);
+    expect(root.query(`Add ${defense.label} to build plan`)?.disabled).toBe(false);
+    click(`Add ${defense.label} to build plan`);
+    await until(() => Boolean(root.query("Build plan 15 of 15 orders")));
+    expectCount(15);
+    click("Clear build plan");
+    await until(() => !root.query("Confirm build plan"));
+    expectCount(0); // Empty plans are hidden, not rendered as 0/15.
+  } finally { flow.data.dispose(); }
+});
+
+test.each(["timeout", "disconnect"] as const)("mounted %s late receipt removes submitted snapshot but retains newer shared row", async mode => {
+  const flow = mountFlow(mode);
+  try {
+    await until(() => Boolean(root.query("Build plan 1 of 15 orders")));
+    expectCount(1);
+    click("Confirm build plan");
+    await until(() => Boolean(root.query("Retry build plan after checking wallet activity")));
+    expectCount(1);
+    click(`Add ${defense.label} to build plan`);
+    await until(() => Boolean(root.query("Build plan 2 of 15 orders")));
+    expectCount(2);
+    flow.first.resolve("0xlate");
+    await until(() => Boolean(root.query("Build plan 1 of 15 orders")) && !root.query("Retry build plan after checking wallet activity"));
+    expectCount(1);
+    expect(root.query(`Remove ${ship.label} from build plan`)).toBeUndefined();
+    expect(root.query(`Remove ${defense.label} from build plan`)).toBeDefined();
+    // Both confirmed and applied notifications must clear the same snapshot only once.
+    await Bun.sleep(10);
+    expectCount(1);
+    expect(flow.sends).toBe(1);
+  } finally { flow.data.dispose(); }
+});
 
 test("mounted MoonPage shows one shared plan and both populated catalogs keep Add with a shared budget", () => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: document });
