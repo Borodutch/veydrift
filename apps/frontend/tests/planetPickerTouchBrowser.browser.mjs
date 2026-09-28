@@ -692,6 +692,25 @@ for (const { width, route, kind } of [
   });
 }
 
+for (const width of [390, 1280]) {
+  test(`planet Mission activity identifies own returns across navigation at ${width}px`, async () => {
+    await loadInspectorFixture("/planet/1/2/3", width, { activeMission: "true", returningRaid: "true" });
+    const row = "[...document.querySelectorAll('a')].find(a => a.textContent.includes('#777'))";
+    await waitForExpression(`${row}?.textContent.includes('Inbound · Own Attack returning')`);
+    assert.equal(await evaluate(`${row}?.querySelector('.text-rose-300') !== null`), false);
+    for (const [path, label] of [
+      ["/planet/9/9/9", "Outbound · Third-party Attack returning"],
+      ["/planet/1/2/3", "Inbound · Own Attack returning"],
+    ]) {
+      await evaluate(`history.pushState({}, "", ${JSON.stringify(path)}); dispatchEvent(new PopStateEvent("popstate"))`);
+      await waitForExpression(`${row}?.textContent.includes(${JSON.stringify(label)})`);
+    }
+    const bounds = await evaluate(`(() => { const r = (${row}).getBoundingClientRect(); return {left:r.left, right:r.right}; })()`);
+    assert.ok(bounds.left >= 0 && bounds.right <= width, JSON.stringify(bounds));
+    assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
+  });
+}
+
 test("owned planet selector loads its own roster endpoint on startup", async () => {
   await loadInspectorFixture("/", 1280, { shell: "settlement" });
   await waitForExpression("window.inspectorProof.requests.some(request => /\\/wallet\\/[^/]+\\/planets(?:\\?|$)/.test(request))");

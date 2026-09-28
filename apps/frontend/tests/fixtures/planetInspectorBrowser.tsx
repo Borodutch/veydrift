@@ -421,11 +421,11 @@ globalThis.fetch = (async (input, init) => {
     if (url.searchParams.get("summaryOnly") === "true") return Response.json({ totalEntries: Number(fixtureParams.get("activeMissionCount") ?? (fixtureParams.get("activeMission") === "true" ? 1 : 0)) });
     return Response.json({ missions: Array.from({ length: Number(fixtureParams.get("activeMissionCount") ?? (fixtureParams.get("activeMission") === "true" ? 1 : 0)) }, (_, index) => ({
       missionId: String(777 + index),
-      status: "Outbound",
-      missionType: "Transport",
-      owner: unrelatedOwner,
+      status: fixtureParams.get("returningRaid") === "true" ? "Returning" : "Outbound",
+      missionType: fixtureParams.get("returningRaid") === "true" ? "Attack" : "Transport",
+      owner: fixtureParams.get("returningRaid") === "true" ? account : unrelatedOwner,
       originPlanetId: "101",
-      targetPlanetId: "102",
+      targetPlanetId: fixtureParams.get("returningRaid") === "true" ? "9909" : "102",
       arrivalAt: String(Math.floor(Date.now() / 1000) + 3600),
       returnAt: String(Math.floor(Date.now() / 1000) + 7200),
       fuelCost: "0",

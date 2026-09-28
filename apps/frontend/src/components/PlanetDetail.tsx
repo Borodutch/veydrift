@@ -432,7 +432,7 @@ export function PlanetDetail({
         <>
           <PlanetFleetActivityPanel
             loading={activeMissions === null}
-            rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [])}
+            rows={planetFleetActivityRows(planet.occupiedBy?.planetId, activeMissions ?? [], "planet", planet.occupiedBy?.owner)}
           />
 
           {planet.occupiedBy?.planetId ? (
@@ -877,6 +877,7 @@ export function planetFleetActivityRows(
   planetId: string | null | undefined,
   missions: readonly FleetMissionSummary[],
   bodyKind: "planet" | "moon" = "planet",
+  planetOwner?: string | null,
 ): PlanetFleetActivityRow[] {
   if (!planetId) return [];
 
@@ -911,18 +912,29 @@ export function planetFleetActivityRows(
       const shipCount = shipEntries.reduce((total, entry) => total + entry.count, 0);
       const missileAttack = mission.missionType === "MissileAttack";
       const missileQuantity = mission.missileQuantity ?? 0;
-      const hostile = direction === "Inbound" && (
+      // Direction describes travel, not allegiance: a raid returning home is inbound but safe.
+      const owner = planetOwner ?? (mission.originPlanetId === planetId
+        ? mission.originPlanet?.owner
+        : mission.targetPlanet?.owner);
+      const own = Boolean(owner && mission.owner.toLowerCase() === owner.toLowerCase());
+      const hostile = !returning && !own && direction === "Inbound" && (
         mission.missionType === "Attack"
         || mission.missionType === "AcsAttack"
         || missileAttack
       );
+
+      const typeLabel = missionTypeLabel(mission.missionType);
+      const allegiance = own ? "Own " : hostile ? "Hostile " : owner ? "Third-party " : "";
+      const lifecycle = returning
+        ? mission.status === "Recalled" ? " recalled · returning" : " returning"
+        : own && direction === "Inbound" ? " arriving" : "";
 
       return {
         ...(shipEntries[0]?.ship.asset ? { asset: shipEntries[0].ship.asset } : {}),
         direction,
         eventLabel: `${returning ? "Lands" : "Arrives"} ${formatUserTimestamp(eventAt)}`,
         missionId: mission.missionId,
-        missionLabel: missionTypeLabel(mission.missionType),
+        missionLabel: `${allegiance}${typeLabel}${lifecycle}`,
         routeLabel: direction === "Local"
           ? planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)
           : `${direction === "Inbound" ? "From" : "To"} ${planetFleetEndpointLabel(endpoint, endpointId, endpointIsMoon)}`,
@@ -1000,7 +1012,7 @@ export function PlanetFleetActivityPanel({
                 <span className="min-w-0">
                   <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-200">
                     <DirectionIcon aria-hidden="true" className={row.tone === "danger" ? "text-rose-300" : "text-cyan-200"} size={14} />
-                    <span className="truncate">{row.direction} · {row.missionLabel}</span>
+                    <span className="min-w-0" title={`${row.direction} · ${row.missionLabel}`}>{row.direction} · {row.missionLabel}</span>
                     <span className="shrink-0 font-mono text-[10px] text-slate-500">#{row.missionId}</span>
                   </span>
                   <span className="mt-1 block truncate text-[11px] text-slate-500" title={`${row.routeLabel} · ${row.eventLabel}`}>{row.routeLabel} · {row.eventLabel}</span>
