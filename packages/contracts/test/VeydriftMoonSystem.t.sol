@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -3265,6 +3266,7 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertEq(moons.moonDefenseQueueBacklog(planetId).length, 13);
     }
 
+    /// forge-config: default.isolate = true
     function testMoonBatchDrainsMaximumReadyPreexistingBacklogsWithinGasCeiling() public {
         uint256 planetId = _readyMoonShipyard();
         _seedBatchPrerequisites(planetId);
@@ -3294,18 +3296,34 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         uint64 defensesReady = moons.moonDefenseQueueBacklog(planetId)[15].readyAt;
         vm.warp(shipsReady > defensesReady ? shipsReady : defensesReady);
         ProductionOrder[] memory orders = _costlyBatchOrders();
-        // Reset storage warmth from fixture construction before measuring the real batch.
-        vm.cool(address(game));
-        vm.cool(address(moons));
+        // Isolation executes every top-level CALL in a fresh EVM transaction:
+        // committed original storage, cleared transient storage, and cold modules/libraries.
+        // Check that semantic boundary rather than relying on vm.cool (warmth only).
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGe(storageGas, 5_000, "requires clean committed storage: enable isolation");
+        assertEq(transientValue, 0, "requires a fresh transaction transient store");
 
-        uint256 beforeGas = gasleft();
+        bytes memory callData = abi.encodeCall(moons.startMoonProductionBatch, (planetId, orders));
+        uint256 intrinsic = 21_000;
+        for (uint256 i; i < callData.length; ++i) {
+            intrinsic += callData[i] == 0 ? 4 : 16;
+        }
         vm.prank(player);
-        moons.startMoonProductionBatch(planetId, orders);
-        uint256 used = beforeGas - gasleft();
-        emit log_named_uint("moon 15 heterogeneous rows plus 17+17 ready rows execution gas", used);
-        uint256 upper = used + 21_000 + 16
-            * abi.encodeCall(moons.startMoonProductionBatch, (planetId, orders)).length;
-        emit log_named_uint("moon heterogeneous settlement intrinsic/calldata upper bound", upper);
+        // Forge isolation adds 21k to this call allowance: a real 12m transaction.
+        moons.startMoonProductionBatch{gas: 12_000_000 - 21_000}(planetId, orders);
+        Vm.Gas memory measured = vm.lastCallGas();
+        // Isolated lastCallGas includes intrinsic and deducts refunds. Add refunds
+        // back: they cannot finance execution or avoid the transaction gas limit.
+        assertGe(measured.gasRefunded, 0);
+        uint256 upper = measured.gasTotalUsed + uint256(uint64(measured.gasRefunded));
+        emit log_named_uint("moon committed settlement execution gas", upper - intrinsic);
+        emit log_named_uint("moon committed settlement intrinsic/calldata gas", intrinsic);
+        emit log_named_uint("moon committed settlement gross transaction gas", upper);
+        emit log_named_uint(
+            "moon committed settlement charged transaction gas", measured.gasTotalUsed
+        );
         assertLt(upper, 12_000_000);
         assertLt(upper, 16_777_216);
         for (uint256 i; i < 7; ++i) {
