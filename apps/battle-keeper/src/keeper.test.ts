@@ -324,6 +324,54 @@ describe("BattleKeeper pending tracking", () => {
 });
 
 describe("BattleKeeper resolution loop", () => {
+  test("late ticks dispatch #93742 return before #93790 impact by scheduled time", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      now: () => 1_790_592_585,
+      maxConcurrency: 1
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 1_790_592_549));
+    keeper.recordArrivalResolved({
+      missionId: "93742", missionType: MissionType.Attack, returnAt: 1_790_592_545
+    });
+
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["93742:return", "93790:arrival"]);
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("dispatches mixed legs by dueAt, then arrival-first ties and numeric mission id", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { maxConcurrency: 1 });
+    keeper.recordArrivalResolved({ missionId: "2", missionType: MissionType.Attack, returnAt: 900 });
+    keeper.recordLaunched(launch("10", MissionType.Attack, 900));
+    keeper.recordLaunched(launch("3", MissionType.Attack, 900));
+    keeper.recordArrivalResolved({ missionId: "20", missionType: MissionType.Attack, returnAt: 800 });
+    keeper.recordArrivalResolved({ missionId: "1", missionType: MissionType.Attack, returnAt: 950 });
+    keeper.recordLaunched(launch("30", MissionType.Attack, 1_001));
+
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["20:return", "3:arrival", "10:arrival", "2:return", "1:return"]);
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["30"]);
+  });
+
+  test("chronological dispatch retains serial nonce safety and excludes overlapping ticks", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { keeper, resolver } = makeKeeper(async () => { await gate; return "0xhash"; }, {
+      maxConcurrency: 2
+    });
+    keeper.recordLaunched(launch("3", MissionType.Attack, 900));
+    keeper.recordArrivalResolved({ missionId: "2", missionType: MissionType.Attack, returnAt: 800 });
+    keeper.recordLaunched(launch("1", MissionType.Attack, 700));
+
+    const first = keeper.tick();
+    expect(resolver.calls).toEqual(["1:arrival"]);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["1:arrival"]);
+    release();
+    await first;
+    expect(resolver.calls).toEqual(["1:arrival", "2:return", "3:arrival"]);
+  });
+
   test("resolves an arrival whose time has passed", async () => {
     const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
     keeper.recordLaunched(launch("1", MissionType.Attack, 900)); // no return leg recorded

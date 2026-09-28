@@ -45,7 +45,11 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   (`eth_sendRawTransaction`) from `KEEPER_PRIVATE_KEY`. Both calls are **permissionless** — any funded
   EOA can resolve. Each submission is simulated with `eth_call` first, so a leg that isn't resolvable
   yet (arrival: randomness not committed; return: not yet due / wrong status) reverts during
-  simulation and is **retried on the next tick** without burning a nonce or crashing.
+  simulation and is **retried on the next tick** without burning a nonce or crashing. Due legs are
+  dispatched by scheduled `dueAt` across both legs; equal timestamps use arrival before return,
+  then numeric mission ID. Submission remains serial for nonce safety. This priority is not a
+  consensus guarantee: the contract must enforce return-versus-impact chronology even when another
+  permissionless resolver submits the attack first.
 - **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent fleet-mission logs over `eth_getLogs`
   to recover **both legs** — a missed launch re-queues the arrival, a missed `FleetMissionResolved`
   drops terminal arrivals, a missed `FleetMissionReturnExposed` transitions to the return leg, and a

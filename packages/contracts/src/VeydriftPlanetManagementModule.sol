@@ -63,13 +63,13 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
                 (mission.status == FleetMissionStatus.Returning
                         || mission.status == FleetMissionStatus.Recalled)
                     && nowTimestamp >= mission.returnAt
-                    && _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
-                        == type(uint64).max
+                    && mission.returnAt
+                        < _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
             ) {
                 // Lazy reconcile (VEY-KANEO-468 Phase 2c): land every matured return leg the player
                 // owns the moment any action touches them — no `completeFleetMissionReturn` tx. The
-                // pending-resolution guard preserves combat-snapshot integrity (a return never lands
-                // across an unresolved Attack/Harvest arrival on the origin planet).
+                // timestamp guard preserves combat snapshots: only returns strictly before the
+                // earliest pending impact may land; arrivals win equal-timestamp ties.
                 _landFleetReturn(missionIds[index], mission);
             }
             unchecked {
@@ -249,12 +249,19 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         ) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
-        _settleDueCombatArrivals(_actingPlayer());
+        // Self-calls from the bounded impact preparer must not recursively resolve arrivals.
+        if (msg.sender != address(this)) _settleDueCombatArrivals(_actingPlayer());
         // The prologue settle runs the lazy return settler, which may already have landed this very
         // mission (VEY-KANEO-468 Phase 2c). If so the leg is Returned — the credit happened this tx,
         // so report success rather than double-crediting (which would underflow activeFleetMissionCount).
         if (mission.status == FleetMissionStatus.Returned) return;
-        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        // The attack preparer already completed the bounded hostile-arrival index. Avoid a
+        // second unbounded scan when called through that self-only path.
+        uint64 pendingAt = msg.sender == address(this)
+            ? _fleetMissions[_arrivalOrderIndexByPlanet[mission.originPlanetId].headMissionId].arrivalAt
+            : _earliestPendingMissionArrivalForPlanet(mission.originPlanetId);
+        // Arrivals win equal-timestamp ties; an earlier return may land despite a later impact.
+        if (mission.returnAt >= pendingAt) revert FleetMissionNotResolved(pendingAt);
         if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
 
         _landFleetReturn(missionId, mission);
@@ -263,8 +270,8 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     /// @dev Credits a matured return leg's cargo + ships back to its origin body and untracks the
     ///      mission (VEY-KANEO-468 Phase 2c: deferred from arrival to return-completion so the leg
     ///      stays enumerable for the lazy return settler). Caller must have already confirmed the
-    ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
-    ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
+    ///      mission is Returning/Recalled, its `returnAt` has elapsed, and it strictly precedes
+    ///      every unresolved combat arrival on the origin planet.
     function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
         bool returnToMoon = mission.originIsMoon
             && _missionMoonExistsForOwner(missionId, mission.originPlanetId, mission.owner, true);

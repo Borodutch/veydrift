@@ -486,8 +486,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         FleetMissionType missionType = mission.missionType;
-        // Planet-target attacks also enter the shared snapshot hook; order every hostile attack on
-        // this planet before a later cutoff can advance its Moon's manufactured ship inventory.
+        // Order every hostile attack before a later cutoff can credit manufactured ships or
+        // scheduled fleet returns. The preparer advances bounded scans before taking the snapshot.
         if (
             missionType == FleetMissionType.Attack && mission.status == FleetMissionStatus.Outbound
                 // forge-lint: disable-next-line(block-timestamp)

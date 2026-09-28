@@ -451,6 +451,9 @@ abstract contract VeydriftGameStorage is Initializable {
     mapping(address main => address delegate) internal _delegateOf;
     mapping(address delegate => address main) internal _delegatorOf;
 
+    // Append-only bounded return scan for an attack. Array mutations invalidate the planet cursor.
+    mapping(uint256 planetId => uint256 cursor) internal _attackReturnScanCursor;
+
     error AlreadyStarted();
     error BadStartPayment();
     error CoordinatesExhausted();

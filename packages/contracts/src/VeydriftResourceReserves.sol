@@ -641,6 +641,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
 
     function _invalidateArrivalOrderIndex(uint256 planetId) private {
         delete _arrivalOrderIndexByPlanet[planetId];
+        delete _attackReturnScanCursor[planetId];
     }
 
     function _addResolutionMissionForPlayer(address player, uint256 missionId) private {

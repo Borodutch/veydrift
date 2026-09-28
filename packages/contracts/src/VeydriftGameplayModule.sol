@@ -415,7 +415,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(currentTime + elapsed);
-        _untrackMissionResolution(missionId, mission);
+        // Keep recalled direct missions enumerable until the scheduled return lands. Their
+        // non-Outbound status already removes them from pending-impact guards.
         if (_isCounterplayMissionType(mission.missionType)) {
             _untrackCounterplayMissionResolution(mission.randomnessRequestId, mission);
         }

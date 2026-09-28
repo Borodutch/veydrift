@@ -583,21 +583,15 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         pure
         returns (uint32)
     {
-        if (ship == Ship.SmallCargo) return ships.smallCargo;
-        if (ship == Ship.LightFighter) return ships.lightFighter;
-        if (ship == Ship.Recycler) return ships.recycler;
-        if (ship == Ship.ColonyShip) return ships.colonyShip;
-        if (ship == Ship.LargeCargo) return ships.largeCargo;
-        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
-        if (ship == Ship.Cruiser) return ships.cruiser;
-        if (ship == Ship.Battleship) return ships.battleship;
-        if (ship == Ship.Bomber) return ships.bomber;
-        if (ship == Ship.Destroyer) return ships.destroyer;
-        if (ship == Ship.Deathstar) return ships.deathstar;
-        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
-        if (ship == Ship.Reaper) return ships.reaper;
-        if (ship == Ship.Pathfinder) return ships.pathfinder;
-        return 0;
+        // MissionShips follows the mobile Ship order, omitting SolarSatellite and Crawler.
+        // Calldata struct fields are ABI-validated uint32 words. This replaces the identical
+        // 14-way selector to keep the new resolution-index invalidation under EIP-170.
+        if (ship == Ship.SolarSatellite || ship == Ship.Crawler) return 0;
+        uint256 index = uint8(ship);
+        if (ship > Ship.SolarSatellite) --index;
+        uint32 quantity;
+        assembly ("memory-safe") { quantity := calldataload(add(ships, mul(index, 32))) }
+        return quantity;
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {

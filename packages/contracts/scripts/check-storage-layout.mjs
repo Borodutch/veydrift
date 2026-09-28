@@ -197,6 +197,12 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(address => address)",
   },
+  {
+    label: "_attackReturnScanCursor",
+    slot: "77",
+    offset: 0,
+    type: "mapping(uint256 => uint256)",
+  },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

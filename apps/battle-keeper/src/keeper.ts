@@ -628,11 +628,13 @@ function canonicalLaunchedMission(
 }
 
 function compareDueMissions(a: PendingMission, b: PendingMission): number {
-  if (a.leg !== b.leg) {
-    return a.leg === "arrival" ? -1 : 1;
-  }
+  // Scheduled time wins across legs: a late tick must not put a newer attack ahead of a return.
+  // This is dispatch priority, not a mining-order guarantee; the contract enforces chronology.
   if (a.dueAt !== b.dueAt) {
     return a.dueAt - b.dueAt;
+  }
+  if (a.leg !== b.leg) {
+    return a.leg === "arrival" ? -1 : 1;
   }
   return BigInt(a.missionId) < BigInt(b.missionId) ? -1 : BigInt(a.missionId) > BigInt(b.missionId) ? 1 : 0;
 }

@@ -7,6 +7,7 @@ import {Technology, Ship, Defense, ProductionOrder} from "./libraries/VeydriftTy
 
 interface IVeydriftMoonArrivalResolver {
     function resolveFleetMission(uint256 missionId) external;
+    function completeFleetMissionReturn(uint256 missionId) external;
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32)
         external
         returns (uint256);
@@ -28,13 +29,10 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
-    /// @dev The pre-existing bounded arrival index also covers ordinary attacks, but its missile
-    ///      helper intentionally permits attack/attack reversal. Moon manufacturing cannot: once
-    ///      a later cutoff credits ships, an earlier battle cannot reconstruct historical inventory.
+    /// @dev Every attack must respect the earliest impact before crediting scheduled returns or
+    ///      manufactured ships. Keep the existing selector to avoid growing the tight Game facade.
     function prepareMoonAttackArrival(uint256 missionId) external returns (bool) {
         FleetMission storage mission = _fleetMissions[missionId];
-        // A planet-only fight cannot affect Moon manufacturing without a live Moon queue.
-        if (!mission.targetIsMoon && !_hasMoonShipQueue(mission.targetPlanetId)) return true;
         if (
             IVeydriftMoonArrivalResolver(address(this))
                     .launchInterplanetaryMissileAttack(
@@ -51,6 +49,42 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
                 revert FleetMissionNotResolved(earlierAt);
             }
         }
+        return _prepareAttackReturns(mission);
+    }
+
+    /// @dev Scan a fixed number of tracked entries per call. Removing a return invalidates the
+    ///      cursor (swap-and-pop); stop immediately and rebuild on the next call. No recursive
+    ///      resolver calls and no historical global mission scan. Arrivals win timestamp ties.
+    function _prepareAttackReturns(FleetMission storage attack) private returns (bool) {
+        uint256[] storage ids = _resolutionMissionIdsByPlanet[attack.targetPlanetId];
+        uint256 cursor = _attackReturnScanCursor[attack.targetPlanetId];
+        uint256 end = cursor + 12;
+        if (end > ids.length) end = ids.length;
+        for (; cursor < end; ++cursor) {
+            uint256 returnId = ids[cursor];
+            FleetMission storage returning = _fleetMissions[returnId];
+            if (
+                returning.originPlanetId != attack.targetPlanetId
+                    || returning.returnAt >= attack.arrivalAt
+            ) continue;
+            if (
+                returning.status == FleetMissionStatus.Returning
+                    || returning.status == FleetMissionStatus.Recalled
+            ) {
+                IVeydriftMoonArrivalResolver(address(this)).completeFleetMissionReturn(returnId);
+                return false;
+            }
+            // A delayed battle/randomness may not yet have exposed its surviving return. Never
+            // snapshot an empty home fleet merely because that earlier mission is still outbound.
+            if (returning.status == FleetMissionStatus.Outbound) {
+                revert FleetMissionNotResolved(returning.arrivalAt);
+            }
+        }
+        if (cursor < ids.length) {
+            _attackReturnScanCursor[attack.targetPlanetId] = cursor;
+            return false;
+        }
+        delete _attackReturnScanCursor[attack.targetPlanetId];
         return true;
     }
 
@@ -61,19 +95,18 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         uint256[] memory ids = _resolutionMissionIdsByPlayer[player];
         uint256 count;
         uint64 nowAt = uint64(block.timestamp);
-        bool moonOrderingRequired;
+        bool attackOrderingRequired;
         for (uint256 i; i < ids.length; ++i) {
             FleetMission storage mission = _fleetMissions[ids[i]];
             if (
                 mission.status == FleetMissionStatus.Outbound
                     && mission.missionType == FleetMissionType.Attack && mission.arrivalAt <= nowAt
-                    && (mission.targetIsMoon || _hasMoonShipQueue(mission.targetPlanetId))
             ) {
-                moonOrderingRequired = true;
+                attackOrderingRequired = true;
                 break;
             }
         }
-        if (!moonOrderingRequired) return;
+        if (!attackOrderingRequired) return;
         for (uint256 i; i < ids.length; ++i) {
             FleetMission storage mission = _fleetMissions[ids[i]];
             if (
@@ -113,17 +146,6 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         uint64 first = _fleetMissions[a].arrivalAt;
         uint64 second = _fleetMissions[b].arrivalAt;
         return first < second || (first == second && a < b);
-    }
-
-    function _hasMoonShipQueue(uint256 planetId) private view returns (bool) {
-        if (_moonSystem == address(0)) return false;
-        (bool ok, bytes memory active) = _moonSystem.staticcall(
-            abi.encodeWithSignature("activeMoonShipQueue(uint256)", planetId)
-        );
-        if (!ok || active.length < 32) return false;
-        uint256 activeFlag;
-        assembly ("memory-safe") { activeFlag := mload(add(active, 32)) }
-        return activeFlag != 0;
     }
 
     /// @notice Typed production on one planet, preserving sender and the exact single-action gates.

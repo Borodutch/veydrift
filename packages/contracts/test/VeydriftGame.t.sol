@@ -6695,8 +6695,13 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.FleetMissionType.Transport,
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 4_000, crystal: 0, deuterium: 0}),
+            10,
             0
         );
+        (,, uint64 savingReturnAt,) = _fleetMission(saveMissionId);
+        // A fleet-save must remain away through impact; a return already due before impact
+        // must instead defend, even if its arrival/return resolution was delayed.
+        assertGt(savingReturnAt, attackArrivalAt);
         assertEq(game.planet(targetPlanetId).resources.metal, 6_000);
 
         vm.warp(attackArrivalAt);
@@ -7943,9 +7948,11 @@ contract VeydriftGameTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
         _fulfillAttackBattleRandomness(secondMissionId, 2);
-        game.resolveFleetMission(missionId);
-        game.resolveFleetMission(missionId);
+        // The faster second fleet reaches the shared target first; chronological snapshots
+        // now reject resolving the slower first fleet ahead of it.
         game.resolveFleetMission(secondMissionId);
+        game.resolveFleetMission(missionId);
+        game.resolveFleetMission(missionId);
 
         (status,, returnAt,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
