@@ -5,6 +5,12 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Technology, Ship, Defense, ProductionOrder} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftChronologyProduction {
+    function settleProductionUntil(uint256 planetId, uint64 cutoffAt) external;
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+    function settleMoonShipProductionUntil(uint256 planetId, uint64 cutoffAt) external;
+}
+
 interface IVeydriftMoonArrivalResolver {
     function resolveFleetMission(uint256 missionId) external;
     function completeFleetMissionReturn(uint256 missionId) external;
@@ -18,6 +24,8 @@ interface IVeydriftMoonArrivalResolver {
 ///      with `delegatecall`. That retains the original player as `msg.sender` and gives every child
 ///      exactly the same settlement, ship, fuel, resolution, and event semantics as a normal launch.
 contract VeydriftBatchTransportModule is VeydriftResourceReserves {
+    event FleetChronologyIndexed(uint256 through, uint256 nextId, bool ready);
+
     uint8 private constant MAX_TRANSPORT_BATCH_ORDERS = 15;
     uint8 private constant MAX_PRODUCTION_ORDERS = 15;
     uint8 private constant MAX_PRODUCTION_BACKLOG = 16;
@@ -29,123 +37,366 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
-    /// @dev Every attack must respect the earliest impact before crediting scheduled returns or
-    ///      manufactured ships. Keep the existing selector to avoid growing the tight Game facade.
-    function prepareMoonAttackArrival(uint256 missionId) external returns (bool) {
-        FleetMission storage mission = _fleetMissions[missionId];
-        if (
-            IVeydriftMoonArrivalResolver(address(this))
-                    .launchInterplanetaryMissileAttack(
-                        missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
-                    ) == 0
-        ) return false;
-        uint256 earliest = _arrivalOrderIndexByPlanet[mission.targetPlanetId].headMissionId;
-        if (earliest != 0 && earliest != missionId) {
-            uint64 earlierAt = _fleetMissions[earliest].arrivalAt;
-            if (
-                earlierAt < mission.arrivalAt
-                    || (earlierAt == mission.arrivalAt && earliest < missionId)
-            ) {
-                revert FleetMissionNotResolved(earlierAt);
-            }
-        }
-        return _prepareAttackReturns(mission);
+    /// @notice Permissionless, resumable reconstruction; no caller-supplied inventory is trusted.
+    function syncFleetChronology(uint256 maximum) external returns (uint256 through, bool ready) {
+        if (maximum == 0 || maximum > 256) revert InvalidQuantity();
+        return _syncChronology(maximum);
     }
 
-    /// @dev Scan a fixed number of tracked entries per call. Removing a return invalidates the
-    ///      cursor (swap-and-pop); stop immediately and rebuild on the next call. No recursive
-    ///      resolver calls and no historical global mission scan. Arrivals win timestamp ties.
-    function _prepareAttackReturns(FleetMission storage attack) private returns (bool) {
-        uint256[] storage ids = _resolutionMissionIdsByPlanet[attack.targetPlanetId];
-        uint256 cursor = _attackReturnScanCursor[attack.targetPlanetId];
-        uint256 end = cursor + 12;
-        if (end > ids.length) end = ids.length;
-        for (; cursor < end; ++cursor) {
-            uint256 returnId = ids[cursor];
-            FleetMission storage returning = _fleetMissions[returnId];
-            if (
-                returning.originPlanetId != attack.targetPlanetId
-                    || returning.returnAt >= attack.arrivalAt
-            ) continue;
-            if (
-                returning.status == FleetMissionStatus.Returning
-                    || returning.status == FleetMissionStatus.Recalled
-            ) {
-                IVeydriftMoonArrivalResolver(address(this)).completeFleetMissionReturn(returnId);
-                return false;
+    function _syncChronology(uint256 maximum) private returns (uint256 through, bool ready) {
+        through = _chronologyIndexedThrough;
+        uint256 end = through + maximum;
+        if (end >= nextFleetId) end = nextFleetId - 1;
+        uint256 activeCount;
+        for (uint256 id = through + 1; id <= end; ++id) {
+            FleetMission storage m = _fleetMissions[id];
+            if (!_active(m)) continue;
+            // Historic empty/terminal slots are cheap; bound expensive multi-body inserts separately.
+            if (activeCount == 32) {
+                end = id - 1;
+                break;
             }
-            // A delayed battle/randomness may not yet have exposed its surviving return. Never
-            // snapshot an empty home fleet merely because that earlier mission is still outbound.
-            if (returning.status == FleetMissionStatus.Outbound) {
-                revert FleetMissionNotResolved(returning.arrivalAt);
+            ++activeCount;
+            _chronologyMissionsByPlayer[m.owner].push(id);
+            address targetOwner = _planets[m.targetPlanetId].owner;
+            if (targetOwner != address(0) && targetOwner != m.owner) {
+                _chronologyMissionsByPlayer[targetOwner].push(id);
+            }
+            uint256 origin = _body(m.originPlanetId, m.originIsMoon);
+            uint256 target = _body(m.targetPlanetId, m.targetIsMoon);
+            _chronologyMissionsByBody[origin].push(id);
+            if (target != origin) _chronologyMissionsByBody[target].push(id);
+            // A destroyed/replaced moon returns to its parent. Reserve that possible destination
+            // from the outset; the event predicate selects only the actual current destination.
+            uint256 fallbackBody = _body(m.originPlanetId, false);
+            if (m.originIsMoon && fallbackBody != target) {
+                _chronologyMissionsByBody[fallbackBody].push(id);
+            }
+            // Moon combat also creates debris in the parent field. Mirror only this inventory
+            // relation: predicates below introduce cross-body dependencies only with Harvest,
+            // never between otherwise independent moon/planet fleets.
+            if (
+                m.missionType == FleetMissionType.Harvest
+                    || (m.missionType == FleetMissionType.Attack && m.targetIsMoon)
+            ) {
+                uint256 debrisPeer = _body(m.targetPlanetId, !m.targetIsMoon);
+                if (
+                    debrisPeer != origin && debrisPeer != target
+                        && (!m.originIsMoon || debrisPeer != fallbackBody)
+                ) _chronologyMissionsByBody[debrisPeer].push(id);
             }
         }
-        if (cursor < ids.length) {
-            _attackReturnScanCursor[attack.targetPlanetId] = cursor;
+        if (end != through) {
+            _chronologyIndexedThrough = end;
+            emit FleetChronologyIndexed(end, nextFleetId, end + 1 == nextFleetId);
+        }
+        return (end, end + 1 == nextFleetId);
+    }
+
+    /// @dev One ordering implementation serves permissionless arrivals, returns, and lazy callers.
+    /// Returns false only for bounded preparatory work. A complete scan rejects an earlier event.
+    function prepareFleetChronology(uint256 id, bool returning) external returns (bool) {
+        (, bool ready) = _syncChronology(4);
+        if (!ready) return false;
+        FleetMission storage m = _fleetMissions[id];
+        (uint256 body, uint64 at, uint8 kind) = _currentEvent(id, returning);
+        if (block.timestamp < at) {
+            if (!returning && m.missionType == FleetMissionType.DefenseHold) {
+                revert DefenseHoldStillActive(at);
+            }
+            revert FleetNotArrived(at);
+        }
+        if (
+            !returning && _linked(m)
+                && _fleetMissions[m.randomnessRequestId].status == FleetMissionStatus.Outbound
+        ) {
             return false;
         }
-        delete _attackReturnScanCursor[attack.targetPlanetId];
+        ChronologyScan storage scan = _chronologyScans[id];
+        uint256 generation = _scanGeneration(body);
+        if (scan.generation != generation) delete _chronologyScans[id];
+        if (scan.blocker != 0) {
+            (uint64 stillEarlier,) = _earlierEvent(scan.blocker, body, id, at, kind);
+            // A previous blocker may have settled or moved later. Re-scan the prefix to find
+            // the next blocker instead of retaining its obsolete minimum.
+            if (stillEarlier != scan.blockerAt) delete _chronologyScans[id];
+        }
+        uint256[] storage ids = _chronologyMissionsByBody[body];
+        uint256 i = scan.cursor;
+        for (uint256 operations; operations < 12 && i < ids.length; ++operations) {
+            if (!_active(_fleetMissions[ids[i]])) {
+                ids[i] = ids[ids.length - 1];
+                ids.pop();
+                ++_chronologyBodyGeneration[body];
+                continue;
+            }
+            (uint64 candidateAt, uint8 candidateKind) = _earlierEvent(ids[i], body, id, at, kind);
+            if (
+                candidateAt != 0
+                    && (scan.blocker == 0
+                        || _before(
+                            candidateAt,
+                            candidateKind,
+                            ids[i],
+                            scan.blockerAt,
+                            scan.blockerKind,
+                            scan.blocker
+                        ))
+            ) {
+                scan.blocker = ids[i];
+                scan.blockerAt = candidateAt;
+                scan.blockerKind = candidateKind;
+            }
+            ++i;
+        }
+        scan.cursor = i;
+        scan.generation = _scanGeneration(body);
+        if (i != ids.length) return false;
+        if (scan.blocker != 0) {
+            FleetMission storage earlier = _fleetMissions[scan.blocker];
+            if (
+                !returning
+                    && (earlier.status == FleetMissionStatus.Returning
+                        || earlier.status == FleetMissionStatus.Recalled)
+            ) {
+                // Exactly one earlier return per preparatory call. Its own guard runs through the
+                // same ordering, and never recursively auto-resolves another return.
+                IVeydriftMoonArrivalResolver(address(this)).completeFleetMissionReturn(scan.blocker);
+                return false;
+            }
+            revert FleetMissionNotResolved(scan.blockerAt);
+        }
+        delete _chronologyScans[id];
+        if (
+            !returning && m.missionType != FleetMissionType.MissileAttack
+                && m.missionType != FleetMissionType.Colonize
+        ) _settleScheduledTarget(m, at);
+        // Ordinary settlement removes events or moves them later. Newly allocated IDs are
+        // appended and scanned before completion. Recalls invalidate their origin-body epochs
+        // (including zero-duration ties); moon destruction invalidates destination proofs globally.
         return true;
     }
 
-    /// @dev Resolve all due arrivals in impact order before the existing lazy resolver iterates
-    ///      its mission-id snapshot. Earlier transports/deploys must land before a later battle.
-    ///      Heap ordering bounds sorting to O(n log n); unseeded attacks stay pending.
-    function settleDuePlayerCombatArrivals(address player) external {
-        uint256[] memory ids = _resolutionMissionIdsByPlayer[player];
-        uint256 count;
-        uint64 nowAt = uint64(block.timestamp);
-        bool attackOrderingRequired;
-        for (uint256 i; i < ids.length; ++i) {
-            FleetMission storage mission = _fleetMissions[ids[i]];
-            if (
-                mission.status == FleetMissionStatus.Outbound
-                    && mission.missionType == FleetMissionType.Attack && mission.arrivalAt <= nowAt
-            ) {
-                attackOrderingRequired = true;
-                break;
+    function _settleScheduledTarget(FleetMission storage m, uint64 at) private {
+        if (m.targetIsMoon) {
+            if (_moonSystem == address(0)) return;
+            (bool ok, bytes memory version) =
+                _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
+            if (ok && version.length >= 32) {
+                if (abi.decode(version, (uint8)) != 1) revert InvalidQuantity();
+                IVeydriftChronologyProduction(_moonSystem)
+                    .settleMoonShipProductionUntil(m.targetPlanetId, at);
+            }
+        } else {
+            IVeydriftChronologyProduction(address(this)).settleProductionUntil(m.targetPlanetId, at);
+            IVeydriftChronologyProduction(address(this))
+                .completeAttackTargetSnapshotQueues(m.targetPlanetId, at);
+        }
+    }
+
+    /// @notice Ordering eligibility only; callers additionally simulate for randomness/gas gates.
+    /// A bounded view fails closed for large inventories until the preparer has completed its scan.
+    function fleetMissionEligibility(uint256 id)
+        external
+        view
+        returns (bool eligible, uint256 blocker, bool inventoryReady)
+    {
+        inventoryReady = _chronologyIndexedThrough + 1 == nextFleetId;
+        if (!inventoryReady) return (false, 0, false);
+        FleetMission storage m = _fleetMissions[id];
+        if (!_active(m)) return (false, 0, true);
+        bool returning = m.status != FleetMissionStatus.Outbound;
+        (uint256 body, uint64 at, uint8 kind) = _currentEvent(id, returning);
+        if (block.timestamp < at) return (false, 0, true);
+        if (
+            !returning && _linked(m)
+                && _fleetMissions[m.randomnessRequestId].status == FleetMissionStatus.Outbound
+        ) return (false, m.randomnessRequestId, true);
+        uint256[] storage ids = _chronologyMissionsByBody[body];
+        ChronologyScan storage scan = _chronologyScans[id];
+        uint256 start;
+        if (scan.generation == _scanGeneration(body)) {
+            start = scan.cursor;
+            blocker = scan.blocker;
+        }
+        if (blocker != 0) {
+            (uint64 stillEarlier,) = _earlierEvent(blocker, body, id, at, kind);
+            if (stillEarlier != 0) return (false, blocker, true);
+            start = 0;
+        }
+        uint256 end = start + 256;
+        if (end > ids.length) end = ids.length;
+        for (uint256 i = start; i < end; ++i) {
+            (uint64 candidateAt,) = _earlierEvent(ids[i], body, id, at, kind);
+            if (candidateAt != 0) return (false, ids[i], true);
+        }
+        return (end == ids.length, 0, true);
+    }
+
+    function _currentEvent(uint256 id, bool returning)
+        private
+        view
+        returns (uint256 body, uint64 at, uint8 kind)
+    {
+        FleetMission storage m = _fleetMissions[id];
+        if (returning) return (_returnBody(id, m), m.returnAt, 1);
+        if (m.missionType == FleetMissionType.DefenseHold) {
+            return (_body(m.targetPlanetId, m.targetIsMoon), _defenseHoldUntil[id], 2);
+        }
+        return (_body(m.targetPlanetId, m.targetIsMoon), m.arrivalAt, 0);
+    }
+
+    function _earlierEvent(uint256 other, uint256 body, uint256 id, uint64 at, uint8 kind)
+        private
+        view
+        returns (uint64 eventAt, uint8 eventKind)
+    {
+        if (other == id) return (0, 0);
+        FleetMission storage m = _fleetMissions[other];
+        if (!_active(m)) return (0, 0);
+        FleetMission storage current = _fleetMissions[id];
+        bool sharesDebris = kind == 0 && m.targetPlanetId == current.targetPlanetId
+            && ((current.missionType == FleetMissionType.Harvest
+                    && m.missionType == FleetMissionType.Attack)
+                || (current.missionType == FleetMissionType.Attack
+                    && m.missionType == FleetMissionType.Harvest));
+        if (
+            m.status == FleetMissionStatus.Outbound && !_linked(m)
+                && (_body(m.targetPlanetId, m.targetIsMoon) == body || sharesDebris)
+        ) {
+            uint8 arrivalKind = m.missionType == FleetMissionType.DefenseHold ? 2 : 0;
+            uint64 arrival = arrivalKind == 2 ? _defenseHoldUntil[other] : m.arrivalAt;
+            if (arrival != 0 && _before(arrival, arrivalKind, other, at, kind, id)) {
+                eventAt = arrival;
+                eventKind = arrivalKind;
             }
         }
-        if (!attackOrderingRequired) return;
-        for (uint256 i; i < ids.length; ++i) {
-            FleetMission storage mission = _fleetMissions[ids[i]];
-            if (
-                mission.status == FleetMissionStatus.Outbound
-                    && (mission.missionType == FleetMissionType.Transport
-                        || mission.missionType == FleetMissionType.Deploy
-                        || mission.missionType == FleetMissionType.Attack
-                        || mission.missionType == FleetMissionType.Harvest
-                        || mission.missionType == FleetMissionType.MissileAttack)
-                    && mission.arrivalAt <= nowAt
-            ) ids[count++] = ids[i];
-        }
-        for (uint256 start = count / 2; start > 0;) {
-            _siftLaterArrival(ids, --start, count);
-        }
-        for (uint256 end = count; end > 1;) {
-            --end;
-            (ids[0], ids[end]) = (ids[end], ids[0]);
-            _siftLaterArrival(ids, 0, end);
-        }
-        for (uint256 i; i < count; ++i) {
-            try IVeydriftMoonArrivalResolver(address(this)).resolveFleetMission(ids[i]) {} catch {}
+        // Outbound round trips reserve their scheduled home event even before survivors are known.
+        // Linked fleets are one battle event at target, but each has its own origin return dependency.
+        if (
+            m.returnAt != 0 && m.missionType != FleetMissionType.MissileAttack
+                && (m.status != FleetMissionStatus.Outbound
+                    || m.missionType != FleetMissionType.Deploy) && _returnBody(other, m) == body
+                && _before(m.returnAt, 1, other, at, kind, id)
+                && (eventAt == 0 || _before(m.returnAt, 1, other, eventAt, eventKind, other))
+        ) {
+            eventAt = m.returnAt;
+            eventKind = 1;
         }
     }
 
-    function _siftLaterArrival(uint256[] memory ids, uint256 root, uint256 end) private view {
-        while (root * 2 + 1 < end) {
-            uint256 child = root * 2 + 1;
-            if (child + 1 < end && _arrivalEarlier(ids[child], ids[child + 1])) ++child;
-            if (!_arrivalEarlier(ids[root], ids[child])) break;
-            (ids[root], ids[child]) = (ids[child], ids[root]);
-            root = child;
+    function _returnBody(uint256 id, FleetMission storage m) private view returns (uint256) {
+        bool moon =
+            m.originIsMoon && _missionMoonExistsForOwner(id, m.originPlanetId, m.owner, true);
+        return _body(m.originPlanetId, moon);
+    }
+
+    function _scanGeneration(uint256 body) private view returns (uint256) {
+        return
+            uint256(keccak256(abi.encode(_chronologyGeneration, _chronologyBodyGeneration[body])));
+    }
+
+    function _body(uint256 planet, bool moon) private pure returns (uint256) {
+        // Colonization targets encode coordinates in the high bit; hashing avoids overflow
+        // and keeps those virtual destinations distinct from real planet/moon IDs.
+        return uint256(keccak256(abi.encode(planet, moon)));
+    }
+
+    function _active(FleetMission storage m) private view returns (bool) {
+        return m.status == FleetMissionStatus.Outbound || m.status == FleetMissionStatus.Returning
+            || m.status == FleetMissionStatus.Recalled;
+    }
+
+    function _linked(FleetMission storage m) private view returns (bool) {
+        return m.missionType == FleetMissionType.AcsAttack
+            || m.missionType == FleetMissionType.AcsDefend
+            || m.missionType == FleetMissionType.Intercept;
+    }
+
+    function _before(uint64 a, uint8 ak, uint256 aid, uint64 b, uint8 bk, uint256 bid)
+        private
+        pure
+        returns (bool)
+    {
+        return a < b || (a == b && (ak < bk || (ak == bk && aid < bid)));
+    }
+
+    /// @dev Complete legacy-safe player inventory, bounded independently of historical fleet count.
+    /// Every leg enters the same facade guard; no lazy path directly credits a fleet around ordering.
+    function settleDuePlayerCombatArrivals(address player) external {
+        (, bool ready) = _syncChronology(4);
+        if (!ready) return;
+        uint256[] storage ids = _chronologyMissionsByPlayer[player];
+        uint256 cursor = _chronologyPlayerCursor[player];
+        uint256 count = ids.length < 12 ? ids.length : 12;
+        uint256[] memory due = new uint256[](count);
+        uint256[] memory visited = new uint256[](count);
+        uint256 visitedCount;
+        uint256 dueCount;
+        // Swap-and-pop may move an already visited tail across a wrapped cursor. Count unique
+        // entries, not slots, so small inventories cannot repeatedly skip the same pending leg.
+        for (
+            uint256 operation;
+            operation < 24 && visitedCount < count && ids.length != 0;
+            ++operation
+        ) {
+            if (cursor >= ids.length) {
+                cursor = 0;
+            }
+            uint256 id = ids[cursor];
+            bool seen;
+            for (uint256 j; j < visitedCount; ++j) {
+                if (visited[j] == id) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (seen) {
+                ++cursor;
+                continue;
+            }
+            visited[visitedCount++] = id;
+            if (!_active(_fleetMissions[id])) {
+                ids[cursor] = ids[ids.length - 1];
+                ids.pop();
+                continue;
+            }
+            (uint64 at, uint8 kind) = _lazyEvent(id);
+            if (block.timestamp >= at) {
+                uint256 position = dueCount;
+                // At most 12 candidates: bounded insertion sort, independent of historical IDs.
+                while (position != 0) {
+                    (uint64 priorAt, uint8 priorKind) = _lazyEvent(due[position - 1]);
+                    if (!_before(at, kind, id, priorAt, priorKind, due[position - 1])) break;
+                    due[position] = due[position - 1];
+                    --position;
+                }
+                due[position] = id;
+                ++dueCount;
+            }
+            ++cursor;
+        }
+        _chronologyPlayerCursor[player] = cursor;
+        for (uint256 i; i < dueCount; ++i) {
+            FleetMission storage m = _fleetMissions[due[i]];
+            if (m.status == FleetMissionStatus.Outbound) {
+                try IVeydriftMoonArrivalResolver(address(this)).resolveFleetMission(due[i]) {}
+                    catch {}
+            } else if (
+                m.status == FleetMissionStatus.Returning || m.status == FleetMissionStatus.Recalled
+            ) {
+                try IVeydriftMoonArrivalResolver(address(this))
+                    .completeFleetMissionReturn(due[i]) {}
+                    catch {}
+            }
         }
     }
 
-    function _arrivalEarlier(uint256 a, uint256 b) private view returns (bool) {
-        uint64 first = _fleetMissions[a].arrivalAt;
-        uint64 second = _fleetMissions[b].arrivalAt;
-        return first < second || (first == second && a < b);
+    function _lazyEvent(uint256 id) private view returns (uint64 at, uint8 kind) {
+        FleetMission storage m = _fleetMissions[id];
+        if (m.status != FleetMissionStatus.Outbound) return (m.returnAt, 1);
+        if (m.missionType == FleetMissionType.DefenseHold) return (_defenseHoldUntil[id], 2);
+        return (m.arrivalAt, 0);
     }
 
     /// @notice Typed production on one planet, preserving sender and the exact single-action gates.

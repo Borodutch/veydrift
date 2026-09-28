@@ -25,6 +25,18 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _replay(false, 4, false);
     }
 
+    function testMoonImpactDoesNotSettleParentPlanetThroughItsLaterCutoff() public {
+        (uint256 home,) = _fixture(true, 4);
+        uint64 parentSettledAt = game.planet(home).lastSettledAt;
+        _fulfillAttackBattleRandomness(ATTACK_ID, 7);
+        _resolveAttackFully(ATTACK_ID);
+        assertEq(
+            game.planet(home).lastSettledAt,
+            parentSettledAt,
+            "moon impact changed independent planet snapshot"
+        );
+    }
+
     function testMoonLaterReturnExcluded() public {
         _replay(true, 4, false);
     }
@@ -46,6 +58,13 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
     }
 
     function _fixture(bool isMoon, int64 offset) private returns (uint256 home, uint256 away) {
+        return _fixtureBodies(isMoon, isMoon, offset);
+    }
+
+    function _fixtureBodies(bool isMoon, bool attackMoon, int64 offset)
+        private
+        returns (uint256 home, uint256 away)
+    {
         vm.warp(RETURN_AT - 1 days);
         (home, away,) = _seedMoonAttackPlanets();
         _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
@@ -55,6 +74,8 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _fundMoon(home, 1_000_000, 1_000_000, 1_000_000);
         _fundMoon(away, 1_000_000, 1_000_000, 1_000_000);
         _setNextFleetId(RETURN_ID);
+        // Synthetic fixture has no IDs below RETURN_ID; migration completeness is tested separately.
+        vm.store(address(game), bytes32(uint256(78)), bytes32(RETURN_ID - 1));
         _setShipCount(home, Ship.SmallCargo, 196);
         _setShipCount(home, Ship.Recycler, 3);
         if (isMoon) {
@@ -96,11 +117,12 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             VeydriftGameStorage.Resources(0, 0, 0),
             100,
             false,
-            isMoon,
+            attackMoon,
             VeydriftGameStorage.LootRatio(3_333, 3_333, 3_334)
         );
         assertEq(id, ATTACK_ID);
         _setTimes(id, IMPACT_AT, IMPACT_AT + 1 hours);
+        game.syncFleetChronology(256);
         // Target body starts empty; a planet return fixture must not retain the launch inventory.
         assertEq(
             isMoon
@@ -301,8 +323,10 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             bytes32(base + 3),
             bytes32(uint256(RETURN_AT - 1) << 64 | uint256(IMPACT_AT + 100) << 128)
         );
-        // Fixture insertion mirrors production invalidation.
-        vm.store(address(game), keccak256(abi.encode(home, uint256(74))), bytes32(0));
+        // This fixture writes an older ID directly; replay that artificial insertion through
+        // the complete inventory. Real launches only allocate IDs above the durable cursor.
+        vm.store(address(game), bytes32(uint256(78)), bytes32(earlierId - 1));
+        game.syncFleetChronology(256);
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftGameStorage.FleetMissionNotResolved.selector, RETURN_AT - 1
@@ -328,6 +352,58 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _fulfillAttackBattleRandomness(ATTACK_ID, 7);
         vm.expectRevert();
         game.resolveFleetMission(ATTACK_ID);
+    }
+
+    function testAmendedScopeMoonReturnIndependentOfPlanetAttack() public {
+        (uint256 home,) = _fixtureBodies(true, false, 4);
+        game.completeFleetMissionReturn(RETURN_ID);
+        assertEq(game.moonShipCount(home, Ship.SmallCargo), 196);
+    }
+
+    function testAmendedScopePlanetReturnIndependentOfMoonAttack() public {
+        (uint256 home,) = _fixtureBodies(false, true, 4);
+        game.completeFleetMissionReturn(RETURN_ID);
+        assertEq(game.shipCount(home, Ship.SmallCargo), 196);
+    }
+
+    function testAmendedScopeEarlierTransportPrecedesAttack() public {
+        (uint256 home, uint256 away) = _fixture(false, 4);
+        vm.warp(IMPACT_AT - 100);
+        _setTechnologyLevel(player, Technology.Computer, 3);
+        _setPlanetOwner(away, player);
+        _setShipCount(away, Ship.SmallCargo, 1);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 transportId = game.launchFleetMission(
+            away,
+            home,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        _setPlanetOwner(away, address(0xDEF));
+        _setTimes(transportId, IMPACT_AT - 1, IMPACT_AT + 1 hours);
+        vm.warp(IMPACT_AT + 6);
+        _fulfillAttackBattleRandomness(ATTACK_ID, 7);
+        // Either reject/defer the later attack, or settle the earlier transport first.
+        (bool ok,) =
+            address(game).call(abi.encodeWithSelector(game.resolveFleetMission.selector, ATTACK_ID));
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(ATTACK_ID);
+        (VeydriftGameStorage.FleetMissionStatus transportStatus,,,) = _fleetMission(transportId);
+        assertTrue(
+            !ok || attackStatus == VeydriftGameStorage.FleetMissionStatus.Outbound
+                || transportStatus != VeydriftGameStorage.FleetMissionStatus.Outbound,
+            "later attack resolved before earlier transport"
+        );
+        // Lazy settlement must order the higher-ID earlier transport before the lower-ID battle.
+        vm.prank(player);
+        game.renamePlanet(home, "chronological transport");
+        (attackStatus,,,) = _fleetMission(ATTACK_ID);
+        (transportStatus,,,) = _fleetMission(transportId);
+        assertTrue(attackStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
+        assertTrue(transportStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
     }
 
     function _setTimes(uint256 id, uint64 arrivalAt, uint64 returnAt) private {

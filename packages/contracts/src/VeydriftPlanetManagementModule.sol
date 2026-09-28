@@ -15,6 +15,7 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 ///      so an arrival whose randomness is not yet committed cannot brick the caller's action.
 interface IVeydriftCombatMissionResolver {
     function resolveFleetMission(uint256 missionId) external;
+    function completeFleetMissionReturn(uint256 missionId) external;
 }
 
 /// @dev Self-call surface routing the deferred return-completion untrack to the gameplay module,
@@ -63,14 +64,14 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
                 (mission.status == FleetMissionStatus.Returning
                         || mission.status == FleetMissionStatus.Recalled)
                     && nowTimestamp >= mission.returnAt
-                    && mission.returnAt
-                        < _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
             ) {
                 // Lazy reconcile (VEY-KANEO-468 Phase 2c): land every matured return leg the player
                 // owns the moment any action touches them — no `completeFleetMissionReturn` tx. The
                 // timestamp guard preserves combat snapshots: only returns strictly before the
                 // earliest pending impact may land; arrivals win equal-timestamp ties.
-                _landFleetReturn(missionIds[index], mission);
+                try IVeydriftCombatMissionResolver(address(this))
+                    .completeFleetMissionReturn(missionIds[index]) {}
+                    catch {}
             }
             unchecked {
                 ++index;
@@ -249,19 +250,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         ) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
-        // Self-calls from the bounded impact preparer must not recursively resolve arrivals.
-        if (msg.sender != address(this)) _settleDueCombatArrivals(_actingPlayer());
-        // The prologue settle runs the lazy return settler, which may already have landed this very
-        // mission (VEY-KANEO-468 Phase 2c). If so the leg is Returned — the credit happened this tx,
-        // so report success rather than double-crediting (which would underflow activeFleetMissionCount).
-        if (mission.status == FleetMissionStatus.Returned) return;
-        // The attack preparer already completed the bounded hostile-arrival index. Avoid a
-        // second unbounded scan when called through that self-only path.
-        uint64 pendingAt = msg.sender == address(this)
-            ? _fleetMissions[_arrivalOrderIndexByPlanet[mission.originPlanetId].headMissionId].arrivalAt
-            : _earliestPendingMissionArrivalForPlanet(mission.originPlanetId);
-        // Arrivals win equal-timestamp ties; an earlier return may land despite a later impact.
-        if (mission.returnAt >= pendingAt) revert FleetMissionNotResolved(pendingAt);
+        // The facade applies the shared body/event ordering to both direct and lazy callers.
         if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
 
         _landFleetReturn(missionId, mission);

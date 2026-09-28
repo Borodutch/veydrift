@@ -1,0 +1,11 @@
+# VEY-905 integration interface (local implementation verified; live fork blocked)
+
+Read-only selector `0xce02abe2`: `fleetMissionEligibility(uint256) returns (bool eligible,uint256 blockerMissionId,bool inventoryReady)`. Backend must require eligible && inventoryReady AND simulate the existing permissionless entrypoint for randomness/runtime gates. Missing selector / incomplete inventory / oversized unfinished proof fails closed. A successful empty eth_call alone is not eligibility.
+
+Permissionless migration selector `0x6b77a0ce`: `syncFleetChronology(uint256 maximum) returns (uint256 through,bool ready)`, maximum 1..256, bounded to 32 active inserts as well as maximum historical reads. Event: `FleetChronologyIndexed(uint256 through,uint256 nextId,bool ready)`. Resume from authoritative slot-78 cursor/receipts; no off-chain omission-free inventory. This migration must be in the exact upgrade handoff.
+
+ALL mission types and BOTH legs can now commit progress-only success during inventory / body scans. Keeper/backend must always read canonical status after receipts; never assume successful arrival/return receipt completed the leg.
+
+Body isolation now includes historical production snapshots, not just return fleet credit. Parent planet snapshots do not settle moon production and moon impact does not advance parent resources. Hold-end ties follow inclusive defense policy. Legacy player inventories support lazy holds/linked/recalled legs. Body scans are epoch-invalidated for pruning and recall (including zero-duration same-block ties), with global invalidation on Moon destruction/pointer change. Lazy player selection visits at most 12 unique entries / 24 slot operations and sorts those candidates chronologically.
+
+Final local verification: 420 focused tests (13 inventory, 19 scheduled, 306 Game, 82 Moon), size build, exact storage append, formatting/live-upgrade policy/diff checks passed. Game is 24,542 bytes with only 34 bytes headroom. Corrected Game-only/full-backfill fork compiled but execution failed before fork creation with Foundry TLS UnknownIssuer; no live proof is claimed. See upgrade handoff for logs and release gate. No commits, broadcasts, upgrades, active processes, or child descendants from this implementation worker.

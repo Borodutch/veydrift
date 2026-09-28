@@ -415,6 +415,19 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
     }
 
+    /// @dev Recall can create a zero-duration return at this same block timestamp. Invalidate
+    /// only possible origin bodies: a saved due-event scan must not miss that new tie dependency.
+    function _invalidateChronologyReturnBody(FleetMission storage mission) internal {
+        ++_chronologyBodyGeneration[
+            uint256(keccak256(abi.encode(mission.originPlanetId, mission.originIsMoon)))
+        ];
+        if (mission.originIsMoon) {
+            ++_chronologyBodyGeneration[
+                uint256(keccak256(abi.encode(mission.originPlanetId, false)))
+            ];
+        }
+    }
+
     function _trackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 

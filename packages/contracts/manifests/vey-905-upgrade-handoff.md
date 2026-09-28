@@ -1,30 +1,36 @@
-# VEY-KANEO-905 contract handoff (keyless; no deployment authorization)
+# VEY-KANEO-905 — keyless contract handoff; exact PR/head authorization required
 
-Game proxy: Base mainnet `0xf397910F005151b09644228573a4353818D3755d`.
-ProxyAdmin: `0xc81609E77b5ea79d0CdA9794b75B65D567535cb9`.
-Canonical script: `script/UpgradeGame.s.sol` (no broadcast without exact PR/head greenlight).
+## Proxy and modules
+Game proxy (Base mainnet): `0xf397910F005151b09644228573a4353818D3755d`. ProxyAdmin: `0xc81609E77b5ea79d0CdA9794b75B65D567535cb9`. Canonical script: `script/UpgradeGame.s.sol`, empty upgrade calldata, complete fresh module construction. Runtime changes: Game, embedded BatchTransport, Gameplay, PlanetManagement, Missile, DefenseHold. All modules share the append-only storage layout. No mixed old/new writer set. **No Moon proxy upgrade**; UpgradeGameFork no longer silently upgrades Moon. Workers must not merge/deploy/sign/broadcast.
 
-## Semantics
+## Event rules
+Order is `(scheduled timestamp, kind, mission ID)`, with arrival=0, return=1, hold expiry=2. Arrival wins return ties; combat at an inclusive hold end precedes removal of the stationed roster. IDs only break final ties. Arrival affects target body; return affects actual origin body (including destroyed/replaced-moon fallback). Outbound round trips reserve their scheduled return while survivors are unknown.
+Linked ACS/counterplay participants are one lead-battle target event, avoiding participant/lead cycles, but keep individual origin return reservations. Existing linked return times still shift with actual battle completion; guards re-read current timestamps. Planet/moon fleet inventories stay separate. Harvest and moon combat coordinate their shared debris field without making an unrelated planet return depend on moon combat.
+Every permissionless arrival/return and lazy settlement enters the same guard. One earlier due return may be landed as preparatory work; earlier combat is never recursively resolved. Non-combat arrival and hold expiry settle production only through their scheduled cutoff, not the delayed resolver block.
 
-- An attack settles strictly earlier scheduled Returning/Recalled missions before combat; arrival wins a timestamp tie. Later returns stay in flight despite resolution delay.
-- Attacks on the same planet/moon pair resolve in (arrivalAt, missionId) order, conservatively across bodies because their queue/ownership hooks are shared.
-- Return completion can cross a later pending arrival, never an earlier/equal one. Earlier unresolved outbound round trips block impact until the result is known; no recursive resolution or invented survivors.
-- The existing bounded hostile-arrival index and a new 12-entry return scan progress across resolver calls. Landing one return ends that preparatory call; swap-and-pop invalidates its cursor. A successful resolver tx may be progress, not terminal completion, as with existing gas-bounded battle rounds.
-- Append-only Game storage: slot 77, `mapping(uint256 => uint256) _attackReturnScanCursor`. Existing storage unchanged. Recalled direct missions stay indexed until return completion.
+## Required bounded legacy migration
+Old indexes omit legacy holds/ACS/counterplay/recalled fleets. Complete indexes scan **every allocated mission ID**, never trusting an off-chain omission-free list. Call `syncFleetChronology(uint256 maximum)` with maximum 1..256. Each call scans at most maximum historical IDs and inserts at most **32 active missions**, separately bounding expensive writes. Returns `(through,ready)`; emits `FleetChronologyIndexed(through,nextId,ready)` when advancing. No fleet balance credit occurs. Cursor is slot 78; readiness is `through + 1 == nextFleetId`.
+Journal every migration tx/receipt/cursor; reconcile uncertain receipts instead of resending. Resume against the current implementation and authoritative cursor. Migration is complete only when ready=true at the current allocated-ID boundary. This backfill is part of the exact upgrade handoff, not an optional follow-up.
+Resolvers/lazy calls auto-scan at most four new IDs and fail closed until complete. Each preparer processes/prunes at most 12 body entries. Terminal entries are pruned. Per-body pruning/recall epochs invalidate affected proofs, including zero-duration same-block recalls; unrelated settlement does not restart a body scan. Moon destruction or pointer changes invalidate proofs because they change return destinations. Lazy settlement uses complete player inventories and visits at most 12 unique entries / 24 slot operations per call, sorting the selected due events.
 
-## Rollout
+## Compatibility
+New view: `fleetMissionEligibility(uint256) returns (bool eligible,uint256 blockerMissionId,bool inventoryReady)`. Backend must require eligible && inventoryReady and additionally simulate the existing entrypoint for randomness/runtime gates. Missing selector, incomplete inventory, or unfinished oversized proof fails closed. Empty successful eth_call alone is not authoritative eligibility.
+**Every mission type and either leg may return progress-only success.** Keeper/backend must read canonical state after receipts and retain Outbound/Returning/Recalled until the actual transition. Mature return timestamp is not credit/archive proof.
 
-Requires a new Game implementation (constructor embeds BatchTransport), PlanetManagement, Gameplay, and every module inheriting resolution-index invalidation. Use the canonical full module deployment in UpgradeGame, not mixed old/new index writers. DefenseHold replaces its mobile-ship quantity branch ladder with equivalent validated-calldata indexing (skipping Satellite/Crawler) to retain EIP-170 headroom. No Moon proxy or randomness upgrade and no ABI selector changes.
+## Storage
+Live prefix through slot 76 unchanged. Slot 77 is the preceding branch return-scan mapping, now reserved rather than authoritative. Appends: 78 inventory cursor; 79 moon-destruction proof epoch; 80 body inventories; 81 mission scans; 82 body pruning/recall epochs; 83 complete player inventories; 84 lazy player cursors. No existing struct reordered. Storage guard enumerates appends.
 
-Order: exact-head independent review and greenlight in Veydrift upgrades topic; main-session keyless simulation/preflight; compatible keeper/backend first; Game proxy upgrade with empty calldata; config/manifest reconciliation and postdeploy smoke; frontend only if changed. Workers must not merge/deploy/sign/broadcast.
+## Authorized rollout order
+1. Exact-head Astra review, tests, size/storage/policy, and Game-only keyless fork including migration. Record exact PR/head and artifacts in greenlight request.
+2. Compatible keeper/backend first: both-leg post-receipt reconciliation and fail-closed readiness.
+3. Only authorized rollout owner executes canonical Game upgrade with empty calldata after exact greenlight.
+4. Journaled bounded backfill until current inventory readiness is proven.
+5. Reconcile config/manifest; run `scripts/veydrift-postdeploy-smoke.mjs`; verify live statuses/readiness.
+6. Frontend last; fresh Mission Control/Detail hidden-button proof; then Testing.
 
-## Verification notes
-
-- Upgrade size check passes: Game 23,913 bytes; Gameplay 24,554; PlanetManagement 23,640; DefenseHold 24,246.
-- `bun run check:storage` passes (v1 prefix preserved; exactly reviewed slot-77 append).
-- Deterministic scheduled-return regression: 15/15 pass. Game suite: 306/306 pass. Moon suites: 82/82 pass. Formatting, diff whitespace, and live-upgrade policy checks pass.
-- Two older fixtures assumed the behavior being corrected: resolving a slower attack ahead of a faster one, and a fleet-save whose scheduled round trip actually ended before impact. They now resolve by impact order and explicitly assert the saving fleet stays away through impact.
-- Keyless live-fork `BASE_MAINNET_RPC=https://mainnet.base.org forge test --match-path test/UpgradeGameFork.t.sol -vv` is blocked by the local RPC TLS trust chain (`UnknownIssuer`). One retry with `/etc/ssl/cert.pem` also fails; certificate verification was not disabled. This must be rerun in the authorized upgrade environment before rollout.
-- The unrelated checked-in VEY-741 launch manifest is already stale against source commit `2b329fb161b921a46966576be4eecd10573c7bef` (manifest says `d7ee5def8ece13052d4a1b4bf7a1e335f39be479`); it was not relabeled as fresh evidence.
-
-Regression: `forge test --match-path test/VeydriftScheduledReturns.t.sol -vv` replays IDs 93742/93790, returnAt 1790592545 and arrivalAt 1790592549 through the real Game/module stack: attack-first, planet/moon, later/equal returns, lazy settle, randomness delay, bounded scans, no double credit.
+## Local validation — final implementation, before parent commit/review
+- **420 focused tests passed:** 13 FleetChronology, 19 ScheduledReturns, 306 Game, 82 Moon. Logs `/tmp/vey905-verified-{inventory,scheduled,game,moon}.log`. Includes the exact 93742/93790 reverse-order replay, all three original red amended-scope probes, legacy return/hold inventory, linked-event cycle avoidance, bounded scans/migration, pruning/recall invalidation, lazy ordering, and independent body snapshots. This is focused coverage, not the entire contracts package suite.
+- Upgrade size build passed: Game **24,542 bytes (34 bytes EIP-170 headroom)**; Gameplay 24,459; BatchTransport 15,782; PlanetManagement 23,282; DefenseHold 24,146. Full table `/tmp/vey905-acceptance-sizes.log`. Do not add facade code without remeasuring.
+- `bun run check:storage`, formatting, live-upgrade policy, and diff whitespace checks passed. Storage log `/tmp/vey905-acceptance-storage.log`.
+- **Live keyless fork is blocked, not proven.** The corrected Game-only/full-backfill test compiled successfully but `BASE_MAINNET_RPC=https://mainnet.base.org forge test --match-path test/UpgradeGameFork.t.sol -vv` failed at `vm.createSelectFork`: Foundry RPC TLS `invalid peer certificate: UnknownIssuer`. Log `/tmp/vey905-final-keyless-fork.log`. It failed before creating a fork or running the upgrade; TLS verification was not disabled. Rerun in a supported trusted RPC environment before release approval. Full backfill may require one cold storage read per historical ID; provision a suitable read-only fork/cache RPC rather than assuming the public endpoint can serve it quickly.
+- Existing unrelated VEY-741 manifest remains stale and was not relabeled as fresh evidence. Independent exact-head review and PR publication remain parent-owned. No commits, deployment, signing, or broadcasts by this contract worker.

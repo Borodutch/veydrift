@@ -114,7 +114,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         }
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
-        if (!_prepareMissionArrivalOrder(missionId, mission.targetPlanetId)) return;
+        // The Game facade has applied complete body/event ordering.
 
         if (!_settleMissileTargetQueues(missionId, mission.targetPlanetId, mission.arrivalAt)) {
             return;

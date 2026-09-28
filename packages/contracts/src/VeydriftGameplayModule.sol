@@ -413,6 +413,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 elapsed = uint64(
             VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
         );
+        _invalidateChronologyReturnBody(mission);
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(currentTime + elapsed);
         // Keep recalled direct missions enumerable until the scheduled return lands. Their
@@ -446,20 +447,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
 
-        // Any planet arrival that settles target queues must respect an earlier missile impact.
-        // Otherwise a later Transport/Deploy could complete ABMs through the resolver's current
-        // timestamp before the earlier missile snapshots defenses at its historical arrival time.
-        // The helper only orders pairs where either mission is a MissileAttack, so ordinary fleet
-        // missions retain their existing permissionless resolution behavior.
-        if (
-            IVeydriftArrivalOrderPreparer(address(this))
-                    .launchInterplanetaryMissileAttack(
-                        missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
-                    ) == 0
-        ) return;
-
         if (missionType == FleetMissionType.Attack) {
-            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
             // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
             // attack's counterplay roster so the battle machinery fights them as defenders.
             // DefenseHold is body-scoped. A fleet stationed over the parent planet must not
@@ -472,8 +460,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 mission.arrivalAt,
                 mission.targetIsMoon
             );
-        } else {
-            _settleResources(mission.targetPlanetId);
         }
         if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             // Both transport and deploy credit the target's cargo on arrival; share the credit + the

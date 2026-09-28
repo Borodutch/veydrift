@@ -2763,17 +2763,16 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertGt(_battleDefenderMetalLoss(vm.getRecordedLogs(), lateId), 0);
     }
 
-    function testEarlierMoonArrivalAlsoBlocksLaterParentPlanetAttack() public {
-        (uint256 earlyId, uint256 lateId, uint256 target,) =
+    function testEarlierMoonArrivalDoesNotBlockIndependentParentPlanetAttack() public {
+        (uint256 earlyId, uint256 lateId, uint256 target, address defender) =
             _twoMoonAttacksAroundPaidProduction(false, true);
-        (, uint64 earlyAt,,) = _fleetMission(earlyId);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, earlyAt)
-        );
-        game.resolveFleetMission(lateId);
+        // Independent planet combat must neither wait for the moon nor settle its future ships.
+        _resolveAttackFully(lateId);
         assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
         _resolveAttackFully(earlyId);
-        game.resolveFleetMission(lateId);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        vm.prank(defender);
+        moons.finishMoonShipProduction(target);
         assertTrue(game.moonShipCount(target, Ship.LightFighter) > 0);
     }
 
@@ -2957,7 +2956,7 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertFalse(moons.activeMoonShipQueue(planetId).active);
     }
 
-    function testGameCombatSnapshotSettlesMoonShipsAtImpactNotResolverTime() public {
+    function testBodyScopedSnapshotsSettleOnlyRequestedMoonAtHistoricalCutoff() public {
         uint256 planetId = _readyMoonShipyard();
         _fundMoon(planetId, 100_000, 100_000, 0);
         vm.prank(player);
@@ -2966,9 +2965,12 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         vm.warp(queued.readyAt + 200);
         vm.prank(address(game));
         game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 0, "planet snapshot touched moon");
+        vm.prank(address(game));
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
         assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
         vm.prank(address(game));
-        game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
         assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
     }
 

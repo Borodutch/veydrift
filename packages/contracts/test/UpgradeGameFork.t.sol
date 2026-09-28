@@ -16,11 +16,6 @@ import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSet
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
-import {
-    IVeydriftMoonGame,
-    IVeydriftRandomnessEngine,
-    VeydriftMoonSystem
-} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePolicy.sol";
@@ -41,8 +36,6 @@ contract UpgradeGameForkTest is Test {
     address internal constant PROXY = 0xf397910F005151b09644228573a4353818D3755d;
     address internal constant PROXY_ADMIN = 0xc81609E77b5ea79d0CdA9794b75B65D567535cb9;
     address internal constant PROXY_ADMIN_OWNER = 0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B;
-    address payable internal constant MOON_PROXY =
-        payable(0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C);
 
     function _addrFromSlot(bytes32 slot) private view returns (address) {
         return address(uint160(uint256(vm.load(PROXY, slot))));
@@ -110,17 +103,18 @@ contract UpgradeGameForkTest is Test {
 
         // Delegation-aware consumers must only be upgraded after Game exposes effectivePlayer.
         assertEq(IVeydriftDelegation(PROXY).effectivePlayer(address(this)), address(this));
-        _upgradeMoonSystem();
-    }
-
-    function _upgradeMoonSystem() private {
-        VeydriftMoonSystem proxied = VeydriftMoonSystem(MOON_PROXY);
-        address owner = proxied.owner();
-        IVeydriftMoonGame game = proxied.game();
-        IVeydriftRandomnessEngine randomness = proxied.randomness();
-        address implementation = address(new VeydriftMoonSystem(address(game), address(randomness)));
-
-        vm.prank(owner);
-        proxied.upgradeToAndCall(implementation, "");
+        // VEY-905 upgrades Game only. Do not silently upgrade the unrelated Moon proxy.
+        uint256 limit = VeydriftGame(PROXY).nextFleetId();
+        bool inventoryReady;
+        // Each chunk scans at most 256 IDs and inserts at most 32 active missions.
+        for (uint256 i; i < (limit + 31) / 32 && !inventoryReady; ++i) {
+            (, inventoryReady) = VeydriftGame(PROXY).syncFleetChronology(256);
+        }
+        assertTrue(inventoryReady, "chronology inventory incomplete");
+        assertEq(
+            VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo),
+            shipBefore,
+            "migration credited fleet"
+        );
     }
 }

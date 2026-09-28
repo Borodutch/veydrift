@@ -32,6 +32,11 @@ interface IVeydriftRiftAttackProtection {
         view;
 }
 
+interface IVeydriftDefenseHoldEventSettlement {
+    function settleProductionUntil(uint256 planetId, uint64 cutoffAt) external;
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+}
+
 interface IVeydriftDefenseHoldArrivalOrder {
     function launchInterplanetaryMissileAttack(
         uint256 missionId,
@@ -366,6 +371,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             ? VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
             : uint256(mission.returnAt)
                 - (holdUntil == 0 ? uint256(mission.arrivalAt) : uint256(holdUntil));
+        _invalidateChronologyReturnBody(mission);
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = (uint256(currentTime) + returnSeconds).toUint64();
 
@@ -403,17 +409,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 holdUntil = _defenseHoldUntil[missionId];
         if (currentTime < holdUntil) revert DefenseHoldStillActive(holdUntil);
 
-        // Planet DefenseHold resolution settles the target through the current timestamp. Do not
-        // let it complete defenses ahead of an earlier missile's historical impact snapshot.
-        if (!mission.targetIsMoon) {
-            if (
-                IVeydriftDefenseHoldArrivalOrder(address(this))
-                        .launchInterplanetaryMissileAttack(
-                            missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
-                        ) == 0
-            ) return;
-        }
-        _settleResources(mission.targetPlanetId);
+        // The chronology preparer settled only this body through holdUntil.
         mission.status = FleetMissionStatus.Returning;
         VeydriftDefenseHoldStorage.endHold(
             _stationedDefenseMissions[mission.targetPlanetId],

@@ -454,6 +454,26 @@ abstract contract VeydriftGameStorage is Initializable {
     // Append-only bounded return scan for an attack. Array mutations invalidate the planet cursor.
     mapping(uint256 planetId => uint256 cursor) internal _attackReturnScanCursor;
 
+    // Complete active-event inventory. Unlike legacy combat indexes this is populated by a
+    // permissionless bounded scan of every allocated ID, including pre-upgrade recalled/linked fleets.
+    uint256 internal _chronologyIndexedThrough;
+    uint256 internal _chronologyGeneration;
+    mapping(uint256 bodyKey => uint256[] missionIds) internal _chronologyMissionsByBody;
+
+    struct ChronologyScan {
+        uint256 generation;
+        uint256 cursor;
+        uint256 blocker;
+        uint64 blockerAt;
+        uint8 blockerKind;
+    }
+    mapping(uint256 missionId => ChronologyScan scan) internal _chronologyScans;
+
+    mapping(uint256 body => uint256 generation) internal _chronologyBodyGeneration;
+
+    mapping(address player => uint256[] missionIds) internal _chronologyMissionsByPlayer;
+    mapping(address player => uint256 cursor) internal _chronologyPlayerCursor;
+
     error AlreadyStarted();
     error BadStartPayment();
     error CoordinatesExhausted();
