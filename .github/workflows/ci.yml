@@ -32,6 +32,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Test CI scope and output guards
+        run: node --test scripts/ci-run-scoped-checks.test.mjs
+
       - name: Determine changed areas
         id: scope
         env:
