@@ -9161,6 +9161,83 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(allyPlanetId).resources.deuterium, deuteriumBeforeRecall);
     }
 
+    function testExpiredDefenseHoldCannotBeRecalledAfterLazyExpiry() public {
+        _assertExpiredHoldRecall(false);
+    }
+
+    function testExpiredDefenseHoldRecallCannotDoubleCreditNestedReturnBeforeLaterTransport()
+        public
+    {
+        _assertExpiredHoldRecall(true);
+    }
+
+    function _assertExpiredHoldRecall(bool laterTransport) private {
+        (address ally,, uint256 target, uint256 home) = _seedDefenseHold();
+        _setTechnologyLevel(ally, Technology.Computer, 1);
+        _setShipCount(home, Ship.Battleship, 1);
+        _setResources(home, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(target, 1_000_000, 1_000_000, 1_000_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        vm.prank(ally);
+        uint256 holdId = game.launchDefenseHold(
+            home, target, ships, VeydriftGameStorage.Resources(123, 45, 0), 100, 4 hours
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(holdId);
+        if (laterTransport) {
+            // Allocate while the hold is not due, then schedule this arrival after its return.
+            // The lazy batch expires the hold first; preparing this transport lands that return.
+            _setPlanetOwner(target, ally);
+            _setShipCount(target, Ship.SmallCargo, 1);
+            delete ships;
+            ships.smallCargo = 1;
+            vm.prank(ally);
+            uint256 transportId = game.launchFleetMission(
+                target, home, VeydriftGameStorage.FleetMissionType.Transport, ships, _noCargo(), 0
+            );
+            bytes32 slot = bytes32(uint256(keccak256(abi.encode(transportId, uint256(24)))) + 3);
+            uint256 departure = uint256(vm.load(address(game), slot)) & type(uint64).max;
+            vm.store(
+                address(game),
+                slot,
+                bytes32(
+                    departure | uint256(returnAt + 1) << 64 | uint256(returnAt + 1 hours) << 128
+                )
+            );
+        }
+        vm.warp(laterTransport ? returnAt + 2 : arrivalAt + 4 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, returnAt)
+        );
+        vm.prank(ally);
+        game.recallFleetMission(holdId);
+        // Reverting recall rolls back its lazy work, without manufacturing another return leg.
+        (VeydriftGameStorage.FleetMissionStatus status,, uint64 unchangedReturnAt,) =
+            _fleetMission(holdId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(unchangedReturnAt, returnAt);
+        assertEq(game.shipCount(home, Ship.Battleship), 0);
+        game.resolveFleetMission(holdId);
+        if (laterTransport) {
+            vm.prank(ally);
+            game.renamePlanet(home, "land hold once");
+        } else {
+            vm.warp(returnAt);
+            game.completeFleetMissionReturn(holdId);
+        }
+        (status,,,) = _fleetMission(holdId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        assertEq(game.shipCount(home, Ship.Battleship), 1);
+        uint128 creditedMetal = game.planet(home).resources.metal;
+        vm.expectRevert();
+        vm.prank(ally);
+        game.recallFleetMission(holdId);
+        vm.expectRevert();
+        game.completeFleetMissionReturn(holdId);
+        assertEq(game.shipCount(home, Ship.Battleship), 1);
+        assertEq(game.planet(home).resources.metal, creditedMetal);
+    }
+
     function testDefenseHoldRejectsUnauthorizedTarget() public {
         (, uint256 attackerPlanetId, uint256 targetPlanetId,) = _seedDefenseHold();
         _setShipCount(attackerPlanetId, Ship.Battleship, 1);

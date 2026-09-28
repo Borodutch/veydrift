@@ -50,8 +50,20 @@ describe("encodeCompleteFleetMissionReturnCall", () => {
 });
 
 describe("ViemMissionResolver", () => {
+  for (const leg of ["arrival", "return"] as const) {
+    for (const proof of ["0x", "0x01", eligibilityProof(0n), eligibilityProof(1n, 0n), new RpcError("missing selector", 3, "0x")]) {
+      test(`${leg} rejects unavailable or incomplete ordering proof ${String(proof)}`, async () => {
+        const transport = new MockTransport(() => proof);
+        const resolver = new ViemMissionResolver(transport, testKey, gameContract, 84532);
+        await expect(resolver.resolveMission("42", leg)).rejects.toBeInstanceOf(MissionNotResolvableError);
+        expect(transport.calls).toHaveLength(1);
+        expect((transport.calls[0]!.params[0] as { data: string }).data).toBe("0xce02abe2" + 42n.toString(16).padStart(64, "0"));
+      });
+    }
+  }
   test("simulate-revert surfaces as MissionNotResolvableError without sending a tx", async () => {
-    const transport = new MockTransport((method) => {
+    const transport = new MockTransport((method, params) => {
+      if (method === "eth_call" && (params[0] as { data: string }).data.startsWith("0xce02abe2")) return eligibilityProof();
       if (method === "eth_call") {
         return new RpcError("execution reverted: NoRandomnessCommitment", 3, "0x");
       }
@@ -64,7 +76,8 @@ describe("ViemMissionResolver", () => {
   });
 
   test("happy path signs and broadcasts via eth_sendRawTransaction", async () => {
-    const transport = new MockTransport((method) => {
+    const transport = new MockTransport((method, params) => {
+      if (method === "eth_call" && (params[0] as { data: string }).data.startsWith("0xce02abe2")) return eligibilityProof();
       switch (method) {
         case "eth_call":
           return "0x";
@@ -99,6 +112,7 @@ describe("ViemMissionResolver", () => {
   test("the return leg simulates and broadcasts completeFleetMissionReturn", async () => {
     let simulatedData: string | undefined;
     const transport = new MockTransport((method, params) => {
+      if (method === "eth_call" && (params[0] as { data: string }).data.startsWith("0xce02abe2")) return eligibilityProof();
       switch (method) {
         case "eth_call":
           simulatedData = (params[0] as { data: string }).data;
@@ -129,7 +143,8 @@ describe("ViemMissionResolver", () => {
   });
 
   test("a mined-but-reverted receipt is retryable (MissionNotResolvableError)", async () => {
-    const transport = new MockTransport((method) => {
+    const transport = new MockTransport((method, params) => {
+      if (method === "eth_call" && (params[0] as { data: string }).data.startsWith("0xce02abe2")) return eligibilityProof();
       switch (method) {
         case "eth_call":
           return "0x";
@@ -160,3 +175,7 @@ describe("ViemMissionResolver", () => {
     expect(resolver.keeperAddress().length).toBe(42);
   });
 });
+
+function eligibilityProof(eligible = 1n, ready = 1n): string {
+  return "0x" + [eligible, 0n, ready].map(n => n.toString(16).padStart(64, "0")).join("");
+}

@@ -344,6 +344,8 @@ export class BattleKeeper {
       return;
     }
 
+    if (status.status !== FleetMissionStatus.None && status.status !== FleetMissionStatus.Resolved
+      && status.status !== FleetMissionStatus.Returned) return;
     const wasTracked = this.pending.delete(status.missionId);
     this.clearRetryDiagnostics(status.missionId);
     this.markTerminal(status.missionId);
@@ -452,29 +454,13 @@ export class BattleKeeper {
       this.lastErrorMissionId = null;
       this.lastErrorLeg = null;
       this.clearRetryDiagnostics(missionId, leg);
-      this.logger.info("[keeper] resolved mission leg", { missionId, leg, hash });
-      // Our submit succeeded. The authoritative event (FleetMissionResolved / FleetMissionReturned)
-      // is the backstop, but advance the state machine now so we don't keep re-submitting.
-      if (leg === "arrival") {
-        if (mission.missionType === MissionType.MissileAttack || mission.missionType === MissionType.Attack) {
-          // A receipt may only advance a bounded return scan, production queue, or combat round.
-          // Retain Outbound missions until canonical state proves arrival settlement. Without a
-          // reader, fail closed and let the authoritative event/sweep advance the leg.
-          const status = await this.resolver.missionStatus?.(missionId);
-          if (!status || status.status === FleetMissionStatus.Outbound) return;
-          // Reconcile terminal/return states exactly; a late receipt may already be Returned.
-          this.inFlight.delete(missionId);
-          this.reconcileMissionStatus(status);
-          return;
-        }
-        this.recordArrivalResolved({
-          missionId,
-          missionType: mission.missionType,
-          returnAt: mission.returnAt
-        });
-      } else {
-        this.recordReturned(missionId);
-      }
+      this.logger.info("[keeper] mission receipt confirmed", { missionId, leg, hash });
+      // Every type and both legs can commit bounded progress without settling the leg.
+      // Never infer a transition from the receipt or the launch-time return estimate.
+      const status = await this.resolver.missionStatus?.(missionId);
+      if (!status) throw new Error(`canonical mission status unavailable for ${missionId}`);
+      this.inFlight.delete(missionId);
+      this.reconcileMissionStatus(status);
     } catch (error) {
       this.submitFailureCount += 1;
       this.lastError = error instanceof Error ? error.message : String(error);

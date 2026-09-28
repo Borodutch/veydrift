@@ -406,6 +406,133 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         assertTrue(transportStatus != VeydriftGameStorage.FleetMissionStatus.Outbound);
     }
 
+    function testDestroyedMoonDeployReservesReturnBeforeLaterOriginArrival() public {
+        _assertMoonDeployReturn(true, false, false);
+    }
+
+    function testReplacementMoonDeployReservesReturnBeforeLaterOriginArrival() public {
+        _assertMoonDeployReturn(true, true, false);
+    }
+
+    function testDestroyedMoonDeployInvalidatesSavedOriginScan() public {
+        _assertMoonDeployReturn(true, false, true);
+    }
+
+    function testReplacementMoonDeployInvalidatesSavedOriginScan() public {
+        _assertMoonDeployReturn(true, true, true);
+    }
+
+    function testSuccessfulMoonDeployDoesNotReserveInventedReturn() public {
+        _assertMoonDeployReturn(false, false, false);
+    }
+
+    function _assertMoonDeployReturn(bool destroy, bool replace, bool savedScan) private {
+        vm.warp(RETURN_AT - 1 days);
+        (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
+        _setPlanetOwner(away, player);
+        _setTechnologyLevel(player, Technology.Computer, 30);
+        _fundPlanet(home, 1_000_000, 1_000_000, 1_000_000);
+        _fundPlanet(away, 1_000_000, 1_000_000, 1_000_000);
+        _setShipCount(home, Ship.SmallCargo, 2);
+        _setShipCount(away, Ship.SmallCargo, 14);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 2;
+        vm.prank(player);
+        uint256 deployId = game.launchBodyFleetMission(
+            home,
+            home,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            ships,
+            VeydriftGameStorage.Resources(123, 45, 0),
+            100,
+            false,
+            true
+        );
+        _setTimes(deployId, RETURN_AT - 100, RETURN_AT);
+        ships.smallCargo = 1;
+        if (savedScan) {
+            // Keep the first (Deploy) entry in a completed prefix while later entries remain.
+            for (uint256 i; i < 13; ++i) {
+                vm.prank(player);
+                uint256 filler = game.launchFleetMission(
+                    away,
+                    home,
+                    VeydriftGameStorage.FleetMissionType.Deploy,
+                    ships,
+                    VeydriftGameStorage.Resources(0, 0, 0),
+                    0
+                );
+                _setTimes(filler, IMPACT_AT + 1 days, IMPACT_AT + 2 days);
+            }
+        }
+        vm.prank(player);
+        uint256 laterId = game.launchFleetMission(
+            away,
+            home,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        _setTimes(laterId, IMPACT_AT, IMPACT_AT + 1 hours);
+        game.syncFleetChronology(256);
+        vm.warp(IMPACT_AT + 6);
+        if (savedScan) {
+            game.resolveFleetMission(laterId);
+            bytes32 scanSlot = bytes32(uint256(keccak256(abi.encode(laterId, uint256(81)))) + 1);
+            assertEq(uint256(vm.load(address(game), scanSlot)), 12, "save prefix past deploy");
+            (VeydriftGameStorage.FleetMissionStatus pending,,,) = _fleetMission(laterId);
+            assertEq(uint8(pending), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        }
+        if (destroy) {
+            _destroyMoonGuaranteed(home);
+            if (replace) _createMoon(home);
+            (bool eligible, uint256 blocker, bool ready) = game.fleetMissionEligibility(laterId);
+            assertTrue(ready);
+            assertFalse(eligible, "failed deploy return must precede later origin arrival");
+            assertEq(blocker, deployId);
+            // With a saved scan this first call proves preparatory progress, not arrival credit.
+            if (savedScan) game.resolveFleetMission(laterId);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    VeydriftGameStorage.FleetMissionNotResolved.selector, RETURN_AT
+                )
+            );
+            game.resolveFleetMission(laterId);
+            game.resolveFleetMission(deployId);
+            (
+                VeydriftGameStorage.FleetMissionStatus status,,,
+                VeydriftGameStorage.Resources memory cargo
+            ) = _fleetMission(deployId);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+            assertEq(cargo.metal, 123);
+            assertEq(cargo.crystal, 45);
+            for (uint256 i; i < 8; ++i) {
+                game.resolveFleetMission(laterId);
+                (status,,,) = _fleetMission(laterId);
+                if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
+            }
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+            (status,,,) = _fleetMission(deployId);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+            assertEq(game.shipCount(home, Ship.SmallCargo), 2);
+            assertEq(game.moonShipCount(home, Ship.SmallCargo), 0);
+            uint128 creditedMetal = game.planet(home).resources.metal;
+            vm.expectRevert();
+            game.completeFleetMissionReturn(deployId);
+            assertEq(game.planet(home).resources.metal, creditedMetal);
+        } else {
+            (bool eligible,,) = game.fleetMissionEligibility(laterId);
+            assertTrue(eligible, "normal deploy has no origin return dependency");
+            game.resolveFleetMission(laterId);
+            game.resolveFleetMission(deployId);
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(deployId);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+            assertEq(game.moonShipCount(home, Ship.SmallCargo), 2);
+            assertEq(game.shipCount(home, Ship.SmallCargo), 0);
+        }
+    }
+
     function _setTimes(uint256 id, uint64 arrivalAt, uint64 returnAt) private {
         bytes32 slot = bytes32(uint256(keccak256(abi.encode(id, uint256(24)))) + 3);
         uint256 departure = uint256(vm.load(address(game), slot)) & type(uint64).max;

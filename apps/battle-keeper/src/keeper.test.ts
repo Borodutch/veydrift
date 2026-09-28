@@ -92,6 +92,43 @@ const launch = (
   ...(randomnessRequestId ? { randomnessRequestId } : {})
 });
 
+describe("BattleKeeper bounded receipts", () => {
+  for (const [name, missionType] of Object.entries(MissionType)) {
+    for (const leg of ["arrival", "return"] as const) {
+      test(`${name} ${leg} retains progress-only receipts until canonical settlement`, async () => {
+        const active = leg === "arrival" ? FleetMissionStatus.Outbound : FleetMissionStatus.Recalled;
+        const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+          statusBehavior: async (missionId, index) => ({ missionId, missionType,
+            status: index === 0 ? active : FleetMissionStatus.Returned,
+            arrivalAt: 800, returnAt: 900, randomnessRequestId: "0" })
+        });
+        keeper.recordLaunched(launch("123", missionType, 800, 900));
+        if (leg === "return") keeper.recordReturnExposed({ missionId: "123", status: active, returnAt: 900 });
+        await keeper.tick();
+        expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "123", leg })]);
+        await keeper.tick();
+        expect(keeper.snapshot().pendingCount).toBe(0);
+        expect(resolver.calls).toEqual([`123:${leg}`, `123:${leg}`]);
+      });
+
+      for (const unavailable of ["missing", "error", "unknown"] as const) {
+        test(`${name} ${leg} fails closed for ${unavailable} canonical status`, async () => {
+          const resolver: MissionResolver = { keeperAddress: () => "0xkeeper", resolveMission: async () => "0xhash" };
+          if (unavailable !== "missing") resolver.missionStatus = async (missionId) => {
+            if (unavailable === "error") throw new Error("RPC unavailable");
+            return { missionId, missionType, status: 255, arrivalAt: 800, returnAt: 900, randomnessRequestId: "0" };
+          };
+          const keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: silentLogger });
+          keeper.recordLaunched(launch("123", missionType, 800, 900));
+          if (leg === "return") keeper.recordReturnExposed({ missionId: "123", status: FleetMissionStatus.Returning, returnAt: 900 });
+          await keeper.tick();
+          expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "123", leg })]);
+        });
+      }
+    }
+  }
+});
+
 describe("BattleKeeper pending tracking", () => {
   test("queues every outbound mission type into the arrival leg", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
@@ -425,12 +462,14 @@ describe("BattleKeeper resolution loop", () => {
 
   test("a non-combat mission (Transport) resolves its arrival then its return", async () => {
     let now = 1_000;
-    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now });
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Transport, arrivalAt: 900, returnAt: 2000, randomnessRequestId: "0" }) });
     keeper.recordLaunched(launch("3", MissionType.Transport, 900, 2_000));
 
     await keeper.tick(); // arrival is due
     expect(resolver.calls).toEqual(["3:arrival"]);
-    // Our own arrival resolve transitions it to the return leg (using the launch returnAt).
+    // Our own arrival resolve transitions it to the return leg (using the canonical returnAt).
     let snap = keeper.snapshot();
     expect(snap.awaitingReturnCount).toBe(1);
     expect(snap.pendingCount).toBe(1);
@@ -448,7 +487,9 @@ describe("BattleKeeper resolution loop", () => {
 
   test("the authoritative FleetMissionResolved returnAt overrides the launch estimate", async () => {
     let now = 1_000;
-    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now });
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Harvest, arrivalAt: 900, returnAt: 5000, randomnessRequestId: "0" }) });
     keeper.recordLaunched(launch("3", MissionType.Harvest, 900, 5_000));
     await keeper.tick(); // arrival resolves; launch estimate said return at 5_000
     // But the on-chain event reports an updated (earlier) return time.
@@ -530,7 +571,9 @@ describe("BattleKeeper resolution loop", () => {
         }
         return "0xhash";
       },
-      { now: () => now }
+      { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Transport, arrivalAt: 900, returnAt: 1400, randomnessRequestId: "0" }) }
     );
     keeper.recordLaunched(launch("3", MissionType.Transport, 900, 1_400));
     await keeper.tick(); // arrival resolves -> awaiting return

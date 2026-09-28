@@ -273,10 +273,16 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         }
         // Outbound round trips reserve their scheduled home event even before survivors are known.
         // Linked fleets are one battle event at target, but each has its own origin return dependency.
+        // Deploy normally has no return; a missing/replaced target moon instead preserves the
+        // fleet and cargo for its scheduled return. Match the moon-arrival resolver predicate.
         if (
             m.returnAt != 0 && m.missionType != FleetMissionType.MissileAttack
                 && (m.status != FleetMissionStatus.Outbound
-                    || m.missionType != FleetMissionType.Deploy) && _returnBody(other, m) == body
+                    || m.missionType != FleetMissionType.Deploy
+                    || (m.targetIsMoon
+                        && !_missionMoonExistsForOwner(
+                            other, m.targetPlanetId, _planets[m.targetPlanetId].owner, false
+                        ))) && _returnBody(other, m) == body
                 && _before(m.returnAt, 1, other, at, kind, id)
                 && (eventAt == 0 || _before(m.returnAt, 1, other, eventAt, eventKind, other))
         ) {

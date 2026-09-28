@@ -356,6 +356,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         }
 
         _settleDueCombatArrivals(player);
+        // Lazy settlement can expire this hold and even land its return through a later arrival.
+        // Never overwrite that transition with a fresh recall (and credit the fleet twice).
+        if (mission.status != FleetMissionStatus.Outbound) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
 
