@@ -15,14 +15,14 @@ contract FleetChronologyHarness is VeydriftBatchTransportModule {
     function seed(
         uint256 id,
         FleetMissionType kind,
-        FleetMissionStatus status,
+        FleetMissionStatus initialStatus,
         uint256 origin,
         uint256 target,
         uint64 arrival,
         uint64 back
     ) external {
         FleetMission storage m = _fleetMissions[id];
-        m.status = status;
+        m.status = initialStatus;
         m.missionType = kind;
         m.owner = address(1);
         m.originPlanetId = origin;
