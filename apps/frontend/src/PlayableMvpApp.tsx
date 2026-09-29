@@ -3324,6 +3324,12 @@ export function PlayableMvpApp({
   // (the manual Refresh button), this never toggles the loading spinner and never clobbers the rendered
   // detail or surfaces an error on a transient poll failure, so the page updates silently in place.
 
+  useEffect(() => {
+    if (!backendData || !missionDetailId) return;
+    // Shared-link observers need fresh forecasts too, without a connected wallet.
+    return backendData.startMissionDetailSync(missionDetailId);
+  }, [backendData, missionDetailId]);
+
   // Close the battle-report share dialog whenever the viewer moves to a different mission so a stale
   // link is never left open.
   useEffect(() => {

@@ -212,6 +212,8 @@ export type JoinAttackForecastContext = {
   participants: readonly JoinAttackForecastParticipant[];
   stationedDefenders?: readonly PublicStationedDefender[];
   selectedAttackerLaneGroup: number | null;
+  // Existing battles contain only the canonical participants, not a hypothetical new join.
+  existingBattle?: boolean;
   unavailableReason?: string;
 };
 
@@ -1123,7 +1125,7 @@ const OUTCOME_PREVIEW_SAMPLE_COUNT = 16;
 const OUTCOME_PREVIEW_CACHE_LIMIT = 64;
 const outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
 
-function useDeferredPublicTargetBattleForecast(
+export function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
   if (prepared.status === "complete") return prepared.forecast;
@@ -1925,9 +1927,11 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
   };
 }
 
+export type BattleForecastTarget = Pick<Planet, "id" | "name" | "owner" | "publicState" | "publicMoonState" | "moonName" | "occupiedBy">;
+
 export function preparePublicTargetBattleForecast(
   ships: MissionShips,
-  target: Planet | undefined,
+  target: BattleForecastTarget | undefined,
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   targetIsMoon = false,
   joinAttackContext?: JoinAttackForecastContext,
@@ -2002,7 +2006,7 @@ export function preparePublicTargetBattleForecast(
         });
       }
     }
-    if (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup)) {
+    if (!joinAttackContext.existingBattle && (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup))) {
       return complete({
         kind: "uncertain",
         label: "Uncertain",
@@ -2034,10 +2038,10 @@ export function preparePublicTargetBattleForecast(
   if (!defenderTechKnown) {
     return pendingCombatIntel("The destination owner's combat technology is missing from public intel, so the preview will not assume zero levels.");
   }
-  const forecastStationedDefenders = targetIsMoon
-    ? []
-    : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
-  if (!targetIsMoon && !Array.isArray(forecastStationedDefenders)) {
+  const forecastStationedDefenders = joinAttackContext?.existingBattle
+    ? joinAttackContext.stationedDefenders
+    : targetIsMoon ? [] : joinAttackContext?.stationedDefenders ?? target.publicState?.stationedDefenderForecastTimeline;
+  if ((!targetIsMoon || joinAttackContext?.existingBattle) && !Array.isArray(forecastStationedDefenders)) {
     return pendingCombatIntel(
       joinAttackContext
         ? "Attack-specific stationed/counterplay defender intel is unavailable, so defending fleets are not silently omitted."
@@ -2096,14 +2100,14 @@ export function preparePublicTargetBattleForecast(
         ships: combatShipRecordCounts(participant.ships ?? {}),
         technology: normalizeCombatTechLevels(participant.combatTechnology),
       })),
-      {
+      ...(joinAttackContext?.existingBattle ? [] : [{
         id: "selected-attacker",
         label: joinAttackContext ? "Selected joining fleet" : "Selected attacking fleet",
         owner: "Connected commander",
         laneGroup: joinAttackContext?.selectedAttackerLaneGroup ?? 0,
         ships: missionShipCounts(ships),
         technology: normalizedAttackerTechLevels,
-      },
+      }]),
     ],
     defender: {
       id: targetIsMoon ? `moon-${target.id}` : `planet-${target.id}`,
@@ -2476,8 +2480,8 @@ export function AttackOutcomePanel({
   battleForecast,
 }: {
   battleForecast: BattleForecastState;
-  lootableAtArrival: MissionResourceSnapshot | null;
-  maxLootForecast: MissionResourceSnapshot;
+  lootableAtArrival?: MissionResourceSnapshot | null;
+  maxLootForecast?: MissionResourceSnapshot;
 }) {
   return (
     <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
@@ -3549,13 +3553,13 @@ function publicBuildingLevels(target: Planet | undefined): Record<BuildingKey, n
   return buildings;
 }
 
-function publicResearchLevel(target: Planet | undefined, key: "energy" | keyof CombatTechLevels): number {
+function publicResearchLevel(target: BattleForecastTarget | undefined, key: "energy" | keyof CombatTechLevels): number {
   const id = researchCatalog.find((entry) => entry.key === key)?.id;
   if (id == null) return 0;
   return target?.publicState?.research?.find((row) => row.id === id)?.level ?? 0;
 }
 
-function targetCombatTechLevels(target: Planet | undefined): CombatTechLevels {
+function targetCombatTechLevels(target: BattleForecastTarget | undefined): CombatTechLevels {
   return {
     weapons: publicResearchLevel(target, "weapons"),
     shielding: publicResearchLevel(target, "shielding"),

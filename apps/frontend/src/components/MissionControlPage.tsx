@@ -1406,7 +1406,7 @@ function MissionRow({
               }}
             />
           ))}
-          <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
+          <OpenMissionButton forecast={mission.status === "Outbound" && ["Attack", "AcsAttack"].includes(mission.missionType)} onClick={() => onOpenReport(mission.missionId)} />
         </>
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -1579,11 +1579,12 @@ function MissionFleet({
         <MissionDetailGroup title="Resources">
           {cargo && resourceTotal(cargo) > 0 ? detailRow("Cargo", formatCargoNonZero(cargo)) : null}
           {harvested && resourceTotal(harvested) > 0 ? detailRow("Debris collected", formatCargoNonZero(harvested)) : null}
-          {loot && resourceTotal(loot) > 0 ? detailRow("Loot", formatCargoNonZero(loot)) : null}
+          {loot && resourceTotal(loot) > 0 ? detailRow(losses?.groupBattleId ? "Loot share" : "Loot", formatCargoNonZero(loot)) : null}
         </MissionDetailGroup>
       ) : null}
       {losses ? (
-        <MissionDetailGroup title="Battle">
+        <MissionDetailGroup title={losses.groupBattleId ? `Shared battle #${losses.groupBattleId}` : "Battle"}>
+          {losses.groupBattleId ? <p className="max-w-xs text-slate-400">Outcome, losses and debris are totals for this battle, repeated across its participant missions. Individual fleet losses are unavailable.</p> : null}
           {detailRow("Outcome", battleOutcomeLabel(losses.outcome), battleOutcomeTextTone(losses.outcome))}
           {resourceTotal(losses.attacker) > 0 ? detailRow("Attacker losses", formatCargoNonZero(losses.attacker)) : null}
           {resourceTotal(losses.defender) > 0 ? detailRow("Defender losses", formatCargoNonZero(losses.defender)) : null}
@@ -1786,7 +1787,7 @@ function MissionCard({
         {/* Mission cell: inline on mobile, badge stacked over a muted # on lg — the stack keeps the
             column narrow and lines the numbers up under each other. */}
         <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 lg:flex-col lg:items-start lg:justify-center">
-          <span className={`inline-flex max-w-full shrink-0 truncate rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badgeTone}`} title={badgeLabel}>{badgeLabel}</span>
+          <span className={`inline-flex max-w-full shrink-0 whitespace-normal break-words rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-tight ${badgeTone}`} title={badgeLabel}>{badgeLabel}</span>
           {missionId ? <span className="shrink-0 text-[11px] font-semibold text-white lg:font-medium lg:text-slate-400">{missionIdLabel(missionId)}</span> : null}
         </span>
         <div
@@ -1910,10 +1911,11 @@ function missionGlance({
           rows self-label. Loot/Debris/Losses keep their one-word prefix everywhere — that
           distinction is real information. */}
       {resourceTotal(mission.cargo) > 0 ? glanceStat("Cargo", mission.cargo, { labelOnDesktop: false }) : null}
-      {loot && resourceTotal(loot) > 0 ? glanceStat("Loot", loot) : null}
+      {losses?.groupBattleId ? glanceRow("Shared battle", `#${losses.groupBattleId}`) : null}
+      {loot && resourceTotal(loot) > 0 ? glanceStat(losses?.groupBattleId ? "Loot share" : "Loot", loot) : null}
       {harvested && resourceTotal(harvested) > 0 ? glanceStat("Debris", harvested) : null}
       {losses && hasAnyCombatLosses(losses.attacker, losses.defender)
-        ? glanceRow("Losses", lossesCompact(losses), { title: "Fleet losses: attacker / defender (resource value)" })
+        ? glanceRow(losses.groupBattleId ? "Group losses" : "Losses", lossesCompact(losses), { title: "Fleet losses: attacker / defender (resource value)" })
         : null}
     </>
   );
@@ -2046,13 +2048,13 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
   );
 }
 
-function OpenMissionButton({ onClick }: { onClick: () => void }) {
+function OpenMissionButton({ onClick, forecast = false }: { onClick: () => void; forecast?: boolean }) {
   return (
     <button
       aria-label="Open"
       className={iconRowActionButtonClass}
       onClick={onClick}
-      title="Open the full mission detail screen"
+      title={forecast ? "Open probable outcome for the whole battle" : "Open the full mission detail screen"}
       type="button"
     >
       <ExternalLink aria-hidden="true" size={14} strokeWidth={1.9} />
@@ -2535,7 +2537,10 @@ function PastMissionSummaryRow({
   return (
     <MissionCard
       actions={
-        <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
+        <>
+          <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
+          {losses?.groupBattleId ? <button className="rounded border border-white/10 px-2 py-1 text-xs text-cyan-200 hover:bg-white/10" onClick={() => onOpenReport(losses.groupBattleId!)} type="button">Battle #{losses.groupBattleId} · participants</button> : null}
+        </>
       }
       glance={missionGlance({ direction: missionDirection, harvested, loot, losses, mission })}
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -2614,9 +2619,10 @@ function PastBattleReportRow({
   // ACS grouped attack: surface the combined group loot and the joiner count so the compact row makes
   // clear the haul was split, with the per-participant breakdown one click away on the detail screen.
   const participants = report.participants ?? [];
-  const isGroupedAttack = participants.length > 1;
-  const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
-  const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
+  const isGroupedAttack = Boolean(report.attackGroupId) || participants.length > 1;
+  const groupBattleId = report.attackGroupId || report.missionId;
+  const lootShown = participants.length > 1 ? sumLoot(participants) : report.loot;
+  const joinerCount = Math.max(0, participants.length - 1);
   return (
     <MissionCard
       actions={
@@ -2627,9 +2633,10 @@ function PastBattleReportRow({
       direction="outbound"
       glance={
         <>
-          {resourceTotal(lootShown) > 0 ? glanceStat("Loot", lootShown) : null}
+          {isGroupedAttack ? glanceRow("Shared battle", `#${groupBattleId}`) : null}
+          {resourceTotal(lootShown) > 0 ? glanceStat(participants.length > 1 ? "Group loot" : "Loot", lootShown) : null}
           {hasAnyCombatLosses(report.attackerLosses, report.defenderLosses)
-            ? glanceRow("Losses", lossesPairCompact(report.attackerLosses, report.defenderLosses), {
+            ? glanceRow(isGroupedAttack ? "Group losses" : "Losses", lossesPairCompact(report.attackerLosses, report.defenderLosses), {
                 title: "Fleet losses: attacker / defender (resource value)",
               })
             : null}
@@ -2640,12 +2647,12 @@ function PastBattleReportRow({
         <div className="contents">
           <MissionDetailGroup title="Battle">
             {detailRow("Outcome", battleOutcomeLabel(report.outcome), battleOutcomeTextTone(report.outcome))}
-            {resourceTotal(lootShown) > 0 ? detailRow(isGroupedAttack ? "Group loot" : "Loot", formatCargoNonZero(lootShown)) : null}
+            {resourceTotal(lootShown) > 0 ? detailRow(participants.length > 1 ? "Group loot" : "Loot", formatCargoNonZero(lootShown)) : null}
             {resourceTotal(report.attackerLosses) > 0 ? detailRow("Attacker losses", formatCargoNonZero(report.attackerLosses)) : null}
             {resourceTotal(report.defenderLosses) > 0 ? detailRow("Defender losses", formatCargoNonZero(report.defenderLosses)) : null}
             {debrisTotal(report.debris) > 0 ? detailRow("Debris field", formatDebrisNonZero(report.debris)) : null}
             {detailRow("Combat", `${report.rounds} rounds · block ${report.blockNumber || "unknown"}`, "text-slate-400")}
-            {isGroupedAttack ? detailRow("Group", `${joinerCount} ${joinerCount === 1 ? "joiner" : "joiners"}`, "text-cyan-300/80") : null}
+            {participants.length > 1 ? detailRow("Group", `${joinerCount} ${joinerCount === 1 ? "joiner" : "joiners"}`, "text-cyan-300/80") : null}
           </MissionDetailGroup>
         </div>
       }
@@ -3254,6 +3261,7 @@ function lootByMissionIdFromReports(reports: BattleReport[]): Map<string, Battle
 // card's "Losses" line. On-chain CombatLosses is a single combined figure per battle (not split per
 // ACS participant), so each side's aggregate resource loss is taken straight from the report.
 export type MissionLossSummary = {
+  groupBattleId?: string | undefined;
   outcome: BattleReport["outcome"];
   attacker: BattleReport["attackerLosses"];
   defender: BattleReport["defenderLosses"];
@@ -3268,7 +3276,10 @@ export type MissionLossSummary = {
 function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, MissionLossSummary> {
   const lookup = new Map<string, MissionLossSummary>();
   for (const report of reports) {
-    const losses = { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris };
+    const losses: MissionLossSummary = {
+      groupBattleId: report.attackGroupId || ((report.participants?.length ?? 0) > 1 ? report.missionId : undefined),
+      outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris,
+    };
     lookup.set(report.missionId, losses);
     for (const participant of report.participants ?? []) {
       lookup.set(participant.missionId, losses);

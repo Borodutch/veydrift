@@ -7,7 +7,7 @@ import { sdk } from "@farcaster/miniapp-sdk";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toFunctionSelector, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
-import type { PlanetType, PublicStationedDefender } from "./types";
+import type { Planet, PlanetType, PublicStationedDefender } from "./types";
 
 export type Eip1193Provider = {
   request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
@@ -699,7 +699,19 @@ export type TargetCombatIntel = {
   };
 };
 
+export type MissionBattleForecast = {
+  leaderMissionId: string;
+  arrivalAt: string;
+  asOf: string;
+  targetIsMoon: boolean;
+  participants: NonNullable<FleetMissionSummary["attackPreview"]>["participants"];
+  stationedDefenders: PublicStationedDefender[];
+  unavailableReason?: string;
+  target: (Pick<Planet, "id" | "name" | "owner" | "publicState" | "publicMoonState"> & Partial<Pick<Planet, "moonName">>) | null;
+};
+
 export type MissionDetailResponse = {
+  battleForecast?: MissionBattleForecast | null;
   mission: FleetMissionSummary;
   battleReport: BattleReport | null;
   battleReportMaterialization?: {

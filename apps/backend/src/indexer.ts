@@ -3126,6 +3126,86 @@ export class SettlementIndexer {
     return mission ? this.withDefenseHoldCombatOutcome(this.fleetMissionSummaryAsOfNow(mission)) : null;
   }
 
+  // Read-only, bounded to this battle's links and target traffic. Existing attacks do not append a
+  // hypothetical joining fleet: that distinction changes stationed defender random-lane identities.
+  missionBattleForecast(mission: FleetMissionSummary) {
+    if (mission.status !== "Outbound" || mission.recallProvenance
+      || !["Attack", "AcsAttack"].includes(mission.missionType)) return null;
+    const leaderId = mission.missionType === "AcsAttack" ? mission.attackGroupId : mission.missionId;
+    const attack = leaderId ? this.fleetMission(leaderId) : null;
+    const unavailable = (reason: string) => ({
+      leaderMissionId: leaderId ?? mission.missionId,
+      arrivalAt: attack?.arrivalAt ?? mission.arrivalAt,
+      targetPlanetId: attack?.targetPlanetId ?? mission.targetPlanetId,
+      targetIsMoon: (attack ?? mission).targetIsMoon === true,
+      participants: [] as NonNullable<FleetMissionSummary["attackPreview"]>["participants"],
+      stationedDefenders: [] as StationedDefenderSummary[],
+      unavailableReason: reason
+    });
+    if (!attack) return unavailable("The shared attack leader is unavailable; the whole battle cannot be forecast.");
+    if (attack.status !== "Outbound" || attack.recallProvenance
+      || this.resolvedBattleMissionIdsForMissions([attack.missionId]).has(attack.missionId)) return null;
+    if (attack.missionType !== "Attack") return unavailable("The shared attack leader is not a valid attack.");
+    const arrival = Number(attack.arrivalAt);
+    if (!Number.isSafeInteger(arrival) || arrival <= 0) return unavailable("The battle arrival time is unavailable.");
+    if (attack.combatResolutionProgress) return unavailable("Battle resolution is already in progress; wait for the actual battle report.");
+    if (arrival <= nowSeconds()) return unavailable("The scheduled impact has passed; current forces cannot reconstruct battle-time state. Await the actual battle report.");
+    const linkedIds = [...new Set([...(attack.joinedAttackMissionIds ?? []), ...(attack.counterplayDefenderMissionIds ?? [])])];
+    const linked = this.fleetMissionSummariesFromCanonicalRowsByIds(linkedIds);
+    const invalidTiming = linked.find((entry) => entry.status === "Outbound" && !entry.recallProvenance
+      && (!Number.isSafeInteger(Number(entry.arrivalAt)) || Number(entry.arrivalAt) <= 0));
+    if (invalidTiming) return unavailable(`Fleet #${invalidTiming.missionId} has unavailable arrival timing.`);
+    // Forecast inventory must follow credited lifecycle state, not the public countdown projection
+    // that promotes overdue Returning/Recalled missions to Returned before settlement is mined.
+    const trafficRows = this.db.query(
+      `SELECT * FROM contract_fleet_missions
+       WHERE status_id IN (1, 2, 5) AND (origin_planet_id = ? OR target_planet_id = ?)`
+    ).all(attack.targetPlanetId, attack.targetPlanetId) as ContractFleetMissionRow[];
+    const traffic = trafficRows.map((row) => this.canonicalFleetMissionSummary(row));
+    const holds = traffic.filter((entry) => entry.missionType === "DefenseHold" && entry.status === "Outbound"
+      && !entry.recallProvenance && (entry.targetIsMoon === true) === (attack.targetIsMoon === true));
+    const invalidHoldTiming = holds.find((entry) => entry.targetPlanetId === attack.targetPlanetId
+      && (!Number.isSafeInteger(Number(entry.arrivalAt)) || Number(entry.arrivalAt) <= 0
+        || !Number.isSafeInteger(Number(this.defenseHoldWindowEnd(entry))) || Number(this.defenseHoldWindowEnd(entry)) <= 0));
+    if (invalidHoldTiming) return unavailable(`Stationed fleet #${invalidHoldTiming.missionId} has unavailable arrival or hold timing.`);
+    const preview = this.joinAttackPreviewSummary(attack, new Map(linked.map((entry) => [entry.missionId, entry])),
+      holds,
+      new Map([[attack.targetPlanetId, this.defenseHoldStorageOrderForPlanet(attack.targetPlanetId)]]), false);
+    const result = {
+      leaderMissionId: attack.missionId, arrivalAt: attack.arrivalAt,
+      targetPlanetId: attack.targetPlanetId, targetIsMoon: attack.targetIsMoon === true,
+      participants: preview.participants, stationedDefenders: preview.stationedDefenders,
+      ...(preview.unavailableReason ? { unavailableReason: preview.unavailableReason } : {})
+    };
+    if (preview.unavailableReason) return result;
+    if (mission.missionType === "AcsAttack" && !preview.participants.some((entry) => entry.missionId === mission.missionId)) {
+      return unavailable("This joined fleet is not an active participant in the shared battle.");
+    }
+    if (preview.participants.some((entry) => !entry.ships || !hasAnyShips(entry.ships))) {
+      return { ...result, unavailableReason: "An attacking fleet composition is unavailable or empty; no favorable outcome is assumed." };
+    }
+    // A scheduled return/deploy is not yet in the garrison. Never add it speculatively (which can
+    // double count a credited landing), nor silently omit a fleet due before hostile impact (VEY-905).
+    const pendingLanding = traffic.find((entry) => {
+      if ((entry.status === "Returning" || entry.status === "Recalled")
+        && entry.originPlanetId === attack.targetPlanetId
+        && (entry.originIsMoon === true) === (attack.targetIsMoon === true)) {
+        const at = Number(entry.returnAt);
+        return !Number.isSafeInteger(at) || at <= 0 || at <= arrival;
+      }
+      if (entry.status === "Outbound" && entry.missionType === "Deploy"
+        && entry.targetPlanetId === attack.targetPlanetId
+        && (entry.targetIsMoon === true) === (attack.targetIsMoon === true)) {
+        const at = Number(entry.arrivalAt);
+        return !Number.isSafeInteger(at) || at <= 0 || at <= arrival;
+      }
+      return false;
+    });
+    return pendingLanding
+      ? { ...result, unavailableReason: `Fleet #${pendingLanding.missionId} has a scheduled return or deployment before impact that is not yet credited to the target. Battle-time garrison is uncertain.` }
+      : result;
+  }
+
   private withDefenseHoldCombatOutcome(mission: FleetMissionSummary): FleetMissionSummary {
     if (mission.missionType !== "DefenseHold") return mission;
     // Canonical mission rows already include the event-derived DefenseHold lifecycle outcome. Do
@@ -13873,7 +13953,8 @@ export class SettlementIndexer {
     defenseHoldStorageOrders: ReadonlyMap<
       string,
       { missionIds: string[]; unavailableReason?: string }
-    >
+    >,
+    prospectiveJoin = true
   ): NonNullable<FleetMissionSummary["attackPreview"]> {
     const leadDisplayName = this.playerProfile(attack.owner).displayName;
     const participants: NonNullable<FleetMissionSummary["attackPreview"]>["participants"] = [{
@@ -13910,7 +13991,8 @@ export class SettlementIndexer {
       summariesById,
       activeDefenseHolds,
       linkedMissionIds,
-      defenseHoldStorageOrders.get(attack.targetPlanetId) ?? { missionIds: [] }
+      defenseHoldStorageOrders.get(attack.targetPlanetId) ?? { missionIds: [] },
+      prospectiveJoin
     );
     const stationedDefenders = defenderPreview.defenders;
     if (defenderPreview.unavailableReason) {
@@ -13922,7 +14004,7 @@ export class SettlementIndexer {
       };
     }
 
-    const joinedMissionIds = [...(attack.joinedAttackMissionIds ?? [])]
+    const joinedMissionIds = [...new Set(attack.joinedAttackMissionIds ?? [])]
       .sort((left, right) => linkedMissionIds.indexOf(left) - linkedMissionIds.indexOf(right));
     for (const joinedMissionId of joinedMissionIds) {
       const joined = summariesById.get(joinedMissionId);
@@ -13938,7 +14020,9 @@ export class SettlementIndexer {
         joined.status !== "Outbound"
         || joined.missionType !== "AcsAttack"
         || joined.attackGroupId !== attack.missionId
+        || joined.recallProvenance
         || joined.targetPlanetId !== attack.targetPlanetId
+        || (joined.targetIsMoon === true) !== (attack.targetIsMoon === true)
         || Number(joined.arrivalAt) > Number(attack.arrivalAt)
       ) {
         continue;
@@ -13978,7 +14062,8 @@ export class SettlementIndexer {
     summariesById: ReadonlyMap<string, FleetMissionSummary>,
     activeDefenseHolds: readonly FleetMissionSummary[],
     linkedMissionIds: readonly string[],
-    storageOrder: { missionIds: string[]; unavailableReason?: string }
+    storageOrder: { missionIds: string[]; unavailableReason?: string },
+    prospectiveJoin = true
   ): { defenders: StationedDefenderSummary[]; unavailableReason?: string } {
     const attackArrival = Number(attack.arrivalAt);
     if (!Number.isFinite(attackArrival)) {
@@ -13988,7 +14073,7 @@ export class SettlementIndexer {
       };
     }
     const defenders: StationedDefenderSummary[] = [];
-    for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
+    for (const missionId of new Set(attack.counterplayDefenderMissionIds ?? [])) {
       const defender = summariesById.get(missionId);
       if (!defender) {
         return {
@@ -13996,7 +14081,18 @@ export class SettlementIndexer {
           unavailableReason: `Counterplay defender #${missionId} composition is missing from indexed public intel.`
         };
       }
-      if (this.isBattleTimeCounterplay(defender, attack, attackArrival)) {
+      if (defender.status === "Outbound" && !defender.recallProvenance
+        && (defender.targetIsMoon === true) === (attack.targetIsMoon === true)
+        && Number(defender.arrivalAt) <= attackArrival
+        && ["AcsDefend", "Intercept", "DefenseHold"].includes(defender.missionType)
+        && defender.targetPlanetId === attack.targetPlanetId) {
+        // Canonical summaries collapse absent and empty compositions; neither proves zero defense.
+        if (!hasAnyShips(defender.ships)) {
+          return {
+            defenders,
+            unavailableReason: `Counterplay defender #${missionId} composition is unavailable or empty; battle forces are uncertain.`
+          };
+        }
         const linkedIndex = linkedMissionIds.indexOf(missionId);
         if (linkedIndex < 0) {
           return {
@@ -14012,12 +14108,42 @@ export class SettlementIndexer {
     }
 
     const qualifiedDefenseHolds = activeDefenseHolds.filter((defender) =>
-      this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)
+      defender.status === "Outbound" && !defender.recallProvenance
+      && !linkedMissionIds.includes(defender.missionId)
+      && (defender.targetIsMoon === true) === (attack.targetIsMoon === true)
+      && this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)
     );
     if (qualifiedDefenseHolds.length > 0) {
+      const unknownComposition = qualifiedDefenseHolds.find((defender) => !hasAnyShips(defender.ships));
+      if (unknownComposition) return { defenders, unavailableReason: `DefenseHold #${unknownComposition.missionId} composition is unavailable or empty; battle forces are uncertain.` };
+      const unknownWindow = qualifiedDefenseHolds.find((defender) => defender.defenseHoldUntil === undefined);
+      if (unknownWindow) return { defenders, unavailableReason: `DefenseHold #${unknownWindow.missionId} has no confirmed hold window at battle arrival.` };
       if (storageOrder.unavailableReason) {
         return { defenders, unavailableReason: storageOrder.unavailableReason };
       }
+      // Hold ship events contain launch counts, not the losses applied by earlier combat rounds.
+      // Even a ready report may only expose aggregate losses, so do not infer surviving ships from
+      // it. Include pending/failed reports and in-progress rounds, before materialization finishes.
+      const previousBattles = (this.db.query(
+        `SELECT missions.* FROM contract_fleet_missions missions
+         WHERE missions.target_planet_id = ? AND missions.mission_type_id = 3
+           AND missions.mission_id != ?
+           AND CAST(missions.arrival_at AS INTEGER) BETWEEN ? AND ?
+           AND EXISTS (SELECT 1 FROM indexed_battle_report_read_models reports
+                       WHERE reports.mission_id = missions.mission_id)`
+      ).all(attack.targetPlanetId, attack.missionId,
+        Math.min(...qualifiedDefenseHolds.map((hold) => Number(hold.arrivalAt))),
+        Math.max(...qualifiedDefenseHolds.map((hold) => Number(this.defenseHoldWindowEnd(hold))))
+      ) as ContractFleetMissionRow[])
+        .map((row) => this.canonicalFleetMissionSummary(row));
+      const affectedHold = qualifiedDefenseHolds.find((defender) => previousBattles.some((battle) =>
+        (battle.targetIsMoon === true) === (defender.targetIsMoon === true)
+        && this.isBattleTimeDefenseHoldForPlanet(defender, battle.targetPlanetId, Number(battle.arrivalAt))
+      ));
+      if (affectedHold) return {
+        defenders,
+        unavailableReason: `DefenseHold #${affectedHold.missionId} may have losses from earlier combat; its current surviving ships are unverified.`
+      };
       const qualifiedById = new Map(qualifiedDefenseHolds.map((defender) => [defender.missionId, defender]));
       const orderedQualified = storageOrder.missionIds
         .map((missionId) => qualifiedById.get(missionId))
@@ -14034,8 +14160,8 @@ export class SettlementIndexer {
       for (const [index, defender] of orderedQualified.entries()) {
         defenders.push({
           ...this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)),
-          // The selected join is appended before resolution; qualified DefenseHolds append after it.
-          laneGroup: linkedMissionIds.length + 1 + index
+          // Only a launch preview appends a hypothetical join before the stationed holds.
+          laneGroup: linkedMissionIds.length + (prospectiveJoin ? 1 : 0) + index
         });
       }
     }
@@ -14243,8 +14369,7 @@ export class SettlementIndexer {
     return defender.missionType === "DefenseHold"
       && defender.targetPlanetId === planetId
       && Number(defender.arrivalAt) <= attackArrival
-      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival
-      && hasAnyShips(defender.ships);
+      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival;
   }
 
   private counterplayHoldUntil(defender: FleetMissionSummary): string {

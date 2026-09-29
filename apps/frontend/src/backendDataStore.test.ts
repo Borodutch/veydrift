@@ -602,6 +602,36 @@ describe("BackendDataStore", () => {
     expect(store.snapshot(store.writeTransactionKey(undefined, "0xaaa"))).toBeUndefined();
   });
 
+  test("mission detail observers retain a scoped read-only refresh policy", async () => {
+    const store = new BackendDataStore("https://api.test");
+    let policy: unknown;
+    let policyTags: Parameters<BackendDataStore["invalidate"]>[0] = [];
+    let released = false;
+    store.startPolling = (name, tags, intervalMs) => {
+      policy = { name, tags, intervalMs };
+      policyTags = tags;
+      return () => { released = true; };
+    };
+    const stop = store.startMissionDetailSync("94881");
+    expect(policy).toEqual({ name: "mission-detail:94881", tags: [`resource:${store.queries.mission("94881").key}`], intervalMs: 10_000 });
+    const key = store.queries.mission("94881").key;
+    const otherKey = store.queries.mission("94880").key;
+    let reads = 0;
+    let otherReads = 0;
+    const unsubscribe = store.subscribeKey(key, () => {});
+    const unsubscribeOther = store.subscribeKey(otherKey, () => {});
+    await store.refresh(key, async () => ({ revision: ++reads }));
+    await store.refresh(otherKey, async () => ({ revision: ++otherReads }));
+    await store.invalidate(policyTags, { activeOnly: true });
+    expect(reads).toBe(2);
+    expect(otherReads).toBe(1);
+    expect(store.snapshot<{ revision: number }>(key)?.data?.revision).toBe(2);
+    stop();
+    expect(released).toBe(true);
+    unsubscribe(); unsubscribeOther();
+    store.dispose();
+  });
+
   test("reference-counts equivalent named pollers", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("global-active-missions");
