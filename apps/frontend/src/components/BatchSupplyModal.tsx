@@ -241,10 +241,10 @@ export function BatchSupplyModal({
               const selectionLimitReached = sourceLimitReason !== undefined;
               const allowedShipTypes = shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes;
               const eligibleShips = allowedSupplyShips(source.ships, allowedShipTypes);
-              const typeUnavailableReason = !hasUsableSupplyCargoFleet(eligibleShips)
+              const typeUnavailableReason = hasUsableSupplyCargoFleet(source.ships) && !hasUsableSupplyCargoFleet(eligibleShips)
                 ? "No ships of the selected types. Enable another ship type to use this source."
                 : undefined;
-              const disabled = Boolean(source.unavailableReason) || (!checked && Boolean(typeUnavailableReason)) || selectionLimitReached;
+              const disabled = Boolean(source.unavailableReason) || (!checked && !hasUsableSupplyCargoFleet(eligibleShips)) || selectionLimitReached;
               const order = orderByOrigin.get(source.planetId);
               const requestedSourceCargo = sourceCargoOverrides[source.planetId];
               const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
@@ -328,7 +328,7 @@ export function BatchSupplyModal({
           {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
-          {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Enable more ship types, select more sources, or reduce the request.</p> : null}
+          {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. {sources.some((source) => !source.unavailableReason && supplyCargoShips.some(({ key }) => (source.ships[key] ?? 0) > 0 && !(shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes).includes(key))) ? "Enable more ship types, select more sources, or reduce the request." : "Select more sources with available cargo ships, or reduce the request."}</p> : null}
           {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
           {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
           {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
