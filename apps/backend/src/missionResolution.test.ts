@@ -400,7 +400,7 @@ describe("MissionResolutionService", () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     const client = new ViemMissionResolutionChainClient(
       {
-        async isFleetChronologyInventoryReady() { return true; },
+        async isFleetChronologyOrderingReady() { return true; },
         async getCanonicalFleetMission() { return { status: canonicalStatus === "returned" ? "Returned" : "Returning" } as never; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
@@ -755,7 +755,7 @@ describe("ViemMissionResolutionChainClient", () => {
         const firstHash = `0x${"a".repeat(64)}`;
         const replacementHash = `0x${"b".repeat(64)}`;
         let blocked = true;
-        let inventoryReady = false;
+        let orderingReady = false;
         let settled = false;
         let latestNonce = 7;
         let pendingNonce = 7;
@@ -799,7 +799,7 @@ describe("ViemMissionResolutionChainClient", () => {
         const reader = {
           async listResolvableFleetMissions() { return []; },
           async listReturnableFleetMissions() { return []; },
-          async isFleetChronologyInventoryReady() { events.push("migration"); return inventoryReady; },
+          async isFleetChronologyOrderingReady() { events.push("ordering"); return orderingReady; },
           async getCanonicalFleetMission() {
             return { status: settled ? "Returned" : leg === "arrival" ? "Outbound" : "Returning" } as never;
           }
@@ -820,9 +820,9 @@ describe("ViemMissionResolutionChainClient", () => {
           return new Response(JSON.stringify({ result: broadcast(Number(BigInt(payload.params[0].nonce))) }));
         }) as typeof fetch;
         try {
-          await expect(submit()).rejects.toThrow("release migration required");
+          await expect(submit()).rejects.toThrow("ordering support unavailable");
           expect(simulations).toHaveLength(0);
-          inventoryReady = true;
+          orderingReady = true;
           await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
           await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
           expect(writes).toEqual([]);
@@ -858,7 +858,7 @@ describe("ViemMissionResolutionChainClient", () => {
             { from, to: config.gameContractAddress, data }, "latest"
           ]);
           for (let i = 0; i < events.length; i++) {
-            if (events[i] === "simulate") expect(events[i - 1]).toBe("migration");
+            if (events[i] === "simulate") expect(events[i - 1]).toBe("ordering");
             if (events[i] === "broadcast") expect(events[i - 1]).toBe("simulate");
           }
         } finally { globalThis.fetch = previousFetch; }
@@ -891,9 +891,9 @@ describe("ViemMissionResolutionChainClient", () => {
     });
   }
   for (const leg of ["arrival", "return"] as const) {
-    test(`${leg} progresses with false UI eligibility only after migration, retaining pending until canonical transition`, async () => {
+    test(`${leg} progresses with false UI eligibility with ordering support, retaining pending until canonical transition`, async () => {
       const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
-      let inventoryReady = false;
+      let orderingReady = false;
       let settled = false;
       let pendingNonce = 7;
       const nonces: number[] = [];
@@ -901,8 +901,8 @@ describe("ViemMissionResolutionChainClient", () => {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           expect(method).toBe("eth_call");
           expect((params[0] as { data: string }).data.startsWith("0xce02abe2")).toBe(true);
-          // UI ordering remains false throughout the bounded scan, even with a complete inventory.
-          return ("0x" + [0n, 0n, BigInt(inventoryReady)].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
+          // UI ordering remains false throughout the bounded scan, without any historical backfill.
+          return ("0x" + [0n, 0n, BigInt(orderingReady)].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
         }
       });
       reader.listResolvableFleetMissions = async () => leg === "arrival" ? [arrival("77", "Transport", "950")] : [];
@@ -927,10 +927,10 @@ describe("ViemMissionResolutionChainClient", () => {
       const client = new ViemMissionResolutionChainClient(reader, config.gameContractAddress!, account,
         publicClient, walletClient, { id: 8453 } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"));
       const submit = () => leg === "arrival" ? client.resolveFleetMission("77") : client.completeFleetMissionReturn("77");
-      await expect(submit()).rejects.toThrow("release migration required");
-      await expect(submit()).rejects.toThrow("release migration required");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
       expect(nonces).toEqual([]);
-      inventoryReady = true;
+      orderingReady = true;
       expect(await reader.canResolveFleetMission(77n, leg)).toBe(false);
       const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger(), now: () => 1_000_000 });
       await service.tick();
@@ -952,7 +952,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let canonicalStatus = "Outbound";
     const nonces: number[] = [];
     const reader = {
-      async isFleetChronologyInventoryReady() { return true; },
+      async isFleetChronologyOrderingReady() { return true; },
       async listResolvableFleetMissions() { return []; },
       async listReturnableFleetMissions() { return []; },
       async getCanonicalFleetMission(missionId: bigint) {
@@ -1036,7 +1036,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
-        async isFleetChronologyInventoryReady() { return true; },
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1146,7 +1146,7 @@ describe("ViemMissionResolutionChainClient", () => {
       } as unknown as PublicClient;
       const client = new ViemMissionResolutionChainClient(
         {
-          async isFleetChronologyInventoryReady() { return true; },
+          async isFleetChronologyOrderingReady() { return true; },
           async listResolvableFleetMissions() { return []; },
           async listReturnableFleetMissions() { return []; }
         },
@@ -1181,7 +1181,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as PublicClient;
     const client = new ViemMissionResolutionChainClient(
       {
-        async isFleetChronologyInventoryReady() { return true; },
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1215,7 +1215,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
-        async isFleetChronologyInventoryReady() { return true; },
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1350,7 +1350,7 @@ describe("moon chance resolution", () => {
       }
     } as unknown as WalletClient;
     const client = () => new ViemMissionResolutionChainClient(
-      { isFleetChronologyInventoryReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      { isFleetChronologyOrderingReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
       config.gameContractAddress!, account, publicClient, walletClient,
       { id: config.chainId } as never, config.rpcUrl, coordinator, moon, engine
     );

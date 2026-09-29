@@ -55,6 +55,14 @@ contract UpgradeGameForkTest is Test {
         address oldImpl = _addrFromSlot(IMPL_SLOT);
         address ownerBefore = VeydriftGame(PROXY).owner();
         uint32 shipBefore = VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo);
+        uint256 nextFleetBefore = VeydriftGame(PROXY).nextFleetId();
+        (bool missionRead, bytes memory latestMissionBefore) =
+            PROXY.staticcall(abi.encodeWithSignature("fleetMission(uint256)", nextFleetBefore - 1));
+        require(missionRead, "latest legacy mission unavailable");
+        bytes32 legacyRegistrationSlot = keccak256(abi.encode(nextFleetBefore - 1, uint256(86)));
+        assertEq(
+            vm.load(PROXY, legacyRegistrationSlot), bytes32(0), "new registration slot occupied"
+        );
         assertFalse(VeydriftGame(PROXY).gamePaused(), "game unexpectedly paused before upgrade");
 
         // Exercise the same live/migration preflight as UpgradeGame.s.sol. The fork must fail
@@ -104,17 +112,15 @@ contract UpgradeGameForkTest is Test {
         // Delegation-aware consumers must only be upgraded after Game exposes effectivePlayer.
         assertEq(IVeydriftDelegation(PROXY).effectivePlayer(address(this)), address(this));
         // VEY-905 upgrades Game only. Do not silently upgrade the unrelated Moon proxy.
-        uint256 limit = VeydriftGame(PROXY).nextFleetId();
-        bool inventoryReady;
-        // Each chunk scans at most 256 IDs and inserts at most 32 active missions.
-        for (uint256 i; i < (limit + 31) / 32 && !inventoryReady; ++i) {
-            (, inventoryReady) = VeydriftGame(PROXY).syncFleetChronology(256);
-        }
-        assertTrue(inventoryReady, "chronology inventory incomplete");
+        (,, bool orderingReady) = VeydriftGame(PROXY).fleetMissionEligibility(1);
+        assertTrue(orderingReady, "upgrade must need no backfill or initialization");
+        assertEq(VeydriftGame(PROXY).nextFleetId(), nextFleetBefore, "allocation boundary changed");
+        (bool missionReadAfter, bytes memory latestMissionAfter) =
+            PROXY.staticcall(abi.encodeWithSignature("fleetMission(uint256)", nextFleetBefore - 1));
+        assertTrue(missionReadAfter);
         assertEq(
-            VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo),
-            shipBefore,
-            "migration credited fleet"
+            keccak256(latestMissionAfter), keccak256(latestMissionBefore), "legacy mission changed"
         );
+        assertEq(vm.load(PROXY, legacyRegistrationSlot), bytes32(0), "legacy mission relabeled");
     }
 }

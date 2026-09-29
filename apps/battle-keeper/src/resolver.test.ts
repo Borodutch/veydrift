@@ -56,7 +56,7 @@ describe("encodeCompleteFleetMissionReturnCall", () => {
 describe("ViemMissionResolver", () => {
   for (const leg of ["arrival", "return"] as const) {
     for (const proof of ["0x", "0x01", eligibilityProof(0n, 0n), eligibilityProof(1n, 0n), new RpcError("missing selector", 3, "0x")]) {
-      test(`${leg} rejects unavailable or incomplete legacy migration proof ${String(proof)}`, async () => {
+      test(`${leg} rejects unavailable ordering support ${String(proof)}`, async () => {
         const transport = new MockTransport(() => proof);
         const resolver = new ViemMissionResolver(transport, testKey, gameContract, 84532);
         await expect(resolver.resolveMission("42", leg)).rejects.toBeInstanceOf(MissionNotResolvableError);
@@ -191,12 +191,11 @@ describe("ViemMissionResolver", () => {
   });
 
   for (const newLaunch of [false, true]) {
-    test(`both legs finish a >256-entry scan with progress receipts${newLaunch ? " after a post-migration launch" : ""}`, async () => {
-      const bodyEntries = 1_025;
-      const pageSize = 256;
+    test(`both legs finish a bounded body scan without backfill${newLaunch ? " after a new launch" : ""}`, async () => {
+      const bodyEntries = newLaunch ? 25 : 24;
+      const pageSize = 12;
       let status: number = FleetMissionStatus.Outbound;
       let scanned = 0;
-      let inventoryCurrent = !newLaunch;
       let receipts = 0;
       let canonicalReads = 0;
       const eligibilitySeen: bigint[] = [];
@@ -205,9 +204,9 @@ describe("ViemMissionResolver", () => {
         if (method === "eth_call") {
           const data = (params[0] as { data: string }).data;
           if (data.startsWith("0xce02abe2")) {
-            const eligible = inventoryCurrent && scanned === bodyEntries ? 1n : 0n;
+            const eligible = scanned === bodyEntries ? 1n : 0n;
             eligibilitySeen.push(eligible);
-            // Migration proof stays true even when a new launch makes inventory stale.
+            // New launches register atomically: body work never requires historical inventory sync.
             return eligibilityProof(eligible, 1n);
           }
           if (data.startsWith(statusSelector)) {
@@ -239,9 +238,7 @@ describe("ViemMissionResolver", () => {
           }
           case "eth_getTransactionReceipt":
             receipts += 1;
-            if (!inventoryCurrent) {
-              inventoryCurrent = true;
-            } else if (scanned < bodyEntries) {
+            if (scanned < bodyEntries) {
               scanned = Math.min(bodyEntries, scanned + pageSize);
             } else {
               status = status === FleetMissionStatus.Outbound
@@ -259,7 +256,7 @@ describe("ViemMissionResolver", () => {
       });
       keeper.recordLaunched({ missionId: "42", missionType: MissionType.Transport, arrivalAt: 800, returnAt: 900 });
       for (const leg of ["arrival", "return"] as const) {
-        const preparationReceipts = Math.ceil(bodyEntries / pageSize) + (leg === "arrival" && newLaunch ? 1 : 0);
+        const preparationReceipts = Math.ceil(bodyEntries / pageSize);
         for (let page = 0; page < preparationReceipts; page += 1) {
           const before = receipts;
           await keeper.tick();
@@ -275,7 +272,7 @@ describe("ViemMissionResolver", () => {
           expect(keeper.snapshot().pendingCount).toBe(0);
         }
       }
-      expect(receipts).toBe(12 + (newLaunch ? 1 : 0));
+      expect(receipts).toBe(2 * (Math.ceil(bodyEntries / pageSize) + 1));
       expect(transport.methodCalls("eth_sendRawTransaction")).toBe(receipts);
       expect(eligibilitySeen.filter(value => value === 0n)).toHaveLength(receipts - 2);
       expect(eligibilitySeen.filter(value => value === 1n)).toHaveLength(2);
@@ -291,6 +288,6 @@ describe("ViemMissionResolver", () => {
   });
 });
 
-function eligibilityProof(eligible = 1n, legacyMigrationComplete = 1n): string {
-  return "0x" + [eligible, 0n, legacyMigrationComplete].map(n => n.toString(16).padStart(64, "0")).join("");
+function eligibilityProof(eligible = 1n, orderingReady = 1n): string {
+  return "0x" + [eligible, 0n, orderingReady].map(n => n.toString(16).padStart(64, "0")).join("");
 }

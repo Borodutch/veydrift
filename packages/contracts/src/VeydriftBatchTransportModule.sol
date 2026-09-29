@@ -24,8 +24,6 @@ interface IVeydriftMoonArrivalResolver {
 ///      with `delegatecall`. That retains the original player as `msg.sender` and gives every child
 ///      exactly the same settlement, ship, fuel, resolution, and event semantics as a normal launch.
 contract VeydriftBatchTransportModule is VeydriftResourceReserves {
-    event FleetChronologyIndexed(uint256 through, uint256 nextId, bool ready);
-
     uint8 private constant MAX_TRANSPORT_BATCH_ORDERS = 15;
     uint8 private constant MAX_PRODUCTION_ORDERS = 15;
     uint8 private constant MAX_PRODUCTION_BACKLOG = 16;
@@ -37,70 +35,71 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
-    /// @notice Permissionless, resumable reconstruction; no caller-supplied inventory is trusted.
-    function syncFleetChronology(uint256 maximum) external returns (uint256 through, bool ready) {
-        if (maximum == 0 || maximum > 256) revert InvalidQuantity();
-        return _syncChronology(maximum);
+    /// @dev Called atomically by every new allocation, never by legacy settlement. No activation
+    /// transaction, historical scan, or caller-selected inventory exists.
+    function registerFleetChronology(uint256 id) external {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        if (_chronologyRegistered[id]) revert InvalidId();
+        FleetMission storage m = _fleetMissions[id];
+        if (id + 1 != nextFleetId || m.status != FleetMissionStatus.Outbound) revert InvalidId();
+        _registerChronologyMission(id);
     }
 
-    function _syncChronology(uint256 maximum) private returns (uint256 through, bool ready) {
-        through = _chronologyIndexedThrough;
-        uint256 end = through + maximum;
-        if (end >= nextFleetId) end = nextFleetId - 1;
-        uint256 activeCount;
-        for (uint256 id = through + 1; id <= end; ++id) {
-            FleetMission storage m = _fleetMissions[id];
-            if (!_active(m)) continue;
-            // Historic empty/terminal slots are cheap; bound expensive multi-body inserts separately.
-            if (activeCount == 32) {
-                end = id - 1;
-                break;
-            }
-            ++activeCount;
-            _chronologyMissionsByPlayer[m.owner].push(id);
-            address targetOwner = _planets[m.targetPlanetId].owner;
-            if (targetOwner != address(0) && targetOwner != m.owner) {
-                _chronologyMissionsByPlayer[targetOwner].push(id);
-            }
-            uint256 origin = _body(m.originPlanetId, m.originIsMoon);
-            uint256 target = _body(m.targetPlanetId, m.targetIsMoon);
-            _chronologyMissionsByBody[origin].push(id);
-            if (target != origin) _chronologyMissionsByBody[target].push(id);
-            // A destroyed/replaced moon returns to its parent. Reserve that possible destination
-            // from the outset; the event predicate selects only the actual current destination.
-            uint256 fallbackBody = _body(m.originPlanetId, false);
-            if (m.originIsMoon && fallbackBody != target) {
-                _chronologyMissionsByBody[fallbackBody].push(id);
-            }
-            // Moon combat also creates debris in the parent field. Mirror only this inventory
-            // relation: predicates below introduce cross-body dependencies only with Harvest,
-            // never between otherwise independent moon/planet fleets.
+    function _registerChronologyMission(uint256 id) internal {
+        FleetMission storage m = _fleetMissions[id];
+        _chronologyRegistered[id] = true;
+        _chronologyMissionsByPlayer[m.owner].push(id);
+        address targetOwner = _planets[m.targetPlanetId].owner;
+        if (targetOwner != address(0) && targetOwner != m.owner) {
+            _chronologyMissionsByPlayer[targetOwner].push(id);
+        }
+        uint256 origin = _body(m.originPlanetId, m.originIsMoon);
+        uint256 target = _body(m.targetPlanetId, m.targetIsMoon);
+        _chronologyMissionsByBody[origin].push(id);
+        if (target != origin) _chronologyMissionsByBody[target].push(id);
+        // A destroyed/replaced moon returns to its parent. Reserve that possible destination
+        // from the outset; the event predicate selects only the actual current destination.
+        uint256 fallbackBody = _body(m.originPlanetId, false);
+        if (m.originIsMoon && fallbackBody != target) {
+            _chronologyMissionsByBody[fallbackBody].push(id);
+        }
+        // Moon combat also creates debris in the parent field. Mirror only this inventory
+        // relation: predicates below introduce cross-body dependencies only with Harvest,
+        // never between otherwise independent moon/planet fleets.
+        if (
+            m.missionType == FleetMissionType.Harvest
+                || (m.missionType == FleetMissionType.Attack && m.targetIsMoon)
+        ) {
+            uint256 debrisPeer = _body(m.targetPlanetId, !m.targetIsMoon);
             if (
-                m.missionType == FleetMissionType.Harvest
-                    || (m.missionType == FleetMissionType.Attack && m.targetIsMoon)
-            ) {
-                uint256 debrisPeer = _body(m.targetPlanetId, !m.targetIsMoon);
-                if (
-                    debrisPeer != origin && debrisPeer != target
-                        && (!m.originIsMoon || debrisPeer != fallbackBody)
-                ) _chronologyMissionsByBody[debrisPeer].push(id);
-            }
+                debrisPeer != origin && debrisPeer != target
+                    && (!m.originIsMoon || debrisPeer != fallbackBody)
+            ) _chronologyMissionsByBody[debrisPeer].push(id);
         }
-        if (end != through) {
-            _chronologyIndexedThrough = end;
-            emit FleetChronologyIndexed(end, nextFleetId, end + 1 == nextFleetId);
-        }
-        ready = end + 1 == nextFleetId;
-        if (ready && !_chronologyMigrationComplete) _chronologyMigrationComplete = true;
-        return (end, ready);
     }
 
     /// @dev One ordering implementation serves permissionless arrivals, returns, and lazy callers.
     /// Returns false only for bounded preparatory work. A complete scan rejects an earlier event.
     function prepareFleetChronology(uint256 id, bool returning) external returns (bool) {
-        (, bool ready) = _syncChronology(4);
-        if (!ready) return false;
         FleetMission storage m = _fleetMissions[id];
+        // Unregistered pre-upgrade missions keep legacy completion liveness. Their interactions
+        // with new missions carry the explicitly accepted mixed-generation ordering limitation.
+        if (!_chronologyRegistered[id]) {
+            if (returning) {
+                _requireNoPendingMissionResolutionForPlanet(m.originPlanetId);
+            } else if (
+                m.missionType != FleetMissionType.Colonize
+                    && m.missionType != FleetMissionType.MissileAttack
+            ) {
+                _settleScheduledTarget(
+                    m,
+                    m.missionType == FleetMissionType.DefenseHold
+                        ? _defenseHoldUntil[id]
+                        : m.arrivalAt
+                );
+            }
+            return true;
+        }
         (uint256 body, uint64 at, uint8 kind) = _currentEvent(id, returning);
         if (block.timestamp < at) {
             if (!returning && m.missionType == FleetMissionType.DefenseHold) {
@@ -197,18 +196,13 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     }
 
     /// @notice Ordering eligibility only; callers additionally simulate for randomness/gas gates.
-    /// A bounded view fails closed until current-ID inventory and body proof are complete.
-    /// migrationReady is durable legacy completion, not current inventory/proof readiness.
-    /// Funded keepers may progress when migrationReady; user controls require eligible too.
+    /// A bounded view fails closed until the body proof is complete. The third word is always
+    /// true: this implementation supports funded progress immediately, with no backfill gate.
     function fleetMissionEligibility(uint256 id)
         external
         view
-        returns (bool eligible, uint256 blocker, bool migrationReady)
+        returns (bool eligible, uint256 blocker, bool orderingReady)
     {
-        migrationReady = _chronologyMigrationComplete;
-        if (!migrationReady || _chronologyIndexedThrough + 1 != nextFleetId) {
-            return (false, 0, migrationReady);
-        }
         FleetMission storage m = _fleetMissions[id];
         if (!_active(m)) return (false, 0, true);
         bool returning = m.status != FleetMissionStatus.Outbound;
@@ -218,6 +212,15 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             !returning && _linked(m)
                 && _fleetMissions[m.randomnessRequestId].status == FleetMissionStatus.Outbound
         ) return (false, m.randomnessRequestId, true);
+        if (!_chronologyRegistered[id]) {
+            return (
+                !returning
+                    || _earliestPendingMissionArrivalForPlanet(m.originPlanetId)
+                        == type(uint64).max,
+                0,
+                true
+            );
+        }
         uint256[] storage ids = _chronologyMissionsByBody[body];
         ChronologyScan storage scan = _chronologyScans[id];
         uint256 start;
@@ -333,11 +336,20 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         return a < b || (a == b && (ak < bk || (ak == bk && aid < bid)));
     }
 
-    /// @dev Complete legacy-safe player inventory, bounded independently of historical fleet count.
+    /// @dev Prospective inventory, bounded independently of historical fleet count.
     /// Every leg enters the same facade guard; no lazy path directly credits a fleet around ordering.
     function settleDuePlayerCombatArrivals(address player) external {
-        (, bool ready) = _syncChronology(4);
-        if (!ready) return;
+        // Legacy indexes are incomplete but remain useful for lazy completion. Never backfill
+        // them into the prospective inventory or let missing legacy membership block new work.
+        uint256[] storage legacy = _resolutionMissionIdsByPlayer[player];
+        uint256 cursorLegacy = _chronologyLegacyCursor[player];
+        uint256 legacyCount = legacy.length < 12 ? legacy.length : 12;
+        for (uint256 i; i < legacyCount && legacy.length != 0; ++i) {
+            if (cursorLegacy >= legacy.length) cursorLegacy = 0;
+            uint256 legacyId = legacy[cursorLegacy++];
+            if (!_chronologyRegistered[legacyId]) _settleLazyMission(legacyId);
+        }
+        _chronologyLegacyCursor[player] = cursorLegacy;
         uint256[] storage ids = _chronologyMissionsByPlayer[player];
         uint256 cursor = _chronologyPlayerCursor[player];
         uint256 count = ids.length < 12 ? ids.length : 12;
@@ -390,17 +402,21 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         }
         _chronologyPlayerCursor[player] = cursor;
         for (uint256 i; i < dueCount; ++i) {
-            FleetMission storage m = _fleetMissions[due[i]];
-            if (m.status == FleetMissionStatus.Outbound) {
-                try IVeydriftMoonArrivalResolver(address(this)).resolveFleetMission(due[i]) {}
-                    catch {}
-            } else if (
-                m.status == FleetMissionStatus.Returning || m.status == FleetMissionStatus.Recalled
-            ) {
-                try IVeydriftMoonArrivalResolver(address(this))
-                    .completeFleetMissionReturn(due[i]) {}
-                    catch {}
-            }
+            _settleLazyMission(due[i]);
+        }
+    }
+
+    function _settleLazyMission(uint256 id) private {
+        FleetMission storage m = _fleetMissions[id];
+        (uint64 at,) = _lazyEvent(id);
+        if (block.timestamp < at) return;
+        if (m.status == FleetMissionStatus.Outbound) {
+            try IVeydriftMoonArrivalResolver(address(this)).resolveFleetMission(id) {} catch {}
+        } else if (
+            m.status == FleetMissionStatus.Returning || m.status == FleetMissionStatus.Recalled
+        ) {
+            try IVeydriftMoonArrivalResolver(address(this)).completeFleetMissionReturn(id) {}
+                catch {}
         }
     }
 

@@ -2218,9 +2218,9 @@ export class VeydriftGameReader implements ChainReader {
     return result === "0x";
   }
 
-  async isFleetChronologyInventoryReady(missionId: bigint): Promise<boolean> {
-    // Legacy backfill belongs to the release owner. Do not burn resolver gas scanning it four
-    // historical IDs at a time; unfinished body scans, however, must be allowed to progress.
+  async isFleetChronologyOrderingReady(missionId: bigint): Promise<boolean> {
+    // The third ABI word confirms resolver support, including legacy missions. New launches
+    // register atomically; no historical inventory/backfill is required for bounded progress.
     const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
     return /^0x[0-9a-fA-F]{192}$/.test(proof)
       && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n;
@@ -5152,7 +5152,7 @@ export class VeydriftGameReader implements ChainReader {
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
     // Funded resolver candidates include bounded preparation work, not just UI-ready legs.
-    // Preserve due-time/randomness filtering above; the write boundary enforces migration readiness.
+    // Preserve due-time/randomness filtering above; the write boundary verifies ordering support and simulates the exact call.
     if (publicReadiness) await applyMissionEligibility({ missions: summaries }, this, nowSeconds);
     return summaries;
   }

@@ -74,8 +74,6 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _fundMoon(home, 1_000_000, 1_000_000, 1_000_000);
         _fundMoon(away, 1_000_000, 1_000_000, 1_000_000);
         _setNextFleetId(RETURN_ID);
-        // Synthetic fixture has no IDs below RETURN_ID; migration completeness is tested separately.
-        vm.store(address(game), bytes32(uint256(78)), bytes32(RETURN_ID - 1));
         _setShipCount(home, Ship.SmallCargo, 196);
         _setShipCount(home, Ship.Recycler, 3);
         if (isMoon) {
@@ -122,7 +120,6 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         );
         assertEq(id, ATTACK_ID);
         _setTimes(id, IMPACT_AT, IMPACT_AT + 1 hours);
-        game.syncFleetChronology(256);
         // Target body starts empty; a planet return fixture must not retain the launch inventory.
         assertEq(
             isMoon
@@ -217,14 +214,13 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         }
     }
 
-    function testPostMigrationLaunchThenIdlePermissionlessArrivalAndReturn() public {
+    function testFirstPostUpgradeLaunchNeedsNoInitializationBeforeArrivalAndReturn() public {
         vm.warp(RETURN_AT - 1 days);
         (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
         _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
         _setPlanetOwner(away, player);
         _fundPlanet(home, 100_000, 100_000, 100_000);
         _setShipCount(home, Ship.SmallCargo, 3);
-        game.syncFleetChronology(256);
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 3;
         vm.prank(player);
@@ -239,24 +235,89 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(id);
         // No player action or explicit sync after launch: only the funded resolver drives progress.
         vm.warp(arrivalAt);
-        (bool eligible,, bool migrationReady) = game.fleetMissionEligibility(id);
-        assertFalse(eligible, "UI must not offer an unindexed mission");
-        assertTrue(migrationReady, "idle launch must not disable funded resolution");
+        (bool eligible,, bool orderingReady) = game.fleetMissionEligibility(id);
+        assertTrue(eligible, "new launch is indexed atomically, without initialization");
+        assertTrue(orderingReady, "idle launch must not disable funded resolution");
         vm.prank(address(0xBEEF));
         game.resolveFleetMission(id);
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(id);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         assertEq(game.shipCount(home, Ship.SmallCargo), 0);
         vm.warp(returnAt);
-        (eligible,, migrationReady) = game.fleetMissionEligibility(id);
+        (eligible,, orderingReady) = game.fleetMissionEligibility(id);
         assertTrue(eligible);
-        assertTrue(migrationReady);
+        assertTrue(orderingReady);
         vm.prank(address(0xBEEF));
         game.completeFleetMissionReturn(id);
         (status,,,) = _fleetMission(id);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
         assertEq(game.shipCount(home, Ship.SmallCargo), 3);
         assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
+    function testUnregisteredLegacyReturnCompletesWithoutMigrationAndCannotBeRelabeled() public {
+        vm.warp(RETURN_AT - 1 days);
+        (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setPlanetOwner(away, player);
+        _fundPlanet(home, 100_000, 100_000, 100_000);
+        _setShipCount(home, Ship.SmallCargo, 3);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+        vm.prank(player);
+        uint256 id = game.launchFleetMission(
+            home,
+            away,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(id);
+        // Reproduce pre-upgrade storage: mission and legacy indexes exist; all appended
+        // chronology membership is absent. No historical mission bytes are rewritten by upgrade.
+        bytes32 registration = keccak256(abi.encode(id, uint256(86)));
+        vm.store(address(game), registration, bytes32(0));
+        vm.store(
+            address(game),
+            keccak256(abi.encode(uint256(keccak256(abi.encode(home, false))), uint256(80))),
+            bytes32(0)
+        );
+        vm.store(
+            address(game),
+            keccak256(abi.encode(uint256(keccak256(abi.encode(away, false))), uint256(80))),
+            bytes32(0)
+        );
+        vm.store(address(game), keccak256(abi.encode(player, uint256(83))), bytes32(0));
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, address(this))
+        );
+        game.registerFleetChronology(id);
+        vm.warp(arrivalAt);
+        game.resolveFleetMission(id);
+        vm.warp(returnAt);
+        game.completeFleetMissionReturn(id);
+        assertEq(game.shipCount(home, Ship.SmallCargo), 3);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(vm.load(address(game), registration), bytes32(0), "legacy stays legacy");
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, returnAt)
+        );
+        game.completeFleetMissionReturn(id);
+        assertEq(game.shipCount(home, Ship.SmallCargo), 3, "no double credit");
+        // First new allocation immediately uses the prospective rules despite old clients
+        // calling the legacy launch selector, and without any initialization transaction.
+        vm.prank(player);
+        uint256 next = game.launchFleetMission(
+            home,
+            away,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        assertEq(uint256(vm.load(address(game), keccak256(abi.encode(next, uint256(86))))), 1);
+        assertEq(vm.load(address(game), registration), bytes32(0));
     }
 
     function testRecalledFleetRemainsTrackedUntilScheduledReturn() public {
@@ -341,34 +402,24 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
 
     function testLaterAttackCannotPullReturnAcrossEarlierUnseededImpact() public {
         (uint256 home, uint256 away) = _fixture(false, -4);
-        // The same returning fleet falls AFTER an additional earlier impact.
-        bytes32 arraySlot = keccak256(abi.encode(home, uint256(38)));
-        uint256 count = uint256(vm.load(address(game), arraySlot));
-        bytes32 dataSlot = keccak256(abi.encode(arraySlot));
-        uint256 earlierId = 93789;
-        vm.store(address(game), bytes32(uint256(dataSlot) + count), bytes32(earlierId));
-        vm.store(address(game), arraySlot, bytes32(count + 1));
-        uint256 base = uint256(keccak256(abi.encode(earlierId, uint256(24))));
-        vm.store(
-            address(game),
-            bytes32(base),
-            bytes32(
-                uint256(VeydriftGameStorage.FleetMissionStatus.Outbound)
-                    | uint256(VeydriftGameStorage.FleetMissionType.Attack) << 8
-                    | uint256(uint160(address(0xDEF))) << 16
-            )
+        // A genuinely new (higher-ID) attack has an earlier scheduled impact. Registration
+        // happens at allocation; synthetic historical insertion is intentionally not backfilled.
+        vm.warp(IMPACT_AT - 100);
+        _setTechnologyLevel(address(0xDEF), Technology.Computer, 3);
+        _setShipCount(away, Ship.SmallCargo, 1);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(address(0xDEF));
+        uint256 earlierId = game.launchFleetMission(
+            away,
+            home,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
         );
-        vm.store(address(game), bytes32(base + 1), bytes32(away));
-        vm.store(address(game), bytes32(base + 2), bytes32(home));
-        vm.store(
-            address(game),
-            bytes32(base + 3),
-            bytes32(uint256(RETURN_AT - 1) << 64 | uint256(IMPACT_AT + 100) << 128)
-        );
-        // This fixture writes an older ID directly; replay that artificial insertion through
-        // the complete inventory. Real launches only allocate IDs above the durable cursor.
-        vm.store(address(game), bytes32(uint256(78)), bytes32(earlierId - 1));
-        game.syncFleetChronology(256);
+        _setTimes(earlierId, RETURN_AT - 1, IMPACT_AT + 100);
+        vm.warp(IMPACT_AT + 6);
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftGameStorage.FleetMissionNotResolved.selector, RETURN_AT - 1
@@ -517,7 +568,6 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             0
         );
         _setTimes(laterId, IMPACT_AT, IMPACT_AT + 1 hours);
-        game.syncFleetChronology(256);
         vm.warp(IMPACT_AT + 6);
         if (savedScan) {
             game.resolveFleetMission(laterId);

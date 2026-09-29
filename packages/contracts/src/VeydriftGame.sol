@@ -539,7 +539,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         return abi.decode(result, (bool));
     }
 
-    function syncFleetChronology(uint256) external returns (uint256, bool) {
+    function registerFleetChronology(uint256) external {
         _delegateToChronology();
     }
 

@@ -335,6 +335,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _trackCounterplayMissionResolution(hostileMissionId, _fleetMissions[missionId]);
         }
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             player,

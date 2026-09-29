@@ -428,6 +428,12 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
     }
 
+    function _registerFleetChronology(uint256 missionId) internal {
+        (bool ok, bytes memory reason) = address(this)
+            .call(abi.encodeWithSignature("registerFleetChronology(uint256)", missionId));
+        if (!ok) assembly ("memory-safe") { revert(add(reason, 32), mload(reason)) }
+    }
+
     function _trackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 

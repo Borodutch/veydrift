@@ -1381,6 +1381,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         assertEq(missionId, 900);
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), missionId, true, true);
@@ -1426,6 +1431,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             false,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         vm.recordLogs();
         vm.prank(ally);
@@ -1435,6 +1445,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             targetPlanetId,
             ships,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), joinedMissionId, false, true);
@@ -1466,6 +1481,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             false,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         vm.recordLogs();
         vm.prank(ally);
@@ -1476,6 +1496,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             ships,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             true
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), joinedMissionId, true, true);
@@ -1546,6 +1571,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 10_000, deuteriumBps: 0})
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
@@ -1576,6 +1606,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             false,
             VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 10_000})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);

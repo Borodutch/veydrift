@@ -90,6 +90,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         _missileMissionQuantity[missionId] = quantity;
         _addMissileArrival(targetPlanetId, missionId);
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             _actingPlayer(),

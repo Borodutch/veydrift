@@ -169,6 +169,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             holdUntil
         );
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             player,
@@ -312,6 +313,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             );
         }
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             player,

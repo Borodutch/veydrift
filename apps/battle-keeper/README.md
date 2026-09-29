@@ -48,8 +48,12 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   simulation and is **retried on the next tick** without burning a nonce or crashing. Due legs are
   dispatched by scheduled `dueAt` across both legs; equal timestamps use arrival before return,
   then numeric mission ID. Submission remains serial for nonce safety. This priority is not a
-  consensus guarantee: the contract must enforce return-versus-impact chronology even when another
-  permissionless resolver submits the attack first.
+  consensus guarantee: the contract enforces chronology for missions launched after its upgrade,
+  including reverse-ordered submissions by permissionless resolvers. Legacy/new interactions retain
+  the accepted temporary ordering limitation; the keeper does not infer mission generations.
+  `fleetMissionEligibility` confirms ordering support immediately for both generations, without
+  historical sync or backfill. Funded workers may advance bounded scans while strict UI eligibility
+  is false, but must still simulate the exact arrival/return call before submitting.
 - **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent fleet-mission logs over `eth_getLogs`
   to recover **both legs** — a missed launch re-queues the arrival, a missed `FleetMissionResolved`
   drops terminal arrivals, a missed `FleetMissionReturnExposed` transitions to the return leg, and a
@@ -58,8 +62,9 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   (`None`/`Resolved`/`Returned`) or corrects legs that no longer match on-chain state, then
   re-attempts due legs.
 - **In-process deduplication**: an in-flight submission prevents another attempt for that leg;
-  tracked terminal missions are not re-queued. When we resolve a leg ourselves we advance the state machine
-  immediately (the matching event is a backstop that refines the authoritative `returnAt`).
+  tracked terminal missions are not re-queued. After each successful receipt we read canonical
+  mission status: progress-only receipts retain the pending leg, and only a canonical transition
+  advances it (the matching event refines the authoritative `returnAt`).
 - Auto-reconnects the WebSocket with capped exponential backoff, serializes transaction submission,
   and emits structured logs. Monitor retry backlogs and health; these mechanisms do not guarantee
   liveness during RPC, signer, or oracle failures.

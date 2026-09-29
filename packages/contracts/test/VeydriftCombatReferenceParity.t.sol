@@ -464,7 +464,6 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
-        _syncFixtureChronology();
         (, uint8 totalRounds) = game.battleResolutionProgress(missionId);
         // At most one scan operation per fixture mission, then one call per combat round.
         // Successful preparer calls need not resolve the battle; reconcile canonical status.
@@ -483,22 +482,6 @@ contract VeydriftCombatReferenceParityTest is Test {
         assertTrue(actual.battleFound, "battle event");
         assertTrue(actual.lossesFound, "losses event");
         assertTrue(actual.debrisFound, "debris event");
-    }
-
-    function _syncFixtureChronology() private {
-        uint256 missionCount = game.nextFleetId() - 1;
-        uint256 previousThrough;
-        bool ready;
-        // Sync one ID per call so the bound follows the fixture inventory, not a retry constant.
-        for (uint256 calls = 0; calls < missionCount; calls++) {
-            uint256 through;
-            (through, ready) = game.syncFleetChronology(1);
-            assertGt(through, previousThrough, "chronology indexing advances");
-            previousThrough = through;
-            if (ready) break;
-        }
-        assertTrue(ready, "fixture chronology fully indexed");
-        assertEq(previousThrough, missionCount, "chronology covers all fixture missions");
     }
 
     function _actualBattleFromLogs(Vm.Log[] memory entries, uint256 missionId)

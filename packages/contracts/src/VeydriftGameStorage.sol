@@ -454,8 +454,8 @@ abstract contract VeydriftGameStorage is Initializable {
     // Append-only bounded return scan for an attack. Array mutations invalidate the planet cursor.
     mapping(uint256 planetId => uint256 cursor) internal _attackReturnScanCursor;
 
-    // Complete active-event inventory. Unlike legacy combat indexes this is populated by a
-    // permissionless bounded scan of every allocated ID, including pre-upgrade recalled/linked fleets.
+    // Prospective inventory. Slots reserved by the abandoned, never-deployed backfill design
+    // remain unused to keep this branch storage layout append-only.
     uint256 internal _chronologyIndexedThrough;
     uint256 internal _chronologyGeneration;
     mapping(uint256 bodyKey => uint256[] missionIds) internal _chronologyMissionsByBody;
@@ -473,8 +473,11 @@ abstract contract VeydriftGameStorage is Initializable {
 
     mapping(address player => uint256[] missionIds) internal _chronologyMissionsByPlayer;
     mapping(address player => uint256 cursor) internal _chronologyPlayerCursor;
-    // Durable legacy migration completion; later launches still require bounded current-ID catch-up.
+    // Unused reserved slot from the abandoned backfill design (never written).
     bool internal _chronologyMigrationComplete;
+    // Sticky per-mission generation: only new allocation writes this, never lifecycle settlement.
+    mapping(uint256 missionId => bool registered) internal _chronologyRegistered;
+    mapping(address player => uint256 cursor) internal _chronologyLegacyCursor;
 
     error AlreadyStarted();
     error BadStartPayment();

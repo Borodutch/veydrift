@@ -211,6 +211,8 @@ const reviewedStorageAppend = [
   { label: "_chronologyMissionsByPlayer", slot: "83", offset: 0, type: "mapping(address => uint256[])" },
   { label: "_chronologyPlayerCursor", slot: "84", offset: 0, type: "mapping(address => uint256)" },
   { label: "_chronologyMigrationComplete", slot: "85", offset: 0, type: "bool" },
+  { label: "_chronologyRegistered", slot: "86", offset: 0, type: "mapping(uint256 => bool)" },
+  { label: "_chronologyLegacyCursor", slot: "87", offset: 0, type: "mapping(address => uint256)" },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

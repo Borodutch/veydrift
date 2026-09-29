@@ -721,7 +721,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyInventoryReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -797,11 +797,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     });
     const preflight = async () => {
       if (functionName === "finalizeMoonChance") return;
-      if (!await this.reader.isFleetChronologyInventoryReady?.(BigInt(missionId))) {
-        throw new Error(`fleet chronology inventory is not ready for ${missionId}; release migration required`);
+      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
+        throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
       }
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
-      // Migration readiness alone does not exclude a chronological/randomness revert. Simulate
+      // Ordering support alone does not exclude a chronological/randomness revert. Simulate
       // the exact funded entrypoint under the nonce lease before both submit and replacement.
       // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
       await this.publicClient.call({
