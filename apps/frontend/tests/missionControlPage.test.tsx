@@ -31,6 +31,14 @@ describe("MissionControlPage", () => {
     }
   });
 
+  test("group report with only leader record labels share as Loot, not combined Group loot", () => {
+    const report = { ...battleReport("94880"), attackGroupId: "94880", loot: { metal: "1200", crystal: "0", deuterium: "0" }, participants: [{ missionId: "94880", address: "0x2222222222222222222222222222222222222222", isMainAttacker: true, ships: { lightFighter: "1" }, loot: { metal: "1200", crystal: "0", deuterium: "0" } }] };
+    const text = visibleText(missionControlPage({ fleetVisibility: { wallet: "0x1111111111111111111111111111111111111111", homePlanetId: "7", incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: [], battleReports: [report] } }));
+    expect(text).toContain("Shared battle #94880");
+    expect(text).toContain("Loot 1,200 M");
+    expect(text).not.toContain("Group loot");
+  });
+
   test("keeps shared battle identity visible for zero-loss and legacy participant reports", () => {
     const missions = capturedGroup.missions as FleetMissionSummary[];
     const report = { ...capturedGroup.report, attackGroupId: null, attackerLosses: { metal: "0", crystal: "0", deuterium: "0" } } as BattleReport;

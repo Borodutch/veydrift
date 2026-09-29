@@ -2647,7 +2647,7 @@ function PastBattleReportRow({
         <div className="contents">
           <MissionDetailGroup title="Battle">
             {detailRow("Outcome", battleOutcomeLabel(report.outcome), battleOutcomeTextTone(report.outcome))}
-            {resourceTotal(lootShown) > 0 ? detailRow(isGroupedAttack ? "Group loot" : "Loot", formatCargoNonZero(lootShown)) : null}
+            {resourceTotal(lootShown) > 0 ? detailRow(participants.length > 1 ? "Group loot" : "Loot", formatCargoNonZero(lootShown)) : null}
             {resourceTotal(report.attackerLosses) > 0 ? detailRow("Attacker losses", formatCargoNonZero(report.attackerLosses)) : null}
             {resourceTotal(report.defenderLosses) > 0 ? detailRow("Defender losses", formatCargoNonZero(report.defenderLosses)) : null}
             {debrisTotal(report.debris) > 0 ? detailRow("Debris field", formatDebrisNonZero(report.debris)) : null}
