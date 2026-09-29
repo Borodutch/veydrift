@@ -4187,6 +4187,7 @@ describe("Veydrift backend", () => {
         defenses: { count: fixture.start === null ? null : Number(fixture.start), power: null,
           units: fixture.start === null ? null : [{ id: 0, count: Number(fixture.start), power: null }] } });
       expect(body.battleReport.roundReports).toHaveLength(fixture.rounds);
+      expect(body.battleForecast).toBeNull();
       if (fixture.start === null) {
         expect(body.battleReport.defenderSnapshot).toBeNull();
         expect(body.battleReport.defenderLossBreakdown).toBeNull();
@@ -4588,6 +4589,26 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body.battleReport).toBeNull();
+    const { asOf: initialAsOf, ...before } = body.battleForecast;
+    expect(Number(initialAsOf)).toBeGreaterThan(0);
+    expect(body.battleForecast).toMatchObject({
+      leaderMissionId: "51", arrivalAt: "1800000000", targetIsMoon: false,
+      participants: [{ missionId: "51", owner: attacker, ships: { lightFighter: "5" } }],
+      stationedDefenders: [],
+      target: { id: "9", owner: defender,
+        publicState: { fleet: expect.arrayContaining([{ id: 1, count: 12 }]), defenses: expect.arrayContaining([{ id: 4, count: 3 }]) },
+        publicMoonState: null }
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const repeat = await (await handler(new Request("http://localhost/mission/51"))).json();
+    const { asOf: repeatAsOf, ...repeated } = repeat.battleForecast;
+    expect(Number(repeatAsOf)).toBeGreaterThanOrEqual(Number(initialAsOf));
+    expect(repeated).toEqual(before);
+    const snapshot = indexer.snapshot();
+    const snapshotSpy = spyOn(indexer, "snapshot").mockReturnValue({ ...snapshot, safeToServeIndexedState: false });
+    const stale = await (await handler(new Request("http://localhost/mission/51"))).json();
+    expect(stale.battleForecast.unavailableReason).toContain("delayed or reconciling");
+    snapshotSpy.mockRestore();
     const targetCombatIntel = body.targetCombatIntel;
     expect(BigInt(targetCombatIntel.combatPower)).toBeGreaterThan(0n);
     expect(targetCombatIntel.activeMissions.map((entry: { missionId: string }) => entry.missionId).sort()).toEqual(["51", "52"]);

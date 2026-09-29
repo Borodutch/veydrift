@@ -2,6 +2,7 @@ import { formatResourceAmount as formatResource } from "../numberFormat";
 import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
+import { MissionBattleForecastPanel } from "./MissionBattleForecastPanel";
 import { MissionDetailSkeleton } from "./LoadingSkeletons";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { formatDurationUntil } from "../durationFormat";
@@ -176,6 +177,7 @@ export function MissionDetailPage({
             onSelectMoon={onSelectMoon}
             onSelectPlayer={onSelectPlayer}
           />
+          {detail ? <MissionBattleForecastPanel detail={detail} now={now} /> : null}
           <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
           <MissionBattleReport
             defenderState={detail?.defenderPlanetState ?? undefined}

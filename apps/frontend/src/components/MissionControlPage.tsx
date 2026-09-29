@@ -1406,7 +1406,7 @@ function MissionRow({
               }}
             />
           ))}
-          <OpenMissionButton onClick={() => onOpenReport(mission.missionId)} />
+          <OpenMissionButton forecast={mission.status === "Outbound" && ["Attack", "AcsAttack"].includes(mission.missionType)} onClick={() => onOpenReport(mission.missionId)} />
         </>
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -2048,13 +2048,13 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
   );
 }
 
-function OpenMissionButton({ onClick }: { onClick: () => void }) {
+function OpenMissionButton({ onClick, forecast = false }: { onClick: () => void; forecast?: boolean }) {
   return (
     <button
       aria-label="Open"
       className={iconRowActionButtonClass}
       onClick={onClick}
-      title="Open the full mission detail screen"
+      title={forecast ? "Open probable outcome for the whole battle" : "Open the full mission detail screen"}
       type="button"
     >
       <ExternalLink aria-hidden="true" size={14} strokeWidth={1.9} />
