@@ -1,3 +1,4 @@
+import { assertDefenseSettlementReady } from "./defenseSettlement";
 import { playerNotice } from "./playerNotice";
 import { evaluateProductionPlan, maxAddableProduction, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
 import { useProductionBuildPlan } from "./useProductionBuildPlan";
@@ -187,6 +188,7 @@ import {
   sendSetDelegateTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendFinishDefenseProductionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
   sendStartMoonShipProductionTransaction,
@@ -2871,6 +2873,12 @@ export function PlayableMvpApp({
   const defenseError = defenseSnapshot?.error;
 
   const [defenseAction, setDefenseAction] = useTransactionAction<DefenseActionState>(backendData, account, "defense", activePlanetId);
+  const finishDefenseSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey("defense:finish", account, activePlanetId));
+  const finishDefensePhase = finishDefenseSnapshot?.data?.phase;
+  // Unknown submissions must be reconciled, never retried by this finish control.
+  const finishDefensePending = finishDefensePhase !== undefined && !["idle", "success", "error"].includes(finishDefensePhase);
+  const defenseContextRef = useRef({ account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig });
+  defenseContextRef.current = { account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig };
   const allianceQuery = backendData && account ? backendData.queries.alliance(account) : undefined;
   const { snapshot: allianceSnapshot, isInitialLoading: allianceLoading } = useBackendDataQuery<ChainAllianceState>(allianceQuery, shouldRefreshAllianceStateForPage(page));
   const allianceState = allianceSnapshot?.data ?? null;
@@ -4392,6 +4400,29 @@ export function PlayableMvpApp({
     },
     [account, defenseState?.homePlanetId, defenseState?.queue, defenseState?.resourceSnapshot, gameContract, provider, backendData, runDefenseTransaction, signerAccount],
   );
+
+  const handleFinishDefense = useCallback(() => {
+    const planetId = activePlanetId;
+    if (!provider || !signerAccount || !account || !gameContract || !planetId || !backendData || activeBodyKind !== "planet" || finishDefensePending) return;
+    const context = defenseContextRef.current;
+    const assertContext = () => {
+      const current = defenseContextRef.current;
+      if (current.account !== context.account || current.signerAccount !== context.signerAccount || current.activePlanetId !== context.activePlanetId || current.activeBodyKind !== context.activeBodyKind || current.runtimeConfig !== context.runtimeConfig) {
+        throw new Error("Wallet or planet changed before submission. Please try again.");
+      }
+    };
+    void runDefenseTransaction(
+      "Finish defenses",
+      "defense:finish",
+      async transactionProvider => {
+        const fresh = await backendData.defenses(account, planetId, { fresh: true });
+        assertContext();
+        assertDefenseSettlementReady(fresh, account, planetId);
+        return sendFinishDefenseProductionTransaction(transactionWalletProvider(transactionProvider, assertContext), signerAccount, gameContract, planetId);
+      },
+      backendData.indexing.production(account, planetId, "defenses"),
+    );
+  }, [account, activeBodyKind, activePlanetId, backendData, finishDefensePending, gameContract, provider, runDefenseTransaction, signerAccount]);
 
   const handleCreateAlliance = useCallback(
     (tag: string, name: string, description: string) => {
@@ -7028,6 +7059,8 @@ export function PlayableMvpApp({
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
+          onFinish={handleFinishDefense}
+          finishPending={finishDefensePending}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}

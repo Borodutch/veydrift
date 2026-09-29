@@ -10239,6 +10239,7 @@ describe("Veydrift backend", () => {
   });
 
   test.each([
+    { planetId: "189", itemId: 0, canonical: 1, quantity: 100 },
     { planetId: "775", itemId: 0, canonical: 2, quantity: 1 },
     { planetId: "786", itemId: 0, canonical: 0, quantity: 2 },
     { planetId: "7", itemId: 9, canonical: 1, quantity: 2 }
@@ -10258,6 +10259,9 @@ describe("Veydrift backend", () => {
       expect(response.status).toBe(200);
       const state = await response.json() as DefenseState;
       const queues = await (await handler(new Request(`http://localhost/wallet/${player}/queues?planetId=${planetId}`))).json();
+      const overview = await (await handler(new Request(`http://localhost/wallet/${player}/overview?planetId=${planetId}`))).json();
+      expect(overview.queues.defense).toEqual(state.queue);
+      expect(overview.queues.unsettledDefense).toEqual(state.unsettledQueue);
       const roster = await (await handler(new Request(`http://localhost/wallet/${player}/planets`))).json();
       const managed = roster.planets.find((row: { planetId: string }) => row.planetId === planetId);
       // Public full-system projections have a separate bounded cache; use a new
@@ -10301,18 +10305,19 @@ describe("Veydrift backend", () => {
       expect(count(partial)).toBe(canonical + 1);
       expect(partial.queue?.quantity ?? 0).toBe(quantity - 1);
       expect(partial.unsettledQueue).toMatchObject({ active: true, quantity, asOfNow: { completedQuantity: 1 } });
-      const partialSettled = quantity > 1 ? 1 : 0;
+      const partialSettled = quantity === 100 ? 77 : quantity > 1 ? 1 : 0;
+      if (quantity === 100) setSystemTime(new Date((now + 770) * 1_000));
       if (partialSettled) {
         logs.push({
           blockNumber: "0x82", transactionHash: "0xvey885-partial", logIndex: "0x0",
           topics: [defenseCompletedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
-          data: abiWords(1n, BigInt(canonical + 1))
+          data: abiWords(BigInt(partialSettled), BigInt(canonical + partialSettled))
         });
         indexer.applyLog(logs.at(-1)!);
         const partialCompletion = await read();
-        expect(canonicalCount(partialCompletion)).toBe(canonical + 1);
-        expect(count(partialCompletion)).toBe(canonical + 1);
-        expect(partialCompletion.unsettledQueue?.quantity).toBe(quantity - 1);
+        expect(canonicalCount(partialCompletion)).toBe(canonical + partialSettled);
+        expect(count(partialCompletion)).toBe(canonical + partialSettled);
+        expect(partialCompletion.unsettledQueue?.quantity).toBe(quantity - partialSettled);
       }
       setSystemTime(new Date((now + quantity * 10) * 1_000));
       const due = await read();

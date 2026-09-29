@@ -80,6 +80,8 @@ import { missionTypeLabel } from "./missionControlModel";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { DefenseSettlementNotice } from "./DefenseSettlementNotice";
+import { pendingDefenseSettlement } from "../defenseSettlement";
 import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
@@ -709,6 +711,7 @@ export function OverviewPage({
 
         {/* Defense queue */}
         <QueuePanel label="Defenses">
+          <DefenseSettlementNotice queue={onChainQueues?.unsettledDefense} />
           {onChainDefenseQueue ? (
             <QueuePanelContent>
               <ProductionQueuePanel
@@ -721,9 +724,11 @@ export function OverviewPage({
               />
             </QueuePanelContent>
           ) : (
-            <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
-              No active defense production.
-            </EmptyQueue>
+            pendingDefenseSettlement(onChainQueues?.unsettledDefense).size === 0 ? (
+              <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
+                No active defense production.
+              </EmptyQueue>
+            ) : null
           )}
         </QueuePanel>
 
