@@ -186,7 +186,7 @@ export function BatchSupplyModal({
       className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
     >
-      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl grid-rows-[auto_auto_auto_minmax(0,1fr)_auto] gap-4 overflow-hidden rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
+      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl auto-rows-max gap-4 overflow-y-auto rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
         <header className="flex items-start justify-between gap-4">
           <h2 className="flex h-5 items-center gap-2 text-lg font-semibold leading-none text-cyan-100">
             <span className="flex size-5 items-center justify-center">
@@ -234,12 +234,12 @@ export function BatchSupplyModal({
           </div>
         </fieldset>
 
-        <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2" aria-label="Source planets">
+        <section className="grid gap-2" aria-label="Source planets">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-slate-100">Source planets</h3>
             <span className="text-xs text-slate-400">{selected.size}/{selectableSourceCount} selected</span>
           </div>
-          <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1">
+          <div className="grid content-start gap-2 pr-1">
             {loading && sources.length === 0 ? (
               <SkeletonRegion className="grid gap-2" label="Loading cargo fleets">
                 {skeletonList(3, (index) => (

@@ -62,8 +62,8 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     const checkbox = index => 'document.querySelectorAll("fieldset input")[ ' + index + ' ]';
     const launch = 'document.querySelector("footer button")';
     const source = `document.querySelector('[aria-label="Source planets"] input[type="checkbox"]')`;
-    async function load(width, query = '') {
-      await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
+    async function load(width, query = '', height = 900) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
       await send('Page.navigate', { url: url + '?' + query });
       const deadline = Date.now() + 20_000;
       while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("fieldset"))'))) {
@@ -105,7 +105,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       return evaluate('supplyFixture.submissions.at(-1)');
     }
     async function record(label) {
-      const result = await evaluate('(() => { const panel = document.querySelector("[role=dialog]").firstElementChild; return {viewport: innerWidth, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, labels: [...document.querySelectorAll("fieldset label")].map(node => node.textContent.trim())}; })()');
+      const result = await evaluate('(() => { const panel = document.querySelector("[role=dialog]").firstElementChild; return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, labels: [...document.querySelectorAll("fieldset label")].map(node => node.textContent.trim())}; })()');
       assert.deepEqual(result.labels, types, label + ': all type controls rendered');
       assert.ok(result.pageWidth <= result.viewport, label + ': page horizontal overflow');
       assert.ok(result.panelScrollWidth <= result.panelWidth, label + ': modal horizontal overflow');
@@ -117,6 +117,29 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
+    }
+    // Short viewports must scroll the whole draft, including newly inserted warnings.
+    for (const width of [390, 320]) {
+      await load(width, '', 568);
+      await click(source);
+      assert.equal(await evaluate(source + '.checked'), false, 'short-screen source deselected');
+      const warning = '[...document.querySelectorAll("[role=dialog] p")].find(node => node.textContent.startsWith("Missing:"))';
+      assert.ok(await evaluate('Boolean(' + warning + ')'), 'deselect inserts shortfall warning');
+      assert.ok((await point(source)).reachable, width + ': source stays reachable after warning');
+      assert.ok((await point(warning)).reachable, width + ': shortfall warning reachable');
+      await record(width + '-568-shortfall');
+      await click(source);
+      assert.equal(await evaluate(source + '.checked'), true, 'short-screen source reselected');
+      assert.equal(await evaluate('Boolean(' + warning + ')'), false, 'reselect clears shortfall');
+      for (let i = 0; i < types.length; i++) {
+        await click(checkbox(i));
+        assert.equal((await selected())[i], !defaults[i], 'short-screen type toggle');
+        await click(checkbox(i));
+      }
+      await expectTypes(defaults, 'short-screen type controls remain operable');
+      await submit();
+      await record(width + '-568-restored');
+      console.log('PASS mounted Supply at ' + width + '×568: source deselect/reselect, warning, type controls, footer, no horizontal overflow');
     }
     for (const width of [1280, 390, 320]) {
       await load(width);
