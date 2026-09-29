@@ -117,6 +117,29 @@ describe("MissionDetailPage probable outcome", () => {
     expect(section).toBeDefined();
     expect(findElements(section, "button").every(node => node.props?.disabled === true)).toBe(true);
   });
+  test("renders the same whole-group probable outcome for leader and joined mission with individual tech", () => {
+    const tech = { weapons: 1, shielding: 2, armor: 3 };
+    const battleForecast: NonNullable<MissionDetailResponse["battleForecast"]> = {
+      leaderMissionId: "1", asOf: "1770001000", arrivalAt: "1770003600", targetIsMoon: false,
+      participants: [
+        { missionId: "1", label: "Lead #1", owner: "0xabc", laneGroup: 0, ships: { cruiser: "2" }, combatTechnology: tech },
+        { missionId: "2", label: "Joined #2", owner: "0xdef", laneGroup: 1, ships: { reaper: "1" }, combatTechnology: { weapons: 4, shielding: 5, armor: 6 } },
+      ],
+      stationedDefenders: [],
+      target: { id: "9", name: "Target", owner: "0x000", publicState: { fleet: [], defenses: [], research: [], stationedDefenderForecastTimeline: [], stationedDefenderTimelineComplete: true } },
+    };
+    const leader: MissionDetailResponse = { mission: combatMission({ status: "Outbound", arrivalAt: "1770003600" }), battleReport: null, battleForecast };
+    const joined: MissionDetailResponse = { ...leader, mission: combatMission({ status: "Outbound", missionId: "2", missionType: "AcsAttack", attackGroupId: "1", arrivalAt: "1770003600" }) };
+    const leaderText = renderDetailText(leader);
+    const joinedText = renderDetailText(joined);
+    for (const text of [leaderText, joinedText]) {
+      expect(text).toContain("Probable outcome");
+      expect(text).toContain("Shared battle # 1 · 2 attacking fleets");
+      expect(text).toContain("Lead #1 · W 1 / S 2 / A 3");
+      expect(text).toContain("Joined #2 · W 4 / S 5 / A 6");
+      expect(text).toMatch(/win|draw|defeat/);
+    }
+  });
   test("actual report or inactive leader removes the preview rather than leaving stale predictions", () => {
     expect(renderDetailText({ mission: combatMission(), battleReport: battleReport() })).not.toContain("Probable outcome");
     expect(renderDetailText({ mission: combatMission({ status: "Outbound" }), battleReport: null, battleForecast: null })).not.toContain("Probable outcome");
@@ -809,6 +832,9 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
   if (typeof vnode.type === "function") {
     if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
+    // Manual VNode traversal has no hook owner; the optional sample-report popup needs
+    // Preact rendering, not a direct function call. The forecast itself is still traversed.
+    if (vnode.type.name === "LazySimulatedBattleReportControl") return [];
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
     return findElements(render({ ...(vnode.props ?? {}) }), tag);
   }
@@ -835,6 +861,7 @@ function textParts(node: ComponentChildren): string[] {
     if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) {
       return [];
     }
+    if (vnode.type.name === "LazySimulatedBattleReportControl") return [];
     return textParts((vnode.type as (props: unknown) => ComponentChildren)(vnode.props));
   }
   if ((vnode.props as { hidden?: boolean } | undefined)?.hidden) {

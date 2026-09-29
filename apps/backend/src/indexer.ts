@@ -3155,7 +3155,13 @@ export class SettlementIndexer {
     const invalidTiming = linked.find((entry) => entry.status === "Outbound" && !entry.recallProvenance
       && (!Number.isSafeInteger(Number(entry.arrivalAt)) || Number(entry.arrivalAt) <= 0));
     if (invalidTiming) return unavailable(`Fleet #${invalidTiming.missionId} has unavailable arrival timing.`);
-    const traffic = this.activeFleetMissionsFromCanonicalRowsForPlanetTouching(attack.targetPlanetId, { includeOverduePendingRandomness: true });
+    // Forecast inventory must follow credited lifecycle state, not the public countdown projection
+    // that promotes overdue Returning/Recalled missions to Returned before settlement is mined.
+    const trafficRows = this.db.query(
+      `SELECT * FROM contract_fleet_missions
+       WHERE status_id IN (1, 2, 5) AND (origin_planet_id = ? OR target_planet_id = ?)`
+    ).all(attack.targetPlanetId, attack.targetPlanetId) as ContractFleetMissionRow[];
+    const traffic = trafficRows.map((row) => this.canonicalFleetMissionSummary(row));
     const holds = traffic.filter((entry) => entry.missionType === "DefenseHold" && entry.status === "Outbound"
       && !entry.recallProvenance && (entry.targetIsMoon === true) === (attack.targetIsMoon === true));
     const invalidHoldTiming = holds.find((entry) => entry.targetPlanetId === attack.targetPlanetId
@@ -3181,7 +3187,6 @@ export class SettlementIndexer {
     // A scheduled return/deploy is not yet in the garrison. Never add it speculatively (which can
     // double count a credited landing), nor silently omit a fleet due before hostile impact (VEY-905).
     const pendingLanding = traffic.find((entry) => {
-      if (!hasAnyShips(entry.ships)) return false;
       if ((entry.status === "Returning" || entry.status === "Recalled")
         && entry.originPlanetId === attack.targetPlanetId
         && (entry.originIsMoon === true) === (attack.targetIsMoon === true)) {
@@ -14081,6 +14086,13 @@ export class SettlementIndexer {
         && Number(defender.arrivalAt) <= attackArrival
         && ["AcsDefend", "Intercept", "DefenseHold"].includes(defender.missionType)
         && defender.targetPlanetId === attack.targetPlanetId) {
+        // Canonical summaries collapse absent and empty compositions; neither proves zero defense.
+        if (!hasAnyShips(defender.ships)) {
+          return {
+            defenders,
+            unavailableReason: `Counterplay defender #${missionId} composition is unavailable or empty; battle forces are uncertain.`
+          };
+        }
         const linkedIndex = linkedMissionIds.indexOf(missionId);
         if (linkedIndex < 0) {
           return {
@@ -14102,6 +14114,8 @@ export class SettlementIndexer {
       && this.isBattleTimeDefenseHoldForPlanet(defender, attack.targetPlanetId, attackArrival)
     );
     if (qualifiedDefenseHolds.length > 0) {
+      const unknownComposition = qualifiedDefenseHolds.find((defender) => !hasAnyShips(defender.ships));
+      if (unknownComposition) return { defenders, unavailableReason: `DefenseHold #${unknownComposition.missionId} composition is unavailable or empty; battle forces are uncertain.` };
       const unknownWindow = qualifiedDefenseHolds.find((defender) => defender.defenseHoldUntil === undefined);
       if (unknownWindow) return { defenders, unavailableReason: `DefenseHold #${unknownWindow.missionId} has no confirmed hold window at battle arrival.` };
       if (storageOrder.unavailableReason) {
@@ -14332,8 +14346,7 @@ export class SettlementIndexer {
     return defender.missionType === "DefenseHold"
       && defender.targetPlanetId === planetId
       && Number(defender.arrivalAt) <= attackArrival
-      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival
-      && hasAnyShips(defender.ships);
+      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival;
   }
 
   private counterplayHoldUntil(defender: FleetMissionSummary): string {

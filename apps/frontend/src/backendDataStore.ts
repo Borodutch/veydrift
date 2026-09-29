@@ -341,7 +341,7 @@ function walletCacheKey(kind: string, wallet: string, ...parts: unknown[]): stri
 function resourceTagsForKey(key: string, wallet?: string | undefined, planetId?: string | undefined): ReadonlySet<BackendDataTag> {
   const separator = key.indexOf(":");
   const kind = separator >= 0 ? key.slice(0, separator) : key;
-  const tags = new Set<BackendDataTag>([`kind:${kind}`]);
+  const tags = new Set<BackendDataTag>([`kind:${kind}`, `resource:${key}`]);
   if (wallet) tags.add(`wallet:${wallet.toLowerCase()}`);
   if (planetId) tags.add(`planet:${planetId}`);
   return tags;

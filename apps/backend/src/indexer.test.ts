@@ -9273,6 +9273,97 @@ describe("SettlementIndexer", () => {
     expect(forecast()).toBeNull();
   });
 
+  test.each([2n, 5n])("mission battle forecasts keep uncredited return status %s uncertain across ETA", (status) => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const now = BigInt(Math.floor(Date.now() / 1_000));
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xreturnforecast" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, origin: bigint, target: bigint, arrival: bigint) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(3n)], abiWords(origin, target, arrival, now + 2_000n, 0n));
+      emit([fleetMissionShipsTopic, topic(id)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    };
+    launch(900n, 9n, 7n, now + 1_000n);
+    launch(901n, 7n, 9n, now - 1_000n);
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("900")!);
+    for (const eta of [now + 1_001n, now + 500n, now, now - 1n]) {
+      emit([fleetMissionReturnExposedTopic, topic(901n), addressTopic(player), topic(status)], abiWords(7n, 9n, eta, 0n, 0n, 0n));
+      if (eta > now + 1_000n) expect(forecast()?.unavailableReason).toBeUndefined();
+      else expect(forecast()?.unavailableReason).toContain("Fleet #901");
+    }
+    // The public countdown can say Returned, but no return/credit event has been ingested yet.
+    expect(indexer.fleetMission("901")?.status).toBe("Returned");
+    expect(forecast()?.unavailableReason).toContain("not yet credited");
+    emit([planetShipCountChangedTopic, topic(7n), topic(1n)], abiWords(3n));
+    emit([fleetMissionReturnedTopic, topic(901n), addressTopic(player), topic(7n)], "0x");
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    expect(indexer.displayedUnitCounts("7", "ship").find((entry) => entry.id === 1)?.count).toBe(3);
+  });
+
+  test.each(["missing", "empty"])("mission battle forecasts fail closed on eligible %s defender and landing compositions", (composition) => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xmissingforecast" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, type: bigint, origin: bigint, target: bigint, at: bigint, link = 0n, moon = false) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(type)], abiWords(origin, target, at, 4_000_002_000n, link));
+      if (composition === "empty") emit([fleetMissionShipsTopic, topic(id)], abiWords(...Array(16).fill(0n)));
+      if (moon) emit([fleetMissionBodiesTopic, topic(id)], abiWords(1n, 1n));
+    };
+    const returned = (id: bigint) => emit([fleetMissionReturnedTopic, topic(id), addressTopic(player), topic(7n)], "0x");
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("900")!);
+    launch(900n, 3n, 9n, 7n, 4_000_000_000n);
+    emit([fleetMissionShipsTopic, topic(900n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    // Linked reactive defenders qualify by status/body/timing, never by whether ships were indexed.
+    launch(901n, 5n, 9n, 7n, 4_000_000_000n, 900n);
+    expect(forecast()?.unavailableReason).toContain("Counterplay defender #901 composition is unavailable or empty");
+    emit([fleetMissionShipsTopic, topic(901n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["901"]);
+    returned(901n);
+    // Exact stationed hold window/order are known, but its composition is not.
+    launch(902n, 9n, 9n, 7n, 3_999_999_000n);
+    emit([defenseHoldStationedTopic, topic(902n), addressTopic(player), topic(7n)], abiWords(9n, 3_999_999_000n, 4_000_001_000n, 4_000_002_000n));
+    expect(forecast()?.unavailableReason).toContain("DefenseHold #902 composition is unavailable or empty");
+    emit([fleetMissionShipsTopic, topic(902n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["902"]);
+    returned(902n);
+    launch(903n, 1n, 9n, 7n, 3_999_999_000n);
+    expect(forecast()?.unavailableReason).toContain("Fleet #903");
+    returned(903n);
+    for (const status of [2n, 5n]) {
+      const id = 904n + status;
+      launch(id, 0n, 7n, 9n, 3_999_999_000n);
+      emit([fleetMissionReturnExposedTopic, topic(id), addressTopic(player), topic(status)], abiWords(7n, 9n, 3_999_999_999n, 0n, 0n, 0n));
+      expect(forecast()?.unavailableReason).toContain("Fleet #" + id);
+      returned(id);
+    }
+    // Missing composition does not make unrelated moon or late-arriving traffic a participant.
+    launch(910n, 1n, 9n, 7n, 4_000_000_001n);
+    launch(911n, 9n, 9n, 7n, 4_000_000_001n);
+    launch(912n, 5n, 9n, 7n, 4_000_000_001n, 900n);
+    launch(913n, 1n, 9n, 7n, 3_999_999_000n, 0n, true);
+    launch(914n, 9n, 9n, 7n, 3_999_999_000n, 0n, true);
+    launch(915n, 5n, 9n, 7n, 3_999_999_000n, 900n, true);
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
+  });
+
   test("VEY-KANEO-855 classifies alliance attacks and defenses atomically from indexed membership", () => {
     const ally = "0x3333333333333333333333333333333333333333" as Address;
     const enemy = "0x4444444444444444444444444444444444444444" as Address;
