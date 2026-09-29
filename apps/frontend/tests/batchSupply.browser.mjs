@@ -66,12 +66,12 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
       await send('Page.navigate', { url: url + '?' + query });
       const deadline = Date.now() + 20_000;
-      while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("button[aria-pressed]"))'))) {
+      while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("[role=dialog]"))'))) {
         assert.ok(Date.now() < deadline, 'fixture did not render');
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       // Source autoselection is a mounted useEffect, not a synchronous initial render.
-      while (!(await evaluate(source + '.checked'))) {
+      while (!query.includes('emptyFleet') && !(await evaluate(source + '.checked'))) {
         assert.ok(Date.now() < deadline, 'source selection effect did not run');
         await settle();
       }
@@ -123,6 +123,19 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
+    }
+    // No inventory is not an excluded fleet: do not direct players to nonexistent controls.
+    for (const width of [1280, 390, 320]) {
+      await load(width, 'emptyFleet=1', 568);
+      assert.equal(await evaluate('document.querySelectorAll("[role=group] button").length'), 0);
+      assert.equal(await evaluate(source + '.disabled'), true);
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      assert.ok(await evaluate('document.body.textContent.includes("No cargo ships")'));
+      assert.equal(await evaluate('document.body.textContent.includes("Enable another ship type")'), false, 'empty inventory must not suggest nonexistent type controls');
+      assert.equal(await evaluate('document.body.textContent.includes("Enable more ship types")'), false, 'empty inventory shortfall must not suggest nonexistent type controls');
+      assert.equal(await evaluate('supplyFixture.submissions.length'), 0);
+      assert.ok((await point(source)).reachable);
+      assert.ok((await point(launch)).reachable);
     }
     // Short viewports must scroll the whole draft, including newly inserted warnings.
     for (const width of [390, 320]) {
