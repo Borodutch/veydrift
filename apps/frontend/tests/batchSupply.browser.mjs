@@ -152,7 +152,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await expectTypes(defaults, 'short-screen type controls remain operable');
       await submit();
       await record(width + '-568-restored');
-      console.log('PASS mounted Supply at ' + width + '×568: source deselect/reselect, warning, type controls, footer, no horizontal overflow');
+      console.log('PASS mounted Supply at ' + width + '×568: source deselect/reselect, shortfall state, type controls, footer, no horizontal overflow');
     }
     for (const width of [1280, 390, 320]) {
       await load(width);
