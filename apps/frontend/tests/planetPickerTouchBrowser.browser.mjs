@@ -869,7 +869,14 @@ for (const width of [390, 1440]) {
     const selector = width < 768 ? '#mobile-navigation-menu' : 'aside[aria-label="Select planet"]';
     const nav = width < 768 ? '#mobile-navigation-menu nav' : 'nav.hidden';
     async function openMenu() {
-      if (width < 768) await clickExpression(`document.querySelector('summary[aria-label="Open navigation menu"]')`);
+      if (width >= 768) return;
+      // Synthetic route clicks can leave the menu open until its deferred close.
+      if (!await evaluate("document.querySelector('details:has(#mobile-navigation-menu)')?.open")) {
+        await clickExpression(`document.querySelector('summary[aria-controls="mobile-navigation-menu"]')`);
+      }
+      await waitForExpression(`document.querySelector('details:has(#mobile-navigation-menu)')?.open === true
+        && document.querySelector('summary[aria-controls="mobile-navigation-menu"]')?.getAttribute('aria-expanded') === 'true'
+        && document.querySelector('#mobile-navigation-menu')?.getBoundingClientRect().height > 0`);
     }
     for (const [id, name, route] of [
       ["102", "Owned Beta", "/planet/4/5/6"],
