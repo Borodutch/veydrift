@@ -167,8 +167,8 @@ export function ComingSoonApp({
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
-      <LandingTrailer />
       <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
+      <LandingTrailer />
       <ScreenshotsSection />
       <HowItWorksSection />
       <AgentSection />
@@ -284,8 +284,7 @@ function LandingTrailer() {
   };
 
   return (
-    // z-10: the hero's retro backdrop is position:fixed over the viewport and would otherwise cover this section.
-    <section aria-label="Veydrift trailer" className="relative z-10 bg-void px-3 pb-6 pt-3 sm:px-6 sm:pb-10 sm:pt-6 lg:px-10">
+    <section aria-label="Veydrift trailer" className="relative bg-void px-3 py-10 sm:px-6 sm:py-16 lg:px-10">
       <div className="relative mx-auto max-w-6xl overflow-hidden rounded-lg border border-signal/[0.12] bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
         <video
           className="block aspect-video w-full bg-black"
