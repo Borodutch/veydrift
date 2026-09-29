@@ -116,6 +116,7 @@ import {
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendFinishDefenseProductionTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
@@ -3458,6 +3459,19 @@ describe("walletFlow", () => {
         { startPriceWei: 50_000_000_000_000_000n },
       ),
     ).rejects.toThrow("Starting resources are currently unavailable");
+  });
+
+  test("finishes defense production with one wallet-confirmed planet-only call", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xfinish";
+    });
+    expect(requests).toHaveLength(0);
+    await expect(sendFinishDefenseProductionTransaction(provider, account, contract, "7")).resolves.toBe("0xfinish");
+    expect(requests).toEqual([{ method: "eth_sendTransaction", params: [{
+      from: account, to: contract, data: encodeGameCall("0xa5a0d597", [7]),
+    }] }]);
   });
 
   test("submits VeydriftGame building and shipyard transactions", async () => {

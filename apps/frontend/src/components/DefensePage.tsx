@@ -42,6 +42,8 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
+  onFinish?: (() => void) | undefined;
+  finishPending?: boolean | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
@@ -81,6 +83,8 @@ export function DefensePage({
   loading,
   now,
   onBuild,
+  onFinish,
+  finishPending,
   onOpenRequirement,
   onSelectDefense,
   onSupply,
@@ -143,7 +147,12 @@ export function DefensePage({
           queueTone="rose"
           selectedKey={selectedKey}
         >
-          <DefenseSettlementNotice queue={defenseState?.unsettledQueue} />
+          <DefenseSettlementNotice
+            queue={defenseState?.unsettledQueue}
+            onFinish={onFinish}
+            disabled={!canTransact || loading || !productionAvailable || actionState.status === "pending" || finishPending}
+            transactionUnavailableReason={transactionUnavailableReason}
+          />
         </ProductionSection>
       )}
     </div>

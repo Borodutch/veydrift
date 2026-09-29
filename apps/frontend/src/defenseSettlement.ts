@@ -1,4 +1,14 @@
-import type { QueueStateResponse } from "./walletFlow";
+import type { ChainDefenseState, QueueStateResponse } from "./walletFlow";
+
+/** Recheck a fresh owned-planet response before requesting a wallet signature. */
+export function assertDefenseSettlementReady(state: ChainDefenseState, wallet: string, planetId: string): void {
+  if (state.wallet.toLowerCase() !== wallet.toLowerCase() || state.homePlanetId !== planetId) {
+    throw new Error("Wallet or planet changed. Refresh defenses before trying again.");
+  }
+  if (state.productionAvailable === false || pendingDefenseSettlement(state.unsettledQueue).size === 0) {
+    throw new Error("No finished defenses are awaiting settlement. Refresh defenses before trying again.");
+  }
+}
 
 /** Only the matured part of canonical unsettled batches, never already credited units. */
 export function pendingDefenseSettlement(queue: QueueStateResponse | null | undefined): Map<number, number> {
