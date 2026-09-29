@@ -107,6 +107,22 @@ function renderDetailUnitTitles(detail: MissionDetailResponse, fleetVisibility =
     .filter((title): title is string => typeof title === "string");
 }
 
+describe("MissionDetailPage probable outcome", () => {
+  test("renders explicit uncertainty and no forecast-triggered transaction for missing intel", () => {
+    const detail = { mission: combatMission({ status: "Outbound" }), battleReport: null };
+    expect(renderDetailText(detail)).toContain("Probable outcome");
+    expect(renderDetailText(detail)).toContain("Uncertain");
+    expect(renderDetailText(detail)).toContain("single fleet is not substituted");
+    const section = findElements(renderDetailPage(detail), "section").find(node => node.props?.["aria-label"] === "Probable outcome");
+    expect(section).toBeDefined();
+    expect(findElements(section, "button").every(node => node.props?.disabled === true)).toBe(true);
+  });
+  test("actual report or inactive leader removes the preview rather than leaving stale predictions", () => {
+    expect(renderDetailText({ mission: combatMission(), battleReport: battleReport() })).not.toContain("Probable outcome");
+    expect(renderDetailText({ mission: combatMission({ status: "Outbound" }), battleReport: null, battleForecast: null })).not.toContain("Probable outcome");
+  });
+});
+
 describe("MissionDetailPage defender Fleet / Defenses block", () => {
   test("shows target combat intel before a combat mission has a battle report", () => {
     const detail: MissionDetailResponse = {

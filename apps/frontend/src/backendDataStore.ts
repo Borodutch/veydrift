@@ -939,6 +939,10 @@ export class BackendDataStore {
     return () => { stop(); disconnect(); };
   }
 
+  startMissionDetailSync(missionId: string): () => void {
+    return this.startPolling(`mission-detail:${missionId}`, [`resource:${cacheKey("mission", missionId)}`], 10_000);
+  }
+
   startSignerDelegationSync(signer: string): () => void {
     // The effective main may differ from this signer. Never filter the signer
     // delegation read through the main-scoped gameplay refresh policy.

@@ -1697,6 +1697,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             battleReport,
             battleReportMaterialization: reportedBattleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
+            battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
             // Current target state remains useful alongside the persisted battle-time snapshot and
             // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
             // this mutable projection.
@@ -4576,6 +4577,25 @@ function defenderPlanetStateForReport(
     fleet: indexer.displayedUnitCounts(planet.planetId, "ship").filter((row) => row.count > 0),
     defenses: indexer.displayedUnitCounts(planet.planetId, "defense").filter((row) => row.count > 0),
     stationedDefenders: report.stationedDefenders ?? indexer.stationedDefendersForBattle(mission, report)
+  };
+}
+
+function missionBattleForecastResponse(indexer: SettlementIndexer, mission: FleetMissionSummary, safe: boolean) {
+  const forecast = indexer.missionBattleForecast(mission);
+  if (!forecast) return null;
+  const planet = indexer.planet(forecast.targetPlanetId);
+  return {
+    ...forecast,
+    asOf: Math.floor(Date.now() / 1_000).toString(),
+    ...(!safe ? { unavailableReason: "Public battle state is delayed or reconciling; the forecast is uncertain until indexing catches up." } : {}),
+    target: planet ? {
+      id: planet.planetId,
+      name: planet.name,
+      owner: planet.owner,
+      coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      publicState: publicPlanetStateRef(planet, indexer),
+      publicMoonState: forecast.targetIsMoon ? publicMoonStateRef(planet, indexer) : null
+    } : null
   };
 }
 

@@ -602,6 +602,21 @@ describe("BackendDataStore", () => {
     expect(store.snapshot(store.writeTransactionKey(undefined, "0xaaa"))).toBeUndefined();
   });
 
+  test("mission detail observers retain a scoped read-only refresh policy", () => {
+    const store = new BackendDataStore("https://api.test");
+    let policy: unknown;
+    let released = false;
+    store.startPolling = (name, tags, intervalMs) => {
+      policy = { name, tags, intervalMs };
+      return () => { released = true; };
+    };
+    const stop = store.startMissionDetailSync("94881");
+    expect(policy).toEqual({ name: "mission-detail:94881", tags: [`resource:${store.queries.mission("94881").key}`], intervalMs: 10_000 });
+    stop();
+    expect(released).toBe(true);
+    store.dispose();
+  });
+
   test("reference-counts equivalent named pollers", async () => {
     const store = new BackendDataStore("https://api.test");
     const key = store.key("global-active-missions");
