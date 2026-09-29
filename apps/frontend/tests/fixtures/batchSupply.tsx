@@ -2,12 +2,13 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
-import type { BatchSupplyOrder, BatchSupplySource, SupplyShipKey } from "../../src/batchSupplyPlanner";
+import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource } from "../../src/batchSupplyPlanner";
 import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
+const twoSources = new URLSearchParams(location.search).has("twoSources");
 const initialRequested = { metal: 1000, crystal: 0, deuterium: 0 };
 const source: BatchSupplySource = {
   planetId: "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: 13 },
@@ -22,16 +23,17 @@ declare global {
   interface Window {
     supplyFixture: {
       refresh: () => void;
+      changeStock: () => void;
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
-      submissions: Array<{ orders: BatchSupplyOrder[]; allowedShipTypes: readonly SupplyShipKey[] }>;
+      submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource }>;
     };
   }
 }
 const submissions: Window["supplyFixture"]["submissions"] = [];
 function Fixture() {
-  const [sources, setSources] = useState([source]);
+  const [sources, setSources] = useState(twoSources ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
   const [draft, setDraft] = useState(0);
   const [account, setAccount] = useState("fixture-account");
   const [destination, setDestination] = useState(target);
@@ -40,6 +42,7 @@ function Fixture() {
   window.supplyFixture = {
     submissions,
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
+    changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),
     pending: kind => {
       setActionPending(kind === "action");
       setTransactionState(kind === "transaction" ? { phase: "pending", label: "Awaiting wallet" } : undefined);
@@ -56,7 +59,7 @@ function Fixture() {
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
     target={destination} sources={sources} initialRequested={initialRequested} maxSources={15}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
-    onConfirm={(orders, allowedShipTypes) => submissions.push(structuredClone({ orders, allowedShipTypes }))} />;
+    onConfirm={(orders, shipTypesBySource) => submissions.push(structuredClone({ orders, shipTypesBySource }))} />;
 }
 document.body.style.background = "#05070d";
 render(<Fixture />, document.getElementById("app")!);

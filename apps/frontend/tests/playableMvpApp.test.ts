@@ -1151,7 +1151,7 @@ describe("Playable MVP app display helpers", () => {
 
   test("replans Supply cargo from confirmation-time source inventories", () => {
     const plan = replanBatchSupplyForConfirmation({
-      allowedShipTypes: ["largeCargo", "smallCargo", "colonyShip"],
+      shipTypesBySource: {},
       maxOrders: 1,
       orders: [
         {

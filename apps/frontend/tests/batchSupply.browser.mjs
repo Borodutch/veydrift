@@ -59,14 +59,14 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     const types = ['Large Cargo', 'Small Cargo', 'Recycler', 'Colony Ship'];
     const defaults = [true, true, false, true];
-    const checkbox = index => 'document.querySelectorAll("fieldset input")[ ' + index + ' ]';
+    const checkbox = index => 'document.querySelector(' + JSON.stringify('button[aria-label="' + types[index] + ' at Astro"]') + ')';
     const launch = 'document.querySelector("footer button")';
     const source = `document.querySelector('[aria-label="Source planets"] input[type="checkbox"]')`;
     async function load(width, query = '', height = 900) {
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
       await send('Page.navigate', { url: url + '?' + query });
       const deadline = Date.now() + 20_000;
-      while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("fieldset"))'))) {
+      while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("button[aria-pressed]"))'))) {
         assert.ok(Date.now() < deadline, 'fixture did not render');
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -88,7 +88,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       await settle();
     }
-    const selected = () => evaluate('[...document.querySelectorAll("fieldset input")].map(input => input.checked)');
+    const selected = () => evaluate('[...document.querySelectorAll("[role=group] button")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
     async function expectTypes(expected, reason) { assert.deepEqual(await selected(), expected, reason); }
     async function input(label, value) {
       const expression = 'document.querySelector(' + JSON.stringify('input[aria-label="' + label + '"]') + ')';
@@ -110,12 +110,12 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         const overflowing = [...panel.querySelectorAll("*")].filter(node => node.clientWidth > 0 && node.scrollWidth > node.clientWidth).map(node => ({
           tag: node.tagName, text: node.textContent.trim().slice(0, 100), className: node.className, width: node.clientWidth, scrollWidth: node.scrollWidth,
         }));
-        return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("fieldset label")].map(node => node.textContent.trim())};
+        return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("[role=group] button")].map(node => node.getAttribute("aria-label").split(" at ")[0])};
       })()`);
-      assert.deepEqual(result.labels, types, label + ': all type controls rendered');
+      assert.deepEqual(result.labels, label.includes('recycler-only') ? ['Recycler'] : types, label + ': available type controls rendered');
       assert.ok(result.pageWidth <= result.viewport, label + ': page horizontal overflow');
       assert.ok(result.panelScrollWidth <= result.panelWidth, label + ': modal horizontal overflow: ' + JSON.stringify(result));
-      for (let i = 0; i < types.length; i++) assert.ok((await point(checkbox(i))).reachable, label + ': reachable ' + types[i]);
+      for (const name of result.labels) assert.ok((await point(checkbox(types.indexOf(name)))).reachable, label + ": reachable " + name);
       assert.ok((await point(launch)).reachable, label + ': launch reachable');
       assert.ok((await point(source)).reachable, label + ': source reachable');
       measurements.push({ label, ...result });
@@ -156,17 +156,17 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     }
     for (const width of [1280, 390, 320]) {
       await load(width);
-      assert.equal(await evaluate('document.querySelector("legend").textContent'), 'Ship types for all sources');
+      assert.equal(await evaluate('document.body.textContent.includes("Ship types for all sources")'), false);
       await expectTypes(defaults, 'Recycler defaults off');
       let submission = await submit();
-      assert.deepEqual(submission.allowedShipTypes, ['largeCargo', 'smallCargo', 'colonyShip']);
+      assert.deepEqual(submission.shipTypesBySource, {});
       assert.equal(submission.orders[0].ships.recycler, 0);
       await record(width + '-default');
 
       // Explicit opt-in must survive even if the current small order does not need a Recycler.
       await click(checkbox(2));
       submission = await submit();
-      assert.ok(submission.allowedShipTypes.includes('recycler'));
+      assert.ok(submission.shipTypesBySource["188"].includes('recycler'));
       assert.equal(submission.orders[0].ships.recycler, 0, 'opt-in differs from currently planned fleet');
       await evaluate('supplyFixture.refresh()'); await settle();
       await expectTypes([true, true, true, true], 'refresh preserves explicit opt-in');
@@ -200,13 +200,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await record(width + '-no-types');
       await click(checkbox(2));
       submission = await submit();
-      assert.deepEqual(submission.allowedShipTypes, ['recycler']);
+      assert.deepEqual(submission.shipTypesBySource["188"], ['recycler']);
       assert.ok(submission.orders[0].ships.recycler > 0);
       for (const key of ['largeCargo', 'smallCargo', 'colonyShip']) assert.equal(submission.orders[0].ships[key], 0);
 
       for (const kind of ['action', 'transaction']) {
         await evaluate('supplyFixture.pending(' + JSON.stringify(kind) + ')'); await settle();
-        assert.equal(await evaluate('[...document.querySelectorAll("fieldset input")].every(input => input.matches(":disabled"))'), true);
+        assert.equal(await evaluate('[...document.querySelectorAll("[role=group] button")].every(input => input.matches(":disabled"))'), true);
         assert.equal(await evaluate(launch + '.disabled'), true);
         await click(checkbox(2));
         await expectTypes([false, false, true, false], kind + ' pending prevents changes');
@@ -214,9 +214,9 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.reject()'); await settle();
       assert.ok(await evaluate('document.querySelector("[role=dialog]").textContent.includes("Wallet request rejected")'));
       await expectTypes([false, false, true, false], 'wallet rejection retains intent');
-      assert.equal(await evaluate('document.querySelector("fieldset input").matches(":disabled")'), false);
+      assert.equal(await evaluate('document.querySelector("[role=group] button").matches(":disabled")'), false);
       submission = await submit();
-      assert.deepEqual(submission.allowedShipTypes, ['recycler'], 'retry carries retained choices');
+      assert.deepEqual(submission.shipTypesBySource["188"], ['recycler'], 'retry carries retained choices');
       await record(width + '-rejected');
 
       for (const kind of ['draft', 'target', 'account']) {
@@ -230,7 +230,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
 
       // A source with only Recyclers cannot supply by default, but opt-in unblocks it.
       await load(width, 'recyclerOnly=1');
-      await expectTypes(defaults, 'Recycler-only source still defaults off');
+      await expectTypes([false], 'Recycler-only source still defaults off');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await click(checkbox(2));
       submission = await submit();
@@ -241,6 +241,63 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await submit();
       await record(width + '-recycler-only');
       console.log('PASS mounted Supply at ' + width + 'px: defaults, explicit intent, refresh, Max, edits, source toggle, empty selection, pending, rejection, resets, Recycler-only source');
+    }
+    // Two distinct source inventories: physical taps/keyboard must not toggle another source or checkbox.
+    for (const width of [1280, 390, 320]) {
+      await load(width, 'twoSources=1', 568);
+      const lunaSmall = `document.querySelector('button[aria-label="Small Cargo at Luna"]')`;
+      const lunaRecycler = `document.querySelector('button[aria-label="Recycler at Luna"]')`;
+      const sourceChecks = `[...document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')].map(input => input.checked)`;
+      const maxMetal = `document.querySelector('input[aria-label="metal to send"]').closest("label").querySelector("button")`;
+      const pressed = expression => evaluate(expression + '.getAttribute("aria-pressed") === "true"');
+      assert.equal(await pressed(lunaRecycler), false, 'second source Recycler defaults off');
+      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×2")'), true);
+      await click(maxMetal);
+      const before = await submit();
+      const originalLuna = before.orders.find(order => order.originPlanetId === '190');
+      assert.ok(originalLuna && originalLuna.ships.smallCargo === 2);
+      await click(checkbox(0));
+      await expectTypes([false, true, false, true], 'only tapped type changes');
+      assert.equal(await pressed(lunaSmall), true);
+      assert.deepEqual(await evaluate(sourceChecks), [true, true], 'chip does not toggle source checkboxes');
+      assert.equal(await evaluate(launch + '.disabled'), true, 'reduced capacity blocks old Max');
+      await click(maxMetal);
+      let submission = await submit();
+      assert.deepEqual(submission.orders.find(order => order.originPlanetId === '190'), originalLuna, 'other source plan unchanged');
+      assert.equal(submission.orders[0].ships.largeCargo, 0);
+      // Native button keyboard activation re-adds the excluded type.
+      await evaluate(checkbox(0) + '.focus()');
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+      await settle();
+      await expectTypes(defaults, 'keyboard re-adds type');
+      await click(maxMetal);
+      submission = await submit();
+      assert.deepEqual(submission.orders, before.orders, 're-adding restores fleet plan');
+      await click(lunaRecycler);
+      assert.equal(await pressed(checkbox(2)), false, 'second source opt-in leaves first Recycler off');
+      assert.deepEqual(await evaluate(sourceChecks), [true, true]);
+      await click(maxMetal);
+      submission = await submit();
+      assert.ok(submission.orders.find(order => order.originPlanetId === '190').ships.recycler > 0);
+      assert.equal(submission.orders[0].ships.recycler, 0);
+      await click(source);
+      const secondSource = `document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[1]`;
+      await click(secondSource);
+      await evaluate('supplyFixture.refresh()'); await settle();
+      assert.deepEqual(await evaluate(sourceChecks), [false, false], 'refresh preserves explicit deselect-all');
+      assert.equal(await pressed(lunaRecycler), true);
+      await click(source); await click(secondSource);
+      await evaluate('supplyFixture.changeStock()'); await settle();
+      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×1")'), true, 'fresh available count');
+      assert.equal(await pressed(lunaRecycler), true, 'changed inventory retains opt-in');
+      assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock blocks short shipment');
+      await click(maxMetal);
+      submission = await submit();
+      assert.equal(submission.orders.reduce((sum, order) => sum + order.cargo.metal, 0), 1000);
+      assert.ok(submission.shipTypesBySource['190'].includes('recycler'));
+      assert.equal(submission.shipTypesBySource['188'].includes('recycler'), false);
+      console.log('PASS independent source chips at ' + width + 'px: source/type isolation, exact plans, keyboard, changed counts, refresh and Max');
     }
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
     await send('Browser.close', {}, false);

@@ -45,6 +45,8 @@ export type BatchSupplyPlan = {
 
 export type SupplyShipKey = "largeCargo" | "smallCargo" | "recycler" | "colonyShip";
 
+export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
+
 export const defaultSupplyShipTypes: readonly SupplyShipKey[] = ["largeCargo", "smallCargo", "colonyShip"];
 
 const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
@@ -102,7 +104,7 @@ export function buildBatchSupplyPlan({
   requested,
   selectedPlanetIds,
   sourceCargoOverrides = {},
-  allowedShipTypes = defaultSupplyShipTypes,
+  shipTypesBySource = {},
   sources,
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
@@ -112,8 +114,8 @@ export function buildBatchSupplyPlan({
   /** Exact per-source cargo chosen in the Supply modal. Sources without an override keep automatic allocation. */
   sourceCargoOverrides?: Readonly<Record<string, Partial<SupplyResources>>>;
   sources: readonly BatchSupplySource[];
-  /** Explicit draft eligibility, including allowed types not currently needed in an order. */
-  allowedShipTypes?: readonly SupplyShipKey[];
+  /** Per-source eligibility. Missing sources use defaults; empty arrays exclude every type. */
+  shipTypesBySource?: SupplyShipTypesBySource;
   maxOrders?: number;
 }): BatchSupplyPlan {
   const normalizedRequested = normalizeSupplyResources(requested);
@@ -125,7 +127,7 @@ export function buildBatchSupplyPlan({
   // shows every allocation and lets the player deselect any source before submitting.
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
-    .map((source) => ({ ...source, ships: allowedSupplyShips(source.ships, allowedShipTypes) }))
+    .map((source) => ({ ...source, ships: allowedSupplyShips(source.ships, shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes) }))
     // Apply player-edited shipments first, then use nearby sources to automatically fill the balance.
     .sort((left, right) => {
       const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;
