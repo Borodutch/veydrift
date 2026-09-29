@@ -7,11 +7,12 @@ const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}
 const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
 
 describe("landing trailer", () => {
-  test("opens the landing with the trailer, above the claim hero", async () => {
+  test("places the trailer right under the claim hero", async () => {
     const source = await Bun.file(landingSource).text();
     const main = source.slice(source.indexOf('<main className="landing-page'));
-    expect(main.indexOf("<LandingTrailer />")).toBeGreaterThan(-1);
-    expect(main.indexOf("<LandingTrailer />")).toBeLessThan(main.indexOf("<HeroSection"));
+    const body = main.slice(main.indexOf(">") + 1, main.indexOf("</main>"));
+    const sections = [...body.matchAll(/<(\w+)[\s/]/g)].map((match) => match[1]);
+    expect(sections.slice(0, 3)).toEqual(["HeroSection", "LandingTrailer", "ScreenshotsSection"]);
     expect(source).toContain('preload="none"');
   });
 
