@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   Activity,
   ArrowRight,
@@ -9,6 +9,7 @@ import {
   Copy,
   ExternalLink,
   Factory,
+  Play,
   Radio,
   Rocket,
   Users,
@@ -39,6 +40,13 @@ const planets = {
 const assets = {
   rift: "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp",
   plasma: "/assets/game/style-pass/generated/research/plasma.webp",
+};
+
+// Versioned: /assets/ is served immutable, so a new cut needs a new file name.
+const trailer = {
+  captions: "/assets/landing/veydrift-trailer-v1.vtt",
+  poster: "/assets/landing/veydrift-trailer-v1-poster.webp",
+  src: "/assets/landing/veydrift-trailer-v1.mp4",
 };
 
 const screenshots = [
@@ -159,6 +167,7 @@ export function ComingSoonApp({
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
+      <LandingTrailer />
       <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
       <ScreenshotsSection />
       <HowItWorksSection />
@@ -262,6 +271,53 @@ function useLandingScrollParallax() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+}
+
+// Click-to-play with sound; preload="none" keeps the 2-minute file off the wire until asked for.
+function LandingTrailer() {
+  const video = useRef<HTMLVideoElement>(null);
+  const [started, setStarted] = useState(false);
+
+  const play = () => {
+    setStarted(true);
+    void video.current?.play().catch(() => undefined);
+  };
+
+  return (
+    // z-10: the hero's retro backdrop is position:fixed over the viewport and would otherwise cover this section.
+    <section aria-label="Veydrift trailer" className="relative z-10 bg-void px-3 pb-6 pt-3 sm:px-6 sm:pb-10 sm:pt-6 lg:px-10">
+      <div className="relative mx-auto max-w-6xl overflow-hidden rounded-lg border border-signal/[0.12] bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
+        <video
+          className="block aspect-video w-full bg-black"
+          controls={started}
+          onEnded={() => setStarted(false)}
+          onPlay={() => setStarted(true)}
+          playsInline
+          poster={trailer.poster}
+          preload="none"
+          ref={video}
+          title="Veydrift in two minutes"
+        >
+          <source src={trailer.src} type="video/mp4" />
+          <track kind="captions" label="English" src={trailer.captions} srcLang="en" />
+        </video>
+        {started ? null : (
+          <button
+            aria-label="Play the two-minute Veydrift trailer"
+            className="group absolute inset-0 flex items-end justify-center bg-[linear-gradient(180deg,rgba(4,7,11,0)_52%,rgba(4,7,11,0.7)_100%)] pb-[9%]"
+            onClick={play}
+            type="button"
+          >
+            <span className="inline-flex min-h-12 items-center gap-3 rounded-full border border-signal/30 bg-signal px-6 py-3 text-sm font-bold text-[#031014] shadow-[0_0_40px_rgba(128,241,255,0.35)] transition group-hover:bg-cyan-100">
+              <Play aria-hidden="true" className="h-5 w-5 fill-current" />
+              Watch the trailer
+              <span className="font-semibold opacity-70">2:00</span>
+            </span>
+          </button>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function HeroSection({
