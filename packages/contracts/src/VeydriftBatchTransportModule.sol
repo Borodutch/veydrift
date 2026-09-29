@@ -101,6 +101,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             return true;
         }
         (uint256 body, uint64 at, uint8 kind) = _currentEvent(id, returning);
+        // Scheduled mission deadlines intentionally use the canonical block clock.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < at) {
             if (!returning && m.missionType == FleetMissionType.DefenseHold) {
                 revert DefenseHoldStillActive(at);
@@ -207,6 +209,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         if (!_active(m)) return (false, 0, true);
         bool returning = m.status != FleetMissionStatus.Outbound;
         (uint256 body, uint64 at, uint8 kind) = _currentEvent(id, returning);
+        // Eligibility uses the same canonical deadline as the state-changing preparer.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < at) return (false, 0, true);
         if (
             !returning && _linked(m)
@@ -386,6 +390,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
                 continue;
             }
             (uint64 at, uint8 kind) = _lazyEvent(id);
+            // Lazy settlement must not execute before the scheduled block-clock deadline.
+            // forge-lint: disable-next-line(block-timestamp)
             if (block.timestamp >= at) {
                 uint256 position = dueCount;
                 // At most 12 candidates: bounded insertion sort, independent of historical IDs.
@@ -409,6 +415,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     function _settleLazyMission(uint256 id) private {
         FleetMission storage m = _fleetMissions[id];
         (uint64 at,) = _lazyEvent(id);
+        // Legacy lazy completion preserves the existing block-clock deadline.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < at) return;
         if (m.status == FleetMissionStatus.Outbound) {
             try IVeydriftMoonArrivalResolver(address(this)).resolveFleetMission(id) {} catch {}
