@@ -7,7 +7,11 @@ import {
   fleetMissionTravelSeconds,
 } from "../fleetMissionRules";
 import {
+  allowedSupplyShips,
   buildBatchSupplyPlan,
+  defaultSupplyShipTypes,
+  hasUsableSupplyCargoFleet,
+  type SupplyShipKey,
   emptySupplyResources,
   normalizeSupplyResources,
   type BatchSupplyOrder,
@@ -15,11 +19,11 @@ import {
   type SupplyResources,
 } from "../batchSupplyPlanner";
 import { shipAssetByKey } from "../gameAssets";
-import type { MissionShipKey, MissionShips } from "../galaxyActions";
+import type { MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
-const supplyCargoShips: Array<{ key: MissionShipKey; label: string }> = [
+const supplyCargoShips: Array<{ key: SupplyShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
   { key: "smallCargo", label: "Small Cargo" },
   { key: "recycler", label: "Recycler" },
@@ -78,7 +82,7 @@ export function BatchSupplyModal({
   initialRequested?: Partial<SupplyResources> | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
-  onConfirm: (orders: BatchSupplyOrder[]) => void;
+  onConfirm: (orders: BatchSupplyOrder[], allowedShipTypes: readonly SupplyShipKey[]) => void;
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
@@ -86,12 +90,14 @@ export function BatchSupplyModal({
 }) {
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
+  const [allowedShipTypes, setAllowedShipTypes] = useState<readonly SupplyShipKey[]>(defaultSupplyShipTypes);
   const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
   useEffect(() => {
     setRequested(supplyResourceInputValues(initialRequested));
     setSelectedSourceIds(new Set());
     setSourceCargoOverrides({});
+    setAllowedShipTypes(defaultSupplyShipTypes);
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId]);
 
   useEffect(() => {
@@ -112,9 +118,10 @@ export function BatchSupplyModal({
     requested: requestedNumbers,
     selectedPlanetIds: selected,
     sourceCargoOverrides,
+    allowedShipTypes,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sourceCargoOverrides, sources, target.galaxy, target.position, target.system]);
+  }), [requestedNumbers, selected, sourceCargoOverrides, allowedShipTypes, sources, maxSources, target.galaxy, target.position, target.system]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -139,6 +146,7 @@ export function BatchSupplyModal({
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
       selectedPlanetIds: selected,
+      allowedShipTypes,
       sources,
       maxOrders: maxSources,
     }).delivered[resource];
@@ -178,7 +186,7 @@ export function BatchSupplyModal({
       className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
     >
-      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-4 overflow-hidden rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
+      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full min-w-0 max-w-3xl grid-cols-[minmax(0,1fr)] auto-rows-max gap-4 overflow-y-auto [overflow-wrap:anywhere] rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
         <header className="flex items-start justify-between gap-4">
           <h2 className="flex h-5 items-center gap-2 text-lg font-semibold leading-none text-cyan-100">
             <span className="flex size-5 items-center justify-center">
@@ -211,12 +219,27 @@ export function BatchSupplyModal({
           ))}
         </section>
 
-        <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2" aria-label="Source planets">
+        <fieldset className="min-w-0" disabled={actionPending || transactionPending}>
+          <legend className="mb-1 text-xs font-semibold text-slate-300">Ship types for all sources</legend>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+            {supplyCargoShips.map(({ key, label }) => {
+              const included = allowedShipTypes.includes(key);
+              return (
+                <label key={key} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded border px-2 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 ${included ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400"}`}>
+                  <input type="checkbox" checked={included} onChange={() => setAllowedShipTypes((current) => current.includes(key) ? current.filter((type) => type !== key) : [...current, key])} />
+                  {label}
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <section className="grid gap-2" aria-label="Source planets">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-slate-100">Source planets</h3>
             <span className="text-xs text-slate-400">{selected.size}/{selectableSourceCount} selected</span>
           </div>
-          <div className="grid min-h-0 content-start gap-2 overflow-y-auto pr-1">
+          <div className="grid content-start gap-2 pr-1">
             {loading && sources.length === 0 ? (
               <SkeletonRegion className="grid gap-2" label="Loading cargo fleets">
                 {skeletonList(3, (index) => (
@@ -238,9 +261,13 @@ export function BatchSupplyModal({
                 unavailableReason: source.unavailableReason,
               });
               const selectionLimitReached = sourceLimitReason !== undefined;
-              const disabled = Boolean(source.unavailableReason) || selectionLimitReached;
+              const eligibleShips = allowedSupplyShips(source.ships, allowedShipTypes);
+              const typeUnavailableReason = !hasUsableSupplyCargoFleet(eligibleShips)
+                ? "No ships of the selected types. Enable another ship type to use this source."
+                : undefined;
+              const disabled = Boolean(source.unavailableReason) || (!checked && Boolean(typeUnavailableReason)) || selectionLimitReached;
               const order = orderByOrigin.get(source.planetId);
-              const fleetPresentation = batchSupplyFleetPresentation(source, order);
+              const fleetPresentation = batchSupplyFleetPresentation({ ships: eligibleShips }, order);
               const requestedSourceCargo = sourceCargoOverrides[source.planetId];
               const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
               const hasManualCargo = sourceCargoOverrides[source.planetId] !== undefined;
@@ -250,7 +277,7 @@ export function BatchSupplyModal({
                 || sourceCargo.deuterium !== requestedSourceCargo.deuterium
               );
               const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
-              const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, source.ships, source.driveLevels);
+              const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, eligibleShips, source.driveLevels);
               return (
                 <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
                   <label className="cursor-pointer">
@@ -287,6 +314,7 @@ export function BatchSupplyModal({
                       <SupplyFleetIcons ships={fleetPresentation.ships} />
                     </span>
                     {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
+                    {typeUnavailableReason ? <span className="block text-xs text-amber-200">{typeUnavailableReason}</span> : null}
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
                   </span>
                 </div>
@@ -295,24 +323,24 @@ export function BatchSupplyModal({
           </div>
         </section>
 
-        <div className="grid gap-3">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
           {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
-          {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Select more sources or reduce the request.</p> : null}
+          {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. Enable more ship types, select more sources, or reduce the request.</p> : null}
           {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
           {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
           {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
 
-          <footer className="grid gap-3 border-t border-white/10 pt-3">
+          <footer className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 border-t border-white/10 pt-3">
             <div className="text-sm text-slate-300">
               <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
               <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
               {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
             </div>
-            <button className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders)} type="button">
-              <Check aria-hidden="true" size={16} />
-              {transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
+            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, [...allowedShipTypes])} type="button">
+              <Check aria-hidden="true" className="shrink-0" size={16} />
+              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}</span>
             </button>
           </footer>
         </div>

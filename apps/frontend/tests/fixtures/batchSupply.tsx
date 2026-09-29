@@ -1,0 +1,62 @@
+// Local-only mounted production modal. No wallet, API, or production entrypoint.
+import { render } from "preact";
+import { useState } from "preact/hooks";
+import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
+import type { BatchSupplyOrder, BatchSupplySource, SupplyShipKey } from "../../src/batchSupplyPlanner";
+import type { ManagedPlanetResponse } from "../../src/walletFlow";
+import type { WriteTransactionState } from "../../src/transactionActionGate";
+import "../../src/styles.css";
+
+const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
+const initialRequested = { metal: 1000, crystal: 0, deuterium: 0 };
+const source: BatchSupplySource = {
+  planetId: "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: 13 },
+  resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
+  ships: recyclerOnly ? { recycler: 5 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
+  driveLevels: { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 },
+};
+// Only the modal's presentation/route fields are consumed; this fixture does not load a wallet response.
+const target = { planetId: "189", name: "Home", galaxy: 6, system: 9, position: 14, coordinates: "6:9:14" } as ManagedPlanetResponse;
+
+declare global {
+  interface Window {
+    supplyFixture: {
+      refresh: () => void;
+      pending: (kind: "action" | "transaction" | "none") => void;
+      reject: () => void;
+      reset: (kind: "draft" | "target" | "account") => void;
+      submissions: Array<{ orders: BatchSupplyOrder[]; allowedShipTypes: readonly SupplyShipKey[] }>;
+    };
+  }
+}
+const submissions: Window["supplyFixture"]["submissions"] = [];
+function Fixture() {
+  const [sources, setSources] = useState([source]);
+  const [draft, setDraft] = useState(0);
+  const [account, setAccount] = useState("fixture-account");
+  const [destination, setDestination] = useState(target);
+  const [actionPending, setActionPending] = useState(false);
+  const [transactionState, setTransactionState] = useState<WriteTransactionState>();
+  window.supplyFixture = {
+    submissions,
+    refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
+    pending: kind => {
+      setActionPending(kind === "action");
+      setTransactionState(kind === "transaction" ? { phase: "pending", label: "Awaiting wallet" } : undefined);
+    },
+    reject: () => { setActionPending(false); setTransactionState({ phase: "error", label: "Wallet request rejected" }); },
+    reset: kind => {
+      setTransactionState(undefined);
+      setActionPending(false);
+      if (kind === "draft") setDraft(value => value + 1);
+      if (kind === "target") setDestination(value => ({ ...value, planetId: String(Number(value.planetId) + 1), name: "New target" }));
+      if (kind === "account") setAccount(value => value + "-new");
+    },
+  };
+  return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
+    target={destination} sources={sources} initialRequested={initialRequested} maxSources={15}
+    actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
+    onConfirm={(orders, allowedShipTypes) => submissions.push(structuredClone({ orders, allowedShipTypes }))} />;
+}
+document.body.style.background = "#05070d";
+render(<Fixture />, document.getElementById("app")!);
