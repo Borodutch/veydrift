@@ -10,7 +10,7 @@ import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
-import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipKey } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
   isStartedBuildingQueueSynced,
@@ -2220,7 +2220,7 @@ export function batchSupplySourceForPlanet(
  * safe to call from a wallet preflight.
  */
 export function replanBatchSupplyForConfirmation({
-  allowedShipTypes,
+  shipTypesBySource,
   maxOrders,
   orders,
   sources,
@@ -2230,7 +2230,7 @@ export function replanBatchSupplyForConfirmation({
   orders: readonly BatchSupplyOrder[];
   sources: readonly BatchSupplySource[];
   target: Pick<ManagedPlanetResponse, "galaxy" | "position" | "system">;
-  allowedShipTypes: readonly SupplyShipKey[];
+  shipTypesBySource: SupplyShipTypesBySource;
 }): BatchSupplyPlan {
   const selectedPlanetIds = new Set(orders.map((order) => order.originPlanetId));
   const sourceCargoOverrides = Object.fromEntries(orders.map((order) => [order.originPlanetId, order.cargo]));
@@ -2250,7 +2250,7 @@ export function replanBatchSupplyForConfirmation({
     },
     requested,
     selectedPlanetIds,
-    allowedShipTypes,
+    shipTypesBySource,
     sourceCargoOverrides,
     sources,
     maxOrders,
@@ -4241,7 +4241,7 @@ export function PlayableMvpApp({
   );
 
   const handleConfirmBatchSupply = useCallback(
-    (orders: BatchSupplyOrder[], allowedShipTypes: readonly SupplyShipKey[]) => {
+    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource) => {
       const target = batchSupplyTarget;
       if (!provider || !signerAccount || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
@@ -4283,7 +4283,7 @@ export function PlayableMvpApp({
                   if (!snapshot.sources.some(source => source.planetId === order.originPlanetId)) throw new Error(`Supply source ${order.originLabel} is no longer available.`);
                 }
                 const refreshedPlan = replanBatchSupplyForConfirmation({
-                  allowedShipTypes,
+                  shipTypesBySource,
                   maxOrders: snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0,
                   orders,
                   sources: batchSupplySourcesFromSnapshot(snapshot, target),

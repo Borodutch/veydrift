@@ -1,7 +1,7 @@
 import { playerNotice } from "../playerNotice";
 import { Check, PackagePlus, X } from "lucide-preact";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   fleetMissionDistance,
   fleetMissionTravelSeconds,
@@ -12,6 +12,7 @@ import {
   defaultSupplyShipTypes,
   hasUsableSupplyCargoFleet,
   type SupplyShipKey,
+  type SupplyShipTypesBySource,
   emptySupplyResources,
   normalizeSupplyResources,
   type BatchSupplyOrder,
@@ -36,15 +37,6 @@ export function batchSupplyMissionLimitError(missionCount: number): string | und
   return missionCount > MAX_TRANSPORT_BATCH_MISSIONS
     ? `A Supply batch can launch at most ${MAX_TRANSPORT_BATCH_MISSIONS} missions. Reduce the plan before launching.`
     : undefined;
-}
-
-export function batchSupplyFleetPresentation(
-  source: Pick<BatchSupplySource, "ships">,
-  order: Pick<BatchSupplyOrder, "ships"> | undefined,
-): { label: "Available cargo fleet" | "Planned fleet"; ships: Partial<MissionShips> } {
-  return order
-    ? { label: "Planned fleet", ships: order.ships }
-    : { label: "Available cargo fleet", ships: source.ships };
 }
 
 export function batchSupplySourceLimitReason({
@@ -82,7 +74,7 @@ export function BatchSupplyModal({
   initialRequested?: Partial<SupplyResources> | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
-  onConfirm: (orders: BatchSupplyOrder[], allowedShipTypes: readonly SupplyShipKey[]) => void;
+  onConfirm: (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource) => void;
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
@@ -90,22 +82,23 @@ export function BatchSupplyModal({
 }) {
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
-  const [allowedShipTypes, setAllowedShipTypes] = useState<readonly SupplyShipKey[]>(defaultSupplyShipTypes);
+  const [shipTypesBySource, setShipTypesBySource] = useState<SupplyShipTypesBySource>({});
+  const sourcesInitialized = useRef(false);
   const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
   useEffect(() => {
     setRequested(supplyResourceInputValues(initialRequested));
     setSelectedSourceIds(new Set());
     setSourceCargoOverrides({});
-    setAllowedShipTypes(defaultSupplyShipTypes);
+    setShipTypesBySource({});
+    sourcesInitialized.current = false;
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId]);
 
   useEffect(() => {
-    if (sources.length === 0) return;
-    setSelectedSourceIds((current) => current.size > 0
-      ? current
-      : new Set(sources.filter((source) => !source.unavailableReason).slice(0, maxSources).map((source) => source.planetId)));
-  }, [maxSources, sources]);
+    if (sourcesInitialized.current || loading || sources.length === 0 || maxSources <= 0) return;
+    sourcesInitialized.current = true;
+    setSelectedSourceIds(new Set(sources.filter((source) => !source.unavailableReason).slice(0, maxSources).map((source) => source.planetId)));
+  }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId, loading, maxSources, sources]);
 
   const selected = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds]);
   const requestedNumbers = useMemo(() => ({
@@ -118,10 +111,10 @@ export function BatchSupplyModal({
     requested: requestedNumbers,
     selectedPlanetIds: selected,
     sourceCargoOverrides,
-    allowedShipTypes,
+    shipTypesBySource,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sourceCargoOverrides, allowedShipTypes, sources, maxSources, target.galaxy, target.position, target.system]);
+  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -146,7 +139,7 @@ export function BatchSupplyModal({
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
       selectedPlanetIds: selected,
-      allowedShipTypes,
+      shipTypesBySource,
       sources,
       maxOrders: maxSources,
     }).delivered[resource];
@@ -219,21 +212,6 @@ export function BatchSupplyModal({
           ))}
         </section>
 
-        <fieldset className="min-w-0" disabled={actionPending || transactionPending}>
-          <legend className="mb-1 text-xs font-semibold text-slate-300">Ship types for all sources</legend>
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-            {supplyCargoShips.map(({ key, label }) => {
-              const included = allowedShipTypes.includes(key);
-              return (
-                <label key={key} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded border px-2 text-xs has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50 ${included ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400"}`}>
-                  <input type="checkbox" checked={included} onChange={() => setAllowedShipTypes((current) => current.includes(key) ? current.filter((type) => type !== key) : [...current, key])} />
-                  {label}
-                </label>
-              );
-            })}
-          </div>
-        </fieldset>
-
         <section className="grid gap-2" aria-label="Source planets">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-slate-100">Source planets</h3>
@@ -261,13 +239,13 @@ export function BatchSupplyModal({
                 unavailableReason: source.unavailableReason,
               });
               const selectionLimitReached = sourceLimitReason !== undefined;
+              const allowedShipTypes = shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes;
               const eligibleShips = allowedSupplyShips(source.ships, allowedShipTypes);
               const typeUnavailableReason = !hasUsableSupplyCargoFleet(eligibleShips)
                 ? "No ships of the selected types. Enable another ship type to use this source."
                 : undefined;
               const disabled = Boolean(source.unavailableReason) || (!checked && Boolean(typeUnavailableReason)) || selectionLimitReached;
               const order = orderByOrigin.get(source.planetId);
-              const fleetPresentation = batchSupplyFleetPresentation({ ships: eligibleShips }, order);
               const requestedSourceCargo = sourceCargoOverrides[source.planetId];
               const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
               const hasManualCargo = sourceCargoOverrides[source.planetId] !== undefined;
@@ -310,9 +288,32 @@ export function BatchSupplyModal({
                     ) : null}
                     {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Adjusted to available stock, cargo capacity, and fuel.</span> : null}
                     <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{fleetPresentation.label}</span>
-                      <SupplyFleetIcons ships={fleetPresentation.ships} />
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Available cargo fleet</span>
+                      <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Available cargo fleet at ${source.label}`}>
+                        {supplyCargoShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key, label }) => {
+                          const included = allowedShipTypes.includes(key);
+                          return (
+                            <button key={key} type="button" aria-pressed={included}
+                              aria-label={label + " at " + source.label}
+                              disabled={actionPending || transactionPending || loading || Boolean(source.unavailableReason)}
+                              className={"inline-flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50 " + (included ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400")}
+                              onClick={() => setShipTypesBySource((current) => {
+                                const types = current[source.planetId] ?? defaultSupplyShipTypes;
+                                return { ...current, [source.planetId]: types.includes(key) ? types.filter((type) => type !== key) : [...types, key] };
+                              })}>
+                              <img alt="" className="h-5 w-5 rounded object-contain" loading="lazy" src={shipAssetByKey[key]} />
+                              <span>{label} ×{format(source.ships[key] ?? 0)}</span>
+                              <span className="text-[10px] font-semibold">{included ? "On" : "Off"}</span>
+                            </button>
+                          );
+                        })}
+                        {!hasUsableSupplyCargoFleet(source.ships) ? <span className="text-xs text-slate-500">No cargo ships</span> : null}
+                      </span>
                     </span>
+                    {order ? <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Planned fleet</span>
+                      <SupplyFleetIcons ships={order.ships} />
+                    </span> : null}
                     {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
                     {typeUnavailableReason ? <span className="block text-xs text-amber-200">{typeUnavailableReason}</span> : null}
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
@@ -338,7 +339,7 @@ export function BatchSupplyModal({
               <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
               {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
             </div>
-            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, [...allowedShipTypes])} type="button">
+            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource)} type="button">
               <Check aria-hidden="true" className="shrink-0" size={16} />
               <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}</span>
             </button>
