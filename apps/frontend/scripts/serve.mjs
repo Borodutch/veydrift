@@ -91,8 +91,10 @@ const contentTypes = {
   ".json": "application/json; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
+  ".mp4": "video/mp4",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".vtt": "text/vtt; charset=utf-8",
   ".webp": "image/webp",
 };
 
@@ -140,6 +142,27 @@ function responseFor(file, pathname) {
   const headers = responseHeadersFor(pathname);
 
   return new Response(file, { headers });
+}
+
+// Video needs byte ranges: Safari/iOS will not play a <video> without 206 responses.
+export function rangeResponseFor(file, pathname, rangeHeader) {
+  const headers = { ...responseHeadersFor(pathname), "accept-ranges": "bytes" };
+  const size = file.size;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader?.trim() ?? "");
+  if (!match || (match[1] === "" && match[2] === "")) {
+    return new Response(file, { headers: { ...headers, "content-length": String(size) } });
+  }
+
+  const start = match[1] === "" ? Math.max(0, size - Number(match[2])) : Number(match[1]);
+  const end = match[1] === "" || match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
+  if (start >= size || start > end) {
+    return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${size}` } });
+  }
+
+  return new Response(file.slice(start, end + 1), {
+    status: 206,
+    headers: { ...headers, "content-length": String(end - start + 1), "content-range": `bytes ${start}-${end}/${size}` },
+  });
 }
 
 export function clearPlanetAnimationCache() {
@@ -1174,7 +1197,7 @@ export async function frontendResponse(request) {
   const file = Bun.file(new URL(`.${route}`, distRoot));
 
   if (await file.exists()) {
-    return responseFor(file, route);
+    return route.endsWith(".mp4") ? rangeResponseFor(file, route, request.headers.get("range")) : responseFor(file, route);
   }
 
   if (
