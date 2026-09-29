@@ -14121,6 +14121,29 @@ export class SettlementIndexer {
       if (storageOrder.unavailableReason) {
         return { defenders, unavailableReason: storageOrder.unavailableReason };
       }
+      // Hold ship events contain launch counts, not the losses applied by earlier combat rounds.
+      // Even a ready report may only expose aggregate losses, so do not infer surviving ships from
+      // it. Include pending/failed reports and in-progress rounds, before materialization finishes.
+      const previousBattles = (this.db.query(
+        `SELECT missions.* FROM contract_fleet_missions missions
+         WHERE missions.target_planet_id = ? AND missions.mission_type_id = 3
+           AND missions.mission_id != ?
+           AND CAST(missions.arrival_at AS INTEGER) BETWEEN ? AND ?
+           AND EXISTS (SELECT 1 FROM indexed_battle_report_read_models reports
+                       WHERE reports.mission_id = missions.mission_id)`
+      ).all(attack.targetPlanetId, attack.missionId,
+        Math.min(...qualifiedDefenseHolds.map((hold) => Number(hold.arrivalAt))),
+        Math.max(...qualifiedDefenseHolds.map((hold) => Number(this.defenseHoldWindowEnd(hold))))
+      ) as ContractFleetMissionRow[])
+        .map((row) => this.canonicalFleetMissionSummary(row));
+      const affectedHold = qualifiedDefenseHolds.find((defender) => previousBattles.some((battle) =>
+        (battle.targetIsMoon === true) === (defender.targetIsMoon === true)
+        && this.isBattleTimeDefenseHoldForPlanet(defender, battle.targetPlanetId, Number(battle.arrivalAt))
+      ));
+      if (affectedHold) return {
+        defenders,
+        unavailableReason: `DefenseHold #${affectedHold.missionId} may have losses from earlier combat; its current surviving ships are unverified.`
+      };
       const qualifiedById = new Map(qualifiedDefenseHolds.map((defender) => [defender.missionId, defender]));
       const orderedQualified = storageOrder.missionIds
         .map((missionId) => qualifiedById.get(missionId))

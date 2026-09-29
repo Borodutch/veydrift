@@ -9220,6 +9220,70 @@ describe("SettlementIndexer", () => {
     );
   });
 
+  test.each([4n, 10n])("mission battle forecasts never resurrect hold ships after %s losses in earlier combat", (lost) => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xholdloss" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, type: bigint, at: bigint, moon = false) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(type)],
+        abiWords(9n, 7n, at, 4_000_003_000n, 0n));
+      emit([fleetMissionShipsTopic, topic(id)], abiWords(0n, 10n, ...Array(14).fill(0n)));
+      if (moon) emit([fleetMissionBodiesTopic, topic(id)], abiWords(0n, 1n));
+    };
+    const resolve = (id: bigint) => {
+      emit([attackBattleResolvedTopic, topic(id), addressTopic(player), topic(7n)], abiWords(1n, 1n, 12345n, 0n, 0n, 0n));
+      emit([combatLossesTopic, topic(id)], abiWords(0n, 0n, 0n, lost * 3_000n, lost * 1_000n, 0n));
+    };
+    launch(1n, 9n, 3_999_999_000n);
+    emit([defenseHoldStationedTopic, topic(1n), addressTopic(player), topic(7n)],
+      abiWords(9n, 3_999_999_000n, 4_000_002_000n, 4_000_003_000n));
+    launch(3n, 3n, 4_000_000_000n);
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("3")!);
+    const intact = () => {
+      expect(forecast()?.unavailableReason).toBeUndefined();
+      expect(forecast()?.stationedDefenders[0]?.ships).toMatchObject({ lightFighter: "10" });
+    };
+    intact();
+    // Battles before arrival, on the other body, or recalled before combat cannot have hit this hold.
+    launch(4n, 3n, 3_999_998_000n); resolve(4n);
+    launch(5n, 3n, 3_999_999_500n, true); resolve(5n);
+    launch(6n, 3n, 3_999_999_500n);
+    emit([fleetMissionRecalledTopic, topic(6n), addressTopic(player)], abiWords(4_000_001_000n, 0n));
+    intact();
+    launch(2n, 3n, 3_999_999_500n);
+    // Launch alone proves no losses. First combat chunk must invalidate the preview immediately,
+    // not only after terminal settlement or a report worker has caught up.
+    intact();
+    emit([combatRoundResolvedTopic, topic(2n), topic(1n)], abiWords(10n, 10n - lost, 0n, 0n, 0n, 0n));
+    const uncertain = () => {
+      expect(forecast()?.unavailableReason).toContain("DefenseHold #1 may have losses from earlier combat");
+      expect(forecast()?.stationedDefenders).toEqual([]);
+      // Canonical launch events have not changed: substituting these counts would resurrect losses.
+      expect(indexer.fleetMission("1")?.ships).toMatchObject({ lightFighter: "10" });
+    };
+    uncertain();
+    resolve(2n);
+    uncertain();
+    expect(indexer.materializeBattleReportReadModelsForWorker(["2"], "ingest")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("2").status).toBe("ready");
+    uncertain();
+    database.query("UPDATE indexed_battle_report_read_models SET status = 'failed', report_json = NULL WHERE mission_id = '2'").run();
+    uncertain();
+    // Recalling the hold removes its uncertainty; it must not remain a phantom defender.
+    emit([fleetMissionRecalledTopic, topic(1n), addressTopic(player)], abiWords(4_000_001_000n, 0n));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    database.close();
+  });
+
   test("mission battle forecasts qualify returns, deployments, holds and bodies without double counting", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
