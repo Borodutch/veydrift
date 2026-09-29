@@ -3652,6 +3652,19 @@ export async function sendFinalizeRiftExtractionTransaction(provider: Eip1193Pro
   });
 }
 
+export async function sendFinishDefenseProductionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId]),
+  });
+}
+
 export async function sendStartDefenseProductionTransaction(
   provider: Eip1193Provider,
   account: string,
