@@ -535,6 +535,8 @@ contract VeydriftCombatReferenceParityTest is Test {
         (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
             _fleetMission(missionId);
         if (status == VeydriftGameStorage.FleetMissionStatus.Returning) {
+            // Move the simulated block clock only forward to the scheduled return deadline.
+            // forge-lint: disable-next-line(block-timestamp)
             if (block.timestamp < returnAt) vm.warp(returnAt);
             // The fully indexed fixture has at most one scan operation per mission.
             uint256 maximumCalls = game.nextFleetId() - 1;

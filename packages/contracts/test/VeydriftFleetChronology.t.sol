@@ -431,6 +431,8 @@ contract VeydriftFleetChronologyTest is Test {
                 VeydriftGameStorage.FleetMissionStatus.Outbound,
                 2,
                 1,
+                // id is bounded to 1..300, so this fixture timestamp is at most 2300.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 uint64(2000 + id),
                 4000
             );
@@ -619,6 +621,8 @@ contract VeydriftFleetChronologyTest is Test {
                 VeydriftGameStorage.FleetMissionStatus.Outbound,
                 2,
                 1,
+                // id is bounded to 1..3, so this fixture timestamp is at most 703.
+                // forge-lint: disable-next-line(unsafe-typecast)
                 uint64(700 + id),
                 1000
             );

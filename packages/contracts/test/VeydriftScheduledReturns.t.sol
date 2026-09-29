@@ -99,6 +99,9 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         vm.warp(firstArrival);
         _fulfillAttackBattleRandomness(id, 42);
         game.resolveFleetMission(id);
+        // Fixture IMPACT_AT is 1,790,592,549; callers use only -4, 0 or 4 seconds.
+        // Both signed and unsigned 64-bit conversions preserve that positive timestamp.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _setTimes(id, firstArrival, uint64(int64(IMPACT_AT) + offset));
 
         _setNextFleetId(ATTACK_ID);
@@ -194,6 +197,8 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         uint256 field;
         for (uint8 i; i <= uint8(Ship.Pathfinder); ++i) {
             if (Ship(i) == Ship.SolarSatellite) continue;
+            // field counts the fixed mobile ship enum (at most 14), safely below uint32.max.
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint32 quantity = uint32(++field);
             _setShipCount(home, Ship(i), quantity);
             assembly ("memory-safe") { mstore(add(ships, mul(sub(field, 1), 32)), quantity) }
