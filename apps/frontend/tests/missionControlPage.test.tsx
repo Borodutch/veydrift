@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import capturedGroup from "./fixtures/resolvedGroupMissions.json";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
 import { renderMissionControlPage as MissionControlPage, StationedDefenseSection, formatMissionTime, isFleetRecallable, manualMissionResolutionKind, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
@@ -6,6 +7,48 @@ import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("MissionControlPage", () => {
+  test("preserves four resolved participant identities and labels one shared actual battle", () => {
+    const missions = capturedGroup.missions as FleetMissionSummary[];
+    const report = capturedGroup.report as BattleReport;
+    for (const wallet of [missions[0]!.targetPlanet!.owner!, missions[0]!.owner]) {
+      const page = missionControlPage({
+        initialView: { activeTab: "mine", activePage: 0, pastTab: "mine", pastPage: 0 },
+        fleetVisibility: { wallet, homePlanetId: wallet === missions[0]!.owner ? missions[0]!.originPlanetId : "812", incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: missions, battleReports: [] },
+        missionArchive: { wallet, homePlanetId: "812", rows: missions.map(mission => ({ kind: "mission", mission, report })), pagination: { page: 1, pageSize: 25, totalEntries: 4, totalPages: 1, hasPreviousPage: false, hasNextPage: false } },
+      });
+      const text = visibleText(page);
+      expect(text.split("Group losses 3.9M / 0")).toHaveLength(5);
+      expect(text.match(/Battle # 94880 · participants/g)).toHaveLength(4);
+      expect(text.match(/Individual fleet losses are unavailable/g)).toHaveLength(4);
+      expect(visibleAttributeValues(page, "data-mission-status")).toEqual(["Draw", "Draw", "Draw", "Draw"]);
+      expect(visibleAttributeValues(page, "data-past-page-total")).toContain("4");
+      for (const row of missions) {
+        expect(text).toContain("#" + row.missionId);
+        expect(text).toContain(row.originPlanet!.name!);
+      }
+      expect(text).not.toContain("Probable");
+      expect(text).not.toContain("Loot share"); // actual per-participant shares are all zero
+    }
+  });
+
+  test("group report with only leader record labels share as Loot, not combined Group loot", () => {
+    const report = { ...battleReport("94880"), attackGroupId: "94880", loot: { metal: "1200", crystal: "0", deuterium: "0" }, participants: [{ missionId: "94880", address: "0x2222222222222222222222222222222222222222", isMainAttacker: true, ships: { lightFighter: "1" }, loot: { metal: "1200", crystal: "0", deuterium: "0" } }] };
+    const text = visibleText(missionControlPage({ fleetVisibility: { wallet: "0x1111111111111111111111111111111111111111", homePlanetId: "7", incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: [], battleReports: [report] } }));
+    expect(text).toContain("Shared battle #94880");
+    expect(text).toContain("Loot 1,200 M");
+    expect(text).not.toContain("Group loot");
+  });
+
+  test("keeps shared battle identity visible for zero-loss and legacy participant reports", () => {
+    const missions = capturedGroup.missions as FleetMissionSummary[];
+    const report = { ...capturedGroup.report, attackGroupId: null, attackerLosses: { metal: "0", crystal: "0", deuterium: "0" } } as BattleReport;
+    const text = visibleText(missionControlPage({
+      fleetVisibility: { wallet: missions[0]!.owner, homePlanetId: missions[0]!.originPlanetId, incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: missions, battleReports: [report] },
+    }));
+    expect(text).toContain("Shared battle #94880");
+    expect(text).not.toContain("Group losses");
+  });
+
   test("does not flash an empty missile-strike section during background polling", () => {
     const page = missionControlPage({
       missileAttackArchiveLoading: true,
@@ -1354,7 +1397,7 @@ const withAlliance = visibleText(missionControlPage({ ...base, fleetVisibility: 
     const text = visibleText(page);
 
     expect(text).not.toContain("Cargo Empty");
-    expect(text).toContain("Loot 30 M / 5 C");
+    expect(text).toContain("Loot share 30 M / 5 C");
     expect(text).not.toContain("Loot 1,200 M / 300 C");
   });
 
