@@ -186,7 +186,7 @@ export function BatchSupplyModal({
       className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
     >
-      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl auto-rows-max gap-4 overflow-y-auto rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
+      <div className="grid max-h-[calc(100dvh-1.5rem)] w-full min-w-0 max-w-3xl grid-cols-[minmax(0,1fr)] auto-rows-max gap-4 overflow-y-auto [overflow-wrap:anywhere] rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
         <header className="flex items-start justify-between gap-4">
           <h2 className="flex h-5 items-center gap-2 text-lg font-semibold leading-none text-cyan-100">
             <span className="flex size-5 items-center justify-center">
@@ -323,7 +323,7 @@ export function BatchSupplyModal({
           </div>
         </section>
 
-        <div className="grid gap-3">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
           {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
           {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
           {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
@@ -332,15 +332,15 @@ export function BatchSupplyModal({
           {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
           {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
 
-          <footer className="grid gap-3 border-t border-white/10 pt-3">
+          <footer className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 border-t border-white/10 pt-3">
             <div className="text-sm text-slate-300">
               <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
               <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
               {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
             </div>
-            <button className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, [...allowedShipTypes])} type="button">
-              <Check aria-hidden="true" size={16} />
-              {transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}
+            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, [...allowedShipTypes])} type="button">
+              <Check aria-hidden="true" className="shrink-0" size={16} />
+              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}</span>
             </button>
           </footer>
         </div>

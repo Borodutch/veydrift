@@ -105,10 +105,16 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       return evaluate('supplyFixture.submissions.at(-1)');
     }
     async function record(label) {
-      const result = await evaluate('(() => { const panel = document.querySelector("[role=dialog]").firstElementChild; return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, labels: [...document.querySelectorAll("fieldset label")].map(node => node.textContent.trim())}; })()');
+      const result = await evaluate(`(() => {
+        const panel = document.querySelector("[role=dialog]").firstElementChild;
+        const overflowing = [...panel.querySelectorAll("*")].filter(node => node.clientWidth > 0 && node.scrollWidth > node.clientWidth).map(node => ({
+          tag: node.tagName, text: node.textContent.trim().slice(0, 100), className: node.className, width: node.clientWidth, scrollWidth: node.scrollWidth,
+        }));
+        return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("fieldset label")].map(node => node.textContent.trim())};
+      })()`);
       assert.deepEqual(result.labels, types, label + ': all type controls rendered');
       assert.ok(result.pageWidth <= result.viewport, label + ': page horizontal overflow');
-      assert.ok(result.panelScrollWidth <= result.panelWidth, label + ': modal horizontal overflow');
+      assert.ok(result.panelScrollWidth <= result.panelWidth, label + ': modal horizontal overflow: ' + JSON.stringify(result));
       for (let i = 0; i < types.length; i++) assert.ok((await point(checkbox(i))).reachable, label + ': reachable ' + types[i]);
       assert.ok((await point(launch)).reachable, label + ': launch reachable');
       assert.ok((await point(source)).reachable, label + ': source reachable');
@@ -121,6 +127,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     // Short viewports must scroll the whole draft, including newly inserted warnings.
     for (const width of [390, 320]) {
       await load(width, '', 568);
+      // Reserve classic scrollbar space even on overlay-scrollbar platforms.
+      await evaluate(`(() => {
+        const panel = document.querySelector("[role=dialog]").firstElementChild;
+        const scrollbarWidth = panel.offsetWidth - panel.clientWidth - 2;
+        if (scrollbarWidth < 15) panel.style.paddingRight = (parseFloat(getComputedStyle(panel).paddingRight) + 15 - scrollbarWidth) + "px";
+      })()`);
+      await settle();
       await click(source);
       assert.equal(await evaluate(source + '.checked'), false, 'short-screen source deselected');
       const warning = '[...document.querySelectorAll("[role=dialog] p")].find(node => node.textContent.startsWith("Missing:"))';
