@@ -98,6 +98,13 @@ describe("staged battle evidence", () => {
     expect(indexer.battleReport("99")?.missionId).toBe("88");
     indexer.applyLog({ ...second.at(-1)!, removed: true });
     expect(indexer.battleReport("99")?.missionId).toBe("77");
+    const sameBlockFinal = { ...second.at(-1)!, blockNumber: final().blockNumber, logIndex: "0x1" };
+    indexer.applyLog(sameBlockFinal);
+    indexer.materializeBattleReportReadModelsForWorker(["88"], "ingest");
+    indexer.applyLog({ ...final(), removed: true });
+    indexer.applyLog({ ...final(), logIndex: "0x9" });
+    indexer.materializeBattleReportReadModelsForWorker(["77"], "ingest");
+    expect(indexer.battleReport("99")?.missionId).toBe("77");
   });
   test("round sequence is complete and repeated deliveries do not duplicate rounds", () => {
     const logs = [...fixture(), final()];

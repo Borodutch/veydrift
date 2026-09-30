@@ -13754,6 +13754,8 @@ export class SettlementIndexer {
           JOIN indexed_battle_report_read_models reports ON reports.mission_id = defenders.battle_mission_id
           WHERE defenders.defender_mission_id = ? AND reports.status = 'ready' AND reports.report_json IS NOT NULL
         ) ORDER BY CAST(block_number AS INTEGER) DESC,
+          length(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
+          lower(ltrim(substr(json_extract(report_json, '$.logIndex'), 3), '0')) DESC,
           CAST(json_extract(report_json, '$.missionId') AS INTEGER) DESC LIMIT 1
       `).get(missionId, missionId) as Pick<BattleReportReadModelRow, "report_json"> | null;
       if (!row?.report_json) {

@@ -1574,6 +1574,7 @@ describe("Mission Control battle reports", () => {
     }))).join(" ");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Fleet losses");
+    expect(text).not.toContain("Cargo carried");
   });
 
   test("shows staged preparation before the first round completes", () => {

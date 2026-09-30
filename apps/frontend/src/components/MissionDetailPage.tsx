@@ -599,7 +599,7 @@ function MissionBattleReport({
         <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
           <Row label={isGroupedAttack ? "Combat ships (combined)" : "Combat ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "combat")} />} />
           <Row label={isGroupedAttack ? "Civil ships (combined)" : "Civil ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "civil")} />} />
-          {isGroupedAttack ? null : <Row label="Cargo carried" value={formatResources(mission.cargo)} />}
+          {!isGroupedAttack && mission.missionId === report.missionId ? <Row label="Cargo carried" value={formatResources(mission.cargo)} /> : null}
           <Row label={isGroupedAttack ? "Fleet losses (combined)" : "Fleet losses"} value={formatResources(report.attackerLosses)} />
           <Row label={isGroupedAttack ? "Loot grabbed (total)" : "Loot grabbed"} value={formatResources(totalLoot)} />
         </Panel>

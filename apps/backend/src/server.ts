@@ -3852,7 +3852,8 @@ function indexedFleetVisibility(
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
   if (!["Attack", "AcsAttack", "Intercept", "AcsDefend", "DefenseHold"].includes(mission.missionType)) return false;
-  if (mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled") return false;
+  if (!["AcsDefend", "DefenseHold"].includes(mission.missionType)
+    && (mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled")) return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;
 }
@@ -3989,7 +3990,10 @@ function battleReportsByAssociatedMissionId(
     for (const missionId of associatedBattleReportMissionIds(report)) {
       const previous = lookup.get(missionId);
       if (!previous || BigInt(report.blockNumber) > BigInt(previous.blockNumber)
-        || (report.blockNumber === previous.blockNumber && BigInt(report.missionId) > BigInt(previous.missionId))) lookup.set(missionId, report);
+        || (BigInt(report.blockNumber) === BigInt(previous.blockNumber)
+          && (BigInt(report.logIndex || "0") > BigInt(previous.logIndex || "0")
+            || (BigInt(report.logIndex || "0") === BigInt(previous.logIndex || "0")
+              && BigInt(report.missionId) > BigInt(previous.missionId))))) lookup.set(missionId, report);
     }
   }
   return lookup;
