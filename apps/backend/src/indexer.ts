@@ -2919,16 +2919,12 @@ export class SettlementIndexer {
       this.settledPlanetsForOwner(wallet).map((planet) => planet.planetId)
     );
     const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
-    const asOfSeconds = nowSeconds();
     // Build the wallet archive as indexed owner/target branches rather than a single broad OR.
     // The old shape made SQLite merge status indexes across the whole mission table and then sort
     // the result; on production history that occasionally blocked a reader for tens of seconds.
     // `UNION` de-duplicates self-targeted missions before the final primary-key lookup while
     // preserving the exact completed/returned and defender-return visibility rules.
-    const completedOrReturnedSql = `(
-      status_id IN (3, 4)
-      OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
-    )`;
+    const completedOrReturnedSql = "status_id IN (3, 4)";
     const targetPlaceholders = targetIds.map(() => "?").join(",");
     let visibleMissionIdsSql: string;
     const visibleMissionParams: SQLQueryBindings[] = [];
@@ -2947,7 +2943,7 @@ export class SettlementIndexer {
         `
         : "SELECT mission_id FROM contract_fleet_missions WHERE 0 = 1";
       if (targetIds.length > 0) {
-        visibleMissionParams.push(...targetIds, walletLower, asOfSeconds.toString());
+        visibleMissionParams.push(...targetIds, walletLower);
       }
     } else {
       const branches = [
@@ -2958,7 +2954,7 @@ export class SettlementIndexer {
             AND ${completedOrReturnedSql}
         `
       ];
-      visibleMissionParams.push(walletLower, asOfSeconds.toString());
+      visibleMissionParams.push(walletLower);
       if (targetIds.length > 0) {
         branches.push(`
           SELECT mission_id
@@ -2966,7 +2962,7 @@ export class SettlementIndexer {
           WHERE target_planet_id IN (${targetPlaceholders})
             AND ${completedOrReturnedSql}
         `);
-        visibleMissionParams.push(...targetIds, asOfSeconds.toString());
+        visibleMissionParams.push(...targetIds);
         // Mission type ids 3/7/8 are Attack/MissileAttack/AcsAttack. Defender-side return legs
         // are visible immediately; an attacker's own returning-flight archive stays unchanged.
         branches.push(`
@@ -3028,11 +3024,7 @@ export class SettlementIndexer {
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
       const mission = this.withFleetMissionPlanetReferences(summary, stateVersion);
-      const returned = (
-        (mission.status === "Returning" || mission.status === "Recalled")
-        && Number(mission.returnAt) <= asOfSeconds
-      ) ? { ...mission, status: "Returned" as const } : mission;
-      return this.withDefenseHoldCombatOutcome(returned);
+      return this.withDefenseHoldCombatOutcome(mission);
     });
 
     return {
@@ -3155,8 +3147,8 @@ export class SettlementIndexer {
     const invalidTiming = linked.find((entry) => entry.status === "Outbound" && !entry.recallProvenance
       && (!Number.isSafeInteger(Number(entry.arrivalAt)) || Number(entry.arrivalAt) <= 0));
     if (invalidTiming) return unavailable(`Fleet #${invalidTiming.missionId} has unavailable arrival timing.`);
-    // Forecast inventory must follow credited lifecycle state, not the public countdown projection
-    // that promotes overdue Returning/Recalled missions to Returned before settlement is mined.
+    // Forecast inventory follows credited lifecycle state: overdue Returning/Recalled
+    // missions remain uncredited until their settlement event is ingested.
     const trafficRows = this.db.query(
       `SELECT * FROM contract_fleet_missions
        WHERE status_id IN (1, 2, 5) AND (origin_planet_id = ? OR target_planet_id = ?)`
@@ -12842,12 +12834,8 @@ export class SettlementIndexer {
     );
     const fulfilledRandomnessRequestIds = needsGate ? decoded.fulfilledRandomnessRequestIds : null;
     const summaries = missions.map((mission) => {
-      const status = (
-        (mission.status === "Returning" || mission.status === "Recalled")
-        && Number(mission.returnAt) <= asOfSeconds
-      )
-        ? "Returned"
-        : mission.status;
+      // A matured return is still in flight until the ordered on-chain credit settles.
+      const status = mission.status;
       const needsResolution = fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds);
       return withFleetMissionResolutionBlocker({
         ...mission,
@@ -13069,12 +13057,7 @@ export class SettlementIndexer {
   ): FleetMissionSummary[] {
     return baseMissions
       .map((mission) => {
-        const status = (
-          (mission.status === "Returning" || mission.status === "Recalled")
-          && Number(mission.returnAt) <= asOfSeconds
-        )
-          ? "Returned"
-          : mission.status;
+        const status = mission.status;
         const resolvedMission = {
           ...mission,
           status,
@@ -13127,7 +13110,6 @@ export class SettlementIndexer {
     this.currentMissionReadModelDbVersion();
     const stateVersion = this.indexedStateCacheVersion();
     const walletLower = wallet.toLowerCase();
-    const asOfSeconds = nowSeconds();
     const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
     // Match fleetMissionArchivePage: preload only defender-side offensive return legs as standby rows.
     const returningDefenderAttackSql = targetIds.length > 0
@@ -13138,7 +13120,7 @@ export class SettlementIndexer {
         AND target_planet_id IN (${targetIds.map(() => "?").join(",")})
       )`
       : "";
-    const params: SQLQueryBindings[] = [asOfSeconds.toString()];
+    const params: SQLQueryBindings[] = [];
     if (targetIds.length > 0) params.push(walletLower, ...targetIds);
     params.push(walletLower, ...targetIds);
     const targetSql = targetIds.length > 0
@@ -13149,7 +13131,6 @@ export class SettlementIndexer {
       FROM contract_fleet_missions
       WHERE (
           status_id IN (3, 4)
-          OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
           ${returningDefenderAttackSql}
         )
         AND (owner = ?${targetSql})
@@ -13158,12 +13139,6 @@ export class SettlementIndexer {
 
     return this.canonicalFleetMissionSummaries(rows)
       .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
-      .map((mission) => (
-        (mission.status === "Returning" || mission.status === "Recalled")
-          && Number(mission.returnAt) <= asOfSeconds
-      )
-        ? { ...mission, status: "Returned" }
-        : mission)
       .map((mission) => this.withDefenseHoldCombatOutcome(mission))
       .sort(compareFleetMissionsNewestFirst);
   }
@@ -13689,12 +13664,7 @@ export class SettlementIndexer {
   private fleetMissionSummaryAsOfNow(mission: FleetMissionSummary): FleetMissionSummary {
     const asOfSeconds = nowSeconds();
     const withPlanetReferences = this.withFleetMissionPlanetReferences(mission);
-    const status = (
-      (withPlanetReferences.status === "Returning" || withPlanetReferences.status === "Recalled")
-      && Number(withPlanetReferences.returnAt) <= asOfSeconds
-    )
-      ? "Returned"
-      : withPlanetReferences.status;
+    const status = withPlanetReferences.status;
     const needsGate = this.randomnessEngineConfigured
       && missionBattleRandomnessRequestId(withPlanetReferences) !== null
       && status === "Outbound"

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PublicClient, WalletClient } from "viem";
+import { createPublicClient, custom, encodeFunctionData, parseAbi, type PublicClient, type WalletClient } from "viem";
 import type { BackendConfig } from "./config";
+import { VeydriftGameReader } from "./evm";
 import {
   MissionResolutionService,
   ViemMissionResolutionChainClient,
@@ -327,6 +328,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() { return "0xresolve"; },
@@ -357,6 +359,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -381,6 +384,7 @@ describe("MissionResolutionService", () => {
     const broadcasts: string[] = [];
     let pendingNonce = 7;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async getTransactionReceipt() { return { status: "success" }; },
@@ -396,6 +400,8 @@ describe("MissionResolutionService", () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
+        async getCanonicalFleetMission() { return { status: canonicalStatus === "returned" ? "Returned" : "Returning" } as never; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -469,6 +475,7 @@ describe("MissionResolutionService", () => {
         })
       },
       chainClient: {
+        async isMissionLegComplete() { return terminal; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -490,7 +497,7 @@ describe("MissionResolutionService", () => {
       failuresByLeg: { arrival: 0 },
       dueArrivals: { count: 0 },
       lastResolvedMissionId: "23007",
-      resolvedCount: 2
+      resolvedCount: 1
     });
   });
 
@@ -508,6 +515,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission(missionId) {
@@ -672,6 +680,7 @@ describe("MissionResolutionService", () => {
         })
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -733,12 +742,217 @@ describe("MissionResolutionService", () => {
 });
 
 describe("ViemMissionResolutionChainClient", () => {
+  for (const leg of ["arrival", "return"] as const) {
+    for (const mode of ["private-key", "unlocked"] as const) {
+      test(`${leg} ${mode} simulates exact latest entrypoint before submit/replacement and fails closed`, async () => {
+        const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+        const from = mode === "private-key" ? account.address : config.missionResolverAddress!;
+        const functionName = leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
+        const data = encodeFunctionData({
+          abi: parseAbi(["function resolveFleetMission(uint256)", "function completeFleetMissionReturn(uint256)"]),
+          functionName, args: [77n]
+        });
+        const firstHash = `0x${"a".repeat(64)}`;
+        const replacementHash = `0x${"b".repeat(64)}`;
+        let blocked = true;
+        let orderingReady = false;
+        let settled = false;
+        let latestNonce = 7;
+        let pendingNonce = 7;
+        const simulations: unknown[][] = [];
+        const writes: number[] = [];
+        const events: string[] = [];
+        // A real Viem call action proves account -> RPC from and explicit latest serialization,
+        // without depending on a reader's optional/custom transport or any signing action.
+        const rpcClient = createPublicClient({ transport: custom({
+          async request({ method, params }) {
+            expect(method).toBe("eth_call");
+            events.push("simulate");
+            simulations.push(params as unknown[]);
+            if (blocked) throw new Error("execution reverted: earlier attack randomness unavailable");
+            return "0x";
+          }
+        }, { retryCount: 0 }) });
+        const publicClient = {
+          call: rpcClient.call,
+          async getStorageAt() { return "0x00"; },
+          async getTransactionCount({ blockTag }: { blockTag: string }) {
+            return blockTag === "latest" ? latestNonce : pendingNonce;
+          },
+          async getTransaction() { return { maxFeePerGas: 80n, maxPriorityFeePerGas: 8n }; },
+          async getBlock() { return { baseFeePerGas: 90n }; },
+          async estimateFeesPerGas() { return { maxFeePerGas: 90n, maxPriorityFeePerGas: 12n }; },
+          async getTransactionReceipt() { return { status: "success" }; },
+          async waitForTransactionReceipt({ hash }: { hash: string }) {
+            if (hash === firstHash) throw new Error("receipt RPC timed out");
+            latestNonce = pendingNonce;
+            return { status: "success" };
+          }
+        };
+        const broadcast = (nonce: number) => {
+          events.push("broadcast");
+          writes.push(nonce);
+          pendingNonce = nonce + 1;
+          return writes.length === 1 ? firstHash : replacementHash;
+        };
+        const walletClient = { async writeContract(input: { nonce: number }) { return broadcast(input.nonce); } };
+        const reader = {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async isFleetChronologyOrderingReady() { events.push("ordering"); return orderingReady; },
+          async getCanonicalFleetMission() {
+            return { status: settled ? "Returned" : leg === "arrival" ? "Outbound" : "Returning" } as never;
+          }
+        };
+        const coordinator = new ResolverTransactionCoordinator(":memory:");
+        const makeClient = () => new ViemMissionResolutionChainClient(
+          reader, config.gameContractAddress!, mode === "private-key" ? account : from,
+          publicClient as unknown as PublicClient, walletClient as unknown as WalletClient,
+          { id: config.chainId } as never, config.rpcUrl, coordinator
+        );
+        // Recreate the client on each retry to exercise durable attempt reuse.
+        const submit = () => makeClient()[functionName]("77");
+        const previousFetch = globalThis.fetch;
+        if (mode === "unlocked") globalThis.fetch = (async (_input, init) => {
+          const payload = JSON.parse(String(init?.body));
+          expect(payload.method).toBe("eth_sendTransaction");
+          expect(payload.params[0]).toMatchObject({ from, to: config.gameContractAddress, data });
+          return new Response(JSON.stringify({ result: broadcast(Number(BigInt(payload.params[0].nonce))) }));
+        }) as typeof fetch;
+        try {
+          await expect(submit()).rejects.toThrow("ordering support unavailable");
+          expect(simulations).toHaveLength(0);
+          orderingReady = true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([]);
+          expect([latestNonce, pendingNonce]).toEqual([7, 7]);
+          const call = publicClient.call;
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).rejects.toThrow("receipt RPC timed out");
+          expect(writes).toEqual([7]);
+          blocked = true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([7]); // no replacement broadcast or extra nonce
+          expect([latestNonce, pendingNonce]).toEqual([7, 8]);
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([7]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(false);
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]); // empty simulation/receipt only progressed a scan
+          settled = true;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
+          expect(simulations).toHaveLength(6);
+          for (const params of simulations) expect(params).toEqual([
+            { from, to: config.gameContractAddress, data }, "latest"
+          ]);
+          for (let i = 0; i < events.length; i++) {
+            if (events[i] === "simulate") expect(events[i - 1]).toBe("ordering");
+            if (events[i] === "broadcast") expect(events[i - 1]).toBe("simulate");
+          }
+        } finally { globalThis.fetch = previousFetch; }
+      });
+    }
+  }
+  for (const leg of ["arrival", "return"] as const) {
+    test(`${leg} canonical completion rejects missing/unknown status and retains active legs`, async () => {
+      let status: string | null = null;
+      const client = new ViemMissionResolutionChainClient({
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async getCanonicalFleetMission() { return status === null ? null : { status } as never; }
+      }, config.gameContractAddress!, config.missionResolverAddress!);
+      await expect(client.isMissionLegComplete("42", leg)).rejects.toThrow("canonical mission status unavailable");
+      for (status of ["Outbound", "Unknown:255", "None"]) expect(await client.isMissionLegComplete("42", leg)).toBe(false);
+      for (status of ["Returning", "Recalled"]) expect(await client.isMissionLegComplete("42", leg)).toBe(leg === "arrival");
+      for (status of ["Returned", "Resolved"]) expect(await client.isMissionLegComplete("42", leg)).toBe(true);
+    });
+
+    test(`${leg} backend service does not report bounded progress or unavailable state as settlement`, async () => {
+      const client = fakeClient({ calls: [], resolvable: ["1"], returnable: ["2"] });
+      client.isMissionLegComplete = async () => false;
+      const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
+      await service.tick();
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0, dueArrivals: { count: 1 }, dueReturns: { count: 1 } });
+      delete client.isMissionLegComplete;
+      await service.tick();
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0, dueArrivals: { count: 1 }, dueReturns: { count: 1 } });
+    });
+  }
+  for (const leg of ["arrival", "return"] as const) {
+    test(`${leg} progresses with false UI eligibility with ordering support, retaining pending until canonical transition`, async () => {
+      const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+      let orderingReady = false;
+      let settled = false;
+      let pendingNonce = 7;
+      const nonces: number[] = [];
+      const reader = new VeydriftGameReader(config, {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          expect((params[0] as { data: string }).data.startsWith("0xce02abe2")).toBe(true);
+          // UI ordering remains false throughout the bounded scan, without any historical backfill.
+          return ("0x" + [0n, 0n, BigInt(orderingReady)].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
+        }
+      });
+      reader.listResolvableFleetMissions = async () => leg === "arrival" ? [arrival("77", "Transport", "950")] : [];
+      reader.listReturnableFleetMissions = async () => leg === "return" ? [returnLeg("77", "Returning", "950")] : [];
+      reader.getCanonicalFleetMission = async () => ({
+        status: settled ? (leg === "arrival" ? "Returning" : "Returned") : (leg === "arrival" ? "Outbound" : "Returning")
+      } as never);
+      const publicClient = {
+        async call() { return { data: "0x" }; },
+        async getTransactionCount() { return pendingNonce; },
+        async getStorageAt() { return "0x00"; },
+        async getTransactionReceipt() { return { status: "success" }; },
+        async waitForTransactionReceipt() { return { status: "success" }; }
+      } as unknown as PublicClient;
+      const walletClient = {
+        async writeContract(input: { nonce: number }) {
+          nonces.push(input.nonce);
+          pendingNonce = input.nonce + 1;
+          return "0x" + input.nonce.toString(16).padStart(64, "0");
+        }
+      } as unknown as WalletClient;
+      const client = new ViemMissionResolutionChainClient(reader, config.gameContractAddress!, account,
+        publicClient, walletClient, { id: 8453 } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"));
+      const submit = () => leg === "arrival" ? client.resolveFleetMission("77") : client.completeFleetMissionReturn("77");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
+      expect(nonces).toEqual([]);
+      orderingReady = true;
+      expect(await reader.canResolveFleetMission(77n, leg)).toBe(false);
+      const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger(), now: () => 1_000_000 });
+      await service.tick();
+      await service.tick();
+      expect(nonces).toEqual([7, 8]);
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0,
+        dueArrivals: { count: leg === "arrival" ? 1 : 0 }, dueReturns: { count: leg === "return" ? 1 : 0 } });
+      settled = true;
+      await service.tick();
+      expect(nonces).toEqual([7, 8]); // canonical transition reuses the receipt; no phantom extra broadcast
+      expect(service.snapshot()).toMatchObject({ resolvedCount: leg === "arrival" ? 1 : 0,
+        returnedCount: leg === "return" ? 1 : 0, dueArrivals: { count: 0 }, dueReturns: { count: 0 } });
+    });
+  }
+
   test("submits successive bounded missile chunks until canonical status leaves Outbound", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     let pendingNonce = 7;
     let canonicalStatus = "Outbound";
     const nonces: number[] = [];
     const reader = {
+      async isFleetChronologyOrderingReady() { return true; },
       async listResolvableFleetMissions() { return []; },
       async listReturnableFleetMissions() { return []; },
       async getCanonicalFleetMission(missionId: bigint) {
@@ -761,6 +975,7 @@ describe("ViemMissionResolutionChainClient", () => {
       }
     };
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async getTransactionReceipt() { return { status: "success" }; },
@@ -799,6 +1014,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let peakBroadcasts = 0;
     let pendingNonce = 7;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -820,6 +1036,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -850,7 +1067,14 @@ describe("ViemMissionResolutionChainClient", () => {
     let latestNonce = 7;
     let pendingNonce = 7;
     const writes: Array<Record<string, unknown>> = [];
+    const reader = new VeydriftGameReader(config, {
+      async request<T>(): Promise<T> {
+        return ("0x" + [0n, 0n, 1n].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
+      }
+    });
+    expect(await reader.canResolveFleetMission(45237n, "arrival")).toBe(false);
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount(input: { blockTag: "latest" | "pending" }) {
         return input.blockTag === "latest" ? latestNonce : pendingNonce;
       },
@@ -875,10 +1099,7 @@ describe("ViemMissionResolutionChainClient", () => {
       }
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
-      {
-        async listResolvableFleetMissions() { return []; },
-        async listReturnableFleetMissions() { return []; }
-      },
+      reader,
       config.gameContractAddress!,
       account,
       publicClient,
@@ -918,12 +1139,14 @@ describe("ViemMissionResolutionChainClient", () => {
 
     try {
       const publicClient = {
+        async call() { return { data: "0x" }; },
         async getTransactionCount() { return 7 + transactions.length; },
         async getStorageAt() { return `0x${"0".repeat(64)}`; },
         async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
       const client = new ViemMissionResolutionChainClient(
         {
+          async isFleetChronologyOrderingReady() { return true; },
           async listResolvableFleetMissions() { return []; },
           async listReturnableFleetMissions() { return []; }
         },
@@ -950,6 +1173,7 @@ describe("ViemMissionResolutionChainClient", () => {
   test("reads the canonical game pause from the fixed proxy storage slot", async () => {
     let requestedSlot: string | undefined;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt(input: { slot: string }) {
         requestedSlot = input.slot;
         return `0x${"1".padStart(64, "0")}`;
@@ -957,6 +1181,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as PublicClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -977,6 +1202,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let nonceReads = 0;
     let broadcasts = 0;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt() { return `0x${"1".padStart(64, "0")}`; },
       async getTransactionCount() { nonceReads += 1; return 7; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -989,6 +1215,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1026,6 +1253,7 @@ function fakeClient(input: {
         targetPlanetId: "86"
       }));
     },
+    async isMissionLegComplete() { return true; },
     async listReturnableFleetMissions() {
       return input.returnable.map((missionId) => ({
         missionId,
@@ -1105,6 +1333,7 @@ describe("moon chance resolution", () => {
     let nonceReads = 0;
     let pendingNonce = 4;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
         ? [16621n, purpose, finalized, 0n]
         : { requester, purposeHash: requestPurpose, createdAt: 1n, fulfilledAt, randomWord: 19n },
@@ -1121,7 +1350,7 @@ describe("moon chance resolution", () => {
       }
     } as unknown as WalletClient;
     const client = () => new ViemMissionResolutionChainClient(
-      { listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      { isFleetChronologyOrderingReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
       config.gameContractAddress!, account, publicClient, walletClient,
       { id: config.chainId } as never, config.rpcUrl, coordinator, moon, engine
     );

@@ -212,7 +212,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (cutoffAt == type(uint64).max) {
             _settleResources(planetId);
         } else {
-            _settleMoonShipsIfSupported(planetId, cutoffAt);
             _delegateToColonizationModule();
         }
     }
@@ -240,9 +239,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function settleDuePlayerCombatArrivals(address) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        (bool ok, bytes memory reason) = _batchTransportModule.delegatecall(msg.data);
-        if (!ok) assembly ("memory-safe") { revert(add(reason, 32), mload(reason)) }
-        _delegateToPlanetManagementModule();
+        _delegateToChronology();
     }
 
     function startResearch(uint256, Technology) external {
@@ -256,6 +253,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function setMoonSystem(address nextMoonSystem) external onlyOwner {
+        ++_chronologyGeneration;
         _moonSystem = nextMoonSystem;
     }
 
@@ -340,6 +338,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function clearMoonState(uint256) external {
+        ++_chronologyGeneration;
         _delegateToColonizationModule();
     }
 
@@ -486,19 +485,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         FleetMissionType missionType = mission.missionType;
-        // Planet-target attacks also enter the shared snapshot hook; order every hostile attack on
-        // this planet before a later cutoff can advance its Moon's manufactured ship inventory.
-        if (
-            missionType == FleetMissionType.Attack && mission.status == FleetMissionStatus.Outbound
-                // forge-lint: disable-next-line(block-timestamp)
-                && block.timestamp >= mission.arrivalAt
-        ) {
-            (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
-                abi.encodeWithSignature("prepareMoonAttackArrival(uint256)", missionId)
-            );
-            if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-            if (!abi.decode(result, (bool))) return;
-        }
+        if (mission.status == FleetMissionStatus.Outbound && !_prepareChronology(missionId, false)) return;
         if (
             missionType == FleetMissionType.Colonize
                 || ((missionType == FleetMissionType.Transport
@@ -534,9 +521,48 @@ contract VeydriftGame is VeydriftResourceReserves {
         totalRounds = BATTLE_MAX_ROUNDS;
     }
 
-    function completeFleetMissionReturn(uint256) external {
+    function completeFleetMissionReturn(uint256 missionId) external {
+        FleetMissionStatus status = _fleetMissions[missionId].status;
+        if (status != FleetMissionStatus.Returning && status != FleetMissionStatus.Recalled) {
+            revert FleetMissionNotResolved(_fleetMissions[missionId].returnAt);
+        }
+        if (!_prepareChronology(missionId, true)) return;
         _touchPlayer(_actingPlayer());
         _delegateToPlanetManagementModule();
+    }
+
+    function _prepareChronology(uint256 id, bool returning) private returns (bool) {
+        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
+            abi.encodeWithSignature("prepareFleetChronology(uint256,bool)", id, returning)
+        );
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        return abi.decode(result, (bool));
+    }
+
+    function registerFleetChronology(uint256) external {
+        _delegateToChronology();
+    }
+
+    function fleetMissionEligibility(uint256 id) external view returns (bool, uint256, bool) {
+        (bool ok, bytes memory result) =
+            address(this).staticcall(abi.encodeWithSelector(this.readFleetChronology.selector, id));
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        return abi.decode(result, (bool, uint256, bool));
+    }
+
+    function readFleetChronology(uint256 id) external returns (bool, uint256, bool) {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
+            abi.encodeWithSelector(this.fleetMissionEligibility.selector, id)
+        );
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
+    }
+
+    function _delegateToChronology() private {
+        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32)

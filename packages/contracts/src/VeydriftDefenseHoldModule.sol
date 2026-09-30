@@ -32,6 +32,11 @@ interface IVeydriftRiftAttackProtection {
         view;
 }
 
+interface IVeydriftDefenseHoldEventSettlement {
+    function settleProductionUntil(uint256 planetId, uint64 cutoffAt) external;
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+}
+
 interface IVeydriftDefenseHoldArrivalOrder {
     function launchInterplanetaryMissileAttack(
         uint256 missionId,
@@ -164,6 +169,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             holdUntil
         );
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             player,
@@ -307,6 +313,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             );
         }
 
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             player,
@@ -351,6 +358,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         }
 
         _settleDueCombatArrivals(player);
+        // Lazy settlement can expire this hold and even land its return through a later arrival.
+        // Never overwrite that transition with a fresh recall (and credit the fleet twice).
+        if (mission.status != FleetMissionStatus.Outbound) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
 
@@ -366,6 +378,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             ? VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
             : uint256(mission.returnAt)
                 - (holdUntil == 0 ? uint256(mission.arrivalAt) : uint256(holdUntil));
+        _invalidateChronologyReturnBody(mission);
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = (uint256(currentTime) + returnSeconds).toUint64();
 
@@ -403,17 +416,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 holdUntil = _defenseHoldUntil[missionId];
         if (currentTime < holdUntil) revert DefenseHoldStillActive(holdUntil);
 
-        // Planet DefenseHold resolution settles the target through the current timestamp. Do not
-        // let it complete defenses ahead of an earlier missile's historical impact snapshot.
-        if (!mission.targetIsMoon) {
-            if (
-                IVeydriftDefenseHoldArrivalOrder(address(this))
-                        .launchInterplanetaryMissileAttack(
-                            missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
-                        ) == 0
-            ) return;
-        }
-        _settleResources(mission.targetPlanetId);
+        // The chronology preparer settled only this body through holdUntil.
         mission.status = FleetMissionStatus.Returning;
         VeydriftDefenseHoldStorage.endHold(
             _stationedDefenseMissions[mission.targetPlanetId],
@@ -583,21 +586,15 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         pure
         returns (uint32)
     {
-        if (ship == Ship.SmallCargo) return ships.smallCargo;
-        if (ship == Ship.LightFighter) return ships.lightFighter;
-        if (ship == Ship.Recycler) return ships.recycler;
-        if (ship == Ship.ColonyShip) return ships.colonyShip;
-        if (ship == Ship.LargeCargo) return ships.largeCargo;
-        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
-        if (ship == Ship.Cruiser) return ships.cruiser;
-        if (ship == Ship.Battleship) return ships.battleship;
-        if (ship == Ship.Bomber) return ships.bomber;
-        if (ship == Ship.Destroyer) return ships.destroyer;
-        if (ship == Ship.Deathstar) return ships.deathstar;
-        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
-        if (ship == Ship.Reaper) return ships.reaper;
-        if (ship == Ship.Pathfinder) return ships.pathfinder;
-        return 0;
+        // MissionShips follows the mobile Ship order, omitting SolarSatellite and Crawler.
+        // Calldata struct fields are ABI-validated uint32 words. This replaces the identical
+        // 14-way selector to keep the new resolution-index invalidation under EIP-170.
+        if (ship == Ship.SolarSatellite || ship == Ship.Crawler) return 0;
+        uint256 index = uint8(ship);
+        if (ship > Ship.SolarSatellite) --index;
+        uint32 quantity;
+        assembly ("memory-safe") { quantity := calldataload(add(ships, mul(index, 32))) }
+        return quantity;
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {

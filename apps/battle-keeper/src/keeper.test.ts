@@ -92,6 +92,43 @@ const launch = (
   ...(randomnessRequestId ? { randomnessRequestId } : {})
 });
 
+describe("BattleKeeper bounded receipts", () => {
+  for (const [name, missionType] of Object.entries(MissionType)) {
+    for (const leg of ["arrival", "return"] as const) {
+      test(`${name} ${leg} retains progress-only receipts until canonical settlement`, async () => {
+        const active = leg === "arrival" ? FleetMissionStatus.Outbound : FleetMissionStatus.Recalled;
+        const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+          statusBehavior: async (missionId, index) => ({ missionId, missionType,
+            status: index === 0 ? active : FleetMissionStatus.Returned,
+            arrivalAt: 800, returnAt: 900, randomnessRequestId: "0" })
+        });
+        keeper.recordLaunched(launch("123", missionType, 800, 900));
+        if (leg === "return") keeper.recordReturnExposed({ missionId: "123", status: active, returnAt: 900 });
+        await keeper.tick();
+        expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "123", leg })]);
+        await keeper.tick();
+        expect(keeper.snapshot().pendingCount).toBe(0);
+        expect(resolver.calls).toEqual([`123:${leg}`, `123:${leg}`]);
+      });
+
+      for (const unavailable of ["missing", "error", "unknown"] as const) {
+        test(`${name} ${leg} fails closed for ${unavailable} canonical status`, async () => {
+          const resolver: MissionResolver = { keeperAddress: () => "0xkeeper", resolveMission: async () => "0xhash" };
+          if (unavailable !== "missing") resolver.missionStatus = async (missionId) => {
+            if (unavailable === "error") throw new Error("RPC unavailable");
+            return { missionId, missionType, status: 255, arrivalAt: 800, returnAt: 900, randomnessRequestId: "0" };
+          };
+          const keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: silentLogger });
+          keeper.recordLaunched(launch("123", missionType, 800, 900));
+          if (leg === "return") keeper.recordReturnExposed({ missionId: "123", status: FleetMissionStatus.Returning, returnAt: 900 });
+          await keeper.tick();
+          expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "123", leg })]);
+        });
+      }
+    }
+  }
+});
+
 describe("BattleKeeper pending tracking", () => {
   test("queues every outbound mission type into the arrival leg", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
@@ -170,6 +207,47 @@ describe("BattleKeeper pending tracking", () => {
     await keeper.tick();
     expect(keeper.snapshot().pendingCount).toBe(0);
     expect(resolver.calls).toEqual(["70:arrival", "70:arrival"]);
+  });
+
+  test("attack preparation receipts retain arrival until canonical settlement", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      statusBehavior: async (missionId, callIndex) => ({
+        missionId,
+        status: callIndex === 0 ? FleetMissionStatus.Outbound : FleetMissionStatus.Returning,
+        missionType: MissionType.Attack,
+        arrivalAt: 900,
+        returnAt: 1_200,
+        randomnessRequestId: "0"
+      })
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 1_100));
+    await keeper.tick();
+    expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ leg: "arrival", dueAt: 900 })]);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["93790:arrival", "93790:arrival"]);
+    expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ leg: "return", dueAt: 1_200 })]);
+  });
+
+  test("already returned attack does not invent another return leg after a late receipt", async () => {
+    const { keeper } = makeKeeper(async () => "0xhash", {
+      statusBehavior: async (missionId) => ({ missionId, status: FleetMissionStatus.Returned,
+        missionType: MissionType.Attack, arrivalAt: 900, returnAt: 950, randomnessRequestId: "0" })
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 950));
+    await keeper.tick();
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("attack receipt without canonical reader stays pending for authoritative events", async () => {
+    const keeper = new BattleKeeper({
+      keeperAddress: () => "0xkeeper",
+      resolveMission: async () => "0xhash"
+    }, { now: () => 1_000, logger: silentLogger });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 900, 1_100));
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+    keeper.recordArrivalResolved({ missionId: "93790", missionType: MissionType.Attack, returnAt: 1_100 });
+    expect(keeper.snapshot().awaitingReturnCount).toBe(1);
   });
 
   test("status reconciliation reopens a missile whose terminal impact was reorged out", async () => {
@@ -324,6 +402,54 @@ describe("BattleKeeper pending tracking", () => {
 });
 
 describe("BattleKeeper resolution loop", () => {
+  test("late ticks dispatch #93742 return before #93790 impact by scheduled time", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      now: () => 1_790_592_585,
+      maxConcurrency: 1
+    });
+    keeper.recordLaunched(launch("93790", MissionType.Attack, 1_790_592_549));
+    keeper.recordArrivalResolved({
+      missionId: "93742", missionType: MissionType.Attack, returnAt: 1_790_592_545
+    });
+
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["93742:return", "93790:arrival"]);
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("dispatches mixed legs by dueAt, then arrival-first ties and numeric mission id", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { maxConcurrency: 1 });
+    keeper.recordArrivalResolved({ missionId: "2", missionType: MissionType.Attack, returnAt: 900 });
+    keeper.recordLaunched(launch("10", MissionType.Attack, 900));
+    keeper.recordLaunched(launch("3", MissionType.Attack, 900));
+    keeper.recordArrivalResolved({ missionId: "20", missionType: MissionType.Attack, returnAt: 800 });
+    keeper.recordArrivalResolved({ missionId: "1", missionType: MissionType.Attack, returnAt: 950 });
+    keeper.recordLaunched(launch("30", MissionType.Attack, 1_001));
+
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["20:return", "3:arrival", "10:arrival", "2:return", "1:return"]);
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["30"]);
+  });
+
+  test("chronological dispatch retains serial nonce safety and excludes overlapping ticks", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { keeper, resolver } = makeKeeper(async () => { await gate; return "0xhash"; }, {
+      maxConcurrency: 2
+    });
+    keeper.recordLaunched(launch("3", MissionType.Attack, 900));
+    keeper.recordArrivalResolved({ missionId: "2", missionType: MissionType.Attack, returnAt: 800 });
+    keeper.recordLaunched(launch("1", MissionType.Attack, 700));
+
+    const first = keeper.tick();
+    expect(resolver.calls).toEqual(["1:arrival"]);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["1:arrival"]);
+    release();
+    await first;
+    expect(resolver.calls).toEqual(["1:arrival", "2:return", "3:arrival"]);
+  });
+
   test("resolves an arrival whose time has passed", async () => {
     const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
     keeper.recordLaunched(launch("1", MissionType.Attack, 900)); // no return leg recorded
@@ -336,12 +462,14 @@ describe("BattleKeeper resolution loop", () => {
 
   test("a non-combat mission (Transport) resolves its arrival then its return", async () => {
     let now = 1_000;
-    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now });
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Transport, arrivalAt: 900, returnAt: 2000, randomnessRequestId: "0" }) });
     keeper.recordLaunched(launch("3", MissionType.Transport, 900, 2_000));
 
     await keeper.tick(); // arrival is due
     expect(resolver.calls).toEqual(["3:arrival"]);
-    // Our own arrival resolve transitions it to the return leg (using the launch returnAt).
+    // Our own arrival resolve transitions it to the return leg (using the canonical returnAt).
     let snap = keeper.snapshot();
     expect(snap.awaitingReturnCount).toBe(1);
     expect(snap.pendingCount).toBe(1);
@@ -359,7 +487,9 @@ describe("BattleKeeper resolution loop", () => {
 
   test("the authoritative FleetMissionResolved returnAt overrides the launch estimate", async () => {
     let now = 1_000;
-    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now });
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Harvest, arrivalAt: 900, returnAt: 5000, randomnessRequestId: "0" }) });
     keeper.recordLaunched(launch("3", MissionType.Harvest, 900, 5_000));
     await keeper.tick(); // arrival resolves; launch estimate said return at 5_000
     // But the on-chain event reports an updated (earlier) return time.
@@ -441,7 +571,9 @@ describe("BattleKeeper resolution loop", () => {
         }
         return "0xhash";
       },
-      { now: () => now }
+      { now: () => now, statusBehavior: async (missionId, index) => ({ missionId,
+        status: index === 0 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        missionType: MissionType.Transport, arrivalAt: 900, returnAt: 1400, randomnessRequestId: "0" }) }
     );
     keeper.recordLaunched(launch("3", MissionType.Transport, 900, 1_400));
     await keeper.tick(); // arrival resolves -> awaiting return

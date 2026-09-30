@@ -41,6 +41,51 @@ import { normalizeViemLog } from "./server";
 import { SharedResponseCache } from "./sharedResponseCache";
 import { planetArchetypeForTemperature, planetMultipliers, systemSnapshot } from "./universe";
 
+test("VEY-905 public mission endpoints gate arrival and return eligibility on the authoritative simulation", async () => {
+  class EligibilityReader extends MockChainReader {
+    eligible = false;
+    fail = false;
+    checked: Array<[bigint, string]> = [];
+    async canResolveFleetMission(id: bigint, leg: "arrival" | "return") {
+      this.checked.push([id, leg]);
+      if (this.fail) throw new Error("RPC unavailable");
+      return this.eligible;
+    }
+  }
+  const reader = new EligibilityReader();
+  const indexer = new SettlementIndexer(reader, 100n);
+  for (const id of [93742n, 93790n]) {
+    for (const log of activeFleetMissionLogs({ arrivalAt: 1_700_000_000n, missionId: id,
+      missionTypeId: 0n, owner: player, originPlanetId: 7n, targetPlanetId: 9n })) indexer.applyLog(log);
+  }
+  indexer.applyLog({ blockNumber: "0x80", transactionHash: "0xreturnexposed905", logIndex: "0x0",
+    topics: [fleetMissionReturnExposedTopic, topic(93742n), addressTopic(player), topic(2n)],
+    data: abiWords(7n, 9n, 1_700_000_100n, 0n, 0n, 0n) });
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader, indexer,
+    role: "reader", enableResponseCache: true });
+  for (const eligible of [false, true, false]) {
+    reader.eligible = eligible;
+    for (const id of [93742, 93790]) {
+      const response = await handler(new Request("http://localhost/mission/" + id));
+      expect(response.status).toBe(200);
+      const { mission } = await response.json();
+      expect(mission.resolutionEligible).toBe(eligible);
+      expect(mission.needsResolution).toBe(eligible && id === 93790);
+      if (id === 93742) expect(mission.status).toBe("Returning");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+    const response = await handler(new Request("http://localhost/missions"));
+    const { missions } = await response.json();
+    expect(missions).toHaveLength(2);
+    expect(missions.every((mission: FleetMissionSummary) => mission.resolutionEligible === eligible)).toBe(true);
+  }
+  reader.fail = true;
+  const failed = await handler(new Request("http://localhost/mission/93790"));
+  expect((await failed.json()).mission).toMatchObject({ needsResolution: false, resolutionEligible: false });
+  expect(reader.checked).toContainEqual([93742n, "return"]);
+  expect(reader.checked).toContainEqual([93790n, "arrival"]);
+});
+
 test("websocket wakeups preserve removal identity without needing a timestamp lookup", () => {
   const log = {
     address: `0x${"1".repeat(40)}`, blockHash: `0x${"2".repeat(64)}`, blockNumber: 384n,

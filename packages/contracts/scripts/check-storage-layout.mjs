@@ -197,6 +197,22 @@ const reviewedStorageAppend = [
     offset: 0,
     type: "mapping(address => address)",
   },
+  {
+    label: "_attackReturnScanCursor",
+    slot: "77",
+    offset: 0,
+    type: "mapping(uint256 => uint256)",
+  },
+  { label: "_chronologyIndexedThrough", slot: "78", offset: 0, type: "uint256" },
+  { label: "_chronologyGeneration", slot: "79", offset: 0, type: "uint256" },
+  { label: "_chronologyMissionsByBody", slot: "80", offset: 0, type: "mapping(uint256 => uint256[])" },
+  { label: "_chronologyScans", slot: "81", offset: 0, type: "mapping(uint256 => struct ChronologyScan)" },
+  { label: "_chronologyBodyGeneration", slot: "82", offset: 0, type: "mapping(uint256 => uint256)" },
+  { label: "_chronologyMissionsByPlayer", slot: "83", offset: 0, type: "mapping(address => uint256[])" },
+  { label: "_chronologyPlayerCursor", slot: "84", offset: 0, type: "mapping(address => uint256)" },
+  { label: "_chronologyMigrationComplete", slot: "85", offset: 0, type: "bool" },
+  { label: "_chronologyRegistered", slot: "86", offset: 0, type: "mapping(uint256 => bool)" },
+  { label: "_chronologyLegacyCursor", slot: "87", offset: 0, type: "mapping(address => uint256)" },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},
@@ -223,6 +239,13 @@ const arrivalOrderIndexStruct = [
   {label: "ready", slot: "0", offset: 8, type: "bool"},
   {label: "headMissionId", slot: "0", offset: 9, type: "uint184"},
 ];
+const chronologyScanStruct = [
+  {label: "generation", slot: "0", offset: 0, type: "uint256"},
+  {label: "cursor", slot: "1", offset: 0, type: "uint256"},
+  {label: "blocker", slot: "2", offset: 0, type: "uint256"},
+  {label: "blockerAt", slot: "3", offset: 0, type: "uint64"},
+  {label: "blockerKind", slot: "3", offset: 8, type: "uint8"},
+];
 const currentV1Prefix = {
   storage: current.storage.slice(0, expected.storage.length),
   structs: Object.fromEntries(
@@ -236,6 +259,7 @@ const hasReviewedStorageAppend = (
   && stableStringify(current.structs.BattleResolutionProgress) === stableStringify(battleResolutionProgressStruct)
   && stableStringify(current.structs.MissileQueueSettlementProgress) === stableStringify(missileQueueSettlementProgressStruct)
   && stableStringify(current.structs.ArrivalOrderIndex) === stableStringify(arrivalOrderIndexStruct)
+  && stableStringify(current.structs.ChronologyScan) === stableStringify(chronologyScanStruct)
 );
 
 if (currentJson !== expectedJson && !hasReviewedStorageAppend) {

@@ -1,0 +1,5 @@
+# VEY-905 prospective integration interface
+
+Selector unchanged: fleetMissionEligibility(uint256) returns (bool eligible,uint256 blockerMissionId,bool orderingReady). Third word is true immediately for this implementation, for both legacy and new missions; no activation, backfill, historical scan, or migration transaction is required. Strict player controls require eligible && orderingReady plus exact-call simulation. Funded backend/keeper workers require orderingReady, simulate the exact entrypoint, and may submit bounded progress even when eligible is false. Every receipt requires canonical state reconciliation.
+
+New missions register atomically inside every allocation path via a self-only registerFleetChronology selector. No external caller can register historical missions. Registration persists through arrival/return/recall/hold and old/new interactions. Unregistered legacy missions retain direct completion and bounded best-effort legacy lazy settlement; mixed-generation chronology is not guaranteed, as explicitly accepted in #21475. No syncFleetChronology selector exists.

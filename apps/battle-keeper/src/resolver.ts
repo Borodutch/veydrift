@@ -31,6 +31,12 @@ const completeFleetMissionReturnAbi = [
   }
 ] as const satisfies Abi;
 
+const fleetMissionEligibilityAbi = [{
+  type: "function", name: "fleetMissionEligibility", stateMutability: "view",
+  inputs: [{ name: "missionId", type: "uint256" }],
+  outputs: [{ type: "bool" }, { type: "uint256" }, { type: "bool" }]
+}] as const satisfies Abi;
+
 export const resolveFleetMissionSelector = "0xde09e7cf";
 export const completeFleetMissionReturnSelector = "0xc2472852";
 
@@ -64,7 +70,7 @@ export type MissionResolver = {
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
   resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
-  /** Canonical post-receipt state; bounded missile settlement can require several receipts. */
+  /** Canonical post-receipt state; every mission type and both legs may need several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
 };
@@ -164,6 +170,18 @@ export class ViemMissionResolver implements MissionResolver {
     //    committed / not arrived / already resolved; return: not due / wrong status / already
     //    returned) — surface as retryable, don't send a tx.
     try {
+      const proof = await this.transport.request<`0x${string}`>("eth_call", [{
+        to: this.to,
+        data: encodeFunctionData({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", args: [BigInt(missionId)] })
+      }, "latest"]);
+      const [, , orderingReady] = decodeFunctionResult({
+        abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", data: proof
+      });
+      // The first bool is strict player-facing settlement eligibility: it remains false while
+      // body scans need bounded preparation. The third bool confirms ordering support for both
+      // legacy and new missions without backfill. Simulate the exact existing entrypoint so
+      // progress-only calls can run without bypassing its chronology/randomness guards.
+      if (!orderingReady) throw new Error("fleet chronology ordering support unavailable");
       await this.transport.request<string>("eth_call", [{ from, to: this.to, data }, "latest"]);
     } catch (error) {
       throw new MissionNotResolvableError(missionId, error);

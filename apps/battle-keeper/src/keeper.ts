@@ -344,6 +344,8 @@ export class BattleKeeper {
       return;
     }
 
+    if (status.status !== FleetMissionStatus.None && status.status !== FleetMissionStatus.Resolved
+      && status.status !== FleetMissionStatus.Returned) return;
     const wasTracked = this.pending.delete(status.missionId);
     this.clearRetryDiagnostics(status.missionId);
     this.markTerminal(status.missionId);
@@ -452,31 +454,13 @@ export class BattleKeeper {
       this.lastErrorMissionId = null;
       this.lastErrorLeg = null;
       this.clearRetryDiagnostics(missionId, leg);
-      this.logger.info("[keeper] resolved mission leg", { missionId, leg, hash });
-      // Our submit succeeded. The authoritative event (FleetMissionResolved / FleetMissionReturned)
-      // is the backstop, but advance the state machine now so we don't keep re-submitting.
-      if (leg === "arrival") {
-        if (mission.missionType === MissionType.MissileAttack) {
-          // A successful receipt may have completed only one bounded queue/order chunk. Read the
-          // canonical mission after every receipt and retain Outbound missiles for the next tick.
-          // Without a reader, fail closed and let the authoritative event/sweep advance it.
-          const status = await this.resolver.missionStatus?.(missionId);
-          if (!status || status.status === FleetMissionStatus.Outbound) return;
-          this.recordArrivalResolved({
-            missionId,
-            missionType: status.missionType,
-            returnAt: status.returnAt
-          });
-          return;
-        }
-        this.recordArrivalResolved({
-          missionId,
-          missionType: mission.missionType,
-          returnAt: mission.returnAt
-        });
-      } else {
-        this.recordReturned(missionId);
-      }
+      this.logger.info("[keeper] mission receipt confirmed", { missionId, leg, hash });
+      // Every type and both legs can commit bounded progress without settling the leg.
+      // Never infer a transition from the receipt or the launch-time return estimate.
+      const status = await this.resolver.missionStatus?.(missionId);
+      if (!status) throw new Error(`canonical mission status unavailable for ${missionId}`);
+      this.inFlight.delete(missionId);
+      this.reconcileMissionStatus(status);
     } catch (error) {
       this.submitFailureCount += 1;
       this.lastError = error instanceof Error ? error.message : String(error);
@@ -628,11 +612,13 @@ function canonicalLaunchedMission(
 }
 
 function compareDueMissions(a: PendingMission, b: PendingMission): number {
-  if (a.leg !== b.leg) {
-    return a.leg === "arrival" ? -1 : 1;
-  }
+  // Scheduled time wins across legs: a late tick must not put a newer attack ahead of a return.
+  // This is dispatch priority, not a mining-order guarantee; the contract enforces chronology.
   if (a.dueAt !== b.dueAt) {
     return a.dueAt - b.dueAt;
+  }
+  if (a.leg !== b.leg) {
+    return a.leg === "arrival" ? -1 : 1;
   }
   return BigInt(a.missionId) < BigInt(b.missionId) ? -1 : BigInt(a.missionId) > BigInt(b.missionId) ? 1 : 0;
 }
