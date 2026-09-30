@@ -57,13 +57,16 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       return result.result.value;
     }
     const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    let touch = false;
     const types = ['Large Cargo', 'Small Cargo', 'Recycler', 'Colony Ship'];
     const defaults = [true, true, false, true];
     const checkbox = index => 'document.querySelector(' + JSON.stringify('button[aria-label="' + types[index] + ' at Astro"]') + ')';
     const launch = 'document.querySelector("footer button")';
     const source = `document.querySelector('[aria-label="Source planets"] input[type="checkbox"]')`;
     async function load(width, query = '', height = 900) {
-      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 640 });
+      touch = width < 640;
+      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: touch });
+      await send('Emulation.setTouchEmulationEnabled', { enabled: touch });
       await send('Page.navigate', { url: url + '?' + query });
       const deadline = Date.now() + 20_000;
       while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("[role=dialog]"))'))) {
@@ -84,8 +87,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     async function click(expression) {
       const { x, y, reachable } = await point(expression);
       assert.ok(reachable, 'reachable pointer target: ' + expression);
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+      if (touch) {
+        await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } else {
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+      }
       await settle();
     }
     const selected = () => evaluate('[...document.querySelectorAll("[role=group] button")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
@@ -133,19 +141,36 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('[...document.querySelectorAll("span")].filter(node => node.textContent === "Planned fleet").length'), 1, 'one heading per source');
       assert.equal(await evaluate(fleet + '.querySelectorAll("button").length'), 2);
       assert.equal(await evaluate('document.querySelectorAll("[role=dialog] img").length'), 2, 'no duplicate noninteractive fleet icons');
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2 plannedOn');
-      assert.equal(await evaluate(recycler + '.textContent'), 'Recycler ×0 plannedOff');
-      const accessibleDescription = async expression => {
+      assert.equal(await evaluate(large + '.textContent'), '×2 planned');
+      assert.equal(await evaluate(recycler + '.textContent'), '×0 planned');
+      const accessibleButton = async expression => {
         const { result } = await send('Runtime.evaluate', { expression });
         const { nodes } = await send('Accessibility.getPartialAXTree', { objectId: result.objectId });
-        return nodes.find(node => node.role?.value === 'button')?.description?.value;
+        return nodes.find(node => node.role?.value === 'button');
       };
-      assert.equal(await accessibleDescription(large), '×2 planned', 'planned amount is exposed to assistive technology');
+      const largeAX = await accessibleButton(large), recyclerAX = await accessibleButton(recycler);
+      assert.equal(largeAX.name.value, 'Large Cargo at Astro');
+      assert.equal(recyclerAX.name.value, 'Recycler at Astro');
+      assert.equal(largeAX.properties.find(property => property.name === 'pressed').value.value, 'true');
+      assert.equal(recyclerAX.properties.find(property => property.name === 'pressed').value.value, 'false');
+      assert.equal(largeAX.description.value, '×2 planned', 'planned amount is exposed to assistive technology');
+      const chipStyle = expression => evaluate('(() => { const button = ' + expression + '; const chip = button.firstElementChild; const target = button.getBoundingClientRect(), visual = chip.getBoundingClientRect(); return {width: target.width, height: target.height, visualWidth: visual.width, visualHeight: visual.height, background: getComputedStyle(chip).backgroundColor, imageOpacity: getComputedStyle(button.querySelector("img")).opacity}; })()');
+      const on = await chipStyle(large), off = await chipStyle(recycler);
+      for (const style of [on, off]) {
+        assert.ok(style.width >= 44 && style.height >= 44, 'usable non-overlapping mobile hit area');
+        assert.ok(style.visualWidth <= 44 && style.visualHeight <= 28, 'compact icon/count footprint');
+      }
+      assert.notEqual(on.background, off.background, 'selected chip is highlighted');
+      assert.equal(off.imageOpacity, '0.5', 'excluded ship image is subdued');
+      assert.equal(await evaluate(large + '.title'), 'Large Cargo');
+      measurements.push({label: width + '-compact-chips', on, off});
       const original = await submit();
       assert.equal(original.orders[0].ships.largeCargo, 2);
       await click(large);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0 plannedOff');
-      assert.equal(await accessibleDescription(large), '×0 planned', 'accessible count updates when excluded');
+      assert.equal(await evaluate(large + '.textContent'), '×0 planned');
+      assert.equal((await accessibleButton(large)).description.value, '×0 planned', 'accessible count updates when excluded');
+      assert.equal((await chipStyle(large)).background, off.background, 'excluded type loses its highlight');
+      assert.equal((await chipStyle(large)).imageOpacity, '0.5');
       assert.equal(await evaluate(source + '.checked'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
       assert.ok(await evaluate('document.body.textContent.includes("No ships planned from this source.")'));
@@ -154,10 +179,10 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click(large);
       assert.deepEqual((await submit()).orders, original.orders, 're-enable restores exactly the preview fleet');
       await input('metal to send', 0);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0 plannedOn', 'enabled unused type remains discoverable');
+      assert.equal(await evaluate(large + '.textContent'), '×0 planned', 'enabled unused type remains discoverable');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await input('metal to send', 34900);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2 plannedOn');
+      assert.equal(await evaluate(large + '.textContent'), '×2 planned');
       if (artifacts) {
         await point(large);
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
@@ -324,6 +349,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
       await settle();
       await expectTypes(defaults, 'keyboard re-adds type');
+      assert.deepEqual(await evaluate('(() => { const button = ' + checkbox(0) + '; const style = getComputedStyle(button); return {focused: document.activeElement === button, visible: button.matches(":focus-visible"), outline: style.outlineStyle, width: style.outlineWidth}; })()'), {focused: true, visible: true, outline: 'solid', width: '2px'}, 'visible keyboard focus survives activation');
       await click(maxMetal);
       submission = await submit();
       assert.deepEqual(submission.orders, before.orders, 're-adding restores fleet plan');
