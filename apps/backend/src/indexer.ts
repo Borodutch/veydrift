@@ -3147,8 +3147,8 @@ export class SettlementIndexer {
     const invalidTiming = linked.find((entry) => entry.status === "Outbound" && !entry.recallProvenance
       && (!Number.isSafeInteger(Number(entry.arrivalAt)) || Number(entry.arrivalAt) <= 0));
     if (invalidTiming) return unavailable(`Fleet #${invalidTiming.missionId} has unavailable arrival timing.`);
-    // Forecast inventory must follow credited lifecycle state, not the public countdown projection
-    // that promotes overdue Returning/Recalled missions to Returned before settlement is mined.
+    // Forecast inventory follows credited lifecycle state: overdue Returning/Recalled
+    // missions remain uncredited until their settlement event is ingested.
     const trafficRows = this.db.query(
       `SELECT * FROM contract_fleet_missions
        WHERE status_id IN (1, 2, 5) AND (origin_planet_id = ? OR target_planet_id = ?)`

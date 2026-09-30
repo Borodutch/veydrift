@@ -9367,11 +9367,12 @@ describe("SettlementIndexer", () => {
       if (eta > now + 1_000n) expect(forecast()?.unavailableReason).toBeUndefined();
       else expect(forecast()?.unavailableReason).toContain("Fleet #901");
     }
-    // The public countdown can say Returned, but no return/credit event has been ingested yet.
-    expect(indexer.fleetMission("901")?.status).toBe("Returned");
+    // An overdue countdown does not complete the canonical lifecycle before return credit.
+    expect(indexer.fleetMission("901")?.status).toBe(status === 2n ? "Returning" : "Recalled");
     expect(forecast()?.unavailableReason).toContain("not yet credited");
     emit([planetShipCountChangedTopic, topic(7n), topic(1n)], abiWords(3n));
     emit([fleetMissionReturnedTopic, topic(901n), addressTopic(player), topic(7n)], "0x");
+    expect(indexer.fleetMission("901")?.status).toBe("Returned");
     expect(forecast()?.unavailableReason).toBeUndefined();
     expect(forecast()?.stationedDefenders).toEqual([]);
     expect(indexer.displayedUnitCounts("7", "ship").find((entry) => entry.id === 1)?.count).toBe(3);
