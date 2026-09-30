@@ -1,4 +1,5 @@
-# Frontend builds run before Nixpacks' final source copy. Excluding this
-# generated output prevents a stale workspace artifact from overwriting the
-# freshly built bundle in the runtime image.
+# Frontend builds run before Nixpacks' final source copy. Excluding these
+# generated outputs prevents stale workspace artifacts from overwriting the
+# freshly built bundle and animation variants/manifest in the runtime image.
 apps/frontend/dist/
+apps/frontend/.animation-variants/
