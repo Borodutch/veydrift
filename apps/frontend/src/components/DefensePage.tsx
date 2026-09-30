@@ -1,3 +1,5 @@
+import { DefenseSettlementNotice } from "./DefenseSettlementNotice";
+import { pendingDefenseSettlement } from "../defenseSettlement";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
@@ -40,6 +42,8 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
+  onFinish?: (() => void) | undefined;
+  finishPending?: boolean | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
@@ -79,6 +83,8 @@ export function DefensePage({
   loading,
   now,
   onBuild,
+  onFinish,
+  finishPending,
   onOpenRequirement,
   onSelectDefense,
   onSupply,
@@ -140,7 +146,14 @@ export function DefensePage({
           queueProgress={progressState}
           queueTone="rose"
           selectedKey={selectedKey}
-        />
+        >
+          <DefenseSettlementNotice
+            queue={defenseState?.unsettledQueue}
+            onFinish={onFinish}
+            disabled={!canTransact || loading || !productionAvailable || actionState.status === "pending" || finishPending}
+            transactionUnavailableReason={transactionUnavailableReason}
+          />
+        </ProductionSection>
       )}
     </div>
   );
@@ -231,6 +244,7 @@ export function defenseProductionItems({
   // New backends expose canonical unsettled quantities separately. Keep the
   // legacy projected queue + launchable inventory pairing during rolling deploys.
   const inventoryQueue = defenseState?.unsettledQueue !== undefined ? defenseState.unsettledQueue : queue;
+  const pendingSettlement = pendingDefenseSettlement(defenseState?.unsettledQueue);
   return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity, quantityValid }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
     // Deployed is the canonical on-chain count, not lazy-settlement launchability.
@@ -281,6 +295,7 @@ export function defenseProductionItems({
         inventoryQueue,
       ),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
+      pendingSettlement: pendingSettlement.get(defense.id) ?? 0,
       countLabel: "Deployed",
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),

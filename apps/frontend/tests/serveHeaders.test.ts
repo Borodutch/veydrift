@@ -1,4 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { animationFilename, animationRoot, animationVariants, prepareAnimationVariants } from "../scripts/animation-variants.mjs";
+import { rename } from "node:fs/promises";
+import { join } from "node:path";
+
+// Same build artifacts as Nixpacks; no request may perform an encode.
+beforeAll(() => prepareAnimationVariants(), 1_800_000);
 import sharp from "sharp";
 import { MOON_ANIMATION_VERSION, PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import { planetArtTypeForCoordinates } from "../src/data/mockUniverse";
@@ -157,11 +163,13 @@ describe("frontend static server headers", () => {
     expect(imageRouteForPathname("/og/cca.png")).toBeNull();
   });
 
-  test("resizes every animation frame once and caches the derivative", async () => {
+  test("streams every precomputed animation frame and caches only file metadata", async () => {
     clearPlanetAnimationCache();
     const url = new URL(`http://localhost/assets/game/planet-animations/scorching-molten.webp?size=64&v=${PLANET_ANIMATION_VERSION}`);
-    const first = await planetAnimationResponse(url);
-    const second = await planetAnimationResponse(url);
+    const [first, second] = await Promise.all([planetAnimationResponse(url), planetAnimationResponse(url)]);
+    expect(first?.headers.get("x-veydrift-animation-cache")).toBe("miss");
+    expect(second?.headers.get("x-veydrift-animation-cache")).toBe("hit");
+    expect(first?.headers.get("x-veydrift-animation-source")).toBe("precomputed");
 
     expect(first?.status).toBe(200);
     expect(second?.status).toBe(200);
@@ -171,6 +179,23 @@ describe("frontend static server headers", () => {
     expect(metadata.width).toBe(64);
     expect(metadata.pageHeight).toBe(64);
     expect(metadata.pages).toBe(96);
+  });
+
+  test("evicts a failed precomputed lookup without starting a resize", async () => {
+    clearPlanetAnimationCache();
+    const route = animationVariants[0]!;
+    const path = join(animationRoot, animationFilename(route));
+    const url = new URL("http://localhost" + route.base + "/" + route.assetType + ".webp?size=" + route.size + "&v=" + route.version);
+    await rename(path, path + ".test-backup");
+    try {
+      await expect(planetAnimationResponse(url)).rejects.toThrow();
+      expect(planetAnimationCacheSize()).toBe(0);
+    } finally { await rename(path + ".test-backup", path); }
+    const response = await planetAnimationResponse(url);
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("x-veydrift-animation-cache")).toBe("miss");
+    expect(response?.headers.get("x-veydrift-animation-source")).toBe("precomputed");
+    await response?.arrayBuffer();
   });
 
   test("rejects unbounded animation variants", async () => {
@@ -193,11 +218,13 @@ describe("frontend static server headers", () => {
     expect(response?.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
   });
 
-  test("resizes and caches every animated moon frame", async () => {
+  test("streams every precomputed moon frame", async () => {
     clearPlanetAnimationCache();
     const url = new URL(`http://localhost/assets/game/moon-animations/cratered-cyan-moon.webp?size=64&v=${MOON_ANIMATION_VERSION}`);
-    const first = await planetAnimationResponse(url);
-    const second = await planetAnimationResponse(url);
+    const [first, second] = await Promise.all([planetAnimationResponse(url), planetAnimationResponse(url)]);
+    expect(first?.headers.get("x-veydrift-animation-cache")).toBe("miss");
+    expect(second?.headers.get("x-veydrift-animation-cache")).toBe("hit");
+    expect(first?.headers.get("x-veydrift-animation-source")).toBe("precomputed");
 
     expect(first?.status).toBe(200);
     expect(second?.status).toBe(200);

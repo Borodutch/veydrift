@@ -9188,6 +9188,30 @@ describe("SettlementIndexer", () => {
       ]
     });
 
+    // The detail forecast is identical through the lead or joiner, without a phantom selected join.
+    const forecast = indexer.missionBattleForecast(indexer.fleetMission("70")!);
+    expect(forecast?.unavailableReason).toBeUndefined();
+    expect(indexer.missionBattleForecast(indexer.fleetMission("72")!)).toEqual(forecast);
+    expect(forecast?.participants.map((entry) => entry.missionId)).toEqual(["70", "72"]);
+    expect(forecast?.stationedDefenders.map(({ missionId, laneGroup }) => [missionId, laneGroup])).toEqual([
+      ["71", 0], ["73", 2], ["82", 4], ["80", 3]
+    ]);
+    // Current research and new joins are read again, not cached as a launch-time roster.
+    indexer.applyLog({ blockNumber: "0x98", transactionHash: "0xtech72", logIndex: "0x0",
+      topics: [researchCompletedTopic, addressTopic(joinedOwner), topic(5n)], data: abiWords(7n) });
+    expect(indexer.missionBattleForecast(indexer.fleetMission("70")!)?.participants[1]?.combatTechnology?.weapons).toBe(7);
+    indexer.applyLog({ blockNumber: "0x99", transactionHash: "0xjoin74", logIndex: "0x0",
+      topics: [attackMissionJoinedTopic, topic(70n), topic(74n), addressTopic(joinedOwner)], data: abiWords(12n, 99n) });
+    applyFleetLog(74n, joinedOwner, 8n, 12n, 99n, 70n, "0x99");
+    applyShips(74n, joinedOwner, [0n, 2n, ...Array(14).fill(0n)]);
+    expect(indexer.missionBattleForecast(indexer.fleetMission("70")!)?.participants.map((entry) => entry.missionId)).toEqual(["70", "72", "74"]);
+    for (const missionId of [72n, 71n]) indexer.applyLog({ blockNumber: "0x9a", transactionHash: `0xrecall${missionId}`, logIndex: "0x0",
+      topics: [fleetMissionRecalledTopic, topic(missionId), addressTopic(missionId === 72n ? joinedOwner : defenderOwner)], data: abiWords(1_900_001_000n, 0n) });
+    expect(indexer.missionBattleForecast(indexer.fleetMission("72")!)).toBeNull();
+    const afterRecall = indexer.missionBattleForecast(indexer.fleetMission("70")!);
+    expect(afterRecall?.participants.map((entry) => entry.missionId)).toEqual(["70", "74"]);
+    expect(afterRecall?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["73", "82", "80"]);
+
     // A legacy/incomplete active hold without its immutable station event cannot be assigned a safe
     // storage-order lane. The public preview must name the gap instead of renumbering the display list.
     applyFleetLog(83n, holdOwner, 9n, 183n, 99n, 0n, "0x98");
@@ -9198,8 +9222,216 @@ describe("SettlementIndexer", () => {
       selectedAttackerLaneGroup: null
     });
     expect(incomplete?.attackPreview?.unavailableReason).toContain(
-      "DefenseHold #83 is missing from exact stationed-defense storage-order indexing"
+      "DefenseHold #83 has no confirmed hold window at battle arrival"
     );
+  });
+
+  test.each([4n, 10n])("mission battle forecasts never resurrect hold ships after %s losses in earlier combat", (lost) => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    indexer.applyEvent(planet);
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xholdloss" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, type: bigint, at: bigint, moon = false) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(type)],
+        abiWords(9n, 7n, at, 4_000_003_000n, 0n));
+      emit([fleetMissionShipsTopic, topic(id)], abiWords(0n, 10n, ...Array(14).fill(0n)));
+      if (moon) emit([fleetMissionBodiesTopic, topic(id)], abiWords(0n, 1n));
+    };
+    const resolve = (id: bigint) => {
+      emit([attackBattleResolvedTopic, topic(id), addressTopic(player), topic(7n)], abiWords(1n, 1n, 12345n, 0n, 0n, 0n));
+      emit([combatLossesTopic, topic(id)], abiWords(0n, 0n, 0n, lost * 3_000n, lost * 1_000n, 0n));
+    };
+    launch(1n, 9n, 3_999_999_000n);
+    emit([defenseHoldStationedTopic, topic(1n), addressTopic(player), topic(7n)],
+      abiWords(9n, 3_999_999_000n, 4_000_002_000n, 4_000_003_000n));
+    launch(3n, 3n, 4_000_000_000n);
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("3")!);
+    const intact = () => {
+      expect(forecast()?.unavailableReason).toBeUndefined();
+      expect(forecast()?.stationedDefenders[0]?.ships).toMatchObject({ lightFighter: "10" });
+    };
+    intact();
+    // Battles before arrival, on the other body, or recalled before combat cannot have hit this hold.
+    launch(4n, 3n, 3_999_998_000n); resolve(4n);
+    launch(5n, 3n, 3_999_999_500n, true); resolve(5n);
+    launch(6n, 3n, 3_999_999_500n);
+    emit([fleetMissionRecalledTopic, topic(6n), addressTopic(player)], abiWords(4_000_001_000n, 0n));
+    intact();
+    launch(2n, 3n, 3_999_999_500n);
+    // Launch alone proves no losses. First combat chunk must invalidate the preview immediately,
+    // not only after terminal settlement or a report worker has caught up.
+    intact();
+    emit([combatRoundResolvedTopic, topic(2n), topic(1n)], abiWords(10n, 10n - lost, 0n, 0n, 0n, 0n));
+    const uncertain = () => {
+      expect(forecast()?.unavailableReason).toContain("DefenseHold #1 may have losses from earlier combat");
+      expect(forecast()?.stationedDefenders).toEqual([]);
+      // Canonical launch events have not changed: substituting these counts would resurrect losses.
+      expect(indexer.fleetMission("1")?.ships).toMatchObject({ lightFighter: "10" });
+    };
+    uncertain();
+    resolve(2n);
+    uncertain();
+    expect(indexer.materializeBattleReportReadModelsForWorker(["2"], "ingest")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("2").status).toBe("ready");
+    uncertain();
+    database.query("UPDATE indexed_battle_report_read_models SET status = 'failed', report_json = NULL WHERE mission_id = '2'").run();
+    uncertain();
+    // Recalling the hold removes its uncertainty; it must not remain a phantom defender.
+    emit([fleetMissionRecalledTopic, topic(1n), addressTopic(player)], abiWords(4_000_001_000n, 0n));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    database.close();
+  });
+
+  test("mission battle forecasts qualify returns, deployments, holds and bodies without double counting", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xforecast" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, type: bigint, origin: bigint, target: bigint, at: bigint, ret: bigint, moon = false) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(type)], abiWords(origin, target, at, ret, 0n));
+      emit([fleetMissionShipsTopic, topic(id)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+      if (moon) emit([fleetMissionBodiesTopic, topic(id)], abiWords(1n, 1n));
+    };
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("900")!);
+    launch(900n, 3n, 9n, 7n, 4_000_000_000n, 4_000_001_000n);
+    expect(forecast()).toMatchObject({ leaderMissionId: "900", participants: [{ missionId: "900" }], stationedDefenders: [] });
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    // A returning fleet's target is elsewhere; qualification must use its HOME body.
+    launch(901n, 0n, 7n, 9n, 3_999_990_000n, 4_000_001_000n);
+    emit([fleetMissionRecalledTopic, topic(901n), addressTopic(player)], abiWords(4_000_000_100n, 0n));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    emit([fleetMissionRecalledTopic, topic(901n), addressTopic(player)], abiWords(3_999_999_999n, 0n));
+    expect(forecast()?.unavailableReason).toContain("Fleet #901");
+    emit([fleetMissionReturnedTopic, topic(901n), addressTopic(player), topic(7n)], "0x");
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    // Moon traffic is never added to the parent planet garrison.
+    launch(902n, 1n, 9n, 7n, 3_999_999_000n, 4_000_001_000n, true);
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    launch(903n, 1n, 9n, 7n, 4_000_000_001n, 4_000_001_000n);
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    launch(904n, 1n, 9n, 7n, 3_999_999_999n, 4_000_001_000n);
+    expect(forecast()?.unavailableReason).toContain("Fleet #904");
+    emit([fleetMissionReturnedTopic, topic(904n), addressTopic(player), topic(7n)], "0x");
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    launch(905n, 9n, 9n, 7n, 4_000_000_001n, 4_000_002_000n);
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    launch(906n, 9n, 9n, 7n, 3_999_999_000n, 4_000_002_000n);
+    expect(forecast()?.unavailableReason).toContain("confirmed hold window");
+    emit([defenseHoldStationedTopic, topic(906n), addressTopic(player), topic(7n)], abiWords(9n, 3_999_999_000n, 4_000_001_000n, 4_000_002_000n));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["906"]);
+    // Reading twice doesn't mutate the roster or append the same stationed ships twice.
+    expect(forecast()).toEqual(forecast());
+    emit([defenseHoldEndedTopic, topic(906n), topic(7n)], abiWords(5n));
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    emit([fleetMissionRecalledTopic, topic(900n), addressTopic(player)], abiWords(4_000_001_000n, 0n));
+    expect(forecast()).toBeNull();
+  });
+
+  test.each([2n, 5n])("mission battle forecasts keep uncredited return status %s uncertain across ETA", (status) => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const now = BigInt(Math.floor(Date.now() / 1_000));
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xreturnforecast" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, origin: bigint, target: bigint, arrival: bigint) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(3n)], abiWords(origin, target, arrival, now + 2_000n, 0n));
+      emit([fleetMissionShipsTopic, topic(id)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    };
+    launch(900n, 9n, 7n, now + 1_000n);
+    launch(901n, 7n, 9n, now - 1_000n);
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("900")!);
+    for (const eta of [now + 1_001n, now + 500n, now, now - 1n]) {
+      emit([fleetMissionReturnExposedTopic, topic(901n), addressTopic(player), topic(status)], abiWords(7n, 9n, eta, 0n, 0n, 0n));
+      if (eta > now + 1_000n) expect(forecast()?.unavailableReason).toBeUndefined();
+      else expect(forecast()?.unavailableReason).toContain("Fleet #901");
+    }
+    // The public countdown can say Returned, but no return/credit event has been ingested yet.
+    expect(indexer.fleetMission("901")?.status).toBe("Returned");
+    expect(forecast()?.unavailableReason).toContain("not yet credited");
+    emit([planetShipCountChangedTopic, topic(7n), topic(1n)], abiWords(3n));
+    emit([fleetMissionReturnedTopic, topic(901n), addressTopic(player), topic(7n)], "0x");
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
+    expect(indexer.displayedUnitCounts("7", "ship").find((entry) => entry.id === 1)?.count).toBe(3);
+  });
+
+  test.each(["missing", "empty"])("mission battle forecasts fail closed on eligible %s defender and landing compositions", (composition) => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    let block = 200;
+    const emit = (topics: string[], data: string) => indexer.applyLog({
+      blockNumber: "0x" + (++block).toString(16), transactionHash: "0xmissingforecast" + block,
+      logIndex: "0x0", topics, data
+    });
+    const launch = (id: bigint, type: bigint, origin: bigint, target: bigint, at: bigint, link = 0n, moon = false) => {
+      emit([fleetMissionLaunchedTopic, topic(id), addressTopic(player), topic(type)], abiWords(origin, target, at, 4_000_002_000n, link));
+      if (composition === "empty") emit([fleetMissionShipsTopic, topic(id)], abiWords(...Array(16).fill(0n)));
+      if (moon) emit([fleetMissionBodiesTopic, topic(id)], abiWords(1n, 1n));
+    };
+    const returned = (id: bigint) => emit([fleetMissionReturnedTopic, topic(id), addressTopic(player), topic(7n)], "0x");
+    const forecast = () => indexer.missionBattleForecast(indexer.fleetMission("900")!);
+    launch(900n, 3n, 9n, 7n, 4_000_000_000n);
+    emit([fleetMissionShipsTopic, topic(900n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    // Linked reactive defenders qualify by status/body/timing, never by whether ships were indexed.
+    launch(901n, 5n, 9n, 7n, 4_000_000_000n, 900n);
+    expect(forecast()?.unavailableReason).toContain("Counterplay defender #901 composition is unavailable or empty");
+    emit([fleetMissionShipsTopic, topic(901n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["901"]);
+    returned(901n);
+    // Exact stationed hold window/order are known, but its composition is not.
+    launch(902n, 9n, 9n, 7n, 3_999_999_000n);
+    emit([defenseHoldStationedTopic, topic(902n), addressTopic(player), topic(7n)], abiWords(9n, 3_999_999_000n, 4_000_001_000n, 4_000_002_000n));
+    expect(forecast()?.unavailableReason).toContain("DefenseHold #902 composition is unavailable or empty");
+    emit([fleetMissionShipsTopic, topic(902n)], abiWords(0n, 3n, ...Array(14).fill(0n)));
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders.map((entry) => entry.missionId)).toEqual(["902"]);
+    returned(902n);
+    launch(903n, 1n, 9n, 7n, 3_999_999_000n);
+    expect(forecast()?.unavailableReason).toContain("Fleet #903");
+    returned(903n);
+    for (const status of [2n, 5n]) {
+      const id = 904n + status;
+      launch(id, 0n, 7n, 9n, 3_999_999_000n);
+      emit([fleetMissionReturnExposedTopic, topic(id), addressTopic(player), topic(status)], abiWords(7n, 9n, 3_999_999_999n, 0n, 0n, 0n));
+      expect(forecast()?.unavailableReason).toContain("Fleet #" + id);
+      returned(id);
+    }
+    // Missing composition does not make unrelated moon or late-arriving traffic a participant.
+    launch(910n, 1n, 9n, 7n, 4_000_000_001n);
+    launch(911n, 9n, 9n, 7n, 4_000_000_001n);
+    launch(912n, 5n, 9n, 7n, 4_000_000_001n, 900n);
+    launch(913n, 1n, 9n, 7n, 3_999_999_000n, 0n, true);
+    launch(914n, 9n, 9n, 7n, 3_999_999_000n, 0n, true);
+    launch(915n, 5n, 9n, 7n, 3_999_999_000n, 900n, true);
+    expect(forecast()?.unavailableReason).toBeUndefined();
+    expect(forecast()?.stationedDefenders).toEqual([]);
   });
 
   test("VEY-KANEO-855 classifies alliance attacks and defenses atomically from indexed membership", () => {

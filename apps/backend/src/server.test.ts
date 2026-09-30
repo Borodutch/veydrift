@@ -1901,6 +1901,22 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test.each(["http://213.133.101.30:8545", "https://base-mainnet.g.alchemy.com/v2/private-key"])("keeps server-only Chicken RPC %s out of public config", async internalRpc => {
+    const previous = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+    process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = internalRpc;
+    try {
+      for (const response of [await handler(new Request("https://api.veydrift.com/runtime-config")), runtimeConfigResponse("reader")]) {
+        const body = await response.json();
+        expect(body.burningChicken.rpcUrl).toBe("https://mainnet.base.org");
+        expect(JSON.stringify(body)).not.toContain(internalRpc);
+      }
+      expect(process.env.VEYDRIFT_BASE_MAINNET_RPC_URL).toBe(internalRpc);
+    } finally {
+      if (previous === undefined) delete process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+      else process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = previous;
+    }
+  });
+
   test("keeps moon attack parity fail closed until operators explicitly enable it", async () => {
     const previousEnabled = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED;
     const previousActivation = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
@@ -2277,7 +2293,7 @@ describe("Veydrift backend", () => {
           burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           burnSelector: "0x6364233d",
           nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          rpcUrl: "https://base.example.test"
+          rpcUrl: "https://mainnet.base.org"
         },
         featureSupport: {
           allianceConfigured: true,
@@ -4232,6 +4248,7 @@ describe("Veydrift backend", () => {
         defenses: { count: fixture.start === null ? null : Number(fixture.start), power: null,
           units: fixture.start === null ? null : [{ id: 0, count: Number(fixture.start), power: null }] } });
       expect(body.battleReport.roundReports).toHaveLength(fixture.rounds);
+      expect(body.battleForecast).toBeNull();
       if (fixture.start === null) {
         expect(body.battleReport.defenderSnapshot).toBeNull();
         expect(body.battleReport.defenderLossBreakdown).toBeNull();
@@ -4633,6 +4650,26 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body.battleReport).toBeNull();
+    const { asOf: initialAsOf, ...before } = body.battleForecast;
+    expect(Number(initialAsOf)).toBeGreaterThan(0);
+    expect(body.battleForecast).toMatchObject({
+      leaderMissionId: "51", arrivalAt: "1800000000", targetIsMoon: false,
+      participants: [{ missionId: "51", owner: attacker, ships: { lightFighter: "5" } }],
+      stationedDefenders: [],
+      target: { id: "9", owner: defender,
+        publicState: { fleet: expect.arrayContaining([{ id: 1, count: 12 }]), defenses: expect.arrayContaining([{ id: 4, count: 3 }]) },
+        publicMoonState: null }
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const repeat = await (await handler(new Request("http://localhost/mission/51"))).json();
+    const { asOf: repeatAsOf, ...repeated } = repeat.battleForecast;
+    expect(Number(repeatAsOf)).toBeGreaterThanOrEqual(Number(initialAsOf));
+    expect(repeated).toEqual(before);
+    const snapshot = indexer.snapshot();
+    const snapshotSpy = spyOn(indexer, "snapshot").mockReturnValue({ ...snapshot, safeToServeIndexedState: false });
+    const stale = await (await handler(new Request("http://localhost/mission/51"))).json();
+    expect(stale.battleForecast.unavailableReason).toContain("delayed or reconciling");
+    snapshotSpy.mockRestore();
     const targetCombatIntel = body.targetCombatIntel;
     expect(BigInt(targetCombatIntel.combatPower)).toBeGreaterThan(0n);
     expect(targetCombatIntel.activeMissions.map((entry: { missionId: string }) => entry.missionId).sort()).toEqual(["51", "52"]);
@@ -10284,6 +10321,7 @@ describe("Veydrift backend", () => {
   });
 
   test.each([
+    { planetId: "189", itemId: 0, canonical: 1, quantity: 100 },
     { planetId: "775", itemId: 0, canonical: 2, quantity: 1 },
     { planetId: "786", itemId: 0, canonical: 0, quantity: 2 },
     { planetId: "7", itemId: 9, canonical: 1, quantity: 2 }
@@ -10303,6 +10341,9 @@ describe("Veydrift backend", () => {
       expect(response.status).toBe(200);
       const state = await response.json() as DefenseState;
       const queues = await (await handler(new Request(`http://localhost/wallet/${player}/queues?planetId=${planetId}`))).json();
+      const overview = await (await handler(new Request(`http://localhost/wallet/${player}/overview?planetId=${planetId}`))).json();
+      expect(overview.queues.defense).toEqual(state.queue);
+      expect(overview.queues.unsettledDefense).toEqual(state.unsettledQueue);
       const roster = await (await handler(new Request(`http://localhost/wallet/${player}/planets`))).json();
       const managed = roster.planets.find((row: { planetId: string }) => row.planetId === planetId);
       // Public full-system projections have a separate bounded cache; use a new
@@ -10346,18 +10387,19 @@ describe("Veydrift backend", () => {
       expect(count(partial)).toBe(canonical + 1);
       expect(partial.queue?.quantity ?? 0).toBe(quantity - 1);
       expect(partial.unsettledQueue).toMatchObject({ active: true, quantity, asOfNow: { completedQuantity: 1 } });
-      const partialSettled = quantity > 1 ? 1 : 0;
+      const partialSettled = quantity === 100 ? 77 : quantity > 1 ? 1 : 0;
+      if (quantity === 100) setSystemTime(new Date((now + 770) * 1_000));
       if (partialSettled) {
         logs.push({
           blockNumber: "0x82", transactionHash: "0xvey885-partial", logIndex: "0x0",
           topics: [defenseCompletedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
-          data: abiWords(1n, BigInt(canonical + 1))
+          data: abiWords(BigInt(partialSettled), BigInt(canonical + partialSettled))
         });
         indexer.applyLog(logs.at(-1)!);
         const partialCompletion = await read();
-        expect(canonicalCount(partialCompletion)).toBe(canonical + 1);
-        expect(count(partialCompletion)).toBe(canonical + 1);
-        expect(partialCompletion.unsettledQueue?.quantity).toBe(quantity - 1);
+        expect(canonicalCount(partialCompletion)).toBe(canonical + partialSettled);
+        expect(count(partialCompletion)).toBe(canonical + partialSettled);
+        expect(partialCompletion.unsettledQueue?.quantity).toBe(quantity - partialSettled);
       }
       setSystemTime(new Date((now + quantity * 10) * 1_000));
       const due = await read();

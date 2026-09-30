@@ -39,6 +39,7 @@ import {
   planetEconomyPillRows,
   isPublicPlanetSettled,
   planetFleetActivityRows,
+  planetFleetActivityTiming,
   planetRecordStatusLabel,
   publicCommanderRows,
   publicQueueViews,
@@ -423,6 +424,41 @@ describe("tester universe display data", () => {
     expect(planetFleetActivityRows("99", [outbound, returning])).toEqual([]);
   });
 
+  test.each(["Outbound", "Returning", "Recalled"] as const)("activity timing selects the %s leg for both endpoints and moons", (status) => {
+    const mission = activeFleetMission({ status, originPlanetId: "7", targetPlanetId: "9",
+      arrivalAt: "1790812800", returnAt: "1790816400", originIsMoon: true, targetIsMoon: true });
+    for (const planetId of ["7", "9"]) {
+      const row = planetFleetActivityRows(planetId, [mission], "moon")[0]!;
+      expect(row.eventAt).toBe(Number(status === "Outbound" ? mission.arrivalAt : mission.returnAt) * 1000);
+      expect(row.returning).toBe(status !== "Outbound");
+      expect(planetFleetActivityTiming(row, row.eventAt! - 1000).clock.startsWith(status === "Outbound" ? "Arrives " : "Lands ")).toBe(true);
+    }
+  });
+
+  test.each([undefined, null, "", "0", "bad", "1e30"])("activity rejects missing/invalid event timestamp %s", (value) => {
+    const mission = activeFleetMission({ originPlanetId: "7", arrivalAt: value as unknown as string });
+    const row = planetFleetActivityRows("7", [mission])[0]!;
+    expect(planetFleetActivityTiming(row, Date.now())).toEqual({ clock: "", eta: "ETA unavailable" });
+  });
+
+  test.each([
+    [93784, "in 1d 2h 3m 4s"], [86400, "in 1d 0h 0m 0s"], [86399, "in 23h 59m 59s"],
+    [3600, "in 1h 0m 0s"], [3599, "in 59m 59s"], [60, "in 1m 0s"], [59, "in 59s"],
+    [1, "in 1s"], [0.001, "in 1s"], [0, "arriving/settling"], [-1, "arriving/settling"],
+  ])("activity countdown at %s seconds is %s", (seconds, eta) => {
+    const eventAt = 1790812800000;
+    expect(planetFleetActivityTiming({ eventAt, returning: false }, eventAt - Number(seconds) * 1000).eta).toBe(eta);
+  });
+
+  test("expired returns settle until refreshed status changes the selected leg", () => {
+    const eventAt = 1790812800000;
+    expect(planetFleetActivityTiming({ eventAt, returning: true }, eventAt + 1000).eta).toBe("landing/settling");
+    const mission = activeFleetMission({ originPlanetId: "7", arrivalAt: String(eventAt / 1000), returnAt: String(eventAt / 1000 + 60) });
+    expect(planetFleetActivityTiming(planetFleetActivityRows("7", [mission])[0]!, eventAt).eta).toBe("arriving/settling");
+    mission.status = "Returning";
+    expect(planetFleetActivityTiming(planetFleetActivityRows("7", [mission])[0]!, eventAt).eta).toBe("in 1m 0s");
+  });
+
   test.each(["Returning", "Recalled"] as const)("own %s raid stays visible and safe when switching planets", (status) => {
     const owner = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
     const other = "0x2222222222222222222222222222222222222222";
@@ -432,8 +468,8 @@ describe("tester universe display data", () => {
     expect(home()[0]).toMatchObject({ direction: "Inbound", tone: "accent",
       missionLabel: status === "Recalled" ? "Own Attack recalled · returning" : "Own Attack returning",
       routeLabel: "From Planet 70", shipCountLabel: "4 ships" });
-    expect(home()[0]?.eventLabel).toBe(
-      `Lands ${formatUserTimestamp(raid.returnAt)}`
+    expect(planetFleetActivityTiming(home()[0]!, Date.now()).clock).toBe(
+      `Lands ${formatUserTimestamp(raid.returnAt)} local`
     );
     expect(planetFleetActivityRows("70", [raid], "planet", other)[0]).toMatchObject({
       direction: "Outbound", tone: "accent", routeLabel: "To Planet 83",

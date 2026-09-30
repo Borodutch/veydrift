@@ -1702,6 +1702,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             battleReport,
             battleReportMaterialization: reportedBattleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
+            battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
             // Current target state remains useful alongside the persisted battle-time snapshot and
             // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
             // this mutable projection.
@@ -4592,6 +4593,25 @@ function defenderPlanetStateForReport(
   };
 }
 
+function missionBattleForecastResponse(indexer: SettlementIndexer, mission: FleetMissionSummary, safe: boolean) {
+  const forecast = indexer.missionBattleForecast(mission);
+  if (!forecast) return null;
+  const planet = indexer.planet(forecast.targetPlanetId);
+  return {
+    ...forecast,
+    asOf: Math.floor(Date.now() / 1_000).toString(),
+    ...(!safe ? { unavailableReason: "Public battle state is delayed or reconciling; the forecast is uncertain until indexing catches up." } : {}),
+    target: planet ? {
+      id: planet.planetId,
+      name: planet.name,
+      owner: planet.owner,
+      coordinates: { galaxy: planet.galaxy, system: planet.system, position: planet.position },
+      publicState: publicPlanetStateRef(planet, indexer),
+      publicMoonState: forecast.targetIsMoon ? publicMoonStateRef(planet, indexer) : null
+    } : null
+  };
+}
+
 function targetCombatIntelForMission(
   indexer: SettlementIndexer,
   mission: FleetMissionSummary,
@@ -5085,7 +5105,9 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenCoordinateBurnSelector;
   const configuredChickenBurnSelector =
     burningChickenBurnSelector.toLowerCase() === burningChickenCoordinateBurnSelector;
-  const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
+  // Browser reads/preflight must not expose the server-only node URL (HTTP or credentials).
+  // Keep internal RPC selection independent; the public Base endpoint supports HTTPS/CORS.
+  const burningChickenRpcUrl = "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,

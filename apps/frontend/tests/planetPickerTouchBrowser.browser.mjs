@@ -869,7 +869,14 @@ for (const width of [390, 1440]) {
     const selector = width < 768 ? '#mobile-navigation-menu' : 'aside[aria-label="Select planet"]';
     const nav = width < 768 ? '#mobile-navigation-menu nav' : 'nav.hidden';
     async function openMenu() {
-      if (width < 768) await clickExpression(`document.querySelector('summary[aria-label="Open navigation menu"]')`);
+      if (width >= 768) return;
+      // Synthetic route clicks can leave the menu open until its deferred close.
+      if (!await evaluate("document.querySelector('details:has(#mobile-navigation-menu)')?.open")) {
+        await clickExpression(`document.querySelector('summary[aria-controls="mobile-navigation-menu"]')`);
+      }
+      await waitForExpression(`document.querySelector('details:has(#mobile-navigation-menu)')?.open === true
+        && document.querySelector('summary[aria-controls="mobile-navigation-menu"]')?.getAttribute('aria-expanded') === 'true'
+        && document.querySelector('#mobile-navigation-menu')?.getBoundingClientRect().height > 0`);
     }
     for (const [id, name, route] of [
       ["102", "Owned Beta", "/planet/4/5/6"],
@@ -1248,7 +1255,7 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
@@ -1269,7 +1276,7 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
@@ -1314,7 +1321,7 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -1364,7 +1371,7 @@ test("Supply preparation expires without locking the modal or submitting late", 
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Available cargo fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -2098,18 +2105,48 @@ for (const phase of ["complete", "settled"]) {
     await loadInspectorFixture("/defenses", 1280, options);
     const deployed = phase === "settled" ? 9 : 8;
     const assertDefense = async () => {
-      await waitForExpression(`document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: ${deployed}') === true`);
+      await waitForExpression(`location.pathname === '/defenses' && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: ${deployed}') === true`);
       const state = await evaluate(`({
         catalog: document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent,
         detail: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
+        settlement: document.querySelector('main [aria-label="Defense settlement"]')?.textContent ?? null,
+        activeQueues: document.querySelectorAll('main [aria-label^="Queue:"]').length,
         errors: window.inspectorProof.errors,
       })`);
+      assert.equal(state.activeQueues, 0);
+      if (phase === "complete") {
+        assert.match(state.settlement, /Built · awaiting settlement/);
+        assert.match(state.settlement, /Rocket Launcher: 1(?:\D|$)/);
+      } else {
+        assert.equal(state.settlement, null);
+      }
       assert.doesNotMatch(state.catalog, /Queued/);
       assert.match(state.detail, new RegExp('Deployed ' + deployed));
       assert.doesNotMatch(state.detail, /Queued [1-9]/);
       assert.deepEqual(state.errors, []);
     };
     await assertDefense();
+    const fixture = await evaluate(`(async () => {
+      const base = '/api/wallet/' + window.inspectorProof.account;
+      const production = await (await fetch(base + '/defenses?planetId=101')).json();
+      const overview = await (await fetch(base + '/overview')).json();
+      return {
+        deployed: production.defenses.find(item => item.id === 0)?.count,
+        launchable: production.launchableDefenses.find(item => item.id === 0)?.count,
+        active: production.queue,
+        unsettled: production.unsettledQueue?.quantity ?? 0,
+        remaining: production.unsettledQueue?.asOfNow?.remainingQuantity ?? 0,
+        overviewActive: overview.queues.defense,
+        overviewUnsettled: overview.queues.unsettledDefense?.quantity ?? 0,
+        planetActive: overview.planetsResponse.planets[0].queues.defense,
+        planetUnsettled: overview.planetsResponse.planets[0].queues.unsettledDefense?.quantity ?? 0,
+      };
+    })()`);
+    assert.deepEqual(fixture, {
+      deployed, launchable: 9, active: null, unsettled: phase === "complete" ? 1 : 0, remaining: 0,
+      overviewActive: null, overviewUnsettled: phase === "complete" ? 1 : 0,
+      planetActive: null, planetUnsettled: phase === "complete" ? 1 : 0,
+    });
     // Restore the fixture URL (the mounted app routes replace it), then perform
     // an actual cache-bypassing reload rather than reusing the in-memory store.
     const reloadUrl = `${inspectorFixtureUrl}?${new URLSearchParams({ route: "/defenses", ...options })}`;
@@ -2118,7 +2155,21 @@ for (const phase of ["complete", "settled"]) {
     await waitForExpression("window.inspectorProof?.appReady === true");
     await assertDefense();
     await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Overview')");
-    await waitForExpression("location.pathname === '/' && document.querySelector('main')?.textContent?.includes('No active defense production.') === true");
+    const overviewNotice = phase === "complete" ? "Built · awaiting settlement" : "No active defense production.";
+    await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Defenses"]')?.textContent?.includes(${JSON.stringify(overviewNotice)}) === true`);
+    const overview = await evaluate(`({
+      text: document.querySelector('main section[aria-label="Defenses"]')?.textContent,
+      activeQueues: document.querySelectorAll('main section[aria-label="Defenses"] [aria-label^="Queue:"]').length,
+      settlement: document.querySelector('main section[aria-label="Defenses"] [aria-label="Defense settlement"]')?.textContent ?? null,
+    })`);
+    assert.equal(overview.activeQueues, 0);
+    if (phase === "complete") {
+      assert.match(overview.settlement, /Rocket Launcher: 1(?:\D|$)/);
+      assert.doesNotMatch(overview.text, /No active defense production\./);
+    } else {
+      assert.equal(overview.settlement, null);
+      assert.doesNotMatch(overview.text, /awaiting settlement/);
+    }
     await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Defenses')");
     await assertDefense();
   });

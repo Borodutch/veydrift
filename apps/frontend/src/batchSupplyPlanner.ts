@@ -1,5 +1,5 @@
 import type { Coordinates } from "./types";
-import { emptyMissionShips, type MissionShips, type MissionShipKey } from "./galaxyActions";
+import { emptyMissionShips, type MissionShips } from "./galaxyActions";
 import {
   fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
@@ -43,7 +43,13 @@ export type BatchSupplyPlan = {
   sourceLimitReached: boolean;
 };
 
-const cargoShipKeys: Array<{ id: number; key: MissionShipKey }> = [
+export type SupplyShipKey = "largeCargo" | "smallCargo" | "recycler" | "colonyShip";
+
+export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
+
+export const defaultSupplyShipTypes: readonly SupplyShipKey[] = ["largeCargo", "smallCargo", "colonyShip"];
+
+const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
   { id: 4, key: "largeCargo" },
   { id: 0, key: "smallCargo" },
   { id: 2, key: "recycler" },
@@ -52,6 +58,15 @@ const cargoShipKeys: Array<{ id: number; key: MissionShipKey }> = [
 
 export function hasUsableSupplyCargoFleet(ships: Partial<MissionShips>): boolean {
   return cargoShipKeys.some(({ key }) => safeAmount(ships[key]) > 0);
+}
+
+/** Filter once, before capacity, fuel and fallback fleet calculations. Never mutate inventory. */
+export function allowedSupplyShips(ships: Partial<MissionShips>, allowedShipTypes: readonly SupplyShipKey[]): MissionShips {
+  const allowed = emptyMissionShips();
+  for (const { key } of cargoShipKeys) {
+    if (allowedShipTypes.includes(key)) allowed[key] = safeAmount(ships[key]);
+  }
+  return allowed;
 }
 
 export function emptySupplyResources(): SupplyResources {
@@ -89,6 +104,7 @@ export function buildBatchSupplyPlan({
   requested,
   selectedPlanetIds,
   sourceCargoOverrides = {},
+  shipTypesBySource = {},
   sources,
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
@@ -98,6 +114,8 @@ export function buildBatchSupplyPlan({
   /** Exact per-source cargo chosen in the Supply modal. Sources without an override keep automatic allocation. */
   sourceCargoOverrides?: Readonly<Record<string, Partial<SupplyResources>>>;
   sources: readonly BatchSupplySource[];
+  /** Per-source eligibility. Missing sources use defaults; empty arrays exclude every type. */
+  shipTypesBySource?: SupplyShipTypesBySource;
   maxOrders?: number;
 }): BatchSupplyPlan {
   const normalizedRequested = normalizeSupplyResources(requested);
@@ -109,6 +127,7 @@ export function buildBatchSupplyPlan({
   // shows every allocation and lets the player deselect any source before submitting.
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
+    .map((source) => ({ ...source, ships: allowedSupplyShips(source.ships, shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes) }))
     // Apply player-edited shipments first, then use nearby sources to automatically fill the balance.
     .sort((left, right) => {
       const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;

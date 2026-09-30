@@ -1,3 +1,4 @@
+import { assertDefenseSettlementReady } from "./defenseSettlement";
 import { playerNotice } from "./playerNotice";
 import { evaluateProductionPlan, maxAddableProduction, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
 import { useProductionBuildPlan } from "./useProductionBuildPlan";
@@ -9,7 +10,7 @@ import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
-import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
   isStartedBuildingQueueSynced,
@@ -187,6 +188,7 @@ import {
   sendSetDelegateTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendFinishDefenseProductionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
   sendStartMoonShipProductionTransaction,
@@ -2218,6 +2220,7 @@ export function batchSupplySourceForPlanet(
  * safe to call from a wallet preflight.
  */
 export function replanBatchSupplyForConfirmation({
+  shipTypesBySource,
   maxOrders,
   orders,
   sources,
@@ -2227,6 +2230,7 @@ export function replanBatchSupplyForConfirmation({
   orders: readonly BatchSupplyOrder[];
   sources: readonly BatchSupplySource[];
   target: Pick<ManagedPlanetResponse, "galaxy" | "position" | "system">;
+  shipTypesBySource: SupplyShipTypesBySource;
 }): BatchSupplyPlan {
   const selectedPlanetIds = new Set(orders.map((order) => order.originPlanetId));
   const sourceCargoOverrides = Object.fromEntries(orders.map((order) => [order.originPlanetId, order.cargo]));
@@ -2246,6 +2250,7 @@ export function replanBatchSupplyForConfirmation({
     },
     requested,
     selectedPlanetIds,
+    shipTypesBySource,
     sourceCargoOverrides,
     sources,
     maxOrders,
@@ -2871,6 +2876,12 @@ export function PlayableMvpApp({
   const defenseError = defenseSnapshot?.error;
 
   const [defenseAction, setDefenseAction] = useTransactionAction<DefenseActionState>(backendData, account, "defense", activePlanetId);
+  const finishDefenseSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey("defense:finish", account, activePlanetId));
+  const finishDefensePhase = finishDefenseSnapshot?.data?.phase;
+  // Unknown submissions must be reconciled, never retried by this finish control.
+  const finishDefensePending = finishDefensePhase !== undefined && !["idle", "success", "error"].includes(finishDefensePhase);
+  const defenseContextRef = useRef({ account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig });
+  defenseContextRef.current = { account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig };
   const allianceQuery = backendData && account ? backendData.queries.alliance(account) : undefined;
   const { snapshot: allianceSnapshot, isInitialLoading: allianceLoading } = useBackendDataQuery<ChainAllianceState>(allianceQuery, shouldRefreshAllianceStateForPage(page));
   const allianceState = allianceSnapshot?.data ?? null;
@@ -3312,6 +3323,12 @@ export function PlayableMvpApp({
   // report yet" until a manual Refresh — exactly the gap this ticket targets. Unlike `loadMissionDetail`
   // (the manual Refresh button), this never toggles the loading spinner and never clobbers the rendered
   // detail or surfaces an error on a transient poll failure, so the page updates silently in place.
+
+  useEffect(() => {
+    if (!backendData || !missionDetailId) return;
+    // Shared-link observers need fresh forecasts too, without a connected wallet.
+    return backendData.startMissionDetailSync(missionDetailId);
+  }, [backendData, missionDetailId]);
 
   // Close the battle-report share dialog whenever the viewer moves to a different mission so a stale
   // link is never left open.
@@ -4224,7 +4241,7 @@ export function PlayableMvpApp({
   );
 
   const handleConfirmBatchSupply = useCallback(
-    (orders: BatchSupplyOrder[]) => {
+    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource) => {
       const target = batchSupplyTarget;
       if (!provider || !signerAccount || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
@@ -4266,6 +4283,7 @@ export function PlayableMvpApp({
                   if (!snapshot.sources.some(source => source.planetId === order.originPlanetId)) throw new Error(`Supply source ${order.originLabel} is no longer available.`);
                 }
                 const refreshedPlan = replanBatchSupplyForConfirmation({
+                  shipTypesBySource,
                   maxOrders: snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0,
                   orders,
                   sources: batchSupplySourcesFromSnapshot(snapshot, target),
@@ -4392,6 +4410,29 @@ export function PlayableMvpApp({
     },
     [account, defenseState?.homePlanetId, defenseState?.queue, defenseState?.resourceSnapshot, gameContract, provider, backendData, runDefenseTransaction, signerAccount],
   );
+
+  const handleFinishDefense = useCallback(() => {
+    const planetId = activePlanetId;
+    if (!provider || !signerAccount || !account || !gameContract || !planetId || !backendData || activeBodyKind !== "planet" || finishDefensePending) return;
+    const context = defenseContextRef.current;
+    const assertContext = () => {
+      const current = defenseContextRef.current;
+      if (current.account !== context.account || current.signerAccount !== context.signerAccount || current.activePlanetId !== context.activePlanetId || current.activeBodyKind !== context.activeBodyKind || current.runtimeConfig !== context.runtimeConfig) {
+        throw new Error("Wallet or planet changed before submission. Please try again.");
+      }
+    };
+    void runDefenseTransaction(
+      "Finish defenses",
+      "defense:finish",
+      async transactionProvider => {
+        const fresh = await backendData.defenses(account, planetId, { fresh: true });
+        assertContext();
+        assertDefenseSettlementReady(fresh, account, planetId);
+        return sendFinishDefenseProductionTransaction(transactionWalletProvider(transactionProvider, assertContext), signerAccount, gameContract, planetId);
+      },
+      backendData.indexing.production(account, planetId, "defenses"),
+    );
+  }, [account, activeBodyKind, activePlanetId, backendData, finishDefensePending, gameContract, provider, runDefenseTransaction, signerAccount]);
 
   const handleCreateAlliance = useCallback(
     (tag: string, name: string, description: string) => {
@@ -7028,6 +7069,8 @@ export function PlayableMvpApp({
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
+          onFinish={handleFinishDefense}
+          finishPending={finishDefensePending}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
@@ -7343,6 +7386,7 @@ export function PlayableMvpApp({
       />
       {batchSupplyTarget ? (
         <BatchSupplyModal
+          key={`${account}:${batchSupplyTarget.planetId}:${batchSupplySourceLoadIdRef.current}`}
           actionPending={batchSupplySubmitting}
           error={batchSupplyError ?? batchSupplySnapshot?.error}
           fleetSlotsKnown={batchSupplyFleetSlotsKnown}
