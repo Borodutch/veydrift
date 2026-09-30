@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
+import {CombatCohort, VeydriftCombatCohorts} from "./libraries/VeydriftCombatCohorts.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -37,6 +38,21 @@ interface IVeydriftCombatMoonSystem {
 }
 
 interface IVeydriftCombatRapidfire {
+    function cohortRoundLosses(
+        CombatCohort[] calldata attackers,
+        CombatCohort[] calldata defenders,
+        uint256 seed,
+        uint8 round
+    )
+        external
+        pure
+        returns (
+            CombatCohort[] memory attackPool,
+            CombatCohort[] memory defensePool,
+            uint256[] memory attackerLosses,
+            uint256[] memory defenderLosses
+        );
+
     function fleetExtraShots(
         FleetBattleGroup[] calldata targetPool,
         Ship firingShip,
@@ -88,6 +104,27 @@ interface IVeydriftCombatRapidfire {
 }
 
 contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
+    function cohortRoundLosses(
+        CombatCohort[] calldata attackers,
+        CombatCohort[] calldata defenders,
+        uint256 seed,
+        uint8 round
+    )
+        external
+        pure
+        returns (
+            CombatCohort[] memory attackPool,
+            CombatCohort[] memory defensePool,
+            uint256[] memory attackerLosses,
+            uint256[] memory defenderLosses
+        )
+    {
+        attackPool = VeydriftCombatCohorts.canonicalize(attackers);
+        defensePool = VeydriftCombatCohorts.canonicalize(defenders);
+        attackerLosses = VeydriftCombatCohorts.losses(defensePool, attackPool, seed, round, 1);
+        defenderLosses = VeydriftCombatCohorts.losses(attackPool, defensePool, seed, round, 4);
+    }
+
     uint16 private constant BPS = 10_000;
     uint8 private constant MAX_RAPIDFIRE_CHAIN = 64;
     bytes32 private constant COMBAT_STREAM_DOMAIN =
@@ -445,13 +482,6 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
 /// @notice Delegatecall target for public-state fleet attack battle resolution.
 contract VeydriftCombatModule is VeydriftResourceReserves {
     uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
-    bytes32 private constant COMBAT_STREAM_DOMAIN =
-        keccak256("veydrift.classic-combat-random-stream.v1");
-    uint256 private constant TARGET_LANE_STRIDE = 32;
-    uint256 private constant TARGET_LANE_PLANET_SHIP = 0;
-    uint256 private constant TARGET_LANE_DEFENSE = 64;
-    uint256 private constant TARGET_LANE_COUNTERPLAY_SHIP = 128;
-    uint256 private constant TARGET_LANE_ATTACKER_SHIP = 4_096;
 
     struct BattleSettlement {
         BattleOutcome outcome;
@@ -749,381 +779,191 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             }
         }
 
-        _snapshotDefendersFireAtAttackers(
-            snapshot, mission.targetPlanetId, seed, round, losses.attackers
+        address resident = _planets[mission.targetPlanetId].owner;
+        CombatCohort[] memory attackerUnits = _cohortUnits(snapshot, resident, true);
+        CombatCohort[] memory defenderUnits = _cohortUnits(snapshot, resident, false);
+        (
+            CombatCohort[] memory attackers,
+            CombatCohort[] memory defenders,
+            uint256[] memory attackerLost,
+            uint256[] memory defenderLost
+        ) = IVeydriftCombatRapidfire(_rapidfireModule)
+            .cohortRoundLosses(attackerUnits, defenderUnits, seed, round);
+        uint256[] memory attackShares = _attributeCohortLosses(
+            attackerUnits, attackers, attackerLost, snapshot, resident, true
         );
-        _snapshotAttackersFireAtDefenders(
-            snapshot, mission.targetPlanetId, seed, round, losses.defender
+        uint256[] memory defenseShares = _attributeCohortLosses(
+            defenderUnits, defenders, defenderLost, snapshot, resident, false
         );
-    }
-
-    function _snapshotDefendersFireAtAttackers(
-        BattleRoundSnapshot memory snapshot,
-        uint256 planetId,
-        uint256 seed,
-        uint8 round,
-        FleetRoundLosses[] memory attackerLosses
-    ) private view {
-        address defender = _planets[planetId].owner;
-        uint16 weapons = _technologyLevels[defender][Technology.Weapons];
-        for (uint256 targetIndex = 0; targetIndex < snapshot.attackers.length;) {
-            FleetBattleGroup memory target = snapshot.attackers[targetIndex];
-            for (uint8 i = 0; i <= MAX_SHIP_ID;) {
-                Ship ship = Ship(i);
-                uint32 count = _missionShipQuantity(snapshot.defender.planetShips, ship);
-                if (count != 0) {
-                    _addShipFireAtFleetLosses(
-                        attackerLosses[targetIndex],
-                        snapshot.attackers,
-                        target,
-                        snapshot.attackerUnits,
-                        ship,
-                        count,
-                        weapons,
-                        seed,
-                        round,
-                        1,
-                        i
-                    );
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-            for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-                Defense defense = Defense(i);
-                uint32 count = snapshot.defender.defenses[i];
-                if (count != 0) {
-                    _addDefenseFireAtFleetLosses(
-                        attackerLosses[targetIndex],
-                        target,
-                        snapshot.attackerUnits,
-                        defense,
-                        count,
-                        weapons,
-                        seed,
-                        round,
-                        2,
-                        i
-                    );
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-            for (uint256 i = 0; i < snapshot.defender.counterplay.length;) {
-                FleetBattleGroup memory firingGroup = snapshot.defender.counterplay[i];
-                uint16 allyWeapons = _technologyLevels[firingGroup.owner][Technology.Weapons];
-                for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
-                    Ship ship = Ship(shipId);
-                    uint32 count = _missionShipQuantity(firingGroup.ships, ship);
-                    if (count != 0) {
-                        _addShipFireAtFleetLosses(
-                            attackerLosses[targetIndex],
-                            snapshot.attackers,
-                            target,
-                            snapshot.attackerUnits,
-                            ship,
-                            count,
-                            allyWeapons,
-                            seed,
-                            round,
-                            3,
-                            shipId
-                        );
-                    }
-                    unchecked {
-                        ++shipId;
-                    }
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-            unchecked {
-                ++targetIndex;
+        for (uint256 g; g < snapshot.attackers.length; ++g) {
+            for (uint8 unit; unit < 16; ++unit) {
+                // Each share is bounded by its original uint32 storage quantity.
+                _addFleetShipLoss(
+                    losses.attackers[g],
+                    snapshot.attackers[g].ships,
+                    Ship(unit),
+                    uint32(attackShares[g * 16 + unit])
+                );
             }
         }
-    }
-
-    function _snapshotAttackersFireAtDefenders(
-        BattleRoundSnapshot memory snapshot,
-        uint256 targetPlanetId,
-        uint256 seed,
-        uint8 round,
-        DefenderRoundLosses memory defenderLosses
-    ) private view {
-        for (uint256 attackerIndex = 0; attackerIndex < snapshot.attackers.length;) {
-            FleetBattleGroup memory attacker = snapshot.attackers[attackerIndex];
-            uint16 weapons = _technologyLevels[attacker.owner][Technology.Weapons];
-            for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-                Ship ship = Ship(i);
-                uint32 count = _missionShipQuantity(attacker.ships, ship);
-                if (count != 0) {
-                    _addShipFireAtDefenderLosses(
-                        defenderLosses,
-                        snapshot.defender,
-                        targetPlanetId,
-                        ship,
-                        count,
-                        weapons,
-                        seed,
-                        round,
-                        4,
-                        i
-                    );
-                }
-                unchecked {
-                    ++i;
-                }
-            }
-            unchecked {
-                ++attackerIndex;
+        for (uint8 unit; unit < 16; ++unit) {
+            uint32 lost = uint32(defenseShares[unit]);
+            if (unit == uint8(Ship.SolarSatellite) || unit == uint8(Ship.Crawler)) {
+                _addDefenderStationarySupportLoss(
+                    losses.defender, Ship(unit), uint32(defenderUnits[unit].count), lost
+                );
+            } else {
+                _addDefenderPlanetShipLoss(
+                    losses.defender, snapshot.defender.planetShips, Ship(unit), lost
+                );
             }
         }
-    }
-
-    function _addShipFireAtFleetLosses(
-        FleetRoundLosses memory losses,
-        FleetBattleGroup[] memory targetPool,
-        FleetBattleGroup memory target,
-        uint256 targetTotal,
-        Ship firingShip,
-        uint32 firingCount,
-        uint16 firingWeapons,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 unit
-    ) private view {
-        if (targetTotal == 0) return;
-
-        uint256 attack = _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingWeapons);
-        uint256 extraShots = IVeydriftCombatRapidfire(_rapidfireModule)
-            .fleetExtraShots(
-                targetPool, firingShip, firingCount, targetTotal, seed, round, side, unit
+        for (uint8 unit; unit < 8; ++unit) {
+            _addDefenderDefenseLoss(
+                losses.defender, snapshot.defender.defenses, unit, uint32(defenseShares[16 + unit])
             );
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship targetShip = Ship(i);
-            uint32 targetCount = _missionShipQuantity(target.ships, targetShip);
-            if (targetCount != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, target.laneGroup, i);
-                uint256 shots = _distributedTargetShots(
-                    firingCount, targetCount, targetTotal, seed, round, side, unit, targetLane
-                )
-                + _distributedTargetShots(
-                    extraShots, targetCount, targetTotal, seed, round, side, unit, targetLane
+        }
+        for (uint256 g; g < snapshot.defender.counterplay.length; ++g) {
+            for (uint8 unit; unit < 16; ++unit) {
+                _addFleetShipLoss(
+                    losses.defender.counterplay[g],
+                    snapshot.defender.counterplay[g].ships,
+                    Ship(unit),
+                    uint32(defenseShares[24 + g * 16 + unit])
                 );
-                uint32 lost = _deterministicShipLossCount(
-                    targetShip,
-                    targetCount,
-                    shots,
-                    attack,
-                    target.owner,
-                    seed,
-                    round,
-                    side,
-                    targetLane
-                );
-                _addFleetShipLoss(losses, target.ships, targetShip, lost);
-            }
-            unchecked {
-                ++i;
             }
         }
     }
 
-    function _addDefenseFireAtFleetLosses(
-        FleetRoundLosses memory losses,
-        FleetBattleGroup memory target,
-        uint256 targetTotal,
-        Defense firingDefense,
-        uint32 firingCount,
-        uint16 firingWeapons,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 unit
-    ) private view {
-        if (targetTotal == 0) return;
-
-        uint256 attack =
-            _combatScaled(VeydriftCatalog.defenseBattleAttack(firingDefense), firingWeapons);
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship targetShip = Ship(i);
-            uint32 targetCount = _missionShipQuantity(target.ships, targetShip);
-            if (targetCount != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_ATTACKER_SHIP, target.laneGroup, i);
-                uint256 shots = _distributedTargetShots(
-                    firingCount, targetCount, targetTotal, seed, round, side, unit, targetLane
-                );
-                uint32 lost = _deterministicShipLossCount(
-                    targetShip,
-                    targetCount,
-                    shots,
-                    attack,
-                    target.owner,
-                    seed,
-                    round,
-                    side,
-                    targetLane
-                );
-                _addFleetShipLoss(losses, target.ships, targetShip, lost);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function _addShipFireAtDefenderLosses(
-        DefenderRoundLosses memory losses,
-        DefenderBattleGroup memory target,
-        uint256 targetPlanetId,
-        Ship firingShip,
-        uint32 firingCount,
-        uint16 firingWeapons,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 unit
-    ) private view {
-        if (target.units == 0) return;
-
-        uint256 attack = _combatScaled(VeydriftCatalog.shipBattleAttack(firingShip), firingWeapons);
-        uint256 extraShots = IVeydriftCombatRapidfire(_rapidfireModule)
-            .defenderExtraShots(target, firingShip, firingCount, seed, round, side, unit);
-        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
-            Ship ship = Ship(i);
-            uint32 count = _missionShipQuantity(target.planetShips, ship);
-            if (count != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_PLANET_SHIP, 0, i);
-                uint256 shots = _distributedTargetShots(
-                    firingCount, count, target.units, seed, round, side, unit, targetLane
-                )
-                + _distributedTargetShots(
-                    extraShots, count, target.units, seed, round, side, unit, targetLane
-                );
-                uint32 lost = _deterministicBodyShipLossCount(
-                    targetPlanetId, ship, count, shots, attack, seed, round, side, targetLane
-                );
-                _addDefenderPlanetShipLoss(losses, target.planetShips, ship, lost);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        _addShipFireAtStationarySupportLosses(
-            losses,
-            target,
-            targetPlanetId,
-            firingCount,
-            attack,
-            extraShots,
-            Ship.SolarSatellite,
-            target.solarSatellites,
-            seed,
-            round,
-            side,
-            unit
-        );
-        _addShipFireAtStationarySupportLosses(
-            losses,
-            target,
-            targetPlanetId,
-            firingCount,
-            attack,
-            extraShots,
-            Ship.Crawler,
-            target.crawlers,
-            seed,
-            round,
-            side,
-            unit
-        );
-        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            Defense defense = Defense(i);
-            uint32 count = target.defenses[i];
-            if (count != 0) {
-                uint256 targetLane = _targetLane(TARGET_LANE_DEFENSE, 0, i);
-                uint256 shots = _distributedTargetShots(
-                    firingCount, count, target.units, seed, round, side, unit, targetLane
-                )
-                + _distributedTargetShots(
-                    extraShots, count, target.units, seed, round, side, unit, targetLane
-                );
-                uint32 lost = _deterministicDefenseLossCount(
-                    targetPlanetId, defense, count, shots, attack, seed, round, side, targetLane
-                );
-                _addDefenderDefenseLoss(losses, target.defenses, i, lost);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        for (uint256 i = 0; i < target.counterplay.length;) {
-            FleetBattleGroup memory counterplay = target.counterplay[i];
-            for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
-                Ship targetShip = Ship(shipId);
-                uint32 count = _missionShipQuantity(counterplay.ships, targetShip);
-                if (count != 0) {
-                    uint256 targetLane =
-                        _targetLane(TARGET_LANE_COUNTERPLAY_SHIP, counterplay.laneGroup, shipId);
-                    uint256 shots = _distributedTargetShots(
-                        firingCount, count, target.units, seed, round, side, unit, targetLane
-                    )
-                    + _distributedTargetShots(
-                        extraShots, count, target.units, seed, round, side, unit, targetLane
-                    );
-                    uint32 lost = _deterministicShipLossCount(
-                        targetShip,
-                        count,
-                        shots,
-                        attack,
-                        counterplay.owner,
-                        seed,
-                        round,
-                        side,
-                        targetLane
-                    );
-                    _addFleetShipLoss(losses.counterplay[i], counterplay.ships, targetShip, lost);
+    /// @dev Flat owner/type inputs retain identity only for post-combat attribution.
+    function _cohortUnits(BattleRoundSnapshot memory snapshot, address resident, bool attacking)
+        private
+        view
+        returns (CombatCohort[] memory units)
+    {
+        FleetBattleGroup[] memory groups =
+            attacking ? snapshot.attackers : snapshot.defender.counterplay;
+        uint256 offset = attacking ? 0 : 24;
+        units = new CombatCohort[](offset + groups.length * 16);
+        if (!attacking) {
+            for (uint8 unit; unit < 24; ++unit) {
+                uint32 count;
+                if (unit >= 16) {
+                    count = snapshot.defender.defenses[unit - 16];
+                } else if (unit == uint8(Ship.SolarSatellite)) {
+                    count = snapshot.defender.solarSatellites;
+                } else if (unit == uint8(Ship.Crawler)) {
+                    count = snapshot.defender.crawlers;
+                } else {
+                    count = _missionShipQuantity(snapshot.defender.planetShips, Ship(unit));
                 }
-                unchecked {
-                    ++shipId;
-                }
+                units[unit] = _cohortUnit(resident, unit, count);
             }
-            unchecked {
-                ++i;
+        }
+        for (uint256 g; g < groups.length; ++g) {
+            for (uint8 unit; unit < 16; ++unit) {
+                units[offset + g * 16 + unit] = _cohortUnit(
+                    groups[g].owner, unit, _missionShipQuantity(groups[g].ships, Ship(unit))
+                );
             }
         }
     }
 
-    function _addShipFireAtStationarySupportLosses(
-        DefenderRoundLosses memory losses,
-        DefenderBattleGroup memory target,
-        uint256 targetPlanetId,
-        uint32 firingCount,
-        uint256 attack,
-        uint256 extraShots,
-        Ship supportShip,
-        uint32 supportCount,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 unit
-    ) private view {
-        if (supportCount == 0) return;
-        uint256 targetLane = _targetLane(TARGET_LANE_PLANET_SHIP, 0, uint8(supportShip));
-        uint256 shots = _distributedTargetShots(
-            firingCount, supportCount, target.units, seed, round, side, unit, targetLane
-        )
-        + _distributedTargetShots(
-            extraShots, supportCount, target.units, seed, round, side, unit, targetLane
+    function _cohortUnit(address owner, uint8 unit, uint32 count)
+        private
+        view
+        returns (CombatCohort memory result)
+    {
+        result.unit = unit;
+        result.count = count;
+        if (count == 0) return result;
+        uint16 weapons = _technologyLevels[owner][Technology.Weapons];
+        uint16 shielding = _technologyLevels[owner][Technology.Shielding];
+        uint16 armor = _technologyLevels[owner][Technology.Armor];
+        result.attack = _combatScaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleAttack(Ship(unit))
+                : VeydriftCatalog.defenseBattleAttack(Defense(unit - 16)),
+            weapons
         );
-        uint32 lost = _deterministicBodyShipLossCount(
-            targetPlanetId, supportShip, supportCount, shots, attack, seed, round, side, targetLane
+        result.shield = _combatScaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleShield(Ship(unit))
+                : VeydriftCatalog.defenseBattleShield(Defense(unit - 16)),
+            shielding
         );
-        _addDefenderStationarySupportLoss(losses, supportShip, supportCount, lost);
+        result.hull = _combatScaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleHull(Ship(unit))
+                : VeydriftCatalog.defenseBattleHull(Defense(unit - 16)),
+            armor
+        );
+        result.key = VeydriftCombatCohorts.key(unit, result.attack, result.shield, result.hull);
+    }
+
+    /// @dev Hamilton apportionment: exact conservation, each owner's share within one
+    /// ship of proportional loss. Stable owner/mission tie-breaks never feed combat RNG.
+    function _attributeCohortLosses(
+        CombatCohort[] memory units,
+        CombatCohort[] memory pool,
+        uint256[] memory lost,
+        BattleRoundSnapshot memory snapshot,
+        address resident,
+        bool attacking
+    ) private pure returns (uint256[] memory shares) {
+        shares = new uint256[](units.length);
+        uint256[] memory remainders = new uint256[](units.length);
+        for (uint256 c; c < pool.length; ++c) {
+            uint256 allocated;
+            for (uint256 i; i < units.length; ++i) {
+                if (units[i].count == 0 || units[i].key != pool[c].key) continue;
+                uint256 weighted = lost[c] * units[i].count;
+                shares[i] = weighted / pool[c].count;
+                remainders[i] = weighted % pool[c].count;
+                allocated += shares[i];
+            }
+            // The unallocated remainder is strictly less than the number of members,
+            // not their ship count. Never iterate over individual ships.
+            for (uint256 left = lost[c] - allocated; left != 0; --left) {
+                uint256 best = type(uint256).max;
+                for (uint256 i; i < units.length; ++i) {
+                    if (units[i].count == 0 || units[i].key != pool[c].key || remainders[i] == 0) {
+                        continue;
+                    }
+                    if (
+                        best == type(uint256).max || remainders[i] > remainders[best]
+                            || (remainders[i] == remainders[best]
+                                && _attributionBefore(i, best, snapshot, resident, attacking))
+                    ) best = i;
+                }
+                ++shares[best];
+                remainders[best] = 0;
+            }
+        }
+    }
+
+    function _attributionBefore(
+        uint256 a,
+        uint256 b,
+        BattleRoundSnapshot memory snapshot,
+        address resident,
+        bool attacking
+    ) private pure returns (bool) {
+        (address ownerA, uint256 missionA) = _cohortIdentity(a, snapshot, resident, attacking);
+        (address ownerB, uint256 missionB) = _cohortIdentity(b, snapshot, resident, attacking);
+        return ownerA < ownerB || (ownerA == ownerB && missionA < missionB);
+    }
+
+    function _cohortIdentity(
+        uint256 i,
+        BattleRoundSnapshot memory snapshot,
+        address resident,
+        bool attacking
+    ) private pure returns (address owner, uint256 missionId) {
+        if (!attacking && i < 24) return (resident, 0);
+        FleetBattleGroup memory group =
+            attacking ? snapshot.attackers[i / 16] : snapshot.defender.counterplay[(i - 24) / 16];
+        return (group.owner, group.missionId);
     }
 
     function _addFleetShipLoss(
@@ -1394,110 +1234,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 repairedDefenses = IVeydriftCombatRapidfire(_rapidfireModule)
             .repairedDefenseCounts(destroyedDefenses, seed);
         _applyDefenseChanges(mission.targetPlanetId, mission.targetIsMoon, repairedDefenses, true);
-    }
-
-    function _distributedTargetShots(
-        uint256 shots,
-        uint32 targetCount,
-        uint256 targetTotal,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint8 firingUnit,
-        uint256 targetUnit
-    ) private view returns (uint256) {
-        return IVeydriftCombatRapidfire(_rapidfireModule)
-            .distributedTargetShots(
-                shots, targetCount, targetTotal, seed, round, side, firingUnit, targetUnit
-            );
-    }
-
-    function _deterministicBodyShipLossCount(
-        uint256 planetId,
-        Ship ship,
-        uint32 count,
-        uint256 shots,
-        uint256 attack,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 unit
-    ) private view returns (uint32) {
-        address owner = _planets[planetId].owner;
-        return
-            _deterministicShipLossCount(ship, count, shots, attack, owner, seed, round, side, unit);
-    }
-
-    function _deterministicShipLossCount(
-        Ship ship,
-        uint32 count,
-        uint256 shots,
-        uint256 attack,
-        address owner,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 unit
-    ) private view returns (uint32) {
-        uint16 shielding = _technologyLevels[owner][Technology.Shielding];
-        uint16 armor = _technologyLevels[owner][Technology.Armor];
-        return _deterministicLossCount(
-            count,
-            shots,
-            attack,
-            _combatScaled(VeydriftCatalog.shipBattleShield(ship), shielding),
-            _combatScaled(VeydriftCatalog.shipBattleHull(ship), armor),
-            seed,
-            round,
-            side,
-            unit
-        );
-    }
-
-    function _deterministicDefenseLossCount(
-        uint256 planetId,
-        Defense defense,
-        uint32 count,
-        uint256 shots,
-        uint256 attack,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 unit
-    ) private view returns (uint32) {
-        address owner = _planets[planetId].owner;
-        uint16 shielding = _technologyLevels[owner][Technology.Shielding];
-        uint16 armor = _technologyLevels[owner][Technology.Armor];
-        return _deterministicLossCount(
-            count,
-            shots,
-            attack,
-            _combatScaled(VeydriftCatalog.defenseBattleShield(defense), shielding),
-            _combatScaled(VeydriftCatalog.defenseBattleHull(defense), armor),
-            seed,
-            round,
-            side,
-            unit
-        );
-    }
-
-    function _deterministicLossCount(
-        uint32 count,
-        uint256 shots,
-        uint256 attack,
-        uint256 shield,
-        uint256 hull,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 unit
-    ) private view returns (uint32) {
-        return IVeydriftCombatRapidfire(_rapidfireModule)
-            .deterministicLossCount(count, shots, attack, shield, hull, seed, round, side, unit);
-    }
-
-    function _targetLane(uint256 base, uint256 group, uint8 unit) private pure returns (uint256) {
-        return base + group * TARGET_LANE_STRIDE + unit;
     }
 
     function _returnLinkedMissions(uint256 hostileMissionId, FleetMission storage hostile) private {
