@@ -7701,7 +7701,7 @@ export class SettlementIndexer {
       `);
       const reportJson = JSON.stringify(report);
       this.db.transaction(() => {
-        for (const associatedMissionId of [report.missionId, ...report.participants.map(participant => participant.missionId)]) {
+        for (const associatedMissionId of new Set([report.missionId, ...report.participants.map(participant => participant.missionId)])) {
           writeReadyReport.run(associatedMissionId, reportJson, durationMs, report.blockNumber, updatedAt);
         }
         clearStationedDefenders.run(report.missionId);
