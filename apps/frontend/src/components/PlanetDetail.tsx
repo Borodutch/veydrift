@@ -46,6 +46,7 @@ import { missionTypeLabel } from "./missionControlModel";
 import { buildInspectPath } from "../inspectRoutes";
 import { backendDataStoreFor } from "../backendDataStore";
 import { useBackendDataQuery } from "../useBackendDataQuery";
+import { useUiClock } from "../useUiClock";
 
 interface Props {
   account?: string | undefined;
@@ -865,7 +866,8 @@ export type PlanetAssetRecordRow = PlanetRecordRow & {
 export type PlanetFleetActivityRow = {
   asset?: string | undefined;
   direction: "Inbound" | "Outbound" | "Local";
-  eventLabel: string;
+  eventAt: number | undefined;
+  returning: boolean;
   missionId: string;
   missionLabel: string;
   routeLabel: string;
@@ -932,7 +934,8 @@ export function planetFleetActivityRows(
       return {
         ...(shipEntries[0]?.ship.asset ? { asset: shipEntries[0].ship.asset } : {}),
         direction,
-        eventLabel: `${returning ? "Lands" : "Arrives"} ${formatUserTimestamp(eventAt)}`,
+        eventAt: validActivityTimestamp(eventAt),
+        returning,
         missionId: mission.missionId,
         missionLabel: `${allegiance}${typeLabel}${lifecycle}`,
         routeLabel: direction === "Local"
@@ -970,6 +973,29 @@ function planetFleetEndpointLabel(
   return `Planet ${fallbackPlanetId}${isMoon ? " moon" : ""}`;
 }
 
+function validActivityTimestamp(value: FleetMissionSummary["arrivalAt"]): number | undefined {
+  const ms = timestampToMs(value);
+  return ms !== undefined && Number.isFinite(new Date(ms).getTime()) ? ms : undefined;
+}
+
+export function planetFleetActivityTiming(row: Pick<PlanetFleetActivityRow, "eventAt" | "returning">, now: number) {
+  const { eventAt, returning } = row;
+  if (eventAt === undefined || !Number.isFinite(new Date(eventAt).getTime())) {
+    return { clock: "", eta: "ETA unavailable" };
+  }
+  const clock = `${returning ? "Lands" : "Arrives"} ${formatUserTimestamp(new Date(eventAt))} local`;
+  let seconds = Math.max(0, Math.ceil((eventAt - now) / 1_000));
+  if (seconds === 0) return { clock, eta: returning ? "landing/settling" : "arriving/settling" };
+  const days = Math.floor(seconds / 86_400);
+  seconds %= 86_400;
+  const hours = Math.floor(seconds / 3_600);
+  seconds %= 3_600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  const duration = [days ? `${days}d` : "", days || hours ? `${hours}h` : "", days || hours || minutes ? `${minutes}m` : "", `${seconds}s`].filter(Boolean).join(" ");
+  return { clock, eta: `in ${duration}` };
+}
+
 export function PlanetFleetActivityPanel({
   loading,
   rows,
@@ -977,6 +1003,7 @@ export function PlanetFleetActivityPanel({
   loading: boolean;
   rows: PlanetFleetActivityRow[];
 }) {
+  const now = useUiClock(!loading && rows.length > 0);
   if (!loading && rows.length === 0) return null;
   const visibleRows = rows.slice(0, 6);
   const overflow = rows.length - visibleRows.length;
@@ -1000,9 +1027,10 @@ export function PlanetFleetActivityPanel({
         <div className="grid gap-2 p-3 sm:grid-cols-2">
           {visibleRows.map((row) => {
             const DirectionIcon = row.direction === "Inbound" ? ArrowDownLeft : ArrowUpRight;
+            const timing = planetFleetActivityTiming(row, now);
             return (
               <a
-                className="group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5 transition hover:border-cyan-200/25 hover:bg-cyan-200/[0.035]"
+                className="group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5 transition hover:border-cyan-200/25 hover:bg-cyan-200/[0.035]"
                 href={buildInspectPath({ kind: "mission", missionId: row.missionId })}
                 key={`${row.missionId}-${row.direction}`}
               >
@@ -1010,14 +1038,20 @@ export function PlanetFleetActivityPanel({
                   {row.asset ? <OptimizedImage alt="" className="h-full w-full object-cover transition-transform group-hover:scale-105" loading="lazy" sizes="icon" src={row.asset} /> : <Rocket aria-hidden="true" className="m-2.5 text-cyan-200/40" size={18} />}
                 </span>
                 <span className="min-w-0">
-                  <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-slate-200">
+                  <span className="flex min-w-0 flex-wrap items-center gap-1.5 break-words text-xs font-semibold text-slate-200">
                     <DirectionIcon aria-hidden="true" className={row.tone === "danger" ? "text-rose-300" : "text-cyan-200"} size={14} />
                     <span className="min-w-0" title={`${row.direction} · ${row.missionLabel}`}>{row.direction} · {row.missionLabel}</span>
                     <span className="shrink-0 font-mono text-[10px] text-slate-500">#{row.missionId}</span>
                   </span>
-                  <span className="mt-1 block truncate text-[11px] text-slate-500" title={`${row.routeLabel} · ${row.eventLabel}`}>{row.routeLabel} · {row.eventLabel}</span>
+                  <span className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-slate-400">
+                    <span className="min-w-0 break-words">{row.routeLabel}</span>
+                    <span className="font-mono">{row.shipCountLabel}</span>
+                  </span>
                 </span>
-                <span className="whitespace-nowrap font-mono text-[11px] text-slate-400">{row.shipCountLabel}</span>
+                <span className="col-span-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 break-words text-[11px] text-slate-300 tabular-nums">
+                  {timing.clock ? <span>{timing.clock}</span> : null}
+                  <span>{timing.eta}</span>
+                </span>
               </a>
             );
           })}
