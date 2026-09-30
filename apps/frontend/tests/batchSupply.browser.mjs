@@ -157,13 +157,23 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       const chipStyle = expression => evaluate('(() => { const button = ' + expression + '; const chip = button.firstElementChild; const target = button.getBoundingClientRect(), visual = chip.getBoundingClientRect(); return {width: target.width, height: target.height, visualWidth: visual.width, visualHeight: visual.height, background: getComputedStyle(chip).backgroundColor, imageOpacity: getComputedStyle(button.querySelector("img")).opacity}; })()');
       const on = await chipStyle(large), off = await chipStyle(recycler);
       for (const style of [on, off]) {
-        assert.ok(style.width >= 44 && style.height >= 44, 'usable non-overlapping mobile hit area');
+        assert.ok(style.width >= 24 && style.height >= 24, 'usable minimum pointer target');
+        assert.ok(style.width <= 44 && style.height <= 30, 'outer button matches the original compact chip footprint');
+        assert.equal(style.height, style.visualHeight, 'no invisible vertical padding around the chip');
         assert.ok(style.visualWidth <= 44 && style.visualHeight <= 28, 'compact icon/count footprint');
       }
       assert.notEqual(on.background, off.background, 'selected chip is highlighted');
       assert.equal(off.imageOpacity, '0.5', 'excluded ship image is subdued');
       assert.equal(await evaluate(large + '.title'), 'Large Cargo');
-      measurements.push({label: width + '-compact-chips', on, off});
+      const layout = await evaluate('(() => { const group = ' + fleet + '; const boxes = [...group.querySelectorAll("button")].map(node => { const r = node.getBoundingClientRect(); return {left: r.left, right: r.right, top: r.top, bottom: r.bottom}; }); return {rowHeight: group.parentElement.getBoundingClientRect().height, groupHeight: group.getBoundingClientRect().height, boxes}; })()');
+      assert.ok(layout.rowHeight <= 30 && layout.groupHeight <= 30, 'whole Planned Fleet row retains the original density');
+      for (let i = 0; i < layout.boxes.length; i++) {
+        for (let j = i + 1; j < layout.boxes.length; j++) {
+          const a = layout.boxes[i], b = layout.boxes[j];
+          assert.ok(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top, 'ship pointer targets never overlap');
+        }
+      }
+      measurements.push({label: width + '-compact-chips', on, off, ...layout});
       const original = await submit();
       assert.equal(original.orders[0].ships.largeCargo, 2);
       await click(large);

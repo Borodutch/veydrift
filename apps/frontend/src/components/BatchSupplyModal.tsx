@@ -297,7 +297,7 @@ export function BatchSupplyModal({
                               aria-describedby={`supply-planned-${source.planetId}-${key}`}
                               disabled={actionPending || transactionPending || loading || Boolean(source.unavailableReason)}
                               title={label}
-                              className="group inline-flex min-h-11 min-w-11 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="group inline-flex min-h-6 min-w-6 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                               onClick={() => setShipTypesBySource((current) => {
                                 const types = current[source.planetId] ?? defaultSupplyShipTypes;
                                 return { ...current, [source.planetId]: types.includes(key) ? types.filter((type) => type !== key) : [...types, key] };
