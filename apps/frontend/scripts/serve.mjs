@@ -1,20 +1,11 @@
 import { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
 export { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { animationConfigs, animationFilename, animationKey, animationRoot, assertAnimationVariantsReady } from "./animation-variants.mjs";
 import { Readable } from "node:stream";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
-import {
-  MOON_ANIMATION_BASE,
-  MOON_ANIMATION_MASTER_WIDTH,
-  MOON_ANIMATION_TYPES,
-  MOON_ANIMATION_VERSION,
-  MOON_ANIMATION_WIDTHS,
-  PLANET_ANIMATION_BASE,
-  PLANET_ANIMATION_TYPES,
-  PLANET_ANIMATION_VERSION,
-  PLANET_ANIMATION_WIDTHS,
-} from "../planetAnimationConfig.ts";
 
 const distRoot = new URL("../dist/", import.meta.url);
 const publicRoot = new URL("../public/", import.meta.url);
@@ -174,23 +165,7 @@ export function planetAnimationCacheSize() {
 }
 
 export function planetAnimationRoute(url) {
-  const configs = [
-    {
-      base: PLANET_ANIMATION_BASE,
-      masterWidth: 1024,
-      types: PLANET_ANIMATION_TYPES,
-      version: PLANET_ANIMATION_VERSION,
-      widths: PLANET_ANIMATION_WIDTHS,
-    },
-    {
-      base: MOON_ANIMATION_BASE,
-      masterWidth: MOON_ANIMATION_MASTER_WIDTH,
-      types: MOON_ANIMATION_TYPES,
-      version: MOON_ANIMATION_VERSION,
-      widths: MOON_ANIMATION_WIDTHS,
-    },
-  ];
-  const config = configs.find(({ base }) => url.pathname.startsWith(`${base}/`) && url.pathname.endsWith(".webp"));
+  const config = animationConfigs.find(({ base }) => url.pathname.startsWith(`${base}/`) && url.pathname.endsWith(".webp"));
   if (!config) return null;
   const assetType = url.pathname.slice(config.base.length + 1, -".webp".length);
   const size = Number(url.searchParams.get("size"));
@@ -200,19 +175,6 @@ export function planetAnimationRoute(url) {
   if (!config.widths.includes(size)) return { error: "Unsupported animation size", status: 400 };
   if (version !== config.version) return { error: "Unsupported animation version", status: 400 };
   return { ...config, assetType, size };
-}
-
-async function resizePlanetAnimation(base, assetType, size) {
-  const started = performance.now();
-  const sourcePath = `${base}/${assetType}.webp`;
-  const source = await readFile(existingAssetUrl(sourcePath));
-  const sharp = await getSharp();
-  const body = await sharp(source, { animated: true })
-    .resize({ width: size, height: size, fit: "fill" })
-    .webp({ quality: 82, effort: 4 })
-    .toBuffer();
-  console.info(JSON.stringify({ event: "animation_resize", assetType, size, durationMs: Math.round(performance.now() - started), bytes: body.byteLength }));
-  return body;
 }
 
 export async function planetAnimationResponse(url) {
@@ -230,20 +192,22 @@ export async function planetAnimationResponse(url) {
     return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset)) : Bun.file(asset), { headers });
   }
 
-  if (route.size === 1024) {
-    return new Response(await resizePlanetAnimation(route.base, route.assetType, route.size), { headers });
+  const key = animationKey(route);
+  let pending = planetAnimationCache.get(key);
+  headers["x-veydrift-animation-cache"] = pending ? "hit" : "miss";
+  headers["x-veydrift-animation-source"] = "precomputed";
+  if (!pending) {
+    const path = join(animationRoot, animationFilename(route));
+    pending = stat(path).then((file) => {
+      if (!file.isFile() || !file.size) throw new Error("Missing precomputed animation: " + key);
+      return { path, bytes: file.size };
+    });
+    planetAnimationCache.set(key, pending);
+    pending.catch(() => { if (planetAnimationCache.get(key) === pending) planetAnimationCache.delete(key); });
   }
-
-  const key = `${route.version}:${route.base}:${route.assetType}:${route.size}`;
-  let body = planetAnimationCache.get(key);
-  headers["x-veydrift-animation-cache"] = body ? "hit" : "miss";
-  if (!body) {
-    body = resizePlanetAnimation(route.base, route.assetType, route.size);
-    planetAnimationCache.set(key, body);
-    body.catch(() => planetAnimationCache.delete(key));
-  }
-
-  return new Response(await body, { headers });
+  const asset = await pending;
+  headers["content-length"] = String(asset.bytes);
+  return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset.path)) : Bun.file(asset.path), { headers });
 }
 
 function docsAppRouteForPathname(pathname) {
@@ -1213,6 +1177,7 @@ export async function frontendResponse(request) {
 }
 
 if (import.meta.main) {
+  await assertAnimationVariantsReady();
   Bun.serve({
     hostname: "0.0.0.0",
     port,

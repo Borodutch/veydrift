@@ -1,4 +1,5 @@
 import preact from "@preact/preset-vite";
+import { prepareAnimationVariants } from "./scripts/animation-variants.mjs";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -121,7 +122,8 @@ function hideWhitepaper(): Plugin {
 }
 
 function planetAnimations(): Plugin {
-  const configureServer = (server: Pick<ViteDevServer, "middlewares">) => {
+  const configureServer = async (server: Pick<ViteDevServer, "middlewares">) => {
+    await prepareAnimationVariants();
     server.middlewares.use(async (request, response, next) => {
       try {
         const result = await planetAnimationResponse(new URL(request.url ?? "/", "http://localhost"));
@@ -140,7 +142,11 @@ function planetAnimations(): Plugin {
       }
     });
   };
-  return { name: "veydrift-planet-animations", configureServer, configurePreviewServer: configureServer };
+  return {
+    name: "veydrift-planet-animations",
+    async buildStart() { await prepareAnimationVariants(); },
+    configureServer, configurePreviewServer: configureServer,
+  };
 }
 
 function docsMarkdownAsset(): Plugin {

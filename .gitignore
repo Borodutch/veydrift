@@ -23,6 +23,7 @@ cache/
 
 # Generated image variants (build-time output)
 apps/frontend/public/assets/game/sizes/
+apps/frontend/.animation-variants/
 
 # Blockchain / zk generated artifacts
 broadcast/

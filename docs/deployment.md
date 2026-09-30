@@ -92,6 +92,30 @@ node scripts/veydrift-redeploy-readiness-probe.mjs --api-url <api-origin> --dura
 
 Retain its results as release evidence. Do not bypass readiness to shorten a deploy.
 
+## Precomputed frontend animations
+
+Every Vite build mode prepares the 60 canonical planet/moon derivatives in
+`apps/frontend/.animation-variants/` before bundling. Nixpacks and the test
+Dockerfile retain that directory in the application image; a dist-only copy is
+not a complete server deployment. No persistent mount or runtime resize is
+needed. Generation is sequential, keyed by artwork/version/size/source hash and
+encoder settings/versions, with failed promises evicted and obsolete outputs
+pruned. The output budget is 512 MiB; current output is about 104 MiB. Source
+artwork changes still require the normal animation URL version bump.
+
+The server validates the complete manifest/files before binding its port, then
+streams derivatives without decoding or caching image bodies. Missing output
+fails startup rather than exposing a cold-page resize timeout. Vite dev/preview
+also prepares outputs before accepting requests. For a standalone local server,
+run `bun run build` first (or `bun scripts/animation-variants.mjs` when
+only rebuilding derivatives). Do not run multiple builds against one output
+folder or build into a running deployment's image.
+
+After building, run `cd apps/frontend && bun scripts/benchmark-animation-delivery.mjs`.
+It starts two fresh local serving processes, fans out all 60 real variants with
+HTML/API-backed control requests, repeats warm, and decodes all animation frames.
+It does not replace first-deployment production timing or dedicated browser QA.
+
 ## Frontend metadata and optional wallet integration
 
 Farcaster account associations must be signed for the exact deployed domain.
