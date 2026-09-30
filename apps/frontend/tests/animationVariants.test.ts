@@ -24,6 +24,15 @@ async function fixture() {
 }
 
 describe("bounded build-time animation variants", () => {
+  test("excludes generated frontend artifacts from the final Nixpacks source copy", async () => {
+    const rules = (await readFile(new URL("../../../.dockerignore", import.meta.url), "utf8"))
+      .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+    expect(rules).toContain("apps/frontend/dist/");
+    expect(rules).toContain("apps/frontend/.animation-variants/");
+    // Later negations must not reintroduce cached variants or their manifest.
+    expect(rules.some((line) => line.startsWith("!"))).toBe(false);
+  });
+
   test("deduplicates concurrent work, preserves all decoded frames/cadence, and reuses exact identities", async () => {
     const f = await fixture();
     try {
