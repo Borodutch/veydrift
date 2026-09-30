@@ -70,7 +70,7 @@ describe("contract battle preview parity", () => {
     });
     expect(rapidfire.rapidfireExtraShots.attacker).toBeGreaterThan(0);
     expect(rapidfire.defender.survivingDefenses).toEqual([
-      { id: 0, label: "Rocket Launcher", count: 45 },
+      { id: 0, label: "Rocket Launcher", count: 48 },
     ]);
 
     const mixed = runContractBattle(
@@ -80,13 +80,13 @@ describe("contract battle preview parity", () => {
     expect(mixed).toMatchObject({
       outcome: "defeat",
       attackerLosses: { metal: 20_000, crystal: 7_000, deuterium: 2_000 },
-      defenderLosses: { metal: 0, crystal: 0, deuterium: 0 },
+      defenderLosses: { metal: 18_000, crystal: 6_000, deuterium: 0 },
     });
     expect(mixed.defender.survivingShips).toEqual([
-      { id: 1, label: "Light Fighter", count: 10 },
+      { id: 1, label: "Light Fighter", count: 4 },
     ]);
     expect(mixed.defender.survivingDefenses).toEqual([
-      { id: 0, label: "Rocket Launcher", count: 49 },
+      { id: 0, label: "Rocket Launcher", count: 38 },
     ]);
   });
 

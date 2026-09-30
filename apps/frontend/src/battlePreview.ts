@@ -429,11 +429,15 @@ function cohortDistributed(shots: bigint, count: bigint, total: bigint, seed: bi
 
 function cohortExtraShots(shooter: CombatCohort, targets: CombatCohort[], total: bigint, seed: bigint, round: number, side: number): bigint {
   if (shooter.unit >= 16) return 0n;
+  // Rapidfire depends only on unit type, not target-owner technology.
+  const typeCounts = Array<bigint>(24).fill(0n);
+  for (const target of targets) typeCounts[target.unit] = (typeCounts[target.unit] ?? 0n) + target.count;
+  const typePool = typeCounts.flatMap((count, unit) => count ? [{ count, unit, key: BigInt(unit) }] : []);
   let incoming = shooter.count;
   let extra = 0n;
   for (let chain = 0; chain < MAX_RAPIDFIRE_CHAIN; chain++) {
     let generated = 0n;
-    for (const target of targets) {
+    for (const target of typePool) {
       const rapidfire = target.unit < 16 ? rapidfireAgainstShip(shooter.unit, target.unit) : rapidfireAgainstDefense(shooter.unit, target.unit - 16);
       if (rapidfire <= 1) continue;
       const selected = cohortDistributed(incoming, target.count, total, seed, round, side, shooter.key, target.key, 1n + BigInt(chain));

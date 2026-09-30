@@ -92,7 +92,15 @@ library VeydriftDefenseHoldStorage {
                     && stationed.arrivalAt <= attackArrivalAt
                     && defenseHoldUntil[stationedMissionId] >= attackArrivalAt
             ) {
-                counterplayMissionIds.push(stationedMissionId);
+                // Repeated resolver calls must not count or debit the same held fleet twice.
+                bool linked;
+                for (uint256 j; j < counterplayMissionIds.length; ++j) {
+                    if (counterplayMissionIds[j] == stationedMissionId) {
+                        linked = true;
+                        break;
+                    }
+                }
+                if (!linked) counterplayMissionIds.push(stationedMissionId);
             }
             unchecked {
                 ++i;

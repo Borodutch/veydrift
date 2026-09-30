@@ -10034,11 +10034,18 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(missionId, 404);
-        game.resolveFleetMission(missionId);
-
-        assertLt(game.shipCount(targetPlanetId, Ship.LightFighter), 10);
-        assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 50);
+        // Changing the combat stream changes which seed exercises a stochastic
+        // retarget. Prove the behavior across bounded seeds, not a legacy lane value.
+        bool observed;
+        for (uint256 randomWord = 1; randomWord <= 128 && !observed; ++randomWord) {
+            uint256 snapshot = vm.snapshotState();
+            _fulfillAttackBattleRandomness(missionId, randomWord);
+            game.resolveFleetMission(missionId);
+            observed = game.shipCount(targetPlanetId, Ship.LightFighter) < 10
+                && game.defenseCount(targetPlanetId, Defense.RocketLauncher) < 50;
+            assertTrue(vm.revertToState(snapshot));
+        }
+        assertTrue(observed, "rapidfire never retargeted both ships and defenses");
     }
 
     function testAttackBattleRapidfireRetargetsIntoAcsDefenderShips() public {
