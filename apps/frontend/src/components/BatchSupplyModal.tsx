@@ -294,6 +294,7 @@ export function BatchSupplyModal({
                           return (
                             <button key={key} type="button" aria-pressed={included}
                               aria-label={label + " at " + source.label}
+                              aria-describedby={`supply-planned-${source.planetId}-${key}`}
                               disabled={actionPending || transactionPending || loading || Boolean(source.unavailableReason)}
                               className={"inline-flex min-h-11 items-center gap-1.5 rounded border px-2 py-1 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50 " + (included ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400")}
                               onClick={() => setShipTypesBySource((current) => {
@@ -301,7 +302,7 @@ export function BatchSupplyModal({
                                 return { ...current, [source.planetId]: types.includes(key) ? types.filter((type) => type !== key) : [...types, key] };
                               })}>
                               <img alt="" className="h-5 w-5 rounded object-contain" loading="lazy" src={shipAssetByKey[key]} />
-                              <span>{label} ×{format(order?.ships[key] ?? 0)}</span>
+                              <span>{label} <span id={`supply-planned-${source.planetId}-${key}`}>×{format(order?.ships[key] ?? 0)}<span className="sr-only"> planned</span></span></span>
                               <span className="text-[10px] font-semibold">{included ? "On" : "Off"}</span>
                             </button>
                           );

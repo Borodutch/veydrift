@@ -133,12 +133,19 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('[...document.querySelectorAll("span")].filter(node => node.textContent === "Planned fleet").length'), 1, 'one heading per source');
       assert.equal(await evaluate(fleet + '.querySelectorAll("button").length'), 2);
       assert.equal(await evaluate('document.querySelectorAll("[role=dialog] img").length'), 2, 'no duplicate noninteractive fleet icons');
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2On');
-      assert.equal(await evaluate(recycler + '.textContent'), 'Recycler ×0Off');
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2 plannedOn');
+      assert.equal(await evaluate(recycler + '.textContent'), 'Recycler ×0 plannedOff');
+      const accessibleDescription = async expression => {
+        const { result } = await send('Runtime.evaluate', { expression });
+        const { nodes } = await send('Accessibility.getPartialAXTree', { objectId: result.objectId });
+        return nodes.find(node => node.role?.value === 'button')?.description?.value;
+      };
+      assert.equal(await accessibleDescription(large), '×2 planned', 'planned amount is exposed to assistive technology');
       const original = await submit();
       assert.equal(original.orders[0].ships.largeCargo, 2);
       await click(large);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0Off');
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0 plannedOff');
+      assert.equal(await accessibleDescription(large), '×0 planned', 'accessible count updates when excluded');
       assert.equal(await evaluate(source + '.checked'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
       assert.ok(await evaluate('document.body.textContent.includes("No ships planned from this source.")'));
@@ -147,10 +154,10 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click(large);
       assert.deepEqual((await submit()).orders, original.orders, 're-enable restores exactly the preview fleet');
       await input('metal to send', 0);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0On', 'enabled unused type remains discoverable');
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0 plannedOn', 'enabled unused type remains discoverable');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await input('metal to send', 34900);
-      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2On');
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2 plannedOn');
       if (artifacts) {
         await point(large);
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
