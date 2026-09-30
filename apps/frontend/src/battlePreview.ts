@@ -4,12 +4,7 @@ import combatCatalogArtifact from "../../../packages/contracts/combat-preview-ca
 const BPS = 10_000n;
 const BATTLE_MAX_ROUNDS = 6;
 const MAX_RAPIDFIRE_CHAIN = 64;
-const TARGET_LANE_STRIDE = 32n;
-const TARGET_LANE_PLANET_SHIP = 0n;
-const TARGET_LANE_DEFENSE = 64n;
-const TARGET_LANE_COUNTERPLAY_SHIP = 128n;
-const TARGET_LANE_ATTACKER_SHIP = 4_096n;
-const COMBAT_STREAM_DOMAIN = keccak256(stringToHex("veydrift.classic-combat-random-stream.v1"));
+const COMBAT_STREAM_DOMAIN = keccak256(stringToHex("veydrift.cohort-combat-random-stream.v1"));
 const PREVIEW_SAMPLE_DOMAIN = keccak256(stringToHex("veydrift.attack-preview-sample.v1"));
 
 export const CONTRACT_BATTLE_SAMPLE_COUNT = 128;
@@ -328,479 +323,158 @@ export function runContractBattle(
 function battleRoundLosses(snapshot: MutableBattle, seed: bigint, round: number): RoundLosses {
   const losses: RoundLosses = {
     attackers: snapshot.attackers.map(() => zeroShipCounts()),
-    defenderShips: zeroShipCounts(),
-    defenderDefenses: zeroDefenseCounts(),
+    defenderShips: zeroShipCounts(), defenderDefenses: zeroDefenseCounts(),
     counterplay: snapshot.defender.counterplay.map(() => zeroShipCounts()),
-    attackerResources: zeroBigResources(),
-    defenderResources: zeroBigResources(),
-    attackerRapidfireExtraShots: 0n,
-    defenderRapidfireExtraShots: 0n,
+    attackerResources: zeroBigResources(), defenderResources: zeroBigResources(),
+    attackerRapidfireExtraShots: 0n, defenderRapidfireExtraShots: 0n,
   };
-  const attackerTotal = attackerUnitTotal(snapshot.attackers);
-
-  for (let targetIndex = 0; targetIndex < snapshot.attackers.length; targetIndex += 1) {
-    const target = snapshot.attackers[targetIndex];
-    const targetLosses = losses.attackers[targetIndex];
-    if (!target || !targetLosses) continue;
-
-    for (let shipId = 0; shipId < 16; shipId += 1) {
-      const count = snapshot.defender.ships[shipId] ?? 0;
-      // Solar Satellites and Crawlers are targetable defender units, but do
-      // not fire in combat. Their target-pool handling is deliberately kept
-      // separate from the defender firing roster to match the contract.
-      if (!isBodyFiringShip(shipId) || count === 0) continue;
-      const extraShots = fleetExtraShots(snapshot.attackers, shipId, count, attackerTotal, seed, round, 1, shipId);
-      losses.defenderRapidfireExtraShots += extraShots;
-      fireShipAtFleetLosses(
-        targetLosses,
-        snapshot.attackers,
-        target,
-        attackerTotal,
-        shipId,
-        count,
-        extraShots,
-        snapshot.defender.technology,
-        seed,
-        round,
-        1,
-        shipId,
-        losses.attackerResources,
-      );
-    }
-
-    for (let defenseId = 0; defenseId < 8; defenseId += 1) {
-      const count = snapshot.defender.defenses[defenseId] ?? 0;
-      if (count === 0) continue;
-      fireDefenseAtFleetLosses(
-        targetLosses,
-        target,
-        attackerTotal,
-        defenseId,
-        count,
-        snapshot.defender.technology,
-        seed,
-        round,
-        2,
-        defenseId,
-        losses.attackerResources,
-      );
-    }
-
-    for (const firingGroup of snapshot.defender.counterplay) {
-      for (let shipId = 0; shipId <= 14; shipId += 1) {
-        const count = firingGroup.ships[shipId] ?? 0;
-        if (shipId === 9 || count === 0) continue;
-        const extraShots = fleetExtraShots(snapshot.attackers, shipId, count, attackerTotal, seed, round, 3, shipId);
-        losses.defenderRapidfireExtraShots += extraShots;
-        fireShipAtFleetLosses(
-          targetLosses,
-          snapshot.attackers,
-          target,
-          attackerTotal,
-          shipId,
-          count,
-          extraShots,
-          firingGroup.technology,
-          seed,
-          round,
-          3,
-          shipId,
-          losses.attackerResources,
-        );
-      }
-    }
-  }
-
-  for (const attacker of snapshot.attackers) {
-    for (let shipId = 0; shipId <= 14; shipId += 1) {
-      const count = attacker.ships[shipId] ?? 0;
-      if (shipId === 9 || count === 0) continue;
-      const extraShots = defenderExtraShots(snapshot.defender, shipId, count, seed, round, 4, shipId);
-      losses.attackerRapidfireExtraShots += extraShots;
-      fireShipAtDefenderLosses(
-        losses,
-        snapshot.defender,
-        shipId,
-        count,
-        extraShots,
-        attacker.technology,
-        seed,
-        round,
-        4,
-        shipId,
-      );
-    }
-  }
+  const attackers = combatCohorts(snapshot, true);
+  const defenders = combatCohorts(snapshot, false);
+  const attackLosses = cohortSideLosses(defenders, attackers, seed, round, 1);
+  const defenseLosses = cohortSideLosses(attackers, defenders, seed, round, 4);
+  losses.attackerRapidfireExtraShots = defenseLosses.extraShots;
+  losses.defenderRapidfireExtraShots = attackLosses.extraShots;
+  attributeCohortLosses(attackers, attackLosses.lost, snapshot, losses, true);
+  attributeCohortLosses(defenders, defenseLosses.lost, snapshot, losses, false);
   return losses;
 }
 
-function fireShipAtFleetLosses(
-  losses: number[],
-  targetPool: readonly MutableFleet[],
-  target: MutableFleet,
-  targetTotal: number,
-  firingShip: number,
-  firingCount: number,
-  extraShots: bigint,
-  firingTechnology: CombatTechnology,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-  resources: BigResources,
-) {
-  if (targetTotal === 0) return;
-  const firingStats = shipStats(firingShip);
-  const attack = combatScaled(firingStats.attack, firingTechnology.weapons);
-  for (let targetShip = 0; targetShip <= 14; targetShip += 1) {
-    const count = target.ships[targetShip] ?? 0;
-    if (targetShip === 9 || count === 0) continue;
-    const lane = targetLaneValue(TARGET_LANE_ATTACKER_SHIP, target.laneGroup, targetShip);
-    const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, lane)
-      + distributedTargetShots(extraShots, count, targetTotal, seed, round, side, firingUnit, lane);
-    const lost = shipLossCount(targetShip, count, shots, attack, target.technology, seed, round, side, lane);
-    addShipLoss(losses, target.ships, targetShip, lost, resources);
-  }
-  void targetPool;
-}
-
-function fireDefenseAtFleetLosses(
-  losses: number[],
-  target: MutableFleet,
-  targetTotal: number,
-  firingDefense: number,
-  firingCount: number,
-  firingTechnology: CombatTechnology,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-  resources: BigResources,
-) {
-  if (targetTotal === 0) return;
-  const attack = combatScaled(defenseStats(firingDefense).attack, firingTechnology.weapons);
-  for (let targetShip = 0; targetShip <= 14; targetShip += 1) {
-    const count = target.ships[targetShip] ?? 0;
-    if (targetShip === 9 || count === 0) continue;
-    const targetLane = targetLaneValue(TARGET_LANE_ATTACKER_SHIP, target.laneGroup, targetShip);
-    const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, targetLane);
-    const lost = shipLossCount(targetShip, count, shots, attack, target.technology, seed, round, side, targetLane);
-    addShipLoss(losses, target.ships, targetShip, lost, resources);
-  }
-}
-
-function fireShipAtDefenderLosses(
-  losses: RoundLosses,
-  target: MutableDefender,
-  firingShip: number,
-  firingCount: number,
-  extraShots: bigint,
-  firingTechnology: CombatTechnology,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-) {
-  const targetTotal = defenderUnitTotal(target);
-  if (targetTotal === 0) return;
-  const attack = combatScaled(shipStats(firingShip).attack, firingTechnology.weapons);
-
-  for (let targetShip = 0; targetShip < 16; targetShip += 1) {
-    const count = target.ships[targetShip] ?? 0;
-    if (!isBodyCombatTarget(targetShip) || count === 0) continue;
-    const lane = targetLaneValue(TARGET_LANE_PLANET_SHIP, 0, targetShip);
-    const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, lane)
-      + distributedTargetShots(extraShots, count, targetTotal, seed, round, side, firingUnit, lane);
-    const lost = shipLossCount(targetShip, count, shots, attack, target.technology, seed, round, side, lane);
-    addShipLoss(losses.defenderShips, target.ships, targetShip, lost, losses.defenderResources);
-  }
-
-  for (let defenseId = 0; defenseId < 8; defenseId += 1) {
-    const count = target.defenses[defenseId] ?? 0;
-    if (count === 0) continue;
-    const lane = targetLaneValue(TARGET_LANE_DEFENSE, 0, defenseId);
-    const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, lane)
-      + distributedTargetShots(extraShots, count, targetTotal, seed, round, side, firingUnit, lane);
-    const lost = defenseLossCount(defenseId, count, shots, attack, target.technology, seed, round, side, lane);
-    addUnitLoss(losses.defenderDefenses, target.defenses, defenseId, lost);
-  }
-
-  for (let groupIndex = 0; groupIndex < target.counterplay.length; groupIndex += 1) {
-    const group = target.counterplay[groupIndex];
-    const groupLosses = losses.counterplay[groupIndex];
-    if (!group || !groupLosses) continue;
-    for (let targetShip = 0; targetShip <= 14; targetShip += 1) {
-      const count = group.ships[targetShip] ?? 0;
-      if (targetShip === 9 || count === 0) continue;
-      const lane = targetLaneValue(TARGET_LANE_COUNTERPLAY_SHIP, group.laneGroup, targetShip);
-      const shots = distributedTargetShots(BigInt(firingCount), count, targetTotal, seed, round, side, firingUnit, lane)
-        + distributedTargetShots(extraShots, count, targetTotal, seed, round, side, firingUnit, lane);
-      const lost = shipLossCount(targetShip, count, shots, attack, group.technology, seed, round, side, lane);
-      addShipLoss(groupLosses, group.ships, targetShip, lost, losses.defenderResources);
+// Largest remainder apportionment preserves every casualty, independently of link order.
+// Owner address then mission ID breaks equal remainders, never a combat/randomness lane.
+function attributeCohortLosses(cohorts: CombatCohort[], lost: bigint[], snapshot: MutableBattle, losses: RoundLosses, attacking: boolean) {
+  cohorts.forEach((cohort, index) => {
+    const killed = lost[index] ?? 0n;
+    const shares = cohort.members.map(member => ({ member, lost: killed * member.count / cohort.count, remainder: killed * member.count % cohort.count }));
+    let left = killed - shares.reduce((sum, share) => sum + share.lost, 0n);
+    const ranked = [...shares].sort((a, b) => {
+      if (a.remainder !== b.remainder) return a.remainder > b.remainder ? -1 : 1;
+      const ownerA = memberOwner(a.member, snapshot, attacking).toLowerCase();
+      const ownerB = memberOwner(b.member, snapshot, attacking).toLowerCase();
+      if (ownerA !== ownerB) return ownerA < ownerB ? -1 : 1;
+      return compareMissionIdentity(a.member.identity, b.member.identity);
+    });
+    for (const share of ranked) {
+      if (!left) break;
+      if (share.remainder) { share.lost++; left--; }
     }
-  }
+    for (const { member, lost: quantity } of shares) {
+      const count = Number(quantity);
+      if (!count) continue;
+      if (attacking) {
+        const fleet = snapshot.attackers[member.group]!;
+        addShipLoss(losses.attackers[member.group]!, fleet.ships, member.unit, count, losses.attackerResources);
+      } else if (member.group >= 0) {
+        const fleet = snapshot.defender.counterplay[member.group]!;
+        addShipLoss(losses.counterplay[member.group]!, fleet.ships, member.unit, count, losses.defenderResources);
+      } else if (member.defense) {
+        addUnitLoss(losses.defenderDefenses, snapshot.defender.defenses, member.unit, count);
+      } else {
+        addShipLoss(losses.defenderShips, snapshot.defender.ships, member.unit, count, losses.defenderResources);
+      }
+    }
+  });
 }
 
-function fleetExtraShots(
-  targetPool: readonly MutableFleet[],
-  firingShip: number,
-  shots: number,
-  targetTotal: number,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-): bigint {
-  let incoming = BigInt(shots);
-  let extraShots = 0n;
-  for (let chain = 0; chain < MAX_RAPIDFIRE_CHAIN; chain += 1) {
+function memberOwner(member: CohortMember, snapshot: MutableBattle, attacking: boolean): string {
+  return attacking ? snapshot.attackers[member.group]!.owner : member.group < 0 ? snapshot.defender.owner : snapshot.defender.counterplay[member.group]!.owner;
+}
+
+function compareMissionIdentity(a: string, b: string): number {
+  // UI defender IDs are prefixed for report keys; numeric onchain identity remains the suffix.
+  const numeric = (id: string) => /^(?:stationed-)?([0-9]+)$/.exec(id)?.[1];
+  const left = numeric(a), right = numeric(b);
+  if (left !== undefined && right !== undefined) return BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0;
+  // A not-yet-launched joining fleet has the next (largest) mission ID.
+  if (a === "selected-attacker") return b === a ? 0 : 1;
+  if (b === "selected-attacker") return -1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+type CohortMember = { count: bigint; group: number; unit: number; defense: boolean; identity: string };
+type CombatCohort = { key: bigint; count: bigint; attack: bigint; shield: bigint; hull: bigint; unit: number; members: CohortMember[] };
+
+function combatCohorts(snapshot: MutableBattle, attacking: boolean): CombatCohort[] {
+  const cohorts = new Map<bigint, CombatCohort>();
+  const add = (unit: number, count: number, technology: CombatTechnology, group: number, identity: string) => {
+    if (!count) return;
+    const stats = unit < 16 ? shipStats(unit) : defenseStats(unit - 16);
+    const attack = combatScaled(stats.attack, technology.weapons);
+    const shield = combatScaled(stats.shield, technology.shielding);
+    const hull = combatScaled(stats.hull, technology.armor);
+    const key = BigInt(keccak256(encodeAbiParameters([{ type: "uint8" }, { type: "uint256" }, { type: "uint256" }, { type: "uint256" }], [unit, attack, shield, hull])));
+    const cohort = cohorts.get(key) ?? { key, count: 0n, attack, shield, hull, unit, members: [] };
+    cohort.count += BigInt(count);
+    cohort.members.push({ count: BigInt(count), group, unit: unit < 16 ? unit : unit - 16, defense: unit >= 16, identity });
+    cohorts.set(key, cohort);
+  };
+  const fleet = (participant: MutableFleet, group: number) => {
+    for (let unit = 0; unit <= 14; unit++) {
+      if (unit !== 9) add(unit, participant.ships[unit] ?? 0, participant.technology, group, participant.id);
+    }
+  };
+  if (attacking) snapshot.attackers.forEach(fleet);
+  else {
+    for (let unit = 0; unit < 16; unit++) add(unit, snapshot.defender.ships[unit] ?? 0, snapshot.defender.technology, -1, "0");
+    for (let unit = 0; unit < 8; unit++) add(unit + 16, snapshot.defender.defenses[unit] ?? 0, snapshot.defender.technology, -1, "0");
+    snapshot.defender.counterplay.forEach(fleet);
+  }
+  return [...cohorts.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+}
+
+function cohortDistributed(shots: bigint, count: bigint, total: bigint, seed: bigint, round: number, side: number, firingKey: bigint, targetKey: bigint, lane: bigint): bigint {
+  if (!shots || !count || !total) return 0n;
+  const weighted = shots * count;
+  return weighted / total + (combatStream(seed, round, side, firingKey, targetKey, lane) % total < weighted % total ? 1n : 0n);
+}
+
+function cohortExtraShots(shooter: CombatCohort, targets: CombatCohort[], total: bigint, seed: bigint, round: number, side: number): bigint {
+  if (shooter.unit >= 16) return 0n;
+  let incoming = shooter.count;
+  let extra = 0n;
+  for (let chain = 0; chain < MAX_RAPIDFIRE_CHAIN; chain++) {
     let generated = 0n;
-    for (const group of targetPool) {
-      generated += shipExtraShots(
-        group.ships,
-        TARGET_LANE_ATTACKER_SHIP,
-        group.laneGroup,
-        firingShip,
-        incoming,
-        targetTotal,
-        seed,
-        round,
-        side,
-        firingUnit,
-        chain,
-      );
+    for (const target of targets) {
+      const rapidfire = target.unit < 16 ? rapidfireAgainstShip(shooter.unit, target.unit) : rapidfireAgainstDefense(shooter.unit, target.unit - 16);
+      if (rapidfire <= 1) continue;
+      const selected = cohortDistributed(incoming, target.count, total, seed, round, side, shooter.key, target.key, 1n + BigInt(chain));
+      generated += sampleChance(selected, BigInt(rapidfire - 1) * BPS / BigInt(rapidfire), seed, round, side, shooter.key, target.key, 30_000n + BigInt(chain));
     }
-    if (generated === 0n) return extraShots;
-    extraShots += generated;
+    if (!generated) break;
+    extra += generated;
     incoming = generated;
   }
-  return extraShots;
+  return extra;
 }
 
-function defenderExtraShots(
-  target: MutableDefender,
-  firingShip: number,
-  shots: number,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-): bigint {
-  const targetTotal = defenderUnitTotal(target);
-  let incoming = BigInt(shots);
+function cohortLossCount(target: CombatCohort, shots: bigint, shooter: CombatCohort, seed: bigint, round: number, side: number): bigint {
+  if (!shots || !target.count || !shooter.attack || !target.hull) return 0n;
+  const targeted = shots < target.count ? shots : target.count;
+  const damage = shooter.attack * ((shots + targeted - 1n) / targeted);
+  if (shooter.attack <= target.shield / 100n || damage <= target.shield) return 0n;
+  const hullDamage = damage - target.shield;
+  if (hullDamage >= target.hull) return targeted;
+  const chance = hullDamage * BPS / target.hull;
+  if (chance <= 3_000n) return 0n;
+  return sampleChance(targeted, chance, seed, round, side, shooter.key, target.key, 65_536n + shots);
+}
+
+function cohortSideLosses(firing: CombatCohort[], targets: CombatCohort[], seed: bigint, round: number, side: number): { lost: bigint[]; extraShots: bigint } {
+  const lost = targets.map(() => 0n);
+  const total = targets.reduce((sum, target) => sum + target.count, 0n);
   let extraShots = 0n;
-  for (let chain = 0; chain < MAX_RAPIDFIRE_CHAIN; chain += 1) {
-    let generated = shipExtraShots(
-      target.ships,
-      TARGET_LANE_PLANET_SHIP,
-      0,
-      firingShip,
-      incoming,
-      targetTotal,
-      seed,
-      round,
-      side,
-      firingUnit,
-      chain,
-      true,
-    );
-    for (let defenseId = 0; defenseId < 8; defenseId += 1) {
-      generated += unitExtraShots(
-        target.defenses[defenseId] ?? 0,
-        rapidfireAgainstDefense(firingShip, defenseId),
-        incoming,
-        targetTotal,
-        seed,
-        round,
-        side,
-        firingUnit,
-        targetLaneValue(TARGET_LANE_DEFENSE, 0, defenseId),
-        chain,
-      );
-    }
-    for (const group of target.counterplay) {
-      generated += shipExtraShots(
-        group.ships,
-        TARGET_LANE_COUNTERPLAY_SHIP,
-        group.laneGroup,
-        firingShip,
-        incoming,
-        targetTotal,
-        seed,
-        round,
-        side,
-        firingUnit,
-        chain,
-      );
-    }
-    if (generated === 0n) return extraShots;
-    extraShots += generated;
-    incoming = generated;
+  if (!total) return { lost, extraShots };
+  for (const shooter of firing) {
+    if (!shooter.attack) continue;
+    const extra = cohortExtraShots(shooter, targets, total, seed, round, side);
+    extraShots += extra;
+    targets.forEach((target, index) => {
+      const shots = cohortDistributed(shooter.count, target.count, total, seed, round, side, shooter.key, target.key, 0n)
+        + cohortDistributed(extra, target.count, total, seed, round, side, shooter.key, target.key, 0n);
+      const killed = (lost[index] ?? 0n) + cohortLossCount(target, shots, shooter, seed, round, side);
+      lost[index] = killed < target.count ? killed : target.count;
+    });
   }
-  return extraShots;
-}
-
-function shipExtraShots(
-  ships: readonly number[],
-  laneBase: bigint,
-  laneGroup: number,
-  firingShip: number,
-  incoming: bigint,
-  targetTotal: number,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-  chain: number,
-  bodyShips = false,
-): bigint {
-  let generated = 0n;
-  const shipLimit = bodyShips ? 16 : 15;
-  for (let shipId = 0; shipId < shipLimit; shipId += 1) {
-    if ((!bodyShips && shipId === 9) || (bodyShips && !isBodyCombatTarget(shipId))) continue;
-    generated += unitExtraShots(
-      ships[shipId] ?? 0,
-      rapidfireAgainstShip(firingShip, shipId),
-      incoming,
-      targetTotal,
-      seed,
-      round,
-      side,
-      firingUnit,
-      targetLaneValue(laneBase, laneGroup, shipId),
-      chain,
-    );
-  }
-  return generated;
-}
-
-function unitExtraShots(
-  count: number,
-  rapidfire: number,
-  incoming: bigint,
-  targetTotal: number,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-  lane: bigint,
-  chain: number,
-): bigint {
-  if (count === 0 || rapidfire <= 1) return 0n;
-  const selected = distributedTargetShots(
-    incoming,
-    count,
-    targetTotal,
-    seed,
-    round,
-    side,
-    firingUnit,
-    lane + BigInt(chain + 1) * 8_192n,
-  );
-  return sampleChance(
-    selected,
-    (BigInt(rapidfire - 1) * BPS) / BigInt(rapidfire),
-    seed,
-    round,
-    side,
-    BigInt(firingUnit),
-    lane,
-    BigInt(30_000 + chain),
-  );
-}
-
-function distributedTargetShots(
-  shots: bigint,
-  targetCount: number,
-  targetTotal: number,
-  seed: bigint,
-  round: number,
-  side: number,
-  firingUnit: number,
-  targetUnit: bigint,
-): bigint {
-  if (shots === 0n || targetCount === 0 || targetTotal === 0) return 0n;
-  const total = BigInt(targetTotal);
-  const weightedShots = shots * BigInt(targetCount);
-  let assigned = weightedShots / total;
-  if (combatStream(seed, round, side, BigInt(firingUnit), targetUnit, 0n) % total < weightedShots % total) {
-    assigned += 1n;
-  }
-  return assigned;
-}
-
-function shipLossCount(
-  shipId: number,
-  count: number,
-  shots: bigint,
-  attack: bigint,
-  technology: CombatTechnology,
-  seed: bigint,
-  round: number,
-  side: number,
-  lane: bigint,
-): number {
-  const stats = shipStats(shipId);
-  return deterministicLossCount(
-    count,
-    shots,
-    attack,
-    combatScaled(stats.shield, technology.shielding),
-    combatScaled(stats.hull, technology.armor),
-    seed,
-    round,
-    side,
-    lane,
-  );
-}
-
-function defenseLossCount(
-  defenseId: number,
-  count: number,
-  shots: bigint,
-  attack: bigint,
-  technology: CombatTechnology,
-  seed: bigint,
-  round: number,
-  side: number,
-  lane: bigint,
-): number {
-  const stats = defenseStats(defenseId);
-  return deterministicLossCount(
-    count,
-    shots,
-    attack,
-    combatScaled(stats.shield, technology.shielding),
-    combatScaled(stats.hull, technology.armor),
-    seed,
-    round,
-    side,
-    lane,
-  );
-}
-
-function deterministicLossCount(
-  count: number,
-  shots: bigint,
-  attack: bigint,
-  shield: bigint,
-  hull: bigint,
-  seed: bigint,
-  round: number,
-  side: number,
-  unit: bigint,
-): number {
-  if (count === 0 || shots === 0n || attack === 0n || hull === 0n) return 0;
-  const targeted = shots < BigInt(count) ? shots : BigInt(count);
-  const shotsPerTarget = (shots + targeted - 1n) / targeted;
-  const damage = attack * shotsPerTarget;
-  if (attack <= shield / 100n || damage <= shield) return 0;
-  const hullDamage = damage - shield;
-  if (hullDamage >= hull) return Number(targeted);
-  const damageBps = (hullDamage * BPS) / hull;
-  if (damageBps <= 3_000n) return 0;
-  const sampled = sampleChance(targeted, damageBps, seed, round, side, unit, 0n, shots);
-  return Number(sampled > targeted ? targeted : sampled);
+  return { lost, extraShots };
 }
 
 function sampleChance(
@@ -1035,16 +709,8 @@ function isBodyCombatTarget(id: number): boolean {
   return id >= 0 && id < 16;
 }
 
-function isBodyFiringShip(id: number): boolean {
-  return id >= 0 && id <= 14 && id !== 9;
-}
-
 function combatScaled(value: number, technologyLevel: number): bigint {
   return (BigInt(value) * (BPS + BigInt(Math.max(0, Math.trunc(technologyLevel))) * 1_000n)) / BPS;
-}
-
-function targetLaneValue(base: bigint, group: number, unit: number): bigint {
-  return base + BigInt(Math.max(0, Math.trunc(group))) * TARGET_LANE_STRIDE + BigInt(unit);
 }
 
 function rapidfireAgainstShip(attacker: number, defender: number): number {
