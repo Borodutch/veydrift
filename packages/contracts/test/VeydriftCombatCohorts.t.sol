@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {CombatCohort, VeydriftCombatCohorts} from "../src/libraries/VeydriftCombatCohorts.sol";
 import {VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
-import {Ship} from "../src/libraries/VeydriftTypes.sol";
+import {Ship, Defense} from "../src/libraries/VeydriftTypes.sol";
 
 contract VeydriftCombatCohortsTest is Test {
     VeydriftCombatRapidfire private math;
@@ -203,5 +203,44 @@ contract VeydriftCombatCohortsTest is Test {
         assertEq(weak.attack, VeydriftCatalog.shipBattleAttack(Ship.Cruiser) * 18 / 10);
         // Below 1% shield threshold cannot damage the owner's cohort.
         assertEq(VeydriftCombatCohorts.lossCount(strong, 10000, strong.shield / 100, 7, 1, 4, 9), 0);
+    }
+
+    function testSevenMixedTechOwnersAllMobileTypesAndResidentDefenseGasCap() public {
+        CombatCohort[] memory attackers = new CombatCohort[](7 * 14);
+        CombatCohort[] memory defenders = new CombatCohort[](7 * 14 + 24);
+        uint256 index;
+        for (uint16 owner; owner < 7; ++owner) {
+            for (uint8 kind; kind < 16; ++kind) {
+                if (kind == uint8(Ship.SolarSatellite) || kind == uint8(Ship.Crawler)) continue;
+                attackers[index] = unit(Ship(kind), 1000, 8 + owner, 8 + owner, 8 + owner);
+                defenders[index] = unit(Ship(kind), 1000, 8 + owner, 8 + owner, 8 + owner);
+                ++index;
+            }
+        }
+        for (uint8 kind; kind < 16; ++kind) {
+            defenders[index++] = unit(Ship(kind), 1000, 8, 8, 8);
+        }
+        for (uint8 kind; kind < 8; ++kind) {
+            uint256 attack = VeydriftCatalog.defenseBattleAttack(Defense(kind)) * 18 / 10;
+            uint256 shield = VeydriftCatalog.defenseBattleShield(Defense(kind)) * 18 / 10;
+            uint256 hull = VeydriftCatalog.defenseBattleHull(Defense(kind)) * 18 / 10;
+            defenders[index++] = CombatCohort(
+                VeydriftCombatCohorts.key(kind + 16, attack, shield, hull),
+                kind == uint8(Defense.SmallShieldDome) || kind == uint8(Defense.LargeShieldDome)
+                    ? 1
+                    : 1000,
+                attack,
+                shield,
+                hull,
+                kind + 16
+            );
+        }
+        uint256 beforeGas = gasleft();
+        math.cohortRoundLosses(attackers, defenders, 94880, 1);
+        uint256 used = beforeGas - gasleft();
+        emit log_named_uint(
+            "seven owners all mobile types and resident defenses pure math gas", used
+        );
+        assertLt(used, 15_000_000, "pure math leaves no Base transaction headroom");
     }
 }

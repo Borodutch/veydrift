@@ -241,7 +241,21 @@ library VeydriftCombatCohorts {
         uint256 firingKey,
         uint256 targetKey,
         uint256 lane
-    ) private pure returns (uint256) {
-        return uint256(keccak256(abi.encode(DOMAIN, seed, round, side, firingKey, targetKey, lane)));
+    ) private pure returns (uint256 value) {
+        bytes32 domain = DOMAIN;
+        // Hash the same seven ABI words in temporary scratch memory. Advancing the
+        // free-memory pointer for every draw causes quadratic memory expansion in
+        // large mixed-tech rosters; none of these encoded words escape this call.
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, domain)
+            mstore(add(ptr, 32), seed)
+            mstore(add(ptr, 64), and(round, 255))
+            mstore(add(ptr, 96), and(side, 255))
+            mstore(add(ptr, 128), firingKey)
+            mstore(add(ptr, 160), targetKey)
+            mstore(add(ptr, 192), lane)
+            value := keccak256(ptr, 224)
+        }
     }
 }

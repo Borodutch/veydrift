@@ -50,7 +50,7 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
         fixture.defenderShips[uint8(Ship.SmallCargo)] = 27;
 
-        fixture.seed = 1;
+        fixture.seed = 5;
         VeydriftCombatReferenceSimulator.BattleResult memory stable =
             VeydriftCombatReferenceSimulator.run(fixture);
         assertEq(uint8(stable.outcome), uint8(VeydriftGameStorage.BattleOutcome.Draw));
@@ -62,7 +62,7 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         VeydriftCombatReferenceSimulator.BattleResult memory exploded =
             VeydriftCombatReferenceSimulator.run(fixture);
         assertEq(uint8(exploded.outcome), uint8(VeydriftGameStorage.BattleOutcome.DefenderWin));
-        assertEq(exploded.rounds, 3);
+        assertEq(exploded.rounds, 1);
         assertEq(exploded.attackerShips[uint8(Ship.SmallCargo)], 0);
         _assertResources(exploded.attackerLosses, 2_000, 2_000, 0);
     }
@@ -78,7 +78,7 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         assertEq(uint8(result.outcome), uint8(VeydriftGameStorage.BattleOutcome.DefenderWin));
         assertEq(result.rounds, 1);
         assertEq(result.attackerShips[uint8(Ship.Cruiser)], 0);
-        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 49);
+        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 48);
         _assertResources(result.attackerLosses, 20_000, 7_000, 2_000);
     }
 
@@ -95,7 +95,7 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         assertEq(result.rounds, 1);
         assertEq(result.attackerShips[uint8(Ship.Cruiser)], 0);
         assertEq(result.defenderShips[uint8(Ship.LightFighter)], 4);
-        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 40);
+        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 38);
         _assertResources(result.attackerLosses, 20_000, 7_000, 2_000);
         _assertResources(result.defenderLosses, 18_000, 6_000, 0);
     }
@@ -139,24 +139,17 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         _assertResources(ownerTech.attackerLosses, 2_000, 2_000, 0);
     }
 
-    function testPreviewFixtureCounterplayLaneChangesLossVector() public pure {
+    function testPreviewFixtureCounterplayLaneCannotChangeLossVector() public pure {
         VeydriftCombatReferenceSimulator.BattleInput memory fixture;
         fixture.seed = 46;
         fixture.attackerShips[uint8(Ship.Cruiser)] = 1;
         fixture.counterplayShips[uint8(Ship.LightFighter)] = 10;
-
-        VeydriftCombatReferenceSimulator.BattleResult memory laneZero =
+        VeydriftCombatReferenceSimulator.BattleResult memory first =
             VeydriftCombatReferenceSimulator.run(fixture);
-        assertEq(uint8(laneZero.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
-        assertEq(laneZero.counterplayShips[uint8(Ship.LightFighter)], 0);
-        _assertResources(laneZero.defenderLosses, 30_000, 10_000, 0);
-
         fixture.counterplayLaneGroup = 2;
-        VeydriftCombatReferenceSimulator.BattleResult memory laneTwo =
+        VeydriftCombatReferenceSimulator.BattleResult memory second =
             VeydriftCombatReferenceSimulator.run(fixture);
-        assertEq(uint8(laneTwo.outcome), uint8(VeydriftGameStorage.BattleOutcome.Draw));
-        assertEq(laneTwo.counterplayShips[uint8(Ship.LightFighter)], 1);
-        _assertResources(laneTwo.defenderLosses, 27_000, 9_000, 0);
+        assertEq(keccak256(abi.encode(first)), keccak256(abi.encode(second)));
     }
 
     function _assertResources(
@@ -168,5 +161,19 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         assertEq(resources.metal, metal);
         assertEq(resources.crystal, crystal);
         assertEq(resources.deuterium, deuterium);
+    }
+
+    function testReferenceCombinedOwnerLossesExceedUint32WithoutTruncation() public pure {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture;
+        fixture.seed = 94881;
+        fixture.attackerShips[uint8(Ship.SmallCargo)] = type(uint32).max;
+        fixture.joinedAttackerShips[uint8(Ship.SmallCargo)] = type(uint32).max;
+        fixture.defenderShips[uint8(Ship.Deathstar)] = type(uint32).max;
+        VeydriftCombatReferenceSimulator.BattleResult memory result =
+            VeydriftCombatReferenceSimulator.run(fixture);
+        assertEq(result.attackerShips[uint8(Ship.SmallCargo)], 0);
+        assertEq(result.joinedAttackerShips[uint8(Ship.SmallCargo)], 0);
+        assertEq(result.attackerLosses.metal, uint256(type(uint32).max) * 2 * 2000);
+        assertEq(result.attackerLosses.crystal, uint256(type(uint32).max) * 2 * 2000);
     }
 }

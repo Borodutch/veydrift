@@ -297,6 +297,47 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 106);
     }
 
+    function testIndependentReferenceReconcilesBothOwnerSidesMixedResearch() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.joinedAttackerTech = VeydriftCombatReferenceSimulator.CombatTech(10, 9, 10);
+        fixture.defenderTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.counterplayTech = VeydriftCombatReferenceSimulator.CombatTech(10, 9, 10);
+        fixture.attackerShips[uint8(Ship.LightFighter)] = 71;
+        fixture.joinedAttackerShips[uint8(Ship.LightFighter)] = 93;
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 13;
+        fixture.joinedAttackerShips[uint8(Ship.Cruiser)] = 19;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 89;
+        fixture.counterplayShips[uint8(Ship.LightFighter)] = 67;
+        fixture.defenderShips[uint8(Ship.Cruiser)] = 17;
+        fixture.counterplayShips[uint8(Ship.Cruiser)] = 11;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 37;
+        _assertReferenceParity(fixture, 94881);
+        assertEq(game.activeFleetMissionCount(player), 0, "leader slot reconciles");
+        assertEq(game.activeFleetMissionCount(ally), 0, "joined slot reconciles");
+        assertEq(game.activeFleetMissionCount(counterplayer), 0, "defender slot reconciles");
+    }
+
+    function testIndependentReferenceReconcilesEqualTechSharedCohortOwnerLosses() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.joinedAttackerTech = fixture.attackerTech;
+        fixture.defenderTech = fixture.attackerTech;
+        fixture.counterplayTech = fixture.attackerTech;
+        fixture.attackerShips[uint8(Ship.LightFighter)] = 71;
+        fixture.joinedAttackerShips[uint8(Ship.LightFighter)] = 93;
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 13;
+        fixture.joinedAttackerShips[uint8(Ship.Cruiser)] = 19;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 89;
+        fixture.counterplayShips[uint8(Ship.LightFighter)] = 67;
+        fixture.defenderShips[uint8(Ship.Cruiser)] = 17;
+        fixture.counterplayShips[uint8(Ship.Cruiser)] = 11;
+        _assertReferenceParity(fixture, 94880);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.activeFleetMissionCount(ally), 0);
+        assertEq(game.activeFleetMissionCount(counterplayer), 0);
+    }
+
     function _assertReferenceParity(
         VeydriftCombatReferenceSimulator.BattleInput memory fixture,
         uint256 randomWord

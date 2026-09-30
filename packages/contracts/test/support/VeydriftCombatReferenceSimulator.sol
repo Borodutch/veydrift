@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage} from "../../src/VeydriftGameStorage.sol";
-import {CombatCohort, VeydriftCombatCohorts} from "../../src/libraries/VeydriftCombatCohorts.sol";
+import {VeydriftIndependentCohortMath} from "./VeydriftIndependentCohortMath.sol";
 import {VeydriftCatalog} from "../../src/libraries/VeydriftCatalog.sol";
 import {Defense, Ship} from "../../src/libraries/VeydriftTypes.sol";
 
@@ -89,8 +89,10 @@ library VeydriftCombatReferenceSimulator {
         private
         pure
     {
-        CombatCohort[] memory a = new CombatCohort[](32);
-        CombatCohort[] memory d = new CombatCohort[](40);
+        VeydriftIndependentCohortMath.Cohort[] memory a =
+            new VeydriftIndependentCohortMath.Cohort[](32);
+        VeydriftIndependentCohortMath.Cohort[] memory d =
+            new VeydriftIndependentCohortMath.Cohort[](40);
         for (uint8 i; i < 16; ++i) {
             a[i] = _unit(i, result.attackerShips[i], input.attackerTech);
             a[16 + i] = _unit(i, result.joinedAttackerShips[i], input.joinedAttackerTech);
@@ -100,23 +102,23 @@ library VeydriftCombatReferenceSimulator {
         for (uint8 i; i < 8; ++i) {
             d[16 + i] = _unit(16 + i, result.defenderDefenses[i], input.defenderTech);
         }
-        CombatCohort[] memory ap = VeydriftCombatCohorts.canonicalize(a);
-        CombatCohort[] memory dp = VeydriftCombatCohorts.canonicalize(d);
+        VeydriftIndependentCohortMath.Cohort[] memory ap =
+            VeydriftIndependentCohortMath.canonicalize(a);
+        VeydriftIndependentCohortMath.Cohort[] memory dp =
+            VeydriftIndependentCohortMath.canonicalize(d);
         uint256[] memory al =
-            _shares(a, ap, VeydriftCombatCohorts.losses(dp, ap, input.seed, round, 1));
+            _shares(a, ap, VeydriftIndependentCohortMath.losses(dp, ap, input.seed, round, 1));
         uint256[] memory dl =
-            _shares(d, dp, VeydriftCombatCohorts.losses(ap, dp, input.seed, round, 4));
+            _shares(d, dp, VeydriftIndependentCohortMath.losses(ap, dp, input.seed, round, 4));
         for (uint8 i; i < 16; ++i) {
             result.attackerShips[i] -= uint32(al[i]);
             result.joinedAttackerShips[i] -= uint32(al[16 + i]);
             result.defenderShips[i] -= uint32(dl[i]);
             result.counterplayShips[i] -= uint32(dl[24 + i]);
-            result.attackerLosses = _add(
-                result.attackerLosses, _multiply(_shipCost(Ship(i)), uint32(al[i] + al[16 + i]))
-            );
-            result.defenderLosses = _add(
-                result.defenderLosses, _multiply(_shipCost(Ship(i)), uint32(dl[i] + dl[24 + i]))
-            );
+            result.attackerLosses =
+                _add(result.attackerLosses, _multiply(_shipCost(Ship(i)), al[i] + al[16 + i]));
+            result.defenderLosses =
+                _add(result.defenderLosses, _multiply(_shipCost(Ship(i)), dl[i] + dl[24 + i]));
         }
         for (uint8 i; i < 8; ++i) {
             result.defenderDefenses[i] -= uint32(dl[16 + i]);
@@ -126,7 +128,7 @@ library VeydriftCombatReferenceSimulator {
     function _unit(uint8 unit, uint32 count, CombatTech memory tech)
         private
         pure
-        returns (CombatCohort memory c)
+        returns (VeydriftIndependentCohortMath.Cohort memory c)
     {
         c.unit = unit;
         c.count = count;
@@ -148,14 +150,14 @@ library VeydriftCombatReferenceSimulator {
                 : VeydriftCatalog.defenseBattleHull(Defense(unit - 16)),
             tech.armor
         );
-        c.key = VeydriftCombatCohorts.key(unit, c.attack, c.shield, c.hull);
+        c.key = uint256(keccak256(abi.encode(unit, c.attack, c.shield, c.hull)));
     }
 
-    function _shares(CombatCohort[] memory units, CombatCohort[] memory pool, uint256[] memory lost)
-        private
-        pure
-        returns (uint256[] memory shares)
-    {
+    function _shares(
+        VeydriftIndependentCohortMath.Cohort[] memory units,
+        VeydriftIndependentCohortMath.Cohort[] memory pool,
+        uint256[] memory lost
+    ) private pure returns (uint256[] memory shares) {
         shares = new uint256[](units.length);
         for (uint256 c; c < pool.length; ++c) {
             uint256 allocated;
@@ -302,7 +304,7 @@ library VeydriftCombatReferenceSimulator {
         return VeydriftGameStorage.Resources(metal, crystal, deuterium);
     }
 
-    function _multiply(VeydriftGameStorage.Resources memory resources, uint32 quantity)
+    function _multiply(VeydriftGameStorage.Resources memory resources, uint256 quantity)
         private
         pure
         returns (VeydriftGameStorage.Resources memory)
