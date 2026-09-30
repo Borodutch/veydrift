@@ -78,7 +78,6 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             }
             Store.layout().bodyLock[m.targetPlanetId] = id;
             b.battleId = id;
-            b.seed = _battleSeed(id, m);
             b.linkedLength = _fleetCounterplayMissions[id].length;
             b.stationedLength = _stationedDefenseMissions[m.targetPlanetId].length;
             (AttackBlockReason reason, uint16 plunder) =
@@ -94,6 +93,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                     ));
             _battleRaidPlunderBps[id] = reason == AttackBlockReason.ScoreProtection ? 0 : plunder;
             _battleRaidProtectionSnapshotted[id] = true;
+            if (!b.blocked) b.seed = _battleSeed(id, m);
             _battleResolutionProgress[id].seed = b.seed;
             b.phase = b.blocked ? 3 : 1;
             BuildingConstruction memory construction = buildingConstructions[m.targetPlanetId];
@@ -129,7 +129,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 32
             );
             if (done) {
-                if (_moonSystem != address(0)) {
+                if (m.targetIsMoon && _moonSystem != address(0)) {
                     (bool versioned, bytes memory version) = _moonSystem.staticcall(
                         abi.encodeWithSignature("moonShipProductionVersion()")
                     );
@@ -215,6 +215,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
             if (b.prepared) {
                 b.phase = 12;
+                b.returnSettlementAt = uint64(block.timestamp);
                 b.returnCursor = 0;
                 b.cursor = 0;
             }
@@ -402,7 +403,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 );
             }
             m.status = FleetMissionStatus.Resolved;
-            m.returnAt = uint64(block.timestamp);
+            m.returnAt = Store.battle(id).returnSettlementAt;
             --activeFleetMissionCount[m.owner];
             _decreaseInternalResources(m.cargo);
             delete m.cargo;
@@ -410,7 +411,10 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
         } else {
             m.status = FleetMissionStatus.Returning;
             if (memberId != id) {
-                m.returnAt = uint64(block.timestamp + (uint256(m.returnAt) - attack.arrivalAt));
+                m.returnAt = uint64(
+                    uint256(Store.battle(id).returnSettlementAt)
+                        + (uint256(m.returnAt) - attack.arrivalAt)
+                );
             }
             if (memberId != id) {
                 _emitFleetMissionReturnExposed(memberId, m, FleetMissionStatus.Returning);
@@ -473,7 +477,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             emit CombatDebrisSignaled(id, m.targetPlanetId, debris.metal, debris.crystal);
             _requestMoonChanceFromBattle(id, m.targetPlanetId, debris);
         }
-        if (!b.blocked && _moonSystem != address(0)) {
+        if (!b.blocked && m.targetIsMoon && _moonSystem != address(0)) {
             (bool versioned, bytes memory version) =
                 _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
             if (versioned && version.length >= 32) {

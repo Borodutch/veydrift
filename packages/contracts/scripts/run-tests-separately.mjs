@@ -29,6 +29,16 @@ export function parseShard(value) {
   return {index: Number(match[1]), count: Number(match[2])};
 }
 
+// Only this multi-transaction driver exceeds Forge's aggregate default. Every
+// actual resolver call remains explicitly capped at 15M in the Solidity fixture.
+export function forgeTestArgs(file) {
+  const args = ["test", "--match-path", `test/${file}`];
+  if (file === "VeydriftStagedCombat.t.sol") {
+    args.push("--isolate", "--gas-limit", "100000000000");
+  }
+  return args;
+}
+
 function main() {
   let testFiles = readdirSync("test")
     .filter((file) => file.endsWith(".t.sol"))
@@ -47,7 +57,7 @@ function main() {
   for (const file of testFiles) {
     const testPath = `test/${file}`;
     console.log(`\n== ${testPath} ==`);
-    const result = spawnSync("forge", ["test", "--match-path", testPath], {
+    const result = spawnSync("forge", forgeTestArgs(file), {
       stdio: "inherit",
     });
 

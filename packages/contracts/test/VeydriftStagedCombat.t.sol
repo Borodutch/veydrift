@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftResourceReserves} from "../src/VeydriftResourceReserves.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -311,8 +312,53 @@ contract VeydriftStagedCombatTest is Test {
         fail("enrollment did not finish");
     }
 
-    /// Run with --isolate: every facade CALL is a committed, cold-storage transaction.
+    function testLinkedReturnEpochSurvivesWarpsAndReversedEnrollment() public {
+        uint64[3] memory forward = _returnEpochScenario(false);
+        game = _newGame();
+        vm.warp(IMPACT);
+        uint64[3] memory reverse = _returnEpochScenario(true);
+        for (uint256 i; i < 3; ++i) {
+            assertEq(forward[i], reverse[i], "enrollment order changed deadline");
+            assertEq(forward[i], IMPACT + 1000, "chunk delay changed return deadline");
+        }
+    }
+
+    function _returnEpochScenario(bool reverse) private returns (uint64[3] memory deadlines) {
+        _seedLeader(1);
+        for (uint256 i; i < 3; ++i) {
+            uint256 id = reverse ? 4 - i : 2 + i;
+            game.seedMission(id, _mission(id, VeydriftGameStorage.FleetMissionType.AcsAttack, 1));
+            game.link(ATTACK, id);
+        }
+        for (uint256 i; i < 200; ++i) {
+            (uint8 currentPhase,,,) = game.progress(ATTACK);
+            if (currentPhase == 12) break;
+            _resolve(game, ATTACK);
+        }
+        (uint8 phase,,,) = game.progress(ATTACK);
+        assertEq(phase, 12, "returns not ready");
+        for (uint256 i; i < 20 && phase != 13; ++i) {
+            vm.warp(block.timestamp + 100);
+            vm.prank(address(uint160(900 + i)));
+            _resolve(game, ATTACK);
+            (phase,,,) = game.progress(ATTACK);
+        }
+        assertEq(phase, 13);
+        for (uint256 i; i < 3; ++i) {
+            VeydriftGameStorage.FleetMission memory m = game.mission(i + 2);
+            assertEq(uint8(m.status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+            deadlines[i] = m.returnAt;
+        }
+    }
+
+    /// The canonical per-file runner supplies aggregate driver gas; each resolve stays capped at 15M.
+    /// forge-config: default.isolate = true
     function testSevenOwnersAllMobileResidentSupportAndDefensesCold15M() public {
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGe(storageGas, 5000, "isolated transaction boundaries required");
+        assertEq(transientValue, 0, "transient state must clear between transactions");
         _seedLeader(1000);
         game.tech(address(101), 8);
         game.tech(address(0xD), 8);
@@ -346,6 +392,7 @@ contract VeydriftStagedCombatTest is Test {
         assertEq(keccak256(abi.encode(game.mission(ATTACK), game.totalInternalResources())), state);
     }
 
+    /// forge-config: default.isolate = true
     function testIdenticalTechPartitionAndEnrollmentOrderExactSideParity() public {
         StagedLifecycleFacade merged = game;
         merged.seedMission(

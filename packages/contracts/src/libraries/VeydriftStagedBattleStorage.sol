@@ -58,6 +58,8 @@ library VeydriftStagedBattleStorage {
         mapping(uint256 => bool) enrolled;
         mapping(uint8 => mapping(uint256 => uint256[])) cohortMembers;
         mapping(uint256 => uint256) capacities;
+        // One settlement epoch for every linked return, independent of continuation timing/order.
+        uint64 returnSettlementAt;
     }
 
     struct Layout {
