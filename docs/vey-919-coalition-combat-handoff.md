@@ -29,18 +29,24 @@ implements substantial portions but does not satisfy every acceptance gate.
 
 - Independent reference through real Game: 19/19. It caught and fixed a genuine
   attacker RNG domain mismatch (0 vs required 4); this is not merely repinned goldens.
-- Staged math/lifecycle: 16/16; planet preparation7; research8; Moon preparation/core41.
+- Staged math/lifecycle: 10/10 under the canonical isolated per-file runner; independent
+  real Game reference19, Moon preparation7, and three new real Game review regressions
+  pass together (29/29). Research8 and Moon preparation/core41 passed before this
+  scoped follow-up. Normal raw Forge defaults cannot fund the aggregate 6,294-call
+  driver; the runner overrides only this test file’s aggregate budget. Every actual
+  resolver call remains explicitly capped at15M, and no roster/assertion was removed.
 - Original full roster retained: seven distinct-tech owners **per side**, all14
   mobile types at1000 each, W/S/A8..14, resident8 and support/defenses. The adapted
-  Gameplay/Combat/Raid facade completed in6294 continuation calls, peak4,494,695 gas.
+  Gameplay/Combat/Raid facade completed in6294 continuation calls, peak4,494,696 gas.
   Every resolver call retains15,000,000 gas ceiling. **Facade dependencies are
   adapted; this is not the complete production Game proxy transaction proof.**
 - Original atomic workload remains an explicit >15M benchmark, not a passing atomic
   gas assertion or an omitted/reduced fixture.
 - Base inherited storage layout guard passes. Namespaced layouts still require
   independent compatibility review. Source runtime/initcode sizes and formatting
-  passed child checks; parent warning cleanup is being rechecked.
-- Consumer/API regression594 passed; keeper99 passed; mission UI118 passed. Further
+  passed a fresh warning-denied 125-file source build; staged runtime24,275bytes
+  (301bytes EIP170 margin). Source checks are not a deployed-proxy proof.
+- Consumer/API regression597 passed; keeper99 passed; mission UI118 passed. Further
   review regressions added deterministic multi-battle defender lookup and complete
   round sequence checks. Backend/frontend TypeScript passed earlier; final checks run.
 - Full pinned Bun1.1.42 backend984pass/1fail and frontend2051pass/4fail. All five
@@ -67,10 +73,16 @@ Local evidence lives in artifacts/vey919-* in the worker worktree. Interface agr
    Preserve state assertions while adding bounded eventual-completion helpers. Prove
    direct/lazy/keeper, delayed randomness, all mutable-input/lock paths, reserve-backed
    debris/returns and full original roster under cold actual proxy transaction limits.
-   Verify the normal CI runner executes long staged tests without exceeding only the
-   aggregate harness budget; never relax individual transaction limits.
-4. **Exact-head independent review and CI** remain required. Current checkpoint is
-   not in-review acceptance. Intermediate consumer reviews found/fixed material bugs.
+   The canonical per-file runner executes the long staged fixture with an
+   aggregate-driver-only override; full CI and cold actual-proxy lifecycle proof remain.
+   Never relax individual transaction limits.
+4. **Exact-head independent review and CI** remain required. A review bound to
+   `6b85b626` found three additional defects: planet combat could settle later Moon
+   defenses before an earlier Moon battle; a protected/missing-Moon bounce awaited
+   oracle randomness; linked return deadlines varied with continuation timing.
+   Successor tests now prove Moon-only preparation/release, oracle-free bounces and a
+   shared persisted return epoch (real Game3/3, staged10/10). Review of the successor
+   head and green CI are still required. This is not in-review acceptance.
 5. **Keyless upgrade closure and approval.** No full canonical script/fork proof yet.
    Game, Gameplay, Combat router, Staged, Legacy, Raid, StateMigration, fresh linked
    libraries, research-completing consumers and Moon changes must all be accounted
