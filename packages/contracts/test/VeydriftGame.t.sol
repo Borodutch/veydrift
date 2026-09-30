@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -3968,7 +3973,7 @@ contract VeydriftGameTest is Test {
             game.previewResources(targetPlanetId);
         assertGt(targetResourcesAtImpact.metal, 2_000);
         _fulfillAttackBattleRandomness(missionId, 778);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
         assertEq(attackCargo.metal, targetResourcesAtImpact.metal / 2);
@@ -11456,7 +11461,7 @@ contract VeydriftGameTest is Test {
     }
 
     function _resolveAttackFully(uint256 missionId) private {
-        for (uint256 calls = 0; calls < 6; calls++) {
+        for (uint256 calls = 0; calls < 20_000; calls++) {
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) return;
             game.resolveFleetMission(missionId);
@@ -12423,8 +12428,11 @@ contract VeydriftGameTest is Test {
     }
 
     function _newGame(address owner) internal returns (VeydriftGame) {
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
@@ -12432,8 +12440,9 @@ contract VeydriftGameTest is Test {
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(address(deployedReferralSystem));
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            address(deployedReferralSystem), address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
             address(deployedReferralSystem), address(colonizationModule)
         );

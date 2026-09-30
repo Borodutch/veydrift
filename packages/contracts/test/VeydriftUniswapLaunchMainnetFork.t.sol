@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -982,8 +988,11 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         evidence.balanceBefore = _reserveBalances(game);
         address proxyAdminAddress = _addressFromSlot(GAME_PROXY, ADMIN_SLOT);
         address proxyAdminOwner = ProxyAdmin(proxyAdminAddress).owner();
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftGame newImplementation = new VeydriftGame(
@@ -998,7 +1007,11 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             address(new VeydriftAttackProtectionModule()),
             address(colonizationModule),
             address(new VeydriftDefenseHoldModule()),
-            address(new VeydriftStateMigrationModule(address(0xBEEF))),
+            address(
+                new VeydriftStateMigrationModule(
+                    address(0xBEEF), address(new VeydriftCombatRaidModule())
+                )
+            ),
             address(new VeydriftAcsAttackModule())
         );
         vm.prank(proxyAdminOwner);

@@ -1,80 +1,88 @@
-# VEY-KANEO-919 — coalition combat implementation checkpoint
+# VEY-KANEO-919 — staged coalition checkpoint
 
-**Not release-ready. Do not merge, deploy or broadcast this branch.**
+**NOT RELEASE-READY. Do not merge, deploy, sign, broadcast or replay battle #94880.**
 
-This is one coupled ticket for coherent ACS attack/defense semantics, not an
-approval to change production or replay battle #94880.
+Nikita's decision (Telegram #21707, 2026-09-30) selects persistent multi-transaction
+combat, not participant caps or a raised transaction ceiling. This checkpoint
+implements substantial portions but does not satisfy every acceptance gate.
 
-## Implemented model
+## Implemented
 
-- Build round-start cohorts by unit kind/type and effective attack/shield/hull.
-  Each owner's Weapons/Shielding/Armor scales that owner's units; no averaging.
-- Merge equal-stat units before targeting, stochastic rounding and loss sampling.
-  Resident ships and eligible allied defenders use the same side representation.
-- Side RNG uses canonical stat keys, never mission/link order. Rapidfire target
-  continuation pools by unit type (technology does not alter the rapidfire matrix).
-- Apportion each cohort's casualties by proportional floors and largest remainder.
-  Owner address then numeric mission ID breaks indivisible attribution ties; these
-  identities never enter combat randomness. Side totals remain invariant when
-  equal-tech fleets are partitioned, even though individuals receive integer losses.
-- Counts are uint256 in combat math, preserving sums above one mission's uint32 limit.
-- The frontend independently mirrors the arithmetic. Historical laneGroup fields
-  remain compatibility metadata, not random lanes.
-- Repeated resolver calls link each qualified stationed hold only once. Arrival,
-  inclusive hold end, body isolation and recalled status guards remain intact.
+- Canonical type/effective-stat cohorts preserve individual Weapons/Shielding/Armor,
+  same-seed side partition parity and deterministic largest-remainder mission losses.
+- Persistent stages cover planet/Moon preparation, roster enrollment, sub-round fire
+  and rapidfire, attribution, unit mutation, raid capacity/loot, and return cleanup.
+  The lead stays Outbound until finalization. Wiped holds clear cargo, slot and hold
+  membership exactly once. No new eligibility cap or join-cutoff change.
+- Research completion checkpoints and an exact baseline legacy combat continuation
+  module are present; their historical activation boundary remains unproven below.
+- Authoritative member snapshots/losses/repairs/acquired-loot events and final event
+  counts drive indexed reports across transactions. Missing evidence fails closed;
+  side resource totals reconcile. Reorgs invalidate cached reports. Reusable defense
+  holds use deterministic latest-canonical many-to-many report lookup.
+- Keeper persists pending jobs and historical discovery in SQLite WAL; retries use
+  canonical status, exact 15M gas preflight and pending-nonce checks. Partial receipts
+  are not completion. Deployment needs a managed persistent volume and stop-first
+  single replica (see battle-keeper README).
 
-## Blocking evidence
+## Verified checkpoint evidence
 
-The all-mobile-type stress case with seven distinct-tech owners per side plus
-resident ships/support/defenses consumed **186,390,251 gas in pure round math**
-after scratch-memory RNG optimization. The unchanged test ceiling is 15,000,000,
-leaving headroom below Base's transaction cap. This test intentionally fails;
-do not raise the ceiling, skip it, remove types, or reduce owner diversity.
-A small three-type fixture passing does not establish real roster safety.
+- Independent reference through real Game: 19/19. It caught and fixed a genuine
+  attacker RNG domain mismatch (0 vs required 4); this is not merely repinned goldens.
+- Staged math/lifecycle: 16/16; planet preparation7; research8; Moon preparation/core41.
+- Original full roster retained: seven distinct-tech owners **per side**, all14
+  mobile types at1000 each, W/S/A8..14, resident8 and support/defenses. The adapted
+  Gameplay/Combat/Raid facade completed in6294 continuation calls, peak4,494,695 gas.
+  Every resolver call retains15,000,000 gas ceiling. **Facade dependencies are
+  adapted; this is not the complete production Game proxy transaction proof.**
+- Original atomic workload remains an explicit >15M benchmark, not a passing atomic
+  gas assertion or an omitted/reduced fixture.
+- Base inherited storage layout guard passes. Namespaced layouts still require
+  independent compatibility review. Source runtime/initcode sizes and formatting
+  passed child checks; parent warning cleanup is being rechecked.
+- Consumer/API regression594 passed; keeper99 passed; mission UI118 passed. Further
+  review regressions added deterministic multi-battle defender lookup and complete
+  round sequence checks. Backend/frontend TypeScript passed earlier; final checks run.
+- Full pinned Bun1.1.42 backend984pass/1fail and frontend2051pass/4fail. All five
+  unrelated local HTTP fixture failures reproduce on pristine base
+  eda10dbae26d34834037cd2e258877b069e32a5c. They do not excuse actual contract failures.
 
-There is no aggregate eligible participant cap in existing ACS admission. Per-owner
-fleet slots do not bound a coalition. Current chunking checkpoints whole rounds;
-a single too-large round can repeatedly fail without progress. Supporting all
-eligible rosters requires resumable sub-round computation, including bounded
-roster construction, attribution and final settlement. A gameplay roster cap is
-an alternative only with an explicit product decision; never silently exclude
-already-qualified fleets.
+Local evidence lives in artifacts/vey919-* in the worker worktree. Interface agreement:
+[producer events](vey919-event-contract.md); [consumer notes](vey919-consumer-integration-notes.md).
 
-## Remaining coupled acceptance work
+## Remaining blockers (do not weaken acceptance)
 
-1. Resolve the gas architecture, then prove actual proxy progress and final
-   settlement under the real transaction cap, not only standalone math.
-2. Research timing: the current patch preserves stored round-time reads. Existing
-   target research is settled through impact, but attacker/joiner/held-owner reads
-   are not a frozen common historical snapshot. Establish an explicit consistent
-   cutoff and test due-before-impact, due-after-impact, delayed resolution and
-   inter-round actions. Historical completed research cannot simply be inferred
-   from today's level after its queue has been deleted.
-3. Wiped DefenseHold fleets still need terminal hold removal, cargo accounting,
-   exactly-once slot release and event evidence; surviving holds must remain.
-4. Semantic cutover must not combine legacy rounds with cohort rounds in one
-   already-started battle. Add a tested version/legacy-continuation strategy;
-   an operational drain without a race-proof gate is not sufficient.
-5. Mission-specific reports need authoritative casualties/loot evidence; do not
-   call pre-carried return cargo acquired loot or include recalled joiners. Verify
-   side resources/debris against all eligible mission results.
-6. Complete direct/lazy/keeper, delayed randomness, moon and hold integration,
-   storage checks, exact-head independent review and CI.
+1. **Initial protection-score scan is still unbounded.** Phase0 calls raw player
+   planet/mission score traversal atomically. It fails closed, but an oversized scan
+   can still prevent progress. Implement coherent bounded score preparation or a
+   maintained equivalent index with proven freeze semantics. This is an engineering
+   gap under the approved design, not another A/B product question.
+2. **Historical research/cutover boundary.** Deleted pre-upgrade queues cannot be
+   reconstructed. Current lazy history baseline does not prove historical impact
+   levels. Establish a reviewed activation/legacy boundary without data migration
+   or retroactive replay. Exact deployed legacy arithmetic provenance, all legacy
+   holds/returns and terminal continuation remain to be proven.
+3. **Real Game/Moon regressions and liveness.** Old focused Game suite12pass/22fail,
+   broad Moon suite69pass/13fail were not fully migrated from single-call assumptions.
+   Preserve state assertions while adding bounded eventual-completion helpers. Prove
+   direct/lazy/keeper, delayed randomness, all mutable-input/lock paths, reserve-backed
+   debris/returns and full original roster under cold actual proxy transaction limits.
+   Verify the normal CI runner executes long staged tests without exceeding only the
+   aggregate harness budget; never relax individual transaction limits.
+4. **Exact-head independent review and CI** remain required. Current checkpoint is
+   not in-review acceptance. Intermediate consumer reviews found/fixed material bugs.
+5. **Keyless upgrade closure and approval.** No full canonical script/fork proof yet.
+   Game, Gameplay, Combat router, Staged, Legacy, Raid, StateMigration, fresh linked
+   libraries, research-completing consumers and Moon changes must all be accounted
+   for. Research checkpoint code in inherited ResourceReserves makes stale module
+   reuse unsafe. UpgradeProductionBatchGame reuses live modules and cannot release
+   this graph. UpgradeGame has historical referral/private-key prerequisites that
+   are not a keyless rehearsal. Do not bypass them.
 
-## Contract upgrade handoff (incomplete; not approval)
+## Release boundary
 
-The Game implementation embeds Gameplay, which embeds Combat, which embeds the
-Rapidfire helper. Releasing this change requires a fresh compatible chain of those
-modules and an in-place Game proxy upgrade preserving storage. The modified
-DefenseHoldStorage library must be freshly linked in its consumers.
-
-Do not use UpgradeProductionBatchGame to release this change: it reuses live
-module addresses. Inspect and adapt the current approved upgrade path instead;
-UpgradeGame's full deployment path also has unrelated historical migration
-prerequisites that must be live-checked, not bypassed. The existing fork smoke
-alone is not proof of coalition gas, timing or in-flight semantic continuity.
-
-After the blockers are fixed: keyless exact-head fork dry-run, explicit upgrades-
-topic approval for this exact ticket/PR/head, compatible backend/keeper first,
-approved Game/module upgrade, verified manifest/health, frontend last, then
-handoff to dedicated Testing. No transaction is authorized by this document.
+After all blockers are fixed: exact-head review and green CI; keyless storage,
+constructor/linked-module and live-fork rehearsal; request Nikita's exact-ticket/PR/head
+approval in Veydrift upgrades. Deploy compatible event-aware backend/keeper first,
+then approved Game/Moon/module upgrades in verified order, manifest/health/smoke,
+frontend last, dedicated Testing. Design approval is not broadcast approval.

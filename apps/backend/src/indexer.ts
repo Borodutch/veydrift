@@ -1,4 +1,5 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { stagedMemberShips } from "./stagedBattleReport";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
@@ -6371,6 +6372,8 @@ export class SettlementIndexer {
         block_number TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_canonical_idx
+        ON indexed_battle_report_read_models(CASE WHEN json_valid(report_json) THEN json_extract(report_json, '$.missionId') END);
       CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_status_idx
         ON indexed_battle_report_read_models (status, updated_at);
       CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_recent_idx
@@ -7585,24 +7588,24 @@ export class SettlementIndexer {
   }
 
   private markBattleReportMaterializationPending(missionId: string, blockNumber: string): void {
+    // Invalidate the canonical report AND aliases before any new/reorged evidence is served.
+    this.db.query(`DELETE FROM indexed_battle_report_read_models
+      WHERE mission_id != ? AND (CASE WHEN json_valid(report_json) THEN json_extract(report_json, '$.missionId') END) = ?`).run(missionId, missionId);
+    this.db.query("DELETE FROM indexed_battle_report_stationed_defenders WHERE battle_mission_id = ?").run(missionId);
     this.db.query(`
       INSERT INTO indexed_battle_report_read_models (
         mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
       )
       VALUES (?, 'pending', NULL, NULL, 0, NULL, ?, ?)
       ON CONFLICT(mission_id) DO UPDATE SET
-        status = CASE
-          WHEN indexed_battle_report_read_models.status = 'ready' THEN indexed_battle_report_read_models.status
-          ELSE 'pending'
-        END,
-        attempts = CASE
-          WHEN indexed_battle_report_read_models.status = 'ready' THEN indexed_battle_report_read_models.attempts
-          ELSE 0
-        END,
+        status = 'pending',
+        report_json = NULL,
+        attempts = 0,
         error = NULL,
         block_number = excluded.block_number,
         updated_at = excluded.updated_at
     `).run(missionId, blockNumber, new Date().toISOString());
+    this.touchBattleReportReadModel();
   }
 
   private backfillBattleReportStationedDefenderIndex(): void {
@@ -7698,7 +7701,7 @@ export class SettlementIndexer {
       `);
       const reportJson = JSON.stringify(report);
       this.db.transaction(() => {
-        for (const associatedMissionId of associatedBattleReportMissionIds(report)) {
+        for (const associatedMissionId of [report.missionId, ...report.participants.map(participant => participant.missionId)]) {
           writeReadyReport.run(associatedMissionId, reportJson, durationMs, report.blockNumber, updatedAt);
         }
         clearStationedDefenders.run(report.missionId);
@@ -10057,7 +10060,7 @@ export class SettlementIndexer {
 
   private applyCombatResolutionProgressEvent(log: IndexedRpcLog, missionId: string): number {
     const progress = decodeCombatResolutionProgressLog(log);
-    const terminal = isAttackBattleResolvedLog(log);
+    const terminal = isAttackBattleResolvedLog(log) || progress?.terminal === true;
     if (!progress && !terminal) return 0;
     const row = this.db.query(`
       SELECT event_json
@@ -10098,10 +10101,13 @@ export class SettlementIndexer {
         AND json_extract(event_json, '$.topics[1]') = ?
     `).all(fleetMissionIdTopic(missionId)) as EventRow[];
     let roundsCompleted = 0;
+    let started = false;
     let terminal = false;
     for (const candidate of sortedEventRows(rows)) {
       const progress = decodeCombatResolutionProgressLog(candidate);
       if (progress?.missionId === missionId) {
+        started = true;
+        terminal ||= progress.terminal === true;
         roundsCompleted = Math.max(roundsCompleted, progress.roundsCompleted);
       }
       if (isAttackBattleResolvedLog(candidate) && battleLogMissionId(candidate) === missionId) {
@@ -10120,7 +10126,7 @@ export class SettlementIndexer {
       ? payload.mission as Record<string, unknown>
       : payload;
     const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
-    if (!terminal && roundsCompleted > 0) {
+    if (!terminal && started) {
       progressPayload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
     } else {
       delete progressPayload.combatResolutionProgress;
@@ -12050,6 +12056,11 @@ export class SettlementIndexer {
     const result = this.db
       .query("DELETE FROM indexed_mission_event_logs WHERE event_id = ?")
       .run(eventId);
+    if (existing?.event_kind === "battle") {
+      const log = parseEvent<IndexedRpcLog>(existing.event_json);
+      const missionId = battleLogMissionId(log);
+      if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
+    }
     if (existing?.event_kind === "randomness") {
       const log = parseEvent<IndexedRpcLog>(existing.event_json);
       const requestId = decodeRandomnessFulfilledRequestId(log);
@@ -13643,7 +13654,14 @@ export class SettlementIndexer {
       ?? this.eventDerivedFleetMissionForMissionId(report.missionId);
     return {
       ...materialized,
-      stationedDefenders: this.stationedDefendersForBattle(attack, materialized)
+      stationedDefenders: report.stagedEvidence
+        ? report.stagedEvidence.members.filter(member => member.side === 1 && member.missionId !== "0").map(member => ({
+          missionId: member.missionId, defender: member.owner, defenderDisplayName: null, battleWindowComplete: true, arrivalAt: attack?.arrivalAt ?? "0",
+          holdUntil: attack?.arrivalAt ?? "0", allianceDepotLevel: 0,
+          ships: stagedMemberShips(member, "starting"), destroyedShips: stagedMemberShips(member, "destroyed"),
+          survivingShips: stagedMemberShips(member, "remaining")
+        }))
+        : this.stationedDefendersForBattle(attack, materialized)
     };
   }
 
@@ -13728,10 +13746,16 @@ export class SettlementIndexer {
     const missingMissionIds: string[] = [];
     for (const missionId of uniqueMissionIds) {
       const row = this.db.query(`
-        SELECT report_json
-        FROM indexed_battle_report_read_models
-        WHERE mission_id = ? AND status = 'ready' AND report_json IS NOT NULL
-      `).get(missionId) as Pick<BattleReportReadModelRow, "report_json"> | null;
+        SELECT report_json FROM (
+          SELECT report_json, block_number FROM indexed_battle_report_read_models
+          WHERE mission_id = ? AND status = 'ready' AND report_json IS NOT NULL
+          UNION ALL
+          SELECT reports.report_json, reports.block_number FROM indexed_battle_report_stationed_defenders defenders
+          JOIN indexed_battle_report_read_models reports ON reports.mission_id = defenders.battle_mission_id
+          WHERE defenders.defender_mission_id = ? AND reports.status = 'ready' AND reports.report_json IS NOT NULL
+        ) ORDER BY CAST(block_number AS INTEGER) DESC,
+          CAST(json_extract(report_json, '$.missionId') AS INTEGER) DESC LIMIT 1
+      `).get(missionId, missionId) as Pick<BattleReportReadModelRow, "report_json"> | null;
       if (!row?.report_json) {
         missingMissionIds.push(missionId);
         continue;
@@ -13843,6 +13867,11 @@ export class SettlementIndexer {
     let logIndex = 0;
 
     for (const report of reportsByPosition) {
+      if (report.stagedEvidence) {
+        const exact = stagedBattleTimeDefenderState(report);
+        if (exact) states.set(report.missionId, exact);
+        continue;
+      }
       while (logIndex < logs.length) {
         const log = logs[logIndex]!;
         if (compareRpcLogPosition(log, report) >= 0 || sameRpcTransaction(log, report)) break;
@@ -15290,7 +15319,7 @@ function parseCombatResolutionProgress(
   if (!candidate || typeof candidate !== "object") return null;
   const roundsCompleted = Number((candidate as Record<string, unknown>).roundsCompleted);
   const totalRounds = Number((candidate as Record<string, unknown>).totalRounds);
-  if (!Number.isInteger(roundsCompleted) || roundsCompleted <= 0) return null;
+  if (!Number.isInteger(roundsCompleted) || roundsCompleted < 0) return null;
   if (!Number.isInteger(totalRounds) || totalRounds < roundsCompleted) return null;
   return { roundsCompleted, totalRounds };
 }
@@ -15507,6 +15536,34 @@ function battleReportProvesEmptyDefender(
     && report.roundReports.length === 0
     && isZeroResources(report.defenderLosses)
     && !transactionLogs.some((log) => battleUnitCountChange(log, report) !== null);
+}
+
+function stagedBattleTimeDefenderState(report: BattleReport): BattleTimeDefenderState | null {
+  if (!report.stagedEvidence?.complete) return null;
+  const resident = report.stagedEvidence.members.find(member => member.side === 1 && member.missionId === "0");
+  const rows = resident?.units ?? [];
+  const section = (defense: boolean) => {
+    const selected = rows.filter(row => (row.unit >= 16) === defense);
+    return battleReportLossSection(
+      new Map(selected.map(row => [defense ? row.unit - 16 : row.unit, { destroyed: row.destroyed, restored: row.restored }])),
+      new Map(selected.map(row => [defense ? row.unit - 16 : row.unit, row.remaining])),
+      defense ? defenseCostForLegacyLoss : shipCostForLegacyLoss
+    );
+  };
+  const planetFleet = section(false);
+  const staticDefenses = section(true);
+  const stationedRows = report.stagedEvidence.members.filter(member => member.side === 1 && member.missionId !== "0")
+    .flatMap(member => member.units.filter(row => row.unit < 16).map(row => ({ id: row.unit, destroyed: row.destroyed, restored: 0, netLost: row.destroyed, remaining: row.remaining })));
+  const stationed = resourceValueForBattleUnits(stationedRows, shipCostForLegacyLoss, "destroyed");
+  const reconciled = (["metal", "crystal", "deuterium"] as const).every(key =>
+    BigInt(stationed[key]) + BigInt(planetFleet.destroyedResources[key]) === BigInt(report.defenderLosses[key]));
+  return {
+    snapshot: {
+      fleet: rows.filter(row => row.unit < 16).map(row => ({ id: row.unit, count: row.starting })),
+      defenses: rows.filter(row => row.unit >= 16).map(row => ({ id: row.unit - 16, count: row.starting }))
+    },
+    lossBreakdown: { planetFleet, staticDefenses, stationedFleet: { destroyedResources: stationed }, fleetLossesReconciled: reconciled }
+  };
 }
 
 function materializeBattleTimeDefenderState(
@@ -16253,7 +16310,8 @@ function associatedBattleReportMissionIds(report: BattleReport): string[] {
   return [...new Set([
     report.missionId,
     report.attackGroupId,
-    ...report.participants.map((participant) => participant.missionId)
+    ...report.participants.map((participant) => participant.missionId),
+    ...(report.stagedEvidence?.members.filter(member => member.side === 1 && member.missionId !== "0").map(member => member.missionId) ?? [])
   ].filter((missionId): missionId is string => Boolean(missionId)))];
 }
 

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -54,8 +60,11 @@ contract VeydriftBodyProtectionRouterTest is Test {
         vm.prank(ADMIN);
         randomness.setPrecommitRequired(false);
 
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
@@ -71,7 +80,11 @@ contract VeydriftBodyProtectionRouterTest is Test {
             address(new VeydriftAttackProtectionModule()),
             address(colonizationModule),
             address(new VeydriftDefenseHoldModule()),
-            address(new VeydriftStateMigrationModule(address(0xBEEF))),
+            address(
+                new VeydriftStateMigrationModule(
+                    address(0xBEEF), address(new VeydriftCombatRaidModule())
+                )
+            ),
             address(new VeydriftAcsAttackModule())
         );
         game = VeydriftGame(

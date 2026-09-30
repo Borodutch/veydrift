@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {VeydriftGameStorage} from "../VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./VeydriftCatalog.sol";
 import {Defense} from "./VeydriftTypes.sol";
+import {VeydriftMoonSystem} from "../VeydriftMoonSystem.sol";
+import {MoonBuilding} from "./VeydriftTypes.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @notice Namespaced FIFO storage and iteration for the size-constrained Moon proxy.
@@ -23,8 +25,117 @@ library VeydriftMoonDefenseBacklog {
         VeydriftGameStorage.Resources cost;
     }
 
+    struct CombatPreparation {
+        uint256 consumed;
+        uint256 compacted;
+        uint64 impact;
+        uint8 phase; // 0 settle/promote, 1 copy, 2 pop, 3 complete
+        bool frozen;
+    }
+
     struct Layout {
         mapping(uint256 planetId => Entry[] queue) queues;
+        mapping(uint256 planetId => CombatPreparation preparation) combat;
+    }
+
+    error MoonCombatFrozen(uint256 planetId);
+    error MoonCombatNotPrepared(uint256 planetId);
+    error MoonCombatImpactChanged();
+    error InvalidWorkBudget();
+
+    function frozen(uint256 planetId) internal view returns (bool) {
+        return _layout().combat[planetId].frozen;
+    }
+
+    function requireUnfrozen(uint256 planetId) internal view {
+        if (frozen(planetId)) revert MoonCombatFrozen(planetId);
+    }
+
+    function requirePrepared(uint256 planetId) internal view {
+        if (_layout().combat[planetId].phase != 3) revert MoonCombatNotPrepared(planetId);
+    }
+
+    function combatActive(uint256 planetId) public view returns (bool) {
+        if (!frozen(planetId)) return false;
+        requirePrepared(planetId);
+        return true;
+    }
+
+    function requireImpact(uint256 planetId, uint64 impact) public view {
+        CombatPreparation storage state = _layout().combat[planetId];
+        if (state.frozen && state.impact != impact) revert MoonCombatImpactChanged();
+    }
+
+    /// @return started True only on the first call; the caller settles the fixed-size building
+    /// and capped ship lane once, using this same impact (never the current wall clock).
+    function begin(uint256 planetId, uint64 impact, uint256 maxWork) public returns (bool started) {
+        if (maxWork == 0) revert InvalidWorkBudget();
+        requireImpact(planetId, impact);
+        CombatPreparation storage state = _layout().combat[planetId];
+        if (state.frozen) return false;
+        state.frozen = true;
+        state.impact = impact;
+        return true;
+    }
+
+    /// @dev One iteration settles/promotes one entry, copies one entry, pops one entry or
+    /// advances a phase. Mutations stay frozen while the physical FIFO is partially compacted.
+    function prepare(
+        mapping(uint256 planetId => Entry queue) storage activeQueues,
+        mapping(uint256 planetId => mapping(Defense defense => uint32 count)) storage counts,
+        uint256 planetId,
+        uint256 maxWork
+    ) public returns (bool complete) {
+        CombatPreparation storage state = _layout().combat[planetId];
+        Entry[] storage queue = _layout().queues[planetId];
+        for (uint256 work; work < maxWork && state.phase < 3; ++work) {
+            if (state.phase == 0) {
+                Entry memory active = activeQueues[planetId];
+                if (!active.active || active.readyAt > state.impact) {
+                    state.phase = 1;
+                    continue;
+                }
+                uint32 total = counts[planetId][active.defense] + active.quantity;
+                counts[planetId][active.defense] = total;
+                emit MoonDefenseCountChanged(planetId, active.defense, total);
+                emit MoonDefenseCompleted(planetId, active.defense, active.quantity, total);
+                if (state.consumed == queue.length) {
+                    delete activeQueues[planetId];
+                    state.phase = 1;
+                } else {
+                    Entry memory next = queue[state.consumed++];
+                    activeQueues[planetId] = next;
+                    emit MoonDefenseQueued(
+                        planetId,
+                        next.defense,
+                        next.quantity,
+                        next.readyAt,
+                        next.cost.metal,
+                        next.cost.crystal,
+                        next.cost.deuterium
+                    );
+                }
+            } else if (state.phase == 1) {
+                if (state.consumed == 0) {
+                    state.phase = 3;
+                } else if (state.consumed + state.compacted < queue.length) {
+                    queue[state.compacted] = queue[state.consumed + state.compacted];
+                    ++state.compacted;
+                } else {
+                    state.phase = 2;
+                }
+            } else {
+                if (queue.length > state.compacted) queue.pop();
+                else state.phase = 3;
+            }
+        }
+        return state.phase == 3;
+    }
+
+    /// @dev Fixed-size namespace cleanup; never walks a queue.
+    function release(uint256 planetId) public {
+        if (frozen(planetId)) requirePrepared(planetId);
+        delete _layout().combat[planetId];
     }
 
     event MoonDefenseQueued(
@@ -97,6 +208,58 @@ library VeydriftMoonDefenseBacklog {
         }
     }
 
+    event MoonBuildingCompleted(
+        uint256 indexed planetId, MoonBuilding indexed building, uint16 level
+    );
+
+    function settleBuildingUntil(
+        mapping(uint256 => VeydriftMoonSystem.MoonBuildingConstruction) storage constructions,
+        mapping(uint256 => mapping(MoonBuilding => uint16)) storage levels,
+        mapping(uint256 => VeydriftMoonSystem.Moon) storage moons,
+        uint256 planetId,
+        uint64 cutoffAt
+    ) public {
+        VeydriftMoonSystem.MoonBuildingConstruction memory construction = constructions[planetId];
+        if (!construction.active || cutoffAt < construction.readyAt) return;
+        delete constructions[planetId];
+        levels[planetId][construction.building] = construction.targetLevel;
+        if (construction.building == MoonBuilding.LunarBase) {
+            unchecked {
+                moons[planetId].fields += 3;
+            }
+        }
+        emit MoonBuildingCompleted(planetId, construction.building, construction.targetLevel);
+    }
+
+    function clearCounts(
+        mapping(uint256 planetId => mapping(Defense defense => uint32 count)) storage counts,
+        uint256 planetId
+    ) public {
+        for (uint8 i; i <= uint8(type(Defense).max); ++i) {
+            delete counts[planetId][Defense(i)];
+        }
+    }
+
+    /// @notice Fixed eight-type combat delta application; keeps linked Moon runtime size bounded.
+    function applyChanges(
+        mapping(uint256 planetId => mapping(Defense defense => uint32 count)) storage counts,
+        uint256 planetId,
+        uint256 changes,
+        bool repair
+    ) public {
+        for (uint8 i; i <= uint8(Defense.LargeShieldDome); ++i) {
+            Defense defense = Defense(i);
+            // Extract one packed uint32 lane, intentionally discarding subsequent lanes.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint32 changed = uint32(changes >> (uint256(i) * 32));
+            if (changed == 0) continue;
+            uint32 current = counts[planetId][defense];
+            uint32 total = repair ? current + changed : current > changed ? current - changed : 0;
+            counts[planetId][defense] = total;
+            emit MoonDefenseCountChanged(planetId, defense, total);
+        }
+    }
+
     function entries(uint256 planetId) public view returns (Entry[] memory) {
         return _layout().queues[planetId];
     }
@@ -112,6 +275,10 @@ library VeydriftMoonDefenseBacklog {
             unchecked {
                 ++i;
             }
+        }
+        if (frozen(planetId)) {
+            requirePrepared(planetId);
+            return valuePacked;
         }
         Entry storage active = activeQueues[planetId];
         if (active.active && active.readyAt <= nowAt) {

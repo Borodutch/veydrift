@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
@@ -442,6 +443,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
+        uint256 lockId = Store.layout().bodyLock[mission.targetPlanetId];
+        if (lockId != 0 && lockId != missionId) {
+            revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
+        }
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
 
@@ -451,28 +456,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         // The helper only orders pairs where either mission is a MissileAttack, so ordinary fleet
         // missions retain their existing permissionless resolution behavior.
         if (
-            IVeydriftArrivalOrderPreparer(address(this))
-                    .launchInterplanetaryMissileAttack(
-                        missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
-                    ) == 0
+            Store.battle(missionId).phase == 0
+                && IVeydriftArrivalOrderPreparer(address(this))
+                        .launchInterplanetaryMissileAttack(
+                            missionId, mission.targetPlanetId, Defense.RocketLauncher, 0
+                        ) == 0
         ) return;
 
-        if (missionType == FleetMissionType.Attack) {
-            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
-            // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
-            // attack's counterplay roster so the battle machinery fights them as defenders.
-            // DefenseHold is body-scoped. A fleet stationed over the parent planet must not
-            // silently join combat against its moon.
-            VeydriftDefenseHoldStorage.linkQualifiedDefenders(
-                _stationedDefenseMissions[mission.targetPlanetId],
-                _fleetCounterplayMissions[missionId],
-                _fleetMissions,
-                _defenseHoldUntil,
-                mission.arrivalAt,
-                mission.targetIsMoon
-            );
-        } else {
+        if (missionType != FleetMissionType.Attack) {
             _settleResources(mission.targetPlanetId);
+        } else if (
+            Store.battle(missionId).phase == 0 && _battleResolutionProgress[missionId].rounds != 0
+        ) {
+            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
         }
         if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             // Both transport and deploy credit the target's cargo on arrival; share the credit + the
@@ -565,28 +561,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         private
         returns (bool complete)
     {
-        while (_fleetMissions[missionId].status == FleetMissionStatus.Outbound) {
-            uint256 availableGas = gasleft();
-            if (availableGas <= COMBAT_ROUND_PARENT_GAS_RESERVE) return false;
-            (bool ok, bytes memory result) = address(this)
-            .call{gas: availableGas - COMBAT_ROUND_PARENT_GAS_RESERVE}(
-                abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId)
-            );
-            if (!ok) {
-                // Empty returndata is the expected signal when the next complete round cannot fit.
-                // Any semantic revert (pending randomness, pause, bad state) must remain visible.
-                if (result.length != 0) {
-                    assembly ("memory-safe") {
-                        revert(add(result, 0x20), mload(result))
-                    }
-                }
-                return false;
-            }
-            if (result.length != 32) revert UnsupportedGameplayModule();
-            complete = abi.decode(result, (bool));
-            if (complete) return true;
-        }
-        return true;
+        // One bounded stage per transaction, without gas-exhaustion probing.
+        (bool ok, bytes memory result) =
+            address(this).call(abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId));
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        if (result.length != 32) revert UnsupportedGameplayModule();
+        return abi.decode(result, (bool));
     }
 
     function _harvestDebris(FleetMission storage mission) private {

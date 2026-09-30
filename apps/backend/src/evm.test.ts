@@ -1805,8 +1805,26 @@ describe("canonical fleet mission details", () => {
 
     const mission = await reader.getCanonicalFleetMission(23_007n);
 
-    expect(selectors).toEqual(["0xf158c946", "0xa5edcf21"]);
+    expect(selectors).toEqual(["0xf158c946", "0xa5edcf21", toFunctionSelector("stagedBattleProgress(uint256)")]);
     expect(mission?.combatResolutionProgress).toEqual({ roundsCompleted: 4, totalRounds: 6 });
+  });
+
+  test("reads zero-round staged preparation and clears terminal staged progress", async () => {
+    let phase = 2n;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(): Promise<T> { throw new Error("unexpected sequential request"); },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        return requests.map(request => {
+          const selector = (request.params[0] as { data: string }).data.slice(0, 10);
+          if (selector === "0xf158c946") return fleetMissionResult({ status: 1n, missionType: 3n, owner: "0x0000000000000000000000000000000000000abc" }) as T;
+          if (selector === "0xa5edcf21") return dataWords([word(0n), word(6n)]) as T;
+          return dataWords([word(phase), word(0n), word(42n)]) as T;
+        });
+      }
+    });
+    expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    phase = 13n;
+    expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toBeUndefined();
   });
 
   test("reads active mission ships and body flags from packed storage", async () => {

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -125,15 +131,20 @@ contract KarsaCombatGasForkTest is Test {
 
     function _upgradeGame() private {
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
-        VeydriftCombatModule combatModule = new VeydriftCombatModule(address(rapidfire));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(rapidfire),
+            address(new VeydriftStagedCombatModule(address(rapidfire))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(REFERRAL_SYSTEM);
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            REFERRAL_SYSTEM, address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(REFERRAL_SYSTEM, address(colonizationModule));
         VeydriftGame implementation = new VeydriftGame(

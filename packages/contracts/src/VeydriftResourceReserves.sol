@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage, IERC20ReserveToken} from "./VeydriftGameStorage.sol";
 import {Building, Resource, Technology} from "./libraries/VeydriftTypes.sol";
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
+import {VeydriftResearchHistory} from "./libraries/VeydriftResearchHistory.sol";
 
 /// @dev Self-call surface used by the lazy reconcile to drain a planet's ready ship/defense
 ///      production queues. The facade exposes `completeAttackTargetSnapshotQueues` (self-only) and
@@ -245,6 +247,13 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     function _settleResearchDue(address player, uint64 cutoffAt) internal {
         ResearchQueue memory queue = researchQueues[player];
         if (queue.active && cutoffAt >= queue.readyAt) {
+            VeydriftResearchHistory.recordCompletion(
+                player,
+                queue.technology,
+                _technologyLevels[player][queue.technology],
+                queue.targetLevel,
+                queue.readyAt
+            );
             delete researchQueues[player];
             _technologyLevels[player][queue.technology] = queue.targetLevel;
             emit ResearchCompleted(player, queue.technology, queue.targetLevel);
@@ -452,7 +461,9 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 
         _untrackDirectMissionResolution(missionId, mission);
-        _untrackLinkedCounterplayMissionResolutions(missionId);
+        if (Store.battle(missionId).phase == 0) {
+            _untrackLinkedCounterplayMissionResolutions(missionId);
+        }
     }
 
     function _untrackCounterplayMissionResolution(
@@ -650,7 +661,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         _resolutionMissionIdsByPlayer[player].length;
     }
 
-    function _removeResolutionMissionForPlayer(address player, uint256 missionId) private {
+    function _removeResolutionMissionForPlayer(address player, uint256 missionId) internal {
         uint256 indexPlusOne = _resolutionMissionIndexByPlayer[player][missionId];
         if (indexPlusOne == 0) return;
 

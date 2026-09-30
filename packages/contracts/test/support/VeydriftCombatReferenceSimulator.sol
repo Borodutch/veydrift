@@ -310,9 +310,9 @@ library VeydriftCombatReferenceSimulator {
         returns (VeydriftGameStorage.Resources memory)
     {
         return VeydriftGameStorage.Resources({
-            metal: uint128(uint256(resources.metal) * quantity),
-            crystal: uint128(uint256(resources.crystal) * quantity),
-            deuterium: uint128(uint256(resources.deuterium) * quantity)
+            metal: (uint256(resources.metal) * quantity).toUint128(),
+            crystal: (uint256(resources.crystal) * quantity).toUint128(),
+            deuterium: (uint256(resources.deuterium) * quantity).toUint128()
         });
     }
 

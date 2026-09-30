@@ -21,6 +21,8 @@ export type KeeperConfig = {
   /** Deep one-time backfill window (blocks) scanned at startup so the keeper picks up missions
    * launched long before it started — including overdue arrivals that block returns. */
   backfillBlocks: number;
+  statePath: string;
+  deploymentBlock: number;
 };
 
 export type ConfigProblem = {
@@ -120,6 +122,12 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
     problems
   );
 
+  const statePath = env.KEEPER_STATE_PATH?.trim() || "/data/battle-keeper/state.sqlite";
+  const deploymentBlock = Number(env.GAME_DEPLOYMENT_BLOCK?.trim() || "0");
+  if (!Number.isSafeInteger(deploymentBlock) || deploymentBlock < 0) {
+    problems.push({ field: "GAME_DEPLOYMENT_BLOCK", message: "GAME_DEPLOYMENT_BLOCK must be a non-negative safe integer." });
+  }
+
   if (problems.length > 0) {
     return { config: null, problems };
   }
@@ -136,7 +144,9 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
       resolveIntervalMs,
       port,
       maxConcurrency,
-      backfillBlocks
+      backfillBlocks,
+      statePath,
+      deploymentBlock
     },
     problems: []
   };
@@ -155,7 +165,9 @@ export function safeConfigSummary(config: KeeperConfig): Record<string, unknown>
     sweepIntervalMs: config.sweepIntervalMs,
     resolveIntervalMs: config.resolveIntervalMs,
     port: config.port,
-    maxConcurrency: config.maxConcurrency
+    maxConcurrency: config.maxConcurrency,
+    statePath: config.statePath,
+    deploymentBlock: config.deploymentBlock
   };
 }
 

@@ -7,7 +7,7 @@ import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem"
 import { canonicalContractTables } from "./contractStateSchema";
 import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
-import { decodeBattleReportLogs } from "./evm";
+import { combatStageAdvancedTopic, decodeBattleReportLogs } from "./evm";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
@@ -2876,6 +2876,54 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+  });
+
+  test("indexes zero-round staged preparation across restart, duplicate delivery and reorg", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90", transactionHash: "0xstaged-launch", logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(23_008n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1_900_000_000n, 1_900_000_600n, 2_348n)
+    });
+    const staged = {
+      blockNumber: "0x91", transactionHash: "0xstaged-prepare", logIndex: "0x0",
+      topics: [combatStageAdvancedTopic, topic(23_008n)], data: abiWords(2n, 40n, 0n)
+    };
+    const progress = (source: SettlementIndexer) => source.fleetMissionVisibility(player).outgoing
+      .find(mission => mission.missionId === "23008")?.combatResolutionProgress;
+    indexer.applyLog(staged);
+    indexer.applyLog(staged);
+    expect(progress(indexer)).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(progress(restarted)).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    const round = {
+      blockNumber: "0x92", transactionHash: "0xstaged-round", logIndex: "0x0",
+      topics: [combatRoundResolvedTopic, topic(23_008n), topic(1n)],
+      data: abiWords(10n, 10n, 0n, 0n, 0n, 0n)
+    };
+    restarted.applyLog(round);
+    expect(progress(restarted)?.roundsCompleted).toBe(1);
+    restarted.applyLog({ ...round, removed: true });
+    expect(progress(restarted)).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    restarted.applyLog({ ...staged, removed: true });
+    expect(progress(restarted)).toBeUndefined();
+    restarted.applyLog(staged);
+    restarted.applyLog({
+      blockNumber: "0x93", transactionHash: "0xstaged-final", logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(23_008n), addressTopic(player), topic(8n)],
+      data: abiWords(2n, 6n, 123n, 0n, 0n, 0n)
+    });
+    expect(progress(restarted)).toBeUndefined();
+    restarted.applyLog({ ...staged, transactionHash: "0xstaged-terminal", blockNumber: "0x93", data: abiWords(13n, 999n, 6n) });
+    expect(progress(restarted)).toBeUndefined();
+    database.close();
   });
 
   test("indexes multi-transaction combat progress, reconciles reorgs, and clears it at settlement", () => {

@@ -31,6 +31,10 @@ const completeFleetMissionReturnAbi = [
   }
 ] as const satisfies Abi;
 
+// Conservative transaction-envelope ceiling, below Base's 2^24 gas maximum.
+// https://docs.base.org/specifications/transactions/troubleshooting-transactions
+export const settlementGasLimit = 15_000_000n;
+
 export const resolveFleetMissionSelector = "0xde09e7cf";
 export const completeFleetMissionReturnSelector = "0xc2472852";
 
@@ -64,7 +68,7 @@ export type MissionResolver = {
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
   resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
-  /** Canonical post-receipt state; bounded missile settlement can require several receipts. */
+  /** Canonical post-receipt state; combat and missile settlement can require several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
 };
@@ -164,19 +168,46 @@ export class ViemMissionResolver implements MissionResolver {
     //    committed / not arrived / already resolved; return: not due / wrong status / already
     //    returned) — surface as retryable, don't send a tx.
     try {
-      await this.transport.request<string>("eth_call", [{ from, to: this.to, data }, "latest"]);
+      await this.transport.request<string>("eth_call", [{ from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}` }, "latest"]);
     } catch (error) {
       throw new MissionNotResolvableError(missionId, error);
     }
 
     // 2) Build the EIP-1559 tx: nonce (pending), gas estimate + buffer, dynamic fees, chainId.
-    const [nonceHex, gasHex, feeData] = await Promise.all([
+    const [nonceHex, latestNonceHex, gasHex, feeData] = await Promise.all([
       this.transport.request<string>("eth_getTransactionCount", [from, "pending"]),
-      this.transport.request<string>("eth_estimateGas", [{ from, to: this.to, data }]),
+      this.transport.request<string>("eth_getTransactionCount", [from, "latest"]),
+      this.transport.request<string>("eth_estimateGas", [{
+        from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}`
+      }]),
       this.resolveFees()
     ]);
 
-    const gas = applyBuffer(BigInt(gasHex), this.options.gasLimitBufferPercent ?? 20n);
+    // A previous send may have timed out or the keeper may have restarted while it was pending.
+    // Do not enqueue a second stage behind an unknown receipt (or reuse its nonce).
+    if (BigInt(nonceHex) !== BigInt(latestNonceHex)) {
+      throw new MissionNotResolvableError(missionId, new Error("keeper transaction still pending"));
+    }
+    const estimate = BigInt(gasHex);
+    if (estimate > settlementGasLimit) {
+      throw new MissionNotResolvableError(missionId, new Error("settlement exceeds gas ceiling"));
+    }
+    const buffered = applyBuffer(estimate, this.options.gasLimitBufferPercent ?? 20n);
+    // Arrival computation may stop at a gasleft checkpoint. A minimum-success estimate can
+    // otherwise select a receipt that makes little/no progress. Give it the unchanged full budget.
+    const gas = leg === "arrival" || buffered > settlementGasLimit
+      ? settlementGasLimit : buffered;
+    // Preflight the exact envelope we will sign, not an unlimited eth_call or an oversized buffer.
+    try {
+      await this.transport.request<string>("eth_call", [{
+        from, to: this.to, data, gas: `0x${gas.toString(16)}`,
+        maxFeePerGas: `0x${feeData.maxFeePerGas.toString(16)}`,
+        maxPriorityFeePerGas: `0x${feeData.maxPriorityFeePerGas.toString(16)}`,
+        nonce: nonceHex, type: "0x2"
+      }, "latest"]);
+    } catch (error) {
+      throw new MissionNotResolvableError(missionId, error);
+    }
 
     const signed = await this.account.signTransaction({
       to: this.to,

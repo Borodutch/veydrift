@@ -473,7 +473,7 @@ function MissionBattleReport({
   now: number;
   report?: BattleReport | undefined;
 }) {
-  if (!isCombatMission(mission)) {
+  if (!isCombatMission(mission) && !(report && ["AcsDefend", "DefenseHold"].includes(mission.missionType))) {
     return null;
   }
 
@@ -535,7 +535,8 @@ function MissionBattleReport({
   // total loot here, then break each participant's loot share out in the Attack group panel below.
   const participants = report.participants ?? [];
   const isGroupedAttack = participants.length > 1;
-  const attackerShips = isGroupedAttack ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
+  const attackerShips = isGroupedAttack || participants.some(participant => participant.destroyedShips !== undefined)
+    ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
   const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
   const battleTimeFleetUnits = compositionUnits(report.defenderSnapshot?.fleet, shipCatalog, shipAssetByKey);
   const battleTimeDefenseUnits = compositionUnits(report.defenderSnapshot?.defenses, defenseCatalog, defenseAssetByKey);
@@ -784,6 +785,8 @@ function AttackGroupPanel({
               <div className="mt-1.5">
                 <UnitIcons units={[...shipUnitsByKind(participant.ships, "combat"), ...shipUnitsByKind(participant.ships, "civil")]} />
               </div>
+              {participant.destroyedShips ? <div className="mt-2 text-xs text-slate-400">Destroyed<UnitIcons units={shipUnits(participant.destroyedShips)} /></div> : null}
+              {participant.survivingShips ? <div className="mt-2 text-xs text-slate-400">Survived<UnitIcons units={shipUnits(participant.survivingShips)} /></div> : null}
             </div>
             <div className="sm:text-right">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Loot share</p>

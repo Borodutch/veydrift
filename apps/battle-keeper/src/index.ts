@@ -1,4 +1,5 @@
 import { loadKeeperConfig, safeConfigSummary } from "./config";
+import { KeeperJournal } from "./journal";
 import { BattleKeeper, consoleLogger } from "./keeper";
 import { ViemMissionResolver } from "./resolver";
 import { buildInfoFromEnv, createHandler } from "./server";
@@ -26,7 +27,9 @@ function main(): void {
     config.gameContractAddress,
     config.chainId
   );
+  const journal = new KeeperJournal(config.statePath, `${config.chainId}:${config.gameContractAddress.toLowerCase()}`);
   const keeper = new BattleKeeper(resolver, {
+    journal,
     maxConcurrency: config.maxConcurrency,
     logger: consoleLogger
   });
@@ -34,6 +37,7 @@ function main(): void {
     logger: consoleLogger
   });
   const sweep = new LogBackfillSweep(transport, config.gameContractAddress, keeper, {
+    deploymentBlock: BigInt(config.deploymentBlock),
     logger: consoleLogger
   });
 
@@ -43,19 +47,19 @@ function main(): void {
 
   // Resolution loop: submit due missions promptly.
   const resolveTimer = setInterval(() => {
-    void keeper.tick();
+    void keeper.tick().catch((error) => consoleLogger.error("[keeper] tick failed", error));
   }, config.resolveIntervalMs);
 
   // Safety sweep: backfill any missed launches + re-attempt due missions.
   const sweepTimer = setInterval(() => {
-    void sweep.sweep().then(() => keeper.tick());
+    void sweep.sweep().then(() => keeper.tick()).catch((error) => consoleLogger.error("[keeper] sweep/tick failed", error));
   }, config.sweepIntervalMs);
 
   // Deep one-time backfill at startup: scan a wide window (config.backfillBlocks, chunked) so the
   // keeper picks up every still-due mission launched before it started — overdue arrivals (which
   // block returns) and overdue returns alike — then converge them via tick().
   consoleLogger.info("[battle-keeper] startup deep backfill", { blocks: config.backfillBlocks });
-  void sweep.sweep(BigInt(config.backfillBlocks)).then(() => keeper.tick());
+  void sweep.sweep(BigInt(config.backfillBlocks)).then(() => keeper.tick()).catch((error) => consoleLogger.error("[keeper] startup recovery failed", error));
 
   const startedAtMs = Date.now();
   const handler = createHandler(keeper, listener, startedAtMs, () => Date.now(), {

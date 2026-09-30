@@ -344,9 +344,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
-        delete researchQueues[_actingPlayer()];
-        _technologyLevels[_actingPlayer()][queue.technology] = queue.targetLevel;
-        emit ResearchCompleted(_actingPlayer(), queue.technology, queue.targetLevel);
+        _settleResearchDue(_actingPlayer(), _currentTimestamp());
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {

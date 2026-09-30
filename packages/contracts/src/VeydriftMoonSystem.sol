@@ -358,25 +358,13 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         external
     {
         if (msg.sender != address(game)) revert NotOwner(msg.sender);
-        // Combat may be resolving a historical impact over multiple transactions. Crediting moon
-        // ships produced *after* that impact here would put them into subsequent battle rounds.
-        _settleMoonBuildingDue(planetId);
-        _settleMoonDefenseDue(planetId);
-        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            Defense defense = Defense(i);
-            uint32 current = _moonDefenseCounts[planetId][defense];
-            uint256 shift = uint256(i) * 32;
-            // forge-lint: disable-next-line(unsafe-typecast)
-            uint32 changed = uint32(changes >> shift);
-            if (changed != 0) {
-                uint32 total =
-                    repair ? current + changed : current > changed ? current - changed : 0;
-                _setMoonDefenseCount(planetId, defense, total);
-            }
-            unchecked {
-                ++i;
-            }
+        // Staged combat must never credit post-impact buildings or defenses between rounds.
+        // Legacy combat (no preparation namespace) retains its existing lazy settlement.
+        if (!VeydriftMoonDefenseBacklog.combatActive(planetId)) {
+            _settleMoonBuildingDue(planetId);
+            _settleMoonDefenseDue(planetId);
         }
+        VeydriftMoonDefenseBacklog.applyChanges(_moonDefenseCounts, planetId, changes, repair);
     }
 
     function setMoonChanceReporter(address nextReporter) external onlyOwner {
@@ -742,6 +730,8 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         MoonDestructionOutcome storage outcome = _moonDestructionOutcomes[outcomeId];
         if (!outcome.active) revert UnknownMoonDestructionOutcome(outcomeId);
         if (outcome.finalized) revert MoonDestructionAlreadyFinalized(outcomeId);
+        VeydriftMoonDefenseBacklog.requireUnfrozen(outcome.targetPlanetId);
+        game.requireNoPendingMoonAttackResolution(outcome.targetPlanetId);
 
         uint256 randomWord =
             randomness.consumeRandomness(outcome.randomnessRequestId, outcome.purposeHash);
@@ -808,20 +798,43 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function _settleMoonStateDue(uint256 planetId) internal {
+        // The defense/building lanes need the same protection even with no active ship queue.
+        VeydriftMoonDefenseBacklog.requireUnfrozen(planetId);
+        game.requireNoPendingMoonAttackResolution(planetId);
         _settleMoonBuildingDue(planetId);
         _settleMoonDefenseDue(planetId);
-        // A delayed multi-round moon battle must not gain ships built after its impact through a
-        // finish/owner-admin path that otherwise has no production-specific pending-combat gate.
-        if (VeydriftMoonShipBacklog.active(planetId).active) {
-            game.requireNoPendingMoonAttackResolution(planetId);
-        }
         VeydriftMoonShipBacklog.settle(planetId, _currentTimestamp(), address(game));
+    }
+
+    /// @notice Freeze and incrementally reconcile Moon inventory at the battle's impact.
+    /// @dev Game must retain the body lock and call until complete before enrollment.
+    function prepareMoonCombat(uint256 planetId, uint64 impact, uint256 maxWork)
+        external
+        returns (bool complete)
+    {
+        if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        if (!_moons[planetId].exists) return true;
+        if (VeydriftMoonDefenseBacklog.begin(planetId, impact, maxWork)) {
+            _settleMoonBuildingUntil(planetId, impact);
+            // Existing gameplay bound: one active entry plus MAX_BACKLOG = 16, not unbounded.
+            VeydriftMoonShipBacklog.settle(planetId, impact, address(game));
+        }
+        return VeydriftMoonDefenseBacklog.prepare(
+            moonDefenseQueues, _moonDefenseCounts, planetId, maxWork
+        );
+    }
+
+    /// @notice Game releases the freeze only after terminal defense repair.
+    function releaseMoonCombat(uint256 planetId) external {
+        if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        VeydriftMoonDefenseBacklog.release(planetId);
     }
 
     /// @notice Game arrival resolver credits only ships finished by historical impact time.
     function settleMoonShipProductionUntil(uint256 planetId, uint64 cutoffAt) external {
         if (msg.sender != address(game)) revert NotOwner(msg.sender);
         if (!_moons[planetId].exists) return;
+        VeydriftMoonDefenseBacklog.requireImpact(planetId, cutoffAt);
         VeydriftMoonShipBacklog.settle(planetId, cutoffAt, address(game));
     }
 
@@ -830,18 +843,13 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     ///      at the top of every moon mutating path. This is the (now redundant) body of
     ///      `finishMoonBuildingUpgrade`, generalized so no finish tx is required for completion.
     function _settleMoonBuildingDue(uint256 planetId) internal {
-        MoonBuildingConstruction memory construction = moonBuildingConstructions[planetId];
-        if (!construction.active || _currentTimestamp() < construction.readyAt) {
-            return;
-        }
-        delete moonBuildingConstructions[planetId];
-        _moonBuildingLevels[planetId][construction.building] = construction.targetLevel;
-        if (construction.building == MoonBuilding.LunarBase) {
-            unchecked {
-                _moons[planetId].fields += 3;
-            }
-        }
-        emit MoonBuildingCompleted(planetId, construction.building, construction.targetLevel);
+        _settleMoonBuildingUntil(planetId, _currentTimestamp());
+    }
+
+    function _settleMoonBuildingUntil(uint256 planetId, uint64 cutoffAt) private {
+        VeydriftMoonDefenseBacklog.settleBuildingUntil(
+            moonBuildingConstructions, _moonBuildingLevels, _moons, planetId, cutoffAt
+        );
     }
 
     function startMoonDefenseProduction(uint256 planetId, Defense defense, uint32 quantity)
@@ -1369,12 +1377,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                 ++i;
             }
         }
-        for (uint8 i = 0; i <= uint8(type(Defense).max);) {
-            delete _moonDefenseCounts[planetId][Defense(i)];
-            unchecked {
-                ++i;
-            }
-        }
+        VeydriftMoonDefenseBacklog.clearCounts(_moonDefenseCounts, planetId);
     }
 
     function _currentTimestamp() private view returns (uint64) {

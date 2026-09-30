@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { KeeperJournal } from "./journal";
 import { encodeAbiParameters, encodeEventTopics, encodeFunctionResult, type Abi } from "viem";
 
 import { battleEventsAbi, FleetMissionStatus, MissionType, type RawLog } from "./events";
@@ -453,4 +457,102 @@ describe("LogBackfillSweep", () => {
       dueAt: 900
     });
   });
+});
+
+
+test("startup log recovery resumes a partially resolved battle with chain-authoritative status", async () => {
+  let chunks = 1; // one stage was committed by the previous keeper process
+  const resolver: MissionResolver = {
+    keeperAddress: () => owner,
+    resolveMission: async () => { chunks++; return "0xchunk"; },
+    missionStatus: async (missionId) => ({
+      missionId, missionType: MissionType.Attack,
+      status: chunks < 3 ? FleetMissionStatus.Outbound : FleetMissionStatus.Resolved,
+      arrivalAt: 900, returnAt: 950, randomnessRequestId: "5"
+    })
+  };
+  const keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: silentLogger });
+  const transport = new MockTransport(
+    [launchedLog(96n, MissionType.Attack, 900n, 950n)],
+    [fleetMissionResult({ status: FleetMissionStatus.Outbound, missionType: MissionType.Attack })]
+  );
+  const sweep = new LogBackfillSweep(transport, gameContract, keeper, { logger: silentLogger });
+  await sweep.sweep(90_000n);
+  expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+  await keeper.tick();
+  expect(chunks).toBe(2);
+  expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+  expect(keeper.snapshot().resolvedCount).toBe(0);
+  await keeper.tick();
+  expect(chunks).toBe(3);
+  expect(keeper.snapshot().pendingCount).toBe(0);
+});
+
+
+test("bounded durable discovery recovers old launch, resumes cursor, and consumes return/terminal logs", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "keeper-history-"));
+  const path = join(dir, "state.sqlite");
+  let journal = new KeeperJournal(path, "8453:game");
+  let state: number = FleetMissionStatus.Outbound;
+  let sent = 0;
+  const events: Array<{ block: bigint; log: RawLog }> = [
+    { block: 50n, log: launchedLog(919n, MissionType.Attack, 10n, 20n) }
+  ];
+  const ranges: bigint[] = [];
+  const transport: JsonRpcTransport = {
+    request: async <T>(method: string, params: unknown[]): Promise<T> => {
+      if (method === "eth_blockNumber") return "0x3e8" as T; // head 1000; rolling window 998..1000
+      if (method === "eth_getLogs") {
+        const range = params[0] as { fromBlock: string; toBlock: string };
+        const from = BigInt(range.fromBlock), to = BigInt(range.toBlock);
+        ranges.push(from);
+        return events.filter((event) => event.block >= from && event.block <= to).map((event) => event.log) as T;
+      }
+      if (method === "eth_call") return fleetMissionResult({
+        status: state, missionType: MissionType.Attack, arrivalAt: 10n, returnAt: 2_000n
+      }) as T;
+      throw new Error(method);
+    }
+  };
+  const resolver: MissionResolver = {
+    keeperAddress: () => owner,
+    resolveMission: async () => { sent++; return "0xchunk"; },
+    missionStatus: async (missionId) => ({ missionId, status: state, missionType: MissionType.Attack,
+      arrivalAt: 10, returnAt: 2_000, randomnessRequestId: "5" })
+  };
+  try {
+    let keeper = new BattleKeeper(resolver, { journal, logger: silentLogger, now: () => 1_000 });
+    let sweep = new LogBackfillSweep(transport, gameContract, keeper, {
+      deploymentBlock: 0n, lookbackBlocks: 2n, maxRangeBlocks: 99n, logger: silentLogger
+    });
+    await sweep.sweep();
+    expect(ranges).toEqual([998n, 0n, 100n]);
+    expect(journal.nextBlock()).toBe(200n);
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["919"]);
+    await keeper.tick();
+    expect(sent).toBe(1);
+    journal.close();
+    journal = new KeeperJournal(path, "8453:game");
+    keeper = new BattleKeeper(resolver, { journal, logger: silentLogger, now: () => 1_000 });
+    sweep = new LogBackfillSweep(transport, gameContract, keeper, {
+      deploymentBlock: 0n, lookbackBlocks: 2n, maxRangeBlocks: 99n, logger: silentLogger
+    });
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["919"]);
+    state = FleetMissionStatus.Returning;
+    events.push({ block: 250n, log: returnExposedLog(919n, FleetMissionStatus.Returning, 2_000n) });
+    ranges.length = 0;
+    await sweep.sweep();
+    expect(ranges).toEqual([998n, 200n, 300n]);
+    expect(journal.nextBlock()).toBe(400n);
+    expect(journal.load()[0]?.leg).toBe("return");
+    await keeper.tick();
+    expect(sent).toBe(1); // canonical future return, not a duplicate arrival
+    state = FleetMissionStatus.Returned;
+    events.push({ block: 450n, log: returnedLog(919n) });
+    await sweep.sweep();
+    expect(journal.nextBlock()).toBe(600n);
+    expect(journal.load()).toEqual([]);
+    await keeper.tick();
+    expect(sent).toBe(1);
+  } finally { journal.close(); rmSync(dir, { recursive: true, force: true }); }
 });

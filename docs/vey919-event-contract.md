@@ -1,0 +1,15 @@
+# VEY919 producer ABI (implementation agreement)
+
+All emitted from Game proxy delegatecall context. Side 0 attacker, 1 defender. Unit 0..15 ship enum, 16..23 defense enum+16. Resident uses missionId 0, planet owner; mobile groups retain their mission id/owner.
+
+- CombatStageAdvanced(uint256 indexed missionId,uint8 phase,uint256 cursor,uint8 round): round means completed rounds, never in-progress round; cursor monotonically increases per successful staged call. phase13 is terminal.
+- CombatMemberSnapshot(uint256 indexed battleId,uint256 indexed missionId,address indexed owner,uint8 side,uint8 unit,uint32 count): emitted exactly once for every nonzero enrolled owner/mission/unit starting count before round1. Eligible roster only; no recalled/late fleets. Units with count0 omitted. A participant with no ships is absent from snapshots.
+- CombatMissionLosses(uint256 indexed battleId,uint256 indexed missionId,address indexed owner,uint8 side,uint8 unit,uint32 lost): incremental destroyed count; sum by battle/member/unit across all transactions. Includes resident defenses. These are gross destruction before repairs.
+- CombatDefenseRepair(uint256 indexed battleId,uint8 unit,uint32 count): repaired defense unit16..23, once on terminal settlement; subtract repaired from net defense loss, never mobile loss.
+- CombatMissionLoot(uint256 indexed battleId,uint256 indexed missionId,uint128 metal,uint128 crystal,uint128 deuterium): newly acquired loot only, not carried cargo; at most one per positive-capacity attacker recipient.
+
+- CombatEvidenceComplete(uint256 indexed battleId,uint256 snapshotCount,uint256 lossEventCount,uint256 lootEventCount,uint256 repairEventCount): emitted after all evidence settlement logs at end of staged module finish; mandatory per-kind event counts. Outer Gameplay may still emit ordinary mission lifecycle events afterward. Require complete unique evidence counts and side resource reconciliation before materializing.
+
+AttackBattleResolved remains terminal battle totals/outcome/seed event. Legacy cargo fields are NOT acquired group loot. Staged reports should consume authoritative snapshot/loss/repair/loot events across battle transactions and bypass historical launch/current-roster enrichment. CombatRoundResolved retains actual per-round resource-loss fields (producer will accumulate them). Completed-round getter battleResolutionProgress retains existing ABI. New stagedBattleProgress(uint256) returns(uint8 phase,uint8 round,uint256 workDone), round completed; workDone monotonic stage+math work.
+
+Not release-ready: integration and full lifecycle/gas tests running. Leader remains Outbound until final atomic finish; body lock retained through credits/returns/debris. Research helper8, preparation7 and staged math7 tests passed independently; all children terminal and collected. Full round math:416 bounded128-work calls, max isolated4,386,685 gas, not full game envelope proof.

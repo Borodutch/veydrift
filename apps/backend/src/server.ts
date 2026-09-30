@@ -3851,7 +3851,7 @@ function indexedFleetVisibility(
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
-  if (!["Attack", "AcsAttack", "Intercept"].includes(mission.missionType)) return false;
+  if (!["Attack", "AcsAttack", "Intercept", "AcsDefend", "DefenseHold"].includes(mission.missionType)) return false;
   if (mission.status === "Recalled" || mission.recallProvenance === "FleetMissionRecalled") return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;
@@ -3987,14 +3987,17 @@ function battleReportsByAssociatedMissionId(
   const lookup = new Map<string, FleetMissionVisibility["battleReports"][number]>();
   for (const report of battleReports) {
     for (const missionId of associatedBattleReportMissionIds(report)) {
-      lookup.set(missionId, report);
+      const previous = lookup.get(missionId);
+      if (!previous || BigInt(report.blockNumber) > BigInt(previous.blockNumber)
+        || (report.blockNumber === previous.blockNumber && BigInt(report.missionId) > BigInt(previous.missionId))) lookup.set(missionId, report);
     }
   }
   return lookup;
 }
 
 function associatedBattleReportMissionIds(report: FleetMissionVisibility["battleReports"][number]): string[] {
-  return [report.missionId, ...report.participants.map((participant) => participant.missionId)];
+  return [report.missionId, ...report.participants.map((participant) => participant.missionId),
+    ...(report.stagedEvidence?.members.filter(member => member.side === 1 && member.missionId !== "0").map(member => member.missionId) ?? [])];
 }
 
 function missionArchiveTimestamp(mission: FleetMissionSummary): number {

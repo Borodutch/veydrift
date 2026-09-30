@@ -106,10 +106,13 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
 
     event MigrationStateImported(address indexed player, uint256 homePlanetId, uint256 planetCount);
 
-    constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
+    constructor(address referralSystemAddress, address combatRaidModule)
+        VeydriftResourceReserves(address(0))
+    {
         _referralSystem = referralSystemAddress;
         _riftModule = address(new VeydriftRiftModule());
-        _combatRaidModule = address(new VeydriftCombatRaidModule());
+        if (combatRaidModule == address(0)) revert UnsupportedGameplayModule();
+        _combatRaidModule = combatRaidModule;
     }
 
     /// @dev The VeydriftGame facade routes the size-sensitive Rift selectors here. This module

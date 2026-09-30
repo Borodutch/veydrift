@@ -5,6 +5,7 @@ import {
   MissionType,
   missionTypeNames
 } from "./events";
+import type { KeeperJournal } from "./journal";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
 export type KeeperLogger = {
@@ -88,6 +89,7 @@ export type KeeperSnapshot = {
 };
 
 export type BattleKeeperOptions = {
+  journal?: KeeperJournal;
   maxConcurrency?: number;
   now?: () => number;
   logger?: KeeperLogger;
@@ -115,6 +117,7 @@ export type BattleKeeperOptions = {
  */
 export class BattleKeeper {
   private readonly pending = new Map<string, PendingMission>();
+  private readonly journal: KeeperJournal | undefined;
   private readonly inFlight = new Set<string>();
   /** Missions that are fully done (return resolved, or arrival resolved with no return leg). */
   private readonly terminal = new Set<string>();
@@ -146,9 +149,31 @@ export class BattleKeeper {
     private readonly resolver: MissionResolver,
     options: BattleKeeperOptions = {}
   ) {
+    this.journal = options.journal;
+    for (const mission of this.journal?.load() ?? []) {
+      this.pending.set(mission.missionId, mission);
+      this.knownMissionTypes.set(mission.missionId, mission.missionType);
+    }
     this.maxConcurrency = Math.min(options.maxConcurrency ?? 1, 1);
     this.now = options.now ?? (() => Math.floor(Date.now() / 1_000));
     this.logger = options.logger ?? consoleLogger;
+  }
+
+  private setPending(missionId: string, mission: PendingMission): void {
+    this.journal?.put(mission);
+    this.pending.set(missionId, mission);
+  }
+
+  private deletePending(missionId: string): boolean {
+    this.journal?.remove(missionId);
+    return this.pending.delete(missionId);
+  }
+
+  discoveryNextBlock(): bigint | undefined { return this.journal?.nextBlock(); }
+
+  commitDiscoveryBatch(nextBlock: bigint, apply: () => void): void {
+    if (this.journal) this.journal.commitBatch(nextBlock, apply);
+    else apply();
   }
 
   /** Record a launched mission into the awaiting-arrival leg. No-op for a non-resolvable type, or a
@@ -162,7 +187,7 @@ export class BattleKeeper {
     if (this.terminal.has(canonicalMission.missionId) || this.pending.has(canonicalMission.missionId)) {
       return;
     }
-    this.pending.set(canonicalMission.missionId, {
+    this.setPending(canonicalMission.missionId, {
       missionId: canonicalMission.missionId,
       missionType: canonicalMission.missionType,
       leg: "arrival",
@@ -193,7 +218,7 @@ export class BattleKeeper {
     if (hasReturnLegAfterArrival(missionType, returnAt)) {
       const existing = this.pending.get(missionId);
       const wasArrival = !existing || existing.leg === "arrival";
-      this.pending.set(missionId, {
+      this.setPending(missionId, {
         missionId,
         missionType: existing?.missionType ?? missionType,
         leg: "return",
@@ -204,7 +229,7 @@ export class BattleKeeper {
         this.logger.info("[keeper] arrival resolved, awaiting return", { missionId, returnAt });
       }
     } else {
-      const wasTracked = this.pending.delete(missionId);
+      const wasTracked = this.deletePending(missionId);
       this.markTerminal(missionId);
       if (wasTracked) {
         this.logger.info("[keeper] arrival resolved (terminal, no return)", { missionId });
@@ -229,7 +254,7 @@ export class BattleKeeper {
 
     const existing = this.pending.get(missionId);
     this.terminal.delete(missionId);
-    this.pending.set(missionId, {
+    this.setPending(missionId, {
       missionId,
       missionType: existing?.missionType ?? this.knownMissionTypes.get(missionId) ?? -1,
       leg: "return",
@@ -254,7 +279,7 @@ export class BattleKeeper {
       return;
     }
 
-    this.pending.set(missionId, {
+    this.setPending(missionId, {
       missionId,
       missionType: MissionType.DefenseHold,
       leg: "arrival",
@@ -270,7 +295,7 @@ export class BattleKeeper {
 
   /** The return leg is done (FleetMissionReturned). Drop the mission — it is terminal. */
   recordReturned(missionId: string): void {
-    const wasTracked = this.pending.delete(missionId);
+    const wasTracked = this.deletePending(missionId);
     this.inFlight.delete(missionId);
     this.clearRetryDiagnostics(missionId);
     if (!this.terminal.has(missionId)) {
@@ -286,7 +311,7 @@ export class BattleKeeper {
    * and moves a wrongly-tracked return back to arrival if the chain still says Outbound. */
   reconcileMissionStatus(status: MissionStatusSnapshot): void {
     if (isAcsJoiner(status)) {
-      const wasTracked = this.pending.delete(status.missionId);
+      const wasTracked = this.deletePending(status.missionId);
       this.inFlight.delete(status.missionId);
       this.clearRetryDiagnostics(status.missionId);
       this.recordLaunched(canonicalLaunchedMission(status));
@@ -309,7 +334,7 @@ export class BattleKeeper {
       this.terminal.delete(status.missionId);
       if (!current || current.leg !== "arrival") {
         if (current) this.clearRetryDiagnostics(status.missionId, current.leg);
-        this.pending.set(status.missionId, {
+        this.setPending(status.missionId, {
           missionId: status.missionId,
           missionType: status.missionType,
           leg: "arrival",
@@ -334,7 +359,7 @@ export class BattleKeeper {
       if (current && current.leg !== "return") {
         this.clearRetryDiagnostics(status.missionId, current.leg);
       }
-      this.pending.set(status.missionId, {
+      this.setPending(status.missionId, {
         missionId: status.missionId,
         missionType: status.missionType,
         leg: "return",
@@ -344,7 +369,7 @@ export class BattleKeeper {
       return;
     }
 
-    const wasTracked = this.pending.delete(status.missionId);
+    const wasTracked = this.deletePending(status.missionId);
     this.clearRetryDiagnostics(status.missionId);
     this.markTerminal(status.missionId);
     if (wasTracked) {
@@ -404,6 +429,7 @@ export class BattleKeeper {
     if (this.ticking) {
       return;
     }
+    this.journal?.assertHealthy();
     this.ticking = true;
     try {
       const due = this.dueMissions();
@@ -444,7 +470,38 @@ export class BattleKeeper {
     }
     this.inFlight.add(missionId);
     try {
+      if (this.journal) {
+        // Restart/backfill may restore a stale leg or replay an old launch before a later log.
+        // Reconcile before signing, not just after a potentially paid duplicate transaction.
+        if (!this.resolver.missionStatus) throw new Error("durable keeper requires canonical status reader");
+        const canonical = await this.resolver.missionStatus(missionId);
+        this.inFlight.delete(missionId);
+        this.reconcileMissionStatus(canonical);
+        const confirmed = this.pending.get(missionId);
+        if (!confirmed || confirmed.leg !== leg || confirmed.dueAt > this.now()) return;
+        this.journal.assertHealthy();
+        this.inFlight.add(missionId);
+      }
       const hash = await this.resolver.resolveMission(missionId, leg);
+      // A mined chunk is not a resolved leg. Combat stays Outbound until every stage settles.
+      const boundedArrival = leg === "arrival" && (
+        mission.missionType === MissionType.Attack
+        || mission.missionType === MissionType.AcsAttack
+        || mission.missionType === MissionType.MissileAttack
+      );
+      const canonicalReceipt = !!this.journal || boundedArrival;
+      const status = canonicalReceipt ? await this.resolver.missionStatus?.(missionId) : undefined;
+      if (canonicalReceipt && (!status
+        || (leg === "arrival" && status.status === FleetMissionStatus.Outbound)
+        || (leg === "return" && (status.status === FleetMissionStatus.Returning
+          || status.status === FleetMissionStatus.Recalled)))) {
+        this.clearRetryDiagnostics(missionId, leg);
+        this.lastError = null;
+        this.lastErrorMissionId = null;
+        this.lastErrorLeg = null;
+        this.logger.info("[keeper] mission chunk mined, leg remains pending", { missionId, leg, hash });
+        return;
+      }
       this.resolvedCount += 1;
       this.lastResolvedMissionId = missionId;
       this.lastResolvedAt = new Date(this.now() * 1_000).toISOString();
@@ -455,20 +512,14 @@ export class BattleKeeper {
       this.logger.info("[keeper] resolved mission leg", { missionId, leg, hash });
       // Our submit succeeded. The authoritative event (FleetMissionResolved / FleetMissionReturned)
       // is the backstop, but advance the state machine now so we don't keep re-submitting.
+      if (status) {
+        // Canonical status also distinguishes a wiped fleet from a surviving return; the
+        // original launch returnAt can remain nonzero for a terminal mission.
+        this.inFlight.delete(missionId);
+        this.reconcileMissionStatus(status);
+        return;
+      }
       if (leg === "arrival") {
-        if (mission.missionType === MissionType.MissileAttack) {
-          // A successful receipt may have completed only one bounded queue/order chunk. Read the
-          // canonical mission after every receipt and retain Outbound missiles for the next tick.
-          // Without a reader, fail closed and let the authoritative event/sweep advance it.
-          const status = await this.resolver.missionStatus?.(missionId);
-          if (!status || status.status === FleetMissionStatus.Outbound) return;
-          this.recordArrivalResolved({
-            missionId,
-            missionType: status.missionType,
-            returnAt: status.returnAt
-          });
-          return;
-        }
         this.recordArrivalResolved({
           missionId,
           missionType: mission.missionType,

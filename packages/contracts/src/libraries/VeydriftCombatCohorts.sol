@@ -145,7 +145,7 @@ library VeydriftCombatCohorts {
         uint256 incoming,
         uint256 chain,
         FireContext memory ctx
-    ) private pure returns (uint256) {
+    ) internal pure returns (uint256) {
         uint16 rapidfire = target.unit < 16
             ? VeydriftCatalog.shipRapidfireAgainstShip(Ship(shooter.unit), Ship(target.unit))
             : VeydriftCatalog.shipRapidfireAgainstDefense(
