@@ -5092,7 +5092,9 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenCoordinateBurnSelector;
   const configuredChickenBurnSelector =
     burningChickenBurnSelector.toLowerCase() === burningChickenCoordinateBurnSelector;
-  const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
+  // Browser reads/preflight must not expose the server-only node URL (HTTP or credentials).
+  // Keep internal RPC selection independent; the public Base endpoint supports HTTPS/CORS.
+  const burningChickenRpcUrl = "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
