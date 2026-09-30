@@ -2248,7 +2248,7 @@ describe("Veydrift backend", () => {
           burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           burnSelector: "0x6364233d",
           nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          rpcUrl: "https://base.example.test"
+          rpcUrl: "https://mainnet.base.org"
         },
         featureSupport: {
           allianceConfigured: true,

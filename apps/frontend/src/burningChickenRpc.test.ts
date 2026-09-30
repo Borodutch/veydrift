@@ -16,18 +16,18 @@ const missingData = "0x7e273289" + (999999n).toString(16).padStart(64, "0"); // 
 
 describe("Chicken browser RPC", () => {
   test.each([config.rpcUrl, "", "not a URL", "https://user:secret@rpc.test", "https://base.example.test/"])("reads the verified #90331 fixture via HTTPS with config %s", async rpcUrl => {
-    globalThis.fetch = (async (input, init) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(rpcUrl === "https://base.example.test/" ? rpcUrl : BASE_MAINNET.rpcUrls[0]);
       expect(JSON.parse(String(init?.body))).toMatchObject({ method: "eth_call", params: [{ to: config.nftContractAddress, data: "0x6352211e" + (90331n).toString(16).padStart(64, "0") }, "latest"] });
       return Response.json({ result: ownerResult });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await expect(fetchBurningChickenForOwner(owner, "90331", { ...config, rpcUrl })).resolves.toEqual({ tokenId: "90331" });
     await expect(fetchBurningChickenForOwner("0x9999999999999999999999999999999999999999", "90331", { ...config, rpcUrl })).rejects.toThrow("not owned by the connected wallet");
   });
 
   test.each([false, true])("recognizes the deployed collection's exact nonexistent-token revert (nested=%s)", async nested => {
     const revert = { code: 3, message: "execution reverted", data: missingData };
-    globalThis.fetch = (async () => Response.json({ error: nested ? { code: -32603, data: { originalError: revert } } : revert })) as typeof fetch;
+    globalThis.fetch = (async () => Response.json({ error: nested ? { code: -32603, data: { originalError: revert } } : revert })) as unknown as typeof fetch;
     await expect(fetchBurningChickenForOwner(owner, "999999", config)).rejects.toThrow("Chicken #999999 was not found on Base mainnet.");
     await expect(fetchBurningChickenForOwner(owner, "90331", config)).rejects.toThrow(unavailable);
   });
@@ -43,7 +43,7 @@ describe("Chicken browser RPC", () => {
     { result: "0x" + "f".repeat(24) + owner.slice(2) },
     { result: ownerResult + "00" },
   ])("does not claim absence for ambiguous RPC/revert/ABI response %j", async body => {
-    globalThis.fetch = (async () => Response.json(body)) as typeof fetch;
+    globalThis.fetch = (async () => Response.json(body)) as unknown as typeof fetch;
     await expect(fetchBurningChickenForOwner(owner, "90331", config)).rejects.toThrow(unavailable);
   });
 
@@ -53,16 +53,16 @@ describe("Chicken browser RPC", () => {
       if (failure === "timeout") throw new DOMException("Timed out", "TimeoutError");
       if (failure === "429") return new Response("Rate limited", { status: 429 });
       return new Response("not JSON");
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await expect(fetchBurningChickenForOwner(owner, "90331", config)).rejects.toThrow(unavailable);
   });
 
   test("a stalled ownership request times out without reporting a missing NFT", async () => {
     let transportSignal: AbortSignal | null | undefined;
-    globalThis.fetch = (async (_input, init) => {
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       transportSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true }));
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await expect(fetchBurningChickenForOwner(owner, "90331", config)).rejects.toThrow(unavailable);
     expect(transportSignal?.aborted).toBe(true);
   }, 15_000);
@@ -70,10 +70,10 @@ describe("Chicken browser RPC", () => {
   test("preserves subscriber cancellation and aborts the transport", async () => {
     const controller = new AbortController();
     let transportSignal: AbortSignal | null | undefined;
-    globalThis.fetch = (async (_input, init) => {
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       transportSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true }));
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const pending = fetchBurningChickenForOwner(owner, "90331", config, controller.signal);
     controller.abort();
     await expect(pending).rejects.toBe(controller.signal.reason);
@@ -95,7 +95,7 @@ describe("Chicken browser RPC", () => {
       }
       throw new Error("Unexpected wallet method: " + method);
     } } as Eip1193Provider;
-    globalThis.fetch = (async (input, init) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe(BASE_MAINNET.rpcUrls[0]);
       const body = JSON.parse(String(init?.body));
       calls.push(body.method);
@@ -104,7 +104,7 @@ describe("Chicken browser RPC", () => {
       expect(body.method).toBe("eth_call");
       expect(body.params).toEqual([{ from: owner, to: config.burnContractAddress, data }, "pending"]);
       return Response.json(outcome === "revert" ? { error: { code: 3, message: "execution reverted" } } : { result: "0x" });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     const pending = sendBurningChickenMoonTransaction(provider, owner, config, "90331", "7", coordinates);
     if (outcome === "success") await expect(pending).resolves.toBe("0xmock-only");
     else await expect(pending).rejects.toBeInstanceOf(Error);
