@@ -901,8 +901,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         result.key = VeydriftCombatCohorts.key(unit, result.attack, result.shield, result.hull);
     }
 
-    /// @dev Hamilton apportionment: exact conservation, each owner's share within one
-    /// ship of proportional loss. Stable owner/mission tie-breaks never feed combat RNG.
+    /// @dev Hamilton apportionment: exact conservation, each mission/cohort member's share
+    /// within one ship of proportional loss. Owner totals across missions can round further.
+    /// Stable owner/mission tie-breaks never feed combat RNG.
     function _attributeCohortLosses(
         CombatCohort[] memory units,
         CombatCohort[] memory pool,
