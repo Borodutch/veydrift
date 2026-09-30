@@ -203,7 +203,7 @@ export type JoinAttackForecastParticipant = {
   missionId: string;
   label: string;
   owner: string;
-  laneGroup: number | null;
+  laneGroup?: number | null;
   ships?: Record<string, string>;
   combatTechnology?: CombatTechLevels;
 };
@@ -650,6 +650,7 @@ export function MissionCreationPage({
           }
         : undefined,
       joinAttackMode ? undefined : { projectedAttackArrivalAt },
+      shipyardState?.wallet,
     ),
     [
       attackerCombatTechLevels,
@@ -657,6 +658,7 @@ export function MissionCreationPage({
       joinAttackContext,
       joinAttackMode,
       projectedAttackArrivalAt,
+      shipyardState?.wallet,
       ships,
       target,
     ],
@@ -1936,6 +1938,7 @@ export function preparePublicTargetBattleForecast(
   targetIsMoon = false,
   joinAttackContext?: JoinAttackForecastContext,
   timing?: BattleForecastTiming,
+  selectedOwner?: string,
 ): PreparedPublicTargetBattleForecast {
   const complete = (forecast: BattleForecastState): PreparedPublicTargetBattleForecast => ({
     status: "complete",
@@ -1995,26 +1998,6 @@ export function preparePublicTargetBattleForecast(
           ...forecastTech,
         });
       }
-      if (participant.laneGroup == null || !Number.isFinite(participant.laneGroup)) {
-        return complete({
-          kind: "uncertain",
-          label: "Uncertain",
-          detail: `${participant.label} battle details are incomplete, so the battle outcome cannot be estimated.`,
-          attackerPower,
-          defenderPower: null,
-          ...forecastTech,
-        });
-      }
-    }
-    if (!joinAttackContext.existingBattle && (joinAttackContext.selectedAttackerLaneGroup == null || !Number.isFinite(joinAttackContext.selectedAttackerLaneGroup))) {
-      return complete({
-        kind: "uncertain",
-        label: "Uncertain",
-        detail: "The joining fleet's battle details are incomplete, so the outcome cannot be estimated.",
-        attackerPower,
-        defenderPower: null,
-        ...forecastTech,
-      });
     }
   }
   if (!target) {
@@ -2072,19 +2055,7 @@ export function preparePublicTargetBattleForecast(
       ...forecastTech,
     });
   }
-  const missingStationedLane = stationedDefenders.find(
-    (defender) => defender.laneGroup == null || !Number.isFinite(defender.laneGroup),
-  );
-  if (missingStationedLane) {
-    return complete({
-      kind: "uncertain",
-      label: "Uncertain",
-      detail: `Stationed fleet #${missingStationedLane.missionId} has incomplete battle details, so the outcome cannot be estimated.`,
-      attackerPower,
-      defenderPower: null,
-      ...forecastTech,
-    });
-  }
+  // Legacy lane metadata is retained for reports, not required by stat/type cohort combat.
 
   const stationedPower = stationedDefendersCombatPower(stationedDefenders);
   const defenderPower = compositionCombatPower(bodyState.fleet, "ship", defenderTechLevels)
@@ -2103,7 +2074,7 @@ export function preparePublicTargetBattleForecast(
       ...(joinAttackContext?.existingBattle ? [] : [{
         id: "selected-attacker",
         label: joinAttackContext ? "Selected joining fleet" : "Selected attacking fleet",
-        owner: "Connected commander",
+        owner: selectedOwner ?? "Connected commander",
         laneGroup: joinAttackContext?.selectedAttackerLaneGroup ?? 0,
         ships: missionShipCounts(ships),
         technology: normalizedAttackerTechLevels,

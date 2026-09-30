@@ -3127,7 +3127,7 @@ export class SettlementIndexer {
   }
 
   // Read-only, bounded to this battle's links and target traffic. Existing attacks do not append a
-  // hypothetical joining fleet: that distinction changes stationed defender random-lane identities.
+  // hypothetical joining fleet. Legacy lane metadata is not a combat input.
   missionBattleForecast(mission: FleetMissionSummary) {
     if (mission.status !== "Outbound" || mission.recallProvenance
       || !["Attack", "AcsAttack"].includes(mission.missionType)) return null;
@@ -13972,18 +13972,16 @@ export class SettlementIndexer {
       ...(attack.counterplayDefenderMissionIds ?? [])
     ];
     const indexedLinkedMissionIds = attack.linkedMissionIds;
-    const linkedMissionIds = indexedLinkedMissionIds
-      && separateLinkedIds.every((missionId) => indexedLinkedMissionIds.includes(missionId))
-      ? indexedLinkedMissionIds
-      : separateLinkedIds.length === 0
-        ? []
-        : null;
-    if (!linkedMissionIds) {
+    // Role-specific links prove membership even when historical interleaved ordering is absent.
+    // Keep all known links; only their order is irrelevant to cohort targeting.
+    const linkedMissionIds = [...new Set([...(indexedLinkedMissionIds ?? []), ...separateLinkedIds])];
+    const unclassifiedLink = linkedMissionIds.find((missionId) => !separateLinkedIds.includes(missionId));
+    if (unclassifiedLink) {
       return {
         participants,
         stationedDefenders: [],
         selectedAttackerLaneGroup: null,
-        unavailableReason: `Attack #${attack.missionId} predates exact combined link-order indexing, so joined attacker random lanes cannot be reconstructed safely.`
+        unavailableReason: `Linked fleet #${unclassifiedLink} has no confirmed attack or defense role; the battle roster is incomplete.`
       };
     }
     const defenderPreview = this.stationedDefendersForAttackPreview(
@@ -14028,14 +14026,6 @@ export class SettlementIndexer {
         continue;
       }
       const linkedIndex = linkedMissionIds.indexOf(joinedMissionId);
-      if (linkedIndex < 0) {
-        return {
-          participants,
-          stationedDefenders,
-          selectedAttackerLaneGroup: null,
-          unavailableReason: `Joined attack #${joinedMissionId} is missing its exact contract lane identity.`
-        };
-      }
       const joinedDisplayName = this.playerProfile(joined.owner).displayName;
       participants.push({
         missionId: joined.missionId,
@@ -14052,7 +14042,7 @@ export class SettlementIndexer {
     return {
       participants,
       stationedDefenders,
-      // The new join is appended to `_fleetCounterplayMissions`; Solidity stores `i + 1`.
+      // Compatibility metadata only; canonical combat cohorts do not use link positions.
       selectedAttackerLaneGroup: linkedMissionIds.length + 1
     };
   }
@@ -14094,12 +14084,6 @@ export class SettlementIndexer {
           };
         }
         const linkedIndex = linkedMissionIds.indexOf(missionId);
-        if (linkedIndex < 0) {
-          return {
-            defenders,
-            unavailableReason: `Counterplay defender #${missionId} is missing its exact shared contract lane identity.`
-          };
-        }
         defenders.push({
           ...this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)),
           laneGroup: linkedIndex
@@ -14154,7 +14138,7 @@ export class SettlementIndexer {
       if (missing) {
         return {
           defenders,
-          unavailableReason: `DefenseHold #${missing.missionId} is missing from exact stationed-defense storage-order indexing.`
+          unavailableReason: `DefenseHold #${missing.missionId} has no confirmed stationed-defense membership.`
         };
       }
       for (const [index, defender] of orderedQualified.entries()) {

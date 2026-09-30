@@ -9190,6 +9190,22 @@ describe("SettlementIndexer", () => {
     expect(forecast?.stationedDefenders.map(({ missionId, laneGroup }) => [missionId, laneGroup])).toEqual([
       ["71", 0], ["73", 2], ["82", 4], ["80", 3]
     ]);
+    // Stat cohorts need complete membership, not the old interleaved random lanes.
+    const leader = indexer.fleetMission("70")!;
+    const historicalLeader = { ...leader };
+    delete historicalLeader.linkedMissionIds;
+    const originalMission = indexer.fleetMission.bind(indexer);
+    const legacyLinks = spyOn(indexer, "fleetMission").mockImplementation((id) =>
+      id === "70" ? historicalLeader : originalMission(id));
+    const withoutLaneOrder = indexer.missionBattleForecast(historicalLeader);
+    expect(withoutLaneOrder?.unavailableReason).toBeUndefined();
+    expect(withoutLaneOrder?.participants.map((entry) => entry.missionId)).toEqual(["70", "72"]);
+    expect(withoutLaneOrder?.stationedDefenders.map((entry) => entry.missionId).sort())
+      .toEqual(["71", "73", "80", "82"]);
+    historicalLeader.linkedMissionIds = [...(leader.linkedMissionIds ?? []), "999999"];
+    expect(indexer.missionBattleForecast(historicalLeader)?.unavailableReason)
+      .toContain("no confirmed attack or defense role");
+    legacyLinks.mockRestore();
     // Current research and new joins are read again, not cached as a launch-time roster.
     indexer.applyLog({ blockNumber: "0x98", transactionHash: "0xtech72", logIndex: "0x0",
       topics: [researchCompletedTopic, addressTopic(joinedOwner), topic(5n)], data: abiWords(7n) });
