@@ -124,6 +124,39 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // Screenshot-equivalent fleet: five available, two actually sent, one selector row only.
+    for (const width of [1280, 390, 320]) {
+      await load(width, 'plannedFleetExample=1', 568);
+      const fleet = `document.querySelector('[aria-label="Planned fleet at Astro"]')`;
+      const large = checkbox(0), recycler = checkbox(2);
+      assert.equal(await evaluate('document.body.textContent.includes("Available cargo fleet")'), false);
+      assert.equal(await evaluate('[...document.querySelectorAll("span")].filter(node => node.textContent === "Planned fleet").length'), 1, 'one heading per source');
+      assert.equal(await evaluate(fleet + '.querySelectorAll("button").length'), 2);
+      assert.equal(await evaluate('document.querySelectorAll("[role=dialog] img").length'), 2, 'no duplicate noninteractive fleet icons');
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2On');
+      assert.equal(await evaluate(recycler + '.textContent'), 'Recycler ×0Off');
+      const original = await submit();
+      assert.equal(original.orders[0].ships.largeCargo, 2);
+      await click(large);
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0Off');
+      assert.equal(await evaluate(source + '.checked'), true);
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      assert.ok(await evaluate('document.body.textContent.includes("No ships planned from this source.")'));
+      await evaluate('supplyFixture.refresh()'); await settle();
+      assert.equal(await evaluate(large + '.getAttribute("aria-pressed")'), 'false');
+      await click(large);
+      assert.deepEqual((await submit()).orders, original.orders, 're-enable restores exactly the preview fleet');
+      await input('metal to send', 0);
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×0On', 'enabled unused type remains discoverable');
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      await input('metal to send', 34900);
+      assert.equal(await evaluate(large + '.textContent'), 'Large Cargo ×2On');
+      if (artifacts) {
+        await point(large);
+        const screenshot = await send('Page.captureScreenshot', { format: 'png' });
+        writeFileSync(join(artifacts, width + '-planned-fleet.png'), Buffer.from(screenshot.data, 'base64'));
+      }
+    }
     // No inventory is not an excluded fleet: do not direct players to nonexistent controls.
     for (const width of [1280, 390, 320]) {
       await load(width, 'emptyFleet=1', 568);
@@ -264,7 +297,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       const maxMetal = `document.querySelector('input[aria-label="metal to send"]').closest("label").querySelector("button")`;
       const pressed = expression => evaluate(expression + '.getAttribute("aria-pressed") === "true"');
       assert.equal(await pressed(lunaRecycler), false, 'second source Recycler defaults off');
-      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×2")'), true);
+      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×0")'), true, 'unused source shows zero planned, not two available');
       await click(maxMetal);
       const before = await submit();
       const originalLuna = before.orders.find(order => order.originPlanetId === '190');
@@ -302,7 +335,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await pressed(lunaRecycler), true);
       await click(source); await click(secondSource);
       await evaluate('supplyFixture.changeStock()'); await settle();
-      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×1")'), true, 'fresh available count');
+      assert.equal(await evaluate(lunaSmall + '.textContent.includes("×1")'), true, 'fresh planned count');
       assert.equal(await pressed(lunaRecycler), true, 'changed inventory retains opt-in');
       assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock blocks short shipment');
       await click(maxMetal);

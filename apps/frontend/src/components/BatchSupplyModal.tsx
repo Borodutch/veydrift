@@ -20,7 +20,6 @@ import {
   type SupplyResources,
 } from "../batchSupplyPlanner";
 import { shipAssetByKey } from "../gameAssets";
-import type { MissionShips } from "../galaxyActions";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
@@ -288,8 +287,8 @@ export function BatchSupplyModal({
                     ) : null}
                     {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Adjusted to available stock, cargo capacity, and fuel.</span> : null}
                     <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Available cargo fleet</span>
-                      <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Available cargo fleet at ${source.label}`}>
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Planned fleet</span>
+                      <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Planned fleet at ${source.label}`}>
                         {supplyCargoShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key, label }) => {
                           const included = allowedShipTypes.includes(key);
                           return (
@@ -302,7 +301,7 @@ export function BatchSupplyModal({
                                 return { ...current, [source.planetId]: types.includes(key) ? types.filter((type) => type !== key) : [...types, key] };
                               })}>
                               <img alt="" className="h-5 w-5 rounded object-contain" loading="lazy" src={shipAssetByKey[key]} />
-                              <span>{label} ×{format(source.ships[key] ?? 0)}</span>
+                              <span>{label} ×{format(order?.ships[key] ?? 0)}</span>
                               <span className="text-[10px] font-semibold">{included ? "On" : "Off"}</span>
                             </button>
                           );
@@ -310,10 +309,7 @@ export function BatchSupplyModal({
                         {!hasUsableSupplyCargoFleet(source.ships) ? <span className="text-xs text-slate-500">No cargo ships</span> : null}
                       </span>
                     </span>
-                    {order ? <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Planned fleet</span>
-                      <SupplyFleetIcons ships={order.ships} />
-                    </span> : null}
+                    {!order && hasUsableSupplyCargoFleet(source.ships) ? <span className="mt-1 block text-xs text-slate-400">No ships planned from this source.</span> : null}
                     {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
                     {typeUnavailableReason ? <span className="block text-xs text-amber-200">{typeUnavailableReason}</span> : null}
                     {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
@@ -359,26 +355,6 @@ export function supplyResourceInputValues(
     crystal: normalized.crystal > 0 ? String(normalized.crystal) : "",
     deuterium: normalized.deuterium > 0 ? String(normalized.deuterium) : "",
   };
-}
-
-function SupplyFleetIcons({ ships }: { ships: Partial<MissionShips> | undefined }) {
-  if (!ships) return <span className="text-xs text-slate-500">Set resources to plan fleet</span>;
-  const units = supplyCargoShips.filter((ship) => (ships[ship.key] ?? 0) > 0);
-  if (units.length === 0) return <span className="text-xs text-slate-500">No cargo ships</span>;
-  return (
-    <span className="flex flex-wrap gap-1">
-      {units.map((ship) => {
-        const count = Math.max(0, Math.trunc(ships[ship.key] ?? 0));
-        const label = `${ship.label} ×${count.toLocaleString()}`;
-        return (
-          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={ship.key} title={label}>
-            <img alt="" className="h-5 w-5 rounded object-contain" loading="lazy" src={shipAssetByKey[ship.key]} />
-            <span className="text-[11px] font-semibold tabular-nums text-slate-200">×{count.toLocaleString()}</span>
-          </span>
-        );
-      })}
-    </span>
-  );
 }
 
 function inputAmount(value: string): number {
