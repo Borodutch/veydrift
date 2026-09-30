@@ -3930,8 +3930,14 @@ export async function fetchBurningChickenForOwner(account: string, tokenId: stri
   try {
     ownerHex = await callBaseMainnetContract(config, config.nftContractAddress, encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId), signal);
   } catch (error) {
-    if (signal?.aborted) throw error;
-    throw new Error(`Chicken #${normalizedTokenId} was not found on Base mainnet.`);
+    if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+    // ERC721NonexistentToken(uint256), verified on the deployed Chicken collection.
+    // Only the exact error for this ID proves absence; generic reverts do not.
+    const data = errorData(error);
+    if (typeof data === "string" && data.toLowerCase() === `0x7e273289${BigInt(normalizedTokenId).toString(16).padStart(64, "0")}`) {
+      throw new Error(`Chicken #${normalizedTokenId} was not found on Base mainnet.`);
+    }
+    throw new Error("Chicken ownership could not be checked. Please try again later.");
   }
 
   if (decodeAddressResult(ownerHex).toLowerCase() !== account.toLowerCase()) {
@@ -3943,10 +3949,22 @@ export async function fetchBurningChickenForOwner(account: string, tokenId: stri
   };
 }
 
+function burningChickenRpcUrl(config: BurningChickenConfig): string {
+  // Also tolerate stale runtime-config responses containing the former HTTP node URL.
+  try {
+    const url = new URL(config.rpcUrl ?? "");
+    if (url.protocol === "https:" && !url.username && !url.password) return url.href;
+  } catch { /* Missing/invalid config uses the public Base endpoint. */ }
+  return BASE_MAINNET.rpcUrls[0];
+}
+
 async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal): Promise<string> {
-  const result = await transactionRpcRequest<unknown>(config.rpcUrl || BASE_MAINNET.rpcUrls[0], "eth_call",
+  const result = await transactionRpcRequest<unknown>(burningChickenRpcUrl(config), "eth_call",
     [{ to: contractAddress, data }, "latest"], { ...(signal ? { signal } : {}) });
-  if (typeof result !== "string") throw new Error("Chicken ownership could not be checked. Please try again later.");
+  // ownerOf returns one ABI-encoded, nonzero address, not arbitrary hex or empty data.
+  if (typeof result !== "string" || !/^0x0{24}[a-fA-F0-9]{40}$/.test(result) || BigInt(result) === 0n) {
+    throw new Error("Chicken ownership could not be checked. Please try again later.");
+  }
   return result;
 }
 
@@ -3965,7 +3983,7 @@ export async function sendBurningChickenMoonTransaction(
     data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   }, {
     requiredChain: BASE_MAINNET,
-    simulationRpcUrl: config.rpcUrl || BASE_MAINNET.rpcUrls[0],
+    simulationRpcUrl: burningChickenRpcUrl(config),
   });
 }
 

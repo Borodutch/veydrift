@@ -1856,6 +1856,22 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test.each(["http://213.133.101.30:8545", "https://base-mainnet.g.alchemy.com/v2/private-key"])("keeps server-only Chicken RPC %s out of public config", async internalRpc => {
+    const previous = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+    process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = internalRpc;
+    try {
+      for (const response of [await handler(new Request("https://api.veydrift.com/runtime-config")), runtimeConfigResponse("reader")]) {
+        const body = await response.json();
+        expect(body.burningChicken.rpcUrl).toBe("https://mainnet.base.org");
+        expect(JSON.stringify(body)).not.toContain(internalRpc);
+      }
+      expect(process.env.VEYDRIFT_BASE_MAINNET_RPC_URL).toBe(internalRpc);
+    } finally {
+      if (previous === undefined) delete process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+      else process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = previous;
+    }
+  });
+
   test("keeps moon attack parity fail closed until operators explicitly enable it", async () => {
     const previousEnabled = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ENABLED;
     const previousActivation = process.env.VEYDRIFT_MOON_ATTACK_PARITY_ACTIVATED_AT;
