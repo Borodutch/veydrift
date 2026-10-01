@@ -2341,12 +2341,14 @@ export class VeydriftGameReader implements ChainReader {
     return this.readFleetMissionSummaries();
   }
 
-  async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint): Promise<CanonicalFleetMissionSnapshot | null> {
+  async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {
+    assertActive?.();
     const [result] = await this.batchCallContract(this.gameContractAddress, [{
       selector: "0xf158c946",
       args: [encodeUint(missionId)]
-    }], blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`);
+    }], blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`, assertActive);
     if (result === undefined) return null;
+    assertActive?.();
     const mission = this.decodeCanonicalFleetMission(missionId, result);
     if (!mission) return null;
     if (mission.missionType === "DefenseHold") {
@@ -5302,13 +5304,15 @@ export class VeydriftGameReader implements ChainReader {
   private async batchCallContract(
     contractAddress: Address,
     calls: Array<{ selector: string; args: string[] }>,
-    blockTag = "latest"
+    blockTag = "latest",
+    assertActive?: () => void
   ): Promise<string[]> {
+    assertActive?.();
     if (calls.length === 0) return [];
     if (calls.length > maxBatchCallSize) {
       const results: string[] = [];
       for (let index = 0; index < calls.length; index += maxBatchCallSize) {
-        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize), blockTag));
+        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize), blockTag, assertActive));
       }
       return results;
     }
@@ -5316,6 +5320,7 @@ export class VeydriftGameReader implements ChainReader {
     const runSequentially = async (): Promise<string[]> => {
       const results: string[] = [];
       for (const call of calls) {
+        assertActive?.();
         results.push(await this.callContract(contractAddress, call.selector, call.args, blockTag));
       }
       return results;

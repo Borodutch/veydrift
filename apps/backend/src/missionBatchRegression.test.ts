@@ -99,7 +99,7 @@ test("production receipt decoder restores per-leg membership, selector, blocker 
    prepare:async()=>({hash:hash(7),membership:JSON.stringify([item]),broadcast:async()=>{nonce++;return hash(7);}})});
   const restarted=new ResolverTransactionCoordinator(path);attach(restarted);
   await restarted.submit({chainId:8453,address,operationId:"randomness",getTransactionCount:async()=>nonce,submit:async()=>hash(8),confirm:async()=>{}});
-  expect(reads).toBe(2);
+  expect(reads).toBe(1); // persisted per-leg outcomes are reused across restart
   const db=new Database(path); const stored=db.query("SELECT outcomes FROM resolver_prepared_intents").get() as {outcomes:string};
   expect(JSON.parse(stored.outcomes)).toEqual([{item,complete:false,blockedDependency:"11",errorSelector:"0xb3439205",outcome:"Failed"}]);db.close();
   const event=logged.find(x=>x.kind==="mission_batch_receipt")!;

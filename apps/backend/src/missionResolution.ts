@@ -23,7 +23,7 @@ import {
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass } from "./resolverTransactions";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
@@ -794,7 +794,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (this.publicClient && this.chain && this.reader.getCanonicalFleetMission) {
       const address = typeof this.sender === "string" ? this.sender : this.sender.address;
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
-        (hash, membership) => this.reconcileBatchReceipt(hash, membership));
+        (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
     }
   }
 
@@ -827,7 +827,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
     // Reconcile even when no indexed candidates remain: a mined batch can disappear from the
     // index before a process restarts, but its durable intent must still release the signer.
-    await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership) => this.reconcileBatchReceipt(hash, membership));
+    await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
     if (!Number.isInteger(this.batchPolicy.maxItems) || this.batchPolicy.maxItems < 1 || this.batchPolicy.maxItems > 32
       || this.batchPolicy.maxFeeUsdMicros <= 0n || this.batchPolicy.maxFeeUsdMicros > 500_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
@@ -873,10 +873,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         return { hash: keccak256(signed), membership: JSON.stringify(items),
           broadcast: () => client.sendRawTransaction({ serializedTransaction: signed }) };
       },
-      reconcilePrepared: (hash, membership) => this.reconcileBatchReceipt(hash, membership),
+      reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: async () => false, // partial progress may require another bounded tx
-      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); await this.reconcileBatchReceipt(hash, JSON.stringify(items)); }
+      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
       // No replacements/cancellation: unknown receipt blocks the shared signer, never uncapped fees.
     });
     return { hash, items, exclusions, outcomes: this.batchReceiptOutcomes.get(hash) ?? [] };
@@ -911,14 +911,24 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
 
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
 
-  private async reconcileBatchReceipt(hash: Hex, membership: string) {
+  private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt> {
     const client = this.publicClient!;
-    const receipt = await client.getTransactionReceipt({ hash });
-    const [block, finalized] = await Promise.all([
-      client.getBlock({ blockNumber: receipt.blockNumber }), client.getBlock({ blockTag: "finalized" })
-    ]);
+    // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
+    const finalized = await (pass.finalizedHead ??= pass.read(async () => {
+      const block = await client.getBlock({ blockTag: "finalized" });
+      if (block.number === null) throw new Error("explicit finalized block unavailable");
+      return block.number;
+    }));
+    if (stored) {
+      const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
+      if (!block.hash || block.hash !== stored.blockHash) throw new Error("batch receipt is not canonical");
+      pass.assertActive();
+      return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
+    }
+    const receipt = await pass.read(() => client.getTransactionReceipt({ hash }));
+    const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
     if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
-    if (finalized.number === null) throw new Error("explicit finalized block unavailable");
     const items: BatchLeg[] = JSON.parse(membership);
     if (!Array.isArray(items) || items.length > 32) throw new Error("invalid persisted batch membership");
     const events = (receipt.logs ?? []).flatMap((log) => {
@@ -930,13 +940,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     for (const [index, item] of items.entries()) {
       const event = events.find((event) => event.index === BigInt(index) && event.missionId === BigInt(item.missionId)
         && event.leg === (item.leg === "arrival" ? 0 : 1));
-      const mission = await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), receipt.blockNumber);
+      const mission = await pass.read(async () => this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), receipt.blockNumber, pass.assertActive));
       if (!mission) throw new Error("persisted batch member canonical state unavailable");
       const complete = (item.leg === "arrival" ? ["Returning", "Recalled", "Resolved", "Returned"] : ["Resolved", "Returned"]).includes(mission.status);
       let blockedDependency: string | null = null;
       if (!complete) {
-        const proof = await client.readContract({ address: this.gameAddress, abi: batchEligibilityAbi,
-          functionName: "fleetMissionEligibility", args: [BigInt(item.missionId)], blockNumber: receipt.blockNumber });
+        const proof = await pass.read(() => client.readContract({ address: this.gameAddress, abi: batchEligibilityAbi,
+          functionName: "fleetMissionEligibility", args: [BigInt(item.missionId)], blockNumber: receipt.blockNumber }));
         blockedDependency = proof[1] === 0n ? null : proof[1].toString();
       }
       outcomes.push({ item, complete, blockedDependency, errorSelector: event?.errorSelector ?? null,
@@ -949,11 +959,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (operatorFee === null) {
       // At the receipt's canonical block the fork-aware oracle supplies actual operator cost.
       try {
-        operatorFee = await client.readContract({ address: gasOracle, abi: oracleAbi,
-          functionName: "getOperatorFee", args: [receipt.gasUsed], blockNumber: receipt.blockNumber });
+        operatorFee = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi,
+          functionName: "getOperatorFee", args: [receipt.gasUsed], blockNumber: receipt.blockNumber }));
         operatorFeeSource = "canonical-block-oracle";
       } catch { /* unknown is NOT zero; actual total remains unavailable */ }
     }
+    pass.assertActive();
     const executionFee = receipt.gasUsed * receipt.effectiveGasPrice;
     emitObservabilityEvent({ kind: "mission_batch_receipt", hash, status: receipt.status, outcomes,
       gasUsed: receipt.gasUsed.toString(), executionFeeWei: executionFee.toString(),
@@ -962,7 +973,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     this.batchReceiptOutcomes.set(hash, outcomes);
     // Bounded in-memory reporting cache; immutable membership/outcomes remain in SQLite.
     if (this.batchReceiptOutcomes.size > 128) this.batchReceiptOutcomes.delete(this.batchReceiptOutcomes.keys().next().value!);
-    return { finalized: receipt.blockNumber <= finalized.number, blockNumber: receipt.blockNumber.toString(),
+    return { finalized: receipt.blockNumber <= finalized, blockNumber: receipt.blockNumber.toString(),
       blockHash: receipt.blockHash, outcomes: JSON.stringify(outcomes) };
   }
 

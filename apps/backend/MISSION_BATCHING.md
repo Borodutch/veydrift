@@ -118,12 +118,70 @@ nonce; per-leg state determines work remaining. If a crash occurred before actua
 send or a tx was dropped, missing receipt intentionally needs operator reconciliation;
 never delete the journal to force a retry or broadcast another nonce blindly.
 
+### Bounded finality and backpressure
+
+Per signer, admit at most **32 unfinalized batch intents** (not 32 total historical
+transactions). The partial unfinalized nonce index is explicitly selected by SQL;
+queries load at most 33 rows, never scan finalized lifetime history. At capacity,
+new batch preparation/signing stops before nonce allocation; sibling randomness/
+moon writes can proceed only after checking **every** retained unfinalized intent.
+A pre-upgrade journal larger than 32 can retire up to 32 finalized rows per pass,
+but the pass always rejects admission if any rows were outside its checked page.
+Repeat reconciliation to drain it; never delete hashes/membership or skip a page.
+
+Each leased reconciliation pass has a **5,000 ms monotonic deadline** and **128
+read-work-unit ceiling**. Reads are sequential. Warm durable outcomes need exactly
+one containing-block hash check per receipt plus **one shared finalized-head read
+per pass**: 32 receipts = 33 reads, including after restart. First/missing hydration
+reads receipt/logs, canonical per-leg state/eligibility and fees once, persists the
+outcomes, and emits receipt telemetry once (a crash before persistence may repeat
+it). Later passes do not rehydrate or re-log receipt/member/fee history and do not
+append redundant confirmation audits. Block-hash mismatch still blocks all writers;
+no cached evidence substitutes for fresh canonicality. All immutable history remains
+available for nonce-regression/gap recovery guards.
+
+A work unit is one client read; pinned canonical mission reads use one RPC plus at
+most one DefenseHold storage RPC (and existing bounded transport retries). Thus
+128 units bound application fanout, not exact wire retry count. There is only one
+underlying read in flight per coordinator/signer. If transport cannot be cancelled,
+the timeout releases the lease and invalidates all continuations: no late outcomes,
+telemetry, DB writes, follow-up legs or broadcasts. Its unresolved handle blocks
+further reconciliation in that coordinator rather than accumulating abandoned
+promises. A sibling process can acquire the lease, but must prove the same history
+within its own bounds; unavailable evidence never authorizes a nonce. Underlying
+HTTP retries may finish independently; no application work follows late results.
+
+Defaults are conservative cadence budgets, not claimed Base latency measurements:
+32 warm receipts require 33 reads (99 across three passes), versus the previous
+roughly 3,456 full-hydration reads across three passes. The 128-unit allowance fits
+31 warm receipts + one worst-case 32-leg incomplete cold receipt (99 units;
+up to 131 underlying calls with all DefenseHold second reads, before retries).
+At one batch per five-second tick, admission saturates in about 160 seconds without
+finality: deliberate backpressure, **not** a promise to sustain that rate across
+normal Base finality lag. Five seconds bounds an individual reconciliation lease
+hold, not packing/confirmation or the whole tick; synchronous SQLite busy handling
+and event-loop scheduling can add latency. Production sizing/throughput needs
+measurement and separate review, not automatic limit increases.
+
+Local regression measurements: 32 warm receipts = 33 reads, zero member/fee reads;
+100 legacy receipts = at most 32 checks/33 reads per pass with no admission beyond
+unchecked history; cold work stops at exactly 128 units and retries reuse completed
+receipt hydration. 25 ms test deadlines release the lease, block repeated unresolved
+reads, and reject late finality/member results without journal writes or sends.
+The resolver_reconciliation_blocked event reports checked/retained lower bound,
+work count, duration, limits, reason and operator action. Window-full: wait for
+explicit finality while continuing empty-queue reconciliation. RPC/deadline/
+unresolved: repair RPC or wait for its outstanding read, then retry. Reorg/missing
+receipt: preserve the journal and perform explicit canonical operator recovery;
+never broadcast blindly.
+
 Telemetry: `mission_batch_prepared` (fill/queue age/estimates/max fees),
 `mission_batch_receipt` (status/gas/execution plus available L1/operator fees),
 `mission_batch_outcomes` (requested vs canonically settled legs),
 `mission_batch_skip`, `mission_batch_indivisible_blocker` and
 `mission_batch_blocked`. Per-leg event outcomes, error selectors, canonical
-completion and eligibility blocker IDs are persisted/re-read after restart.
+completion and eligibility blocker IDs are persisted/reused after restart; only
+canonicality/finality evidence is refreshed every pass.
 Raw Base RPC hex quantities are normalized to bigint. Actual operator fees use
 the receipt field or the fork-aware oracle at the canonical receipt block.
 Unavailable fee components and total are null, never invented zero or concatenated

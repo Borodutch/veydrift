@@ -4,8 +4,18 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { Hex } from "viem";
+import { emitObservabilityEvent } from "./observability";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
+
+export type PreparedReconciliationPass = {
+  /** Every asynchronous read must pass here; late completions cannot resume hydration. */
+  read: <T>(operation: () => Promise<T>) => Promise<T>;
+  assertActive: () => void;
+  finalizedHead?: Promise<bigint>;
+};
+type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
+  pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
 
 export type ResolverTransactionRequest = {
   chainId: number;
@@ -16,7 +26,7 @@ export type ResolverTransactionRequest = {
   /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
   prepare?: (nonce: number) => Promise<{ hash: Hex; membership: string; broadcast: () => Promise<Hex> }>;
   /** Reconcile any durable prepared intent under the shared signer lease, including other operations. */
-  reconcilePrepared?: (hash: Hex, membership: string) => Promise<PreparedReceipt | void>;
+  reconcilePrepared?: PreparedReconciler;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
   isConfirmedCanonical?: (hash: Hex) => Promise<boolean>;
   /** A canonical receipt can be one bounded chunk of a larger logical operation. */
@@ -49,6 +59,9 @@ export type ResolverTransactionCoordinatorOptions = {
   replacementWaitMs?: number;
   replacementPollMs?: number;
   staleTransactionMs?: number;
+  maxUnfinalizedIntents?: number;
+  reconciliationTimeoutMs?: number;
+  reconciliationReadLimit?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -67,6 +80,10 @@ const defaultLeaseWaitMs = 60_000;
 const defaultReplacementWaitMs = 15_000;
 const defaultReplacementPollMs = 250;
 const defaultStaleTransactionMs = 5 * 60_000;
+// 32 retained receipts => 33 reads on a warm pass; cold hydration is separately bounded.
+const defaultMaxUnfinalizedIntents = 32;
+const defaultReconciliationTimeoutMs = 5_000;
+const defaultReconciliationReadLimit = 128;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
@@ -81,6 +98,11 @@ export class ResolverTransactionCoordinator {
   private readonly replacementWaitMs: number;
   private readonly replacementPollMs: number;
   private readonly staleTransactionMs: number;
+  private readonly maxUnfinalizedIntents: number;
+  private readonly reconciliationTimeoutMs: number;
+  private readonly reconciliationReadLimit: number;
+  // A transport may not support abort. Never stack abandoned reads on the same signer.
+  private readonly unfinishedReconciliations = new Map<string, Promise<unknown>>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly localTails = new Map<string, Promise<void>>();
@@ -96,6 +118,12 @@ export class ResolverTransactionCoordinator {
     this.replacementWaitMs = options.replacementWaitMs ?? defaultReplacementWaitMs;
     this.replacementPollMs = options.replacementPollMs ?? defaultReplacementPollMs;
     this.staleTransactionMs = options.staleTransactionMs ?? defaultStaleTransactionMs;
+    this.maxUnfinalizedIntents = options.maxUnfinalizedIntents ?? defaultMaxUnfinalizedIntents;
+    this.reconciliationTimeoutMs = options.reconciliationTimeoutMs ?? defaultReconciliationTimeoutMs;
+    this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
+    for (const value of [this.maxUnfinalizedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit]) {
+      if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
+    }
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -163,6 +191,12 @@ export class ResolverTransactionCoordinator {
       this.database.exec("ROLLBACK;");
       throw error;
     }
+    this.database.exec(`
+      CREATE INDEX IF NOT EXISTS resolver_intents_unfinalized_nonce
+        ON resolver_prepared_intents(chain_id, resolver_address, nonce) WHERE status != 'finalized';
+      CREATE INDEX IF NOT EXISTS resolver_intents_nonce
+        ON resolver_prepared_intents(chain_id, resolver_address, nonce);
+    `);
   }
   /** The mission client registers the canonical batch reader for sibling randomness/moon writers.
    * A standalone writer without it fails closed while any unfinalized batch remains. */
@@ -178,27 +212,101 @@ export class ResolverTransactionCoordinator {
   }
 
   reconcilePrepared(chainId: number, address: Hex,
-    confirm: (hash: Hex, membership: string) => Promise<PreparedReceipt | void>): Promise<void> {
+    confirm: PreparedReconciler): Promise<void> {
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
       (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)));
   }
 
   private async reconcileIntents(chainId: number, address: Hex,
     confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void): Promise<void> {
-    confirm ??= this.preparedReconcilers.get(resolverKey(chainId, address));
-    const intents = this.database.query("SELECT operation_id AS operationId, nonce, transaction_hash AS hash, membership FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' ORDER BY nonce")
-      .all(chainId, normalizeAddress(address)) as Array<{ operationId: string; nonce: number; hash: Hex; membership: string }>;
-    for (const intent of intents) {
-      if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
-        "durable batch intent cannot bypass canonical receipt/finality reconciliation");
-      // Missing/orphaned receipt preserves the immutable intent and blocks EVERY writer.
-      const receipt = await confirm(intent.hash, intent.membership);
+    const key = resolverKey(chainId, address);
+    confirm ??= this.preparedReconcilers.get(key);
+    const started = performance.now();
+    let reads = 0, checked = 0, active = true;
+    let budgetError: Error | undefined;
+    const blocked = (reason: string) => new Error("resolver reconciliation backpressure: " + reason
+      + "; no nonce allocated; check RPC/finality and retry, preserve the intent journal");
+    const deadline = started + this.reconciliationTimeoutMs;
+    const assertActive = () => {
+      if (budgetError) throw budgetError;
+      if (!active || performance.now() >= deadline) throw blocked("read deadline exceeded");
       assertLease();
-      if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
-      this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
-        .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes,
-          chainId, normalizeAddress(address), intent.hash);
-      this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
+    };
+    // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
+    const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
+      membership, status, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes
+      FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized'
+      ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
+        operationId: string; nonce: number; hash: Hex; membership: string; status: string;
+        blockNumber: string | null; blockHash: Hex | null; outcomes: string | null;
+      }>;
+    if (!intents.length) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
+    });
+    // One underlying read at a time; a timeout releases the lease, not permission to keep
+    // hydrating or write late. Retain the unresolved handle so retries cannot pile up reads.
+    const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+      assertActive();
+      const work = Promise.resolve().then(() => { assertActive(); return operation(); });
+      this.unfinishedReconciliations.set(key, work);
+      const clear = () => { if (this.unfinishedReconciliations.get(key) === work) this.unfinishedReconciliations.delete(key); };
+      void work.then(clear, clear);
+      const result = await Promise.race([work, expired]);
+      assertActive();
+      return result;
+    };
+    const pass: PreparedReconciliationPass = { assertActive, read: async (operation) => {
+      if (reads >= this.reconciliationReadLimit) {
+        budgetError = blocked("read budget exhausted");
+        throw budgetError;
+      }
+      reads++;
+      return bounded(operation);
+    } };
+    try {
+      if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
+      for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) {
+        if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
+          "durable batch intent cannot bypass canonical receipt/finality reconciliation");
+        const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
+          ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes } : undefined;
+        const receipt = await bounded(() => confirm!(intent.hash, intent.membership, stored, pass));
+        assertActive();
+        if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
+        if (!stored || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
+          this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
+            .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes,
+              chainId, normalizeAddress(address), intent.hash);
+          if (intent.status !== "confirmed") this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
+        }
+        checked++;
+      }
+      // An oversized old journal may drain finalized rows in bounded passes, but NEVER
+      // authorize a writer based on only a page of canonical evidence.
+      if (intents.length > this.maxUnfinalizedIntents) throw blocked("retained window exceeded; reconciliation-only drain required");
+    } catch (error) {
+      emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
+        retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
+        durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
+        reason: error instanceof Error ? error.message : String(error),
+        action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
+      throw error;
+    } finally {
+      active = false;
+      clearTimeout(timer);
+    }
+  }
+
+  private assertPreparedAdmission(chainId: number, address: Hex): void {
+    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' ORDER BY nonce LIMIT ?")
+      .all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents);
+    if (rows.length >= this.maxUnfinalizedIntents) {
+      emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address,
+        retainedAtLeast: rows.length, maxRetained: this.maxUnfinalizedIntents, reason: "retained window full",
+        action: "wait for explicit RPC finality; keep reconciliation running; no new batch signatures" }, "warn");
+      throw new Error("resolver reconciliation backpressure: retained window full; wait for finality before preparing another batch");
     }
   }
   /**
@@ -265,6 +373,7 @@ export class ResolverTransactionCoordinator {
     assertLease: () => void
   ): Promise<Hex> {
     await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
+    if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     if (previous?.status === "confirmed" && previous.transactionHash) {
       const isCanonical = !request.isConfirmedCanonical
