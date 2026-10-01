@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Test} from "forge-std/Test.sol";
 import {VeydriftResourceReserves} from "../src/VeydriftResourceReserves.sol";
 import {VeydriftBattleResearch as R} from "../src/libraries/VeydriftBattleResearch.sol";
@@ -92,9 +93,9 @@ contract VeydriftBattleResearchTest is Test {
 
     function testOldLeaderIgnoresEveryDueQueueAndCheckpointWhileNewUsesImpact() public {
         for (uint256 i; i < 3; ++i) {
-            address owner = address(uint160(i + 1));
+            address owner = address(SafeCast.toUint160(i + 1));
             h.seed(owner, 5, 6, 7);
-            h.queue(owner, Technology.Weapons, 9, uint64(199 + i));
+            h.queue(owner, Technology.Weapons, 9, SafeCast.toUint64(199 + i));
             h.mark(100 + i);
             R.Levels memory old = h.capture(1, owner, 200);
             R.Levels memory fresh = h.capture(100 + i, owner, 200);
@@ -111,17 +112,23 @@ contract VeydriftBattleResearchTest is Test {
 
     function testSevenOwnersAllThreeTechnologiesQueueBoundariesAndCoherentCohorts() public {
         for (uint256 i; i < 7; ++i) {
-            address owner = address(uint160(i + 1));
+            address owner = address(SafeCast.toUint160(i + 1));
             for (uint256 t; t < 3; ++t) {
-                h.seed(owner, uint16(2 + i), uint16(3 + i), uint16(4 + i));
+                h.seed(
+                    owner,
+                    SafeCast.toUint16(2 + i),
+                    SafeCast.toUint16(3 + i),
+                    SafeCast.toUint16(4 + i)
+                );
                 Technology technology =
                     t == 0 ? Technology.Weapons : t == 1 ? Technology.Shielding : Technology.Armor;
-                uint64 at = uint64(199 + i % 3);
-                h.queue(owner, technology, uint16(20 + i), at);
+                uint64 at = SafeCast.toUint64(199 + i % 3);
+                h.queue(owner, technology, SafeCast.toUint16(20 + i), at);
                 uint256 leader = 1000 + i * 10 + t;
                 h.mark(leader);
                 R.Levels memory fresh = h.capture(leader, owner, 200);
-                uint16 expected = at <= 200 ? uint16(20 + i) : uint16(2 + i + t);
+                uint16 expected =
+                    at <= 200 ? SafeCast.toUint16(20 + i) : SafeCast.toUint16(2 + i + t);
                 assertEq(t == 0 ? fresh.weapons : t == 1 ? fresh.shielding : fresh.armor, expected);
                 R.Levels memory old = h.capture(leader + 10000, owner, 200);
                 assertEq(old.weapons, 2 + i);

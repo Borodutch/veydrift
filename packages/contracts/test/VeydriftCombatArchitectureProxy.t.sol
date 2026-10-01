@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -278,7 +279,7 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         private
         returns (uint256 id, address owner_)
     {
-        owner_ = address(uint160(0x90000 + index));
+        owner_ = address(SafeCast.toUint160(0x90000 + index));
         vm.deal(owner_, 1 ether);
         vm.prank(owner_);
         uint256 origin = game.startPlanet{value: 0.05 ether}();
@@ -379,8 +380,9 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         for (uint256 i; i < 4510; ++i) {
             uint256 member = 200000 + i;
             bool eligible = i == 31 || i == 2240 || i == 4509;
-            address owner_ =
-                eligible ? (i == 2240 ? defender : player) : address(uint160(0x100000 + i));
+            address owner_ = eligible
+                ? (i == 2240 ? defender : player)
+                : address(SafeCast.toUint160(0x100000 + i));
             G.FleetMissionType kind =
                 i == 2240 ? G.FleetMissionType.AcsDefend : G.FleetMissionType.AcsAttack;
             G.FleetMissionStatus status = eligible
@@ -479,7 +481,7 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
             uint256 n = i == 0 ? 0 : i == 1 ? 2200 : 4508;
             bytes32 p = keccak256(abi.encode(id, keccak256(abi.encode(500000 + n, uint256(40)))));
             bytes32 o = keccak256(
-                abi.encode(id, keccak256(abi.encode(uint160(0x100000 + n), uint256(41))))
+                abi.encode(id, keccak256(abi.encode(SafeCast.toUint160(0x100000 + n), uint256(41))))
             );
             assertEq(uint256(vm.load(address(game), p)), 0);
             assertEq(uint256(vm.load(address(game), o)), 0);
@@ -547,12 +549,12 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         assertEq(phase, 4);
         uint256 a = _researchLevels(id, player);
         uint256 d = _researchLevels(id, defender);
-        assertEq(uint8(a), 1);
-        assertEq(uint8(d), 1);
+        assertEq(SafeCast.toUint8(a & 0xff), 1);
+        assertEq(SafeCast.toUint8(d & 0xff), 1);
         uint256 expectedW = fresh ? (ready <= impact ? 11 : 5) : (materialize ? 11 : 5);
         uint256 expectedS = fresh ? (ready <= impact ? 13 : 7) : (materialize ? 13 : 7);
-        assertEq(uint16(a >> 8), expectedW, "attacker policy");
-        assertEq(uint16(d >> 24), expectedS, "defender policy");
+        assertEq(SafeCast.toUint16((a >> 8) & 0xffff), expectedW, "attacker policy");
+        assertEq(SafeCast.toUint16((d >> 24) & 0xffff), expectedS, "defender policy");
         if (!fresh && !materialize) {
             (bool activeA,,,,) = game.researchQueues(player);
             (bool activeD,,,,) = game.researchQueues(defender);
@@ -606,7 +608,7 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         bytes32 list = keccak256(abi.encode(target, uint256(48)));
         for (uint256 i; i < 7; ++i) {
             uint256 held = 100000 + i;
-            address owner_ = address(uint160(0x7100 + i));
+            address owner_ = address(SafeCast.toUint160(0x7100 + i));
             _storeFleetMission(
                 held,
                 G.FleetMissionStatus.Outbound,
@@ -628,10 +630,15 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
             vm.store(
                 address(game), bytes32(uint256(keccak256(abi.encode(list))) + i), bytes32(held)
             );
-            _setTechnologyLevel(owner_, Technology.Weapons, uint16(5 + i));
-            _setTechnologyLevel(owner_, Technology.Shielding, uint16(6 + i));
-            _setTechnologyLevel(owner_, Technology.Armor, uint16(7 + i));
-            _researchQueue(owner_, Technology.Weapons, uint16(20 + i), arrival - 1 + uint64(i % 3));
+            _setTechnologyLevel(owner_, Technology.Weapons, SafeCast.toUint16(5 + i));
+            _setTechnologyLevel(owner_, Technology.Shielding, SafeCast.toUint16(6 + i));
+            _setTechnologyLevel(owner_, Technology.Armor, SafeCast.toUint16(7 + i));
+            _researchQueue(
+                owner_,
+                Technology.Weapons,
+                SafeCast.toUint16(20 + i),
+                arrival - 1 + SafeCast.toUint64(i % 3)
+            );
             // A member's marker is deliberately opposite: ONLY the leader's policy may matter.
             vm.store(address(game), _researchMarker(held), bytes32(uint256(fresh ? 0 : 1)));
         }
@@ -646,12 +653,12 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         (uint8 phase,,) = game.stagedBattleProgress(id);
         assertEq(phase, 6);
         for (uint256 i; i < 7; ++i) {
-            address owner_ = address(uint160(0x7100 + i));
+            address owner_ = address(SafeCast.toUint160(0x7100 + i));
             uint256 packed = _researchLevels(id, owner_);
-            assertEq(uint8(packed), 1);
-            assertEq(uint16(packed >> 8), fresh && i % 3 < 2 ? 20 + i : 5 + i);
-            assertEq(uint16(packed >> 24), 6 + i);
-            assertEq(uint16(packed >> 40), 7 + i);
+            assertEq(SafeCast.toUint8(packed & 0xff), 1);
+            assertEq(SafeCast.toUint16((packed >> 8) & 0xffff), fresh && i % 3 < 2 ? 20 + i : 5 + i);
+            assertEq(SafeCast.toUint16((packed >> 24) & 0xffff), 6 + i);
+            assertEq(SafeCast.toUint16((packed >> 40) & 0xffff), 7 + i);
         }
     }
 
@@ -780,7 +787,7 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         bytes32 list = keccak256(abi.encode(target, uint256(48)));
         for (uint256 i; i < 22; ++i) {
             uint256 held = 100000 + i;
-            address owner_ = address(uint160(0x10000 + i));
+            address owner_ = address(SafeCast.toUint160(0x10000 + i));
             _storeFleetMission(
                 held,
                 G.FleetMissionStatus.Outbound,
@@ -808,9 +815,9 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
                 bytes32(i + 1)
             );
             vm.store(address(game), keccak256(abi.encode(owner_, uint256(25))), bytes32(uint256(1)));
-            _setTechnologyLevel(owner_, Technology.Weapons, uint16(8 + i % 7));
-            _setTechnologyLevel(owner_, Technology.Shielding, uint16(8 + i % 7));
-            _setTechnologyLevel(owner_, Technology.Armor, uint16(8 + i % 7));
+            _setTechnologyLevel(owner_, Technology.Weapons, SafeCast.toUint16(8 + i % 7));
+            _setTechnologyLevel(owner_, Technology.Shielding, SafeCast.toUint16(8 + i % 7));
+            _setTechnologyLevel(owner_, Technology.Armor, SafeCast.toUint16(8 + i % 7));
         }
         vm.store(address(game), list, bytes32(uint256(22)));
         _fulfillAttackBattleRandomness(id, 659);
