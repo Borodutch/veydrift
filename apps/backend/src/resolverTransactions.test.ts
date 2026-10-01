@@ -49,7 +49,7 @@ describe("ResolverTransactionCoordinator", () => {
     });
   });
 
-  test("final synchronous guard and post-preflight lease loss retain prevented intent without any resend", async () => {
+  test("owned expiry is prevented but lost lease retains unresolved pending intent without any resend", async () => {
     for (const mode of ["expiry", "lease"] as const) await withDatabase(async (databasePath) => {
       const coordinator = new ResolverTransactionCoordinator(databasePath);
       let prepared = 0, sent = 0, checked = 0;
@@ -73,18 +73,94 @@ describe("ResolverTransactionCoordinator", () => {
       expect(checked).toBe(mode === "expiry" ? 1 : 0);
       const db = new Database(databasePath);
       expect(db.query("SELECT nonce, transaction_hash AS hash, status FROM resolver_prepared_intents").get())
-        .toEqual({ nonce: 7, hash: hash(7), status: "prevented" });
-      expect(db.query("SELECT status FROM resolver_transaction_attempts").get()).toEqual({ status: "prevented" });
+        .toEqual({ nonce: 7, hash: hash(7), status: mode === "expiry" ? "prevented" : "pending" });
+      expect(db.query("SELECT status FROM resolver_transaction_attempts").get()).toEqual({ status: mode === "expiry" ? "prevented" : "submitted" });
       db.close();
       const restarted = new ResolverTransactionCoordinator(databasePath);
-      await expect(restarted.submit(request)).rejects.toThrow("locally prevented");
-      await expect(restarted.submit({ ...request, operationId: "randomness:1" })).rejects.toThrow("locally prevented");
+      const blocked = mode === "expiry" ? "locally prevented" : "durable batch intent";
+      await expect(restarted.submit(request)).rejects.toThrow(blocked);
+      await expect(restarted.submit({ ...request, operationId: "randomness:1" })).rejects.toThrow(blocked);
       await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 7, throughNonce: 7,
         broadcast: true, getTransactionCount: async () => 7, submitCancellation: async () => { sent++; return hash(7); },
         confirm: async () => {}
-      })).rejects.toThrow("locally prevented");
+      })).rejects.toThrow(blocked);
       expect(prepared).toBe(1);
       expect(sent).toBe(0);
+    });
+  });
+
+  test("stale preflight owner changes zero rows and cannot overwrite successor nonce5/hashBB", async () => {
+    for (const mode of ["lease", "identity", "intent"] as const) await withDatabase(async (databasePath) => {
+      const coordinator = new ResolverTransactionCoordinator(databasePath);
+      const oldHash = ("0x" + "aa".repeat(32)) as `0x${string}`;
+      const nextHash = ("0x" + "bb".repeat(32)) as `0x${string}`;
+      let sent = 0;
+      let snapshot = "";
+      const db = new Database(databasePath);
+      // Capture all ownership/admission/audit rows after the successor mutation. No stale write is allowed.
+      const state = () => JSON.stringify({
+        intents: db.query("SELECT * FROM resolver_prepared_intents").all(),
+        attempts: db.query("SELECT * FROM resolver_transaction_attempts").all(),
+        audit: db.query("SELECT * FROM resolver_transaction_audit").all()
+      });
+      try {
+        await expect(coordinator.submit({ chainId, address, operationId: "batch", getTransactionCount: async () => 4,
+          submit: async () => oldHash, confirm: async () => {}, prepare: async () => ({ hash: oldHash, membership: "[]",
+            validateBeforeBroadcast: async () => {
+              if (mode === "lease") db.query("UPDATE resolver_transaction_leases SET holder = 'successor'").run();
+              if (mode !== "intent") db.query("UPDATE resolver_transaction_attempts SET nonce = 5, transaction_hash = ?, status = 'submitted' WHERE operation_id = 'batch'").run(nextHash);
+              else db.query("UPDATE resolver_prepared_intents SET membership = 'successor-membership'").run();
+              snapshot = state();
+              if (mode !== "lease") throw new Error("quote expired");
+            }, broadcast: async () => { sent++; return oldHash; }
+          }) })).rejects.toThrow(mode === "lease" ? "lease was lost" : mode === "identity" ? "identity changed" : "intent changed");
+        expect(state()).toBe(snapshot);
+        expect(sent).toBe(0);
+        if (mode !== "intent") expect(db.query("SELECT nonce, transaction_hash AS hash, status FROM resolver_transaction_attempts").get())
+          .toEqual({ nonce: 5, hash: nextHash, status: "submitted" });
+      } finally { db.close(); }
+    });
+  });
+
+  test("in-flight signing reservation blocks restarted sibling writers and nonce recovery before a result exists", async () => {
+    await withDatabase(async (databasePath) => {
+      let clock = 1_000, signs = 0, sends = 0;
+      const options = { now: () => clock, leaseRenewIntervalMs: 1_000_000 };
+      const owner = new ResolverTransactionCoordinator(databasePath, options);
+      let release!: (signed: `0x${string}`) => void;
+      let started!: () => void;
+      const ready = new Promise<void>((resolve) => { started = resolve; });
+      const result = new Promise<`0x${string}`>((resolve) => { release = resolve; });
+      const pending = owner.submit({ chainId, address, operationId: "batch:signing", getTransactionCount: async () => 4,
+        submit: async () => { sends++; return hash(4); }, confirm: async () => {},
+        prepare: async (_nonce, signing) => {
+          await signing.sign("[]", () => { signs++; started(); return result; });
+          throw new Error("must not resume preparation under lost lease");
+        }
+      });
+      // Attach rejection observation before relinquishing the old lease.
+      const rejected = pending.catch((error: unknown) => error);
+      await ready;
+      clock += 90_001;
+      const restarted = new ResolverTransactionCoordinator(databasePath, options);
+      await expect(restarted.submit({ chainId, address, operationId: "randomness:1", getTransactionCount: async () => 4,
+        submit: async () => { sends++; return hash(4); }, confirm: async () => {}
+      })).rejects.toThrow("explicit fenced recovery");
+      await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 4, throughNonce: 4,
+        broadcast: true, getTransactionCount: async () => 4, submitCancellation: async () => { sends++; return hash(4); }, confirm: async () => {}
+      })).rejects.toThrow("explicit fenced recovery");
+      const db = new Database(databasePath);
+      const before = JSON.stringify(db.query("SELECT * FROM resolver_transaction_attempts").all());
+      release("0x1234");
+      expect(String(await rejected)).toContain("lease was lost");
+      expect(JSON.stringify(db.query("SELECT * FROM resolver_transaction_attempts").all())).toBe(before);
+      expect(db.query("SELECT transaction_hash FROM resolver_signing_results").get()).toEqual({
+        transaction_hash: "0x56570de287d73cd1cb6092bb8fdee6173974955fdef345ae579ee9f475ea7432"
+      });
+      expect(db.query("SELECT transferred FROM resolver_signing_reservations").get()).toEqual({ transferred: 0 });
+      db.close();
+      expect(signs).toBe(1);
+      expect(sends).toBe(0);
     });
   });
 

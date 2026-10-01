@@ -853,7 +853,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       chainId, address: account.address, operationId,
       getTransactionCount: (blockTag) => client.getTransactionCount({ address: account.address, blockTag }),
       submit: async () => { throw new Error("batch requires persisted preparation"); },
-      prepare: async (currentNonce) => {
+      prepare: async (currentNonce, signing) => {
         if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
         const block = await client.getBlock({ blockTag: "latest" });
         if (block.number === null) throw new Error("canonical batch block unavailable");
@@ -865,8 +865,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           || fees.provenance.blockTimestamp !== block.timestamp || canonical.hash !== fees.provenance.blockHash)
           throw new Error("batch quote block changed before signing");
         assertBatchQuoteFresh(fees.provenance);
-        const signed = await account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
-          nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
+        const signed = await signing.sign(JSON.stringify(items), () => {
+          assertBatchQuoteFresh(fees.provenance);
+          return account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
+            nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
+        });
         emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
           fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
