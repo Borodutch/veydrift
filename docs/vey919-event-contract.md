@@ -2,7 +2,7 @@
 
 All emitted from Game proxy delegatecall context. Side 0 attacker, 1 defender. Unit 0..15 ship enum, 16..23 defense enum+16. Resident uses missionId 0, planet owner; mobile groups retain their mission id/owner.
 
-- CombatStageAdvanced(uint256 indexed missionId,uint8 phase,uint256 cursor,uint8 round): round means completed rounds, never in-progress round; cursor monotonically increases per successful staged call. phase13 is terminal.
+- CombatStageAdvanced(uint256 indexed missionId,uint8 phase,uint256 cursor,uint8 round): round means completed rounds, never in-progress round; cursor monotonically increases per successful staged call. phase13 is terminal; phase14 is bounded protection-score preparation and phase15 is the pre-round oracle/production transition, both active even with zero completed rounds.
 - CombatMemberSnapshot(uint256 indexed battleId,uint256 indexed missionId,address indexed owner,uint8 side,uint8 unit,uint32 count): emitted exactly once for every nonzero enrolled owner/mission/unit starting count before round1. Eligible roster only; no recalled/late fleets. Units with count0 omitted. A participant with no ships is absent from snapshots.
 - CombatMissionLosses(uint256 indexed battleId,uint256 indexed missionId,address indexed owner,uint8 side,uint8 unit,uint32 lost): incremental destroyed count; sum by battle/member/unit across all transactions. Includes resident defenses. These are gross destruction before repairs.
 - CombatDefenseRepair(uint256 indexed battleId,uint8 unit,uint32 count): repaired defense unit16..23, once on terminal settlement; subtract repaired from net defense loss, never mobile loss.
