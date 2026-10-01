@@ -1135,8 +1135,8 @@ export function hiddenWhitepaperPath(pathname) {
 
 export const pactMeta = {
   title: "The Veydrift Pact — get $VEYDRIFT before the auction",
-  description: "Friends & family round ($50K–$100K) for Veydrift, the onchain space strategy game on Base with 75% weekly player retention. Pact → continuous clearing auction → open liquidity.",
-  imagePath: "/assets/landing/pact-og-v1.jpg",
+  description: "Friends & family round: 5% of $VEYDRIFT supply at $0.002 per token. Veydrift is the onchain space strategy game on Base with 75% weekly player retention. Pact → continuous clearing auction → open liquidity.",
+  imagePath: "/assets/landing/pact-og-v2.jpg",
 };
 
 async function pactHtmlResponse(request, url) {
