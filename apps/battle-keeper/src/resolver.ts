@@ -2,6 +2,8 @@ import { decodeFunctionResult, encodeFunctionData, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { JsonRpcTransport } from "./transport";
+import { readMissionProgress, type MissionProgress } from "./progress";
+import { assertSignedTarget, signedAttempt, resumeSignedAttempt, type AttemptStore } from "./transaction";
 
 /**
  * Permissionless settlement entrypoints — any funded EOA can call them. We keep the ABIs inline so
@@ -48,6 +50,7 @@ export type CanonicalMissionStatus = {
   arrivalAt: number;
   returnAt: number;
   randomnessRequestId: string;
+  targetPlanetId?: string;
 };
 
 /** Raised when an attempted resolve reverts on simulation — almost always "randomness not committed
@@ -67,7 +70,12 @@ export type MissionResolver = {
    * completeFleetMissionReturn for "return"). Resolves with the tx hash once mined successfully.
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
-  resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
+  resolveMission(missionId: string, leg: MissionLeg, beforeSign?: () => Promise<MissionProgress | void>): Promise<string>;
+  bindAttemptStore?(store: AttemptStore): void;
+  pendingProgress?(missionId: string, leg: MissionLeg): MissionProgress | undefined;
+  hasSignedAttempt?(missionId: string, leg: MissionLeg): boolean;
+  acknowledgeReceipt?(missionId: string, leg: MissionLeg): void;
+  missionProgress?(missionId: string): Promise<MissionProgress>;
   /** Canonical post-receipt state; combat and missile settlement can require several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
@@ -127,6 +135,7 @@ export function encodeMissionCall(missionId: bigint, leg: MissionLeg): `0x${stri
 }
 
 type ViemResolverOptions = {
+  arrivalProgressVersions?: readonly string[];
   /** Poll interval / attempts while waiting for the tx receipt. */
   receiptPollIntervalMs?: number;
   receiptMaxPolls?: number;
@@ -143,6 +152,13 @@ export class ViemMissionResolver implements MissionResolver {
   private readonly account: ReturnType<typeof privateKeyToAccount>;
   private readonly to: `0x${string}`;
   private readonly chainId: number;
+  private attemptStore: AttemptStore | undefined;
+  bindAttemptStore(store: AttemptStore): void { this.attemptStore = store; }
+  hasSignedAttempt(id: string, leg: MissionLeg): boolean { return !!this.attemptStore?.getAttempt(id + ":" + leg); }
+  pendingProgress(id: string, leg: MissionLeg): MissionProgress | undefined {
+    return this.attemptStore?.getAttempt(id + ":" + leg)?.progress;
+  }
+  acknowledgeReceipt(id: string, leg: MissionLeg): void { this.attemptStore?.removeAttempt(id + ":" + leg); }
 
   constructor(
     private readonly transport: JsonRpcTransport,
@@ -160,7 +176,17 @@ export class ViemMissionResolver implements MissionResolver {
     return this.account.address;
   }
 
-  async resolveMission(missionId: string, leg: MissionLeg = "arrival"): Promise<string> {
+  async missionProgress(missionId: string): Promise<MissionProgress> {
+    const mission = await this.missionStatus(missionId);
+    return readMissionProgress(this.transport, this.to, missionId,
+      mission.status === 1 ? mission.targetPlanetId : undefined,
+      mission.missionType === 7, this.options.arrivalProgressVersions);
+  }
+
+  async resolveMission(missionId: string, leg: MissionLeg = "arrival", beforeSign?: () => Promise<MissionProgress | void>): Promise<string> {
+    const pending = this.attemptStore?.getAttempt(missionId + ":" + leg);
+    if (pending) return this.resume(missionId, leg);
+    if (this.attemptStore?.attemptKeys().length) throw new Error("another durable signed transaction owns the keeper nonce");
     const data = encodeMissionCall(BigInt(missionId), leg);
     const from = this.account.address;
 
@@ -209,6 +235,8 @@ export class ViemMissionResolver implements MissionResolver {
       throw new MissionNotResolvableError(missionId, error);
     }
 
+    // The durable progress intent commits after read-only preflight and before signing/broadcast.
+    const progress = await beforeSign?.();
     const signed = await this.account.signTransaction({
       to: this.to,
       data,
@@ -220,10 +248,26 @@ export class ViemMissionResolver implements MissionResolver {
       type: "eip1559"
     });
 
-    // 3) Broadcast raw + wait for a successful receipt.
+    // Persistence is the only gateway to dispatch. A crash before this write is safe to rebuild;
+    // after it, restart can only resend these exact bytes, never allocate a replacement nonce.
+    if (this.attemptStore) {
+      this.attemptStore.putAttempt(missionId + ":" + leg, signedAttempt(signed, Number(BigInt(nonceHex)), progress || undefined));
+      return this.resume(missionId, leg);
+    }
+    // Legacy standalone adapters have no durable owner. Production always binds the keeper journal.
     const hash = await this.transport.request<`0x${string}`>("eth_sendRawTransaction", [signed]);
     await this.waitForSuccessfulReceipt(hash, missionId);
     return hash;
+  }
+
+  private async resume(missionId: string, leg: MissionLeg): Promise<string> {
+    const attempt = this.attemptStore!.getAttempt(missionId + ":" + leg)!;
+    await assertSignedTarget(attempt, { from: this.account.address, to: this.to,
+      data: encodeMissionCall(BigInt(missionId), leg), chainId: this.chainId, maxGas: settlementGasLimit });
+    // Paid reverts retain their envelope until the keeper durably consumes the checkpoint.
+    return resumeSignedAttempt(this.transport, attempt, {
+      polls: this.options.receiptMaxPolls ?? 40, intervalMs: this.options.receiptPollIntervalMs ?? 1500
+    });
   }
 
   async missionStatus(missionId: string): Promise<CanonicalMissionStatus> {
@@ -247,7 +291,8 @@ export class ViemMissionResolver implements MissionResolver {
       missionType: Number(decoded[1]),
       arrivalAt: Number(decoded[6]),
       returnAt: Number(decoded[7]),
-      randomnessRequestId: decoded[10].toString()
+      randomnessRequestId: decoded[10].toString(),
+      targetPlanetId: decoded[4].toString()
     };
   }
 

@@ -25,7 +25,8 @@ function main(): void {
     transport,
     config.keeperPrivateKey,
     config.gameContractAddress,
-    config.chainId
+    config.chainId,
+    { arrivalProgressVersions: config.arrivalProgressVersions ?? [] }
   );
   const journal = new KeeperJournal(config.statePath, `${config.chainId}:${config.gameContractAddress.toLowerCase()}`);
   const keeper = new BattleKeeper(resolver, {

@@ -444,3 +444,13 @@ describe("backend config", () => {
     }).config.qaSyntheticStationedDefenders).toBe(false);
   });
 });
+
+
+test("arrival progress deployment capability requires exact implementation/runtime pairs", () => {
+  const pair = "0x" + "a".repeat(40) + ":0x" + "b".repeat(64);
+  const load = loadBackendConfig;
+  const base = { VEYDRIFT_RPC_URL: "http://localhost:8545" };
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: pair }).config?.arrivalProgressVersions).toEqual([pair]);
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: "*" }).problems.some(p => p.field === "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS")).toBe(true);
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: "0x" + "a".repeat(40) }).problems.some(p => p.field === "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS")).toBe(true);
+});

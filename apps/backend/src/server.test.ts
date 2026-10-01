@@ -12510,12 +12510,20 @@ describe("worker role gating (VEY-KANEO-466)", () => {
         return { indexedState: "healthy", safeToServeIndexedState: true };
       }
     } as unknown as SettlementIndexer;
-    const handler = createRequestHandler({
-      chainReader: new MockChainReader(),
-      config: configuredTestConfig,
-      indexer,
-      missionResolution: service
-    });
+    // This health projection fixture owns each awaited tick. Handler startup must not
+    // race those ticks with a fire-and-forget run (which correctly skips overlaps).
+    const start = spyOn(service, "start").mockImplementation(() => {});
+    let handler: ReturnType<typeof createRequestHandler>;
+    try {
+      handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: configuredTestConfig,
+        indexer,
+        missionResolution: service
+      });
+    } finally {
+      start.mockRestore();
+    }
 
     const response = await handler(new Request("http://localhost/health"));
     const body = await response.json();
@@ -12550,6 +12558,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
 
     service.stop();
     expect(failedBody.missionResolution).toMatchObject({
+      inFlight: false,
+      skippedOverlappingRuns: 0,
       healthStatus: "degraded",
       healthWarnings: ["moon_chance_resolution_retrying"],
       moonChanceResolution: {

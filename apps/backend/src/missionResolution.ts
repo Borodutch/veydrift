@@ -12,7 +12,12 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import type { BackendConfig } from "./config";
+import { guardAllows, consumeProgress, progressKey, readMissionProgress, type MissionProgress, type ProgressGuard } from "../../battle-keeper/src/progress";
+import { assertSignedTarget, signedAttempt, resumeSignedAttempt, MinedRevertError, type SignedAttempt } from "../../battle-keeper/src/transaction";
 import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
 import { emitObservabilityEvent } from "./observability";
@@ -37,10 +42,9 @@ const longPauseAlertAfterMs = 10 * 60_000;
 // VeydriftGame.v1 storage layout fixes `_gamePaused` at proxy slot 52. Reading the canonical proxy
 // storage avoids a contract upgrade solely to expose an operational getter.
 const gamePausedStorageSlot = toHex(52n, { size: 32 });
-// Base caps an individual transaction at 2^24 gas. Supply that envelope explicitly: Reth's
-// estimator can stop at an inner delegatecall's empty out-of-gas revert and misreport a valid,
-// bounded battle as UnsupportedGameplayModule instead of broadcasting it.
-const fleetMissionResolutionGas = 16_777_216n;
+// Match the audited keeper envelope below Base's 2^24 cap. Explicit gas avoids Reth's
+// misleading inner-delegatecall estimate; backend must not become a higher-gas retry bypass.
+const fleetMissionResolutionGas = 15_000_000n;
 
 const moonReadAbi = parseAbi([
   "function moonChanceRandomness(uint256 outcomeId) view returns (uint256 requestId, bytes32 purposeHash, bool finalized, uint256 randomWord)",
@@ -77,6 +81,7 @@ export type MissionResolutionChainClient = {
   resolveFleetMission(missionId: string): Promise<string>;
   completeFleetMissionReturn(missionId: string): Promise<string>;
   gamePaused?(): Promise<boolean>;
+  recoverPendingMissions?(): Promise<string[]>;
   finalizeMoonChance?(outcomeId: string): Promise<"pending" | "finalized">;
 };
 
@@ -226,6 +231,7 @@ export class MissionResolutionService {
   private lastError: string | null = null;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
+  private readonly chunkPending = new Set<string>();
   private resolvedCount = 0;
   private returnedCount = 0;
   private gamePaused = false;
@@ -357,11 +363,19 @@ export class MissionResolutionService {
       if (this.gamePaused && startedAtMs < this.nextGamePauseProbeAtMs) return;
       const paused = await this.readCanonicalGamePause();
       this.observeGamePause(paused, startedAtMs);
+      if (!paused) {
+        for (const missionId of await this.chainClient.recoverPendingMissions?.() ?? []) {
+          await this.candidateSource?.reconcileMissionResolutionCandidate?.(missionId);
+        }
+      }
       const scanStartedAtMs = this.now();
       const candidates = await this.listCandidates();
       this.lastScanDurationMs = Math.max(0, this.now() - scanStartedAtMs);
       const settlementCandidates = toSettlementCandidates(candidates);
       this.publishDueCandidates(settlementCandidates);
+      for (const id of this.chunkPending) {
+        if (!settlementCandidates.some(candidate => candidate.mission.missionId === id)) this.chunkPending.delete(id);
+      }
       if (paused) {
         this.recordPausedResolutionAttempts(settlementCandidates, startedAtMs);
         this.lastError = null;
@@ -638,11 +652,18 @@ export class MissionResolutionService {
       this.recordLatency(candidate.leg, candidate.dueAt);
       this.pendingDueAt[candidate.leg].delete(candidate.mission.missionId);
       this.failedCandidateRetries.delete(candidateRetryKey(candidate));
+      this.chunkPending.delete(candidate.mission.missionId);
       return true;
     } catch (error) {
       if (error instanceof GamePausedBeforeResolverAllocationError) {
         this.observeGamePause(true, this.now());
         this.recordPausedResolutionAttempts([candidate], this.now());
+        return false;
+      }
+      if (error instanceof MissionChunkPendingError) {
+        await this.candidateSource?.reconcileMissionResolutionCandidate?.(candidate.mission.missionId);
+        // Read-only probes remain prompt; durable operation identity suppresses paid no-op retries.
+        this.chunkPending.add(candidate.mission.missionId);
         return false;
       }
       this.failuresByLeg[candidate.leg] += 1;
@@ -698,6 +719,7 @@ export class MissionResolutionService {
       warnings.push("game_pause_long_running");
     }
     if (this.moonChanceRetryingCount() > 0) warnings.push("moon_chance_resolution_retrying");
+    if (this.chunkPending.size > 0) warnings.push("mission_chunk_pending_progress_guard");
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
@@ -715,6 +737,7 @@ function needsCanonicalMissionReconciliation(error: unknown): boolean {
 }
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
+  private readonly progressDb: Database;
   constructor(
     private readonly reader: Pick<
       VeydriftGameReader,
@@ -728,8 +751,39 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly rpcUrl?: string,
     private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:"),
     private readonly moonAddress?: Address,
-    private readonly randomnessEngineAddress?: Address
-  ) {}
+    private readonly randomnessEngineAddress?: Address,
+    progressStorePath = ":memory:",
+    private readonly arrivalProgressVersions: readonly string[] = []
+  ) {
+    if (progressStorePath !== ":memory:") mkdirSync(dirname(progressStorePath), { recursive: true });
+    this.progressDb = new Database(progressStorePath, { create: true });
+    this.progressDb.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;");
+    this.progressDb.exec("CREATE TABLE IF NOT EXISTS mission_progress_intents (identity TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS mission_signed_attempts (identity TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  }
+
+  private async reconcilePreparedMissions(): Promise<void> {
+    if (!this.chain || !this.reader.getCanonicalFleetMission) return;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    await this.transactionCoordinator.withAccountLease(this.chain.id, address, async lease => {
+      lease.reconcilePreparations(this.progressDb, `${this.chain!.id}:${this.gameAddress.toLowerCase()}:`);
+    });
+  }
+
+  async recoverPendingMissions(): Promise<string[]> {
+    await this.reconcilePreparedMissions();
+    const recovered: string[] = [];
+    const prefix = [this.chain!.id, this.gameAddress.toLowerCase()].join(":") + ":";
+    for (const row of this.progressDb.query<{ identity: string }, []>("SELECT identity FROM mission_signed_attempts").all()) {
+      if (!row.identity.startsWith(prefix)) continue;
+      const [missionId, leg] = row.identity.slice(prefix.length).split(":");
+      if (!missionId || (leg !== "resolveFleetMission" && leg !== "completeFleetMissionReturn")) {
+        throw new Error("invalid persisted mission identity");
+      }
+      await this.writeGuardedMission(leg, missionId);
+      recovered.push(missionId);
+    }
+    return recovered;
+  }
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
     return this.reader.listResolvableFleetMissions();
@@ -739,12 +793,31 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.reader.listReturnableFleetMissions();
   }
 
-  resolveFleetMission(missionId: string): Promise<string> {
-    return this.write("resolveFleetMission", missionId);
+  async resolveFleetMission(missionId: string): Promise<string> {
+    await this.reconcilePreparedMissions();
+    if (this.reader.getCanonicalFleetMission && !this.loadSigned(missionId, "resolveFleetMission")) {
+      const mission = await this.reader.getCanonicalFleetMission(BigInt(missionId));
+      if (!mission) throw new Error("canonical mission unavailable; resolver signing disabled");
+      if (mission.status !== "Outbound") return "canonical:arrival-complete";
+    }
+    const hash = await this.write("resolveFleetMission", missionId);
+    if (this.reader.getCanonicalFleetMission) {
+      const mission = await this.reader.getCanonicalFleetMission(BigInt(missionId));
+      if (!mission || mission.status === "Outbound") throw new MissionChunkPendingError();
+    }
+    return hash;
   }
 
-  completeFleetMissionReturn(missionId: string): Promise<string> {
-    return this.write("completeFleetMissionReturn", missionId);
+  async completeFleetMissionReturn(missionId: string): Promise<string> {
+    await this.reconcilePreparedMissions();
+    if (this.reader.getCanonicalFleetMission && !this.loadSigned(missionId, "completeFleetMissionReturn") && await this.isResolutionOperationComplete("completeFleetMissionReturn", missionId)) {
+      return "canonical:return-complete";
+    }
+    const hash = await this.write("completeFleetMissionReturn", missionId);
+    if (this.reader.getCanonicalFleetMission && !await this.isResolutionOperationComplete("completeFleetMissionReturn", missionId)) {
+      throw new MissionChunkPendingError();
+    }
+    return hash;
   }
 
   async finalizeMoonChance(outcomeId: string): Promise<"pending" | "finalized"> {
@@ -781,9 +854,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
 
   private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
     const targetAddress = functionName === "finalizeMoonChance" ? this.moonAddress! : this.gameAddress;
+    if (functionName !== "finalizeMoonChance" && this.reader.getCanonicalFleetMission) {
+      return this.writeGuardedMission(functionName, missionId);
+    }
+    if (this.progressDb.query("SELECT 1 FROM mission_signed_attempts LIMIT 1").get()) {
+      throw new Error("a durable signed mission must be reconciled before other resolver writes");
+    }
+    // Older injected adapters and moon settlement retain the existing coordinator path.
     const operationId = functionName === "finalizeMoonChance"
-      ? `moon-chance:${targetAddress.toLowerCase()}:${missionId}`
-      : `mission:${functionName}:${missionId}`;
+      ? `moon-chance:${targetAddress.toLowerCase()}:${missionId}` : `mission:${functionName}:${missionId}`;
     const data = encodeFunctionData({
       abi: veydriftGameResolutionAbi,
       functionName,
@@ -806,16 +885,18 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           address: account.address,
           blockTag
         }),
-        submit: (nonce) => this.walletClient!.writeContract({
-          abi: veydriftGameResolutionAbi,
-          account,
-          address: targetAddress,
-          chain: this.chain!,
-          functionName,
-          args: [BigInt(missionId)],
-          nonce,
-          ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
-        }),
+        submit: async (nonce) => {
+          return this.walletClient!.writeContract({
+            abi: veydriftGameResolutionAbi,
+            account,
+            address: targetAddress,
+            chain: this.chain!,
+            functionName,
+            args: [BigInt(missionId)],
+            nonce,
+            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
+          });
+        },
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
@@ -853,13 +934,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         address: from,
         blockTag
       }),
-      submit: (nonce) => this.sendUnlockedTransaction(
-        from,
-        targetAddress,
-        data,
-        nonce,
-        functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
-      ),
+      submit: async (nonce) => {
+        return this.sendUnlockedTransaction(
+          from,
+          targetAddress,
+          data,
+          nonce,
+          functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
+        );
+      },
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
@@ -875,6 +958,150 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     });
   }
 
+  private progressIdentity(missionId: string, leg: string): string {
+    return [this.chain!.id, this.gameAddress.toLowerCase(), missionId, leg].join(":");
+  }
+
+  private loadSigned(missionId: string, leg: string): SignedAttempt | undefined {
+    const row = this.progressDb.query<{ value: string }, [string]>(
+      "SELECT value FROM mission_signed_attempts WHERE identity = ?").get(this.progressIdentity(missionId, leg));
+    return row ? JSON.parse(row.value) as SignedAttempt : undefined;
+  }
+
+  private loadGuard(identity: string): ProgressGuard | undefined {
+    const row = this.progressDb.query<{ value: string }, [string]>(
+      "SELECT value FROM mission_progress_intents WHERE identity = ?").get(identity);
+    if (!row) return undefined;
+    const value = JSON.parse(row.value) as ProgressGuard | MissionProgress;
+    // The pre-release A7 intent format is conservative on migration, never silently discarded.
+    return "before" in value ? value : { missionId: "legacy", leg: "arrival", before: value };
+  }
+
+  private async writeGuardedMission(functionName: "resolveFleetMission" | "completeFleetMissionReturn", missionId: string): Promise<string> {
+    if (!this.publicClient || !this.chain) throw new Error("canonical resolver clients unavailable");
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    return this.transactionCoordinator.withAccountLease(this.chain.id, address, async lease => {
+      lease.reconcilePreparations(this.progressDb, `${this.chain!.id}:${this.gameAddress.toLowerCase()}:`);
+      const identity = this.progressIdentity(missionId, functionName);
+      const transport = { request: <T>(method: string, params: unknown[]): Promise<T> =>
+        (lease.assert(), this.publicClient!.request({ method, params } as never)) as Promise<T> };
+      const finish = async (attempt: SignedAttempt): Promise<Hex> => {
+        const consumeReceipt = (reverted = false) => {
+          lease.assert();
+          const current = this.loadSigned(missionId, functionName);
+          if (current?.hash !== attempt.hash || current.nonce !== attempt.nonce) {
+            throw new Error("stale signed mission acknowledgment; guard unchanged");
+          }
+          if (!attempt.progress) throw new Error("signed mission missing progress checkpoint");
+          // These connections share one SQLite file in production: acknowledge outside the local
+          // write transaction, under the same account lease. A crash here retains the paid envelope
+          // for receipt-only recovery, rather than orphaning a central reservation after local delete.
+          lease.acknowledge(identity + ":progress:" + progressKey(attempt.progress), Number(attempt.nonce), attempt.hash, reverted);
+          this.progressDb.transaction(() => {
+            lease.assert();
+            const deleted = this.progressDb.query(
+              "DELETE FROM mission_signed_attempts WHERE identity = ? AND json_extract(value, '$.hash') = ? AND json_extract(value, '$.nonce') = ?"
+            ).run(identity, attempt.hash, attempt.nonce);
+            if (deleted.changes !== 1) throw new Error("stale signed mission acknowledgment; guard unchanged");
+            if (!attempt.progress) throw new Error("signed mission missing progress checkpoint");
+            const guard = consumeProgress(this.loadGuard(identity), attempt.progress, missionId,
+              functionName === "resolveFleetMission" ? "arrival" : "return");
+            this.progressDb.query("INSERT OR REPLACE INTO mission_progress_intents VALUES (?, ?)")
+              .run(identity, JSON.stringify(guard));
+          }).immediate();
+        };
+        try {
+          await assertSignedTarget(attempt, { from: typeof this.sender === "string" ? this.sender : this.sender.address,
+            to: this.gameAddress, data: encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] }),
+            chainId: this.chain!.id, maxGas: fleetMissionResolutionGas });
+          const hash = await resumeSignedAttempt(transport, attempt);
+          consumeReceipt();
+          return hash;
+        } catch (error) {
+          if (error instanceof MinedRevertError) consumeReceipt(true);
+          throw error;
+        }
+      };
+      const previous = this.loadSigned(missionId, functionName);
+      // Recovery cannot allocate a nonce or sign: replay only the persisted bytes. It is safe even
+      // if the coordinator process died before it recorded the returned hash (allocating state).
+      if (previous) {
+        if (!previous.progress) throw new Error("signed mission missing progress checkpoint");
+        return lease.recover(identity + ":progress:" + progressKey(previous.progress), Number(previous.nonce), previous.hash, () => finish(previous));
+      }
+      if (this.progressDb.query("SELECT 1 FROM mission_signed_attempts LIMIT 1").get()) {
+        throw new Error("another durable signed mission owns the resolver nonce");
+      }
+      if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
+      const progress = await this.resolutionProgress(missionId);
+      if (progress.arrivalCapability === false || (progress.arrivalOrderCursor !== undefined && progress.arrivalGeneration === undefined)) {
+        throw new Error("arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade");
+      }
+      if (!guardAllows(this.loadGuard(identity), progress)) throw new MissionChunkPendingError();
+      const account = typeof this.sender === "string" ? undefined : this.sender;
+      return lease.submit({
+        chainId: this.chain!.id, address, operationId: identity + ":progress:" + progressKey(progress), signedEnvelope: true,
+        preparation: { store: this.progressDb, identity },
+        getTransactionCount: blockTag => this.publicClient!.getTransactionCount({ address, blockTag }),
+        isConfirmedCanonical: hash => this.isConfirmedCanonical(hash),
+        isOperationComplete: async () => true,
+        submit: async nonce => {
+          if (this.progressDb.query("SELECT 1 FROM mission_signed_attempts LIMIT 1").get()) {
+            throw new Error("another durable signed mission owns the resolver nonce");
+          }
+          if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
+          const current = await this.resolutionProgress(missionId);
+          if (progressKey(progress) !== progressKey(current) || !guardAllows(this.loadGuard(identity), current)) {
+            throw new MissionChunkPendingError();
+          }
+          const data = encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] });
+          // Fee/gas preparation and signing are entirely pre-broadcast. Definite failures here leave
+          // no consumed intent. Persist deterministic raw bytes before the first send RPC.
+          const request = await this.publicClient!.prepareTransactionRequest({
+            account: address, chain: null, to: this.gameAddress, data, nonce,
+            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
+          });
+          let raw: Hex;
+          if (account) raw = await account.signTransaction({ ...request, chainId: this.chain!.id } as never);
+          else {
+            const signed = await transport.request<Hex | { raw: Hex }>("eth_signTransaction", [{
+              from: address, to: this.gameAddress, data, nonce: toHex(nonce), gas: toHex(request.gas!),
+              chainId: toHex(this.chain!.id), type: "0x2", maxFeePerGas: toHex(request.maxFeePerGas!),
+              maxPriorityFeePerGas: toHex(request.maxPriorityFeePerGas!)
+            }]);
+            raw = typeof signed === "string" ? signed : signed.raw;
+          }
+          const attempt = signedAttempt(raw, nonce, current);
+          lease.assert();
+          this.progressDb.query("INSERT INTO mission_signed_attempts VALUES (?, ?)").run(identity, JSON.stringify(attempt));
+          // Coordinator now records the deterministic hash before confirm performs any broadcast.
+          return attempt.hash;
+        },
+        confirm: async hash => {
+          const attempt = this.loadSigned(missionId, functionName);
+          if (attempt) {
+            if (attempt.hash !== hash) throw new Error("coordinator/signed transaction identity mismatch");
+            await finish(attempt);
+          } else await this.confirm(hash);
+        }
+      });
+    });
+  }
+
+  private async resolutionProgress(missionId: string): Promise<MissionProgress> {
+    const mission = await this.reader.getCanonicalFleetMission!(BigInt(missionId));
+    if (!mission) throw new Error("canonical mission unavailable; resolver signing disabled");
+    if (!this.publicClient) throw new Error("canonical progress client unavailable");
+    const transport = {
+      request: <T>(method: string, params: unknown[]): Promise<T> =>
+        this.publicClient!.request({ method, params } as never) as Promise<T>
+    };
+    const progress = await readMissionProgress(transport, this.gameAddress, missionId,
+      mission.status === "Outbound" ? mission.targetPlanetId : undefined,
+      mission.missionTypeId === 7, this.arrivalProgressVersions);
+    return progress;
+  }
+
   private async isResolutionOperationComplete(
     functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance",
     missionId: string
@@ -887,7 +1114,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       return state[2];
     }
     const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
-    if (!mission) return true;
+    if (!mission) {
+      if (this.reader.getCanonicalFleetMission) throw new Error("canonical mission unavailable; resolver signing disabled");
+      return true;
+    }
     if (functionName === "resolveFleetMission") return mission.status !== "Outbound";
     return mission.status !== "Returning" && mission.status !== "Recalled";
   }
@@ -946,6 +1176,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
   }
 }
 
+export class MissionChunkPendingError extends Error {
+  constructor() {
+    super("mission remains pending; paid retries require canonical progress/version change");
+    this.name = "MissionChunkPendingError";
+  }
+}
+
 export class GamePausedBeforeResolverAllocationError extends Error {
   constructor() {
     super("canonical game pause is active; resolver transaction allocation is suppressed");
@@ -984,7 +1221,9 @@ function buildMissionResolutionChainClient(
         config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
       ),
       config.moonContractAddress,
-      config.randomnessEngineAddress
+      config.randomnessEngineAddress,
+      config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite",
+      config.arrivalProgressVersions ?? []
     );
   }
 
@@ -1008,7 +1247,9 @@ function buildMissionResolutionChainClient(
       config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
     ),
     config.moonContractAddress,
-    config.randomnessEngineAddress
+    config.randomnessEngineAddress,
+    config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite",
+    config.arrivalProgressVersions ?? []
   );
 }
 

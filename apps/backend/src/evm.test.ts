@@ -1823,7 +1823,13 @@ describe("canonical fleet mission details", () => {
       }
     });
     expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    for (const preparationPhase of [14n, 15n]) {
+      phase = preparationPhase;
+      expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toEqual({ roundsCompleted: 0, totalRounds: 6 });
+    }
     phase = 13n;
+    expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toBeUndefined();
+    phase = 0n;
     expect((await reader.getCanonicalFleetMission(23_007n))?.combatResolutionProgress).toBeUndefined();
   });
 

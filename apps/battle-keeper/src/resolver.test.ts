@@ -205,6 +205,17 @@ describe("bounded staged settlement envelope", () => {
     });
   }
 
+  test("durable intent hook runs after exact preflight and blocks signing on failure", async () => {
+    const transport = transportFor();
+    const resolver = new ViemMissionResolver(transport, testKey, gameContract, 8453);
+    await expect(resolver.resolveMission("1", "arrival", async () => {
+      expect(transport.methodCalls("eth_call")).toBe(2);
+      expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+      throw new Error("journal unavailable");
+    })).rejects.toThrow("journal unavailable");
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+  });
+
   test("over-ceiling estimate never signs/broadcasts", async () => {
     const transport = transportFor((method) => method === "eth_estimateGas"
       ? `0x${(settlementGasLimit + 1n).toString(16)}` : undefined);

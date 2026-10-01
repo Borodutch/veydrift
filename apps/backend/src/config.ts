@@ -1,8 +1,10 @@
 import { dirname, join } from "node:path";
+import { parseArrivalProgressVersions } from "../../battle-keeper/src/progress";
 
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
+  arrivalProgressVersions?: readonly string[];
   allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
@@ -170,6 +172,9 @@ const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "pr
 
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
   const problems: ConfigProblem[] = [];
+  let arrivalProgressVersions: string[] = [];
+  try { arrivalProgressVersions = parseArrivalProgressVersions(env.VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS); }
+  catch (error) { problems.push({ field: "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS", message: String(error) }); }
   const deploymentMode = parseDeploymentMode(env.VEYDRIFT_DEPLOYMENT_MODE, problems);
   // VEY-KANEO-471: gate the synthetic stationed-defense QA payload on an explicit opt-in env AND a
   // non-production deployment. Both conditions are required, so a stray env in prod can never surface
@@ -437,6 +442,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
       resolverTransactionStorePath,
+      arrivalProgressVersions,
       ...(migrationContractAddress ? { migrationContractAddress } : {}),
       qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),

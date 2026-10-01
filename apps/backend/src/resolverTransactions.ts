@@ -9,6 +9,10 @@ export type ResolverTransactionRequest = {
   chainId: number;
   address: `0x${string}`;
   operationId: string;
+  /** Raw bytes persisted by the owner: no other operation may replace/cancel its reservation. */
+  signedEnvelope?: boolean;
+  /** A10 preparation-only lifecycle, valid only with the intact shared mission journal. */
+  preparation?: { store: Database; identity: string };
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number) => Promise<Hex>;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
@@ -48,6 +52,7 @@ export type ResolverTransactionCoordinatorOptions = {
 };
 
 type StoredAttempt = {
+  signedEnvelope?: number;
   operationId?: string;
   nonce: number;
   status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled";
@@ -64,8 +69,9 @@ const defaultStaleTransactionMs = 5 * 60_000;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
- * processes. SQLite stores coordination metadata only: operation labels, nonces, and public hashes;
- * private keys, calldata, randomness words, and RPC credentials never enter this database.
+ * processes. These tables store coordination metadata: operation labels, nonces, public hashes
+ * and signed-envelope ownership. The shared database may also contain mission raw envelopes;
+ * private keys and RPC credentials never enter it.
  */
 export class ResolverTransactionCoordinator {
   private readonly database: Database;
@@ -129,6 +135,64 @@ export class ResolverTransactionCoordinator {
         created_at TEXT NOT NULL
       );
     `);
+    this.database.transaction(() => {
+      const columns = this.database.query("PRAGMA table_info(resolver_transaction_attempts)").all() as { name: string }[];
+      if (!columns.some(column => column.name === "signed_envelope")) {
+        this.database.exec("ALTER TABLE resolver_transaction_attempts ADD COLUMN signed_envelope INTEGER NOT NULL DEFAULT 0");
+        // The pre-release guarded mission identity already proves owner-managed signed bytes.
+        this.database.exec("UPDATE resolver_transaction_attempts SET signed_envelope = 1 WHERE operation_id LIKE '%:resolveFleetMission:progress:%' OR operation_id LIKE '%:completeFleetMissionReturn:progress:%'");
+      }
+      if (!columns.some(column => column.name === "preparation_identity")) {
+        this.database.exec("ALTER TABLE resolver_transaction_attempts ADD COLUMN preparation_identity TEXT");
+      }
+    }).immediate();
+  }
+
+  /** Guarded mission recovery and new allocation share exactly the same account lease as every
+   * randomness/moon writer. Callers must assert after awaits, before durable ack or dispatch. */
+  withAccountLease<T>(chainId: number, address: Hex, operation: (lease: {
+    assert: () => void;
+    reconcilePreparations: (store: Database, ownerPrefix: string) => void;
+    acknowledge: (operationId: string, nonce: number, hash: Hex, reverted: boolean) => void;
+    submit: (request: ResolverTransactionRequest) => Promise<Hex>;
+    recover: (operationId: string, nonce: number, hash: Hex, finish: () => Promise<Hex>) => Promise<Hex>;
+  }) => Promise<T>): Promise<T> {
+    return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address, assertLease =>
+      operation({ assert: assertLease,
+        reconcilePreparations: (store, ownerPrefix) => this.reconcilePreparations(chainId, address, store, ownerPrefix, assertLease),
+        acknowledge: (operationId, nonce, hash, reverted) => {
+          assertLease();
+          const existing = this.loadAttempt(chainId, address, operationId);
+          if (!existing || existing.nonce !== nonce || existing.transactionHash !== hash) {
+            throw new Error("stale coordinator acknowledgment");
+          }
+          this.recordAttempt(chainId, address, operationId, nonce, hash, reverted ? "reverted" : "confirmed");
+        },
+        submit: request => {
+          if (request.chainId !== chainId || normalizeAddress(request.address) !== normalizeAddress(address)) {
+            throw new Error("account lease identity mismatch");
+          }
+          return this.submitWithLease(request, assertLease);
+        },
+        recover: async (operationId, nonce, hash, finish) => {
+          assertLease();
+          const existing = this.loadAttempt(chainId, address, operationId);
+          if (existing?.transactionHash && existing.transactionHash !== hash) throw new Error("recovery hash differs from coordinator");
+          this.assertNoReservedAttempt(chainId, address, operationId, nonce);
+          this.recordAttempt(chainId, address, operationId, nonce, hash, "submitted", true);
+          try {
+            const result = await finish();
+            assertLease();
+            this.recordAttempt(chainId, address, operationId, nonce, hash, "confirmed");
+            return result;
+          } catch (error) {
+            assertLease();
+            if (isRevertedTransactionError(error)) this.recordAttempt(chainId, address, operationId, nonce, hash, "reverted");
+            throw error;
+          }
+        }
+      })
+    ));
   }
 
   submit(request: ResolverTransactionRequest): Promise<Hex> {
@@ -147,47 +211,61 @@ export class ResolverTransactionCoordinator {
     validateNonceRange(request.fromNonce, request.throughNonce);
     const key = resolverKey(request.chainId, request.address);
     return this.enqueueLocal(key, () => this.withLease(request.chainId, request.address, async (assertLease) => {
+      const record = (...args: Parameters<ResolverTransactionCoordinator["recordAttempt"]>) => {
+        assertLease(); this.recordAttempt(...args);
+      };
       const plannedNonces = range(request.fromNonce, request.throughNonce);
       const submitted: Array<{ nonce: number; hash: Hex }> = [];
       let latest = await request.getTransactionCount("latest");
+      assertLease();
       let pending = await request.getTransactionCount("pending");
+      assertLease();
       if (latest !== request.fromNonce || pending !== request.fromNonce) {
         throw new Error(
           `resolver nonce recovery expected latest/pending ${request.fromNonce}, got ${latest}/${pending}`
         );
       }
+      this.assertNoReservedAttempt(request.chainId, request.address, "", request.fromNonce);
       if (!request.broadcast) return { plannedNonces, submitted };
 
       for (const nonce of plannedNonces) {
         latest = await request.getTransactionCount("latest");
+        assertLease();
         pending = await request.getTransactionCount("pending");
+        assertLease();
         if (latest !== nonce || pending !== nonce) {
           throw new Error(
             `resolver nonce recovery stopped before ${nonce}: latest/pending is ${latest}/${pending}`
           );
         }
+        this.assertNoReservedAttempt(request.chainId, request.address, "", nonce);
         const operationId = `nonce-gap-cancel:${nonce}`;
-        this.recordAttempt(request.chainId, request.address, operationId, nonce, null, "allocating");
+        record(request.chainId, request.address, operationId, nonce, null, "allocating");
         assertLease();
         let hash: Hex;
         try {
           hash = await request.submitCancellation(nonce);
+          assertLease();
         } catch (error) {
-          this.recordAttempt(request.chainId, request.address, operationId, nonce, null, "rejected");
+          assertLease();
+          record(request.chainId, request.address, operationId, nonce, null, "rejected");
           throw error;
         }
-        this.recordAttempt(request.chainId, request.address, operationId, nonce, hash, "submitted");
+        record(request.chainId, request.address, operationId, nonce, hash, "submitted");
         try {
           await request.confirm(hash);
+          assertLease();
         } catch (error) {
+          assertLease();
           if (isRevertedTransactionError(error)) {
-            this.recordAttempt(request.chainId, request.address, operationId, nonce, hash, "reverted");
+            record(request.chainId, request.address, operationId, nonce, hash, "reverted");
           }
           throw error;
         }
-        this.recordAttempt(request.chainId, request.address, operationId, nonce, hash, "confirmed");
+        record(request.chainId, request.address, operationId, nonce, hash, "confirmed");
         submitted.push({ nonce, hash });
       }
+      assertLease();
       return { plannedNonces, submitted };
     }));
   }
@@ -196,6 +274,10 @@ export class ResolverTransactionCoordinator {
     request: ResolverTransactionRequest,
     assertLease: () => void
   ): Promise<Hex> {
+    const record = (...args: Parameters<ResolverTransactionCoordinator["recordAttempt"]>) => {
+      assertLease(); this.recordAttempt(...args);
+    };
+    this.assertNoReservedAttempt(request.chainId, request.address, request.operationId, Number.MAX_SAFE_INTEGER);
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     if (previous?.status === "confirmed" && previous.transactionHash) {
       const isCanonical = !request.isConfirmedCanonical
@@ -206,7 +288,7 @@ export class ResolverTransactionCoordinator {
       }
       // Either a reorg removed the confirmation or the receipt completed only one bounded chunk.
       // Retire this attempt and allocate at the current pending nonce; never replay the old nonce.
-      this.recordAttempt(
+      record(
         request.chainId,
         request.address,
         request.operationId,
@@ -216,50 +298,10 @@ export class ResolverTransactionCoordinator {
       );
     }
     if (previous?.status === "allocating" || previous?.status === "ambiguous") {
-      const [latest, pending] = await Promise.all([
-        request.getTransactionCount("latest"),
-        request.getTransactionCount("pending")
-      ]);
-      if (previous.status === "allocating" && (latest > previous.nonce || pending > previous.nonce)) {
-        this.recordAttempt(
-          request.chainId,
-          request.address,
-          request.operationId,
-          previous.nonce,
-          null,
-          "ambiguous"
-        );
-        throw new ResolverSubmissionAmbiguousError(
-          request.chainId,
-          request.address,
-          previous.nonce,
-          "an unrecorded broadcast may have advanced the account; refresh canonical operation state"
-        );
-      }
-      if (previous.status === "ambiguous" && pending > previous.nonce && latest <= previous.nonce) {
-        throw new ResolverSubmissionAmbiguousError(
-          request.chainId,
-          request.address,
-          previous.nonce,
-          "the possibly accepted transaction is still pending"
-        );
-      }
-      this.recordAttempt(
-        request.chainId,
-        request.address,
-        request.operationId,
-        previous.nonce,
-        null,
-        "rejected"
-      );
-      if (previous.status === "ambiguous" && latest > previous.nonce) {
-        throw new ResolverSubmissionAmbiguousError(
-          request.chainId,
-          request.address,
-          previous.nonce,
-          "the nonce was mined; refresh canonical operation state before any retry"
-        );
-      }
+      // Only reconcilePreparations may release a proven A10 pre-dispatch allocation. A generic
+      // or migrated unknown send is never cleared by nonce counts, time, or another retry.
+      throw new ResolverSubmissionAmbiguousError(request.chainId, request.address, previous.nonce,
+        "unknown allocation retained; explicit owner reconciliation required before any retry");
     }
     if (previous?.status === "submitted" && previous.transactionHash) {
       const replaceImmediately = this.isStale(previous)
@@ -268,7 +310,7 @@ export class ResolverTransactionCoordinator {
       if (!replaceImmediately) {
         try {
           await request.confirm(previous.transactionHash);
-          this.recordAttempt(
+          record(
             request.chainId,
             request.address,
             request.operationId,
@@ -279,7 +321,7 @@ export class ResolverTransactionCoordinator {
           return previous.transactionHash;
         } catch (error) {
           if (isRevertedTransactionError(error)) {
-            this.recordAttempt(
+            record(
               request.chainId,
               request.address,
               request.operationId,
@@ -320,7 +362,7 @@ export class ResolverTransactionCoordinator {
         }
         throw replacementError;
       }
-      this.recordAttempt(
+      record(
         request.chainId,
         request.address,
         request.operationId,
@@ -332,7 +374,7 @@ export class ResolverTransactionCoordinator {
         await request.confirm(replacementHash);
       } catch (replacementError) {
         if (isRevertedTransactionError(replacementError)) {
-          this.recordAttempt(
+          record(
             request.chainId,
             request.address,
             request.operationId,
@@ -343,7 +385,7 @@ export class ResolverTransactionCoordinator {
         }
         throw replacementError;
       }
-      this.recordAttempt(
+      record(
         request.chainId,
         request.address,
         request.operationId,
@@ -364,6 +406,7 @@ export class ResolverTransactionCoordinator {
         const stale = this.loadSubmittedAttemptAtNonce(request.chainId, request.address, latest);
         if (
           stale?.operationId
+          && !stale.signedEnvelope
           && stale.transactionHash
           && request.shouldReplace
           && request.cancelStale
@@ -371,7 +414,7 @@ export class ResolverTransactionCoordinator {
         ) {
           assertLease();
           const cancellationHash = await request.cancelStale(latest, stale.transactionHash);
-          this.recordAttempt(
+          record(
             request.chainId,
             request.address,
             stale.operationId,
@@ -383,7 +426,7 @@ export class ResolverTransactionCoordinator {
             await request.confirm(cancellationHash);
           } catch (error) {
             if (isRevertedTransactionError(error)) {
-              this.recordAttempt(
+              record(
                 request.chainId,
                 request.address,
                 stale.operationId,
@@ -394,7 +437,7 @@ export class ResolverTransactionCoordinator {
             }
             throw error;
           }
-          this.recordAttempt(
+          record(
             request.chainId,
             request.address,
             stale.operationId,
@@ -408,32 +451,36 @@ export class ResolverTransactionCoordinator {
         throw new ResolverNonceStalledError(request.chainId, request.address, latest);
       }
       const nonce = pending;
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "allocating");
+      // A persisted hash (or a crash during allocation) owns this nonce even when no RPC
+      // accepted it: latest==pending is NOT evidence that locally signed bytes do not exist.
+      this.assertNoReservedAttempt(request.chainId, request.address, request.operationId, nonce);
+      record(request.chainId, request.address, request.operationId, nonce, null, "allocating", request.signedEnvelope,
+        request.preparation && this.sharesStore(request.preparation.store) ? request.preparation.identity : null);
       assertLease();
       let hash: Hex;
       try {
         hash = await request.submit(nonce);
       } catch (error) {
         if (!isReplacementUnderpricedError(error)) {
-          this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+          record(request.chainId, request.address, request.operationId, nonce, null, "rejected");
           throw error;
         }
         const advanced = await this.waitForNonceAdvance(request.getTransactionCount, nonce);
         if (advanced) continue;
-        this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+        record(request.chainId, request.address, request.operationId, nonce, null, "rejected");
         throw new ResolverNonceStalledError(request.chainId, request.address, nonce);
       }
 
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "submitted");
+      record(request.chainId, request.address, request.operationId, nonce, hash, "submitted");
       try {
         await request.confirm(hash);
       } catch (error) {
         if (isRevertedTransactionError(error)) {
-          this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "reverted");
+          record(request.chainId, request.address, request.operationId, nonce, hash, "reverted");
         }
         throw error;
       }
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "confirmed");
+      record(request.chainId, request.address, request.operationId, nonce, hash, "confirmed");
       return hash;
     }
 
@@ -496,8 +543,11 @@ export class ResolverTransactionCoordinator {
     };
     try {
       const result = await operation(assertLease);
-      if (leaseError) throw leaseError;
+      assertLease();
       return result;
+    } catch (error) {
+      assertLease();
+      throw error;
     } finally {
       clearInterval(renew);
       this.database.query(`
@@ -557,13 +607,50 @@ export class ResolverTransactionCoordinator {
     `).get(chainId, normalizeAddress(address), operationId) as StoredAttempt | null;
   }
 
+  private sharesStore(store: Database): boolean {
+    const file = (db: Database) => (db.query("PRAGMA database_list").all() as { name: string; file: string }[])
+      .find(row => row.name === "main")?.file;
+    const mine = file(this.database);
+    return store === this.database || (!!mine && mine === file(store));
+  }
+
+  private reconcilePreparations(chainId: number, address: Hex, store: Database, ownerPrefix: string,
+    assertLease: () => void): void {
+    assertLease();
+    if (!this.sharesStore(store)) return; // Never infer absence across separate/lost journals.
+    this.database.transaction(() => {
+      assertLease();
+      const rows = this.database.query(
+        "SELECT operation_id AS operationId, nonce, preparation_identity AS identity FROM resolver_transaction_attempts WHERE chain_id = ? AND resolver_address = ? AND status = 'allocating' AND transaction_hash IS NULL AND signed_envelope = 1 AND preparation_identity IS NOT NULL"
+      ).all(chainId, normalizeAddress(address)) as { operationId: string; nonce: number; identity: string }[];
+      for (const row of rows) {
+        if (!row.identity.startsWith(ownerPrefix) || row.operationId.indexOf(row.identity + ":progress:") !== 0) continue;
+        if (this.database.query("SELECT 1 FROM mission_signed_attempts WHERE identity = ?").get(row.identity)) continue;
+        // A10-only marker proves callback has no dispatch before durable raw persistence. No
+        // RPC nonce comparison, timeout, migrated/generic allocation or unknown send is cleared.
+        const now = new Date(this.now()).toISOString();
+        this.database.query("UPDATE resolver_transaction_attempts SET status = 'rejected', updated_at = ?, preparation_identity = NULL WHERE chain_id = ? AND resolver_address = ? AND operation_id = ?")
+          .run(now, chainId, normalizeAddress(address), row.operationId);
+        this.database.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'rejected',?)")
+          .run(chainId, normalizeAddress(address), row.operationId, row.nonce, now);
+      }
+    }).immediate();
+  }
+
+  private assertNoReservedAttempt(chainId: number, address: Hex, operationId: string, nonce: number): void {
+    const owner = this.database.query(
+      "SELECT operation_id FROM resolver_transaction_attempts WHERE chain_id = ? AND resolver_address = ? AND operation_id != ? AND (nonce >= ? OR signed_envelope = 1) AND status IN ('allocating','ambiguous','submitted') LIMIT 1"
+    ).get(chainId, normalizeAddress(address), operationId, nonce);
+    if (owner) throw new Error("durable resolver nonce reservation requires owner recovery before other writes");
+  }
+
   private loadSubmittedAttemptAtNonce(
     chainId: number,
     address: `0x${string}`,
     nonce: number
   ): StoredAttempt | null {
     return this.database.query(`
-      SELECT operation_id AS operationId, nonce, transaction_hash AS transactionHash, status,
+      SELECT operation_id AS operationId, signed_envelope AS signedEnvelope, nonce, transaction_hash AS transactionHash, status,
         updated_at AS updatedAt
       FROM resolver_transaction_attempts
       WHERE chain_id = ? AND resolver_address = ? AND nonce = ? AND status = 'submitted'
@@ -583,7 +670,9 @@ export class ResolverTransactionCoordinator {
     operationId: string,
     nonce: number,
     transactionHash: Hex | null,
-    status: StoredAttempt["status"]
+    status: StoredAttempt["status"],
+    signedEnvelope = false,
+    preparationIdentity: string | null = null
   ): void {
     const normalizedAddress = normalizeAddress(address);
     const now = new Date(this.now()).toISOString();
@@ -591,14 +680,16 @@ export class ResolverTransactionCoordinator {
     try {
       this.database.query(`
         INSERT INTO resolver_transaction_attempts (
-          chain_id, resolver_address, operation_id, nonce, transaction_hash, status, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          chain_id, resolver_address, operation_id, nonce, transaction_hash, status, updated_at, signed_envelope, preparation_identity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(chain_id, resolver_address, operation_id) DO UPDATE SET
           nonce = excluded.nonce,
           transaction_hash = excluded.transaction_hash,
           status = excluded.status,
-          updated_at = excluded.updated_at
-      `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now);
+          updated_at = excluded.updated_at,
+          signed_envelope = MAX(resolver_transaction_attempts.signed_envelope, excluded.signed_envelope),
+          preparation_identity = excluded.preparation_identity
+      `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now, signedEnvelope ? 1 : 0, preparationIdentity);
       this.database.query(`
         INSERT INTO resolver_transaction_audit (
           chain_id, resolver_address, operation_id, nonce, transaction_hash, status, created_at

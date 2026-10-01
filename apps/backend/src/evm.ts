@@ -2369,7 +2369,9 @@ export class VeydriftGameReader implements ChainReader {
       const totalRounds = Number(decodeUintWord(wordAt(words, 1)));
       const staged = stagedResults[resultIndex] ?? "0x";
       const phase = staged.length >= 194 ? Number(decodeUintWord(wordAt(splitWords(staged), 0))) : 0;
-      next[index] = phase !== 13 && (roundsCompleted > 0 || (phase > 0 && phase < 13))
+      // Phase 13 is terminal; 14/15 prepare protection before the first combat round.
+      const stagedInProgress = (phase > 0 && phase < 13) || phase === 14 || phase === 15;
+      next[index] = phase !== 13 && (roundsCompleted > 0 || stagedInProgress)
         ? { ...mission, combatResolutionProgress: { roundsCompleted, totalRounds } }
         : mission;
     });

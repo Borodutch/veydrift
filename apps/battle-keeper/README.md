@@ -147,8 +147,63 @@ Both the estimate and initial simulation are bounded by this ceiling; the exact
 chosen gas/fee/nonce envelope is simulated again before signing. Return estimates
 retain buffered gas, capped at the same ceiling and re-simulated. This ceiling is
 an envelope bound, not proof that any particular contract stage makes progress.
-The contract must either commit progress or revert; the current settlement ABI
-alone cannot distinguish a successful no-op from a successful chunk.
+After exact-envelope preflight, the keeper signs locally and persists the raw transaction,
+its deterministic hash/nonce, and the progress checkpoint in SQLite **before broadcasting**.
+Restart first reconciles the canonical receipt or rebroadcasts identical signed bytes;
+unknown sends never allocate a second nonce. A crash before signed persistence can safely
+retry preparation. Fee/funds/pre-sign rejection does not consume a progress checkpoint.
+Other jobs cannot reuse a nonce owned by an unresolved durable envelope.
+
+Only a canonical paid receipt (success **or revert**) consumes the checkpoint. An unchanged successful
+receipt therefore suppresses further paid attempts, including across restarts. Ticks still
+probe canonical state. Version/progress reads share an EIP-1898 canonical block hash;
+malformed block quantities/hashes/bytecode and unknown reads fail closed. Within each
+implementation version, **all** progress dimensions must be nondecreasing and at least
+one must advance. Prior implementation high-water marks are retained across upgrades,
+so oscillating versions cannot repeatedly authorize the same checkpoint. A genuinely
+advancing chunk receives the next tick without a delay or participant cap.
+
+The staged ABI is (phase, round, workDone), with legacy completed-round fallback only
+on an explicit missing-selector revert. Missile preparation also observes pinned packed cursors
+and silent compaction array lengths. Every Outbound target's ordering namespace is observed,
+including Transport, Deploy and Harvest: bounded ordering scans are not exclusive to combat.
+
+**Source-bound capability / rollout:** configure VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS in both
+keeper and backend as comma-separated implementation-address:runtime-keccak256 pairs (both 0x hex).
+The release owner must derive each pair from the reviewed frozen Game deployment and verify its
+exact deployed runtime bytes (including immutable embedded-module addresses), not creation code,
+unlinked artifact bytes, selector success, nonzero storage, or an arbitrary nonempty getter.
+No wildcard is accepted. Empty/mismatched lists fail closed for guarded target-arrival signing.
+The implementation slot, its runtime bytes and target counters are all read at one canonical
+EIP-1898 block hash. Unknown old code is never inferred capable from zero or nonzero counters.
+
+Stage the compatible services first with settlement disabled, approve/upgrade Game normally,
+install its reviewed address/runtime pair, and enable settlement. A matching upgraded runtime
+with existing zero namespace counters gets one ordinary durable initial probe; the first scan
+advances cumulative work. A paid no-op/revert consumes zero, so restart cannot buy that probe
+again. No manual per-target initialization is needed. Generation and cumulative work must remain
+nondecreasing thereafter. Raw legacy cursor is diagnostic only and no arbitrary cursor decrease
+is accepted. Returns do not execute the arrival scan and omit its dimension.
+
+Backend recovery, acknowledgment, and allocation share the coordinator's durable account-wide
+lease with moon/randomness writers. Locally signed nonces stay reserved even when latest equals
+pending. Only owner receipt reconciliation or identical-byte rebroadcast releases signed ownership;
+other jobs cannot borrow/cancel it. Identity/hash/nonce CAS protects acknowledgments after waits.
+A10 marks preparation-only reservations in the shared SQLite store before invoking preparation.
+Owner reconciliation (also before terminal/index-empty handling) releases ONLY those new marked
+allocating/null-hash rows with no corresponding raw envelope. It uses no nonce-count or timeout
+inference. Raw-present, submitted, ambiguous, migrated and generic unknown states remain reserved
+for explicit owner reconciliation. Separate/lost journals do not prove a pre-dispatch allocation.
+
+All writers for a signer must share the persistent coordinator store and preserve both coordinator
+and mission-progress tables (production uses one SQLite file). Retire old writer binaries stop-first;
+old versions do not understand new reservation lifecycle markers. Backend and keeper retain the
+15M arrival envelope and zero-native-value checks. Generic nonce-gap recovery is fenced on every
+async boundary and final success/error; stale owners cannot overwrite successor attempts.
+
+Health due-mission diagnostics expose progressGuard and no-progress errors. Consumed
+guards remain after terminal reconciliation as reorg high-water marks. Durable envelopes
+are reconciled even if discovery events already removed their pending mission.
 
 A pending keeper nonce blocks new sends, including after a receipt timeout or
 process restart, rather than queuing another call behind an unknown outcome.

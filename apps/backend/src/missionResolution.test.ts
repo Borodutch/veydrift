@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PublicClient, WalletClient } from "viem";
+import { encodeFunctionResult, encodeAbiParameters, stringToHex, keccak256, parseTransaction, type Hex, type PublicClient, type WalletClient } from "viem";
+import { progressAbi } from "../../battle-keeper/src/progress";
 import type { BackendConfig } from "./config";
 import {
   MissionResolutionService,
@@ -737,6 +741,7 @@ describe("ViemMissionResolutionChainClient", () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     let pendingNonce = 7;
     let canonicalStatus = "Outbound";
+    let workDone = 0n;
     const nonces: number[] = [];
     const reader = {
       async listResolvableFleetMissions() { return []; },
@@ -760,36 +765,77 @@ describe("ViemMissionResolutionChainClient", () => {
         };
       }
     };
+    let mined: Hex | undefined;
+    let preparationFailure = true, rejectRaw = true, reverted = false;
+    const rawAttempts: Hex[] = [];
+    const blockHash = "0x" + "a".repeat(64);
+    const arrivalSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"bytes32"}], [2n,keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))]));
+    const queueSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}], [77n,73n]));
     const publicClient = {
+      async prepareTransactionRequest(input: { nonce: number; data: Hex; to: Hex; gas?: bigint }) {
+        if (preparationFailure) throw new Error("insufficient funds for gas * price + value");
+        return { ...input, gas: input.gas ?? 21000n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, type: "eip1559" };
+      },
+      async request({ method, params }: { method: string; params: unknown[] }) {
+        if (method === "eth_getBlockByNumber") return { number: "0x64", hash: blockHash };
+        if (method === "eth_getStorageAt") return "0x" + (params[1] === queueSlot ? workDone : params[1] === arrivalSlot ? 1n : 0n).toString(16).padStart(64,"0");
+        if (method === "eth_getCode") return "0x6000";
+        if (method === "eth_call") return encodeFunctionResult({ abi: progressAbi,
+          functionName: "stagedBattleProgress", result: [0, 0, 0n] });
+        if (method === "eth_sendRawTransaction") {
+          const raw = params[0] as Hex;
+          rawAttempts.push(raw);
+          if (rejectRaw) throw new Error("insufficient funds at raw broadcast");
+          const tx = parseTransaction(raw);
+          expect(tx.gas).toBe(15_000_000n);
+          nonces.push(tx.nonce!); pendingNonce = tx.nonce! + 1;
+          mined = keccak256(raw); return mined;
+        }
+        if (method === "eth_getTransactionReceipt") return mined === params[0]
+          ? { status: reverted ? "0x0" : "0x1", transactionHash: mined, blockNumber: "0x64", blockHash } : null;
+        throw new Error(method);
+      },
       async getTransactionCount() { return pendingNonce; },
-      async getStorageAt() { return `0x${"0".repeat(64)}`; },
+      async getStorageAt() { return "0x" + "0".repeat(64); },
       async getTransactionReceipt() { return { status: "success" }; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
-    const walletClient = {
-      async writeContract(input: { nonce: number }) {
-        nonces.push(input.nonce);
-        pendingNonce = input.nonce + 1;
-        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
-      }
-    } as unknown as WalletClient;
-    const client = new ViemMissionResolutionChainClient(
-      reader,
-      config.gameContractAddress!,
-      account,
-      publicClient,
-      walletClient,
-      { id: 8453 } as never,
-      config.rpcUrl,
-      new ResolverTransactionCoordinator(":memory:")
+    const walletClient = {} as WalletClient;
+    const dir = mkdtempSync(join(tmpdir(), "backend-progress-"));
+    const makeClient = () => new ViemMissionResolutionChainClient(
+      reader, config.gameContractAddress!, account, publicClient, walletClient,
+      { id: 8453 } as never, config.rpcUrl,
+      new ResolverTransactionCoordinator(":memory:"), undefined, undefined, join(dir, "intents.sqlite"),
+      [`${config.gameContractAddress!}:${keccak256("0x6000")}`]
     );
+    let client = makeClient();
 
-    await client.resolveFleetMission("77");
-    await client.resolveFleetMission("77");
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("insufficient funds");
+    expect(nonces).toEqual([]);
+    client = makeClient(); preparationFailure = false;
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("insufficient funds at raw broadcast");
+    expect(nonces).toEqual([]);
+    client = makeClient(); rejectRaw = false;
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
+    expect(rawAttempts[0]).toBe(rawAttempts[1]);
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
+    expect(nonces).toEqual([7]); // status-1 no-op never buys the same checkpoint twice
+    client = makeClient(); // even loss of coordinator history cannot bypass the durable signing intent
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
+    expect(nonces).toEqual([7]);
+    workDone++;
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
+    workDone++; reverted = true;
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("reverted");
+    expect(nonces).toEqual([7, 8, 9]);
+    client = makeClient();
+    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
+    expect(nonces).toEqual([7, 8, 9]); // paid status0 cannot reopen unchanged checkpoint
     canonicalStatus = "Resolved";
     await client.resolveFleetMission("77");
 
-    expect(nonces).toEqual([7, 8]);
+    expect(nonces).toEqual([7, 8, 9]);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("serializes broadcasts and confirmations while assigning pending nonces", async () => {
@@ -837,7 +883,7 @@ describe("ViemMissionResolutionChainClient", () => {
     ]);
 
     expect(broadcasts).toEqual([
-      { functionName: "resolveFleetMission", gas: 16_777_216n, nonce: 7 },
+      { functionName: "resolveFleetMission", gas: 15_000_000n, nonce: 7 },
       { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
@@ -892,9 +938,9 @@ describe("ViemMissionResolutionChainClient", () => {
     await expect(client.resolveFleetMission("45237")).resolves.toBe(replacementHash);
 
     expect(writes).toHaveLength(2);
-    expect(writes[0]).toMatchObject({ gas: 16_777_216n, nonce: 7 });
+    expect(writes[0]).toMatchObject({ gas: 15_000_000n, nonce: 7 });
     expect(writes[1]).toMatchObject({
-      gas: 16_777_216n,
+      gas: 15_000_000n,
       maxFeePerGas: 100n,
       maxPriorityFeePerGas: 12n,
       nonce: 7
@@ -938,7 +984,7 @@ describe("ViemMissionResolutionChainClient", () => {
       await client.resolveFleetMission("23007");
       await client.completeFleetMissionReturn("23008");
 
-      expect(transactions[0]?.gas).toBe("0x1000000");
+      expect(transactions[0]?.gas).toBe("0xe4e1c0");
       expect(transactions[0]?.nonce).toBe("0x7");
       expect(transactions[1]).not.toHaveProperty("gas");
       expect(transactions[1]?.nonce).toBe("0x8");

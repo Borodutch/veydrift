@@ -5,7 +5,9 @@ import {
   MissionType,
   missionTypeNames
 } from "./events";
+import { MinedRevertError } from "./transaction";
 import type { KeeperJournal } from "./journal";
+import { progressAdvanced, guardAllows, consumeProgress, type MissionProgress, type ProgressGuard } from "./progress";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
 export type KeeperLogger = {
@@ -54,6 +56,7 @@ export type PendingMissionDiagnostic = {
   retryCount: number;
   lastError: string | null;
   lastErrorAt: string | null;
+  progressGuard: boolean;
 };
 
 export type MissionStatusSnapshot = {
@@ -119,6 +122,7 @@ export class BattleKeeper {
   private readonly pending = new Map<string, PendingMission>();
   private readonly journal: KeeperJournal | undefined;
   private readonly inFlight = new Set<string>();
+  private readonly progressGuards = new Map<string, ProgressGuard>();
   /** Missions that are fully done (return resolved, or arrival resolved with no return leg). */
   private readonly terminal = new Set<string>();
   private readonly terminalReconcileQueue: string[] = [];
@@ -150,6 +154,10 @@ export class BattleKeeper {
     options: BattleKeeperOptions = {}
   ) {
     this.journal = options.journal;
+    if (this.journal) this.resolver.bindAttemptStore?.(this.journal);
+    for (const guard of this.journal?.guards() ?? []) {
+      this.progressGuards.set(this.retryKey(guard.missionId, guard.leg), guard);
+    }
     for (const mission of this.journal?.load() ?? []) {
       this.pending.set(mission.missionId, mission);
       this.knownMissionTypes.set(mission.missionId, mission.missionType);
@@ -432,6 +440,15 @@ export class BattleKeeper {
     this.journal?.assertHealthy();
     this.ticking = true;
     try {
+      // WS/sweep may have removed a job after observing another resolver's terminal event.
+      // The durable signed envelope still owns its nonce and must be reconciled before new work.
+      for (const key of this.journal?.attemptKeys() ?? []) {
+        const [id, leg] = key.split(":");
+        if (!id || (leg !== "arrival" && leg !== "return")) throw new Error("invalid signed job identity");
+        const current = this.pending.get(id);
+        this.setPending(id, { missionId: id, leg, dueAt: 0,
+          returnAt: current?.returnAt ?? 0, missionType: current?.missionType ?? this.knownMissionTypes.get(id) ?? -1 });
+      }
       const due = this.dueMissions();
       if (due.length === 0) {
         return;
@@ -470,7 +487,8 @@ export class BattleKeeper {
     }
     this.inFlight.add(missionId);
     try {
-      if (this.journal) {
+      const recovering = this.resolver.hasSignedAttempt?.(missionId, leg) ?? false;
+      if (!recovering && (this.journal || this.resolver.missionProgress)) {
         // Restart/backfill may restore a stale leg or replay an old launch before a later log.
         // Reconcile before signing, not just after a potentially paid duplicate transaction.
         if (!this.resolver.missionStatus) throw new Error("durable keeper requires canonical status reader");
@@ -479,22 +497,59 @@ export class BattleKeeper {
         this.reconcileMissionStatus(canonical);
         const confirmed = this.pending.get(missionId);
         if (!confirmed || confirmed.leg !== leg || confirmed.dueAt > this.now()) return;
-        this.journal.assertHealthy();
+        this.journal?.assertHealthy();
         this.inFlight.add(missionId);
       }
-      const hash = await this.resolver.resolveMission(missionId, leg);
+      const progressKey = this.retryKey(missionId, leg);
+      let before = this.resolver.pendingProgress?.(missionId, leg);
+      const checkProgress = async (): Promise<MissionProgress | void> => {
+        if (!this.resolver.missionProgress) return;
+        before = await this.resolver.missionProgress(missionId);
+        if (!guardAllows(this.progressGuards.get(progressKey), before)) {
+          throw new Error(before.arrivalCapability === false || (before.arrivalOrderCursor !== undefined && before.arrivalGeneration === undefined)
+            ? "arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade"
+            : "no canonical mission progress since previous paid receipt; paid retries suppressed until state/version advances");
+        }
+        return before;
+      };
+      if (!recovering && this.resolver.missionProgress) await checkProgress();
+      const consumeReceipt = () => {
+        before = this.resolver.pendingProgress?.(missionId, leg) ?? before;
+        if (before) {
+          const guard = consumeProgress(this.progressGuards.get(progressKey), before, missionId, leg);
+          this.journal?.putGuard(guard);
+          this.progressGuards.set(progressKey, guard);
+        }
+        this.resolver.acknowledgeReceipt?.(missionId, leg);
+      };
+      let hash: string;
+      try { hash = await this.resolver.resolveMission(missionId, leg, checkProgress); }
+      catch (error) {
+        // Status0 still spent gas. Consume before clearing its envelope, just like a no-op;
+        // unknown/pre-broadcast rejection is deliberately NOT consumed.
+        if (error instanceof MinedRevertError) consumeReceipt();
+        throw error;
+      }
+      // Receipt success consumes the checkpoint, never intent/signing alone. Persist consumption
+      // BEFORE acknowledging the raw envelope. A crash between these writes only replays its hash.
+      consumeReceipt();
       // A mined chunk is not a resolved leg. Combat stays Outbound until every stage settles.
       const boundedArrival = leg === "arrival" && (
         mission.missionType === MissionType.Attack
         || mission.missionType === MissionType.AcsAttack
         || mission.missionType === MissionType.MissileAttack
       );
-      const canonicalReceipt = !!this.journal || boundedArrival;
+      const canonicalReceipt = !!this.journal || !!this.resolver.missionProgress || boundedArrival;
       const status = canonicalReceipt ? await this.resolver.missionStatus?.(missionId) : undefined;
       if (canonicalReceipt && (!status
         || (leg === "arrival" && status.status === FleetMissionStatus.Outbound)
         || (leg === "return" && (status.status === FleetMissionStatus.Returning
           || status.status === FleetMissionStatus.Recalled)))) {
+        const guard = this.progressGuards.get(progressKey);
+        if (this.resolver.missionProgress && (!guard
+          || !progressAdvanced(guard.before, await this.resolver.missionProgress(missionId)))) {
+          throw new Error("successful receipt made no canonical mission progress; paid retries suppressed until state/version advances");
+        }
         this.clearRetryDiagnostics(missionId, leg);
         this.lastError = null;
         this.lastErrorMissionId = null;
@@ -597,7 +652,8 @@ export class BattleKeeper {
           dueAgeSeconds: Math.max(0, nowSeconds - mission.dueAt),
           retryCount: retry?.retryCount ?? 0,
           lastError: retry?.lastError ?? null,
-          lastErrorAt: retry?.lastErrorAt ?? null
+          lastErrorAt: retry?.lastErrorAt ?? null,
+          progressGuard: this.progressGuards.has(this.retryKey(mission.missionId, mission.leg))
         });
       }
     }

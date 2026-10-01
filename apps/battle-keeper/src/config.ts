@@ -3,7 +3,10 @@
  * reads everything from `process.env` (documented in README.md) and never embeds secrets.
  */
 
+import { parseArrivalProgressVersions } from "./progress";
+
 export type KeeperConfig = {
+  arrivalProgressVersions?: readonly string[];
   rpcUrl: string;
   rpcFallbackUrls: string[];
   wsRpcUrl: string;
@@ -67,6 +70,9 @@ function parsePositiveInt(
 
 export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResult {
   const problems: ConfigProblem[] = [];
+  let arrivalProgressVersions: string[] = [];
+  try { arrivalProgressVersions = parseArrivalProgressVersions(env.VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS); }
+  catch (error) { problems.push({ field: "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS", message: String(error) }); }
 
   const rpcUrl = env.RPC_URL?.trim() ?? "";
   if (!rpcUrl) {
@@ -134,6 +140,7 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
 
   return {
     config: {
+      arrivalProgressVersions,
       rpcUrl,
       rpcFallbackUrls,
       wsRpcUrl,
