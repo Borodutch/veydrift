@@ -95,6 +95,7 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
+import { PactInterestStore, pactInterestStorePath, validatePactInterest } from "./pactInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -365,6 +366,7 @@ export type ServerDependencies = {
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
+  pactInterestStore?: PactInterestStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
   walletMessageVerifier?: WalletMessageVerifier;
@@ -641,6 +643,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
+  let pactInterestStore = dependencies.pactInterestStore;
+  const pactInterestRateLimits = new Map<string, { count: number; resetAt: number }>();
   const directWalletMessageVerifier = dependencies.walletMessageVerifier ?? (
     usesProductionDependencies && loaded.problems.length === 0
       ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
@@ -766,6 +770,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/cca") {
       if (!ccaRpc) return unavailableResponse(loaded.problems);
       return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
+    }
+
+    if (request.method === "POST" && url.pathname === "/pact/interest") {
+      const now = Date.now();
+      if (pactInterestRateLimits.size > 2_048) pactInterestRateLimits.clear();
+      const clientKey = requestClientKey(request) ?? "unknown";
+      const limit = pactInterestRateLimits.get(clientKey);
+      if (limit && limit.resetAt > now && ++limit.count > 10) {
+        return Response.json({ error: "rate_limited", message: "Too many submissions. Try again later." }, { headers: corsHeaders, status: 429 });
+      }
+      if (!limit || limit.resetAt <= now) pactInterestRateLimits.set(clientKey, { count: 1, resetAt: now + 600_000 });
+      try {
+        const interest = validatePactInterest(await readJsonBody(request));
+        if (typeof interest === "string") {
+          return Response.json({ error: "invalid_pact_interest", message: interest }, { headers: corsHeaders, status: 400 });
+        }
+        pactInterestStore ??= new PactInterestStore(pactInterestStorePath(loaded.config.indexDbPath));
+        pactInterestStore.save(interest);
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
