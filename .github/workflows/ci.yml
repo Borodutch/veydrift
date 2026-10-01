@@ -106,9 +106,12 @@ jobs:
           path: |
             packages/contracts/cache
             packages/contracts/out
-          key: foundry-${{ runner.os }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/foundry.toml') }}
+          # One cache per job: jobs compile different targets/settings (storage check forces
+          # optimizer-off builds), so a shared key let the first finisher save a near-empty cache
+          # and the build job recompiled all contracts (~15 min) on every run.
+          key: foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/script/**/*.sol', 'packages/contracts/foundry.toml') }}
           restore-keys: |
-            foundry-${{ runner.os }}-
+            foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-
 
       - name: Install dependencies
         if: steps.plan.outputs.packages == 'true'
