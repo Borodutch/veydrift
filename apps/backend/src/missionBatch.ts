@@ -1,9 +1,11 @@
 import { encodeFunctionData, parseAbi, type Hex } from "viem";
 
 export const missionBatchAbi = parseAbi([
-  "function resolveFleetMissionBatch((uint256 missionId,uint8 leg)[] items)"
+  "function resolveFleetMissionBatch((uint256 missionId,uint8 leg)[] items) returns (uint8[] outcomes,uint256 executionGasUsed)"
 ]);
-export type BatchLeg = { missionId: string; leg: "arrival" | "return"; dueAt: number };
+export type BatchLeg = { missionId: string; leg: "arrival" | "return"; dueAt: number; chronologyKind?: 0 | 1 | 2 };
+export type BatchExclusion = { item: BatchLeg; reason: string; terminal?: boolean };
+export type BatchLegOutcome = { item: BatchLeg; outcome: string; errorSelector: string | null; blockedDependency: string | null; complete: boolean };
 export type MissionBatchPolicy = {
   enabled: boolean;
   maxItems: number;
@@ -35,10 +37,14 @@ export function batchCalldata(items: readonly BatchLeg[]): Hex {
 }
 export function compareBatchLegs(a: BatchLeg, b: BatchLeg): number {
   if (a.dueAt !== b.dueAt) return a.dueAt - b.dueAt;
-  if (a.leg !== b.leg) return a.leg === "arrival" ? -1 : 1;
+  const ak = a.chronologyKind ?? (a.leg === "arrival" ? 0 : 1), bk = b.chronologyKind ?? (b.leg === "arrival" ? 0 : 1);
+  if (ak !== bk) return ak - bk;
   return BigInt(a.missionId) < BigInt(b.missionId) ? -1 : BigInt(a.missionId) > BigInt(b.missionId) ? 1 : 0;
 }
 export class BatchCapacityError extends Error {}
+export class BatchUnproductiveError extends BatchCapacityError {
+  constructor(readonly rejected: BatchExclusion[]) { super(rejected.map((x) => `${x.item.missionId}:${x.reason}`).join(", ")); }
+}
 export type BatchQuote = {
   gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint;
   l1Fee: bigint; operatorFee: bigint; totalWei: bigint; usdMicros: bigint;
@@ -72,12 +78,16 @@ export function totalBatchExposure(input: {
  * never rearrange chosen legs. On-chain 905 guards keep its dependent later legs blocked. */
 export async function packMissionBatch<T>(items: readonly BatchLeg[], maxItems: number,
   estimate: (items: BatchLeg[]) => Promise<T>, blocked: (item: BatchLeg, reason: string) => void
-): Promise<{ items: BatchLeg[]; quote?: T; estimates: number }> {
+): Promise<{ items: BatchLeg[]; quote?: T; estimates: number; exclusions: BatchExclusion[] }> {
+  if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 32) throw new Error("batch maxItems must be 1..32");
+  const deadline = Date.now() + 20_000;
   const selected: BatchLeg[] = [];
+  const exclusions: BatchExclusion[] = [];
+  const exclude = (item: BatchLeg, reason: string) => { exclusions.push({ item, reason }); blocked(item, reason); };
   let quote: T | undefined;
   let estimates = 0;
   for (const item of [...items].sort(compareBatchLegs)) {
-    if (selected.length >= maxItems) break;
+    if (selected.length >= maxItems || Date.now() >= deadline) break;
     if (selected.some((other) => other.missionId === item.missionId && other.leg === item.leg)) continue;
     try {
       estimates++;
@@ -90,10 +100,12 @@ export async function packMissionBatch<T>(items: readonly BatchLeg[], maxItems: 
         try { estimates++; await estimate([item]); }
         catch (singleError) {
           if (!(singleError instanceof BatchCapacityError)) throw singleError;
-          blocked(item, singleError.message);
+          exclude(item, singleError.message);
+          continue;
         }
-      } else blocked(item, error.message);
+        exclude(item, "batch-capacity-or-dependency: " + error.message);
+      } else exclude(item, error.message);
     }
   }
-  return { items: selected, ...(quote === undefined ? {} : { quote }), estimates };
+  return { items: selected, exclusions, ...(quote === undefined ? {} : { quote }), estimates };
 }

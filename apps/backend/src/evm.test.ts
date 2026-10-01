@@ -1782,6 +1782,25 @@ describe("moon chance report event decoding", () => {
 });
 
 describe("canonical fleet mission details", () => {
+  test("pins canonical hold deadline storage without replacing physical arrival", async () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        expect(method).toBe("eth_getStorageAt");
+        expect(params).toEqual([readerConfig.gameContractAddress,
+          keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [23_007n, 50n])), "0x64"]);
+        return dataWords([word(950n)]) as T;
+      },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        expect(requests.length).toBe(1);
+        expect(requests[0]!.params[1]).toBe("0x64");
+        return [fleetMissionResult({ status: 1n, missionType: 9n, owner }) as T];
+      }
+    });
+    const mission = await reader.getCanonicalFleetMission(23_007n, 100n);
+    expect(mission?.defenseHoldUntil).toBe("950");
+    expect(mission?.arrivalAt).not.toBe("950");
+  });
   test("reads canonical multi-transaction combat progress for an outbound attack", async () => {
     const owner = "0x0000000000000000000000000000000000000abc" as Address;
     const selectors: string[] = [];

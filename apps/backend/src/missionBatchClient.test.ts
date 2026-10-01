@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { keccak256, parseTransaction, type PublicClient } from "viem";
+import { encodeFunctionResult, keccak256, parseTransaction, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { defaultMissionBatchPolicy } from "./missionBatch";
+import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
+import { measuredBatchGas } from "./missionBatchFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 // Synthetic fixture-only key, never loaded from runtime configuration.
@@ -22,12 +23,12 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
     estimateGas: async () => 100_000n,
     estimateMaxPriorityFeePerGas: async () => 10n,
     readContract: async ({ functionName }: { functionName: string }) => functionName === "decimals" ? 8
-      : functionName === "latestRoundData" ? [1n, 3000_00000000n, BigInt(now), BigInt(now), 1n] : 100n,
-    call: async () => ({}),
+      : functionName === "latestRoundData" ? [1n, 3000_00000000n, BigInt(now), BigInt(now), 1n] : functionName === "fleetMissionEligibility" ? [false, 9n, true] : 100n,
+    call: async () => ({ data: encodeFunctionResult({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch", result: [[0], 100_000n] }) }),
     sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: `0x${string}` }) => {
       broadcasts++;
       expect(parseTransaction(serializedTransaction).nonce).toBe(4);
-      expect(parseTransaction(serializedTransaction).gas).toBe(120_000n);
+      expect(parseTransaction(serializedTransaction).gas).toBe((measuredBatchGas(100_000n, parseTransaction(serializedTransaction).data!, 1) * 120n + 99n) / 100n);
       if (options.ambiguous) throw new Error("connection lost after send");
       mined = true; nonce++;
       return keccak256(serializedTransaction);
@@ -66,7 +67,7 @@ test("ambiguous batch and missing receipt block retries; empty queue can recover
   await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("receipt unknown");
   expect(f.broadcasts()).toBe(1);
   f.mine();
-  expect(await f.client.resolveMissionBatch([])).toEqual({ hash: null, items: [] });
+  expect(await f.client.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
   expect(f.broadcasts()).toBe(1);
 });
 test("reverted receipt consumes nonce without inventing per-leg success; noncanonical receipt stays blocked", async () => {

@@ -42,7 +42,7 @@ describe("ResolverTransactionCoordinator", () => {
       await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 7, throughNonce: 7, broadcast: true,
         getTransactionCount: async () => 7, submitCancellation: async () => { sends++; return hash(7); }, confirm: async () => {}
       })).rejects.toThrow("cannot bypass");
-      await restarted.reconcilePrepared(chainId, address, async (h) => { expect(h).toBe(hash(7)); });
+      await restarted.reconcilePrepared(chainId, address, async (h) => { expect(h).toBe(hash(7)); return { finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }; });
       await restarted.submit({ chainId, address, operationId: "randomness:5", getTransactionCount: async () => 8,
         submit: async (nonce) => { sends++; expect(nonce).toBe(8); return hash(8); }, confirm: async () => {} });
       expect(sends).toBe(2);
@@ -53,7 +53,8 @@ describe("ResolverTransactionCoordinator", () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     let sent = 0;
     const request = { chainId, address, operationId: "batch", getTransactionCount: async () => 0,
-      submit: async () => { throw new Error("blind"); }, confirm: async () => {} };
+      submit: async () => { throw new Error("blind"); }, confirm: async () => {},
+      reconcilePrepared: async () => ({ finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }) };
     await expect(coordinator.submit({ ...request, prepare: async () => { throw new Error("fee cap changed"); } })).rejects.toThrow("fee cap");
     await coordinator.submit({ ...request, prepare: async () => ({ hash: hash(0), membership: "[]", broadcast: async () => { sent++; return hash(0); } }) });
     await coordinator.reconcilePrepared(chainId, address, async () => { throw new Error("already confirmed"); });

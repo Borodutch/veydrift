@@ -5,6 +5,8 @@ import { dirname } from "node:path";
 
 import type { Hex } from "viem";
 
+export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
+
 export type ResolverTransactionRequest = {
   chainId: number;
   address: `0x${string}`;
@@ -14,7 +16,7 @@ export type ResolverTransactionRequest = {
   /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
   prepare?: (nonce: number) => Promise<{ hash: Hex; membership: string; broadcast: () => Promise<Hex> }>;
   /** Reconcile any durable prepared intent under the shared signer lease, including other operations. */
-  reconcilePrepared?: (hash: Hex) => Promise<void>;
+  reconcilePrepared?: (hash: Hex, membership: string) => Promise<PreparedReceipt | void>;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
   isConfirmedCanonical?: (hash: Hex) => Promise<boolean>;
   /** A canonical receipt can be one bounded chunk of a larger logical operation. */
@@ -82,6 +84,7 @@ export class ResolverTransactionCoordinator {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly localTails = new Map<string, Promise<void>>();
+  private readonly preparedReconcilers = new Map<string, NonNullable<ResolverTransactionRequest["reconcilePrepared"]>>();
 
   constructor(
     private readonly databasePath: string,
@@ -138,6 +141,33 @@ export class ResolverTransactionCoordinator {
         created_at TEXT NOT NULL
       );
     `);
+    // Migrate the old single-slot intent, including reconciled but NOT finalized rows.
+    this.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const columns = this.database.query("PRAGMA table_info(resolver_prepared_intents)").all() as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "receipt_block_hash")) {
+        this.database.exec(`ALTER TABLE resolver_prepared_intents RENAME TO resolver_prepared_intents_v1;
+        CREATE TABLE resolver_prepared_intents (
+          chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
+          nonce INTEGER NOT NULL, transaction_hash TEXT NOT NULL, membership TEXT NOT NULL,
+          status TEXT NOT NULL, receipt_block_number TEXT, receipt_block_hash TEXT, outcomes TEXT,
+          PRIMARY KEY (chain_id, resolver_address, transaction_hash)
+        );
+        INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status)
+          SELECT chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,
+            CASE WHEN status = 'reconciled' THEN 'confirmed' ELSE status END FROM resolver_prepared_intents_v1;
+        DROP TABLE resolver_prepared_intents_v1;`);
+      }
+      this.database.exec("COMMIT;");
+    } catch (error) {
+      this.database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  /** The mission client registers the canonical batch reader for sibling randomness/moon writers.
+   * A standalone writer without it fails closed while any unfinalized batch remains. */
+  setPreparedReconciler(chainId: number, address: Hex, reconcile: NonNullable<ResolverTransactionRequest["reconcilePrepared"]>): void {
+    this.preparedReconcilers.set(resolverKey(chainId, address), reconcile);
   }
 
   submit(request: ResolverTransactionRequest): Promise<Hex> {
@@ -147,19 +177,30 @@ export class ResolverTransactionCoordinator {
     ));
   }
 
-  reconcilePrepared(chainId: number, address: Hex, confirm: (hash: Hex) => Promise<void>): Promise<void> {
-    return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address, async (assertLease) => {
-      const intent = this.database.query("SELECT operation_id AS operationId, nonce, transaction_hash AS hash FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND status = 'pending'")
-        .get(chainId, normalizeAddress(address)) as { operationId: string; nonce: number; hash: Hex } | null;
-      if (!intent) return;
-      await confirm(intent.hash);
-      assertLease();
-      this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
-      this.database.query("UPDATE resolver_prepared_intents SET status = 'reconciled' WHERE chain_id = ? AND resolver_address = ?")
-        .run(chainId, normalizeAddress(address));
-    }));
+  reconcilePrepared(chainId: number, address: Hex,
+    confirm: (hash: Hex, membership: string) => Promise<PreparedReceipt | void>): Promise<void> {
+    return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
+      (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)));
   }
 
+  private async reconcileIntents(chainId: number, address: Hex,
+    confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void): Promise<void> {
+    confirm ??= this.preparedReconcilers.get(resolverKey(chainId, address));
+    const intents = this.database.query("SELECT operation_id AS operationId, nonce, transaction_hash AS hash, membership FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' ORDER BY nonce")
+      .all(chainId, normalizeAddress(address)) as Array<{ operationId: string; nonce: number; hash: Hex; membership: string }>;
+    for (const intent of intents) {
+      if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
+        "durable batch intent cannot bypass canonical receipt/finality reconciliation");
+      // Missing/orphaned receipt preserves the immutable intent and blocks EVERY writer.
+      const receipt = await confirm(intent.hash, intent.membership);
+      assertLease();
+      if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
+      this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
+        .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes,
+          chainId, normalizeAddress(address), intent.hash);
+      this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
+    }
+  }
   /**
    * Fill a precisely bounded, currently empty nonce range with zero-value self-transactions supplied
    * by the caller. The chain must be contiguous at every step; any occupied/earlier nonce aborts the
@@ -169,10 +210,11 @@ export class ResolverTransactionCoordinator {
     validateNonceRange(request.fromNonce, request.throughNonce);
     const key = resolverKey(request.chainId, request.address);
     return this.enqueueLocal(key, () => this.withLease(request.chainId, request.address, async (assertLease) => {
-      const batchIntent = this.database.query("SELECT nonce FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND status = 'pending'")
-        .get(request.chainId, normalizeAddress(request.address)) as { nonce: number } | null;
-      if (batchIntent) throw new ResolverSubmissionAmbiguousError(request.chainId, request.address, batchIntent.nonce,
-        "nonce-gap recovery cannot bypass a durable batch intent; reconcile its canonical receipt first");
+      await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
+      const retained = this.database.query("SELECT nonce FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND nonce >= ? LIMIT 1")
+        .get(request.chainId, normalizeAddress(request.address), request.fromNonce) as { nonce: number } | null;
+      if (retained) throw new ResolverSubmissionAmbiguousError(request.chainId, request.address, request.fromNonce,
+        "nonce-gap recovery overlaps retained batch history; explicit recovery required");
       const plannedNonces = range(request.fromNonce, request.throughNonce);
       const submitted: Array<{ nonce: number; hash: Hex }> = [];
       let latest = await request.getTransactionCount("latest");
@@ -222,22 +264,7 @@ export class ResolverTransactionCoordinator {
     request: ResolverTransactionRequest,
     assertLease: () => void
   ): Promise<Hex> {
-    const intent = this.database.query(
-      "SELECT operation_id AS operationId, nonce, transaction_hash AS hash FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND status = 'pending'"
-    ).get(request.chainId, normalizeAddress(request.address)) as { operationId: string; nonce: number; hash: Hex } | null;
-    if (intent) {
-      // A dropped/unknown receipt is NOT permission to replay or cancel. Even randomness must
-      // stop here until the batch owner proves the canonical receipt of this exact local hash.
-      if (!request.reconcilePrepared) throw new ResolverSubmissionAmbiguousError(
-        request.chainId, request.address, intent.nonce, "durable batch intent awaits canonical receipt reconciliation"
-      );
-      await request.reconcilePrepared(intent.hash);
-      assertLease();
-      this.database.query("UPDATE resolver_prepared_intents SET status = 'reconciled' WHERE chain_id = ? AND resolver_address = ?")
-        .run(request.chainId, normalizeAddress(request.address));
-      this.recordAttempt(request.chainId, request.address, intent.operationId, intent.nonce, intent.hash, "confirmed");
-      if (intent.operationId === request.operationId) return intent.hash;
-    }
+    await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     if (previous?.status === "confirmed" && previous.transactionHash) {
       const isCanonical = !request.isConfirmedCanonical
@@ -450,6 +477,10 @@ export class ResolverTransactionCoordinator {
         throw new ResolverNonceStalledError(request.chainId, request.address, latest);
       }
       const nonce = pending;
+      const retained = this.database.query("SELECT nonce FROM resolver_prepared_intents WHERE chain_id = ? AND resolver_address = ? AND nonce >= ? LIMIT 1")
+        .get(request.chainId, normalizeAddress(request.address), nonce) as { nonce: number } | null;
+      if (retained) throw new ResolverSubmissionAmbiguousError(request.chainId, request.address, nonce,
+        "nonce regression overlaps retained batch history; explicit recovery required");
       this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "allocating");
       assertLease();
       let hash: Hex;
@@ -458,7 +489,7 @@ export class ResolverTransactionCoordinator {
           const prepared = await request.prepare(nonce);
           assertLease();
           this.database.query(
-            "INSERT OR REPLACE INTO resolver_prepared_intents VALUES (?, ?, ?, ?, ?, ?, 'pending')"
+            "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
           ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
           this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
           assertLease();
@@ -487,8 +518,7 @@ export class ResolverTransactionCoordinator {
         throw error;
       }
       this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "confirmed");
-      if (request.prepare) this.database.query("UPDATE resolver_prepared_intents SET status = 'reconciled' WHERE chain_id = ? AND resolver_address = ?")
-        .run(request.chainId, normalizeAddress(request.address));
+      if (request.prepare) await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
       return hash;
     }
 
