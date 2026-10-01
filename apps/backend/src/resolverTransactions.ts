@@ -24,7 +24,12 @@ export type ResolverTransactionRequest = {
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number) => Promise<Hex>;
   /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
-  prepare?: (nonce: number) => Promise<{ hash: Hex; membership: string; broadcast: () => Promise<Hex> }>;
+  prepare?: (nonce: number) => Promise<{ hash: Hex; membership: string;
+    /** Read-only preflight after persistence; failure proves broadcast was never invoked. */
+    validateBeforeBroadcast?: () => Promise<void>;
+    /** Synchronous final guard, run after the last await and lease check. */
+    assertBeforeBroadcast?: () => void;
+    broadcast: () => Promise<Hex> }>;
   /** Reconcile any durable prepared intent under the shared signer lease, including other operations. */
   reconcilePrepared?: PreparedReconciler;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
@@ -69,7 +74,7 @@ export type ResolverTransactionCoordinatorOptions = {
 type StoredAttempt = {
   operationId?: string;
   nonce: number;
-  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled";
+  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled" | "prevented";
   transactionHash: Hex | null;
   updatedAt: string;
 };
@@ -268,6 +273,8 @@ export class ResolverTransactionCoordinator {
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
       for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) {
+        if (intent.status === "prevented") throw new Error(
+          "resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
         if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
           "durable batch intent cannot bypass canonical receipt/finality reconciliation");
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
@@ -601,7 +608,18 @@ export class ResolverTransactionCoordinator {
             "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
           ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
           this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
-          assertLease();
+          try {
+            await prepared.validateBeforeBroadcast?.();
+            assertLease();
+            prepared.assertBeforeBroadcast?.();
+          } catch (error) {
+            // No network submission was invoked. Retain hash/membership/nonce and block
+            // automatic reuse across restart; unlike an RPC failure this is NOT ambiguous.
+            this.database.query("UPDATE resolver_prepared_intents SET status = 'prevented' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
+              .run(request.chainId, normalizeAddress(request.address), prepared.hash);
+            this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "prevented");
+            throw error;
+          }
           hash = await prepared.broadcast();
           if (hash.toLowerCase() !== prepared.hash.toLowerCase()) throw new Error("broadcast hash differs from persisted local batch hash");
         } else hash = await request.submit(nonce);

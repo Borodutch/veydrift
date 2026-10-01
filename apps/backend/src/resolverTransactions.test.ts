@@ -49,6 +49,45 @@ describe("ResolverTransactionCoordinator", () => {
     });
   });
 
+  test("final synchronous guard and post-preflight lease loss retain prevented intent without any resend", async () => {
+    for (const mode of ["expiry", "lease"] as const) await withDatabase(async (databasePath) => {
+      const coordinator = new ResolverTransactionCoordinator(databasePath);
+      let prepared = 0, sent = 0, checked = 0;
+      const request = { chainId, address, operationId: "batch:guard", getTransactionCount: async () => 7,
+        submit: async () => { sent++; return hash(7); }, confirm: async () => {},
+        prepare: async () => {
+          prepared++;
+          return { hash: hash(7), membership: "[]",
+            validateBeforeBroadcast: async () => {
+              const db = new Database(databasePath);
+              expect(db.query("SELECT status FROM resolver_prepared_intents").get()).toEqual({ status: "pending" });
+              if (mode === "lease") db.query("UPDATE resolver_transaction_leases SET expires_at_ms = 0").run();
+              db.close();
+            },
+            assertBeforeBroadcast: () => { checked++; throw new Error("quote expired at final boundary"); },
+            broadcast: async () => { sent++; return hash(7); }
+          };
+        }
+      };
+      await expect(coordinator.submit(request)).rejects.toThrow(mode === "expiry" ? "quote expired" : "lease was lost");
+      expect(checked).toBe(mode === "expiry" ? 1 : 0);
+      const db = new Database(databasePath);
+      expect(db.query("SELECT nonce, transaction_hash AS hash, status FROM resolver_prepared_intents").get())
+        .toEqual({ nonce: 7, hash: hash(7), status: "prevented" });
+      expect(db.query("SELECT status FROM resolver_transaction_attempts").get()).toEqual({ status: "prevented" });
+      db.close();
+      const restarted = new ResolverTransactionCoordinator(databasePath);
+      await expect(restarted.submit(request)).rejects.toThrow("locally prevented");
+      await expect(restarted.submit({ ...request, operationId: "randomness:1" })).rejects.toThrow("locally prevented");
+      await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 7, throughNonce: 7,
+        broadcast: true, getTransactionCount: async () => 7, submitCancellation: async () => { sent++; return hash(7); },
+        confirm: async () => {}
+      })).rejects.toThrow("locally prevented");
+      expect(prepared).toBe(1);
+      expect(sent).toBe(0);
+    });
+  });
+
   test("preparation failure never sends and successful intent confirmation releases shared signer", async () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     let sent = 0;
