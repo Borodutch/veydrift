@@ -24,6 +24,8 @@ function fixture() {
   let missionTypeId = 3, status = "Outbound", scanWork = 0n, scanOnReceipt = false;
   let receiptGate: ReturnType<typeof deferred> | undefined, receiptStarted = deferred();
   let preparationGate: ReturnType<typeof deferred> | undefined, preparationStarted = deferred();
+  let simulationGate: ReturnType<typeof deferred> | undefined, simulationStarted = deferred(), simulationFailure = false;
+  let simulations = 0;
   const receipts = new Map<Hex, unknown>(), raws: Hex[] = [], writes: number[] = [];
   const arrivalSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"bytes32"}], [2n,keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))]));
   const reader = { async isFleetChronologyOrderingReady() { return true; }, async listResolvableFleetMissions() { return []; }, async listReturnableFleetMissions() { return []; },
@@ -42,7 +44,15 @@ function fixture() {
       if (method === "eth_getCode") return "0x6000";
       if (method === "eth_getStorageAt") return toHex(params[1] === arrivalSlot && namespaceActive ? 1n
         : params[1] === toHex(BigInt(arrivalSlot) + 1n, {size:32}) ? scanWork : 0n, { size: 32 });
-      if (method === "eth_call") return encodeFunctionResult({ abi: progressAbi, functionName: "stagedBattleProgress", result: [1,0,work] });
+      if (method === "eth_call") {
+        if ((params[0] as {nonce?:string}).nonce !== undefined) {
+          simulations++;
+          if (simulationGate) { const gate = simulationGate; simulationGate = undefined; simulationStarted.release(); await gate.promise; }
+          if (simulationFailure) throw new Error("insufficient funds at exact envelope preflight");
+          return "0x";
+        }
+        return encodeFunctionResult({ abi: progressAbi, functionName: "stagedBattleProgress", result: [1,0,work] });
+      }
       if (method === "eth_sendRawTransaction") {
         const raw = params[0] as Hex; raws.push(raw);
         if (rejected) throw new Error("insufficient funds at raw broadcast");
@@ -73,6 +83,8 @@ function fixture() {
     mine() { mine(raws[0]!); }, advance() { work++; }, fund() { rejected = false; },
     delayReceipt() { receiptGate = deferred(); receiptStarted = deferred(); return { gate: receiptGate, started: receiptStarted.promise }; },
     delayPreparation() { preparationGate = deferred(); preparationStarted = deferred(); return { gate: preparationGate, started: preparationStarted.promise }; },
+    delaySimulation() { simulationGate = deferred(); simulationStarted = deferred(); return { gate: simulationGate, started: simulationStarted.promise }; },
+    failSimulation() { simulationFailure = true; }, simulations() { return simulations; },
     close() { rmSync(dir, {recursive:true,force:true}); } };
 }
 const settle = (promise: Promise<string>) => promise.catch(error => String(error));
@@ -135,6 +147,38 @@ test("mission rejection/restart reserves nonce against real randomness and queue
   } finally { f.close(); }
 });
 
+
+for (const recovery of [false, true]) test(`lease loss during exact ${recovery ? "durable" : "unsigned"} preflight forbids signing/dispatch`, async () => {
+  const f = fixture();
+  try {
+    const client = f.client();
+    if (recovery) await expect(client.resolveFleetMission("1")).rejects.toThrow("insufficient funds");
+    const original = f.envelope();
+    const wait = f.delaySimulation();
+    const old = settle(f.client().resolveFleetMission("1")); await wait.started;
+    const d = f.db();
+    d.exec("UPDATE resolver_transaction_leases SET expires_at_ms = 0");
+    wait.gate.release(); expect(await old).toContain("lease was lost");
+    expect(f.envelope()).toEqual(original); expect(f.raws).toHaveLength(recovery ? 1 : 0);
+    d.close();
+  } finally { f.close(); }
+});
+
+test("failed exact durable preflight retains shared-account fencing until canonical receipt-only recovery", async () => {
+  const f = fixture();
+  try {
+    await expect(f.client().resolveFleetMission("1")).rejects.toThrow("insufficient funds");
+    const original = f.envelope(); f.failSimulation();
+    await expect(f.client().resolveFleetMission("1")).rejects.toThrow("exact envelope preflight");
+    expect(f.envelope()).toEqual(original);expect(f.raws).toHaveLength(1);
+    await expect(f.randomness().commitRandomnessBatch([toHex(1n,{size:32})])).rejects.toThrow("reservation");
+    await expect(moon(f.client())).rejects.toThrow("durable signed mission");
+    expect(f.writes).toEqual([]);
+    const simulations = f.simulations();f.mine();
+    await expect(f.client().resolveFleetMission("1")).rejects.toThrow("mission remains pending");
+    expect(f.simulations()).toBe(simulations);expect(f.envelope()).toBeNull();expect(f.raws).toHaveLength(1);
+  } finally { f.close(); }
+});
 
 test("lost-lease delayed old recovery cannot acknowledge the next chunk", async () => {
   const f = fixture();

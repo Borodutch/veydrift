@@ -4,10 +4,13 @@ import {
   defineChain,
   encodeFunctionData,
   http,
+  formatTransactionRequest,
+  parseTransaction,
   parseAbi,
   toHex,
   type Hex,
   type PublicClient,
+  type TransactionRequest,
   type WalletClient
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -859,15 +862,28 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return value !== undefined && BigInt(value) !== 0n;
   }
 
-  private async preflightMission(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<void> {
+  private async preflightMission(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string, envelope?: TransactionRequest, assertLease: () => void = () => {}): Promise<void> {
       if (functionName === "finalizeMoonChance") return;
+      assertLease();
       if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
       }
+      assertLease();
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
-      // Ordering support alone does not exclude a chronological/randomness revert. Simulate
-      // the exact funded entrypoint under the nonce lease before both submit and replacement.
-      // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
+      if (envelope) {
+        // viem.call drops transaction type (and some typed-envelope fields). Format directly so
+        // the RPC sees the same envelope as the signer, including access/authorization lists.
+        const request = formatTransactionRequest({
+          ...envelope, from: typeof this.sender === "string" ? this.sender : this.sender.address,
+          value: envelope.value ?? 0n
+        });
+        if (envelope.type && envelope.type !== "legacy") request.accessList ??= [];
+        await this.publicClient.request({ method: "eth_call", params: [request, "latest"] });
+        assertLease();
+        return;
+      }
+      // Early entrypoint check before allocation. The guarded path additionally simulates the
+      // prepared envelope before signing and the validated durable envelope before dispatch.
       await this.publicClient.call({
         account: typeof this.sender === "string" ? this.sender : this.sender.address,
         to: this.gameAddress,
@@ -875,6 +891,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         gas: fleetMissionResolutionGas,
         blockTag: "latest"
       });
+      assertLease();
   }
 
   private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
@@ -1022,8 +1039,16 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         // Recovery retains exact raw bytes, but must still respect current chronology before
         // a new dispatch. Canonical receipt-only recovery does not re-simulate or broadcast.
         if (method === "eth_sendRawTransaction") {
-          try { await this.preflightMission(functionName, missionId); }
-          catch (error) { throw new PreBroadcastError(error); }
+          try {
+            const attempt = this.loadSigned(missionId, functionName);
+            if (!attempt || params[0] !== attempt.raw) throw new Error("raw dispatch differs from durable mission envelope");
+            await assertSignedTarget(attempt, { from: address, to: this.gameAddress,
+              data: encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] }),
+              chainId: this.chain!.id, maxGas: fleetMissionResolutionGas });
+            lease.assert();
+            const { sidecars: _sidecars, ...envelope } = parseTransaction(attempt.raw);
+            await this.preflightMission(functionName, missionId, envelope, lease.assert);
+          } catch (error) { throw new PreBroadcastError(error); }
         }
         lease.assert();
         return this.publicClient!.request({ method, params } as never) as Promise<T>;
@@ -1057,6 +1082,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           await assertSignedTarget(attempt, { from: typeof this.sender === "string" ? this.sender : this.sender.address,
             to: this.gameAddress, data: encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] }),
             chainId: this.chain!.id, maxGas: fleetMissionResolutionGas });
+          lease.assert();
           const hash = await resumeSignedAttempt(transport, attempt);
           consumeReceipt();
           return hash;
@@ -1081,7 +1107,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         throw new Error("arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade");
       }
       if (!guardAllows(this.loadGuard(identity), progress)) throw new MissionChunkPendingError();
-      await this.preflightMission(functionName, missionId);
+      await this.preflightMission(functionName, missionId, undefined, lease.assert);
       const account = typeof this.sender === "string" ? undefined : this.sender;
       return lease.submit({
         chainId: this.chain!.id, address, operationId: identity + ":progress:" + progressKey(progress), signedEnvelope: true,
@@ -1098,21 +1124,21 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           if (progressKey(progress) !== progressKey(current) || !guardAllows(this.loadGuard(identity), current)) {
             throw new MissionChunkPendingError();
           }
-          await this.preflightMission(functionName, missionId);
+          await this.preflightMission(functionName, missionId, undefined, lease.assert);
           const data = encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] });
           // Fee/gas preparation and signing are entirely pre-broadcast. Definite failures here leave
           // no consumed intent. Persist deterministic raw bytes before the first send RPC.
           const request = await this.publicClient!.prepareTransactionRequest({
             account: address, chain: null, to: this.gameAddress, data, nonce,
-            gas: fleetMissionResolutionGas
+            gas: fleetMissionResolutionGas, value: 0n, type: "eip1559", accessList: []
           });
+          lease.assert();
+          await this.preflightMission(functionName, missionId, request, lease.assert);
           let raw: Hex;
           if (account) raw = await account.signTransaction({ ...request, chainId: this.chain!.id } as never);
           else {
             const signed = await transport.request<Hex | { raw: Hex }>("eth_signTransaction", [{
-              from: address, to: this.gameAddress, data, nonce: toHex(nonce), gas: toHex(request.gas!),
-              chainId: toHex(this.chain!.id), type: "0x2", maxFeePerGas: toHex(request.maxFeePerGas!),
-              maxPriorityFeePerGas: toHex(request.maxPriorityFeePerGas!)
+              ...formatTransactionRequest({ ...request, from: address }), chainId: toHex(this.chain!.id)
             }]);
             raw = typeof signed === "string" ? signed : signed.raw;
           }
