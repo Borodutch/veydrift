@@ -1,0 +1,412 @@
+{
+  "ok": false,
+  "apiUrl": "https://api.veydrift.com",
+  "wallet": null,
+  "deliveryContext": {
+    "runtime": "node",
+    "proxySettingsPresent": true,
+    "proxyBypassSettingsPresent": false,
+    "measurementBoundary": "client-fetch-through-json-parse",
+    "proxyUsage": "not-observable-from-fetch",
+    "upstreamPhases": "not-observable-from-fetch"
+  },
+  "evidence": [
+    {
+      "name": "health",
+      "endpoint": "/health",
+      "startedAt": "2026-10-01T02:11:13.818Z",
+      "status": 200,
+      "ms": 344,
+      "responseReadyMs": 339.99,
+      "bodyReadMs": 3.7,
+      "bytes": 9848,
+      "timedOut": false,
+      "keys": [
+        "backend",
+        "chain",
+        "chainSync",
+        "chainSyncRpc",
+        "configured",
+        "gameMaintenance",
+        "indexer",
+        "missionResolution",
+        "ok",
+        "paidAllianceRpc",
+        "randomnessCommitter",
+        "randomnessReadiness",
+        "readiness",
+        "rpc",
+        "service"
+      ]
+    },
+    {
+      "name": "runtime-config",
+      "endpoint": "/runtime-config",
+      "startedAt": "2026-10-01T02:11:14.163Z",
+      "status": 200,
+      "ms": 278,
+      "responseReadyMs": 277.83,
+      "bodyReadMs": 0.38,
+      "bytes": 2091,
+      "timedOut": false,
+      "keys": [
+        "allianceContractAddress",
+        "apiUrl",
+        "backend",
+        "burningChicken",
+        "chainId",
+        "contractAddress",
+        "featureSupport",
+        "gameContractAddress",
+        "graphqlUrl",
+        "migrationContractAddress",
+        "moonContractAddress",
+        "network",
+        "paidAllianceInviteAddress",
+        "paidAllianceInviteCapabilities",
+        "paidAllianceInviteSignerAddress",
+        "randomnessEngineAddress",
+        "referralSignerAddress",
+        "referralStartPriceWei",
+        "referralSystemAddress",
+        "resourceTokenAddresses",
+        "rpcProvider"
+      ]
+    },
+    {
+      "name": "galaxy",
+      "endpoint": "/universe/galaxies/1/systems/1",
+      "startedAt": "2026-10-01T02:11:14.441Z",
+      "status": 200,
+      "ms": 352,
+      "responseReadyMs": 351.2,
+      "bodyReadMs": 0.47,
+      "bytes": 3564,
+      "timedOut": false,
+      "keys": [
+        "chainId",
+        "galaxy",
+        "generatorVersion",
+        "planets",
+        "settlementContractAddress",
+        "system"
+      ]
+    },
+    {
+      "name": "rankings",
+      "endpoint": "/highscores?limit=10",
+      "startedAt": "2026-10-01T02:11:14.793Z",
+      "status": 200,
+      "ms": 562,
+      "responseReadyMs": 546.76,
+      "bodyReadMs": 14.77,
+      "bytes": 139059,
+      "timedOut": false,
+      "keys": [
+        "durationMs",
+        "formula",
+        "generatedAt",
+        "pagination",
+        "rankings",
+        "source"
+      ]
+    },
+    {
+      "name": "runtime-config-stress",
+      "endpoint": "/runtime-config",
+      "rounds": 12,
+      "p95Ms": 594,
+      "maxMs": 594,
+      "noisyEndpoints": [
+        "/universe/galaxies/6/systems/9",
+        "/universe/galaxies/1/systems/1",
+        "/highscores?limit=10"
+      ],
+      "runtimeStatuses": [
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200,
+        200
+      ],
+      "runtimeSamples": [
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:15.356Z",
+          "status": 200,
+          "ms": 321,
+          "responseReadyMs": 320.64,
+          "bodyReadMs": 0.38,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:16.358Z",
+          "status": 200,
+          "ms": 492,
+          "responseReadyMs": 491.54,
+          "bodyReadMs": 0.52,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:16.855Z",
+          "status": 200,
+          "ms": 372,
+          "responseReadyMs": 371.88,
+          "bodyReadMs": 0.32,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:17.390Z",
+          "status": 200,
+          "ms": 514,
+          "responseReadyMs": 513.27,
+          "bodyReadMs": 0.33,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:17.912Z",
+          "status": 200,
+          "ms": 315,
+          "responseReadyMs": 315,
+          "bodyReadMs": 0.27,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:18.267Z",
+          "status": 200,
+          "ms": 322,
+          "responseReadyMs": 321.25,
+          "bodyReadMs": 0.33,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:18.759Z",
+          "status": 200,
+          "ms": 397,
+          "responseReadyMs": 396.57,
+          "bodyReadMs": 0.3,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:19.188Z",
+          "status": 200,
+          "ms": 344,
+          "responseReadyMs": 344.19,
+          "bodyReadMs": 0.25,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:19.551Z",
+          "status": 200,
+          "ms": 318,
+          "responseReadyMs": 317.52,
+          "bodyReadMs": 0.25,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:19.873Z",
+          "status": 200,
+          "ms": 333,
+          "responseReadyMs": 332.24,
+          "bodyReadMs": 0.58,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:20.218Z",
+          "status": 200,
+          "ms": 359,
+          "responseReadyMs": 358.8,
+          "bodyReadMs": 0.26,
+          "bytes": 2091,
+          "timedOut": false
+        },
+        {
+          "endpoint": "/runtime-config",
+          "startedAt": "2026-10-01T02:11:20.818Z",
+          "status": 200,
+          "ms": 594,
+          "responseReadyMs": 593.59,
+          "bodyReadMs": 0.2,
+          "bytes": 2091,
+          "timedOut": false
+        }
+      ],
+      "noisyStatuses": [
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/6/systems/9",
+          "status": 200
+        },
+        {
+          "endpoint": "/universe/galaxies/1/systems/1",
+          "status": 200
+        },
+        {
+          "endpoint": "/highscores?limit=10",
+          "status": 200
+        }
+      ]
+    }
+  ],
+  "failures": [
+    "runtime-config stress p95 594ms exceeded 500ms"
+  ]
+}

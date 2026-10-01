@@ -3,9 +3,9 @@
 export function deliveryContext(env = process.env) {
   return {
     runtime: typeof Bun === "undefined" ? "node" : "bun",
-    proxyEnvironmentPresent: ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+    proxySettingsPresent: ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
       .some((name) => Boolean(env[name])),
-    proxyBypassEnvironmentPresent: ["NO_PROXY", "no_proxy"].some((name) => Boolean(env[name])),
+    proxyBypassSettingsPresent: ["NO_PROXY", "no_proxy"].some((name) => Boolean(env[name])),
     measurementBoundary: "client-fetch-through-json-parse",
     proxyUsage: "not-observable-from-fetch",
     upstreamPhases: "not-observable-from-fetch"

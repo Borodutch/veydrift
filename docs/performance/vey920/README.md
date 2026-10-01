@@ -10,7 +10,7 @@ Remaining blocker to full root-cause/remediation acceptance: correlated upstream
 
 ## Measurements
 
-UTC 2026-10-01 02:01–02:07 (Vancouver 2026-09-30 19:01–19:07). Nearest-rank p95; with 12 samples p95 equals max. Different transports/connection reuse are named, not treated as interchangeable controls.
+UTC 2026-10-01 02:01–02:11 (Vancouver 2026-09-30 19:01–19:11). Nearest-rank p95; with 12 samples p95 equals max. Different transports/connection reuse are named, not treated as interchangeable controls.
 
 | Path / workload | Count | p50 ms | p95 / max ms | Result |
 | --- | ---: | ---: | ---: | --- |
@@ -41,6 +41,12 @@ Preserved default smoke, 12 rounds × (runtime-config plus three concurrent nois
 Evidence includes [Vancouver curl](vancouver-managed-egress.json), [production curl](production-curl-retry.json), [origin/public paired fetch](origin-public-paired.json), and [handler records](runtime-handler-logs.json). Logs are bounded to last 10 minutes / tail 10,000 at collection; matching records span 01:54:18.987–02:02:21.746 UTC. 248 non-JSON lines skipped explicitly; 85 matching runtime records retained. This is not full-service traffic aggregation or exact per-request correlation, and does not rule out intermittent saturation outside that window or before handler entry.
 
 An initial remote-curl JSON formatting attempt was unparsable and discarded, **not counted as zero-latency success**. Its local artifact remains under artifacts/vey920/production-public.json; the numeric-format retry above is authoritative.
+
+## Review correction and retest
+
+The first instrumented report above redacted the two proxy-presence booleans because their names included “Environment”. Original `smoke-vancouver-final.json` is preserved unchanged. The fix uses `proxySettingsPresent` / `proxyBypassSettingsPresent` and asserts their types in the final serialized CLI output; sanitizer behavior is unchanged. A fresh [review-correction sample](smoke-vancouver-reviewed.json) confirms true/false respectively and still **fails at 594 ms p95**, response-ready max593.59 ms/body-read max0.58 ms. Variability is not evidence of a performance correction: this change only renames diagnostics.
+
+27 focused tests plus docs checks pass. Backend typecheck passes. The broader local backend suite has1005 passes and one failure in the unchanged smart-wallet RPC loopback fixture; focused retry and exact-base936007ec reproduction both have11 passes/one same failure. No wallet code or gas constraint was changed to make it pass. Hosted CI remains a separate gate.
 
 ## Bounded corrective change
 

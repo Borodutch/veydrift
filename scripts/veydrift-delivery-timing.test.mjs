@@ -7,11 +7,11 @@ import { deliveryContext, deliverySample, timedJsonRequest } from "./veydrift-de
 
 test("context never exposes proxy values or claims they were used", () => {
   const context = deliveryContext({ HTTPS_PROXY: "https://user:canary@private.invalid", NO_PROXY: "private-host-canary" });
-  assert.equal(context.proxyEnvironmentPresent, true);
-  assert.equal(context.proxyBypassEnvironmentPresent, true);
+  assert.equal(context.proxySettingsPresent, true);
+  assert.equal(context.proxyBypassSettingsPresent, true);
   assert.equal(context.proxyUsage, "not-observable-from-fetch");
   assert.equal(JSON.stringify(context).includes("canary"), false);
-  assert.equal(deliveryContext({}).proxyEnvironmentPresent, false);
+  assert.equal(deliveryContext({}).proxySettingsPresent, false);
 });
 
 test("separates delayed response headers and body; counts UTF-8 bytes", async () => {
@@ -93,4 +93,6 @@ test("smoke keeps the default 500ms gate and persists failed sample timings", as
   assert.ok(stress.runtimeSamples.every((sample) => sample.responseReadyMs >= 500));
   assert.equal(stdout.includes("body-canary"), false);
   assert.equal(result.deliveryContext.proxyUsage, "not-observable-from-fetch");
+  assert.equal(typeof result.deliveryContext.proxySettingsPresent, "boolean");
+  assert.equal(result.deliveryContext.proxyBypassSettingsPresent, true);
 });
