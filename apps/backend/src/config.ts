@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { loadMissionBatchPolicy, type MissionBatchPolicy } from "./missionBatch";
 
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
@@ -44,6 +45,7 @@ export type BackendConfig = {
   // type-checking; loadBackendConfig always populates the default.
   pollIntervalMs?: number;
   missionResolutionEnabled: boolean;
+  missionBatch?: MissionBatchPolicy;
   missionResolverAddress?: `0x${string}`;
   missionResolverPrivateKey?: `0x${string}`;
   resolverTransactionStorePath?: string;
@@ -273,6 +275,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS",
     problems
   );
+  const missionBatch = loadMissionBatchPolicy(env, problems);
   const missionResolverAddress = parseAddress(
     env.VEYDRIFT_MISSION_RESOLVER_ADDRESS,
     "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
@@ -434,6 +437,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       rebuildDeadlineMs,
       pollIntervalMs,
       missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
+      missionBatch,
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
       resolverTransactionStorePath,
