@@ -20,6 +20,38 @@ export function validatePactInterest(body: Record<string, unknown> | null): Pact
   return { email, amountUsd: Math.round(amountUsd), telegram: telegram || null };
 }
 
+export function pactInterestMessage(interest: PactInterest): string {
+  const tokens = Math.floor(interest.amountUsd / 0.002).toLocaleString("en-US");
+  return [
+    "New Pact sign-up",
+    `$${interest.amountUsd.toLocaleString("en-US")} → ${tokens} $VEYDRIFT`,
+    interest.email,
+    ...(interest.telegram ? [`@${interest.telegram}`] : []),
+  ].join("\n");
+}
+
+// Best effort: a Telegram outage must never fail a sign-up that is already stored.
+export async function notifyPactInterest(
+  interest: PactInterest,
+  env: Record<string, string | undefined> = process.env,
+  send: typeof fetch = fetch,
+): Promise<void> {
+  const token = env.VEYDRIFT_PACT_TELEGRAM_BOT_TOKEN;
+  const chatId = env.VEYDRIFT_PACT_TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    const response = await send(`https://api.telegram.org/bot${token}/sendMessage`, {
+      body: JSON.stringify({ chat_id: chatId, text: pactInterestMessage(interest) }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) console.warn("Pact Telegram notification failed", response.status);
+  } catch (error) {
+    console.warn("Pact Telegram notification failed", error instanceof Error ? error.name : "error");
+  }
+}
+
 export function pactInterestStorePath(indexDbPath: string): string {
   return indexDbPath === ":memory:" ? ":memory:" : join(dirname(indexDbPath), "pact-interest.sqlite");
 }
