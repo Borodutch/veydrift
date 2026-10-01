@@ -515,14 +515,23 @@ contract VeydriftCombatReferenceParityTest is Test {
                 MissionResolutionItem[] memory items = new MissionResolutionItem[](2);
                 items[0] = MissionResolutionItem(missionId, 0);
                 items[1] = MissionResolutionItem(missionId, 1);
+                (uint8 roundsBefore,) = game.battleResolutionProgress(missionId);
                 uint256 beforeGas = gasleft();
-                MissionResolutionOutcome[] memory outcomes =
+                (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
                     game.resolveFleetMissionBatch{gas: batchGas}(items);
-                emit log_named_uint("combat batch execution gas", beforeGas - gasleft());
+                uint256 total = beforeGas - gasleft();
+                emit log_named_uint("combat batch execution gas", total);
+                emit log_named_uint("combat measured execution gas", measured);
+                assertGt(measured, 0);
+                assertLt(measured, total);
+                assertLt(total, 16_777_216 - 50_000); // Real Base cap, with intrinsic headroom.
                 (status,,,) = _fleetMission(missionId);
                 if (requirePartial && status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
                     (uint8 completed,) = game.battleResolutionProgress(missionId);
-                    if (completed != 0) sawPartial = true;
+                    if (completed > roundsBefore) {
+                        sawPartial = true;
+                        assertEq(uint8(outcomes[0]), uint8(MissionResolutionOutcome.Progress));
+                    }
                     // Prove one bounded partial call; then use the supported maximum to finish.
                     // A round/finalization can be indivisible and exceed a smaller keeper estimate.
                     batchGas = 16_500_000;
@@ -530,7 +539,7 @@ contract VeydriftCombatReferenceParityTest is Test {
                 assertEq(
                     uint8(outcomes[0]),
                     status == VeydriftGameStorage.FleetMissionStatus.Outbound
-                        ? uint8(MissionResolutionOutcome.Pending)
+                        ? uint8(MissionResolutionOutcome.Progress)
                         : uint8(MissionResolutionOutcome.Settled)
                 );
                 assertTrue(

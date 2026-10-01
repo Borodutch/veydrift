@@ -87,10 +87,10 @@ contract VeydriftMissionBatchTest is Test {
             1200
         );
         h.link(2, 1);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(2, 0, 1, 0));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(2, 0, 1, 0));
         assertEq(uint8(o[0]), 1);
         assertEq(uint8(o[1]), 0);
-        o = h.resolveFleetMissionBatch(_items(2, 0, 2, 0));
+        (o,) = h.resolveFleetMissionBatch(_items(2, 0, 2, 0));
         assertEq(uint8(o[0]), 0);
         assertEq(uint8(o[1]), 2);
     }
@@ -99,11 +99,11 @@ contract VeydriftMissionBatchTest is Test {
         _seed(1, false, 2, 1, 800);
         _seed(2, true, 1, 3, 900);
         _seed(3, true, 4, 5, 900);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(2, 1, 3, 1));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(2, 1, 3, 1));
         assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Failed));
         assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.Settled));
         assertEq(uint8(h.status(2)), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        o = h.resolveFleetMissionBatch(_items(1, 0, 2, 1));
+        (o,) = h.resolveFleetMissionBatch(_items(1, 0, 2, 1));
         assertEq(uint8(o[0]), 0);
         assertEq(uint8(o[1]), 0);
     }
@@ -111,8 +111,8 @@ contract VeydriftMissionBatchTest is Test {
     function testReverseEarlierReturnBecomesPreparationNotFalseArrivalSuccess() public {
         _seed(1, true, 1, 3, 800);
         _seed(2, false, 2, 1, 900);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(2, 0, 1, 1));
-        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Pending));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(2, 0, 1, 1));
+        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Progress));
         assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.AlreadySettled));
         assertEq(uint8(h.status(2)), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
@@ -120,7 +120,7 @@ contract VeydriftMissionBatchTest is Test {
     function testSameTimestampArrivalWinsEvenWithLargerId() public {
         _seed(1, true, 1, 3, 900);
         _seed(2, false, 2, 1, 900);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(1, 1, 2, 0));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(1, 1, 2, 0));
         assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Failed));
         assertEq(uint8(o[1]), 0);
     }
@@ -136,7 +136,7 @@ contract VeydriftMissionBatchTest is Test {
         x[4] = MissionResolutionItem(2, 1);
         x[5] = MissionResolutionItem(0, 0);
         x[6] = MissionResolutionItem(1, 2);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(x);
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(x);
         assertEq(uint8(o[0]), 0);
         assertEq(uint8(o[1]), 2);
         assertEq(uint8(o[2]), 2);
@@ -160,7 +160,7 @@ contract VeydriftMissionBatchTest is Test {
         _seed(999, true, 1, 2, 900);
         _seed(1, true, 3, 4, 900);
         uint256 beforeGas = gasleft();
-        MissionResolutionOutcome[] memory o =
+        (MissionResolutionOutcome[] memory o,) =
             h.resolveFleetMissionBatch{gas: 16_500_000}(_items(999, 1, 1, 1));
         emit log_named_uint("poison plus independent execution gas", beforeGas - gasleft());
         assertEq(uint8(o[0]), 5);
@@ -176,7 +176,7 @@ contract VeydriftMissionBatchTest is Test {
         }
         vm.recordLogs();
         uint256 beforeGas = gasleft();
-        MissionResolutionOutcome[] memory outcomes =
+        (MissionResolutionOutcome[] memory outcomes,) =
             h.resolveFleetMissionBatch{gas: 16_500_000}(items);
         uint256 used = beforeGas - gasleft();
         assertEq(vm.getRecordedLogs().length, 32);
@@ -190,7 +190,7 @@ contract VeydriftMissionBatchTest is Test {
     function testLowGasReportsUnattemptedItemsNotSuccess() public {
         _seed(999, true, 1, 2, 900);
         _seed(1, true, 3, 4, 900);
-        MissionResolutionOutcome[] memory o =
+        (MissionResolutionOutcome[] memory o,) =
             h.resolveFleetMissionBatch{gas: 200_000}(_items(999, 1, 1, 1));
         assertTrue(
             o[1] == MissionResolutionOutcome.GasLimited || o[1] == MissionResolutionOutcome.Settled
@@ -198,11 +198,83 @@ contract VeydriftMissionBatchTest is Test {
         assertTrue(o[0] != MissionResolutionOutcome.Settled);
     }
 
+    function testTinyGasSuccessfulCallHasMeasurementButNoProductiveOutcome() public {
+        _seed(1, true, 1, 2, 900);
+        _seed(2, true, 3, 4, 900);
+        (MissionResolutionOutcome[] memory o, uint256 measured) =
+            h.resolveFleetMissionBatch{gas: 100_000}(_items(1, 1, 2, 1));
+        assertGt(measured, 0);
+        assertLt(measured, 100_000);
+        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.GasLimited));
+        assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.GasLimited));
+        assertEq(uint8(h.status(1)), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
+    function testMeasuredCheapSettlementExcludesWrapperOverhead() public {
+        _seed(1, true, 1, 2, 900);
+        _seed(2, true, 3, 4, 900);
+        uint256 beforeGas = gasleft();
+        (MissionResolutionOutcome[] memory o, uint256 measured) =
+            h.resolveFleetMissionBatch(_items(1, 1, 2, 1));
+        uint256 total = beforeGas - gasleft();
+        assertGt(measured, 0);
+        assertLt(measured, total);
+        assertLt(total - measured, 30_000);
+        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Settled));
+        assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.Settled));
+        emit log_named_uint("cheap measured execution gas", measured);
+    }
+
+    function testBoundedScanIsProgressButRepeatedLinkedNoOpIsPending() public {
+        for (uint256 id = 1; id <= 25; ++id) {
+            _seed(id, false, id + 100, 1, 900);
+        }
+        (MissionResolutionOutcome[] memory o, uint256 measured) =
+            h.resolveFleetMissionBatch(_items(1, 0, 1, 0));
+        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Progress));
+        assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.Progress));
+        assertEq(h.cursor(1), 24);
+        assertGt(measured, 0);
+        h.seed(
+            26,
+            VeydriftGameStorage.FleetMissionType.AcsAttack,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            200,
+            1,
+            900,
+            1200
+        );
+        h.link(26, 1);
+        (o, measured) = h.resolveFleetMissionBatch(_items(26, 0, 26, 0));
+        assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Pending));
+        assertEq(uint8(o[1]), uint8(MissionResolutionOutcome.Pending));
+        assertGt(measured, 0); // Spending gas alone never means useful progress.
+    }
+
+    function testUnchangedBlockerTracksPrerequisiteScanAndReturnProgress() public {
+        _seed(1, true, 1, 3, 800);
+        _seed(2, false, 2, 1, 900);
+        for (uint256 id = 3; id <= 27; ++id) {
+            _seed(id, false, id + 100, 1, 950);
+        }
+        MissionResolutionItem[] memory items = new MissionResolutionItem[](1);
+        items[0] = MissionResolutionItem(2, 0);
+        // Two scans of the requested arrival, then three scans of its earlier return.
+        for (uint256 i; i < 5; ++i) {
+            (MissionResolutionOutcome[] memory o, uint256 measured) =
+                h.resolveFleetMissionBatch(items);
+            assertEq(uint8(o[0]), uint8(MissionResolutionOutcome.Progress));
+            assertGt(measured, 0);
+        }
+        assertEq(uint8(h.status(1)), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        assertEq(uint8(h.status(2)), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
     function testLegacyBoundaryNotBackfilledByBatch() public {
         _seed(1, true, 1, 3, 800);
         h.legacy(1);
         _seed(2, false, 2, 1, 900);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(2, 0, 1, 1));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(2, 0, 1, 1));
         assertEq(uint8(o[0]), 0);
         assertEq(uint8(o[1]), 0);
         assertFalse(h.registered(1));
@@ -216,7 +288,7 @@ contract VeydriftMissionBatchTest is Test {
         h.targetMoon(1);
         // Independent planet return does not depend on the moon attack.
         _seed(3, true, 1, 4, 950);
-        MissionResolutionOutcome[] memory o = h.resolveFleetMissionBatch(_items(1, 0, 3, 1));
+        (MissionResolutionOutcome[] memory o,) = h.resolveFleetMissionBatch(_items(1, 0, 3, 1));
         assertEq(uint8(o[0]), 0);
         // second planet attack remains a genuine dependency, not an unrelated moon one.
         assertEq(uint8(o[1]), 5);

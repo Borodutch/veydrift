@@ -104,11 +104,14 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     );
 
     /// @notice Best-effort typed resolution. Each child retains sender and canonical chronology.
-    /// Successful child execution is Pending unless the requested leg actually changed status.
+    /// @dev Progress means canonical preparation/rounds changed, not that this leg settled.
+    /// executionGasUsed measures this module's body, including failed work and outcome events;
+    /// it excludes intrinsic gas, proxy dispatch, ABI return encoding/copy and caller overhead.
     function resolveFleetMissionBatch(MissionResolutionItem[] calldata items)
         external
-        returns (MissionResolutionOutcome[] memory outcomes)
+        returns (MissionResolutionOutcome[] memory outcomes, uint256 executionGasUsed)
     {
+        uint256 measurementStart = gasleft();
         _requireGameNotPaused();
         uint256 count = items.length;
         if (count == 0 || count > MAX_RESOLUTION_ITEMS) revert InvalidQuantity();
@@ -121,6 +124,7 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             outcomes[i] = outcome;
             emit FleetMissionBatchItem(i, item.missionId, item.leg, outcome, reason);
         }
+        executionGasUsed = measurementStart - gasleft();
     }
 
     function _resolveBatchItem(
@@ -153,6 +157,10 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < dueAt) return (MissionResolutionOutcome.NotDue, 0);
 
+        // Fixed-size reads only. An existing prerequisite's own bounded scan may advance while
+        // our scan remains unchanged; a newly discovered prerequisite changes our blocker.
+        uint256 prerequisite = _chronologyScans[item.missionId].blocker;
+        bytes32 beforeProgress = _resolutionProgress(item.missionId, prerequisite);
         uint256 available = gasleft();
         uint256 spent = startedWith - available;
         // Reserve covers EIP-150 forwarding loss, cold per-item status reads, every remaining
@@ -189,7 +197,26 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         bool settled = item.leg == 0
             ? m.status != FleetMissionStatus.Outbound
             : m.status == FleetMissionStatus.Returned;
-        return (settled ? MissionResolutionOutcome.Settled : MissionResolutionOutcome.Pending, 0);
+        if (settled) return (MissionResolutionOutcome.Settled, 0);
+        return (
+            beforeProgress != _resolutionProgress(item.missionId, prerequisite)
+                ? MissionResolutionOutcome.Progress
+                : MissionResolutionOutcome.Pending,
+            0
+        );
+    }
+
+    /// @dev Only persisted canonical scan fields, prerequisite status and combat rounds count.
+    /// No fleet arrays, resource structs, gas-spent heuristics or temporary writes are observed.
+    function _resolutionProgress(uint256 id, uint256 prerequisite) private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _chronologyScans[id],
+                _battleResolutionProgress[id].rounds,
+                _chronologyScans[prerequisite],
+                _fleetMissions[prerequisite].status
+            )
+        );
     }
 
     /// @dev Called atomically by every new allocation, never by legacy settlement. No activation

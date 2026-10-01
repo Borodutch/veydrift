@@ -229,7 +229,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         }
         vm.warp(RETURN_AT);
         uint256 beforeGas = gasleft();
-        MissionResolutionOutcome[] memory outcomes =
+        (MissionResolutionOutcome[] memory outcomes,) =
             game.resolveFleetMissionBatch{gas: 16_500_000}(items);
         emit log_named_uint("32 independent cheap returns execution gas", beforeGas - gasleft());
         for (uint256 i; i < 32; ++i) {
@@ -272,7 +272,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         while (totalSettled < 32 && calls < 32) {
             vm.prank(player);
             uint256 beforeGas = gasleft();
-            MissionResolutionOutcome[] memory current =
+            (MissionResolutionOutcome[] memory current,) =
                 game.resolveFleetMissionBatch{gas: 16_500_000}(items);
             uint256 used = beforeGas - gasleft();
             if (used > maxGas) maxGas = used;
@@ -292,7 +292,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             RETURN_AT,
             "delegatecall retains acting sender"
         );
-        MissionResolutionOutcome[] memory outcomes = game.resolveFleetMissionBatch(items);
+        (MissionResolutionOutcome[] memory outcomes,) = game.resolveFleetMissionBatch(items);
         for (uint256 i; i < 32; ++i) {
             assertEq(uint8(outcomes[i]), uint8(MissionResolutionOutcome.AlreadySettled));
         }
@@ -331,7 +331,9 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         items[1] = MissionResolutionItem(offset < 0 ? RETURN_ID : ATTACK_ID, offset < 0 ? 1 : 0);
         items[2] = items[0];
         if (offset >= 0) {
-            MissionResolutionOutcome[] memory blocked = game.resolveFleetMissionBatch(items);
+            (MissionResolutionOutcome[] memory blocked, uint256 blockedGas) =
+                game.resolveFleetMissionBatch(items);
+            assertGt(blockedGas, 0); // Pending randomness is failed work, never Progress.
             assertEq(uint8(blocked[0]), uint8(MissionResolutionOutcome.Failed));
             assertEq(uint8(blocked[1]), uint8(MissionResolutionOutcome.Failed));
             assertEq(uint8(blocked[2]), uint8(MissionResolutionOutcome.Failed));
@@ -345,13 +347,18 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _fulfillAttackBattleRandomness(ATTACK_ID, 7);
         vm.recordLogs();
         uint256 beforeGas = gasleft();
-        MissionResolutionOutcome[] memory outcomes =
+        (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
             game.resolveFleetMissionBatch{gas: 16_500_000}(items);
-        emit log_named_uint("mixed return/combat batch execution gas", beforeGas - gasleft());
+        uint256 total = beforeGas - gasleft();
+        emit log_named_uint("mixed return/combat batch execution gas", total);
+        emit log_named_uint("mixed return/combat measured execution gas", measured);
+        assertGt(measured, 0);
+        assertLt(measured, total);
+        assertLt(total, 16_777_216 - 50_000);
         assertEq(
             uint8(outcomes[0]),
             offset < 0
-                ? uint8(MissionResolutionOutcome.Pending)
+                ? uint8(MissionResolutionOutcome.Progress)
                 : uint8(MissionResolutionOutcome.Failed)
         );
         assertEq(uint8(outcomes[2]), uint8(MissionResolutionOutcome.Settled));
@@ -372,7 +379,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         uint32 ships = moon
             ? game.moonShipCount(home, Ship.SmallCargo)
             : game.shipCount(home, Ship.SmallCargo);
-        outcomes = game.resolveFleetMissionBatch(items);
+        (outcomes,) = game.resolveFleetMissionBatch(items);
         for (uint256 i; i < outcomes.length; ++i) {
             assertEq(uint8(outcomes[i]), uint8(MissionResolutionOutcome.AlreadySettled));
         }

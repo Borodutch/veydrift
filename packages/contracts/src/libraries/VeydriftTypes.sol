@@ -72,7 +72,8 @@ struct MissionResolutionItem {
     uint8 leg;
 }
 
-/// @dev Progress does not assert any work completed; canonical state remains authoritative.
+/// @dev Pending means no observed canonical progress; Progress means preparation/rounds advanced
+/// without settling this leg. Canonical status remains authoritative for both.
 enum MissionResolutionOutcome {
     Settled,
     Pending,
@@ -80,7 +81,8 @@ enum MissionResolutionOutcome {
     Invalid,
     NotDue,
     Failed,
-    GasLimited
+    GasLimited,
+    Progress
 }
 
 enum Technology {

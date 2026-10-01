@@ -501,7 +501,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function resolveFleetMissionBatch(MissionResolutionItem[] calldata)
         external
-        returns (MissionResolutionOutcome[] memory)
+        returns (MissionResolutionOutcome[] memory, uint256)
     {
         _delegateToChronology();
     }
