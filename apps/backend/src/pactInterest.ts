@@ -14,7 +14,7 @@ export function validatePactInterest(body: Record<string, unknown> | null): Pact
   const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
   if (email.length > 254 || !emailPattern.test(email)) return "Enter a valid email.";
   const amountUsd = Number(body?.amountUsd);
-  if (!Number.isFinite(amountUsd) || amountUsd < 1_000 || amountUsd > 1_000_000) return "Enter an amount between $1,000 and $1,000,000.";
+  if (!Number.isFinite(amountUsd) || amountUsd < 1_000 || amountUsd > 100_000) return "Enter an amount between $1,000 and $100,000.";
   const telegram = typeof body?.telegram === "string" ? body.telegram.trim().replace(/^@/, "") : "";
   if (telegram && !/^[A-Za-z0-9_]{3,32}$/.test(telegram)) return "Enter a valid Telegram username.";
   return { email, amountUsd: Math.round(amountUsd), telegram: telegram || null };
