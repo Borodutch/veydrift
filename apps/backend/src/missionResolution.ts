@@ -1,9 +1,11 @@
 import {
+  decodeEventLog,
   createPublicClient,
   createWalletClient,
   defineChain,
   encodeFunctionData,
   http,
+  keccak256,
   parseAbi,
   toHex,
   type Hex,
@@ -21,8 +23,11 @@ import {
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass } from "./resolverTransactions";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
+
+import { quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -41,6 +46,13 @@ const gamePausedStorageSlot = toHex(52n, { size: 32 });
 // estimator can stop at an inner delegatecall's empty out-of-gas revert and misreport a valid,
 // bounded battle as UnsupportedGameplayModule instead of broadcasting it.
 const fleetMissionResolutionGas = 16_777_216n;
+
+const batchReceiptAbi = parseAbi([
+  "event FleetMissionBatchItem(uint256 indexed index,uint256 indexed missionId,uint8 leg,uint8 outcome,bytes4 errorSelector)"
+]);
+const batchEligibilityAbi = parseAbi([
+  "function fleetMissionEligibility(uint256 id) view returns (bool eligible,uint256 blocker,bool orderingReady)"
+]);
 
 const moonReadAbi = parseAbi([
   "function moonChanceRandomness(uint256 outcomeId) view returns (uint256 requestId, bytes32 purposeHash, bool finalized, uint256 randomWord)",
@@ -75,6 +87,7 @@ export type MissionResolutionChainClient = {
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
+  resolveMissionBatch?(items: BatchLeg[]): Promise<{ hash: string | null; items: BatchLeg[]; exclusions?: BatchExclusion[]; outcomes?: BatchLegOutcome[] }>;
   completeFleetMissionReturn(missionId: string): Promise<string>;
   isMissionLegComplete?(missionId: string, leg: "arrival" | "return"): Promise<boolean>;
   gamePaused?(): Promise<boolean>;
@@ -84,6 +97,7 @@ export type MissionResolutionChainClient = {
 export type MissionResolutionCandidates = {
   arrivals: ResolvableFleetMission[];
   returns: ReturnableFleetMission[];
+  nextCursor?: string;
 };
 
 export type MoonChanceResolutionCandidate = { cursor: number; outcomeId: string };
@@ -92,7 +106,7 @@ export type MissionResolutionCandidateSource = {
   moonChanceResolutionCandidateCount?(): number;
   moonChanceResolutionCandidates?(afterCursor: number, limit: number): MoonChanceResolutionCandidate[];
   moonChanceTerminalOutcomeIds?(outcomeIds: readonly string[]): string[];
-  missionResolutionCandidates(asOfSeconds?: number, limit?: number): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
+  missionResolutionCandidates(asOfSeconds?: number, limit?: number, afterMissionId?: string): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
   /**
    * A resolver settlement can expose a stale event-indexed mission status, including when a durable
    * coordinator reuses a previously confirmed operation. Re-read just that candidate from canonical
@@ -406,9 +420,15 @@ export class MissionResolutionService {
     return this.config.missionResolverAddress?.toLowerCase() as Address | undefined ?? null;
   }
 
+  private missionCursor = "0";
+
   private async listCandidates(): Promise<MissionResolutionCandidates> {
     if (this.candidateSource) {
-      return this.candidateSource.missionResolutionCandidates(undefined, this.maxMissionsPerTick * 5);
+      if (!this.config.missionBatch?.enabled)
+        return this.candidateSource.missionResolutionCandidates(undefined, this.maxMissionsPerTick * 5);
+      const result = await this.candidateSource.missionResolutionCandidates(undefined, this.maxMissionsPerTick, this.missionCursor);
+      this.missionCursor = result.nextCursor ?? "0";
+      return result;
     }
     if (!this.chainClient) return { arrivals: [], returns: [] };
     const [arrivals, returns] = await Promise.all([
@@ -508,6 +528,44 @@ export class MissionResolutionService {
     const attemptable = all
       .filter((candidate) => this.canAttempt(candidate))
       .slice(0, this.maxMissionsPerTick * 5);
+    if (this.config.missionBatch?.enabled) {
+      if (!this.chainClient?.resolveMissionBatch) throw new Error("batch rollout enabled without supported durable batch client");
+      const candidates = attemptable.slice(0, this.maxMissionsPerTick);
+      try {
+        const result = await this.chainClient.resolveMissionBatch(candidates.map((c) => ({ missionId: c.mission.missionId, leg: c.leg, dueAt: c.dueAt })));
+        for (const excluded of result.exclusions ?? []) {
+          await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
+          const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
+          if (candidate) this.scheduleRetry(candidateRetryKey(candidate));
+          emitObservabilityEvent({ kind: "mission_batch_skip", ...excluded.item, reason: excluded.reason, terminal: excluded.terminal ?? false }, "warn");
+        }
+        let settled = 0;
+        for (const item of result.items) {
+          const candidate = candidates.find((c) => c.mission.missionId === item.missionId && c.leg === item.leg)!;
+          await this.candidateSource?.reconcileMissionResolutionCandidate?.(item.missionId);
+          if (!await this.chainClient.isMissionLegComplete?.(item.missionId, item.leg)) {
+            const outcome = result.outcomes?.find((o) => o.item.missionId === item.missionId && o.item.leg === item.leg);
+            emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: outcome?.outcome ?? "canonical-leg-incomplete",
+              errorSelector: outcome?.errorSelector ?? null, blockedDependency: outcome?.blockedDependency ?? null }, "warn");
+            this.scheduleRetry(candidateRetryKey(candidate));
+            continue;
+          }
+          settled++;
+          if (item.leg === "arrival") { this.resolvedCount++; this.lastResolvedMissionId = item.missionId; }
+          else { this.returnedCount++; this.lastReturnedMissionId = item.missionId; }
+          this.recordLatency(item.leg, item.dueAt);
+          this.pendingDueAt[item.leg].delete(item.missionId);
+          this.failedCandidateRetries.delete(candidateRetryKey(candidate));
+        }
+        emitObservabilityEvent({ kind: "mission_batch_outcomes", hash: result.hash, requestedLegs: result.items.length,
+          settledLegs: settled, blockedOrPartialLegs: result.items.length - settled });
+      } catch (error) {
+        for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
+        this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
+        emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
+      }
+      return;
+    }
     let successful = 0;
     let cursor = 0;
     while (cursor < attemptable.length && successful < this.maxMissionsPerTick && !this.gamePaused) {
@@ -730,8 +788,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly rpcUrl?: string,
     private readonly transactionCoordinator = new ResolverTransactionCoordinator(":memory:"),
     private readonly moonAddress?: Address,
-    private readonly randomnessEngineAddress?: Address
-  ) {}
+    private readonly randomnessEngineAddress?: Address,
+    private readonly batchPolicy: MissionBatchPolicy = defaultMissionBatchPolicy
+  ) {
+    if (this.publicClient && this.chain && this.reader.getCanonicalFleetMission) {
+      const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+      this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
+        (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+    }
+  }
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
     return this.reader.listResolvableFleetMissions();
@@ -751,6 +816,165 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
 
   isMissionLegComplete(missionId: string, leg: "arrival" | "return"): Promise<boolean> {
     return this.isResolutionOperationComplete(leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn", missionId);
+  }
+
+  async resolveMissionBatch(candidates: BatchLeg[]): Promise<{ hash: string | null; items: BatchLeg[]; exclusions: BatchExclusion[]; outcomes?: BatchLegOutcome[] }> {
+    if (!this.batchPolicy.enabled) throw new Error("mission batching disabled pending separate release greenlight/runtime enable");
+    if (typeof this.sender === "string" || !this.publicClient || !this.chain) throw new Error("durable batching requires local signer");
+    const account = this.sender;
+    const client = this.publicClient;
+    const chainId = this.chain.id;
+    if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
+    // Reconcile even when no indexed candidates remain: a mined batch can disappear from the
+    // index before a process restarts, but its durable intent must still release the signer.
+    await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+    if (!Number.isInteger(this.batchPolicy.maxItems) || this.batchPolicy.maxItems < 1 || this.batchPolicy.maxItems > 32
+      || this.batchPolicy.maxFeeUsdMicros <= 0n || this.batchPolicy.maxFeeUsdMicros > 500_000n)
+      throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
+    const exclusions: BatchExclusion[] = [];
+    const initialBlock = await client.getBlock({ blockTag: "latest" });
+    if (initialBlock.number === null) throw new Error("canonical batch block unavailable");
+    const fresh = await this.freshBatchCandidates(candidates.slice(0, 100), initialBlock.number, exclusions);
+    if (!fresh.length) return { hash: null, items: [], exclusions };
+    const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
+    const quote = (items: BatchLeg[], currentNonce = nonce, blockNumber = initialBlock.number!) => quoteMissionBatch(client, {
+      items, blockNumber, nonce: currentNonce, account: account.address, game: this.gameAddress, chainId, policy: this.batchPolicy
+    });
+    const packed = await packMissionBatch(fresh, this.batchPolicy.maxItems, quote, (item, reason) => {
+      emitObservabilityEvent({ kind: "mission_batch_indivisible_blocker", ...item, reason,
+        action: "review contract gas/prerequisites; do not raise cap or bypass batching" }, "warn");
+    });
+    exclusions.push(...packed.exclusions);
+    if (!packed.items.length) return { hash: null, items: [], exclusions };
+    const items = packed.items;
+    const data = batchCalldata(items);
+    const operationId = "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(data);
+    const hash = await this.transactionCoordinator.submit({
+      chainId, address: account.address, operationId,
+      getTransactionCount: (blockTag) => client.getTransactionCount({ address: account.address, blockTag }),
+      submit: async () => { throw new Error("batch requires persisted preparation"); },
+      prepare: async (currentNonce) => {
+        if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
+        const block = await client.getBlock({ blockTag: "latest" });
+        if (block.number === null) throw new Error("canonical batch block unavailable");
+        const current = await this.freshBatchCandidates(items, block.number);
+        if (JSON.stringify(current) !== JSON.stringify(items)) throw new Error("batch canonical membership changed; repack next tick");
+        const fees = await quote(items, currentNonce, block.number); // exact signed-gas productive simulation under lease
+        const canonical = await client.getBlock({ blockNumber: block.number });
+        if (canonical.hash !== block.hash || Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30)
+          throw new Error("batch quote block changed or expired before signing");
+        const signed = await account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
+          nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
+        emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
+          fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
+          queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
+          estimatedGas: fees.gas.toString(), maxTotalFeeWei: fees.totalWei.toString(), maxTotalUsdMicros: fees.usdMicros.toString(),
+          l1FeeWei: fees.l1Fee.toString(), operatorFeeWei: fees.operatorFee.toString() });
+        return { hash: keccak256(signed), membership: JSON.stringify(items),
+          broadcast: () => client.sendRawTransaction({ serializedTransaction: signed }) };
+      },
+      reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),
+      isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
+      isOperationComplete: async () => false, // partial progress may require another bounded tx
+      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
+      // No replacements/cancellation: unknown receipt blocks the shared signer, never uncapped fees.
+    });
+    return { hash, items, exclusions, outcomes: this.batchReceiptOutcomes.get(hash) ?? [] };
+  }
+
+  private async freshBatchCandidates(items: BatchLeg[], blockNumber?: bigint, exclusions: BatchExclusion[] = []): Promise<BatchLeg[]> {
+    const fresh: BatchLeg[] = [];
+    for (const item of items) {
+      const mission = await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), blockNumber);
+      if (!mission) throw new Error("canonical batch candidate unavailable: " + item.missionId);
+      const complete = item.leg === "arrival" ? ["Returning", "Recalled", "Resolved", "Returned"].includes(mission.status)
+        : ["Resolved", "Returned"].includes(mission.status);
+      const hold = item.leg === "arrival" && mission.missionType === "DefenseHold";
+      if (hold && mission.defenseHoldUntil === undefined) throw new Error("canonical defense hold deadline unavailable");
+      const dueAt = Number(item.leg === "arrival" ? hold ? mission.defenseHoldUntil : mission.arrivalAt : mission.returnAt);
+      const eligible = item.leg === "arrival" ? ["Outbound", "Arrived"].includes(mission.status)
+        : ["Returning", "Recalled"].includes(mission.status);
+      if (complete || !eligible || dueAt <= 0 || dueAt > Math.floor(Date.now() / 1000)) {
+        exclusions.push({ item, reason: complete ? "settled" : "not-due-or-stale", terminal: complete });
+        emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: complete ? "settled" : "not-due-or-stale" });
+        continue;
+      }
+      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(item.missionId), blockNumber)) {
+        exclusions.push({ item, reason: "ordering-unavailable" });
+        emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
+        continue;
+      }
+      fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
+    }
+    return fresh.sort(compareBatchLegs);
+  }
+
+  private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
+
+  private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt> {
+    const client = this.publicClient!;
+    // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
+    const finalized = await (pass.finalizedHead ??= pass.read(async () => {
+      const block = await client.getBlock({ blockTag: "finalized" });
+      if (block.number === null) throw new Error("explicit finalized block unavailable");
+      return block.number;
+    }));
+    if (stored) {
+      const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
+      if (!block.hash || block.hash !== stored.blockHash) throw new Error("batch receipt is not canonical");
+      pass.assertActive();
+      return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
+    }
+    const receipt = await pass.read(() => client.getTransactionReceipt({ hash }));
+    const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
+    if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
+    const items: BatchLeg[] = JSON.parse(membership);
+    if (!Array.isArray(items) || items.length > 32) throw new Error("invalid persisted batch membership");
+    const events = (receipt.logs ?? []).flatMap((log) => {
+      if (log.address.toLowerCase() !== this.gameAddress.toLowerCase()) return [];
+      try { return [decodeEventLog({ abi: batchReceiptAbi, data: log.data, topics: log.topics }).args]; }
+      catch { return []; } // unrelated game events
+    });
+    const outcomes: BatchLegOutcome[] = [];
+    for (const [index, item] of items.entries()) {
+      const event = events.find((event) => event.index === BigInt(index) && event.missionId === BigInt(item.missionId)
+        && event.leg === (item.leg === "arrival" ? 0 : 1));
+      const mission = await pass.read(async () => this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), receipt.blockNumber, pass.assertActive));
+      if (!mission) throw new Error("persisted batch member canonical state unavailable");
+      const complete = (item.leg === "arrival" ? ["Returning", "Recalled", "Resolved", "Returned"] : ["Resolved", "Returned"]).includes(mission.status);
+      let blockedDependency: string | null = null;
+      if (!complete) {
+        const proof = await pass.read(() => client.readContract({ address: this.gameAddress, abi: batchEligibilityAbi,
+          functionName: "fleetMissionEligibility", args: [BigInt(item.missionId)], blockNumber: receipt.blockNumber }));
+        blockedDependency = proof[1] === 0n ? null : proof[1].toString();
+      }
+      outcomes.push({ item, complete, blockedDependency, errorSelector: event?.errorSelector ?? null,
+        outcome: receipt.status === "reverted" ? "Reverted" : event ? batchOutcomeNames[event.outcome] ?? "UnknownOutcome" : "MissingOutcome" });
+    }
+    const extra = receipt as unknown as Record<string, unknown>;
+    const l1Fee = rpcQuantity(extra.l1Fee);
+    let operatorFee = rpcQuantity(extra.operatorFee);
+    let operatorFeeSource = operatorFee === null ? "unavailable" : "receipt";
+    if (operatorFee === null) {
+      // At the receipt's canonical block the fork-aware oracle supplies actual operator cost.
+      try {
+        operatorFee = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi,
+          functionName: "getOperatorFee", args: [receipt.gasUsed], blockNumber: receipt.blockNumber }));
+        operatorFeeSource = "canonical-block-oracle";
+      } catch { /* unknown is NOT zero; actual total remains unavailable */ }
+    }
+    pass.assertActive();
+    const executionFee = receipt.gasUsed * receipt.effectiveGasPrice;
+    emitObservabilityEvent({ kind: "mission_batch_receipt", hash, status: receipt.status, outcomes,
+      gasUsed: receipt.gasUsed.toString(), executionFeeWei: executionFee.toString(),
+      l1FeeWei: l1Fee?.toString() ?? null, operatorFeeWei: operatorFee?.toString() ?? null, operatorFeeSource,
+      actualTotalFeeWei: l1Fee !== null && operatorFee !== null ? (executionFee + l1Fee + operatorFee).toString() : null });
+    this.batchReceiptOutcomes.set(hash, outcomes);
+    // Bounded in-memory reporting cache; immutable membership/outcomes remain in SQLite.
+    if (this.batchReceiptOutcomes.size > 128) this.batchReceiptOutcomes.delete(this.batchReceiptOutcomes.keys().next().value!);
+    return { finalized: receipt.blockNumber <= finalized, blockNumber: receipt.blockNumber.toString(),
+      blockHash: receipt.blockHash, outcomes: JSON.stringify(outcomes) };
   }
 
   async finalizeMoonChance(outcomeId: string): Promise<"pending" | "finalized"> {
@@ -1020,7 +1244,8 @@ function buildMissionResolutionChainClient(
         config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
       ),
       config.moonContractAddress,
-      config.randomnessEngineAddress
+      config.randomnessEngineAddress,
+      config.missionBatch
     );
   }
 
@@ -1044,7 +1269,8 @@ function buildMissionResolutionChainClient(
       config.resolverTransactionStorePath ?? ".data/resolver-transactions.sqlite"
     ),
     config.moonContractAddress,
-    config.randomnessEngineAddress
+    config.randomnessEngineAddress,
+    config.missionBatch
   );
 }
 

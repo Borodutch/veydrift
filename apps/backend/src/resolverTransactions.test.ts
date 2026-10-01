@@ -14,6 +14,52 @@ const address = "0x1111111111111111111111111111111111111111" as const;
 const chainId = 8453;
 
 describe("ResolverTransactionCoordinator", () => {
+  test("persists exact batch membership/nonce/local hash before ambiguous send and blocks randomness across restart", async () => {
+    await withDatabase(async (databasePath) => {
+      let sends = 0;
+      const membership = JSON.stringify([{ missionId: "12", leg: "return", dueAt: 5 }]);
+      const coordinator = new ResolverTransactionCoordinator(databasePath);
+      await expect(coordinator.submit({
+        chainId, address, operationId: "batch:12", getTransactionCount: async () => 7,
+        submit: async () => { throw new Error("must not use blind send"); },
+        prepare: async (nonce) => ({ hash: hash(nonce), membership, broadcast: async () => {
+          sends++;
+          const db = new Database(databasePath);
+          const intent = db.query("SELECT nonce, transaction_hash AS hash, membership, status FROM resolver_prepared_intents").get();
+          expect(intent).toEqual({ nonce: 7, hash: hash(7), membership, status: "pending" });
+          db.close();
+          throw new Error("RPC disconnected after acceptance");
+        } }),
+        confirm: async () => {}
+      })).rejects.toThrow("disconnected");
+      const restarted = new ResolverTransactionCoordinator(databasePath);
+      await expect(restarted.submit({ chainId, address, operationId: "randomness:5", getTransactionCount: async () => 7,
+        submit: async () => { sends++; return hash(8); }, confirm: async () => {},
+        cancelStale: async () => { throw new Error("must not cancel batch"); }
+      })).rejects.toThrow("durable batch intent");
+      await expect(restarted.reconcilePrepared(chainId, address, async () => { throw new Error("receipt unknown"); })).rejects.toThrow("unknown");
+      expect(sends).toBe(1);
+      await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 7, throughNonce: 7, broadcast: true,
+        getTransactionCount: async () => 7, submitCancellation: async () => { sends++; return hash(7); }, confirm: async () => {}
+      })).rejects.toThrow("cannot bypass");
+      await restarted.reconcilePrepared(chainId, address, async (h) => { expect(h).toBe(hash(7)); return { finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }; });
+      await restarted.submit({ chainId, address, operationId: "randomness:5", getTransactionCount: async () => 8,
+        submit: async (nonce) => { sends++; expect(nonce).toBe(8); return hash(8); }, confirm: async () => {} });
+      expect(sends).toBe(2);
+    });
+  });
+
+  test("preparation failure never sends and successful intent confirmation releases shared signer", async () => {
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    let sent = 0;
+    const request = { chainId, address, operationId: "batch", getTransactionCount: async () => 0,
+      submit: async () => { throw new Error("blind"); }, confirm: async () => {},
+      reconcilePrepared: async () => ({ finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }) };
+    await expect(coordinator.submit({ ...request, prepare: async () => { throw new Error("fee cap changed"); } })).rejects.toThrow("fee cap");
+    await coordinator.submit({ ...request, prepare: async () => ({ hash: hash(0), membership: "[]", broadcast: async () => { sent++; return hash(0); } }) });
+    await coordinator.reconcilePrepared(chainId, address, async () => { throw new Error("already confirmed"); });
+    expect(sent).toBe(1);
+  });
   test("serializes concurrent mission/randomness writers through one nonce stream", async () => {
     await withDatabase(async (databasePath) => {
       const coordinator = new ResolverTransactionCoordinator(databasePath);

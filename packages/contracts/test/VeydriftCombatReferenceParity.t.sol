@@ -18,7 +18,13 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
-import {Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {
+    Defense,
+    Ship,
+    Technology,
+    MissionResolutionItem,
+    MissionResolutionOutcome
+} from "../src/libraries/VeydriftTypes.sol";
 import {VeydriftCombatReferenceSimulator} from "./support/VeydriftCombatReferenceSimulator.sol";
 
 contract CombatReferenceResourceToken {
@@ -68,7 +74,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     address private ally = address(0xA77A);
     address private counterplayer = address(0xC017);
     address private fulfiller = address(0xF111);
-    VeydriftGame private game;
+    VeydriftGame internal game;
     VeydriftAllianceSystem private allianceSystem;
     RandomnessEngine private randomness;
     CombatReferenceResourceToken private metalToken;
@@ -127,6 +133,41 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.deal(defender, 1 ether);
         vm.deal(ally, 1 ether);
         vm.deal(counterplayer, 1 ether);
+    }
+
+    bool private batchMode;
+    uint256 private batchGas = 16_500_000;
+    bool private requirePartial;
+    bool private sawPartial;
+
+    function testBatchAcsCombatPreservesReference() public {
+        batchMode = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.joinedAttackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 500;
+        _assertReferenceParity(fixture, 104);
+    }
+
+    function testBatchGasConstrainedCombatCommitsPartialRoundsAndFinishes() public {
+        batchMode = true;
+        batchGas = 4_000_000;
+        requirePartial = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
+        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+        _assertReferenceParity(fixture, 32);
+        assertTrue(sawPartial, "fixture must actually persist partial rounds");
+    }
+
+    function testBatchCounterplayCombatPreservesReference() public {
+        batchMode = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
+        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+        _assertReferenceParity(fixture, 32);
     }
 
     function testReferenceParityDefenderWinCargoAgainstRocketLaunchers() public {
@@ -340,7 +381,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _launchFixtureAttack(VeydriftCombatReferenceSimulator.BattleInput memory fixture)
-        private
+        internal
         returns (LaunchedBattle memory launched)
     {
         bool hasJoinedAttack = _shipTotal(fixture.joinedAttackerShips) != 0;
@@ -470,7 +511,58 @@ contract VeydriftCombatReferenceParityTest is Test {
         uint256 maximumCalls = game.nextFleetId() - 1 + totalRounds;
         VeydriftGameStorage.FleetMissionStatus status;
         for (uint256 calls = 0; calls < maximumCalls; calls++) {
-            game.resolveFleetMission(missionId);
+            if (batchMode) {
+                MissionResolutionItem[] memory items = new MissionResolutionItem[](2);
+                items[0] = MissionResolutionItem(missionId, 0);
+                items[1] = MissionResolutionItem(missionId, 1);
+                (uint8 roundsBefore,) = game.battleResolutionProgress(missionId);
+                uint256 beforeGas = gasleft();
+                (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
+                    game.resolveFleetMissionBatch{gas: batchGas}(items);
+                uint256 total = beforeGas - gasleft();
+                // --isolate applies refunds; restore them for a conservative pre-refund bound.
+                Vm.Gas memory callGas = vm.lastCallGas();
+                assertGe(callGas.gasRefunded, 0);
+                uint256 refund = uint256(uint64(callGas.gasRefunded));
+                uint256 gross = callGas.gasTotalUsed + refund;
+                emit log_named_uint("combat batch execution gas", total);
+                emit log_named_uint("combat measured execution gas", measured);
+                assertGt(measured, 0);
+                assertLt(measured, gross);
+                assertLt(gross, 16_777_216 - 50_000); // Real Base cap, with intrinsic headroom.
+                (status,,,) = _fleetMission(missionId);
+                if (requirePartial && status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                    (uint8 completed,) = game.battleResolutionProgress(missionId);
+                    if (completed > roundsBefore) {
+                        sawPartial = true;
+                        assertEq(uint8(outcomes[0]), uint8(MissionResolutionOutcome.Progress));
+                        // A receipt at a smaller gas limit can succeed without another round.
+                        // Repeated exact-call simulation must not label gas spent as Progress.
+                        for (uint256 repeat; repeat < 2; ++repeat) {
+                            (MissionResolutionOutcome[] memory idle, uint256 idleGas) =
+                                game.resolveFleetMissionBatch{gas: 500_000}(items);
+                            assertEq(uint8(idle[0]), uint8(MissionResolutionOutcome.Pending));
+                            assertGt(idleGas, 0);
+                            (uint8 unchanged,) = game.battleResolutionProgress(missionId);
+                            assertEq(unchanged, completed);
+                        }
+                    }
+                    // Prove one bounded partial call; then use the supported maximum to finish.
+                    // A round/finalization can be indivisible and exceed a smaller keeper estimate.
+                    batchGas = 16_500_000;
+                }
+                assertEq(
+                    uint8(outcomes[0]),
+                    status == VeydriftGameStorage.FleetMissionStatus.Outbound
+                        ? uint8(MissionResolutionOutcome.Progress)
+                        : uint8(MissionResolutionOutcome.Settled)
+                );
+                assertTrue(
+                    outcomes[1] != MissionResolutionOutcome.Settled, "return must not credit early"
+                );
+            } else {
+                game.resolveFleetMission(missionId);
+            }
             (status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
         }
@@ -485,7 +577,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _actualBattleFromLogs(Vm.Log[] memory entries, uint256 missionId)
-        private
+        internal
         pure
         returns (ActualBattle memory actual)
     {
@@ -530,7 +622,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         }
     }
 
-    function _finishMissionReturnIfNeeded(uint256 missionId) private {
+    function _finishMissionReturnIfNeeded(uint256 missionId) internal {
         if (missionId == 0) return;
         (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
             _fleetMission(missionId);
@@ -647,7 +739,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _fleetMission(uint256 missionId)
-        private
+        internal
         view
         returns (
             VeydriftGameStorage.FleetMissionStatus status,
@@ -659,13 +751,13 @@ contract VeydriftCombatReferenceParityTest is Test {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
     }
 
-    function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) private {
+    function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
         (,,,,,,,,,, uint256 requestId) = game.fleetMission(missionId);
         vm.prank(fulfiller);
         randomness.fulfillRandomness(requestId, randomWord);
     }
 
-    function _setTechnologyLevel(address account, Technology technology, uint16 level) private {
+    function _setTechnologyLevel(address account, Technology technology, uint16 level) internal {
         bytes32 outerSlot = keccak256(abi.encode(account, uint256(20)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
         vm.store(address(game), slot, bytes32(uint256(level)));
@@ -676,7 +768,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.store(address(game), slot, bytes32(uint256(lastActiveAt)));
     }
 
-    function _setShipCount(uint256 planetId, Ship ship, uint32 count) private {
+    function _setShipCount(uint256 planetId, Ship ship, uint32 count) internal {
         bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(22)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(ship)), outerSlot));
         vm.store(address(game), slot, bytes32(uint256(count)));
@@ -689,7 +781,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _setResources(uint256 planetId, uint128 metal, uint128 crystal, uint128 deuterium)
-        private
+        internal
     {
         uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
         vm.store(address(game), bytes32(planetBase + 2), _packResourcesHead(metal, crystal));
@@ -699,7 +791,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _setPlanetCoordinates(uint256 planetId, uint16 galaxy, uint16 system, uint8 position)
-        private
+        internal
     {
         VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
         uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
@@ -718,7 +810,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         return bytes32((uint256(crystal) << 128) | uint256(metal));
     }
 
-    function _newGame(address owner) private returns (VeydriftGame) {
+    function _newGame(address owner) internal virtual returns (VeydriftGame) {
         VeydriftCombatModule combatModule =
             new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));

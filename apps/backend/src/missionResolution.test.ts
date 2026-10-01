@@ -28,6 +28,30 @@ const config: BackendConfig = {
 };
 
 describe("MissionResolutionService", () => {
+  test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
+    const calls: string[] = [];
+    const client = fakeClient({ calls, resolvable: ["1", "2"], returnable: ["3"] });
+    let batchCalls = 0;
+    client.resolveMissionBatch = async (items) => { batchCalls++; return { hash: "0xabc", items }; };
+    client.isMissionLegComplete = async (id) => id !== "2";
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+      { chainClient: client, logger: silentLogger() });
+    await service.tick();
+    expect(batchCalls).toBe(1);
+    expect(calls).toEqual([]);
+    expect(service.snapshot().resolvedCount).toBe(1);
+    expect(service.snapshot().returnedCount).toBe(1);
+  });
+  test("enabled unsupported/failed batch path never silently sends legacy singles", async () => {
+    const calls: string[] = [];
+    const client = fakeClient({ calls, resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async () => { throw new Error("missing price"); };
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+      { chainClient: client, logger: silentLogger() });
+    await service.tick();
+    expect(calls).toEqual([]);
+    expect(service.snapshot().resolvedCount).toBe(0);
+  });
   test("settles resolvable arrival legs and due return legs in one tick", async () => {
     const calls: string[] = [];
     const service = new MissionResolutionService(config, {

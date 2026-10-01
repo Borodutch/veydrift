@@ -66,6 +66,25 @@ struct ProductionOrder {
     uint32 quantity;
 }
 
+/// @dev Typed resolution only: leg 0 = arrival/hold expiry, leg 1 = return.
+struct MissionResolutionItem {
+    uint256 missionId;
+    uint8 leg;
+}
+
+/// @dev Pending means no observed canonical progress; Progress means preparation/rounds advanced
+/// without settling this leg. Canonical status remains authoritative for both.
+enum MissionResolutionOutcome {
+    Settled,
+    Pending,
+    AlreadySettled,
+    Invalid,
+    NotDue,
+    Failed,
+    GasLimited,
+    Progress
+}
+
 enum Technology {
     Energy,
     Laser,

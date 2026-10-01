@@ -4,7 +4,12 @@ pragma solidity ^0.8.28;
 import {Vm} from "forge-std/Vm.sol";
 import {VeydriftMoonSystemTestBase} from "./VeydriftMoonSystem.t.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
-import {Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {
+    Ship,
+    Technology,
+    MissionResolutionItem,
+    MissionResolutionOutcome
+} from "../src/libraries/VeydriftTypes.sol";
 
 /// @notice Keyless replay of the production timing boundary, through the real Game/module stack.
 contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
@@ -185,6 +190,210 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             );
         }
         assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
+    function testBatchThirtyTwoIndependentReturnsFitOneReceipt() public {
+        vm.warp(RETURN_AT - 1 days);
+        MissionResolutionItem[] memory items = new MissionResolutionItem[](32);
+        for (uint256 i; i < 32; ++i) {
+            // Deterministic fixture addresses only, bounded below 32.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            address owner = address(uint160(0x10000 + i));
+            vm.deal(owner, 1 ether);
+            vm.prank(owner);
+            uint256 home = game.startPlanet{value: 0.05 ether}();
+            _fundPlanet(home, 100_000, 100_000, 100_000);
+            _setShipCount(home, Ship.Recycler, 1);
+            vm.store(
+                address(game),
+                keccak256(abi.encode(home, uint256(27))),
+                bytes32(uint256(1_000) | (uint256(1_000) << 128))
+            );
+            _setTechnologyLevel(owner, Technology.CombustionDrive, 6);
+            VeydriftGameStorage.MissionShips memory recycler;
+            recycler.recycler = 1;
+            vm.prank(owner);
+            uint256 id = game.launchFleetMission(
+                home,
+                home,
+                VeydriftGameStorage.FleetMissionType.Harvest,
+                recycler,
+                VeydriftGameStorage.Resources(0, 0, 0),
+                0
+            );
+            _setTimes(id, RETURN_AT, RETURN_AT + 100);
+            vm.prank(owner);
+            game.recallFleetMission(id);
+            _setTimes(id, RETURN_AT - 100, RETURN_AT);
+            items[i] = MissionResolutionItem(id, 1);
+        }
+        vm.warp(RETURN_AT);
+        uint256 beforeGas = gasleft();
+        (MissionResolutionOutcome[] memory outcomes,) =
+            game.resolveFleetMissionBatch{gas: 16_500_000}(items);
+        emit log_named_uint("32 independent cheap returns execution gas", beforeGas - gasleft());
+        for (uint256 i; i < 32; ++i) {
+            assertEq(uint8(outcomes[i]), uint8(MissionResolutionOutcome.Settled));
+        }
+    }
+
+    function testBatchThirtyTwoCheapReturnsGasAndSender() public {
+        vm.warp(RETURN_AT - 1 days);
+        (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setTechnologyLevel(player, Technology.Computer, 40);
+        _setPlanetOwner(away, player);
+        _fundPlanet(home, 10_000_000, 10_000_000, 10_000_000);
+        _setShipCount(home, Ship.SmallCargo, 32);
+        MissionResolutionItem[] memory items = new MissionResolutionItem[](32);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        for (uint256 i; i < 32; ++i) {
+            vm.prank(player);
+            uint256 id = game.launchFleetMission(
+                home,
+                away,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                ships,
+                VeydriftGameStorage.Resources(1, 2, 3),
+                0
+            );
+            vm.prank(player);
+            game.recallFleetMission(id);
+            _setTimes(id, RETURN_AT - 100, RETURN_AT);
+            items[i] = MissionResolutionItem(id, 1);
+        }
+        vm.warp(RETURN_AT);
+        uint256 totalSettled;
+        uint256 calls;
+        uint256 maxGas;
+        // Shared-body invalidations are real: repeated bounded batches finish the backlog,
+        // but Pending occurrences must never be counted as completed mission legs.
+        while (totalSettled < 32 && calls < 32) {
+            vm.prank(player);
+            uint256 beforeGas = gasleft();
+            (MissionResolutionOutcome[] memory current,) =
+                game.resolveFleetMissionBatch{gas: 16_500_000}(items);
+            uint256 used = beforeGas - gasleft();
+            if (used > maxGas) maxGas = used;
+            for (uint256 i; i < 32; ++i) {
+                if (current[i] == MissionResolutionOutcome.Settled) ++totalSettled;
+            }
+            ++calls;
+        }
+        emit log_named_uint("32 same-body return backlog maximum batch gas", maxGas);
+        emit log_named_uint("32 same-body return backlog batches", calls);
+        assertEq(totalSettled, 32);
+        assertLt(calls, 32, "fewer receipts than one per credited return");
+        assertEq(game.shipCount(home, Ship.SmallCargo), 32);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(player, uint256(34))))),
+            RETURN_AT,
+            "delegatecall retains acting sender"
+        );
+        (MissionResolutionOutcome[] memory outcomes,) = game.resolveFleetMissionBatch(items);
+        for (uint256 i; i < 32; ++i) {
+            assertEq(uint8(outcomes[i]), uint8(MissionResolutionOutcome.AlreadySettled));
+        }
+        assertEq(game.shipCount(home, Ship.SmallCargo), 32);
+    }
+
+    function testBatchPlanetEarlierReturnReverseArray() public {
+        _batchReplay(false, -4);
+    }
+
+    function testBatchMoonEarlierReturnReverseArray() public {
+        _batchReplay(true, -4);
+    }
+
+    function testBatchPlanetLaterReturnReverseArray() public {
+        _batchReplay(false, 4);
+    }
+
+    function testBatchMoonLaterReturnReverseArray() public {
+        _batchReplay(true, 4);
+    }
+
+    function testBatchPlanetTieArrivalWins() public {
+        _batchReplay(false, 0);
+    }
+
+    function testBatchMoonTieArrivalWins() public {
+        _batchReplay(true, 0);
+    }
+
+    function _batchReplay(bool moon, int64 offset) private {
+        (uint256 home,) = _fixture(moon, offset);
+        MissionResolutionItem[] memory items = new MissionResolutionItem[](3);
+        // Put the later leg first, then repeat it: each occurrence has its own truthful result.
+        items[0] = MissionResolutionItem(offset < 0 ? ATTACK_ID : RETURN_ID, offset < 0 ? 0 : 1);
+        items[1] = MissionResolutionItem(offset < 0 ? RETURN_ID : ATTACK_ID, offset < 0 ? 1 : 0);
+        items[2] = items[0];
+        if (offset >= 0) {
+            (MissionResolutionOutcome[] memory blocked, uint256 blockedGas) =
+                game.resolveFleetMissionBatch(items);
+            assertGt(blockedGas, 0); // Pending randomness is failed work, never Progress.
+            assertEq(uint8(blocked[0]), uint8(MissionResolutionOutcome.Failed));
+            assertEq(uint8(blocked[1]), uint8(MissionResolutionOutcome.Failed));
+            assertEq(uint8(blocked[2]), uint8(MissionResolutionOutcome.Failed));
+            assertEq(
+                moon
+                    ? game.moonShipCount(home, Ship.SmallCargo)
+                    : game.shipCount(home, Ship.SmallCargo),
+                0
+            );
+        }
+        _fulfillAttackBattleRandomness(ATTACK_ID, 7);
+        vm.recordLogs();
+        uint256 beforeGas = gasleft();
+        (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
+            game.resolveFleetMissionBatch{gas: 16_500_000}(items);
+        uint256 total = beforeGas - gasleft();
+        // --isolate applies refunds; restore them for a conservative pre-refund bound.
+        Vm.Gas memory callGas = vm.lastCallGas();
+        assertGe(callGas.gasRefunded, 0);
+        uint256 refund = uint256(uint64(callGas.gasRefunded));
+        uint256 gross = callGas.gasTotalUsed + refund;
+        emit log_named_uint("mixed return/combat batch execution gas", total);
+        emit log_named_uint("mixed return/combat measured execution gas", measured);
+        assertGt(measured, 0);
+        assertLt(measured, gross);
+        assertLt(gross, 16_777_216 - 50_000);
+        assertEq(
+            uint8(outcomes[0]),
+            offset < 0
+                ? uint8(MissionResolutionOutcome.Progress)
+                : uint8(MissionResolutionOutcome.Failed)
+        );
+        assertEq(uint8(outcomes[2]), uint8(MissionResolutionOutcome.Settled));
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 topic = keccak256(
+            "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
+        );
+        bool found;
+        for (uint256 i; i < entries.length; ++i) {
+            if (entries[i].topics[0] == topic && uint256(entries[i].topics[1]) == ATTACK_ID) {
+                (, uint8 rounds,,,,) =
+                    abi.decode(entries[i].data, (uint8, uint8, uint256, uint128, uint128, uint128));
+                assertEq(rounds != 0, offset < 0);
+                found = true;
+            }
+        }
+        assertTrue(found);
+        uint32 ships = moon
+            ? game.moonShipCount(home, Ship.SmallCargo)
+            : game.shipCount(home, Ship.SmallCargo);
+        (outcomes,) = game.resolveFleetMissionBatch(items);
+        for (uint256 i; i < outcomes.length; ++i) {
+            assertEq(uint8(outcomes[i]), uint8(MissionResolutionOutcome.AlreadySettled));
+        }
+        assertEq(
+            moon
+                ? game.moonShipCount(home, Ship.SmallCargo)
+                : game.shipCount(home, Ship.SmallCargo),
+            ships
+        );
     }
 
     function testBodyLaunchPreservesEveryMobileShipQuantity() public {
