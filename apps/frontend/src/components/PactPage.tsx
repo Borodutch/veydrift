@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ArrowRight, Check, Coins, ExternalLink, Handshake, Lock, Repeat, Rocket, Swords, Users } from "lucide-preact";
-import { playableApiUrl } from "../runtimeConfig";
+import { submitPactInterest } from "../pactInterest";
 import { TelegramIcon } from "./TelegramIcon";
 
 const telegramUrl = "https://t.me/borodutch";
@@ -248,12 +248,7 @@ function PactForm() {
     setStatus("sending");
     setError("");
     try {
-      const response = await fetch(`${playableApiUrl}/pact/interest`, {
-        body: JSON.stringify({ amountUsd: form.get("amountUsd"), email: form.get("email"), telegram: form.get("telegram") }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      });
-      if (!response.ok) throw new Error(((await response.json().catch(() => null)) as { message?: string } | null)?.message ?? "");
+      await submitPactInterest({ amountUsd: form.get("amountUsd"), email: form.get("email"), telegram: form.get("telegram") });
       setStatus("sent");
     } catch (caught) {
       setStatus("idle");
