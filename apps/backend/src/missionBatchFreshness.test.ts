@@ -1,0 +1,185 @@
+import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { encodeFunctionResult, keccak256, type PublicClient } from "viem";
+import { defaultMissionBatchPolicy, missionBatchAbi } from "./missionBatch";
+import { ViemMissionResolutionChainClient } from "./missionResolution";
+import { ResolverTransactionCoordinator } from "./resolverTransactions";
+
+const address = "0x1111111111111111111111111111111111111111" as const;
+const game = "0x2222222222222222222222222222222222222222" as const;
+const blockHash = "0x" + "aa".repeat(32);
+const base = 1_800_000_000;
+const chain = { id: 8453, name: "inert", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: ["http://invalid.test"] } } };
+const inertBytes = "0x1234" as const; // not a signed transaction; no key or network used
+
+type Options = {
+  priceAge?: number; exactDelayMs?: number; canonicalDelayMs?: number; signingDelayMs?: number;
+  broadcastReadDelayMs?: number; mismatchQuote?: boolean; reorgAfterSign?: boolean;
+  incompleteRound?: boolean; futurePrice?: boolean; ambiguous?: boolean;
+  loseLeaseBeforeSign?: boolean; loseLeaseDuringSigning?: boolean; seedSuccessor?: boolean;
+};
+async function scenario(options: Options, check: (f: ReturnType<typeof fixture>) => Promise<void>) {
+  const dir = mkdtempSync(join(tmpdir(), "batch-freshness-"));
+  const originalNow = Date.now;
+  let clock = base * 1000;
+  Date.now = () => clock;
+  try { await check(fixture(join(dir, "intents.sqlite"), options, (ms) => { clock += ms; })); }
+  finally { Date.now = originalNow; rmSync(dir, { recursive: true, force: true }); }
+}
+function fixture(path: string, options: Options, advance: (ms: number) => void) {
+  let signs = 0, sends = 0, blocks = 0, exactCalls = 0, mined = false;
+  const updatedAt = BigInt(base - (options.priceAge ?? 119) + (options.futurePrice ? 122 : 0));
+  const receipt = { status: "success", blockNumber: 1n, blockHash, gasUsed: 100_000n,
+    effectiveGasPrice: 100n, l1Fee: 200n, operatorFee: 0n };
+  const loseLease = () => {
+    const db = new Database(path);
+    db.query("UPDATE resolver_transaction_leases SET holder = 'successor'").run();
+    if (options.seedSuccessor) db.query("UPDATE resolver_transaction_attempts SET nonce = 5, transaction_hash = ?, status = 'submitted'")
+      .run("0x" + "bb".repeat(32));
+    db.close();
+  };
+  const publicClient = {
+    getStorageAt: async () => "0x00",
+    getTransactionCount: async () => mined ? 5 : 4,
+    getBlock: async () => {
+      blocks++;
+      // initial block, packing quote, prepare block, final quote, pre-sign canonical, pre-send canonical
+      if (blocks === 5) {
+        advance(options.canonicalDelayMs ?? 0);
+        if (options.loseLeaseBeforeSign) loseLease();
+      }
+      if (blocks === 6) advance(options.broadcastReadDelayMs ?? 0);
+      return { number: 1n, hash: (options.mismatchQuote && blocks === 4) || (options.reorgAfterSign && blocks === 6)
+        ? "0x" + "bb".repeat(32) : blockHash,
+        timestamp: BigInt(base), baseFeePerGas: 100n, gasLimit: 30_000_000n };
+    },
+    estimateMaxPriorityFeePerGas: async () => 10n,
+    readContract: async ({ functionName }: { functionName: string }) => functionName === "decimals" ? 8
+      : functionName === "latestRoundData" ? [5n, 3000_00000000n, updatedAt, updatedAt, options.incompleteRound ? 4n : 5n]
+      : functionName === "fleetMissionEligibility" ? [false, 9n, true] : 100n,
+    call: async ({ gas }: { gas: bigint }) => {
+      if (gas !== 16_777_216n && ++exactCalls === 2) advance(options.exactDelayMs ?? 0);
+      return { data: encodeFunctionResult({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch", result: [[0], 100_000n] }) };
+    },
+    sendRawTransaction: async () => {
+      sends++;
+      if (options.ambiguous) throw new Error("connection lost after send");
+      mined = true;
+      return keccak256(inertBytes);
+    },
+    waitForTransactionReceipt: async () => receipt,
+    getTransactionReceipt: async () => { if (!mined) throw new Error("receipt unknown"); return receipt; }
+  };
+  const sender = { address, signTransaction: async () => {
+    signs++;
+    advance(options.signingDelayMs ?? 0);
+    if (options.loseLeaseDuringSigning) loseLease();
+    return inertBytes;
+  } };
+  const makeClient = () => new ViemMissionResolutionChainClient({
+    listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [],
+    isFleetChronologyOrderingReady: async () => true,
+    getCanonicalFleetMission: async () => ({ status: "Outbound", arrivalAt: String(base - 5), returnAt: String(base + 5) }) as never
+  }, game, sender as never, publicClient as unknown as PublicClient, undefined, chain, undefined,
+  new ResolverTransactionCoordinator(path), undefined, undefined,
+  { ...defaultMissionBatchPolicy, enabled: true, maxItems: 2, priceFeed: game });
+  const rows = () => {
+    const db = new Database(path);
+    try { return db.query("SELECT nonce, transaction_hash AS hash, membership, status FROM resolver_prepared_intents").all(); }
+    finally { db.close(); }
+  };
+  const signingRows = () => {
+    const db = new Database(path);
+    try { return db.query("SELECT r.nonce, r.membership, r.transferred, s.transaction_hash AS hash FROM resolver_signing_reservations r LEFT JOIN resolver_signing_results s ON s.reservation_id = r.id").all(); }
+    finally { db.close(); }
+  };
+  const attempts = () => {
+    const db = new Database(path);
+    try { return db.query("SELECT nonce, transaction_hash AS hash, status FROM resolver_transaction_attempts").all(); }
+    finally { db.close(); }
+  };
+  return { client: makeClient(), restart: makeClient, rows, signingRows, attempts, advance, counts: () => ({ signs, sends }),
+    items: [{ missionId: "1", leg: "arrival" as const, dueAt: base - 5 }] };
+}
+
+test("actual batch path accepts fresh119 and exact120 price / exact30 quote boundaries", async () => {
+  for (const options of [{}, { exactDelayMs: 1000 }, { signingDelayMs: 1000 },
+    { priceAge: 90, signingDelayMs: 30_000 }, { priceAge: 90, exactDelayMs: 30_000 }]) {
+    await scenario(options, async (f) => {
+      expect((await f.client.resolveMissionBatch(f.items)).hash).toBe(keccak256(inertBytes));
+      expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    });
+  }
+});
+
+test("actual exact simulation and final canonical await cannot age a price/quote into signing", async () => {
+  for (const options of [{ priceAge: 121 }, { exactDelayMs: 2000 }, { canonicalDelayMs: 2000 },
+    { priceAge: 0, exactDelayMs: 30_001 }, { priceAge: 0, canonicalDelayMs: 30_001 },
+    { mismatchQuote: true }, { incompleteRound: true }, { futurePrice: true }]) {
+    await scenario(options, async (f) => {
+      await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
+      expect(f.counts()).toEqual({ signs: 0, sends: 0 });
+      expect(f.rows()).toEqual([]);
+    });
+  }
+});
+
+test("signing/pre-send awaits expiring price or quote preserve locally prevented intent across restart", async () => {
+  for (const options of [{ signingDelayMs: 2000 }, { signingDelayMs: 31_000 },
+    { priceAge: 0, signingDelayMs: 30_001 }, { broadcastReadDelayMs: 2000 },
+    { priceAge: 0, broadcastReadDelayMs: 30_001 }, { reorgAfterSign: true }]) {
+    await scenario(options, async (f) => {
+      await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
+      expect(f.counts()).toEqual({ signs: 1, sends: 0 });
+      const saved = [{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "prevented" }];
+      expect(f.rows()).toEqual(saved);
+      const restarted = f.restart();
+      await expect(restarted.resolveMissionBatch(f.items)).rejects.toThrow("locally prevented");
+      await expect(restarted.resolveMissionBatch([])).rejects.toThrow("locally prevented");
+      expect(f.counts()).toEqual({ signs: 1, sends: 0 });
+      expect(f.rows()).toEqual(saved);
+    });
+  }
+});
+
+test("lease replaced during last canonical read prevents the actual signer and any signing reservation", async () => {
+  await scenario({ loseLeaseBeforeSign: true, seedSuccessor: true }, async (f) => {
+    await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("lease was lost");
+    expect(f.counts()).toEqual({ signs: 0, sends: 0 });
+    expect(f.signingRows()).toEqual([]);
+    expect(f.rows()).toEqual([]);
+    expect(f.attempts()).toEqual([{ nonce: 5, hash: "0x" + "bb".repeat(32), status: "submitted" }]);
+  });
+});
+
+test("lease lost during async signing retains immutable original hash without touching successor or re-signing", async () => {
+  for (const seedSuccessor of [false, true]) await scenario({ loseLeaseDuringSigning: true, seedSuccessor }, async (f) => {
+    await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("lease was lost");
+    const evidence = [{ nonce: 4, membership: JSON.stringify(f.items), hash: keccak256(inertBytes), transferred: 0 }];
+    const attempts = seedSuccessor ? [{ nonce: 5, hash: "0x" + "bb".repeat(32), status: "submitted" }]
+      : [{ nonce: 4, hash: null, status: "allocating" }];
+    expect(f.signingRows()).toEqual(evidence);
+    expect(f.rows()).toEqual([]);
+    expect(f.attempts()).toEqual(attempts);
+    f.advance(90_001); // successor lease expires; restart acquires a new fence, not the old holder
+    await expect(f.restart().resolveMissionBatch(f.items)).rejects.toThrow("explicit fenced recovery");
+    await expect(f.restart().resolveMissionBatch([])).rejects.toThrow("explicit fenced recovery");
+    expect(f.counts()).toEqual({ signs: 1, sends: 0 });
+    expect(f.signingRows()).toEqual(evidence);
+    expect(f.attempts()).toEqual(attempts);
+  });
+});
+
+test("ambiguous network submission stays pending and never becomes locally prevented on restart", async () => {
+  await scenario({ ambiguous: true }, async (f) => {
+    await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("connection lost");
+    f.advance(31_000);
+    await expect(f.restart().resolveMissionBatch(f.items)).rejects.toThrow("receipt unknown");
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.rows()).toEqual([{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "pending" }]);
+  });
+});

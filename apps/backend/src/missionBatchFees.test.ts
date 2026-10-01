@@ -14,7 +14,7 @@ const result = (outcome: number, used = 100_000n) => ({ data: encodeFunctionResu
 function fixture(overrides: Record<string, unknown> = {}) {
   const calls: Array<Record<string, unknown>> = [];
   const client = {
-    getBlock: async () => ({ number: 10n, timestamp: now, baseFeePerGas: 100n, gasLimit: 30_000_000n }),
+    getBlock: async () => ({ number: 10n, hash: "0x" + "aa".repeat(32), timestamp: now, baseFeePerGas: 100n, gasLimit: 30_000_000n }),
     estimateGas: async () => { throw new Error("must not trust success-only estimateGas"); },
     call: async (args: Record<string, unknown>) => { calls.push(args); return result(0); },
     estimateMaxPriorityFeePerGas: async () => 10n,
@@ -41,11 +41,27 @@ test("quotes actual nonce/calldata/gas/maxfee and explicit Base fee oracles", as
   const { client, calls } = fixture();
   const quote = await quoteMissionBatch(client, input);
   expect(quote.totalWei).toBe(signedGas * 210n + 2200n);
+  expect(Object.isFrozen(quote)).toBe(true);
+  expect(Object.isFrozen(quote.provenance)).toBe(true);
+  expect(quote.provenance).toEqual({ blockNumber: 10n, blockHash: ("0x" + "aa".repeat(32)) as `0x${string}`,
+    blockTimestamp: now, priceFeed: input.policy.priceFeed, priceRoundId: 5n,
+    priceUpdatedAt: now, priceMaxAgeSeconds: 120 });
   expect(calls[0]?.data).toBe(batchCalldata(input.items));
 });
+test("quote freezes the policy used by price reads and exposure across async work", async () => {
+  const policy = { ...input.policy, priceFeed: input.policy.priceFeed as `0x${string}` };
+  const quote = await quoteMissionBatch(fixture({ getBlock: async () => {
+    policy.priceFeed = input.game;
+    policy.priceMaxAgeSeconds = 300;
+    return { number: 10n, hash: "0x" + "aa".repeat(32), timestamp: now, baseFeePerGas: 100n, gasLimit: 30_000_000n };
+  } }).client, { ...input, policy });
+  expect(quote.provenance.priceFeed).toBe(input.policy.priceFeed);
+  expect(quote.provenance.priceMaxAgeSeconds).toBe(120);
+});
+
 test("stale base block, failed estimate, operator failure, stale price and cap spike fail closed", async () => {
   for (const overrides of [
-    { getBlock: async () => ({ number: 10n, timestamp: now - 100n, baseFeePerGas: 1n, gasLimit: 30_000_000n }) },
+    { getBlock: async () => ({ number: 10n, hash: "0x" + "aa".repeat(32), timestamp: now - 100n, baseFeePerGas: 1n, gasLimit: 30_000_000n }) },
     { call: async () => { throw new Error("measurement failed"); } },
     { readContract: async () => { throw new Error("fee/price RPC unavailable"); } }
   ]) await expect(quoteMissionBatch(fixture(overrides).client, input)).rejects.toThrow();
