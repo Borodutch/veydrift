@@ -36,9 +36,21 @@ const game = [
 ] as const;
 
 const steps = [
-  { tag: "Now", title: "The Pact", body: "A $50K–$100K friends & family round. Small, direct, and first in line — before any public price exists." },
+  { tag: "Now", title: "The Pact", body: "5% of supply at $0.002 per $VEYDRIFT, $50K–$100K, fully unlocked when the Pact is finalized. First in line, before any public price exists." },
   { tag: "Next", title: "Continuous clearing auction", body: "250M $VEYDRIFT sold through Uniswap's onchain CCA. Price discovery happens over time, not in the first block, so snipers don't win by default." },
   { tag: "Then", title: "Open liquidity", body: "Auction proceeds plus 250M reserved $VEYDRIFT migrate automatically into a Uniswap v4 $VEYDRIFT/WETH pool, alongside three $VEYDRIFT/resource pools. Positions sit in a time lock with no owner and no early-unlock path." },
+] as const;
+
+const pactPriceUsd = 0.002;
+const pactTokens = 50_000_000;
+const totalSupply = 1_000_000_000;
+const pactTerms = [
+  { label: "Allocation", value: "5% of supply", note: "50,000,000 $VEYDRIFT, carved out of the contributor allocation" },
+  { label: "Price", value: "$0.002", note: "per $VEYDRIFT — a $2M fully diluted valuation" },
+  { label: "Round size", value: "$50K–$100K", note: "$50K buys 2.5% of supply, $100K buys the full 5%" },
+  { label: "Minimum", value: "$1,000", note: "500,000 $VEYDRIFT" },
+  { label: "Unlock", value: "100%", note: "unlocked when the Pact is finalized — no vesting" },
+  { label: "Unsold tokens", value: "Back to contributors", note: "whatever the Pact does not sell stays with contributors" },
 ] as const;
 
 const allocations = [
@@ -46,7 +58,8 @@ const allocations = [
   { label: "$VEYDRIFT/WETH liquidity", share: 25, color: "bg-cyan-600", note: "250M — paired with auction proceeds, time-locked" },
   { label: "Resource liquidity", share: 15, color: "bg-ember", note: "150M — 50M each vs vMETAL, vCRYSTAL, vDEUT" },
   { label: "Development", share: 15, color: "bg-violet-400", note: "150M — 5-year linear vesting" },
-  { label: "Contributors", share: 10, color: "bg-emerald-400", note: "100M — 4-year vesting, 1-year cliff" },
+  { label: "Contributors", share: 5, color: "bg-emerald-400", note: "50M — 4-year vesting, 1-year cliff; unsold Pact tokens return here" },
+  { label: "The Pact", share: 5, color: "bg-white", note: "50M — $0.002 each, unlocked when the Pact is finalized" },
   { label: "Ecosystem & strategic", share: 10, color: "bg-rose-400", note: "100M — 6-year linear vesting" },
 ] as const;
 
@@ -74,14 +87,15 @@ export function PactApp() {
         <div className="mx-auto max-w-6xl">
           <p className="inline-flex items-center gap-2 rounded-full bg-signal/[0.08] px-3 py-1.5 text-sm font-semibold text-signal">
             <Handshake className="h-4 w-4" />
-            Friends & family round · $50K–$100K
+            Friends & family round · 5% of supply at $0.002
           </p>
           <h1 className="mt-6 max-w-4xl text-4xl font-semibold leading-[1.05] sm:text-6xl">
             The Veydrift Pact: get $VEYDRIFT before the auction.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
             Veydrift is an onchain space strategy game on Base. Players have been playing it every day for four months, before there
-            was any token to hold. The Pact is a small round for people who want in before the public auction sets a price.
+            was any token to hold. The Pact offers 5% of the supply at $0.002 per token to people who want in before the public auction
+            sets a price.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <a className="inline-flex min-h-12 items-center gap-2 rounded-full bg-signal px-6 py-3 text-sm font-bold text-[#031014] shadow-[0_0_40px_rgba(128,241,255,0.3)] hover:brightness-110" href="#join">
@@ -174,6 +188,19 @@ export function PactApp() {
         </ol>
       </Section>
 
+      <Section eyebrow="Pact terms" title="5% of supply. $0.002 per token. Unlocked at close.">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {pactTerms.map((term) => (
+            <div className="landing-feature !min-h-0" key={term.label}>
+              <h3 className="!mt-0 text-sm !font-semibold uppercase tracking-wide !text-slate-400">{term.label}</h3>
+              <div className="mt-2 text-3xl font-semibold text-signal">{term.value}</div>
+              <p>{term.note}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-6 text-sm text-slate-400">Allocations are first come, first served until the $100K cap is reached.</p>
+      </Section>
+
       <Section eyebrow="Tokenomics" title="1,000,000,000 $VEYDRIFT. Fixed forever.">
         <p className="max-w-2xl text-slate-300">
           No owner, no minter, no proxy, no pause switch. The entire supply is allocated once, at genesis, and team tokens vest
@@ -199,7 +226,7 @@ export function PactApp() {
         </ul>
         <p className="mt-6 flex items-start gap-2 text-sm text-slate-400">
           <Lock className="mt-0.5 h-4 w-4 shrink-0 text-signal" />
-          Half the supply goes to the public auction and its liquidity. Pact pricing, size and unlock terms are shared one-on-one.
+          Half the supply goes to the public auction and its liquidity. The Pact's 5% comes out of the contributor allocation.
         </p>
       </Section>
 
@@ -209,8 +236,8 @@ export function PactApp() {
             <p className="text-sm font-semibold text-signal">Join the Pact</p>
             <h2 className="mt-3 text-3xl font-semibold leading-tight sm:text-4xl">Tell me how much $VEYDRIFT you want.</h2>
             <p className="mt-4 text-slate-300">
-              The round is capped at $100K, and allocations go to the people who reach out first. Leave your details and I'll
-              send you the terms personally. No commitment until you've seen them.
+              $0.002 per $VEYDRIFT, capped at $100K for the full 5%. Allocations go to the people who reach out first. Leave
+              your details and I'll follow up personally to confirm your allocation.
             </p>
             <div className="mt-8 rounded-xl border border-white/10 bg-void/60 p-5">
               <p className="flex items-center gap-2 font-semibold">
@@ -241,6 +268,8 @@ export function PactApp() {
 function PactForm() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState("");
+  const [amountUsd, setAmountUsd] = useState(0);
+  const tokens = Math.floor(amountUsd / pactPriceUsd);
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -261,7 +290,7 @@ function PactForm() {
       <div className="flex flex-col items-start justify-center rounded-xl border border-signal/30 bg-void/60 p-6">
         <Check className="h-8 w-8 text-signal" />
         <h3 className="mt-4 text-2xl font-semibold">You're on the list.</h3>
-        <p className="mt-2 text-slate-300">I'll reach out with the Pact terms. Want to move faster? Ping me on Telegram.</p>
+        <p className="mt-2 text-slate-300">I'll reach out to confirm your allocation. Want to move faster? Ping me on Telegram.</p>
       </div>
     );
   }
@@ -270,8 +299,13 @@ function PactForm() {
   return (
     <form className="grid content-start gap-4 rounded-xl border border-white/10 bg-void/60 p-6" onSubmit={submit}>
       <label className="text-sm font-semibold text-slate-200">
-        How much do you want to put in? (USD, min $1,000)
-        <input className={input} inputMode="numeric" max={1_000_000} min={1_000} name="amountUsd" placeholder="5000" required step={100} type="number" />
+        How much do you want to put in? (USD, $1,000–$100,000)
+        <input className={input} inputMode="numeric" max={100_000} min={1_000} name="amountUsd" onInput={(event) => setAmountUsd(Number(event.currentTarget.value) || 0)} placeholder="5000" required step={100} type="number" />
+        {tokens > 0 && tokens <= pactTokens ? (
+          <span className="mt-2 block font-normal text-signal">
+            = {tokens.toLocaleString("en-US")} $VEYDRIFT · {((tokens / totalSupply) * 100).toLocaleString("en-US", { maximumFractionDigits: 3 })}% of supply
+          </span>
+        ) : null}
       </label>
       <label className="text-sm font-semibold text-slate-200">
         Email
