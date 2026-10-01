@@ -6,6 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
 
+test("delivery diagnostics and smoke edits run the delivery regression suite", () => {
+  for (const file of ["veydrift-delivery-timing.mjs", "veydrift-delivery-timing.test.mjs", "veydrift-postdeploy-smoke.mjs"]) {
+    assert.equal(filesRequireBackendChecks([`scripts/${file}`]), true);
+  }
+  const check = planChecks({ backend: true }).find((entry) => entry.label === "release-diagnostics-test");
+  assert.ok(check.args.includes("scripts/veydrift-delivery-timing.test.mjs"));
+});
+
 test("PR and push CI select every check, while local preflight stays scoped", () => {
   const dir = mkdtempSync(join(tmpdir(), "veydrift-ci-parity-"));
   const scopeScript = new URL("./ci-scope.mjs", import.meta.url).pathname;

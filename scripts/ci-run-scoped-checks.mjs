@@ -131,7 +131,7 @@ export function planChecks(scope, group = "all") {
     add("backend-check", "bun", ["run", "check:backend"]);
     add("backend-test", "bun", ["run", "test:backend"]);
     add("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
-    add("release-diagnostics-test", "node", ["--test", "scripts/veydrift-safe-diagnostics.test.mjs"]);
+    add("release-diagnostics-test", "node", ["--test", "scripts/veydrift-safe-diagnostics.test.mjs", "scripts/veydrift-delivery-timing.test.mjs"]);
   }
 
   if (scope.frontend) {

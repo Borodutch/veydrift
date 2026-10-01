@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { deliveryContext, deliverySample, timedJsonRequest } from "./veydrift-delivery-timing.mjs";
 import { keccak256 } from "viem";
 
 import { receiptActivatesImplementation } from "./veydrift-upgrade-receipt.mjs";
@@ -204,6 +205,7 @@ const result = {
   ok: failures.length === 0,
   apiUrl: publicDiagnosticUrl(apiUrl),
   wallet: wallet ?? null,
+  deliveryContext: deliveryContext(),
   evidence,
   failures
 };
@@ -355,9 +357,7 @@ async function checkJson(name, endpoint, validate) {
   evidence.push({
     name,
     endpoint,
-    status: sample.status,
-    ms: sample.ms,
-    timedOut: sample.timedOut,
+    ...deliverySample(sample),
     ...(sample.body && typeof sample.body === "object" ? { keys: Object.keys(sample.body).sort() } : {}),
     ...(sample.error ? { error: sample.error } : {})
   });
@@ -394,6 +394,7 @@ async function checkRuntimeConfigStress(noisyEndpoints) {
     maxMs: Math.max(0, ...runtimeLatencies),
     noisyEndpoints,
     runtimeStatuses: runtimeSamples.map((sample) => sample.status),
+    runtimeSamples: runtimeSamples.map(deliverySample),
     noisyStatuses: noisySamples.map((sample) => ({ endpoint: sample.endpoint, status: sample.status, error: sample.error }))
   });
 
@@ -419,40 +420,7 @@ function runtimeStressEndpoints() {
 }
 
 async function timedJson(endpoint, timeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const started = Date.now();
-  try {
-    const response = await fetch(`${apiUrl}${endpoint}`, {
-      headers: { accept: "application/json" },
-      signal: controller.signal
-    });
-    const text = await response.text();
-    const body = JSON.parse(text);
-    return {
-      endpoint,
-      ok: response.ok,
-      status: response.status,
-      ms: Date.now() - started,
-      body,
-      error: body?.error ?? undefined,
-      timedOut: false
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const normalizedMessage = message.toLowerCase();
-    return {
-      endpoint,
-      ok: false,
-      status: null,
-      ms: Date.now() - started,
-      body: null,
-      error: message,
-      timedOut: normalizedMessage.includes("abort")
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return { endpoint, ...await timedJsonRequest(`${apiUrl}${endpoint}`, timeoutMs) };
 }
 
 function percentile(sortedValues, percentileValue) {
