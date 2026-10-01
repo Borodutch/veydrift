@@ -3,6 +3,7 @@ import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256, stringToHex, toFunctionSelector } from "viem";
 import type { BackendConfig } from "./config";
+import { applyMissionEligibility } from "./missionEligibility";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import {
   buildingDurationSeconds,
@@ -657,6 +658,8 @@ export type FleetMissionSummary = {
   // missions reconstructed without a launch event.
   launchBlockNumber: string;
   needsResolution: boolean;
+  // Read-only simulation of the current permissionless leg, including event ordering.
+  resolutionEligible?: boolean;
   // Canonical progress while a large Attack is resolving across gas-bounded transactions.
   // Zero rounds denotes staged preparation/sub-round work; omitted before combat and after settlement.
   combatResolutionProgress?: {
@@ -1405,6 +1408,7 @@ export type DebrisFieldEvent = {
 };
 
 export interface ChainReader {
+  canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
   getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getStartPrice(): Promise<string | null>;
@@ -2209,8 +2213,27 @@ export class VeydriftGameReader implements ChainReader {
     return this.readBattleReports();
   }
 
+  async canResolveFleetMission(missionId: bigint, leg: "arrival" | "return"): Promise<boolean> {
+    // An empty successful simulation may only prepare a bounded chronology scan.
+    // Require the authoritative ordering proof before checking runtime/randomness guards.
+    const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
+    if (!/^0x[0-9a-fA-F]{192}$/.test(proof)) return false;
+    const words = splitWords(proof);
+    if (decodeUintWord(wordAt(words, 0)) !== 1n || decodeUintWord(wordAt(words, 2)) !== 1n) return false;
+    const result = await this.call(leg === "arrival" ? "0xde09e7cf" : "0xc2472852", [encodeUint(missionId)]);
+    return result === "0x";
+  }
+
+  async isFleetChronologyOrderingReady(missionId: bigint): Promise<boolean> {
+    // The third ABI word confirms resolver support, including legacy missions. New launches
+    // register atomically; no historical inventory/backfill is required for bounded progress.
+    const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
+    return /^0x[0-9a-fA-F]{192}$/.test(proof)
+      && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n;
+  }
+
   async listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
-    const summaries = await this.readFleetMissionSummaries();
+    const summaries = await this.readFleetMissionSummaries(false);
     return summaries
       .filter((mission) =>
         mission.needsResolution
@@ -2234,7 +2257,7 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listReturnableFleetMissions(): Promise<ReturnableFleetMission[]> {
-    const summaries = await this.readFleetMissionSummaries();
+    const summaries = await this.readFleetMissionSummaries(false);
     const nowSeconds = Math.floor(Date.now() / 1_000);
     return summaries
       .filter((mission) =>
@@ -5112,7 +5135,7 @@ export class VeydriftGameReader implements ChainReader {
     return this.callContract(this.settlementContractAddress, selector, args);
   }
 
-  private async readFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
+  private async readFleetMissionSummaries(publicReadiness = true): Promise<FleetMissionSummary[]> {
     const missionLogs = await this.getLogs({
       address: this.gameContractAddress,
       fromBlock: toQuantity(this.indexFromBlock),
@@ -5140,10 +5163,14 @@ export class VeydriftGameReader implements ChainReader {
     // listResolvableFleetMissions it feeds) never surfaces a phantom-ready attack. Skipped entirely
     // when no Attack has arrived, so the common path adds no extra RPC round trip.
     const fulfilledRandomnessRequestIds = await this.readFulfilledRandomnessRequestIds(missions, nowSeconds);
-    return missions.map((mission) => ({
+    const summaries = missions.map((mission) => ({
       ...mission,
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
+    // Funded resolver candidates include bounded preparation work, not just UI-ready legs.
+    // Preserve due-time/randomness filtering above; the write boundary verifies ordering support and simulates the exact call.
+    if (publicReadiness) await applyMissionEligibility({ missions: summaries }, this, nowSeconds);
+    return summaries;
   }
 
   private decodeCanonicalFleetMission(missionId: bigint, result: string): CanonicalFleetMissionSnapshot | null {

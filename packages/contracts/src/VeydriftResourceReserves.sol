@@ -426,6 +426,25 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
     }
 
+    /// @dev Recall can create a zero-duration return at this same block timestamp. Invalidate
+    /// only possible origin bodies: a saved due-event scan must not miss that new tie dependency.
+    function _invalidateChronologyReturnBody(FleetMission storage mission) internal {
+        ++_chronologyBodyGeneration[
+            uint256(keccak256(abi.encode(mission.originPlanetId, mission.originIsMoon)))
+        ];
+        if (mission.originIsMoon) {
+            ++_chronologyBodyGeneration[
+                uint256(keccak256(abi.encode(mission.originPlanetId, false)))
+            ];
+        }
+    }
+
+    function _registerFleetChronology(uint256 missionId) internal {
+        (bool ok, bytes memory reason) = address(this)
+            .call(abi.encodeWithSignature("registerFleetChronology(uint256)", missionId));
+        if (!ok) assembly ("memory-safe") { revert(add(reason, 32), mload(reason)) }
+    }
+
     function _trackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 
@@ -650,6 +669,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     function _invalidateArrivalOrderIndex(uint256 planetId) internal {
         VeydriftArrivalProgress.invalidate(planetId);
         delete _arrivalOrderIndexByPlanet[planetId];
+        delete _attackReturnScanCursor[planetId];
     }
 
     function _addResolutionMissionForPlayer(address player, uint256 missionId) private {

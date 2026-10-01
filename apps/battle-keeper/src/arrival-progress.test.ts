@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeAbiParameters, encodeFunctionResult, keccak256, stringToHex, toHex, type Hex } from "viem";
-import { readMissionProgress, progressAbi, consumeProgress, guardAllows } from "./progress";
+import { readMissionProgress, progressAbi, consumeProgress, guardAllows, progressKey } from "./progress";
 const hash = "0x" + "a".repeat(64);
 const address = "0x1111111111111111111111111111111111111111";
 const slot = (base: bigint) => keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [2n, base]));
@@ -104,4 +104,32 @@ test("capability binds EIP1967 implementation and exact runtime hash at the same
   expect(guardAllows(undefined,await read())).toBe(true);
   code = "0x6001"; expect(guardAllows(undefined,await read())).toBe(false);
   expect(tags.every(tag=>JSON.stringify(tag)===JSON.stringify({blockHash:hash,requireCanonical:true}))).toBe(true);
+});
+
+for (const target of [undefined, "2"]) test("chronology counter keeps " + (target ? "arrival" : "return") + " scans live without reopening paid no-ops", async () => {
+  let work = 0n;
+  const chronologySlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],
+    [1n, BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))) + 1n]));
+  const tags: unknown[] = [];
+  const read = () => readMissionProgress({async request<T>(method: string, params: unknown[]): Promise<T> {
+    if (method === "eth_getBlockByNumber") return {number:"0x64",hash} as T;
+    tags.push(params.at(-1));
+    if (method === "eth_getCode") return "0x6000" as T;
+    if (method === "eth_getStorageAt") return toHex(params[1] === chronologySlot ? work : 0n,{size:32}) as T;
+    if (method === "eth_call") return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]}) as T;
+    throw new Error(method);
+  }}, address, "1", target, false, [address+":"+keccak256("0x6000")]);
+  const before = await read(); expect(before.chronologyWorkDone).toBe("0");
+  const guard = consumeProgress(undefined,before,"1",target ? "arrival" : "return");
+  expect(guardAllows(guard,await read())).toBe(false);
+  work=12n; const advanced=await read(); expect(guardAllows(guard,advanced)).toBe(true);
+  const paid=consumeProgress(guard,advanced,"1",target ? "arrival" : "return");
+  expect(guardAllows(paid,await read())).toBe(false);
+  work=1n; expect(guardAllows(paid,await read())).toBe(false);
+  expect(tags.every(tag=>JSON.stringify(tag)===JSON.stringify({blockHash:hash,requireCanonical:true}))).toBe(true);
+});
+test("chronology extension preserves pre-existing raw envelope operation keys", () => {
+  const old={blockNumber:"1",blockHash:hash,version:"v",phase:0,round:0,workDone:"0"};
+  expect(progressKey(old)).toBe(["v","0","0","","","",""].join(":"));
+  expect(progressKey({...old,chronologyWorkDone:"0"})).toBe(progressKey(old)+":chronology:0");
 });

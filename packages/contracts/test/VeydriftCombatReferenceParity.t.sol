@@ -511,11 +511,15 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
+        VeydriftGameStorage.FleetMissionStatus status;
         for (uint256 calls = 0; calls < 20_000; calls++) {
             game.resolveFleetMission{gas: 15_000_000}(missionId);
-            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+            (status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
         }
+        assertTrue(
+            status != VeydriftGameStorage.FleetMissionStatus.Outbound, "bounded battle resolution"
+        );
         actual = _actualBattleFromLogs(vm.getRecordedLogs(), missionId);
 
         assertTrue(actual.battleFound, "battle event");
@@ -529,7 +533,8 @@ contract VeydriftCombatReferenceParityTest is Test {
         returns (ActualBattle memory actual)
     {
         for (uint256 i = 0; i < entries.length;) {
-            if (entries[i].topics.length != 0 && uint256(entries[i].topics[1]) == missionId) {
+            // Preparatory chronology events have no indexed fields (only the signature topic).
+            if (entries[i].topics.length > 1 && uint256(entries[i].topics[1]) == missionId) {
                 if (entries[i].topics[0] == ATTACK_BATTLE_RESOLVED_TOPIC) {
                     (actual.outcome, actual.rounds, actual.seed,,,) = abi.decode(
                         entries[i].data,
@@ -573,8 +578,21 @@ contract VeydriftCombatReferenceParityTest is Test {
         (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
             _fleetMission(missionId);
         if (status == VeydriftGameStorage.FleetMissionStatus.Returning) {
-            vm.warp(returnAt);
-            game.completeFleetMissionReturn(missionId);
+            // Move the simulated block clock only forward to the scheduled return deadline.
+            // forge-lint: disable-next-line(block-timestamp)
+            if (block.timestamp < returnAt) vm.warp(returnAt);
+            // The fully indexed fixture has at most one scan operation per mission.
+            uint256 maximumCalls = game.nextFleetId() - 1;
+            for (uint256 calls = 0; calls < maximumCalls; calls++) {
+                game.completeFleetMissionReturn(missionId);
+                (status,,,) = _fleetMission(missionId);
+                if (status != VeydriftGameStorage.FleetMissionStatus.Returning) break;
+            }
+            assertEq(
+                uint8(status),
+                uint8(VeydriftGameStorage.FleetMissionStatus.Returned),
+                "bounded return completion"
+            );
         }
     }
 

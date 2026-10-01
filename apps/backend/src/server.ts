@@ -58,6 +58,7 @@ import {
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
+import { applyMissionEligibility, missionEligibilityPath } from "./missionEligibility";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
@@ -94,6 +95,7 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
+import { PactInterestStore, pactInterestStorePath, validatePactInterest } from "./pactInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -364,6 +366,7 @@ export type ServerDependencies = {
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
+  pactInterestStore?: PactInterestStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
   walletMessageVerifier?: WalletMessageVerifier;
@@ -388,6 +391,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // narrow live reader so Overview can render a determinate whole-queue bar.
       hydrateQueueStartedAt: true,
       rpcCallSource: "api-explicit-live-read"
+    }) : undefined);
+  const missionEligibilityReader = dependencies.chainReader
+    ?? (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, {
+      rpcCallSource: "mission-eligibility", minRequestIntervalMs: 0, cacheTtlMs: 0, requestTimeoutMs: 1_500
     }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
@@ -636,6 +643,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
+  let pactInterestStore = dependencies.pactInterestStore;
+  const pactInterestRateLimits = new Map<string, { count: number; resetAt: number }>();
   const directWalletMessageVerifier = dependencies.walletMessageVerifier ?? (
     usesProductionDependencies && loaded.problems.length === 0
       ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
@@ -761,6 +770,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/cca") {
       if (!ccaRpc) return unavailableResponse(loaded.problems);
       return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
+    }
+
+    if (request.method === "POST" && url.pathname === "/pact/interest") {
+      const now = Date.now();
+      if (pactInterestRateLimits.size > 2_048) pactInterestRateLimits.clear();
+      const clientKey = requestClientKey(request) ?? "unknown";
+      const limit = pactInterestRateLimits.get(clientKey);
+      if (limit && limit.resetAt > now && ++limit.count > 10) {
+        return Response.json({ error: "rate_limited", message: "Too many submissions. Try again later." }, { headers: corsHeaders, status: 429 });
+      }
+      if (!limit || limit.resetAt <= now) pactInterestRateLimits.set(clientKey, { count: 1, resetAt: now + 600_000 });
+      try {
+        const interest = validatePactInterest(await readJsonBody(request));
+        if (typeof interest === "string") {
+          return Response.json({ error: "invalid_pact_interest", message: interest }, { headers: corsHeaders, status: 400 });
+        }
+        pactInterestStore ??= new PactInterestStore(pactInterestStorePath(loaded.config.indexDbPath));
+        pactInterestStore.save(interest);
+        return Response.json({ ok: true }, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -2197,7 +2228,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return withRequestCors(request, await routeRequest(request));
       }
 
-      const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
+      // Never serve stale-while-revalidate readiness after the chain eligibility changes.
+      // Indexed projections retain their own caches; eligibility is checked at the public boundary.
+      const needsMissionEligibility = request.method === "GET" && missionEligibilityPath(url.pathname);
+      const cacheTtlMs = enableResponseCache && !needsMissionEligibility ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
         const staleCacheKey = cacheableJsonRequestStaleKey(request, url, cacheKey);
@@ -2259,7 +2293,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       const rateLimited = readRateLimitResponse(request, url, readRateLimits);
       if (rateLimited) return withRequestCors(request, rateLimited);
-      const response = await routeRequest(request);
+      let response = await routeRequest(request);
+      if (needsMissionEligibility && response.ok && jsonContentType(response.headers.get("content-type"))) {
+        const payload = await response.json() as Record<string, unknown>;
+        await applyMissionEligibility(payload, missionEligibilityReader);
+        response = Response.json(payload, { status: response.status, headers: response.headers });
+      }
       if (request.method === "GET" && jsonContentType(response.headers.get("content-type"))) {
         const headers = new Headers(response.headers);
         headers.set("cache-control", "no-store");

@@ -17,7 +17,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { BackendConfig } from "./config";
 import { guardAllows, consumeProgress, progressKey, readMissionProgress, type MissionProgress, type ProgressGuard } from "../../battle-keeper/src/progress";
-import { assertSignedTarget, signedAttempt, resumeSignedAttempt, MinedRevertError, type SignedAttempt } from "../../battle-keeper/src/transaction";
+import { assertSignedTarget, signedAttempt, resumeSignedAttempt, MinedRevertError, PreBroadcastError, type SignedAttempt } from "../../battle-keeper/src/transaction";
 import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
 import { emitObservabilityEvent } from "./observability";
@@ -80,6 +80,7 @@ export type MissionResolutionChainClient = {
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
   completeFleetMissionReturn(missionId: string): Promise<string>;
+  isMissionLegComplete?(missionId: string, leg: "arrival" | "return"): Promise<boolean>;
   gamePaused?(): Promise<boolean>;
   recoverPendingMissions?(): Promise<string[]>;
   finalizeMoonChance?(outcomeId: string): Promise<"pending" | "finalized">;
@@ -642,6 +643,7 @@ export class MissionResolutionService {
       // otherwise a canonically Resolved mission never reaches its return leg and a Returned mission
       // remains in the active projection forever despite no transaction needing to be rebroadcast.
       await this.candidateSource?.reconcileMissionResolutionCandidate?.(candidate.mission.missionId);
+      if (!await this.chainClient.isMissionLegComplete?.(candidate.mission.missionId, candidate.leg)) return false;
       if (candidate.leg === "arrival") {
         this.lastResolvedMissionId = candidate.mission.missionId;
         this.resolvedCount += 1;
@@ -742,7 +744,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -798,7 +800,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (this.reader.getCanonicalFleetMission && !this.loadSigned(missionId, "resolveFleetMission")) {
       const mission = await this.reader.getCanonicalFleetMission(BigInt(missionId));
       if (!mission) throw new Error("canonical mission unavailable; resolver signing disabled");
-      if (mission.status !== "Outbound") return "canonical:arrival-complete";
+      if (["Returning", "Recalled", "Resolved", "Returned"].includes(mission.status)) return "canonical:arrival-complete";
+      if (mission.status !== "Outbound") throw new Error("canonical mission status unavailable; resolver signing disabled");
     }
     const hash = await this.write("resolveFleetMission", missionId);
     if (this.reader.getCanonicalFleetMission) {
@@ -818,6 +821,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       throw new MissionChunkPendingError();
     }
     return hash;
+  }
+
+  isMissionLegComplete(missionId: string, leg: "arrival" | "return"): Promise<boolean> {
+    return this.isResolutionOperationComplete(leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn", missionId);
   }
 
   async finalizeMoonChance(outcomeId: string): Promise<"pending" | "finalized"> {
@@ -852,6 +859,24 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return value !== undefined && BigInt(value) !== 0n;
   }
 
+  private async preflightMission(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<void> {
+      if (functionName === "finalizeMoonChance") return;
+      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
+        throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
+      }
+      if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
+      // Ordering support alone does not exclude a chronological/randomness revert. Simulate
+      // the exact funded entrypoint under the nonce lease before both submit and replacement.
+      // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
+      await this.publicClient.call({
+        account: typeof this.sender === "string" ? this.sender : this.sender.address,
+        to: this.gameAddress,
+        data: encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] }),
+        gas: fleetMissionResolutionGas,
+        blockTag: "latest"
+      });
+  }
+
   private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
     const targetAddress = functionName === "finalizeMoonChance" ? this.moonAddress! : this.gameAddress;
     if (functionName !== "finalizeMoonChance" && this.reader.getCanonicalFleetMission) {
@@ -868,6 +893,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       functionName,
       args: [BigInt(missionId)]
     });
+    const preflight = () => this.preflightMission(functionName, missionId);
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
     // allocation, wallet estimate, or broadcast is allowed after the canonical pause flips.
@@ -886,6 +912,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           blockTag
         }),
         submit: async (nonce) => {
+          await preflight();
           return this.walletClient!.writeContract({
             abi: veydriftGameResolutionAbi,
             account,
@@ -894,23 +921,26 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
             functionName,
             args: [BigInt(missionId)],
             nonce,
-            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
+            gas: fleetMissionResolutionGas
           });
         },
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
-        replace: async (nonce, previousHash) => this.walletClient!.writeContract({
-          abi: veydriftGameResolutionAbi,
-          account,
-          address: targetAddress,
-          chain: this.chain!,
-          functionName,
-          args: [BigInt(missionId)],
-          nonce,
-          ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {}),
-          ...await resolverReplacementFees(this.publicClient!, previousHash)
-        }),
+        replace: async (nonce, previousHash) => {
+          await preflight();
+          return this.walletClient!.writeContract({
+            abi: veydriftGameResolutionAbi,
+            account,
+            address: targetAddress,
+            chain: this.chain!,
+            functionName,
+            args: [BigInt(missionId)],
+            nonce,
+            gas: fleetMissionResolutionGas,
+            ...await resolverReplacementFees(this.publicClient!, previousHash)
+          });
+        },
         cancelStale: async (nonce, previousHash) => this.walletClient!.sendTransaction({
           account,
           chain: this.chain!,
@@ -935,6 +965,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         blockTag
       }),
       submit: async (nonce) => {
+        await preflight();
         return this.sendUnlockedTransaction(
           from,
           targetAddress,
@@ -946,14 +977,17 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
-      replace: async (nonce, previousHash) => this.sendUnlockedTransaction(
-        from,
-        targetAddress,
-        data,
-        nonce,
-        functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined,
-        await resolverReplacementFees(this.publicClient!, previousHash)
-      ),
+      replace: async (nonce, previousHash) => {
+        await preflight();
+        return this.sendUnlockedTransaction(
+          from,
+          targetAddress,
+          data,
+          nonce,
+          functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined,
+          await resolverReplacementFees(this.publicClient!, previousHash)
+        );
+      },
       confirm: (hash) => this.confirm(hash)
     });
   }
@@ -983,8 +1017,17 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.transactionCoordinator.withAccountLease(this.chain.id, address, async lease => {
       lease.reconcilePreparations(this.progressDb, `${this.chain!.id}:${this.gameAddress.toLowerCase()}:`);
       const identity = this.progressIdentity(missionId, functionName);
-      const transport = { request: <T>(method: string, params: unknown[]): Promise<T> =>
-        (lease.assert(), this.publicClient!.request({ method, params } as never)) as Promise<T> };
+      const transport = { request: async <T>(method: string, params: unknown[]): Promise<T> => {
+        lease.assert();
+        // Recovery retains exact raw bytes, but must still respect current chronology before
+        // a new dispatch. Canonical receipt-only recovery does not re-simulate or broadcast.
+        if (method === "eth_sendRawTransaction") {
+          try { await this.preflightMission(functionName, missionId); }
+          catch (error) { throw new PreBroadcastError(error); }
+        }
+        lease.assert();
+        return this.publicClient!.request({ method, params } as never) as Promise<T>;
+      } };
       const finish = async (attempt: SignedAttempt): Promise<Hex> => {
         const consumeReceipt = (reverted = false) => {
           lease.assert();
@@ -1038,6 +1081,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         throw new Error("arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade");
       }
       if (!guardAllows(this.loadGuard(identity), progress)) throw new MissionChunkPendingError();
+      await this.preflightMission(functionName, missionId);
       const account = typeof this.sender === "string" ? undefined : this.sender;
       return lease.submit({
         chainId: this.chain!.id, address, operationId: identity + ":progress:" + progressKey(progress), signedEnvelope: true,
@@ -1054,12 +1098,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           if (progressKey(progress) !== progressKey(current) || !guardAllows(this.loadGuard(identity), current)) {
             throw new MissionChunkPendingError();
           }
+          await this.preflightMission(functionName, missionId);
           const data = encodeFunctionData({ abi: veydriftGameResolutionAbi, functionName, args: [BigInt(missionId)] });
           // Fee/gas preparation and signing are entirely pre-broadcast. Definite failures here leave
           // no consumed intent. Persist deterministic raw bytes before the first send RPC.
           const request = await this.publicClient!.prepareTransactionRequest({
             account: address, chain: null, to: this.gameAddress, data, nonce,
-            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
+            gas: fleetMissionResolutionGas
           });
           let raw: Hex;
           if (account) raw = await account.signTransaction({ ...request, chainId: this.chain!.id } as never);
@@ -1115,11 +1160,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
     const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
     if (!mission) {
-      if (this.reader.getCanonicalFleetMission) throw new Error("canonical mission unavailable; resolver signing disabled");
+      if (this.reader.getCanonicalFleetMission) throw new Error("canonical mission status unavailable; resolver signing disabled");
       return true;
     }
-    if (functionName === "resolveFleetMission") return mission.status !== "Outbound";
-    return mission.status !== "Returning" && mission.status !== "Recalled";
+    if (functionName === "resolveFleetMission") {
+      return ["Returning", "Recalled", "Resolved", "Returned"].includes(mission.status);
+    }
+    return ["Resolved", "Returned"].includes(mission.status);
   }
 
   private async confirm(hash: Hex): Promise<void> {

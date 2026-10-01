@@ -230,16 +230,21 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
-        game = new VeydriftGame(
-            admin,
-            address(firstPlanetSettlementModule),
-            address(gameplayModule),
-            address(planetManagementModule),
-            address(attackProtectionModule),
-            address(colonizationModule),
-            address(defenseHoldModule),
-            address(stateMigrationModule),
-            address(new VeydriftAcsAttackModule())
+        game = VeydriftGame(
+            payable(deployCode(
+                    "VeydriftGame.sol:VeydriftGame",
+                    abi.encode(
+                        admin,
+                        address(firstPlanetSettlementModule),
+                        address(gameplayModule),
+                        address(planetManagementModule),
+                        address(attackProtectionModule),
+                        address(colonizationModule),
+                        address(defenseHoldModule),
+                        address(stateMigrationModule),
+                        address(new VeydriftAcsAttackModule())
+                    )
+                ))
         );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();
@@ -1391,6 +1396,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         assertEq(missionId, 900);
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), missionId, true, true);
@@ -1436,6 +1446,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             false,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         vm.recordLogs();
         vm.prank(ally);
@@ -1445,6 +1460,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             targetPlanetId,
             ships,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), joinedMissionId, false, true);
@@ -1476,6 +1496,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             false,
             true
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         vm.recordLogs();
         vm.prank(ally);
@@ -1486,6 +1511,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             ships,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             true
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         _assertFleetMissionBodiesLog(vm.getRecordedLogs(), joinedMissionId, true, true);
@@ -1556,6 +1586,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 10_000, deuteriumBps: 0})
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
@@ -1586,6 +1621,11 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             true,
             false,
             VeydriftGameStorage.LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 10_000})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
@@ -2781,17 +2821,17 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertGt(_battleDefenderMetalLoss(vm.getRecordedLogs(), lateId), 0);
     }
 
-    function testEarlierMoonArrivalAlsoBlocksLaterParentPlanetAttack() public {
-        (uint256 earlyId, uint256 lateId, uint256 target,) =
+    function testEarlierMoonArrivalDoesNotBlockIndependentParentPlanetAttack() public {
+        (uint256 earlyId, uint256 lateId, uint256 target, address defender) =
             _twoMoonAttacksAroundPaidProduction(false, true);
-        (, uint64 earlyAt,,) = _fleetMission(earlyId);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, earlyAt)
-        );
-        game.resolveFleetMission(lateId);
+        // Independent planet combat must neither wait for the moon nor settle its future ships.
+        _resolveAttackFully(lateId);
         assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
         _resolveAttackFully(earlyId);
         _resolveAttackFully(lateId);
+        assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
+        vm.prank(defender);
+        moons.finishMoonShipProduction(target);
         assertTrue(game.moonShipCount(target, Ship.LightFighter) > 0);
     }
 
@@ -2979,7 +3019,7 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         assertFalse(moons.activeMoonShipQueue(planetId).active);
     }
 
-    function testGameCombatSnapshotSettlesMoonShipsAtImpactNotResolverTime() public {
+    function testBodyScopedSnapshotsSettleOnlyRequestedMoonAtHistoricalCutoff() public {
         uint256 planetId = _readyMoonShipyard();
         _fundMoon(planetId, 100_000, 100_000, 0);
         vm.prank(player);
@@ -2988,9 +3028,12 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         vm.warp(queued.readyAt + 200);
         vm.prank(address(game));
         game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        assertEq(game.moonShipCount(planetId, Ship.LightFighter), 0, "planet snapshot touched moon");
+        vm.prank(address(game));
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
         assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
         vm.prank(address(game));
-        game.completeAttackTargetSnapshotQueues(planetId, queued.readyAt - 1);
+        moons.settleMoonShipProductionUntil(planetId, queued.readyAt - 1);
         assertEq(game.moonShipCount(planetId, Ship.LightFighter), 3);
     }
 

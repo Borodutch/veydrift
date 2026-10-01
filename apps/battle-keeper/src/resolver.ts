@@ -1,9 +1,9 @@
-import { decodeFunctionResult, encodeFunctionData, type Abi } from "viem";
+import { decodeFunctionResult, encodeFunctionData, parseTransaction, toHex, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { JsonRpcTransport } from "./transport";
 import { readMissionProgress, type MissionProgress } from "./progress";
-import { assertSignedTarget, signedAttempt, resumeSignedAttempt, type AttemptStore } from "./transaction";
+import { assertSignedTarget, signedAttempt, resumeSignedAttempt, PreBroadcastError, type AttemptStore } from "./transaction";
 
 /**
  * Permissionless settlement entrypoints — any funded EOA can call them. We keep the ABIs inline so
@@ -36,6 +36,11 @@ const completeFleetMissionReturnAbi = [
 // Conservative transaction-envelope ceiling, below Base's 2^24 gas maximum.
 // https://docs.base.org/specifications/transactions/troubleshooting-transactions
 export const settlementGasLimit = 15_000_000n;
+const fleetMissionEligibilityAbi = [{
+  type: "function", name: "fleetMissionEligibility", stateMutability: "view",
+  inputs: [{ name: "missionId", type: "uint256" }],
+  outputs: [{ type: "bool" }, { type: "uint256" }, { type: "bool" }]
+}] as const satisfies Abi;
 
 export const resolveFleetMissionSelector = "0xde09e7cf";
 export const completeFleetMissionReturnSelector = "0xc2472852";
@@ -194,7 +199,19 @@ export class ViemMissionResolver implements MissionResolver {
     //    committed / not arrived / already resolved; return: not due / wrong status / already
     //    returned) — surface as retryable, don't send a tx.
     try {
-      await this.transport.request<string>("eth_call", [{ from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}` }, "latest"]);
+      const proof = await this.transport.request<`0x${string}`>("eth_call", [{
+        to: this.to,
+        data: encodeFunctionData({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", args: [BigInt(missionId)] })
+      }, "latest"]);
+      const [, , orderingReady] = decodeFunctionResult({
+        abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", data: proof
+      });
+      // The first bool is strict player-facing settlement eligibility: it remains false while
+      // body scans need bounded preparation. The third bool confirms ordering support for both
+      // legacy and new missions without backfill. Simulate the exact existing entrypoint so
+      // progress-only calls can run without bypassing its chronology/randomness guards.
+      if (!orderingReady) throw new Error("fleet chronology ordering support unavailable");
+await this.transport.request<string>("eth_call", [{ from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}` }, "latest"]);
     } catch (error) {
       throw new MissionNotResolvableError(missionId, error);
     }
@@ -265,7 +282,23 @@ export class ViemMissionResolver implements MissionResolver {
     await assertSignedTarget(attempt, { from: this.account.address, to: this.to,
       data: encodeMissionCall(BigInt(missionId), leg), chainId: this.chainId, maxGas: settlementGasLimit });
     // Paid reverts retain their envelope until the keeper durably consumes the checkpoint.
-    return resumeSignedAttempt(this.transport, attempt, {
+    const transport: JsonRpcTransport = { request: async <T>(method: string, params: unknown[]): Promise<T> => {
+      if (method === "eth_sendRawTransaction") {
+        try {
+          const proof = await this.transport.request<`0x${string}`>("eth_call", [{ to: this.to,
+            data: encodeFunctionData({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", args: [BigInt(missionId)] }) }, "latest"]);
+          const [, , ready] = decodeFunctionResult({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", data: proof });
+          if (!ready) throw new Error("fleet chronology ordering support unavailable");
+          const tx = parseTransaction(attempt.raw);
+          await this.transport.request("eth_call", [{ from: this.account.address, to: this.to, data: tx.data,
+            nonce: toHex(tx.nonce!), gas: toHex(tx.gas!), value: toHex(tx.value ?? 0n),
+            ...(tx.maxFeePerGas === undefined ? {} : { maxFeePerGas: toHex(tx.maxFeePerGas) }),
+            ...(tx.maxPriorityFeePerGas === undefined ? {} : { maxPriorityFeePerGas: toHex(tx.maxPriorityFeePerGas) }) }, "latest"]);
+        } catch (error) { throw new PreBroadcastError(error); }
+      }
+      return this.transport.request<T>(method, params);
+    } };
+    return resumeSignedAttempt(transport, attempt, {
       polls: this.options.receiptMaxPolls ?? 40, intervalMs: this.options.receiptPollIntervalMs ?? 1500
     });
   }

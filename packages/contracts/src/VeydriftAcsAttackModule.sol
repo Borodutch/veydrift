@@ -211,6 +211,7 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         emit AttackMissionJoined(
             attackMissionId, missionId, _actingPlayer(), originPlanetId, attack.targetPlanetId
         );
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             _actingPlayer(),

@@ -36,6 +36,8 @@ export function forgeTestArgs(file) {
   if (file === "VeydriftStagedCombat.t.sol") {
     args.push("--isolate", "--gas-limit", "100000000000");
   }
+  // vm.setEnv is process-global. Negative authority/migration fixtures must not race.
+  if (file === "VeydriftCoalitionUpgradeKeyless.t.sol") args.push("--threads", "1");
   return args;
 }
 

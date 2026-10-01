@@ -370,6 +370,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             originIsMoon: false,
             targetIsMoon: false
         });
+        _registerFleetChronology(missionId);
         emit FleetMissionLaunched(
             missionId,
             _actingPlayer(),

@@ -66,7 +66,7 @@ function creationNames(code) {
   return [...new Set(names)];
 }
 
-export function checkClosure({root=defaultRoot, out, oldOut, graph=edges, fresh=freshArtifacts}) {
+export function checkClosure({root=defaultRoot, out, oldOut, graph=edges, fresh=freshArtifacts, appendBaseline}) {
 assert(oldOut && existsSync(join(oldOut, "VeydriftGame.sol", "VeydriftGame.json")), "baseline artifact root required: expected <baseline>/VeydriftGame.sol/VeydriftGame.json (not its container directory)");
 const artifacts = {};
 const sourceFingerprints = {};
@@ -86,6 +86,29 @@ function normalize(layout) {
     return {label, encoding:t.encoding, bytes:t.numberOfBytes, ...(t.key?{key:type(t.key,s)}:{}), ...(t.value?{value:type(t.value,s)}:{}), ...(t.base?{base:type(t.base,s)}:{}), ...(t.members?{members:t.members.map(m=>({label:m.label,slot:m.slot,offset:m.offset,type:type(m.type,s)}))}:{})};
   };
   return layout.storage.map(e=>({label:e.label,slot:e.slot,offset:e.offset,type:type(e.type)}));
+}
+// An explicit pinned-main artifact may authorize ONLY its eleven reviewed chronology appends.
+// Default remains exact equality. No arbitrary tail, changed old field or missing baseline passes.
+const mainStorageSource = "0x537454fd0bdf438e46fab02df1e7e0a68847eb727c75ff1f96f632c71b6c7abf";
+const appendNames = ["_attackReturnScanCursor","_chronologyIndexedThrough","_chronologyGeneration",
+  "_chronologyMissionsByBody","_chronologyScans","_chronologyBodyGeneration","_chronologyMissionsByPlayer",
+  "_chronologyPlayerCursor","_chronologyMigrationComplete","_chronologyRegistered","_chronologyLegacyCursor"];
+let mainAppendLayout, baselineGameLayout, mainAppendEvidence = null;
+if (appendBaseline) {
+  const bytes = readFileSync(appendBaseline);
+  const artifact = JSON.parse(bytes);
+  assert.equal(artifact.metadata?.sources?.["src/VeydriftGameStorage.sol"]?.keccak256, mainStorageSource,
+    "append baseline is not pinned-main GameStorage source");
+  mainAppendLayout = normalize(artifact.storageLayout);
+  baselineGameLayout = normalize(load("VeydriftGame", undefined, oldOut).storageLayout);
+  assert.equal(baselineGameLayout.length,75,"unexpected original inherited layout count");
+  assert.equal(mainAppendLayout.length,86,"unexpected pinned-main inherited layout count");
+  assert.deepEqual(mainAppendLayout.slice(0,75),baselineGameLayout,"pinned main changed old recursive fields");
+  const tail=mainAppendLayout.slice(75);
+  assert.deepEqual(tail.map(x=>x.label),appendNames,"unreviewed storage append labels");
+  assert.deepEqual(tail.map(x=>[x.slot,x.offset]),appendNames.map((_,i)=>[String(77+i),0]),"unreviewed storage append positions");
+  mainAppendEvidence={sourceCommit:"936007eca841b62c5e172f97dc64ce11633a96a5",artifactPath:appendBaseline,
+    artifactSha256:hash(bytes),gameStorageSourceKeccak256:mainStorageSource,normalizedAppends:tail};
 }
 function visit(name, source) {
   if (artifacts[name]) return;
@@ -111,9 +134,16 @@ function visit(name, source) {
   const baselinePath = join(oldOut,basename(target),`${name}.json`);
   let compatibility, baselineArtifactSha256 = null;
   if (existsSync(baselinePath)) {
-    assert.deepEqual(layout,normalize(load(name,target,oldOut).storageLayout), `${name} recursive inherited storage changed`);
+    const previous = normalize(load(name,target,oldOut).storageLayout);
+    if (mainAppendLayout && layout.length !== previous.length) {
+      assert.deepEqual(previous,baselineGameLayout, name+" is not the reviewed inherited Game layout");
+      assert.deepEqual(layout,mainAppendLayout,name+" differs from pinned-main recursive append layout");
+      compatibility="exact-recursive-baseline-plus-pinned-main-appends";
+    } else {
+      assert.deepEqual(layout,previous,name+" recursive inherited storage changed");
+      compatibility="exact-recursive-match-to-baseline";
+    }
     baselineArtifactSha256 = hash(readFileSync(baselinePath));
-    compatibility="exact-recursive-match-to-baseline";
   } else {
     assert(fresh.has(name), `missing required pre-existing baseline artifact: ${baselinePath}`);
     compatibility="explicit-fresh-artifact/no-prior-layout";
@@ -143,7 +173,7 @@ assert.equal(new Set(namespaces.map(x=>x.slot)).size,namespaces.length,"duplicat
 // Recheck after traversal, so concurrent source edits cannot produce mixed-snapshot evidence.
 for (const [file, fingerprint] of Object.entries(sourceFingerprints)) assert.equal(hash(readFileSync(join(root,file))),fingerprint.sha256,`source changed during closure: ${file}`);
 const orderedFingerprints = Object.fromEntries(Object.entries(sourceFingerprints).sort(([a],[b])=>a.localeCompare(b)));
-const report={sourceFingerprints:orderedFingerprints,sourceManifestSha256:hash(JSON.stringify(orderedFingerprints)),embeddedEdges,metadataCreations,baselineCompared:Object.values(artifacts).filter(a=>a.storageCompatibility==="exact-recursive-match-to-baseline").length,explicitFresh:Object.keys(artifacts).filter(n=>artifacts[n].storageCompatibility==="explicit-fresh-artifact/no-prior-layout"),blockers,generatedAt:new Date().toISOString(),artifactDirectory:out,baselineDirectory:oldOut??null,syntheticTemplatesNotLiveCode:true,edges:graph,externalReusedDependencies:["Game/Moon proxies and authorities","configured randomness","distinct frozen source referral / finalized target referral","existing storage-wired Alliance and resource tokens"],namespaces,namespacedCompatibility:"Names differ and slots are domain-separated; source/semantic review and deployed historical provenance remain required. Solidity storageLayout does not enumerate assembly namespaces.",artifacts};
+const report={mainAppendEvidence,sourceFingerprints:orderedFingerprints,sourceManifestSha256:hash(JSON.stringify(orderedFingerprints)),embeddedEdges,metadataCreations,baselineCompared:Object.values(artifacts).filter(a=>a.baselineArtifactSha256 !== null).length,explicitFresh:Object.keys(artifacts).filter(n=>artifacts[n].storageCompatibility==="explicit-fresh-artifact/no-prior-layout"),blockers,generatedAt:new Date().toISOString(),artifactDirectory:out,baselineDirectory:oldOut??null,syntheticTemplatesNotLiveCode:true,edges:graph,externalReusedDependencies:["Game/Moon proxies and authorities","configured randomness","distinct frozen source referral / finalized target referral","existing storage-wired Alliance and resource tokens"],namespaces,namespacedCompatibility:"Names differ and slots are domain-separated; source/semantic review and deployed historical provenance remain required. Solidity storageLayout does not enumerate assembly namespaces.",artifacts};
 return report;
 }
 
@@ -151,7 +181,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const out = process.argv[2] ?? "artifacts/vey919-keyless-out-a7";
   const destination = process.argv[3] ?? "artifacts/vey919-keyless-closure-a7.json";
   const oldOut = process.argv[4];
-  const report = checkClosure({out,oldOut});
+  const report = checkClosure({out,oldOut,appendBaseline:process.argv[5]});
   writeFileSync(destination,JSON.stringify(report,null,2)+"\n");
   console.log(`${Object.keys(report.artifacts).length} graph artifacts; ${report.baselineCompared} recursive baseline comparisons; ${report.explicitFresh.length} explicit fresh; ${report.blockers.length ? "BLOCKED: "+report.blockers.join("; ") : "runtime/initcode gates pass"}; ${destination}`);
   if (report.blockers.length) process.exitCode=1;

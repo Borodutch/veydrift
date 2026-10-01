@@ -26,9 +26,10 @@ function fixture() {
   let preparationGate: ReturnType<typeof deferred> | undefined, preparationStarted = deferred();
   const receipts = new Map<Hex, unknown>(), raws: Hex[] = [], writes: number[] = [];
   const arrivalSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"bytes32"}], [2n,keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))]));
-  const reader = { async listResolvableFleetMissions() { return []; }, async listReturnableFleetMissions() { return []; },
+  const reader = { async isFleetChronologyOrderingReady() { return true; }, async listResolvableFleetMissions() { return []; }, async listReturnableFleetMissions() { return []; },
     async getCanonicalFleetMission() { return { status, missionTypeId, targetPlanetId: "2" }; } };
   const publicClient = {
+    async call() { return { data: "0x" }; },
     async getStorageAt() { return toHex(0n, { size: 32 }); },
     async getTransactionCount() { return nonce; },
     async waitForTransactionReceipt() { return { status: "success" }; },

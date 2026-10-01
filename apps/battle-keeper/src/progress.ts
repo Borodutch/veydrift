@@ -15,6 +15,7 @@ export type MissionProgress = {
   round: number;
   workDone: string;
   queueProgress?: string;
+  chronologyWorkDone?: string; // Per-mission monotonic scans, including nested returns.
   arrivalOrderCursor?: string; // Legacy zero-namespace deployments only.
   arrivalCapability?: boolean; // Exact implementation-address/runtime-hash deployment allowlist.
   arrivalGeneration?: string;
@@ -44,7 +45,9 @@ export function consumeProgress(guard: ProgressGuard | undefined, before: Missio
 
 export function progressKey(progress: MissionProgress): string {
   // Exclude observation block/hash: time passing is not permission to buy another attempt.
-  return [progress.version, progress.workDone, progress.round, progress.queueProgress ?? "", progress.arrivalOrderCursor ?? "", progress.arrivalGeneration ?? "", progress.arrivalWorkDone ?? ""].join(":");
+  const legacyKey = [progress.version, progress.workDone, progress.round, progress.queueProgress ?? "", progress.arrivalOrderCursor ?? "", progress.arrivalGeneration ?? "", progress.arrivalWorkDone ?? ""].join(":");
+  // Preserve operation identities of already-persisted pre-chronology raw envelopes.
+  return progress.chronologyWorkDone === undefined ? legacyKey : legacyKey + ":chronology:" + progress.chronologyWorkDone;
 }
 
 /** workDone is cumulative across preparation, cohort math and settlement. Phases are NOT ordered:
@@ -83,6 +86,12 @@ export function progressAdvanced(before: MissionProgress, after: MissionProgress
     if (after.arrivalOrderCursor === undefined || BigInt(after.arrivalOrderCursor) < BigInt(before.arrivalOrderCursor)) return false;
     advanced ||= BigInt(after.arrivalOrderCursor) > BigInt(before.arrivalOrderCursor);
   }
+  if (before.chronologyWorkDone !== undefined) {
+    if (after.chronologyWorkDone === undefined || BigInt(after.chronologyWorkDone) < BigInt(before.chronologyWorkDone)) return false;
+    advanced ||= BigInt(after.chronologyWorkDone) > BigInt(before.chronologyWorkDone);
+  } else if (after.chronologyWorkDone !== undefined && BigInt(after.chronologyWorkDone) > 0n) {
+    advanced = true;
+  }
   if (before.queueProgress !== undefined) {
     if (after.queueProgress === undefined) return false;
     if (before.queueProgress !== after.queueProgress) {
@@ -120,6 +129,10 @@ export async function readMissionProgress(
   if (typeof code !== "string" || !/^0x(?:[0-9a-f]{2})+$/i.test(code)) throw new Error("implementation code unavailable or malformed; signing disabled");
   const codeHash = keccak256(code);
   const capable = arrivalProgressVersions.includes(`${codeAddress.toLowerCase()}:${codeHash.toLowerCase()}`);
+  const chronologySlot = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }],
+    [BigInt(missionId), BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))) + 1n]));
+  const chronology = await transport.request<Hex>("eth_getStorageAt", [address, chronologySlot, tag]);
+  if (!/^0x[0-9a-f]{64}$/i.test(chronology)) throw new Error("invalid chronology progress namespace");
   const call = (functionName: "stagedBattleProgress" | "battleResolutionProgress") =>
     transport.request<Hex>("eth_call", [{ to: address, data: encodeFunctionData({
       abi: progressAbi, functionName, args: [BigInt(missionId)]
@@ -171,7 +184,8 @@ export async function readMissionProgress(
     }
   }
   return {
-    ...(targetPlanetId === undefined ? {} : { arrivalCapability: capable }),
+    arrivalCapability: capable,
+    chronologyWorkDone: BigInt(chronology).toString(),
     ...(arrivalOrderCursor === undefined ? {} : { arrivalOrderCursor }),
     ...(arrivalGeneration === undefined ? {} : { arrivalGeneration, arrivalWorkDone: arrivalWorkDone! }),
     ...(queueProgress === undefined ? {} : { queueProgress }),

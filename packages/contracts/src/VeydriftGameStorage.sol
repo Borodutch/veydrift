@@ -452,6 +452,34 @@ abstract contract VeydriftGameStorage is Initializable {
     mapping(address main => address delegate) internal _delegateOf;
     mapping(address delegate => address main) internal _delegatorOf;
 
+    // Append-only bounded return scan for an attack. Array mutations invalidate the planet cursor.
+    mapping(uint256 planetId => uint256 cursor) internal _attackReturnScanCursor;
+
+    // Prospective inventory. Slots reserved by the abandoned, never-deployed backfill design
+    // remain unused to keep this branch storage layout append-only.
+    uint256 internal _chronologyIndexedThrough;
+    uint256 internal _chronologyGeneration;
+    mapping(uint256 bodyKey => uint256[] missionIds) internal _chronologyMissionsByBody;
+
+    struct ChronologyScan {
+        uint256 generation;
+        uint256 cursor;
+        uint256 blocker;
+        uint64 blockerAt;
+        uint8 blockerKind;
+    }
+    mapping(uint256 missionId => ChronologyScan scan) internal _chronologyScans;
+
+    mapping(uint256 body => uint256 generation) internal _chronologyBodyGeneration;
+
+    mapping(address player => uint256[] missionIds) internal _chronologyMissionsByPlayer;
+    mapping(address player => uint256 cursor) internal _chronologyPlayerCursor;
+    // Unused reserved slot from the abandoned backfill design (never written).
+    bool internal _chronologyMigrationComplete;
+    // Sticky per-mission generation: only new allocation writes this, never lifecycle settlement.
+    mapping(uint256 missionId => bool registered) internal _chronologyRegistered;
+    mapping(address player => uint256 cursor) internal _chronologyLegacyCursor;
+
     error AlreadyStarted();
     error BadStartPayment();
     error CoordinatesExhausted();

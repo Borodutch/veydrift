@@ -240,6 +240,37 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         return _add(resources, _reserveLimitedIncrease(added));
     }
 
+    function energyBalance(uint256 planetId)
+        public
+        view
+        returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
+    {
+        Planet storage planetRef = _planets[planetId];
+        return VeydriftFormulas.energyBalance(
+            _buildingLevels[planetId][Building.MetalMine],
+            _buildingLevels[planetId][Building.CrystalMine],
+            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
+            _buildingLevels[planetId][Building.SolarPlant],
+            _buildingLevels[planetId][Building.FusionReactor],
+            _shipCounts[planetId][Ship.SolarSatellite],
+            planetRef.temperature,
+            _technologyLevels[planetRef.owner][Technology.Energy]
+        );
+    }
+
+    function storageCaps(uint256 planetId)
+        public
+        view
+        returns (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap)
+    {
+        if (_planets[planetId].owner == address(0)) revert NoPlanet();
+        return VeydriftFormulas.storageCaps(
+            _buildingLevels[planetId][Building.MetalStorage],
+            _buildingLevels[planetId][Building.CrystalStorage],
+            _buildingLevels[planetId][Building.DeuteriumTank]
+        );
+    }
+
     function productionPerHour(uint256 planetId)
         external
         view

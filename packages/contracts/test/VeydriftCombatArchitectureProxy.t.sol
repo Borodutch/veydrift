@@ -342,8 +342,8 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         }
         (uint256 g4, uint256 w6, uint64 c6) = _arrivalProgress(target);
         assertEq(g4, g3);
-        assertEq(w6, 67);
-        assertEq(c6, 30);
+        assertEq(w6, 68); //31 retained records plus the completion marker, after36 earlier work.
+        assertEq(c6, 31); // Recalled missions remain indexed until their scheduled return.
         vm.prank(address(game));
         game.launchInterplanetaryMissileAttack(1, target, Defense.RocketLauncher, 0);
         (, uint256 w7,) = _arrivalProgress(target);

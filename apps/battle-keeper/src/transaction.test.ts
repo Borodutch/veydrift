@@ -19,7 +19,7 @@ function fixture() {
   let mined: Hex | undefined, reject = false, loseReceipt = false, reverted = false;
   const raws: Hex[] = [];
   const transport: JsonRpcTransport = { async request<T>(method: string, params: unknown[]): Promise<T> {
-    if (method === "eth_call") return "0x" as T;
+    if (method === "eth_call") return ((params[0] as {data:string}).data.startsWith("0xce02abe2") ? ("0x" + [1n,0n,1n].map(n=>n.toString(16).padStart(64,"0")).join("")) : "0x") as T;
     if (method === "eth_getTransactionCount") return (mined ? "0x1" : "0x0") as T;
     if (method === "eth_estimateGas") return "0x5208" as T;
     if (method === "eth_getBlockByNumber") return { number: "0x65", hash: blockHash, baseFeePerGas: "0x1" } as T;

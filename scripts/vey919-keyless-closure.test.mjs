@@ -62,3 +62,55 @@ test("stale source and unsupported qualified construction fail closed",t=>{
 test("reviewed real embedded return/discard edges are present and source-covered",()=>{
  for(const [parent,child] of [["VeydriftLegacyCombatModule","VeydriftLegacyCombatReturnModule"],["VeydriftStateMigrationModule","VeydriftMigrationDiscardModule"]]){assert(edges[parent].includes(child));assert(createdContracts(readFileSync(`packages/contracts/src/${parent}.sol`,"utf8"),parent).includes(child));}
 });
+
+function appendFixture(t) {
+ const f=fixture(t);
+ const names=["_attackReturnScanCursor","_chronologyIndexedThrough","_chronologyGeneration","_chronologyMissionsByBody","_chronologyScans","_chronologyBodyGeneration","_chronologyMissionsByPlayer","_chronologyPlayerCursor","_chronologyMigrationComplete","_chronologyRegistered","_chronologyLegacyCursor"];
+ const prefix=Array.from({length:75},(_,i)=>({label:"original"+i,slot:String(i),offset:0,type:"uint"}));
+ for(const name of ["VeydriftGame","Child"]) for(const base of [f.oldOut,f.out]) {
+  const path=join(base,name+".sol",name+".json"),a=JSON.parse(readFileSync(path));
+  a.storageLayout.storage=structuredClone(prefix);
+  if(base===f.out)a.storageLayout.storage.push(...names.map((label,i)=>({label,slot:String(77+i),offset:0,type:"uint"})));
+  writeFileSync(path,JSON.stringify(a));
+ }
+ const a=JSON.parse(readFileSync(join(f.out,"VeydriftGame.sol","VeydriftGame.json")));
+ a.metadata.sources["src/VeydriftGameStorage.sol"]={keccak256:"0x537454fd0bdf438e46fab02df1e7e0a68847eb727c75ff1f96f632c71b6c7abf"};
+ f.appendBaseline=join(f.root,"pinned-main.json");writeFileSync(f.appendBaseline,JSON.stringify(a));return f;
+}
+function mutate(path,fn){const a=JSON.parse(readFileSync(path));fn(a);writeFileSync(path,JSON.stringify(a));}
+test("append mode is explicit and still compares every old artifact",t=>{
+ const f=appendFixture(t);assert.throws(()=>checkClosure({...f,appendBaseline:undefined}),/recursive inherited storage changed/);
+ const r=checkClosure(f);assert.equal(r.baselineCompared,3);assert.equal(r.mainAppendEvidence.normalizedAppends.length,11);
+ assert.equal(r.artifacts.Child.storageCompatibility,"exact-recursive-baseline-plus-pinned-main-appends");
+});
+test("append artifact must match the pinned source anchor",t=>{
+ const f=appendFixture(t);mutate(f.appendBaseline,a=>a.metadata.sources["src/VeydriftGameStorage.sol"].keccak256="0x00");
+ assert.throws(()=>checkClosure(f),/not pinned-main/);
+});
+test("append mode rejects changed original recursive fields",t=>{
+ const f=appendFixture(t);mutate(f.appendBaseline,a=>a.storageLayout.storage[0].offset=1);
+ assert.throws(()=>checkClosure(f),/changed old recursive fields/);
+});
+test("append mode rejects unreviewed labels and positions",t=>{
+ const f=appendFixture(t);mutate(f.appendBaseline,a=>a.storageLayout.storage[85].slot="88");
+ assert.throws(()=>checkClosure(f),/unreviewed storage append positions/);
+ mutate(f.appendBaseline,a=>{a.storageLayout.storage[85].slot="87";a.storageLayout.storage[85].label="other";});
+ assert.throws(()=>checkClosure(f),/unreviewed storage append labels/);
+});
+test("candidate cannot append any extra field",t=>{
+ const f=appendFixture(t);mutate(join(f.out,"Child.sol","Child.json"),a=>a.storageLayout.storage.push({label:"extra",slot:"88",offset:0,type:"uint"}));
+ assert.throws(()=>checkClosure(f),/differs from pinned-main/);
+});
+test("candidate cannot change even a new tail field width",t=>{
+ const f=appendFixture(t);mutate(join(f.out,"Child.sol","Child.json"),a=>{
+  a.storageLayout.types.short={label:"uint128",encoding:"inplace",numberOfBytes:"16"};a.storageLayout.storage[85].type="short";
+ });assert.throws(()=>checkClosure(f),/differs from pinned-main/);
+});
+test("append mode never waives a missing old artifact",t=>{
+ const f=appendFixture(t);rmSync(join(f.oldOut,"Child.sol","Child.json"));assert.throws(()=>checkClosure(f),/missing required pre-existing baseline/);
+});
+test("unrelated inherited layouts cannot adopt the Game tail",t=>{
+ const f=appendFixture(t);const game=JSON.parse(readFileSync(join(f.out,"VeydriftGame.sol","VeydriftGame.json")));
+ mutate(join(f.out,"VeydriftMoonSystem.sol","VeydriftMoonSystem.json"),a=>a.storageLayout=game.storageLayout);
+ assert.throws(()=>checkClosure(f),/not the reviewed inherited Game layout/);
+});

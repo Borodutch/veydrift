@@ -1166,6 +1166,7 @@ export async function frontendResponse(request) {
 
   if (
     docsAppRouteForPathname(route)
+    || route.replace(/\/+$/, "") === "/pact"
     || playAppRouteForPathname(route)
     || inviteAppRouteForPathname(route)
     || gameAppRouteForPathname(route)

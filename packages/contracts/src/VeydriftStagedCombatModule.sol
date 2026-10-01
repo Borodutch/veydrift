@@ -87,43 +87,50 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             if (!b.blocked) b.seed = _battleSeed(id, m);
             _battleResolutionProgress[id].seed = b.seed;
             b.phase = b.blocked ? 3 : 1;
-            BuildingConstruction memory construction = buildingConstructions[m.targetPlanetId];
-            if (construction.active && construction.readyAt <= m.arrivalAt) {
-                IStagedProduction(address(this))
-                    .settleProductionUntil(m.targetPlanetId, construction.readyAt);
-                delete buildingConstructions[m.targetPlanetId];
-                _snapshotPlanetScore(m.targetPlanetId);
-                _buildingLevels[m.targetPlanetId][construction.building] = construction.targetLevel;
-                if (construction.building == Building.Terraformer) {
-                    _planets[m.targetPlanetId].fields += 5;
+            if (!m.targetIsMoon) {
+                BuildingConstruction memory construction = buildingConstructions[m.targetPlanetId];
+                if (construction.active && construction.readyAt <= m.arrivalAt) {
+                    IStagedProduction(address(this))
+                        .settleProductionUntil(m.targetPlanetId, construction.readyAt);
+                    delete buildingConstructions[m.targetPlanetId];
+                    _snapshotPlanetScore(m.targetPlanetId);
+                    _buildingLevels[m.targetPlanetId][construction.building] =
+                    construction.targetLevel;
+                    if (construction.building == Building.Terraformer) {
+                        _planets[m.targetPlanetId].fields += 5;
+                    }
+                    emit BuildingCompleted(
+                        m.targetPlanetId, construction.building, construction.targetLevel
+                    );
                 }
-                emit BuildingCompleted(
-                    m.targetPlanetId, construction.building, construction.targetLevel
-                );
+                IStagedProduction(address(this))
+                    .settleProductionUntil(m.targetPlanetId, m.arrivalAt);
             }
-            IStagedProduction(address(this)).settleProductionUntil(m.targetPlanetId, m.arrivalAt);
             ++b.workDone;
             emit CombatStageAdvanced(id, b.phase, b.workDone, 0);
             return false;
         }
         if (b.phase == 1) {
             _snapshotPlanetScore(m.targetPlanetId);
-            (bool done,) = VeydriftCombatPreparation.advance(
-                b.preparation,
-                m.targetPlanetId,
-                shipQueues[m.targetPlanetId],
-                defenseQueues[m.targetPlanetId],
-                _shipQueueBacklogs[m.targetPlanetId],
-                _defenseQueueBacklogs[m.targetPlanetId],
-                _shipQueueTimings[m.targetPlanetId],
-                _defenseQueueTimings[m.targetPlanetId],
-                _shipCounts[m.targetPlanetId],
-                _defenseCounts[m.targetPlanetId],
-                m.arrivalAt,
-                32
-            );
+            bool done = true;
+            if (!m.targetIsMoon) {
+                (done,) = VeydriftCombatPreparation.advance(
+                    b.preparation,
+                    m.targetPlanetId,
+                    shipQueues[m.targetPlanetId],
+                    defenseQueues[m.targetPlanetId],
+                    _shipQueueBacklogs[m.targetPlanetId],
+                    _defenseQueueBacklogs[m.targetPlanetId],
+                    _shipQueueTimings[m.targetPlanetId],
+                    _defenseQueueTimings[m.targetPlanetId],
+                    _shipCounts[m.targetPlanetId],
+                    _defenseCounts[m.targetPlanetId],
+                    m.arrivalAt,
+                    32
+                );
+            }
             if (done) {
-                if (_moonSystem != address(0)) {
+                if (m.targetIsMoon && _moonSystem != address(0)) {
                     (bool versioned, bytes memory version) = _moonSystem.staticcall(
                         abi.encodeWithSignature("moonShipProductionVersion()")
                     );
@@ -205,14 +212,16 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 b.cohortCursor = 0;
                 b.memberCursor = 0;
             }
-        } else if (b.phase == 7) {
-            VeydriftCombatAttribution.floors(b);
-        } else if (b.phase == 8) {
-            VeydriftCombatAttribution.remainder(b);
-        } else if (b.phase == 9) {
-            _applyMember(id, b, m);
-        } else if (b.phase == 10) {
-            _applyCohort(id, b);
+        } else if (b.phase >= 7 && b.phase <= 10) {
+            // At most32 constant-size attribution/application operations; stop at the next
+            // round or raid boundary. Same sequence/ties/accounting, fewer paid chunks and
+            // retain the unchanged64-stage lazy budget; resolver envelopes remain capped at15M.
+            for (uint256 operation; operation < 32 && b.phase >= 7 && b.phase <= 10; ++operation) {
+                if (b.phase == 7) VeydriftCombatAttribution.floors(b);
+                else if (b.phase == 8) VeydriftCombatAttribution.remainder(b);
+                else if (b.phase == 9) _applyMember(id, b, m);
+                else _applyCohort(id, b);
+            }
         } else if (b.phase == 11) {
             // Raid integration is separately bounded by its own persistent cursor.
             (bool ok, bytes memory data) =
@@ -487,7 +496,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             emit CombatDebrisSignaled(id, m.targetPlanetId, debris.metal, debris.crystal);
             _requestMoonChanceFromBattle(id, m.targetPlanetId, debris);
         }
-        if (!b.blocked && _moonSystem != address(0)) {
+        if (!b.blocked && m.targetIsMoon && _moonSystem != address(0)) {
             (bool versioned, bytes memory version) =
                 _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
             if (versioned && version.length >= 32) {

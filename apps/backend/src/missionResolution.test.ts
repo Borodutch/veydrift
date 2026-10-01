@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
-import { encodeFunctionResult, encodeAbiParameters, stringToHex, keccak256, parseTransaction, type Hex, type PublicClient, type WalletClient } from "viem";
+import { createPublicClient, custom, encodeFunctionData, parseAbi, encodeFunctionResult, encodeAbiParameters, stringToHex, keccak256, parseTransaction, toHex, type Hex, type PublicClient, type WalletClient } from "viem";
 import { progressAbi } from "../../battle-keeper/src/progress";
 import type { BackendConfig } from "./config";
+import { VeydriftGameReader } from "./evm";
 import {
   MissionResolutionService,
   ViemMissionResolutionChainClient,
@@ -331,6 +332,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() { return "0xresolve"; },
@@ -361,6 +363,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -384,11 +387,28 @@ describe("MissionResolutionService", () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const broadcasts: string[] = [];
     let pendingNonce = 7;
+    let actualStatus = "Outbound";
+    const blockHash = ("0x"+"a".repeat(64)) as Hex;
+    const receipts = new Map<Hex,unknown>();
     const publicClient = {
-      async getTransactionCount() { return pendingNonce; },
-      async getStorageAt() { return `0x${"0".repeat(64)}`; },
-      async getTransactionReceipt() { return { status: "success" }; },
-      async waitForTransactionReceipt() { return { status: "success" }; }
+      async call() { return {data:"0x"}; },
+      async getTransactionCount() {return pendingNonce;},
+      async getStorageAt() {return toHex(0n,{size:32});},
+      async prepareTransactionRequest(input:object) {return {...input,maxFeePerGas:2n,maxPriorityFeePerGas:1n,type:"eip1559"};},
+      async request({method,params}:{method:string;params:unknown[]}) {
+        if(method==="eth_getBlockByNumber")return {number:"0x64",hash:blockHash};
+        if(method==="eth_getCode")return "0x6000";
+        if(method==="eth_getStorageAt")return toHex(0n,{size:32});
+        if(method==="eth_call")return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
+        if(method==="eth_getTransactionReceipt")return receipts.get(params[0] as Hex)??null;
+        if(method==="eth_sendRawTransaction") {
+          const raw=params[0] as Hex,tx=parseTransaction(raw),hash=keccak256(raw);
+          const name=actualStatus==="Outbound"?"resolveFleetMission":"completeFleetMissionReturn";
+          broadcasts.push(name+":"+tx.nonce);pendingNonce=tx.nonce!+1;actualStatus=actualStatus==="Outbound"?"Returning":"Returned";
+          receipts.set(hash,{status:"0x1",transactionHash:hash,blockNumber:"0x64",blockHash});return hash;
+        }
+        throw new Error(method);
+      }
     } as unknown as PublicClient;
     const walletClient = {
       async writeContract(input: { functionName: string; nonce: number }) {
@@ -400,6 +420,8 @@ describe("MissionResolutionService", () => {
     const coordinator = new ResolverTransactionCoordinator(":memory:");
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
+        async getCanonicalFleetMission() { return { status: actualStatus, missionTypeId:0, targetPlanetId:"2" } as never; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -409,7 +431,7 @@ describe("MissionResolutionService", () => {
       walletClient,
       { id: 8453 } as never,
       config.rpcUrl,
-      coordinator
+      coordinator, undefined, undefined, ":memory:", [config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]
     );
 
     // Simulate the operation confirmed before the indexed source caught up. Reusing this operation
@@ -473,6 +495,7 @@ describe("MissionResolutionService", () => {
         })
       },
       chainClient: {
+        async isMissionLegComplete() { return terminal; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -494,7 +517,7 @@ describe("MissionResolutionService", () => {
       failuresByLeg: { arrival: 0 },
       dueArrivals: { count: 0 },
       lastResolvedMissionId: "23007",
-      resolvedCount: 2
+      resolvedCount: 1
     });
   });
 
@@ -512,6 +535,7 @@ describe("MissionResolutionService", () => {
         }
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission(missionId) {
@@ -676,6 +700,7 @@ describe("MissionResolutionService", () => {
         })
       },
       chainClient: {
+        async isMissionLegComplete() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() {
@@ -737,6 +762,188 @@ describe("MissionResolutionService", () => {
 });
 
 describe("ViemMissionResolutionChainClient", () => {
+  for (const leg of ["arrival", "return"] as const) {
+    for (const mode of ["private-key", "unlocked"] as const) {
+      test(leg + " " + mode + " preflights new and identical-raw recovery without replacement or nonce guessing", async () => {
+        const account = privateKeyToAccount(("0x" + "1".repeat(64)) as Hex);
+        const from = account.address;
+        const functionName = leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
+        const data = encodeFunctionData({abi:parseAbi(["function resolveFleetMission(uint256)","function completeFleetMissionReturn(uint256)"]),functionName,args:[77n]});
+        const dir = mkdtempSync(join(tmpdir(), "merged-preflight-"));
+        const store = join(dir, "journal.sqlite");
+        const hash = ("0x" + "a".repeat(64)) as Hex;
+        const chronologySlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],
+          [77n,BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1")))+1n]));
+        let orderingReady=false, blocked=true, funded=false, settled=false, advance=true;
+        let nonce=7, work=0n;
+        const raws: Hex[]=[];
+        const receipts=new Map<Hex,unknown>();
+        const simulations: unknown[][]=[];
+        const events:string[]=[];
+        const rpcClient=createPublicClient({transport:custom({async request({method,params}) {
+          expect(method).toBe("eth_call"); events.push("simulate"); simulations.push(params as unknown[]);
+          if(blocked) throw new Error("execution reverted: earlier attack randomness unavailable");
+          return "0x";
+        }},{retryCount:0})});
+        const publicClient={
+          call:rpcClient.call,
+          async getStorageAt(){return toHex(0n,{size:32});},
+          async getTransactionCount(){return nonce;},
+          async prepareTransactionRequest(input:object){return {...input,maxFeePerGas:3n,maxPriorityFeePerGas:1n,type:"eip1559"};},
+          async request({method,params}:{method:string;params:unknown[]}) {
+            if(method==="eth_getBlockByNumber") return {number:"0x64",hash};
+            if(method==="eth_getCode") return "0x6000";
+            if(method==="eth_getStorageAt") return toHex(params[1]===chronologySlot?work:0n,{size:32});
+            if(method==="eth_call") return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
+            if(method==="eth_signTransaction") {
+              const tx=params[0] as Record<string,Hex>;
+              expect(tx.from).toBe(from);
+              return account.signTransaction({to:tx.to!,data:tx.data!,nonce:Number(BigInt(tx.nonce!)),gas:BigInt(tx.gas!),
+                chainId:Number(BigInt(tx.chainId!)),maxFeePerGas:BigInt(tx.maxFeePerGas!),maxPriorityFeePerGas:BigInt(tx.maxPriorityFeePerGas!),type:"eip1559"});
+            }
+            if(method==="eth_getTransactionReceipt") return receipts.get(params[0] as Hex)??null;
+            if(method==="eth_sendRawTransaction") {
+              events.push("broadcast");const raw=params[0] as Hex;raws.push(raw);
+              const tx=parseTransaction(raw);expect(tx.gas).toBe(15_000_000n);expect(tx.data).toBe(data);
+              if(!funded) throw new Error("insufficient funds at raw broadcast");
+              const receiptHash=keccak256(raw);nonce=tx.nonce!+1;if(advance)work+=12n;
+              receipts.set(receiptHash,{status:"0x1",transactionHash:receiptHash,blockHash:hash,blockNumber:"0x64"});
+              return receiptHash;
+            }
+            throw new Error(method);
+          }
+        };
+        const reader={async listResolvableFleetMissions(){return [];},async listReturnableFleetMissions(){return [];},
+          async isFleetChronologyOrderingReady(){events.push("ordering");return orderingReady;},
+          async getCanonicalFleetMission(){return {status:settled?"Returned":leg==="arrival"?"Outbound":"Returning",missionTypeId:0,targetPlanetId:"2"} as never;}};
+        const make=()=>new ViemMissionResolutionChainClient(reader,config.gameContractAddress!,mode==="private-key"?account:from,
+          publicClient as unknown as PublicClient,undefined,{id:config.chainId} as never,config.rpcUrl,
+          new ResolverTransactionCoordinator(store),undefined,undefined,store,[config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]);
+        const submit=()=>make()[functionName]("77");
+        try {
+          await expect(submit()).rejects.toThrow("ordering support unavailable");expect(simulations).toHaveLength(0);
+          orderingReady=true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");expect(raws).toHaveLength(0);expect(nonce).toBe(7);
+          const call=publicClient.call;Object.assign(publicClient,{call:undefined});
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");expect(raws).toHaveLength(0);publicClient.call=call;
+          blocked=false;await expect(submit()).rejects.toThrow("insufficient funds");expect(raws).toHaveLength(1);
+          blocked=true;await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");expect(raws).toHaveLength(1);expect(nonce).toBe(7);
+          Object.assign(publicClient,{call:undefined});await expect(submit()).rejects.toThrow("missing RPC simulation client");expect(raws).toHaveLength(1);publicClient.call=call;
+          blocked=false;funded=true;
+          await expect(submit()).rejects.toThrow("mission remains pending");expect(raws).toHaveLength(2);expect(raws[1]).toBe(raws[0]);
+          expect(raws.map(raw=>parseTransaction(raw).nonce)).toEqual([7,7]);
+          advance=false;await expect(submit()).rejects.toThrow("mission remains pending");expect(raws.map(raw=>parseTransaction(raw).nonce)).toEqual([7,7,8]);
+          await expect(submit()).rejects.toThrow("mission remains pending");expect(raws).toHaveLength(3);
+          settled=true;expect(await submit()).toBe(leg==="arrival"?"canonical:arrival-complete":"canonical:return-complete");expect(raws).toHaveLength(3);
+          expect(await make().isMissionLegComplete("77",leg)).toBe(true);
+          expect(simulations.length).toBeGreaterThan(6);
+          for(const params of simulations) expect(params).toEqual([{from,to:config.gameContractAddress,data,gas:"0xe4e1c0"},"latest"]);
+          for(let i=0;i<events.length;i++) {
+            if(events[i]==="simulate")expect(events[i-1]).toBe("ordering");
+            if(events[i]==="broadcast")expect(events[i-1]).toBe("simulate");
+          }
+        } finally {rmSync(dir,{recursive:true,force:true});}
+      },20_000);
+    }
+  }
+  for (const leg of ["arrival", "return"] as const) {
+    test(`${leg} canonical completion rejects missing/unknown status and retains active legs`, async () => {
+      let status: string | null = null;
+      const client = new ViemMissionResolutionChainClient({
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async getCanonicalFleetMission() { return status === null ? null : { status } as never; }
+      }, config.gameContractAddress!, config.missionResolverAddress!);
+      await expect(client.isMissionLegComplete("42", leg)).rejects.toThrow("canonical mission status unavailable");
+      for (status of ["Outbound", "Unknown:255", "None"]) expect(await client.isMissionLegComplete("42", leg)).toBe(false);
+      for (status of ["Returning", "Recalled"]) expect(await client.isMissionLegComplete("42", leg)).toBe(leg === "arrival");
+      for (status of ["Returned", "Resolved"]) expect(await client.isMissionLegComplete("42", leg)).toBe(true);
+    });
+
+    test(`${leg} backend service does not report bounded progress or unavailable state as settlement`, async () => {
+      const client = fakeClient({ calls: [], resolvable: ["1"], returnable: ["2"] });
+      client.isMissionLegComplete = async () => false;
+      const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
+      await service.tick();
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0, dueArrivals: { count: 1 }, dueReturns: { count: 1 } });
+      delete client.isMissionLegComplete;
+      await service.tick();
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0, dueArrivals: { count: 1 }, dueReturns: { count: 1 } });
+    });
+  }
+  for (const leg of ["arrival", "return"] as const) {
+    test(`${leg} progresses with false UI eligibility with ordering support, retaining pending until canonical transition`, async () => {
+      const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+      let orderingReady = false;
+      let settled = false;
+      let pendingNonce = 7;
+      const nonces: number[] = [];
+      const reader = new VeydriftGameReader(config, {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_call");
+          expect((params[0] as { data: string }).data.startsWith("0xce02abe2")).toBe(true);
+          // UI ordering remains false throughout the bounded scan, without any historical backfill.
+          return ("0x" + [0n, 0n, BigInt(orderingReady)].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
+        }
+      });
+      reader.listResolvableFleetMissions = async () => leg === "arrival" ? [arrival("77", "Transport", "950")] : [];
+      reader.listReturnableFleetMissions = async () => leg === "return" ? [returnLeg("77", "Returning", "950")] : [];
+      reader.getCanonicalFleetMission = async () => ({
+        status: settled ? (leg === "arrival" ? "Returning" : "Returned") : (leg === "arrival" ? "Outbound" : "Returning")
+      } as never);
+      const blockHash = ("0x" + "a".repeat(64)) as Hex;
+      const chronologySlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],
+        [77n,BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1")))+1n]));
+      const receipts = new Map<Hex,unknown>();
+      const publicClient = {
+        async call() { return { data: "0x" }; },
+        async getTransactionCount() { return pendingNonce; },
+        async getStorageAt() { return toHex(0n,{size:32}); },
+        async prepareTransactionRequest(input:object) { return {...input,maxFeePerGas:2n,maxPriorityFeePerGas:1n,type:"eip1559"}; },
+        async request({method,params}:{method:string;params:unknown[]}) {
+          if(method==="eth_getBlockByNumber")return {number:"0x64",hash:blockHash};
+          if(method==="eth_getCode")return "0x6000";
+          if(method==="eth_getStorageAt")return toHex(params[1]===chronologySlot?BigInt(pendingNonce-7):0n,{size:32});
+          if(method==="eth_call")return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
+          if(method==="eth_getTransactionReceipt")return receipts.get(params[0] as Hex)??null;
+          if(method==="eth_sendRawTransaction") {
+            const raw=params[0] as Hex,tx=parseTransaction(raw),hash=keccak256(raw);
+            nonces.push(tx.nonce!);pendingNonce=tx.nonce!+1;
+            receipts.set(hash,{status:"0x1",transactionHash:hash,blockNumber:"0x64",blockHash});return hash;
+          }
+          throw new Error(method);
+        }
+      } as unknown as PublicClient;
+      const walletClient = {
+        async writeContract(input: { nonce: number }) {
+          nonces.push(input.nonce);
+          pendingNonce = input.nonce + 1;
+          return "0x" + input.nonce.toString(16).padStart(64, "0");
+        }
+      } as unknown as WalletClient;
+      const client = new ViemMissionResolutionChainClient(reader, config.gameContractAddress!, account,
+        publicClient, walletClient, { id: 8453 } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"), undefined, undefined, ":memory:", [config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]);
+      const submit = () => leg === "arrival" ? client.resolveFleetMission("77") : client.completeFleetMissionReturn("77");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
+      await expect(submit()).rejects.toThrow("ordering support unavailable");
+      expect(nonces).toEqual([]);
+      orderingReady = true;
+      expect(await reader.canResolveFleetMission(77n, leg)).toBe(false);
+      const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger(), now: () => 1_000_000 });
+      await service.tick();
+      await service.tick();
+      expect(nonces).toEqual([7, 8]);
+      expect(service.snapshot()).toMatchObject({ resolvedCount: 0, returnedCount: 0,
+        dueArrivals: { count: leg === "arrival" ? 1 : 0 }, dueReturns: { count: leg === "return" ? 1 : 0 } });
+      settled = true;
+      await service.tick();
+      expect(nonces).toEqual([7, 8]); // canonical transition reuses the receipt; no phantom extra broadcast
+      expect(service.snapshot()).toMatchObject({ resolvedCount: leg === "arrival" ? 1 : 0,
+        returnedCount: leg === "return" ? 1 : 0, dueArrivals: { count: 0 }, dueReturns: { count: 0 } });
+    });
+  }
+
   test("submits successive bounded missile chunks until canonical status leaves Outbound", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     let pendingNonce = 7;
@@ -744,6 +951,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let workDone = 0n;
     const nonces: number[] = [];
     const reader = {
+      async isFleetChronologyOrderingReady() { return true; },
       async listResolvableFleetMissions() { return []; },
       async listReturnableFleetMissions() { return []; },
       async getCanonicalFleetMission(missionId: bigint) {
@@ -795,6 +1003,7 @@ describe("ViemMissionResolutionChainClient", () => {
           ? { status: reverted ? "0x0" : "0x1", transactionHash: mined, blockNumber: "0x64", blockHash } : null;
         throw new Error(method);
       },
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return "0x" + "0".repeat(64); },
       async getTransactionReceipt() { return { status: "success" }; },
@@ -845,6 +1054,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let peakBroadcasts = 0;
     let pendingNonce = 7;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -866,6 +1076,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -884,19 +1095,26 @@ describe("ViemMissionResolutionChainClient", () => {
 
     expect(broadcasts).toEqual([
       { functionName: "resolveFleetMission", gas: 15_000_000n, nonce: 7 },
-      { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
+      { functionName: "completeFleetMissionReturn", gas: 15_000_000n, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
   });
 
-  test("replaces an underpriced mission transaction at the same nonce with bumped fees", async () => {
+  test("legacy injected adapter replaces an underpriced mission transaction at the same nonce with bumped fees", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const firstHash = `0x${"a".repeat(64)}` as const;
     const replacementHash = `0x${"b".repeat(64)}` as const;
     let latestNonce = 7;
     let pendingNonce = 7;
     const writes: Array<Record<string, unknown>> = [];
+    const reader = new VeydriftGameReader(config, {
+      async request<T>(): Promise<T> {
+        return ("0x" + [0n, 0n, 1n].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
+      }
+    });
+    expect(await reader.canResolveFleetMission(45237n, "arrival")).toBe(false);
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getTransactionCount(input: { blockTag: "latest" | "pending" }) {
         return input.blockTag === "latest" ? latestNonce : pendingNonce;
       },
@@ -921,10 +1139,9 @@ describe("ViemMissionResolutionChainClient", () => {
       }
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
-      {
-        async listResolvableFleetMissions() { return []; },
-        async listReturnableFleetMissions() { return []; }
-      },
+      // Explicit legacy adapter: production's canonical reader always takes durable raw signing.
+      { async listResolvableFleetMissions() { return []; }, async listReturnableFleetMissions() { return []; },
+        isFleetChronologyOrderingReady: id => reader.isFleetChronologyOrderingReady(id) },
       config.gameContractAddress!,
       account,
       publicClient,
@@ -964,12 +1181,14 @@ describe("ViemMissionResolutionChainClient", () => {
 
     try {
       const publicClient = {
+        async call() { return { data: "0x" }; },
         async getTransactionCount() { return 7 + transactions.length; },
         async getStorageAt() { return `0x${"0".repeat(64)}`; },
         async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
       const client = new ViemMissionResolutionChainClient(
         {
+          async isFleetChronologyOrderingReady() { return true; },
           async listResolvableFleetMissions() { return []; },
           async listReturnableFleetMissions() { return []; }
         },
@@ -996,6 +1215,7 @@ describe("ViemMissionResolutionChainClient", () => {
   test("reads the canonical game pause from the fixed proxy storage slot", async () => {
     let requestedSlot: string | undefined;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt(input: { slot: string }) {
         requestedSlot = input.slot;
         return `0x${"1".padStart(64, "0")}`;
@@ -1003,6 +1223,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as PublicClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1023,6 +1244,7 @@ describe("ViemMissionResolutionChainClient", () => {
     let nonceReads = 0;
     let broadcasts = 0;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       async getStorageAt() { return `0x${"1".padStart(64, "0")}`; },
       async getTransactionCount() { nonceReads += 1; return 7; },
       async waitForTransactionReceipt() { return { status: "success" }; }
@@ -1035,6 +1257,7 @@ describe("ViemMissionResolutionChainClient", () => {
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
       {
+        async isFleetChronologyOrderingReady() { return true; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -1072,6 +1295,7 @@ function fakeClient(input: {
         targetPlanetId: "86"
       }));
     },
+    async isMissionLegComplete() { return true; },
     async listReturnableFleetMissions() {
       return input.returnable.map((missionId) => ({
         missionId,
@@ -1151,6 +1375,7 @@ describe("moon chance resolution", () => {
     let nonceReads = 0;
     let pendingNonce = 4;
     const publicClient = {
+      async call() { return { data: "0x" }; },
       readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
         ? [16621n, purpose, finalized, 0n]
         : { requester, purposeHash: requestPurpose, createdAt: 1n, fulfilledAt, randomWord: 19n },
@@ -1167,7 +1392,7 @@ describe("moon chance resolution", () => {
       }
     } as unknown as WalletClient;
     const client = () => new ViemMissionResolutionChainClient(
-      { listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      { isFleetChronologyOrderingReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
       config.gameContractAddress!, account, publicClient, walletClient,
       { id: config.chainId } as never, config.rpcUrl, coordinator, moon, engine
     );

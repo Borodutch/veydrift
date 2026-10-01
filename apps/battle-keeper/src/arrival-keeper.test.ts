@@ -17,6 +17,7 @@ for (const type of [0,1,4]) test("keeper pays successive ordering-only chunks fo
     if (method === "eth_getBlockByNumber") return {number:"0x64",hash:blockHash,baseFeePerGas:"0x1"} as T;
     if (method === "eth_getCode") return "0x6000" as T;
     if (method === "eth_getStorageAt") return toHex(params[1] === toHex(BigInt(slot)+1n,{size:32}) ? scan : 0n,{size:32}) as T;
+    if (method === "eth_call" && (params[0] as {data:string}).data.startsWith("0xce02abe2")) return ("0x" + [1n,0n,1n].map(n=>n.toString(16).padStart(64,"0")).join("")) as T;
     if (method === "eth_call") return ((params[0] as {data:string}).data === stagedData
       ? encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]}) : "0x") as T;
     if (method === "eth_getTransactionCount") return toHex(nonce) as T;

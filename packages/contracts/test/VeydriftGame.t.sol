@@ -3249,7 +3249,10 @@ contract VeydriftGameTest is Test {
         uint32 lastDefenseTotal;
         for (uint256 i = 0; i < logs.length;) {
             Vm.Log memory entry = logs[i];
-            if (entry.emitter == address(game) && entry.topics[1] == bytes32(targetPlanetId)) {
+            if (
+                entry.emitter == address(game) && entry.topics.length >= 3
+                    && entry.topics[1] == bytes32(targetPlanetId)
+            ) {
                 if (
                     entry.topics[0] == shipSig
                         && entry.topics[2] == bytes32(uint256(uint8(Ship.LightFighter)))
@@ -4474,6 +4477,11 @@ contract VeydriftGameTest is Test {
         uint256 missionId = game.launchInterplanetaryMissileAttack(
             originPlanetId, targetPlanetId, Defense.LightLaser, 5
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
         assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 2);
@@ -4593,10 +4601,20 @@ contract VeydriftGameTest is Test {
         vm.warp(arrivalAt);
         uint256 maximumImpactGas;
         for (uint256 index = 0; index < missionCount; ++index) {
-            uint256 gasBefore = gasleft();
-            game.resolveFleetMission(firstMissionId + index);
-            uint256 gasUsed = gasBefore - gasleft();
-            if (gasUsed > maximumImpactGas) maximumImpactGas = gasUsed;
+            bool complete;
+            for (uint256 chunk; chunk < 24; ++chunk) {
+                uint256 gasBefore = gasleft();
+                game.resolveFleetMission(firstMissionId + index);
+                uint256 gasUsed = gasBefore - gasleft();
+                if (gasUsed > maximumImpactGas) maximumImpactGas = gasUsed;
+                (VeydriftGameStorage.FleetMissionStatus current,,,) =
+                    _fleetMission(firstMissionId + index);
+                if (current == VeydriftGameStorage.FleetMissionStatus.Resolved) {
+                    complete = true;
+                    break;
+                }
+            }
+            assertTrue(complete, "bounded chronology must finish each impact");
         }
 
         assertLt(maximumImpactGas, 500_000);
@@ -4825,18 +4843,14 @@ contract VeydriftGameTest is Test {
         (, uint64 transportArrivalAt,,) = _fleetMission(transportMissionId);
         assertLt(transportArrivalAt, arrivalAt);
 
-        // Even though this non-combat arrival was scheduled first, resolving it after the missile's
-        // impact time would settle the defense queue through the late resolver timestamp. The due
-        // missile therefore has priority so the second, post-impact ABM cannot intercept it.
+        // All events now settle by scheduled time. The earlier transport may resolve first,
+        // but must settle production only through its own arrival, never through the late block.
         vm.warp(arrivalAt + 1_000);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
-        );
         game.resolveFleetMission(transportMissionId);
-        assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
+        assertLe(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 1);
         queue = game.defenseQueue(targetPlanetId);
         assertTrue(queue.active);
-        assertEq(queue.quantity, 2);
+        assertGe(queue.quantity, 1);
 
         game.resolveFleetMission(missionId);
 
@@ -4846,7 +4860,8 @@ contract VeydriftGameTest is Test {
         assertTrue(queue.active);
         assertEq(queue.quantity, 1);
 
-        game.resolveFleetMission(transportMissionId);
+        vm.prank(defender);
+        game.finishDefenseProduction(targetPlanetId);
         assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 1);
     }
 
@@ -4933,6 +4948,11 @@ contract VeydriftGameTest is Test {
             ships,
             VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0}),
             0
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
 
@@ -5025,7 +5045,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionIds[0]);
         vm.warp(arrivalAt);
         for (uint256 i = 0; i < missionIds.length; i++) {
-            game.resolveFleetMission(missionIds[i]);
+            _resolveAttackFully(missionIds[i]); // same bounded arrival driver; missile scan may need a preparatory receipt
         }
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 3);
     }
@@ -5236,7 +5256,7 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionIds[0]);
         vm.warp(arrivalAt);
         for (uint256 i = 0; i < missionIds.length; i++) {
-            game.resolveFleetMission(missionIds[i]);
+            _resolveAttackFully(missionIds[i]); // same bounded arrival driver; missile scan may need a preparatory receipt
         }
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 3);
     }
@@ -6264,6 +6284,11 @@ contract VeydriftGameTest is Test {
             100,
             0
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(missionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
         uint256 positionDistance =
             colonyPosition > 8 ? uint256(colonyPosition - 8) : uint256(8 - colonyPosition);
         uint256 expectedDistance = 1_000 + positionDistance * 5;
@@ -6713,8 +6738,13 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.FleetMissionType.Transport,
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 4_000, crystal: 0, deuterium: 0}),
+            10,
             0
         );
+        (,, uint64 savingReturnAt,) = _fleetMission(saveMissionId);
+        // A fleet-save must remain away through impact; a return already due before impact
+        // must instead defend, even if its arrival/return resolution was delayed.
+        assertGt(savingReturnAt, attackArrivalAt);
         assertEq(game.planet(targetPlanetId).resources.metal, 6_000);
 
         vm.warp(attackArrivalAt);
@@ -6836,6 +6866,13 @@ contract VeydriftGameTest is Test {
         uint256[] memory missionIds =
             ITransportBatchEntrypoints(address(game)).launchTransportBatch(targetPlanetId, orders);
 
+        for (uint256 i; i < missionIds.length; ++i) {
+            assertEq(
+                uint256(vm.load(address(game), keccak256(abi.encode(missionIds[i], uint256(86))))),
+                1,
+                "batch child must opt in atomically"
+            );
+        }
         assertEq(missionIds.length, 2);
         assertEq(missionIds[0], nextFleetId);
         assertEq(missionIds[1], nextFleetId + 1);
@@ -7961,15 +7998,18 @@ contract VeydriftGameTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
         _fulfillAttackBattleRandomness(secondMissionId, 2);
+        // Preserve chronological order and staged completion: the faster second fleet lands first.
+        _resolveAttackFully(secondMissionId);
         _resolveAttackFully(missionId);
         game.resolveFleetMission{gas: 15_000_000}(missionId); // terminal idempotency
-        _resolveAttackFully(secondMissionId);
 
         (status,, returnAt,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
         vm.warp(returnAt);
+        // The faster fleet also has the earlier return; settle it before the later home event.
+        game.completeFleetMissionReturn(secondMissionId);
         game.completeFleetMissionReturn(missionId);
-        assertEq(game.activeFleetMissionCount(player), 1);
+        assertEq(game.activeFleetMissionCount(player), 0);
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 2);
         assertGt(game.planet(originPlanetId).resources.metal, 0);
     }
@@ -8708,6 +8748,11 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             801
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(hostileMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         VeydriftGameStorage.MissionShips memory defenders;
         defenders.lightFighter = 1;
@@ -8719,6 +8764,13 @@ contract VeydriftGameTest is Test {
             defenders,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
+        );
+        assertEq(
+            uint256(
+                vm.load(address(game), keccak256(abi.encode(counterplayMissionId, uint256(86))))
+            ),
+            1,
+            "launch must opt in atomically"
         );
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(counterplayMissionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
@@ -8977,6 +9029,11 @@ contract VeydriftGameTest is Test {
         uint256 holdMissionId = game.launchDefenseHold(
             allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(holdMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
 
         // The stationed fleet has arrived and is holding before the attack lands.
         (, uint64 holdArrivalAt, uint64 holdReturnAt,) = _fleetMission(holdMissionId);
@@ -8992,6 +9049,11 @@ contract VeydriftGameTest is Test {
             attackers,
             _noCargo(),
             771
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
         (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
         vm.warp(attackArrivalAt);
@@ -9116,6 +9178,11 @@ contract VeydriftGameTest is Test {
         uint256 holdMissionId = game.launchDefenseHold(
             allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(holdMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
         (, uint64 holdArrivalAt, uint64 originalReturnAt,) = _fleetMission(holdMissionId);
         uint64 holdUntil = holdArrivalAt + 4 hours;
         uint64 recallAt = holdArrivalAt + 1 hours;
@@ -9151,6 +9218,83 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Recalled));
         assertEq(returnAt, expectedReturnAt);
         assertEq(game.planet(allyPlanetId).resources.deuterium, deuteriumBeforeRecall);
+    }
+
+    function testExpiredDefenseHoldCannotBeRecalledAfterLazyExpiry() public {
+        _assertExpiredHoldRecall(false);
+    }
+
+    function testExpiredDefenseHoldRecallCannotDoubleCreditNestedReturnBeforeLaterTransport()
+        public
+    {
+        _assertExpiredHoldRecall(true);
+    }
+
+    function _assertExpiredHoldRecall(bool laterTransport) private {
+        (address ally,, uint256 target, uint256 home) = _seedDefenseHold();
+        _setTechnologyLevel(ally, Technology.Computer, 1);
+        _setShipCount(home, Ship.Battleship, 1);
+        _setResources(home, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(target, 1_000_000, 1_000_000, 1_000_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        vm.prank(ally);
+        uint256 holdId = game.launchDefenseHold(
+            home, target, ships, VeydriftGameStorage.Resources(123, 45, 0), 100, 4 hours
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(holdId);
+        if (laterTransport) {
+            // Allocate while the hold is not due, then schedule this arrival after its return.
+            // The lazy batch expires the hold first; preparing this transport lands that return.
+            _setPlanetOwner(target, ally);
+            _setShipCount(target, Ship.SmallCargo, 1);
+            delete ships;
+            ships.smallCargo = 1;
+            vm.prank(ally);
+            uint256 transportId = game.launchFleetMission(
+                target, home, VeydriftGameStorage.FleetMissionType.Transport, ships, _noCargo(), 0
+            );
+            bytes32 slot = bytes32(uint256(keccak256(abi.encode(transportId, uint256(24)))) + 3);
+            uint256 departure = uint256(vm.load(address(game), slot)) & type(uint64).max;
+            vm.store(
+                address(game),
+                slot,
+                bytes32(
+                    departure | uint256(returnAt + 1) << 64 | uint256(returnAt + 1 hours) << 128
+                )
+            );
+        }
+        vm.warp(laterTransport ? returnAt + 2 : arrivalAt + 4 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, returnAt)
+        );
+        vm.prank(ally);
+        game.recallFleetMission(holdId);
+        // Reverting recall rolls back its lazy work, without manufacturing another return leg.
+        (VeydriftGameStorage.FleetMissionStatus status,, uint64 unchangedReturnAt,) =
+            _fleetMission(holdId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(unchangedReturnAt, returnAt);
+        assertEq(game.shipCount(home, Ship.Battleship), 0);
+        game.resolveFleetMission(holdId);
+        if (laterTransport) {
+            vm.prank(ally);
+            game.renamePlanet(home, "land hold once");
+        } else {
+            vm.warp(returnAt);
+            game.completeFleetMissionReturn(holdId);
+        }
+        (status,,,) = _fleetMission(holdId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        assertEq(game.shipCount(home, Ship.Battleship), 1);
+        uint128 creditedMetal = game.planet(home).resources.metal;
+        vm.expectRevert();
+        vm.prank(ally);
+        game.recallFleetMission(holdId);
+        vm.expectRevert();
+        game.completeFleetMissionReturn(holdId);
+        assertEq(game.shipCount(home, Ship.Battleship), 1);
+        assertEq(game.planet(home).resources.metal, creditedMetal);
     }
 
     function testDefenseHoldRejectsUnauthorizedTarget() public {
@@ -9360,6 +9504,11 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             900
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
         vm.prank(ally);
         vm.expectEmit(true, true, true, true);
         emit AttackMissionJoined(
@@ -9371,6 +9520,11 @@ contract VeydriftGameTest is Test {
             targetPlanetId,
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
         (,,,,,,,, uint128 attackFuelCost,,) = game.fleetMission(attackMissionId);
         (,,,,,,,, uint128 joinedFuelCost,,) = game.fleetMission(joinedMissionId);
@@ -9582,6 +9736,11 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             902
         );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(attackMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
+        );
         vm.prank(ally);
         uint256 joinedMissionId = game.joinAttackMission(
             allyPlanetId,
@@ -9589,6 +9748,11 @@ contract VeydriftGameTest is Test {
             targetPlanetId,
             _smallCargoManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0})
+        );
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(joinedMissionId, uint256(86))))),
+            1,
+            "launch must opt in atomically"
         );
 
         vm.warp(block.timestamp + 90 seconds);
@@ -10488,6 +10652,7 @@ contract VeydriftGameTest is Test {
         assertLt(remainingDebrisMetal + remainingDebrisCrystal, debrisMetal + debrisCrystal);
 
         vm.warp(harvestReturnAt);
+        game.completeFleetMissionReturn(attackMissionId);
         game.completeFleetMissionReturn(harvestMissionId);
         assertEq(game.shipCount(originPlanetId, Ship.Recycler), 2);
     }
@@ -12520,16 +12685,21 @@ contract VeydriftGameTest is Test {
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
             address(deployedReferralSystem), address(colonizationModule)
         );
-        VeydriftGame deployedGame = new VeydriftGame(
-            owner,
-            address(firstPlanetSettlementModule),
-            address(gameplayModule),
-            address(planetManagementModule),
-            address(attackProtectionModule),
-            address(colonizationModule),
-            address(defenseHoldModule),
-            address(stateMigrationModule),
-            address(new VeydriftAcsAttackModule())
+        VeydriftGame deployedGame = VeydriftGame(
+            payable(deployCode(
+                    "VeydriftGame.sol:VeydriftGame",
+                    abi.encode(
+                        owner,
+                        address(firstPlanetSettlementModule),
+                        address(gameplayModule),
+                        address(planetManagementModule),
+                        address(attackProtectionModule),
+                        address(colonizationModule),
+                        address(defenseHoldModule),
+                        address(stateMigrationModule),
+                        address(new VeydriftAcsAttackModule())
+                    )
+                ))
         );
         vm.prank(owner);
         deployedReferralSystem.setGame(address(deployedGame));

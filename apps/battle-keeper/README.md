@@ -45,7 +45,15 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   (`eth_sendRawTransaction`) from `KEEPER_PRIVATE_KEY`. Both calls are **permissionless** — any funded
   EOA can resolve. Each submission is simulated with `eth_call` first, so a leg that isn't resolvable
   yet (arrival: randomness not committed; return: not yet due / wrong status) reverts during
-  simulation and is **retried on the next tick** without burning a nonce or crashing.
+  simulation and is **retried on the next tick** without burning a nonce or crashing. Due legs are
+  dispatched by scheduled `dueAt` across both legs; equal timestamps use arrival before return,
+  then numeric mission ID. Submission remains serial for nonce safety. This priority is not a
+  consensus guarantee: the contract enforces chronology for missions launched after its upgrade,
+  including reverse-ordered submissions by permissionless resolvers. Legacy/new interactions retain
+  the accepted temporary ordering limitation; the keeper does not infer mission generations.
+  `fleetMissionEligibility` confirms ordering support immediately for both generations, without
+  historical sync or backfill. Funded workers may advance bounded scans while strict UI eligibility
+  is false, but must still simulate the exact arrival/return call before submitting.
 - **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent fleet-mission logs over `eth_getLogs`
   to recover **both legs** — a missed launch re-queues the arrival, a missed `FleetMissionResolved`
   drops terminal arrivals, a missed `FleetMissionReturnExposed` transitions to the return leg, and a
@@ -54,8 +62,9 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   (`None`/`Resolved`/`Returned`) or corrects legs that no longer match on-chain state, then
   re-attempts due legs.
 - **In-process deduplication**: an in-flight submission prevents another attempt for that leg;
-  tracked terminal missions are not re-queued. When we resolve a leg ourselves we advance the state machine
-  immediately (the matching event is a backstop that refines the authoritative `returnAt`).
+  tracked terminal missions are not re-queued. After each successful receipt we read canonical
+  mission status: progress-only receipts retain the pending leg, and only a canonical transition
+  advances it (the matching event refines the authoritative `returnAt`).
 - Auto-reconnects the WebSocket with capped exponential backoff, serializes transaction submission,
   and emits structured logs. Monitor retry backlogs and health; these mechanisms do not guarantee
   liveness during RPC, signer, or oracle failures.
@@ -149,7 +158,7 @@ retain buffered gas, capped at the same ceiling and re-simulated. This ceiling i
 an envelope bound, not proof that any particular contract stage makes progress.
 After exact-envelope preflight, the keeper signs locally and persists the raw transaction,
 its deterministic hash/nonce, and the progress checkpoint in SQLite **before broadcasting**.
-Restart first reconciles the canonical receipt or rebroadcasts identical signed bytes;
+Restart first reconciles the canonical receipt or re-simulates and rebroadcasts identical signed bytes;
 unknown sends never allocate a second nonce. A crash before signed persistence can safely
 retry preparation. Fee/funds/pre-sign rejection does not consume a progress checkpoint.
 Other jobs cannot reuse a nonce owned by an unresolved durable envelope.
@@ -173,7 +182,7 @@ keeper and backend as comma-separated implementation-address:runtime-keccak256 p
 The release owner must derive each pair from the reviewed frozen Game deployment and verify its
 exact deployed runtime bytes (including immutable embedded-module addresses), not creation code,
 unlinked artifact bytes, selector success, nonzero storage, or an arbitrary nonempty getter.
-No wildcard is accepted. Empty/mismatched lists fail closed for guarded target-arrival signing.
+No wildcard is accepted. Empty/mismatched lists fail closed for guarded arrivals and returns.
 The implementation slot, its runtime bytes and target counters are all read at one canonical
 EIP-1898 block hash. Unknown old code is never inferred capable from zero or nonzero counters.
 
@@ -183,7 +192,9 @@ with existing zero namespace counters gets one ordinary durable initial probe; t
 advances cumulative work. A paid no-op/revert consumes zero, so restart cannot buy that probe
 again. No manual per-target initialization is needed. Generation and cumulative work must remain
 nondecreasing thereafter. Raw legacy cursor is diagnostic only and no arbitrary cursor decrease
-is accepted. Returns do not execute the arrival scan and omit its dimension.
+is accepted. Returns omit the target arrival-order dimension, but both legs observe the per-mission
+chronology work counter. Nested return work advances its parent only after actual progress or a
+canonical status transition. Old persisted operation keys retain their original format.
 
 Backend recovery, acknowledgment, and allocation share the coordinator's durable account-wide
 lease with moon/randomness writers. Locally signed nonces stay reserved even when latest equals

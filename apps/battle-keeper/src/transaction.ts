@@ -54,6 +54,7 @@ export async function resumeSignedAttempt(
         const hash = await transport.request<Hex>("eth_sendRawTransaction", [attempt.raw]);
         if (hash !== attempt.hash) throw new Error("RPC returned a different transaction hash");
       } catch (error) {
+        if (error instanceof PreBroadcastError) throw error;
         sendError = error;
         if (error instanceof Error && /insufficient funds|underpriced|fee cap|nonce too low/i.test(error.message)) throw error;
       }
@@ -63,6 +64,11 @@ export async function resumeSignedAttempt(
     if (poll + 1 < (options.polls ?? 40)) await new Promise(resolve => setTimeout(resolve, options.intervalMs ?? 1500));
   }
   throw sendError ?? new Error("signed transaction receipt pending; identical transaction retained");
+}
+
+/** The caller proved dispatch was never entered; retain raw ownership but fail immediately. */
+export class PreBroadcastError extends Error {
+  constructor(cause: unknown) { super(cause instanceof Error ? cause.message : String(cause), { cause }); }
 }
 
 export class MinedRevertError extends Error {
