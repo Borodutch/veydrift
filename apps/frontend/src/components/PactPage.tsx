@@ -275,8 +275,8 @@ function PactForm() {
   return (
     <form className="grid content-start gap-4 rounded-xl border border-white/10 bg-void/60 p-6" onSubmit={submit}>
       <label className="text-sm font-semibold text-slate-200">
-        How much do you want to put in? (USD)
-        <input className={input} inputMode="numeric" max={1_000_000} min={100} name="amountUsd" placeholder="5000" required step={100} type="number" />
+        How much do you want to put in? (USD, min $1,000)
+        <input className={input} inputMode="numeric" max={1_000_000} min={1_000} name="amountUsd" placeholder="5000" required step={100} type="number" />
       </label>
       <label className="text-sm font-semibold text-slate-200">
         Email

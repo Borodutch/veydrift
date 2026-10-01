@@ -6,7 +6,7 @@ describe("pact interest", () => {
     expect(validatePactInterest({ email: " Ann@Example.com ", amountUsd: "2500.4", telegram: "@ann_x" }))
       .toEqual({ email: "ann@example.com", amountUsd: 2500, telegram: "ann_x" });
     expect(validatePactInterest({ email: "nope", amountUsd: 1000 })).toBeString();
-    expect(validatePactInterest({ email: "a@b.co", amountUsd: 5 })).toBeString();
+    expect(validatePactInterest({ email: "a@b.co", amountUsd: 999 })).toBeString();
     expect(validatePactInterest({ email: "a@b.co", amountUsd: 1000, telegram: "bad handle!" })).toBeString();
     expect(validatePactInterest(null)).toBeString();
   });
