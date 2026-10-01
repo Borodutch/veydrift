@@ -1,10 +1,9 @@
 import { dirname, join } from "node:path";
-import { parseArrivalProgressVersions } from "../../battle-keeper/src/progress";
+import { loadMissionBatchPolicy, type MissionBatchPolicy } from "./missionBatch";
 
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
-  arrivalProgressVersions?: readonly string[];
   allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
@@ -46,6 +45,7 @@ export type BackendConfig = {
   // type-checking; loadBackendConfig always populates the default.
   pollIntervalMs?: number;
   missionResolutionEnabled: boolean;
+  missionBatch?: MissionBatchPolicy;
   missionResolverAddress?: `0x${string}`;
   missionResolverPrivateKey?: `0x${string}`;
   resolverTransactionStorePath?: string;
@@ -172,9 +172,6 @@ const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "pr
 
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
   const problems: ConfigProblem[] = [];
-  let arrivalProgressVersions: string[] = [];
-  try { arrivalProgressVersions = parseArrivalProgressVersions(env.VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS); }
-  catch (error) { problems.push({ field: "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS", message: String(error) }); }
   const deploymentMode = parseDeploymentMode(env.VEYDRIFT_DEPLOYMENT_MODE, problems);
   // VEY-KANEO-471: gate the synthetic stationed-defense QA payload on an explicit opt-in env AND a
   // non-production deployment. Both conditions are required, so a stray env in prod can never surface
@@ -278,6 +275,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS",
     problems
   );
+  const missionBatch = loadMissionBatchPolicy(env, problems);
   const missionResolverAddress = parseAddress(
     env.VEYDRIFT_MISSION_RESOLVER_ADDRESS,
     "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
@@ -439,10 +437,10 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       rebuildDeadlineMs,
       pollIntervalMs,
       missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
+      missionBatch,
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
       resolverTransactionStorePath,
-      arrivalProgressVersions,
       ...(migrationContractAddress ? { migrationContractAddress } : {}),
       qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),

@@ -52,6 +52,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     // Leave enough gas in the parent frame to catch an out-of-gas child round and return the
     // already-committed rounds successfully. EIP-150 also retains 1/64 of forwarded gas.
     uint256 private constant COMBAT_ROUND_PARENT_GAS_RESERVE = 500_000;
+    // Above the heaviest measured staged step (~4.5M); later stages start only if one fits.
+    uint256 private constant COMBAT_STAGE_GAS = 5_000_000;
     bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
         keccak256(
             "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
@@ -561,19 +563,31 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         private
         returns (bool complete)
     {
-        // Permissionless continuations retain one bounded stage. A lazy self-call may drain a
-        // small battle so its following action gate does not roll all progress back. This is a
-        // fixed work budget, not OOG probing, and does not cap eligible participants or inventory.
-        uint256 stages = msg.sender == address(this) ? 64 : 1;
-        for (uint256 i; i < stages; ++i) {
-            if (i != 0 && gasleft() < 1_500_000) return false;
-            (bool ok, bytes memory result) =
-                address(this).call(abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId));
-            if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-            if (result.length != 32) revert UnsupportedGameplayModule();
+        // Commit as many bounded stages as fit. Each stage is its own child call, so a failed
+        // later stage rolls back alone and the next call resumes (and surfaces any error) from
+        // persisted state. The first stage gets all gas and always bubbles: a paid call either
+        // progresses or reverts. A public call below COMBAT_STAGE_GAS plus reserve runs one stage.
+        for (
+            bool first = true;
+            _fleetMissions[missionId].status == FleetMissionStatus.Outbound;
+            first = false
+        ) {
+            uint256 availableGas = gasleft();
+            // Lazy self-calls must drain the battle before their action gate; public calls stop
+            // before a worst-case stage could burn its whole allowance out of gas.
+            uint256 floor = msg.sender == address(this) ? 0 : COMBAT_STAGE_GAS;
+            if (!first && availableGas < floor + COMBAT_ROUND_PARENT_GAS_RESERVE) return false;
+            (bool ok, bytes memory result) = address(this)
+            .call{gas: first ? availableGas : availableGas - COMBAT_ROUND_PARENT_GAS_RESERVE}(
+                abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId)
+            );
+            if (!ok) {
+                if (first) assembly ("memory-safe") { revert(add(result, 0x20), mload(result)) }
+                return false;
+            }
             if (abi.decode(result, (bool))) return true;
         }
-        return false;
+        return true;
     }
 
     function _harvestDebris(FleetMission storage mission) private {

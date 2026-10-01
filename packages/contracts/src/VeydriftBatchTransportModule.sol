@@ -4,7 +4,15 @@ pragma solidity ^0.8.28;
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
-import {Technology, Ship, Defense, ProductionOrder} from "./libraries/VeydriftTypes.sol";
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
+import {
+    Technology,
+    Ship,
+    Defense,
+    ProductionOrder,
+    MissionResolutionItem,
+    MissionResolutionOutcome
+} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftChronologyProduction {
     function settleProductionUntil(uint256 planetId, uint64 cutoffAt) external;
@@ -34,7 +42,191 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         )
     );
 
-    constructor() VeydriftResourceReserves(address(0)) {}
+    address private immutable _resolutionGameplay;
+    address private immutable _resolutionColonization;
+    address private immutable _resolutionDefenseHold;
+    address private immutable _resolutionPlanetManagement;
+
+    constructor(
+        address gameplay,
+        address colonization,
+        address defenseHold,
+        address planetManagement
+    ) VeydriftResourceReserves(address(0)) {
+        _resolutionGameplay = gameplay;
+        _resolutionColonization = colonization;
+        _resolutionDefenseHold = defenseHold;
+        _resolutionPlanetManagement = planetManagement;
+    }
+
+    function resolveFleetMission(uint256 missionId) external virtual {
+        _requireGameNotPaused();
+        FleetMission storage mission = _fleetMissions[missionId];
+        FleetMissionType missionType = mission.missionType;
+        uint256 lockId = Store.layout().bodyLock[mission.targetPlanetId];
+        if (lockId != 0 && lockId != missionId) {
+            revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
+        }
+        // A staged body snapshot is immutable once preparation begins. Chronology runs first.
+        if (
+            mission.status == FleetMissionStatus.Outbound && Store.battle(missionId).phase == 0
+                && !prepareFleetChronology(missionId, false)
+        ) return;
+        if (
+            missionType == FleetMissionType.Colonize
+                || ((missionType == FleetMissionType.Transport
+                        || missionType == FleetMissionType.Deploy)
+                    && mission.targetIsMoon)
+        ) {
+            _dispatchResolution(_resolutionColonization);
+        }
+        if (missionType == FleetMissionType.DefenseHold) {
+            _dispatchResolution(_resolutionDefenseHold);
+        }
+        if (missionType == FleetMissionType.MissileAttack) {
+            _dispatchResolution(_resolutionPlanetManagement);
+        }
+        _dispatchResolution(_resolutionGameplay);
+    }
+
+    function _dispatchResolution(address module) private {
+        (bool ok, bytes memory result) = module.delegatecall(msg.data);
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
+    }
+
+    // Count bounds calldata/results; the shared execution envelope additionally bounds all nested
+    // lazy/production/chronology/combat work, not merely the number of requested mission IDs.
+    uint256 private constant MAX_RESOLUTION_ITEMS = 32;
+    uint256 private constant MAX_ITEM_GAS = 15_000_000;
+    uint256 private constant MAX_BATCH_WORK_GAS = 15_500_000;
+    uint256 private constant MIN_ITEM_GAS = 100_000;
+
+    event FleetMissionBatchItem(
+        uint256 indexed index,
+        uint256 indexed missionId,
+        uint8 leg,
+        MissionResolutionOutcome outcome,
+        bytes4 errorSelector
+    );
+
+    /// @notice Best-effort typed resolution. Each child retains sender and canonical chronology.
+    /// @dev Progress means canonical preparation/rounds changed, not that this leg settled.
+    /// executionGasUsed measures this module's body, including failed work and outcome events;
+    /// it excludes intrinsic gas, proxy dispatch, ABI return encoding/copy and caller overhead.
+    function resolveFleetMissionBatch(MissionResolutionItem[] calldata items)
+        external
+        returns (MissionResolutionOutcome[] memory outcomes, uint256 executionGasUsed)
+    {
+        uint256 measurementStart = gasleft();
+        _requireGameNotPaused();
+        uint256 count = items.length;
+        if (count == 0 || count > MAX_RESOLUTION_ITEMS) revert InvalidQuantity();
+        outcomes = new MissionResolutionOutcome[](count);
+        uint256 startedWith = gasleft();
+        for (uint256 i; i < count; ++i) {
+            MissionResolutionItem calldata item = items[i];
+            (MissionResolutionOutcome outcome, bytes4 reason) =
+                _resolveBatchItem(item, count - i, startedWith);
+            outcomes[i] = outcome;
+            emit FleetMissionBatchItem(i, item.missionId, item.leg, outcome, reason);
+        }
+        executionGasUsed = measurementStart - gasleft();
+    }
+
+    function _resolveBatchItem(
+        MissionResolutionItem calldata item,
+        uint256 remaining,
+        uint256 startedWith
+    ) private returns (MissionResolutionOutcome outcome, bytes4 reason) {
+        FleetMission storage m = _fleetMissions[item.missionId];
+        FleetMissionStatus status = m.status;
+        if (item.leg > 1 || status == FleetMissionStatus.None) {
+            return (MissionResolutionOutcome.Invalid, 0);
+        }
+        if (item.leg == 0 && status != FleetMissionStatus.Outbound) {
+            return (MissionResolutionOutcome.AlreadySettled, 0);
+        }
+        if (item.leg == 1) {
+            if (status == FleetMissionStatus.Returned || status == FleetMissionStatus.Resolved) {
+                return (MissionResolutionOutcome.AlreadySettled, 0);
+            }
+            if (status == FleetMissionStatus.Outbound) {
+                return (MissionResolutionOutcome.Pending, 0);
+            }
+        }
+        uint64 dueAt = item.leg == 1
+            ? m.returnAt
+            : (m.missionType == FleetMissionType.DefenseHold
+                    ? _defenseHoldUntil[item.missionId]
+                    : m.arrivalAt);
+        // Same scheduled block clock as canonical chronology, including hold expiry.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (block.timestamp < dueAt) return (MissionResolutionOutcome.NotDue, 0);
+
+        // Fixed-size reads only. An existing prerequisite's own bounded scan may advance while
+        // our scan remains unchanged; a newly discovered prerequisite changes our blocker.
+        uint256 prerequisite = _chronologyScans[item.missionId].blocker;
+        bytes32 beforeProgress = _resolutionProgress(item.missionId, prerequisite);
+        uint256 available = gasleft();
+        uint256 spent = startedWith - available;
+        // Reserve covers EIP-150 forwarding loss, cold per-item status reads, every remaining
+        // outcome/event and the facade's bounded result copy. Low caller gas may still revert the
+        // outer transaction: callers must estimate exact calldata, never infer receipt = settled.
+        uint256 reserve = 60_000 + remaining * 12_000;
+        if (spent >= MAX_BATCH_WORK_GAS || available <= reserve + MIN_ITEM_GAS) {
+            return (MissionResolutionOutcome.GasLimited, 0);
+        }
+        uint256 allowance = available - reserve;
+        uint256 workLeft = MAX_BATCH_WORK_GAS - spent;
+        if (allowance > workLeft) allowance = workLeft;
+        if (allowance > MAX_ITEM_GAS) allowance = MAX_ITEM_GAS;
+        // Explicit EIP-150 allowance: delegatecall must not consume the parent's outcome reserve.
+        uint256 eip150 = available - available / 64;
+        if (allowance > eip150) allowance = eip150;
+        if (allowance < MIN_ITEM_GAS) return (MissionResolutionOutcome.GasLimited, 0);
+        bytes memory data = abi.encodeWithSelector(
+            item.leg == 0
+                ? IVeydriftMoonArrivalResolver.resolveFleetMission.selector
+                : IVeydriftMoonArrivalResolver.completeFleetMissionReturn.selector,
+            item.missionId
+        );
+        bool ok;
+        // Never allocate/copy unbounded returndata from an unsuccessful child (including OOG).
+        assembly ("memory-safe") {
+            ok := delegatecall(allowance, address(), add(data, 32), mload(data), 0, 0)
+            if and(iszero(ok), gt(returndatasize(), 3)) {
+                returndatacopy(0, 0, 4)
+                reason := mload(0)
+            }
+        }
+        if (!ok) return (MissionResolutionOutcome.Failed, reason);
+        bool settled = item.leg == 0
+            ? m.status != FleetMissionStatus.Outbound
+            : m.status == FleetMissionStatus.Returned;
+        if (settled) return (MissionResolutionOutcome.Settled, 0);
+        return (
+            beforeProgress != _resolutionProgress(item.missionId, prerequisite)
+                ? MissionResolutionOutcome.Progress
+                : MissionResolutionOutcome.Pending,
+            0
+        );
+    }
+
+    /// @dev Only persisted canonical scan fields, prerequisite status and combat rounds count.
+    /// No fleet arrays, resource structs, gas-spent heuristics or temporary writes are observed.
+    function _resolutionProgress(uint256 id, uint256 prerequisite) private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                _chronologyScans[id],
+                _battleResolutionProgress[id].rounds,
+                Store.battle(id).workDone,
+                Store.battle(id).math.workDone,
+                _chronologyScans[prerequisite],
+                _fleetMissions[prerequisite].status
+            )
+        );
+    }
 
     /// @dev Called atomically by every new allocation, never by legacy settlement. No activation
     /// transaction, historical scan, or caller-selected inventory exists.
@@ -84,7 +276,7 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
 
     /// @dev One ordering implementation serves permissionless arrivals, returns, and lazy callers.
     /// Returns false only for bounded preparatory work. A complete scan rejects an earlier event.
-    function prepareFleetChronology(uint256 id, bool returning) external returns (bool) {
+    function prepareFleetChronology(uint256 id, bool returning) public returns (bool) {
         FleetMission storage m = _fleetMissions[id];
         // Unregistered pre-upgrade missions keep legacy completion liveness. Their interactions
         // with new missions carry the explicitly accepted mixed-generation ordering limitation.

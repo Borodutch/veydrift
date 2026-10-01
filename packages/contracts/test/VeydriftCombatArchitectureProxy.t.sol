@@ -71,7 +71,8 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         vm.cool(address(moons));
         vm.cool(address(randomness));
         uint256 gasBefore = gasleft();
-        game.resolveFleetMission{gas: 15_000_000}(id);
+        // Below one stage budget plus reserve: exactly one bounded stage per step.
+        game.resolveFleetMission{gas: 5_000_000}(id);
         used = gasBefore - gasleft();
         (uint8 phase,, uint256 afterWork) = game.stagedBattleProgress(id);
         assertTrue(afterWork > beforeWork || phase == 13, "successful receipt without progress");
@@ -168,8 +169,8 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         }
     }
 
+    /// Caller starts vm.recordLogs(): a lazy mutation may finish the scan before this runs.
     function _assertProtection(uint256 id, uint256 a, uint256 d) private {
-        vm.recordLogs();
         for (uint256 n; n < 100; ++n) {
             (uint8 p,,) = game.stagedBattleProgress(id);
             if (p == 15) break;
@@ -219,6 +220,7 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         _step(id);
         (uint8 phase,,) = game.stagedBattleProgress(id);
         assertEq(phase, 14);
+        vm.recordLogs();
         if (mode == 0) {
             vm.prank(defender);
             game.finishShipProduction(2011);

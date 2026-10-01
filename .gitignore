@@ -29,6 +29,9 @@ apps/frontend/.animation-variants/
 broadcast/
 artifacts/
 packages/contracts/manifests/private-paid-invite-migration.json
+# Regenerated local-only mission batch EVM fixture state.
+packages/contracts/manifests/vey918-mixed-alloc.json
+packages/contracts/manifests/vey918-mixed-meta.json
 typechain-types/
 proofs/
 !packages/circuits/proofs/

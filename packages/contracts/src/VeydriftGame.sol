@@ -14,7 +14,9 @@ import {
     Resource,
     Ship,
     Technology,
-    ProductionOrder
+    ProductionOrder,
+    MissionResolutionItem,
+    MissionResolutionOutcome
 } from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftGameProductionSettler {
@@ -43,6 +45,14 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _acsAttackModule;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    /// @notice One outcome per requested batch occurrence, not a promise of receipt-wide settlement.
+    event FleetMissionBatchItem(
+        uint256 indexed index,
+        uint256 indexed missionId,
+        uint8 leg,
+        MissionResolutionOutcome outcome,
+        bytes4 errorSelector
+    );
 
     /// @dev Paid alliance invite fees enter the same proxy balance as first-planet fees.
     function depositPaidAllianceInviteFee() external payable {
@@ -77,7 +87,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         _colonizationModule = colonizationModule;
         _defenseHoldModule = defenseHoldModule;
         _stateMigrationModule = stateMigrationModule;
-        _batchTransportModule = address(new VeydriftBatchTransportModule());
+        _batchTransportModule = address(
+            new VeydriftBatchTransportModule(
+                gameplayModule, colonizationModule, defenseHoldModule, planetManagementModule
+            )
+        );
         _acsAttackModule = acsAttackModule;
     }
 
@@ -486,34 +500,15 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
-    function resolveFleetMission(uint256 missionId) external {
-        _requireGameNotPaused();
-        FleetMission storage mission = _fleetMissions[missionId];
-        FleetMissionType missionType = mission.missionType;
-        uint256 lockId = Store.layout().bodyLock[mission.targetPlanetId];
-        if (lockId != 0 && lockId != missionId) {
-            revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
-        }
-        // A staged body snapshot is immutable once preparation begins. Chronology runs first.
-        if (
-            mission.status == FleetMissionStatus.Outbound && Store.battle(missionId).phase == 0
-                && !_prepareChronology(missionId, false)
-        ) return;
-        if (
-            missionType == FleetMissionType.Colonize
-                || ((missionType == FleetMissionType.Transport
-                        || missionType == FleetMissionType.Deploy)
-                    && mission.targetIsMoon)
-        ) {
-            _delegateToColonizationModule();
-        }
-        if (missionType == FleetMissionType.DefenseHold) {
-            _delegateToDefenseHoldModule();
-        }
-        if (missionType == FleetMissionType.MissileAttack) {
-            _delegateToPlanetManagementModule();
-        }
-        _delegateToPlayModule();
+    function resolveFleetMission(uint256) external {
+        _delegateToChronology();
+    }
+
+    function resolveFleetMissionBatch(MissionResolutionItem[] calldata)
+        external
+        returns (MissionResolutionOutcome[] memory, uint256)
+    {
+        _delegateToChronology();
     }
 
     /// @dev Self-call surface used by the gameplay module to isolate one complete combat round.

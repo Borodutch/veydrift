@@ -3492,16 +3492,17 @@ export class SettlementIndexer {
   // Bounded resolver-facing projection over the canonical active-mission table. Unlike the public
   // Mission Control projection, this deliberately keeps overdue return rows in their on-chain
   // Returning/Recalled status and never reconstructs mission history from logs.
-  missionResolutionCandidates(asOfSeconds = nowSeconds(), limit = 500): {
+  missionResolutionCandidates(asOfSeconds = nowSeconds(), limit = 500, afterMissionId?: string): {
     arrivals: ResolvableFleetMission[];
     returns: ReturnableFleetMission[];
+    nextCursor?: string;
   } {
     this.currentMissionReadModelDbVersion();
     const boundedLimit = Math.max(1, Math.min(5_000, Math.floor(limit)));
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
-      WHERE (
+      WHERE CAST(mission_id AS INTEGER) > ? AND (
         status_id = 1
         AND (
           (
@@ -3535,21 +3536,14 @@ export class SettlementIndexer {
           AND CAST(return_at AS INTEGER) <= ?
         )
       )
+      -- Scan by stable key, then sort the bounded window chronologically in the resolver.
+      -- A poisoned oldest page cannot hide later unrelated bodies; on-chain guards remain authoritative.
       ORDER BY
-        CASE
-          WHEN status_id = 1 AND mission_type_id = 9
-            THEN CAST(COALESCE(
-              json_extract(event_json, '$.mission.defenseHoldUntil'),
-              json_extract(event_json, '$.defenseHoldUntil'),
-              return_at,
-              arrival_at
-            ) AS INTEGER)
-          WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER)
-          ELSE CAST(return_at AS INTEGER)
-        END ASC,
+        ${afterMissionId === undefined ? `CASE WHEN status_id = 1 AND mission_type_id = 9 THEN CAST(COALESCE(json_extract(event_json, '$.mission.defenseHoldUntil'), json_extract(event_json, '$.defenseHoldUntil'), return_at, arrival_at) AS INTEGER) WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,` : ""}
         CAST(mission_id AS INTEGER) ASC
       LIMIT ?
     `).all(
+      afterMissionId ?? "0",
       asOfSeconds,
       asOfSeconds,
       this.randomnessEngineConfigured ? 1 : 0,
@@ -3595,7 +3589,7 @@ export class SettlementIndexer {
         returnAt,
         targetPlanetId
       }));
-    return { arrivals, returns };
+    return { arrivals, returns, ...(afterMissionId === undefined ? {} : { nextCursor: rows.length < boundedLimit ? "0" : rows.at(-1)!.mission_id }) };
   }
 
   /**

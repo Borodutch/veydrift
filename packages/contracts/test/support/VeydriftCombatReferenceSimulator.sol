@@ -28,7 +28,6 @@ library VeydriftCombatReferenceSimulator {
         uint32[16] counterplayShips;
         uint32[8] defenderDefenses;
         bool counterplayIntercept;
-        uint256 counterplayLaneGroup;
         CombatTech attackerTech;
         CombatTech joinedAttackerTech;
         CombatTech defenderTech;

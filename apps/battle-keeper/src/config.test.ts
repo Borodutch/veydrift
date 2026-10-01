@@ -10,6 +10,13 @@ const validEnv = {
 } as NodeJS.ProcessEnv;
 
 describe("loadKeeperConfig", () => {
+  test("fails closed rather than running uncoordinated standalone batches", () => {
+    for (const flag of ["MISSION_BATCH_ENABLED", "VEYDRIFT_MISSION_BATCH_ENABLED"]) {
+      const result = loadKeeperConfig({ ...validEnv, [flag]: "true" });
+      expect(result.config).toBeNull();
+      expect(result.problems[0]?.message).toContain("durable shared");
+    }
+  });
   test("loads a valid config with defaults", () => {
     const { config, problems } = loadKeeperConfig(validEnv);
     expect(problems).toEqual([]);

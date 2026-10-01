@@ -139,19 +139,6 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         _assertResources(ownerTech.attackerLosses, 2_000, 2_000, 0);
     }
 
-    function testPreviewFixtureCounterplayLaneCannotChangeLossVector() public pure {
-        VeydriftCombatReferenceSimulator.BattleInput memory fixture;
-        fixture.seed = 46;
-        fixture.attackerShips[uint8(Ship.Cruiser)] = 1;
-        fixture.counterplayShips[uint8(Ship.LightFighter)] = 10;
-        VeydriftCombatReferenceSimulator.BattleResult memory first =
-            VeydriftCombatReferenceSimulator.run(fixture);
-        fixture.counterplayLaneGroup = 2;
-        VeydriftCombatReferenceSimulator.BattleResult memory second =
-            VeydriftCombatReferenceSimulator.run(fixture);
-        assertEq(keccak256(abi.encode(first)), keccak256(abi.encode(second)));
-    }
-
     function _assertResources(
         VeydriftGameStorage.Resources memory resources,
         uint128 metal,

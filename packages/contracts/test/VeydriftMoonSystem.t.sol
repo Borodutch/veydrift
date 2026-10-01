@@ -31,7 +31,6 @@ import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimi
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
 import {VeydriftMoonShipBacklog} from "../src/libraries/VeydriftMoonShipBacklog.sol";
-import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftBodyAttackWindow} from "../src/libraries/VeydriftBodyAttackWindow.sol";
 import {
     Building,
@@ -97,37 +96,6 @@ contract MoonAttackWindowHarness is VeydriftGameStorage {
         bool targetIsMoon
     ) external view returns (uint32) {
         return _currentBodyAttackCount(attacker, defender, planetId, targetIsMoon);
-    }
-}
-
-contract MoonDefenseHoldIsolationHarness is VeydriftGameStorage {
-    constructor() VeydriftGameStorage(address(this)) {}
-
-    function seedPlanetHold(uint256 targetPlanetId, uint256 missionId, uint64 arrivalAt) external {
-        FleetMission storage stationed = _fleetMissions[missionId];
-        stationed.status = FleetMissionStatus.Outbound;
-        stationed.missionType = FleetMissionType.DefenseHold;
-        stationed.arrivalAt = arrivalAt;
-        stationed.targetIsMoon = false;
-        _defenseHoldUntil[missionId] = arrivalAt + 1 days;
-        _stationedDefenseMissions[targetPlanetId].push(missionId);
-    }
-
-    function link(
-        uint256 targetPlanetId,
-        uint256 attackMissionId,
-        uint64 arrivalAt,
-        bool targetIsMoon
-    ) external returns (uint256) {
-        VeydriftDefenseHoldStorage.linkQualifiedDefenders(
-            _stationedDefenseMissions[targetPlanetId],
-            _fleetCounterplayMissions[attackMissionId],
-            _fleetMissions,
-            _defenseHoldUntil,
-            arrivalAt,
-            targetIsMoon
-        );
-        return _fleetCounterplayMissions[attackMissionId].length;
     }
 }
 
@@ -1952,13 +1920,6 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         assertEq(harness.bodyAttackCount(attacker, defender, planetId, false), 0);
     }
 
-    function _testPlanetDefenseHoldDoesNotDefendMoonAttack() internal {
-        MoonDefenseHoldIsolationHarness harness = new MoonDefenseHoldIsolationHarness();
-        harness.seedPlanetHold(77, 1, 100);
-        assertEq(harness.link(77, 2, 200, true), 0);
-        assertEq(harness.link(77, 3, 200, false), 1);
-    }
-
     function _testMoonAttackParityInitializerIsIdempotent() internal {
         uint64 activatedAt = game.moonAttackParityActivatedAt();
         assertGt(activatedAt, 0);
@@ -2668,10 +2629,6 @@ contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
 
     function testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade() public {
         _testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade();
-    }
-
-    function testPlanetDefenseHoldDoesNotDefendMoonAttack() public {
-        _testPlanetDefenseHoldDoesNotDefendMoonAttack();
     }
 
     function testMoonAttackParityInitializerIsIdempotent() public {

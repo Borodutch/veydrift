@@ -700,35 +700,33 @@ describe("BattleKeeper safety sweep reconcile", () => {
 
 
 describe("staged combat continuation", () => {
-  for (const scenario of ["group attack", "group defense", "oversized solo"]) {
-    test(scenario + " remains arrival across chunks and uses canonical return time", async () => {
-      let now = 1_000;
-      const { keeper, resolver } = makeKeeper(async () => "0xchunk", {
-        now: () => now,
-        statusBehavior: async (missionId, index) => ({
-          missionId, missionType: MissionType.Attack,
-          status: index < 2 ? FleetMissionStatus.Outbound : index === 2 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
-          arrivalAt: 900, returnAt: index < 2 ? 950 : 2_000, randomnessRequestId: "44"
-        })
-      });
-      keeper.recordLaunched(launch("91", MissionType.Attack, 900, 950));
-      for (let i = 0; i < 2; i++) {
-        await keeper.tick();
-        expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
-        expect(keeper.snapshot().awaitingReturnCount).toBe(0);
-        expect(keeper.snapshot().resolvedCount).toBe(0);
-      }
-      await keeper.tick();
-      expect(keeper.snapshot().awaitingReturnCount).toBe(1);
-      expect(keeper.snapshot().resolvedCount).toBe(1);
-      await keeper.tick();
-      expect(resolver.calls).toEqual(["91:arrival", "91:arrival", "91:arrival"]);
-      now = 2_000;
-      await keeper.tick();
-      expect(resolver.calls.at(-1)).toBe("91:return");
-      expect(keeper.snapshot().pendingCount).toBe(0);
+  test("staged battle remains arrival across chunks and uses canonical return time", async () => {
+    let now = 1_000;
+    const { keeper, resolver } = makeKeeper(async () => "0xchunk", {
+      now: () => now,
+      statusBehavior: async (missionId, index) => ({
+        missionId, missionType: MissionType.Attack,
+        status: index < 2 ? FleetMissionStatus.Outbound : index === 2 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        arrivalAt: 900, returnAt: index < 2 ? 950 : 2_000, randomnessRequestId: "44"
+      })
     });
-  }
+    keeper.recordLaunched(launch("91", MissionType.Attack, 900, 950));
+    for (let i = 0; i < 2; i++) {
+      await keeper.tick();
+      expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+      expect(keeper.snapshot().awaitingReturnCount).toBe(0);
+      expect(keeper.snapshot().resolvedCount).toBe(0);
+    }
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingReturnCount).toBe(1);
+    expect(keeper.snapshot().resolvedCount).toBe(1);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["91:arrival", "91:arrival", "91:arrival"]);
+    now = 2_000;
+    await keeper.tick();
+    expect(resolver.calls.at(-1)).toBe("91:return");
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
 
   test("restart discovers unfinished on-chain stage and duplicate launches/ticks do not reset it", async () => {
     let chunks = 0;

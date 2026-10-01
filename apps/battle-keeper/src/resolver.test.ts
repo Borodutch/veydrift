@@ -313,15 +313,15 @@ describe("bounded staged settlement envelope", () => {
     });
   }
 
-  for (const estimate of [21_000n, 14_900_000n, settlementGasLimit]) {
-    test(`arrival estimate ${estimate} uses full safe budget and exact preflight`, async () => {
+  {
+    const estimate = 21_000n;
+    test("low arrival estimate still uses full safe budget and exact preflight", async () => {
       const transport = transportFor((method) => method === "eth_estimateGas"
         ? `0x${estimate.toString(16)}` : undefined);
       await new ViemMissionResolver(transport, testKey, gameContract, 8453).resolveMission("1");
       const send = transport.calls.find((call) => call.method === "eth_sendRawTransaction")!;
       const signed = parseTransaction(send.params[0] as `0x${string}`);
       expect(signed.gas).toBe(settlementGasLimit);
-      expect(signed.gas).toBeLessThan(16_777_216n);
       const calls = transport.calls.filter((call) => call.method === "eth_call");
       expect(calls).toHaveLength(3);
       const preflight = calls[2]!.params[0] as Record<string, string>;

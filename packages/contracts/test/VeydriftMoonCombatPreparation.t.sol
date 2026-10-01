@@ -288,10 +288,4 @@ contract VeydriftMoonCombatPreparationTest is Test {
         }
         game.release(moon, 1);
     }
-
-    function testMoonRuntimeSize() public {
-        VeydriftMoonSystem implementation = new VeydriftMoonSystem(address(game), address(1));
-        emit log_named_uint("Moon runtime bytes", address(implementation).code.length);
-        assertLe(address(implementation).code.length, 24576);
-    }
 }

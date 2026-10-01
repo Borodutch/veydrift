@@ -73,6 +73,9 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
   let arrivalProgressVersions: string[] = [];
   try { arrivalProgressVersions = parseArrivalProgressVersions(env.VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS); }
   catch (error) { problems.push({ field: "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS", message: String(error) }); }
+  if (env.VEYDRIFT_MISSION_BATCH_ENABLED === "true" || env.MISSION_BATCH_ENABLED === "true") {
+    problems.push({ field: "MISSION_BATCH_ENABLED", message: "Standalone batching is unsupported: use the backend durable shared mission/randomness coordinator. No single-call fallback when batch rollout is requested." });
+  }
 
   const rpcUrl = env.RPC_URL?.trim() ?? "";
   if (!rpcUrl) {

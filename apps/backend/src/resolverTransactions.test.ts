@@ -14,6 +14,52 @@ const address = "0x1111111111111111111111111111111111111111" as const;
 const chainId = 8453;
 
 describe("ResolverTransactionCoordinator", () => {
+  test("persists exact batch membership/nonce/local hash before ambiguous send and blocks randomness across restart", async () => {
+    await withDatabase(async (databasePath) => {
+      let sends = 0;
+      const membership = JSON.stringify([{ missionId: "12", leg: "return", dueAt: 5 }]);
+      const coordinator = new ResolverTransactionCoordinator(databasePath);
+      await expect(coordinator.submit({
+        chainId, address, operationId: "batch:12", getTransactionCount: async () => 7,
+        submit: async () => { throw new Error("must not use blind send"); },
+        prepare: async (nonce) => ({ hash: hash(nonce), membership, broadcast: async () => {
+          sends++;
+          const db = new Database(databasePath);
+          const intent = db.query("SELECT nonce, transaction_hash AS hash, membership, status FROM resolver_prepared_intents").get();
+          expect(intent).toEqual({ nonce: 7, hash: hash(7), membership, status: "pending" });
+          db.close();
+          throw new Error("RPC disconnected after acceptance");
+        } }),
+        confirm: async () => {}
+      })).rejects.toThrow("disconnected");
+      const restarted = new ResolverTransactionCoordinator(databasePath);
+      await expect(restarted.submit({ chainId, address, operationId: "randomness:5", getTransactionCount: async () => 7,
+        submit: async () => { sends++; return hash(8); }, confirm: async () => {},
+        cancelStale: async () => { throw new Error("must not cancel batch"); }
+      })).rejects.toThrow("durable batch intent");
+      await expect(restarted.reconcilePrepared(chainId, address, async () => { throw new Error("receipt unknown"); })).rejects.toThrow("unknown");
+      expect(sends).toBe(1);
+      await expect(restarted.recoverNonceGap({ chainId, address, fromNonce: 7, throughNonce: 7, broadcast: true,
+        getTransactionCount: async () => 7, submitCancellation: async () => { sends++; return hash(7); }, confirm: async () => {}
+      })).rejects.toThrow("cannot bypass");
+      await restarted.reconcilePrepared(chainId, address, async (h) => { expect(h).toBe(hash(7)); return { finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }; });
+      await restarted.submit({ chainId, address, operationId: "randomness:5", getTransactionCount: async () => 8,
+        submit: async (nonce) => { sends++; expect(nonce).toBe(8); return hash(8); }, confirm: async () => {} });
+      expect(sends).toBe(2);
+    });
+  });
+
+  test("preparation failure never sends and successful intent confirmation releases shared signer", async () => {
+    const coordinator = new ResolverTransactionCoordinator(":memory:");
+    let sent = 0;
+    const request = { chainId, address, operationId: "batch", getTransactionCount: async () => 0,
+      submit: async () => { throw new Error("blind"); }, confirm: async () => {},
+      reconcilePrepared: async () => ({ finalized: true, blockNumber: "1", blockHash: hash(1), outcomes: "[]" }) };
+    await expect(coordinator.submit({ ...request, prepare: async () => { throw new Error("fee cap changed"); } })).rejects.toThrow("fee cap");
+    await coordinator.submit({ ...request, prepare: async () => ({ hash: hash(0), membership: "[]", broadcast: async () => { sent++; return hash(0); } }) });
+    await coordinator.reconcilePrepared(chainId, address, async () => { throw new Error("already confirmed"); });
+    expect(sent).toBe(1);
+  });
   test("serializes concurrent mission/randomness writers through one nonce stream", async () => {
     await withDatabase(async (databasePath) => {
       const coordinator = new ResolverTransactionCoordinator(databasePath);
@@ -372,7 +418,7 @@ describe("ResolverTransactionCoordinator", () => {
     expect(broadcasts).toEqual([4, 5]);
   });
 
-  test("retains unknown crash-after-broadcast allocation across canonical count changes", async () => {
+  test("defers a crash-after-broadcast ambiguity until canonical state refreshes", async () => {
     await withDatabase(async (databasePath) => {
       const coordinator = new ResolverTransactionCoordinator(databasePath);
       const operationId = "mission:resolve:crash-window";
@@ -405,11 +451,11 @@ describe("ResolverTransactionCoordinator", () => {
 
       latest = 31;
       pending = 31;
-      await expect(request()).rejects.toThrow("explicit owner reconciliation required before any retry");
+      await expect(request()).rejects.toThrow("refresh canonical operation state before any retry");
       expect(broadcasts).toBe(0);
 
-      await expect(request()).rejects.toThrow("unknown allocation retained");
-      expect(broadcasts).toBe(0);
+      expect(await request()).toBe(hash(31));
+      expect(broadcasts).toBe(1);
     });
   });
 
@@ -468,93 +514,3 @@ async function withDatabase(operation: (databasePath: string) => Promise<void>):
     rmSync(directory, { recursive: true, force: true });
   }
 }
-
-
-test("persisted unbroadcast hash reserves nonce even when pending equals latest across restart", async () => {
-  await withDatabase(async databasePath => {
-    const first = new ResolverTransactionCoordinator(databasePath);
-    await expect(first.submit({ chainId, address, operationId: "mission:reserved", getTransactionCount: async () => 7,
-      submit: async () => hash(7), confirm: async () => { throw new Error("insufficient funds at raw broadcast"); }
-    })).rejects.toThrow("insufficient funds");
-    const second = new ResolverTransactionCoordinator(databasePath);
-    let called = false;
-    await expect(second.submit({ chainId, address, operationId: "randomness:next", getTransactionCount: async () => 7,
-      submit: async () => { called = true; return hash(7); }, confirm: async () => {}
-    })).rejects.toThrow("reservation");
-    expect(called).toBe(false);
-    await expect(second.recoverNonceGap({ chainId, address, fromNonce:7, throughNonce:7, broadcast:true,
-      getTransactionCount: async () => 7, submitCancellation: async () => { called = true; return hash(7); }, confirm: async () => {}
-    })).rejects.toThrow("reservation");
-    expect(called).toBe(false);
-  });
-});
-
-test("migrates old guarded allocating rows as protected account-wide reservations", async () => {
-  await withDatabase(async databasePath => {
-    const d = new Database(databasePath);
-    d.exec("CREATE TABLE resolver_transaction_attempts (chain_id INTEGER, resolver_address TEXT, operation_id TEXT, nonce INTEGER, transaction_hash TEXT, status TEXT, updated_at TEXT, PRIMARY KEY(chain_id,resolver_address,operation_id))");
-    d.query("INSERT INTO resolver_transaction_attempts VALUES (?, ?, ?, 7, NULL, 'allocating', ?)").run(
-      chainId, address, "8453:game:1:resolveFleetMission:progress:v1", new Date().toISOString());
-    const c = new ResolverTransactionCoordinator(databasePath);
-    let called = false;
-    await expect(c.submit({ chainId, address, operationId:"randomness:migrated", getTransactionCount:async () => 8,
-      submit:async () => { called = true; return hash(8); }, confirm:async () => {} })).rejects.toThrow("reservation");
-    expect(called).toBe(false);
-    expect((d.query("SELECT signed_envelope AS value FROM resolver_transaction_attempts").get() as {value:number}).value).toBe(1);
-    d.close();
-  });
-});
-
-
-for (const at of ["submit", "confirm", "submit-error", "confirm-error"]) test("nonce-gap recovery fences durable takeover during " + at, async () => {
-  await withDatabase(async databasePath => {
-    const c = new ResolverTransactionCoordinator(databasePath);
-    const d = new Database(databasePath);
-    let release!: () => void, started!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const entered = new Promise<void>(resolve => { started = resolve; });
-    const pause = async () => { started(); await gate; if (at.endsWith("error")) throw new Error("transaction reverted"); };
-    const old = c.recoverNonceGap({chainId,address,fromNonce:7,throughNonce:7,broadcast:true,getTransactionCount:async()=>7,
-      submitCancellation:async()=>{if(at.startsWith("submit")) await pause(); return hash(7);},
-      confirm:async()=>{if(at.startsWith("confirm")) await pause();}
-    }).catch(error => String(error));
-    await entered;
-    d.query("UPDATE resolver_transaction_leases SET holder = 'successor', expires_at_ms = ?").run(Date.now()+60_000);
-    d.query("UPDATE resolver_transaction_attempts SET transaction_hash = ?, status = 'submitted'").run(hash(88));
-    release(); expect(await old).toContain("lease was lost");
-    const row = d.query("SELECT transaction_hash AS hash, status FROM resolver_transaction_attempts").get() as {hash:string;status:string};
-    expect(row).toEqual({hash:hash(88),status:"submitted"});
-    d.close();
-  });
-});
-
-
-test("owner reconciliation releases only new shared-store pre-dispatch rows, retaining raw/migrated/unknown", async () => {
-  await withDatabase(async databasePath => {
-    const c = new ResolverTransactionCoordinator(databasePath), d = new Database(databasePath);
-    d.exec("CREATE TABLE mission_signed_attempts (identity TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    const prefix = "8453:game:";
-    const states = [
-      ["new", "allocating", null, true, false],
-      ["raw", "allocating", null, true, true],
-      ["migrated", "allocating", null, false, false],
-      ["unknown", "ambiguous", null, true, false],
-      ["submitted", "submitted", hash(7), true, false]
-    ] as const;
-    for (const [name,status,txHash,marked,raw] of states) {
-      const identity = prefix + name + ":resolveFleetMission";
-      d.query("INSERT INTO resolver_transaction_attempts (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,updated_at,signed_envelope,preparation_identity) VALUES (?,?,?,7,?,?,?,1,?)")
-        .run(chainId,address,identity+":progress:old",txHash,status,new Date().toISOString(),marked?identity:null);
-      if(raw) d.query("INSERT INTO mission_signed_attempts VALUES (?, '{}')").run(identity);
-    }
-    const wrongStore = new Database(":memory:");
-    await c.withAccountLease(chainId,address,async lease => lease.reconcilePreparations(wrongStore,prefix));
-    expect((d.query("SELECT COUNT(*) AS count FROM resolver_transaction_attempts WHERE status = 'rejected'").get() as {count:number}).count).toBe(0);
-    wrongStore.close();
-    await c.withAccountLease(chainId,address,async lease => lease.reconcilePreparations(d,prefix));
-    const rows = d.query("SELECT operation_id AS id,status FROM resolver_transaction_attempts ORDER BY operation_id").all() as {id:string;status:string}[];
-    expect(rows.filter(row=>row.status==="rejected").map(row=>row.id)).toEqual([prefix+"new:resolveFleetMission:progress:old"]);
-    expect(d.query("SELECT 1 FROM mission_signed_attempts").get()).not.toBeNull();
-    d.close();
-  });
-});

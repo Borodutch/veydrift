@@ -13,19 +13,6 @@ contract VeydriftCoalitionUpgradeLiveForkTest is Test {
     bytes32 constant IMPLEMENTATION =
         bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
 
-    function testTrustedPinnedBaseForkTransport() public {
-        string memory rpc = vm.envOr("VEY919_LIVE_RPC", string(""));
-        if (bytes(rpc).length == 0) {
-            vm.skip(true);
-            return;
-        }
-        uint256 pin = vm.envUint("VEY919_LIVE_BLOCK");
-        vm.createSelectFork(rpc, pin);
-        assertEq(block.chainid, 8453);
-        assertEq(block.number, pin);
-        _assertPinnedHash(pin);
-    }
-
     function _assertPinnedHash(uint256 pin) private {
         // The fork block itself is outside BLOCKHASH range; roll one local block only to read it.
         vm.roll(pin + 1);

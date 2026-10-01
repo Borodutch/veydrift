@@ -103,7 +103,9 @@ contract UpgradeGameForkTest is Test {
             vm.skip(true);
             return;
         }
-        vm.createSelectFork(rpc);
+        uint256 forkBlock = vm.envOr("BASE_MAINNET_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
 
         assertEq(block.chainid, 8453, "fork must be Base mainnet");
         address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
@@ -122,9 +124,9 @@ contract UpgradeGameForkTest is Test {
             PROXY.staticcall(abi.encodeWithSignature("fleetMission(uint256)", nextFleetBefore - 1));
         require(missionRead, "latest legacy mission unavailable");
         bytes32 legacyRegistrationSlot = keccak256(abi.encode(nextFleetBefore - 1, uint256(86)));
-        assertEq(
-            vm.load(PROXY, legacyRegistrationSlot), bytes32(0), "new registration slot occupied"
-        );
+        // After 905, existing records may already be registered. An ordinary later upgrade
+        // must preserve either generation, not assume that every current record is legacy.
+        bytes32 registrationBefore = vm.load(PROXY, legacyRegistrationSlot);
         assertFalse(VeydriftGame(PROXY).gamePaused(), "game unexpectedly paused before upgrade");
 
         // The only dependency write performed by the canonical script, fork-local and owner-only.
@@ -187,7 +189,7 @@ contract UpgradeGameForkTest is Test {
 
         // Delegation-aware consumers must only be upgraded after Game exposes effectivePlayer.
         assertEq(IVeydriftDelegation(PROXY).effectivePlayer(address(this)), address(this));
-        // VEY-905 upgrades Game only. Do not silently upgrade the unrelated Moon proxy.
+        // This Game-only upgrade must not silently upgrade the unrelated Moon proxy.
         (,, bool orderingReady) = VeydriftGame(PROXY).fleetMissionEligibility(1);
         assertTrue(orderingReady, "upgrade must need no backfill or initialization");
         assertEq(VeydriftGame(PROXY).nextFleetId(), nextFleetBefore, "allocation boundary changed");
@@ -197,6 +199,10 @@ contract UpgradeGameForkTest is Test {
         assertEq(
             keccak256(latestMissionAfter), keccak256(latestMissionBefore), "legacy mission changed"
         );
-        assertEq(vm.load(PROXY, legacyRegistrationSlot), bytes32(0), "legacy mission relabeled");
+        assertEq(
+            vm.load(PROXY, legacyRegistrationSlot),
+            registrationBefore,
+            "mission generation relabeled"
+        );
     }
 }

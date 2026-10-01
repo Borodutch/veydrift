@@ -95,7 +95,7 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
-import { PactInterestStore, pactInterestStorePath, validatePactInterest } from "./pactInterest";
+import { notifyPactInterest, PactInterestStore, pactInterestStorePath, validatePactInterest } from "./pactInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -788,6 +788,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
         pactInterestStore ??= new PactInterestStore(pactInterestStorePath(loaded.config.indexDbPath));
         pactInterestStore.save(interest);
+        void notifyPactInterest(interest);
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (error) {
         return errorResponse(error, 400);

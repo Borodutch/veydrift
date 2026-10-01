@@ -326,11 +326,15 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 _fleetMissions[member.missionId].ships, Ship(member.unit), member.count
             );
         } else if (member.unit < 16) {
-            if (attack.targetIsMoon) {
-                _setMoonShipCount(attack.targetPlanetId, Ship(member.unit), member.count);
-            } else {
-                _setPlanetShipCount(attack.targetPlanetId, Ship(member.unit), member.count);
-            }
+            // Subtract from the live body count: an unregistered legacy-origin battle does not
+            // block returns, and units credited after enrollment must survive untouched.
+            uint256 body = attack.targetPlanetId;
+            Ship ship = Ship(member.unit);
+            uint32 current =
+                attack.targetIsMoon ? _moonShipCounts[body][ship] : _shipCounts[body][ship];
+            current = current > lost ? current - lost : 0;
+            if (attack.targetIsMoon) _setMoonShipCount(body, ship, current);
+            else _setPlanetShipCount(body, ship, current);
         } else {
             uint256 changes = uint256(lost) << (uint256(member.unit - 16) * 32);
             _applyDefenseChanges(attack.targetPlanetId, attack.targetIsMoon, changes, false);

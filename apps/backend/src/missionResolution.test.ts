@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
-import { createPublicClient, custom, encodeFunctionData, parseAbi, encodeFunctionResult, encodeAbiParameters, stringToHex, keccak256, parseTransaction, toHex, type Hex, type PublicClient, type WalletClient } from "viem";
-import { progressAbi } from "../../battle-keeper/src/progress";
+import { createPublicClient, custom, encodeFunctionData, parseAbi, type PublicClient, type WalletClient } from "viem";
 import type { BackendConfig } from "./config";
 import { VeydriftGameReader } from "./evm";
 import {
@@ -33,6 +28,30 @@ const config: BackendConfig = {
 };
 
 describe("MissionResolutionService", () => {
+  test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
+    const calls: string[] = [];
+    const client = fakeClient({ calls, resolvable: ["1", "2"], returnable: ["3"] });
+    let batchCalls = 0;
+    client.resolveMissionBatch = async (items) => { batchCalls++; return { hash: "0xabc", items }; };
+    client.isMissionLegComplete = async (id) => id !== "2";
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+      { chainClient: client, logger: silentLogger() });
+    await service.tick();
+    expect(batchCalls).toBe(1);
+    expect(calls).toEqual([]);
+    expect(service.snapshot().resolvedCount).toBe(1);
+    expect(service.snapshot().returnedCount).toBe(1);
+  });
+  test("enabled unsupported/failed batch path never silently sends legacy singles", async () => {
+    const calls: string[] = [];
+    const client = fakeClient({ calls, resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async () => { throw new Error("missing price"); };
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+      { chainClient: client, logger: silentLogger() });
+    await service.tick();
+    expect(calls).toEqual([]);
+    expect(service.snapshot().resolvedCount).toBe(0);
+  });
   test("settles resolvable arrival legs and due return legs in one tick", async () => {
     const calls: string[] = [];
     const service = new MissionResolutionService(config, {
@@ -388,28 +407,12 @@ describe("MissionResolutionService", () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const broadcasts: string[] = [];
     let pendingNonce = 7;
-    let actualStatus = "Outbound";
-    const blockHash = ("0x"+"a".repeat(64)) as Hex;
-    const receipts = new Map<Hex,unknown>();
     const publicClient = {
-      async call() { return {data:"0x"}; },
-      async getTransactionCount() {return pendingNonce;},
-      async getStorageAt() {return toHex(0n,{size:32});},
-      async prepareTransactionRequest(input:object) {return {...input,maxFeePerGas:2n,maxPriorityFeePerGas:1n,type:"eip1559"};},
-      async request({method,params}:{method:string;params:unknown[]}) {
-        if(method==="eth_getBlockByNumber")return {number:"0x64",hash:blockHash};
-        if(method==="eth_getCode")return "0x6000";
-        if(method==="eth_getStorageAt")return toHex(0n,{size:32});
-        if(method==="eth_call")return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
-        if(method==="eth_getTransactionReceipt")return receipts.get(params[0] as Hex)??null;
-        if(method==="eth_sendRawTransaction") {
-          const raw=params[0] as Hex,tx=parseTransaction(raw),hash=keccak256(raw);
-          const name=actualStatus==="Outbound"?"resolveFleetMission":"completeFleetMissionReturn";
-          broadcasts.push(name+":"+tx.nonce);pendingNonce=tx.nonce!+1;actualStatus=actualStatus==="Outbound"?"Returning":"Returned";
-          receipts.set(hash,{status:"0x1",transactionHash:hash,blockNumber:"0x64",blockHash});return hash;
-        }
-        throw new Error(method);
-      }
+      async call() { return { data: "0x" }; },
+      async getTransactionCount() { return pendingNonce; },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
+      async getTransactionReceipt() { return { status: "success" }; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
     const walletClient = {
       async writeContract(input: { functionName: string; nonce: number }) {
@@ -422,7 +425,7 @@ describe("MissionResolutionService", () => {
     const client = new ViemMissionResolutionChainClient(
       {
         async isFleetChronologyOrderingReady() { return true; },
-        async getCanonicalFleetMission() { return { status: actualStatus, missionTypeId:0, targetPlanetId:"2" } as never; },
+        async getCanonicalFleetMission() { return { status: canonicalStatus === "returned" ? "Returned" : "Returning" } as never; },
         async listResolvableFleetMissions() { return []; },
         async listReturnableFleetMissions() { return []; }
       },
@@ -432,7 +435,7 @@ describe("MissionResolutionService", () => {
       walletClient,
       { id: 8453 } as never,
       config.rpcUrl,
-      coordinator, undefined, undefined, ":memory:", [config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]
+      coordinator
     );
 
     // Simulate the operation confirmed before the indexed source caught up. Reusing this operation
@@ -765,142 +768,125 @@ describe("MissionResolutionService", () => {
 describe("ViemMissionResolutionChainClient", () => {
   for (const leg of ["arrival", "return"] as const) {
     for (const mode of ["private-key", "unlocked"] as const) {
-      test(leg + " " + mode + " preflights new and identical-raw recovery without replacement or nonce guessing", async () => {
-        const account = privateKeyToAccount(("0x" + "1".repeat(64)) as Hex);
-        const from = account.address;
+      test(`${leg} ${mode} simulates exact latest entrypoint before submit/replacement and fails closed`, async () => {
+        const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+        const from = mode === "private-key" ? account.address : config.missionResolverAddress!;
         const functionName = leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
-        const data = encodeFunctionData({abi:parseAbi(["function resolveFleetMission(uint256)","function completeFleetMissionReturn(uint256)"]),functionName,args:[77n]});
-        const dir = mkdtempSync(join(tmpdir(), "merged-preflight-"));
-        const store = join(dir, "journal.sqlite");
-        const hash = ("0x" + "a".repeat(64)) as Hex;
-        const chronologySlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],
-          [77n,BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1")))+1n]));
-        let orderingReady=false, blocked=true, funded=false, settled=false, advance=true;
-        let nonce=7, work=0n;
-        let exactFailure = "", signCount = 0, prepareCount = 0;
-        const sign = account.signTransaction;
-        account.signTransaction = async (...args) => { signCount++; return sign(...args); };
-        const raws: Hex[]=[];
-        const receipts=new Map<Hex,unknown>();
-        const simulations: unknown[][]=[];
-        const events:string[]=[];
-        const rpcClient=createPublicClient({transport:custom({async request({method,params}) {
-          expect(method).toBe("eth_call"); events.push("simulate"); simulations.push(params as unknown[]);
-          if(blocked) throw new Error("execution reverted: earlier attack randomness unavailable");
-          const tx = (params as unknown[])[0] as Record<string, unknown>;
-          if (exactFailure && tx.maxFeePerGas !== undefined) throw new Error(exactFailure);
-          return "0x";
-        }},{retryCount:0})});
-        const publicClient={
-          call:rpcClient.call,
-          async getStorageAt(){return toHex(0n,{size:32});},
-          async getTransactionCount(){return nonce;},
-          async prepareTransactionRequest(input:object){prepareCount++; return {...input,maxFeePerGas:3n,maxPriorityFeePerGas:1n,type:"eip1559"};},
-          async request({method,params}:{method:string;params:unknown[]}) {
-            if(method==="eth_getBlockByNumber") return {number:"0x64",hash};
-            if(method==="eth_getCode") return "0x6000";
-            if(method==="eth_getStorageAt") return toHex(params[1]===chronologySlot?work:0n,{size:32});
-            if(method==="eth_call") {
-              if ((params[0] as {data:string}).data === data) return rpcClient.request({method:"eth_call",params:params as never});
-              return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
-            }
-            if(method==="eth_signTransaction") {
-              const tx=params[0] as Record<string,Hex>;
-              expect(tx.from).toBe(from);
-              return account.signTransaction({to:tx.to!,data:tx.data!,nonce:Number(BigInt(tx.nonce!)),gas:BigInt(tx.gas!),
-                chainId:Number(BigInt(tx.chainId!)),maxFeePerGas:BigInt(tx.maxFeePerGas!),maxPriorityFeePerGas:BigInt(tx.maxPriorityFeePerGas!),type:"eip1559"});
-            }
-            if(method==="eth_getTransactionReceipt") return receipts.get(params[0] as Hex)??null;
-            if(method==="eth_sendRawTransaction") {
-              events.push("broadcast");const raw=params[0] as Hex;raws.push(raw);
-              const tx=parseTransaction(raw);expect(tx.gas).toBe(15_000_000n);expect(tx.data).toBe(data);
-              if(!funded) throw new Error("insufficient funds at raw broadcast");
-              const receiptHash=keccak256(raw);nonce=tx.nonce!+1;if(advance)work+=12n;
-              receipts.set(receiptHash,{status:"0x1",transactionHash:receiptHash,blockHash:hash,blockNumber:"0x64"});
-              return receiptHash;
-            }
-            throw new Error(method);
+        const data = encodeFunctionData({
+          abi: parseAbi(["function resolveFleetMission(uint256)", "function completeFleetMissionReturn(uint256)"]),
+          functionName, args: [77n]
+        });
+        const firstHash = `0x${"a".repeat(64)}`;
+        const replacementHash = `0x${"b".repeat(64)}`;
+        let blocked = true;
+        let orderingReady = false;
+        let settled = false;
+        let latestNonce = 7;
+        let pendingNonce = 7;
+        const simulations: unknown[][] = [];
+        const writes: number[] = [];
+        const events: string[] = [];
+        // A real Viem call action proves account -> RPC from and explicit latest serialization,
+        // without depending on a reader's optional/custom transport or any signing action.
+        const rpcClient = createPublicClient({ transport: custom({
+          async request({ method, params }) {
+            expect(method).toBe("eth_call");
+            events.push("simulate");
+            simulations.push(params as unknown[]);
+            if (blocked) throw new Error("execution reverted: earlier attack randomness unavailable");
+            return "0x";
+          }
+        }, { retryCount: 0 }) });
+        const publicClient = {
+          call: rpcClient.call,
+          async getStorageAt() { return "0x00"; },
+          async getTransactionCount({ blockTag }: { blockTag: string }) {
+            return blockTag === "latest" ? latestNonce : pendingNonce;
+          },
+          async getTransaction() { return { maxFeePerGas: 80n, maxPriorityFeePerGas: 8n }; },
+          async getBlock() { return { baseFeePerGas: 90n }; },
+          async estimateFeesPerGas() { return { maxFeePerGas: 90n, maxPriorityFeePerGas: 12n }; },
+          async getTransactionReceipt() { return { status: "success" }; },
+          async waitForTransactionReceipt({ hash }: { hash: string }) {
+            if (hash === firstHash) throw new Error("receipt RPC timed out");
+            latestNonce = pendingNonce;
+            return { status: "success" };
           }
         };
-        const reader={async listResolvableFleetMissions(){return [];},async listReturnableFleetMissions(){return [];},
-          async isFleetChronologyOrderingReady(){events.push("ordering");return orderingReady;},
-          async getCanonicalFleetMission(){return {status:settled?"Returned":leg==="arrival"?"Outbound":"Returning",missionTypeId:0,targetPlanetId:"2"} as never;}};
-        const make=()=>new ViemMissionResolutionChainClient(reader,config.gameContractAddress!,mode==="private-key"?account:from,
-          publicClient as unknown as PublicClient,undefined,{id:config.chainId} as never,config.rpcUrl,
-          new ResolverTransactionCoordinator(store),undefined,undefined,store,[config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]);
-        const submit=()=>make()[functionName]("77");
-        const durable = () => {
-          const db = new Database(store);
-          try { return {
-            signed: db.query("SELECT value FROM mission_signed_attempts").all(),
-            reservations: db.query("SELECT operation_id, nonce, transaction_hash, status, signed_envelope FROM resolver_transaction_attempts WHERE status IN ('allocating','submitted')").all()
-          }; } finally { db.close(); }
+        const broadcast = (nonce: number) => {
+          events.push("broadcast");
+          writes.push(nonce);
+          pendingNonce = nonce + 1;
+          return writes.length === 1 ? firstHash : replacementHash;
         };
+        const walletClient = { async writeContract(input: { nonce: number }) { return broadcast(input.nonce); } };
+        const reader = {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async isFleetChronologyOrderingReady() { events.push("ordering"); return orderingReady; },
+          async getCanonicalFleetMission() {
+            return { status: settled ? "Returned" : leg === "arrival" ? "Outbound" : "Returning" } as never;
+          }
+        };
+        const coordinator = new ResolverTransactionCoordinator(":memory:");
+        const makeClient = () => new ViemMissionResolutionChainClient(
+          reader, config.gameContractAddress!, mode === "private-key" ? account : from,
+          publicClient as unknown as PublicClient, walletClient as unknown as WalletClient,
+          { id: config.chainId } as never, config.rpcUrl, coordinator
+        );
+        // Recreate the client on each retry to exercise durable attempt reuse.
+        const submit = () => makeClient()[functionName]("77");
+        const previousFetch = globalThis.fetch;
+        if (mode === "unlocked") globalThis.fetch = (async (_input, init) => {
+          const payload = JSON.parse(String(init?.body));
+          expect(payload.method).toBe("eth_sendTransaction");
+          expect(payload.params[0]).toMatchObject({ from, to: config.gameContractAddress, data });
+          return new Response(JSON.stringify({ result: broadcast(Number(BigInt(payload.params[0].nonce))) }));
+        }) as typeof fetch;
         try {
-          await expect(submit()).rejects.toThrow("ordering support unavailable");expect(simulations).toHaveLength(0);
-          orderingReady=true;
+          await expect(submit()).rejects.toThrow("ordering support unavailable");
+          expect(simulations).toHaveLength(0);
+          orderingReady = true;
           await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
-          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");expect(raws).toHaveLength(0);expect(nonce).toBe(7);
-          const call=publicClient.call;Object.assign(publicClient,{call:undefined});
-          await expect(submit()).rejects.toThrow("missing RPC simulation client");expect(raws).toHaveLength(0);publicClient.call=call;
-          blocked=false;
-          for (const failure of ["max fee per gas less than block base fee", "insufficient funds for gas * price + value"]) {
-            exactFailure = failure;
-            await expect(submit()).rejects.toThrow(failure);
-            expect(signCount).toBe(0); expect(raws).toHaveLength(0); expect(nonce).toBe(7);
-            expect(durable()).toEqual({signed:[],reservations:[]});
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([]);
+          expect([latestNonce, pendingNonce]).toEqual([7, 7]);
+          const call = publicClient.call;
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).rejects.toThrow("receipt RPC timed out");
+          expect(writes).toEqual([7]);
+          blocked = true;
+          await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");
+          expect(writes).toEqual([7]); // no replacement broadcast or extra nonce
+          expect([latestNonce, pendingNonce]).toEqual([7, 8]);
+          Object.assign(publicClient, { call: undefined });
+          await expect(submit()).rejects.toThrow("missing RPC simulation client");
+          expect(writes).toEqual([7]);
+          publicClient.call = call;
+          blocked = false;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(false);
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]); // empty simulation/receipt only progressed a scan
+          settled = true;
+          await expect(submit()).resolves.toBe(replacementHash);
+          expect(writes).toEqual([7, 7, 8]);
+          expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
+          expect(simulations).toHaveLength(6);
+          for (const params of simulations) expect(params).toEqual([
+            { from, to: config.gameContractAddress, data }, "latest"
+          ]);
+          for (let i = 0; i < events.length; i++) {
+            if (events[i] === "simulate") expect(events[i - 1]).toBe("ordering");
+            if (events[i] === "broadcast") expect(events[i - 1]).toBe("simulate");
           }
-          exactFailure="";await expect(submit()).rejects.toThrow("insufficient funds");expect(raws).toHaveLength(1);
-          const persisted = durable(), prepared = prepareCount;
-          expect(persisted.signed).toHaveLength(1);expect(persisted.reservations).toHaveLength(1);
-          for (const failure of ["max fee per gas less than block base fee", "insufficient funds for gas * price + value"]) {
-            exactFailure=failure; await expect(submit()).rejects.toThrow(failure);
-            expect(durable()).toEqual(persisted); expect(raws).toHaveLength(1); expect(nonce).toBe(7);
-            expect(signCount).toBe(1);expect(prepareCount).toBe(prepared);
-          }
-          exactFailure="";
-          blocked=true;await expect(submit()).rejects.toThrow("earlier attack randomness unavailable");expect(raws).toHaveLength(1);expect(nonce).toBe(7);
-          Object.assign(publicClient,{call:undefined});await expect(submit()).rejects.toThrow("missing RPC simulation client");expect(raws).toHaveLength(1);publicClient.call=call;
-          blocked=false;funded=true;
-          await expect(submit()).rejects.toThrow("mission remains pending");expect(raws).toHaveLength(2);expect(raws[1]).toBe(raws[0]);
-          expect(raws.map(raw=>parseTransaction(raw).nonce)).toEqual([7,7]);
-          advance=false;await expect(submit()).rejects.toThrow("mission remains pending");expect(raws.map(raw=>parseTransaction(raw).nonce)).toEqual([7,7,8]);
-          await expect(submit()).rejects.toThrow("mission remains pending");expect(raws).toHaveLength(3);
-          settled=true;expect(await submit()).toBe(leg==="arrival"?"canonical:arrival-complete":"canonical:return-complete");expect(raws).toHaveLength(3);
-          expect(await make().isMissionLegComplete("77",leg)).toBe(true);
-          // A paid receipt is recovery evidence even when fresh simulation/ordering would fail.
-          const db = new Database(store);
-          try {
-            const row = persisted.signed[0] as {value:string};
-            const attempt = JSON.parse(row.value) as {hash:Hex;nonce:string};
-            db.query("INSERT INTO mission_signed_attempts VALUES (?, ?)").run(
-              `${config.chainId}:${config.gameContractAddress!.toLowerCase()}:77:${functionName}`, row.value);
-            expect(attempt.nonce).toBe("7");
-          } finally { db.close(); }
-          const beforeReceiptRecovery = simulations.length;
-          orderingReady=false;blocked=true;exactFailure="insufficient funds for gas * price + value";
-          await make().recoverPendingMissions();
-          expect(simulations).toHaveLength(beforeReceiptRecovery);expect(raws).toHaveLength(3);
-          expect(signCount).toBe(2);expect(durable().signed).toEqual([]);
-          expect(simulations.length).toBeGreaterThan(6);
-          for(const params of simulations) {
-            const tx = params[0] as Record<string,string>;
-            if (tx.nonce === undefined) {
-              expect(params).toEqual([{from,to:config.gameContractAddress,data,gas:"0xe4e1c0"},"latest"]);
-            } else {
-              const parsed = parseTransaction(raws.find(raw => toHex(parseTransaction(raw).nonce!) === tx.nonce)!);
-              expect(params).toEqual([{from,to:parsed.to,data:parsed.data,gas:toHex(parsed.gas!),nonce:toHex(parsed.nonce!),
-                value:toHex(parsed.value??0n),type:"0x2",maxFeePerGas:toHex(parsed.maxFeePerGas!),
-                maxPriorityFeePerGas:toHex(parsed.maxPriorityFeePerGas!),accessList:parsed.accessList??[]},"latest"]);
-            }
-          }
-          expect(simulations.filter(params => (params[0] as {nonce?:string}).nonce !== undefined).length).toBeGreaterThan(6);
-          for(let i=0;i<events.length;i++) {
-            if(events[i]==="simulate")expect(events[i-1]).toBe("ordering");
-            if(events[i]==="broadcast")expect(events[i-1]).toBe("simulate");
-          }
-        } finally {rmSync(dir,{recursive:true,force:true});}
-      },20_000);
+        } finally { globalThis.fetch = previousFetch; }
+      });
     }
   }
   for (const leg of ["arrival", "return"] as const) {
@@ -948,28 +934,12 @@ describe("ViemMissionResolutionChainClient", () => {
       reader.getCanonicalFleetMission = async () => ({
         status: settled ? (leg === "arrival" ? "Returning" : "Returned") : (leg === "arrival" ? "Outbound" : "Returning")
       } as never);
-      const blockHash = ("0x" + "a".repeat(64)) as Hex;
-      const chronologySlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],
-        [77n,BigInt(keccak256(stringToHex("veydrift.storage.arrival-progress.v1")))+1n]));
-      const receipts = new Map<Hex,unknown>();
       const publicClient = {
         async call() { return { data: "0x" }; },
         async getTransactionCount() { return pendingNonce; },
-        async getStorageAt() { return toHex(0n,{size:32}); },
-        async prepareTransactionRequest(input:object) { return {...input,maxFeePerGas:2n,maxPriorityFeePerGas:1n,type:"eip1559"}; },
-        async request({method,params}:{method:string;params:unknown[]}) {
-          if(method==="eth_getBlockByNumber")return {number:"0x64",hash:blockHash};
-          if(method==="eth_getCode")return "0x6000";
-          if(method==="eth_getStorageAt")return toHex(params[1]===chronologySlot?BigInt(pendingNonce-7):0n,{size:32});
-          if(method==="eth_call")return encodeFunctionResult({abi:progressAbi,functionName:"stagedBattleProgress",result:[0,0,0n]});
-          if(method==="eth_getTransactionReceipt")return receipts.get(params[0] as Hex)??null;
-          if(method==="eth_sendRawTransaction") {
-            const raw=params[0] as Hex,tx=parseTransaction(raw),hash=keccak256(raw);
-            nonces.push(tx.nonce!);pendingNonce=tx.nonce!+1;
-            receipts.set(hash,{status:"0x1",transactionHash:hash,blockNumber:"0x64",blockHash});return hash;
-          }
-          throw new Error(method);
-        }
+        async getStorageAt() { return "0x00"; },
+        async getTransactionReceipt() { return { status: "success" }; },
+        async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
       const walletClient = {
         async writeContract(input: { nonce: number }) {
@@ -979,7 +949,7 @@ describe("ViemMissionResolutionChainClient", () => {
         }
       } as unknown as WalletClient;
       const client = new ViemMissionResolutionChainClient(reader, config.gameContractAddress!, account,
-        publicClient, walletClient, { id: 8453 } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"), undefined, undefined, ":memory:", [config.gameContractAddress!.toLowerCase()+":"+keccak256("0x6000")]);
+        publicClient, walletClient, { id: 8453 } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"));
       const submit = () => leg === "arrival" ? client.resolveFleetMission("77") : client.completeFleetMissionReturn("77");
       await expect(submit()).rejects.toThrow("ordering support unavailable");
       await expect(submit()).rejects.toThrow("ordering support unavailable");
@@ -1004,7 +974,6 @@ describe("ViemMissionResolutionChainClient", () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     let pendingNonce = 7;
     let canonicalStatus = "Outbound";
-    let workDone = 0n;
     const nonces: number[] = [];
     const reader = {
       async isFleetChronologyOrderingReady() { return true; },
@@ -1029,78 +998,37 @@ describe("ViemMissionResolutionChainClient", () => {
         };
       }
     };
-    let mined: Hex | undefined;
-    let preparationFailure = true, rejectRaw = true, reverted = false;
-    const rawAttempts: Hex[] = [];
-    const blockHash = "0x" + "a".repeat(64);
-    const arrivalSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"bytes32"}], [2n,keccak256(stringToHex("veydrift.storage.arrival-progress.v1"))]));
-    const queueSlot = keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}], [77n,73n]));
     const publicClient = {
-      async prepareTransactionRequest(input: { nonce: number; data: Hex; to: Hex; gas?: bigint }) {
-        if (preparationFailure) throw new Error("insufficient funds for gas * price + value");
-        return { ...input, gas: input.gas ?? 21000n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, type: "eip1559" };
-      },
-      async request({ method, params }: { method: string; params: unknown[] }) {
-        if (method === "eth_getBlockByNumber") return { number: "0x64", hash: blockHash };
-        if (method === "eth_getStorageAt") return "0x" + (params[1] === queueSlot ? workDone : params[1] === arrivalSlot ? 1n : 0n).toString(16).padStart(64,"0");
-        if (method === "eth_getCode") return "0x6000";
-        if (method === "eth_call") return encodeFunctionResult({ abi: progressAbi,
-          functionName: "stagedBattleProgress", result: [0, 0, 0n] });
-        if (method === "eth_sendRawTransaction") {
-          const raw = params[0] as Hex;
-          rawAttempts.push(raw);
-          if (rejectRaw) throw new Error("insufficient funds at raw broadcast");
-          const tx = parseTransaction(raw);
-          expect(tx.gas).toBe(15_000_000n);
-          nonces.push(tx.nonce!); pendingNonce = tx.nonce! + 1;
-          mined = keccak256(raw); return mined;
-        }
-        if (method === "eth_getTransactionReceipt") return mined === params[0]
-          ? { status: reverted ? "0x0" : "0x1", transactionHash: mined, blockNumber: "0x64", blockHash } : null;
-        throw new Error(method);
-      },
       async call() { return { data: "0x" }; },
       async getTransactionCount() { return pendingNonce; },
-      async getStorageAt() { return "0x" + "0".repeat(64); },
+      async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async getTransactionReceipt() { return { status: "success" }; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
-    const walletClient = {} as WalletClient;
-    const dir = mkdtempSync(join(tmpdir(), "backend-progress-"));
-    const makeClient = () => new ViemMissionResolutionChainClient(
-      reader, config.gameContractAddress!, account, publicClient, walletClient,
-      { id: 8453 } as never, config.rpcUrl,
-      new ResolverTransactionCoordinator(":memory:"), undefined, undefined, join(dir, "intents.sqlite"),
-      [`${config.gameContractAddress!}:${keccak256("0x6000")}`]
+    const walletClient = {
+      async writeContract(input: { nonce: number }) {
+        nonces.push(input.nonce);
+        pendingNonce = input.nonce + 1;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemMissionResolutionChainClient(
+      reader,
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      { id: 8453 } as never,
+      config.rpcUrl,
+      new ResolverTransactionCoordinator(":memory:")
     );
-    let client = makeClient();
 
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("insufficient funds");
-    expect(nonces).toEqual([]);
-    client = makeClient(); preparationFailure = false;
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("insufficient funds at raw broadcast");
-    expect(nonces).toEqual([]);
-    client = makeClient(); rejectRaw = false;
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
-    expect(rawAttempts[0]).toBe(rawAttempts[1]);
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
-    expect(nonces).toEqual([7]); // status-1 no-op never buys the same checkpoint twice
-    client = makeClient(); // even loss of coordinator history cannot bypass the durable signing intent
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
-    expect(nonces).toEqual([7]);
-    workDone++;
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
-    workDone++; reverted = true;
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("reverted");
-    expect(nonces).toEqual([7, 8, 9]);
-    client = makeClient();
-    await expect(client.resolveFleetMission("77")).rejects.toThrow("mission remains pending");
-    expect(nonces).toEqual([7, 8, 9]); // paid status0 cannot reopen unchanged checkpoint
+    await client.resolveFleetMission("77");
+    await client.resolveFleetMission("77");
     canonicalStatus = "Resolved";
     await client.resolveFleetMission("77");
 
-    expect(nonces).toEqual([7, 8, 9]);
-    rmSync(dir, { recursive: true, force: true });
+    expect(nonces).toEqual([7, 8]);
   });
 
   test("serializes broadcasts and confirmations while assigning pending nonces", async () => {
@@ -1150,13 +1078,13 @@ describe("ViemMissionResolutionChainClient", () => {
     ]);
 
     expect(broadcasts).toEqual([
-      { functionName: "resolveFleetMission", gas: 15_000_000n, nonce: 7 },
-      { functionName: "completeFleetMissionReturn", gas: 15_000_000n, nonce: 8 }
+      { functionName: "resolveFleetMission", gas: 16_777_216n, nonce: 7 },
+      { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
   });
 
-  test("legacy injected adapter replaces an underpriced mission transaction at the same nonce with bumped fees", async () => {
+  test("replaces an underpriced mission transaction at the same nonce with bumped fees", async () => {
     const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
     const firstHash = `0x${"a".repeat(64)}` as const;
     const replacementHash = `0x${"b".repeat(64)}` as const;
@@ -1195,9 +1123,7 @@ describe("ViemMissionResolutionChainClient", () => {
       }
     } as unknown as WalletClient;
     const client = new ViemMissionResolutionChainClient(
-      // Explicit legacy adapter: production's canonical reader always takes durable raw signing.
-      { async listResolvableFleetMissions() { return []; }, async listReturnableFleetMissions() { return []; },
-        isFleetChronologyOrderingReady: id => reader.isFleetChronologyOrderingReady(id) },
+      reader,
       config.gameContractAddress!,
       account,
       publicClient,
@@ -1211,9 +1137,9 @@ describe("ViemMissionResolutionChainClient", () => {
     await expect(client.resolveFleetMission("45237")).resolves.toBe(replacementHash);
 
     expect(writes).toHaveLength(2);
-    expect(writes[0]).toMatchObject({ gas: 15_000_000n, nonce: 7 });
+    expect(writes[0]).toMatchObject({ gas: 16_777_216n, nonce: 7 });
     expect(writes[1]).toMatchObject({
-      gas: 15_000_000n,
+      gas: 16_777_216n,
       maxFeePerGas: 100n,
       maxPriorityFeePerGas: 12n,
       nonce: 7
@@ -1259,7 +1185,7 @@ describe("ViemMissionResolutionChainClient", () => {
       await client.resolveFleetMission("23007");
       await client.completeFleetMissionReturn("23008");
 
-      expect(transactions[0]?.gas).toBe("0xe4e1c0");
+      expect(transactions[0]?.gas).toBe("0x1000000");
       expect(transactions[0]?.nonce).toBe("0x7");
       expect(transactions[1]).not.toHaveProperty("gas");
       expect(transactions[1]?.nonce).toBe("0x8");

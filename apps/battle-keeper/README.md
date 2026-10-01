@@ -177,8 +177,8 @@ on an explicit missing-selector revert. Missile preparation also observes pinned
 and silent compaction array lengths. Every Outbound target's ordering namespace is observed,
 including Transport, Deploy and Harvest: bounded ordering scans are not exclusive to combat.
 
-**Source-bound capability / rollout:** configure VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS in both
-keeper and backend as comma-separated implementation-address:runtime-keccak256 pairs (both 0x hex).
+**Source-bound capability / rollout:** configure VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS for the
+keeper (the backend uses its own batch resolver) as comma-separated implementation-address:runtime-keccak256 pairs (both 0x hex).
 The release owner must derive each pair from the reviewed frozen Game deployment and verify its
 exact deployed runtime bytes (including immutable embedded-module addresses), not creation code,
 unlinked artifact bytes, selector success, nonzero storage, or an arbitrary nonempty getter.

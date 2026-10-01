@@ -115,6 +115,40 @@ contract VeydriftStagedReviewRegressionTest is VeydriftMoonSystemTestBase {
         assertEq(game.defenseCount(target, Defense.RocketLauncher), 0);
     }
 
+    /// An unregistered legacy-origin battle does not block returns to its body. Ships credited
+    /// after resident enrollment must survive casualty application instead of being overwritten.
+    function testShipsCreditedMidBattleSurviveCasualtyApplication() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 10);
+        uint256 id = _launch(origin, target, false);
+        (, uint64 arrivalAt,,) = _fleetMission(id);
+        _fulfillAttackBattleRandomness(id, 661);
+        vm.warp(arrivalAt);
+        vm.recordLogs();
+        for (uint256 i; i < 2000; ++i) {
+            (uint8 phase,,) = game.stagedBattleProgress(id);
+            if (phase >= 3 && phase != 14 && phase != 15) break;
+            // Small calls commit only a few stages, so the battle stays mid-flight.
+            game.resolveFleetMission{gas: 1_500_000}(id);
+        }
+        (uint8 enrolledPhase,,) = game.stagedBattleProgress(id);
+        assertLt(enrolledPhase, 9, "inject before casualty application");
+        _setShipCount(target, Ship.LightFighter, 15); // e.g. a registered return landed
+        _finishCapped(id);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 lossTopic =
+            keccak256("CombatMissionLosses(uint256,uint256,address,uint8,uint8,uint32)");
+        uint256 lost;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != lossTopic || uint256(logs[i].topics[2]) != 0) continue;
+            (uint8 side, uint8 unit, uint32 count) =
+                abi.decode(logs[i].data, (uint8, uint8, uint32));
+            if (side == 1 && unit == uint8(Ship.LightFighter)) lost += count;
+        }
+        assertGt(lost, 0, "fixture must destroy resident fighters");
+        assertEq(game.shipCount(target, Ship.LightFighter), 15 - lost);
+    }
+
     function testScoreProtectedBounceDoesNotWaitForOracle() public {
         (uint256 origin, uint256 target, address defender) = _fixture();
         uint256 id = _launch(origin, target, false);

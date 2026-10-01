@@ -692,6 +692,7 @@ export type FleetMissionSummary = {
 };
 
 export type CanonicalFleetMissionSnapshot = {
+  defenseHoldUntil?: string;
   missionId: string;
   statusId: number;
   missionTypeId: number;
@@ -2224,10 +2225,9 @@ export class VeydriftGameReader implements ChainReader {
     return result === "0x";
   }
 
-  async isFleetChronologyOrderingReady(missionId: bigint): Promise<boolean> {
-    // The third ABI word confirms resolver support, including legacy missions. New launches
-    // register atomically; no historical inventory/backfill is required for bounded progress.
-    const proof = await this.call("0xce02abe2", [encodeUint(missionId)]);
+  async isFleetChronologyOrderingReady(missionId: bigint, blockNumber?: bigint): Promise<boolean> {
+    // The third ABI word confirms resolver support, including legacy missions.
+    const proof = await this.callContract(this.gameContractAddress, "0xce02abe2", [encodeUint(missionId)], blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`);
     return /^0x[0-9a-fA-F]{192}$/.test(proof)
       && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n;
   }
@@ -2347,15 +2347,25 @@ export class VeydriftGameReader implements ChainReader {
     return this.readFleetMissionSummaries();
   }
 
-  async getCanonicalFleetMission(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null> {
+  async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {
+    assertActive?.();
     const [result] = await this.batchCallContract(this.gameContractAddress, [{
       selector: "0xf158c946",
       args: [encodeUint(missionId)]
-    }]);
+    }], blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`, assertActive);
     if (result === undefined) return null;
+    assertActive?.();
     const mission = this.decodeCanonicalFleetMission(missionId, result);
     if (!mission) return null;
-    return (await this.withCanonicalCombatResolutionProgress([mission]))[0] ?? mission;
+    if (mission.missionType === "DefenseHold") {
+      // Reviewed VeydriftGame.v1 layout: mapping(uint256 => uint64) at slot 50.
+      const slot = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [missionId, 50n]));
+      const value = await this.transport.request<string>("eth_getStorageAt", [this.gameContractAddress, slot,
+        blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`]);
+      mission.defenseHoldUntil = (BigInt(value) & ((1n << 64n) - 1n)).toString();
+    }
+    // Batch chronology/status reads stay pinned; optional UI combat enrichment is latest-only.
+    return blockNumber === undefined ? (await this.withCanonicalCombatResolutionProgress([mission]))[0] ?? mission : mission;
   }
 
   private async withCanonicalCombatResolutionProgress(
@@ -5312,13 +5322,15 @@ export class VeydriftGameReader implements ChainReader {
   private async batchCallContract(
     contractAddress: Address,
     calls: Array<{ selector: string; args: string[] }>,
-    blockTag = "latest"
+    blockTag = "latest",
+    assertActive?: () => void
   ): Promise<string[]> {
+    assertActive?.();
     if (calls.length === 0) return [];
     if (calls.length > maxBatchCallSize) {
       const results: string[] = [];
       for (let index = 0; index < calls.length; index += maxBatchCallSize) {
-        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize), blockTag));
+        results.push(...await this.batchCallContract(contractAddress, calls.slice(index, index + maxBatchCallSize), blockTag, assertActive));
       }
       return results;
     }
@@ -5326,6 +5338,7 @@ export class VeydriftGameReader implements ChainReader {
     const runSequentially = async (): Promise<string[]> => {
       const results: string[] = [];
       for (const call of calls) {
+        assertActive?.();
         results.push(await this.callContract(contractAddress, call.selector, call.args, blockTag));
       }
       return results;

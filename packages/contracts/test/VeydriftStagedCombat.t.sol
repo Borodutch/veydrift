@@ -281,6 +281,17 @@ contract VeydriftStagedCombatTest is Test {
         assertLt(used, GAS_LIMIT, "resolve envelope exceeds 15M");
     }
 
+    /// Below one stage budget plus reserve: commits exactly one bounded stage. A stage heavier
+    /// than that budget runs out of gas atomically and is retried with the full envelope.
+    function _stage(uint256 id) internal {
+        (bool ok, bytes memory data) = address(game).call{gas: 5_450_000}(
+            abi.encodeCall(IStagedLifecycle.resolveFleetMission, (id))
+        );
+        if (ok) return;
+        if (data.length != 0) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
+        _resolve(game, id);
+    }
+
     function _finish(StagedLifecycleFacade g) internal returns (uint256 calls, uint256 peak) {
         (uint8 phase,, uint256 work, uint256 seed) = g.progress(ATTACK);
         for (; calls < 30000 && phase != 13; ++calls) {
@@ -333,14 +344,14 @@ contract VeydriftStagedCombatTest is Test {
         for (uint256 i; i < 200; ++i) {
             (uint8 currentPhase,,,) = game.progress(ATTACK);
             if (currentPhase == 12) break;
-            _resolve(game, ATTACK);
+            _stage(ATTACK);
         }
         (uint8 phase,,,) = game.progress(ATTACK);
         assertEq(phase, 12, "returns not ready");
         for (uint256 i; i < 20 && phase != 13; ++i) {
             vm.warp(block.timestamp + 100);
             vm.prank(address(SafeCast.toUint160(900 + i)));
-            _resolve(game, ATTACK);
+            _stage(ATTACK);
             (phase,,,) = game.progress(ATTACK);
         }
         assertEq(phase, 13);
@@ -536,7 +547,8 @@ contract VeydriftStagedCombatTest is Test {
             if (id == 3) d.arrivalAt = IMPACT + 1;
             if (id == 4) d.status = VeydriftGameStorage.FleetMissionStatus.Recalled;
             game.seedMission(id, d);
-            game.hold(id, id == 5 ? IMPACT - 1 : IMPACT + 100);
+            // Hold end is inclusive: id 6 ends exactly at impact and still defends.
+            game.hold(id, id == 5 ? IMPACT - 1 : id == 6 ? IMPACT : IMPACT + 100);
         }
         _enroll();
         for (uint256 id = 2; id <= 5; ++id) {

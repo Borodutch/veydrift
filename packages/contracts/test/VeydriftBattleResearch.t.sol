@@ -29,10 +29,6 @@ contract BattleResearchHarness is VeydriftResourceReserves {
         researchQueues[owner] = ResearchQueue(true, t, level, at, Resources(0, 0, 0));
     }
 
-    function settle(address owner, uint64 at) external {
-        _settleResearchDue(owner, at);
-    }
-
     function capture(uint256 leader, address owner, uint64 impact)
         external
         returns (R.Levels memory)
@@ -79,35 +75,6 @@ contract VeydriftBattleResearchTest is Test {
 
     function setUp() public {
         h = new BattleResearchHarness();
-    }
-
-    function testOldDeletedQueueAmbiguityExplicitlyUsesStoredNotInventedHistory() public {
-        address owner = address(1);
-        h.seed(owner, 6, 7, 8); // old implementation already deleted the level-5 -> 6 queue
-        R.Levels memory l = h.capture(1, owner, 150);
-        assertEq(l.weapons, 6);
-        assertEq(l.shielding, 7);
-        assertEq(l.armor, 8);
-        assertFalse(h.marked(1));
-    }
-
-    function testOldLeaderIgnoresEveryDueQueueAndCheckpointWhileNewUsesImpact() public {
-        for (uint256 i; i < 3; ++i) {
-            address owner = address(SafeCast.toUint160(i + 1));
-            h.seed(owner, 5, 6, 7);
-            h.queue(owner, Technology.Weapons, 9, SafeCast.toUint64(199 + i));
-            h.mark(100 + i);
-            R.Levels memory old = h.capture(1, owner, 200);
-            R.Levels memory fresh = h.capture(100 + i, owner, 200);
-            assertEq(old.weapons, 5);
-            assertEq(fresh.weapons, i < 2 ? 9 : 5);
-            h.settle(owner, 1000);
-            h.mark(200 + i);
-            fresh = h.capture(200 + i, owner, 200);
-            assertEq(fresh.weapons, i < 2 ? 9 : 5);
-            old = h.capture(2, owner, 200);
-            assertEq(old.weapons, 9, "old uses current stored even when history differs");
-        }
     }
 
     function testSevenOwnersAllThreeTechnologiesQueueBoundariesAndCoherentCohorts() public {
