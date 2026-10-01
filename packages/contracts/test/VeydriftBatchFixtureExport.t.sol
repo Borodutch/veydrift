@@ -75,18 +75,18 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
         // Two disjoint cheap recalled transports: no battle-body chronology dependencies.
         uint256[] memory returnIds = new uint256[](2);
         uint256[] memory homeIds = new uint256[](2);
-        for (uint256 i; i < 2; ++i) {
-            address owner = address(uint160(0x91800 + i));
+        for (uint16 i; i < 2; ++i) {
+            address owner = address(uint160(0x91800) + i);
             vm.deal(owner, 1 ether);
             vm.prank(owner);
             uint256 home = game.startPlanet{value: 0.05 ether}();
             homeIds[i] = home;
-            _setPlanetCoordinates(home, 2, uint16(100 + i), 8);
-            address awayOwner = address(uint160(0x91900 + i));
+            _setPlanetCoordinates(home, 2, 100 + i, 8);
+            address awayOwner = address(uint160(0x91900) + i);
             vm.deal(awayOwner, 1 ether);
             vm.prank(awayOwner);
             uint256 away = game.startPlanet{value: 0.05 ether}();
-            _setPlanetCoordinates(away, 2, uint16(100 + i), 9);
+            _setPlanetCoordinates(away, 2, 100 + i, 9);
             // Test-only ownership seed for a same-owner transport destination.
             bytes32 slot = keccak256(abi.encode(away, uint256(4)));
             vm.store(
