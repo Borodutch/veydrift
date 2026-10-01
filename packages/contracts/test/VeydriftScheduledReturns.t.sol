@@ -350,11 +350,16 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
             game.resolveFleetMissionBatch{gas: 16_500_000}(items);
         uint256 total = beforeGas - gasleft();
+        // --isolate applies refunds; restore them for a conservative pre-refund bound.
+        Vm.Gas memory callGas = vm.lastCallGas();
+        assertGe(callGas.gasRefunded, 0);
+        uint256 refund = uint256(uint64(callGas.gasRefunded));
+        uint256 gross = callGas.gasTotalUsed + refund;
         emit log_named_uint("mixed return/combat batch execution gas", total);
         emit log_named_uint("mixed return/combat measured execution gas", measured);
         assertGt(measured, 0);
-        assertLt(measured, total);
-        assertLt(total, 16_777_216 - 50_000);
+        assertLt(measured, gross);
+        assertLt(gross, 16_777_216 - 50_000);
         assertEq(
             uint8(outcomes[0]),
             offset < 0

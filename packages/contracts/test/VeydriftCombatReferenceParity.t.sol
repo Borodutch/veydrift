@@ -520,17 +520,32 @@ contract VeydriftCombatReferenceParityTest is Test {
                 (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
                     game.resolveFleetMissionBatch{gas: batchGas}(items);
                 uint256 total = beforeGas - gasleft();
+                // --isolate applies refunds; restore them for a conservative pre-refund bound.
+                Vm.Gas memory callGas = vm.lastCallGas();
+                assertGe(callGas.gasRefunded, 0);
+                uint256 refund = uint256(uint64(callGas.gasRefunded));
+                uint256 gross = callGas.gasTotalUsed + refund;
                 emit log_named_uint("combat batch execution gas", total);
                 emit log_named_uint("combat measured execution gas", measured);
                 assertGt(measured, 0);
-                assertLt(measured, total);
-                assertLt(total, 16_777_216 - 50_000); // Real Base cap, with intrinsic headroom.
+                assertLt(measured, gross);
+                assertLt(gross, 16_777_216 - 50_000); // Real Base cap, with intrinsic headroom.
                 (status,,,) = _fleetMission(missionId);
                 if (requirePartial && status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
                     (uint8 completed,) = game.battleResolutionProgress(missionId);
                     if (completed > roundsBefore) {
                         sawPartial = true;
                         assertEq(uint8(outcomes[0]), uint8(MissionResolutionOutcome.Progress));
+                        // A receipt at a smaller gas limit can succeed without another round.
+                        // Repeated exact-call simulation must not label gas spent as Progress.
+                        for (uint256 repeat; repeat < 2; ++repeat) {
+                            (MissionResolutionOutcome[] memory idle, uint256 idleGas) =
+                                game.resolveFleetMissionBatch{gas: 500_000}(items);
+                            assertEq(uint8(idle[0]), uint8(MissionResolutionOutcome.Pending));
+                            assertGt(idleGas, 0);
+                            (uint8 unchanged,) = game.battleResolutionProgress(missionId);
+                            assertEq(unchanged, completed);
+                        }
                     }
                     // Prove one bounded partial call; then use the supported maximum to finish.
                     // A round/finalization can be indivisible and exceed a smaller keeper estimate.
