@@ -92,8 +92,18 @@ independent returns, selected gas is 299,018 / 1,080,606 / 3,760,437; actual gas
 96,586 / 566,036 / 2,175,953; all 1/8/32 settle. Fee-oracle/price/priority fees
 are synthetic (cap unchanged), not live Base measurements. This direct harness
 is not proxy/full-battle/ACS proof. Parent integration owns the reproducible
-`scripts/mission-batch-anvil-proof.ts`; actual mixed combat/proxy and keyless Base
-fee simulation remain release gates.
+`scripts/mission-batch-anvil-proof.ts`. A separate production-packer/quote proof now
+uses the actual compiled Game/module/Transparent-proxy graph: two unrelated due
+returns plus counterplay combat settle together at 14,921,654 selected gas and
+11,780,261 receipt gas. Reference survivors/losses/debris and no double credits
+pass. See `scripts/mission-batch-mixed-proxy-proof.md`; the normal contract test
+gate regenerates the ignored fixture state and runs that proof once (CI shard 1).
+Those prices remain synthetic, not live Base estimates. Read-only live Base fee
+component sampling and keyless upgrade/fork proofs are recorded in
+`packages/contracts/manifests/vey-918-upgrade-handoff.md`. The candidate price feed
+was 225 seconds old and correctly blocked by the default 120-second policy. Keep
+batching disabled until its fresh-price configuration and operational envelope
+are explicitly reviewed; no guard was relaxed.
 
 ## Durability and operations
 
