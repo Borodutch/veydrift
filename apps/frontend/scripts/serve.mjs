@@ -1133,6 +1133,24 @@ export function hiddenWhitepaperPath(pathname) {
   return /(?:^|\/)whitepaper(?:\.pdf)?(?:[/?#]|$)/i.test(pathname);
 }
 
+export const pactMeta = {
+  title: "The Veydrift Pact — get $VEYDRIFT before the auction",
+  description: "Friends & family round ($50K–$100K) for Veydrift, the onchain space strategy game on Base with 75% weekly player retention. Pact → continuous clearing auction → open liquidity.",
+  imagePath: "/assets/landing/pact-og-v1.jpg",
+};
+
+async function pactHtmlResponse(request, url) {
+  const origin = publicOrigin(request, url);
+  const html = injectShareMeta(await readFile(staticFileUrl("/index.html"), "utf8"), {
+    canonicalUrl: `${origin}/pact`,
+    description: pactMeta.description,
+    imageType: "image/jpeg",
+    imageUrl: `${origin}${pactMeta.imagePath}`,
+    title: pactMeta.title,
+  });
+  return new Response(html, { headers: { "cache-control": "public, max-age=60", "content-type": "text/html; charset=utf-8" } });
+}
+
 export async function frontendResponse(request) {
   const url = new URL(request.url);
   const pathname = decodeURIComponent(url.pathname).replaceAll("\\", "/");
@@ -1158,6 +1176,8 @@ export async function frontendResponse(request) {
     return shareHtmlResponse(request, shareRoute);
   }
 
+  if (route.replace(/\/+$/, "") === "/pact") return pactHtmlResponse(request, url);
+
   const file = Bun.file(new URL(`.${route}`, distRoot));
 
   if (await file.exists()) {
@@ -1166,7 +1186,6 @@ export async function frontendResponse(request) {
 
   if (
     docsAppRouteForPathname(route)
-    || route.replace(/\/+$/, "") === "/pact"
     || playAppRouteForPathname(route)
     || inviteAppRouteForPathname(route)
     || gameAppRouteForPathname(route)
