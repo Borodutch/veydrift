@@ -8,7 +8,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 /// Minimal harness for prospective chronology plus unregistered pre-upgrade state.
 /// Integration through the actual proxy/modules lives in VeydriftScheduledReturns.t.sol.
 contract FleetChronologyHarness is VeydriftBatchTransportModule {
-    constructor() {
+    constructor() VeydriftBatchTransportModule(address(0), address(0), address(0), address(0)) {
         nextFleetId = 1;
     }
 
@@ -65,13 +65,13 @@ contract FleetChronologyHarness is VeydriftBatchTransportModule {
         _fleetMissions[id].returnAt = at;
     }
 
-    function resolveFleetMission(uint256 id) external {
+    function resolveFleetMission(uint256 id) external override {
         if (this.prepareFleetChronology(id, false)) {
             _fleetMissions[id].status = FleetMissionStatus.Resolved;
         }
     }
 
-    function completeFleetMissionReturn(uint256 id) external {
+    function completeFleetMissionReturn(uint256 id) external virtual {
         if (this.prepareFleetChronology(id, true)) {
             _fleetMissions[id].status = FleetMissionStatus.Returned;
         }

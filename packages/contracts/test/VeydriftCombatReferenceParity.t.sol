@@ -18,7 +18,13 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
-import {Defense, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {
+    Defense,
+    Ship,
+    Technology,
+    MissionResolutionItem,
+    MissionResolutionOutcome
+} from "../src/libraries/VeydriftTypes.sol";
 import {VeydriftCombatReferenceSimulator} from "./support/VeydriftCombatReferenceSimulator.sol";
 
 contract CombatReferenceResourceToken {
@@ -127,6 +133,41 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.deal(defender, 1 ether);
         vm.deal(ally, 1 ether);
         vm.deal(counterplayer, 1 ether);
+    }
+
+    bool private batchMode;
+    uint256 private batchGas = 16_500_000;
+    bool private requirePartial;
+    bool private sawPartial;
+
+    function testBatchAcsCombatPreservesReference() public {
+        batchMode = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.joinedAttackerShips[uint8(Ship.Battleship)] = 1_000;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 500;
+        _assertReferenceParity(fixture, 104);
+    }
+
+    function testBatchGasConstrainedCombatCommitsPartialRoundsAndFinishes() public {
+        batchMode = true;
+        batchGas = 4_000_000;
+        requirePartial = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
+        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+        _assertReferenceParity(fixture, 32);
+        assertTrue(sawPartial, "fixture must actually persist partial rounds");
+    }
+
+    function testBatchCounterplayCombatPreservesReference() public {
+        batchMode = true;
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
+        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
+        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
+        _assertReferenceParity(fixture, 32);
     }
 
     function testReferenceParityDefenderWinCargoAgainstRocketLaunchers() public {
@@ -470,7 +511,34 @@ contract VeydriftCombatReferenceParityTest is Test {
         uint256 maximumCalls = game.nextFleetId() - 1 + totalRounds;
         VeydriftGameStorage.FleetMissionStatus status;
         for (uint256 calls = 0; calls < maximumCalls; calls++) {
-            game.resolveFleetMission(missionId);
+            if (batchMode) {
+                MissionResolutionItem[] memory items = new MissionResolutionItem[](2);
+                items[0] = MissionResolutionItem(missionId, 0);
+                items[1] = MissionResolutionItem(missionId, 1);
+                uint256 beforeGas = gasleft();
+                MissionResolutionOutcome[] memory outcomes =
+                    game.resolveFleetMissionBatch{gas: batchGas}(items);
+                emit log_named_uint("combat batch execution gas", beforeGas - gasleft());
+                (status,,,) = _fleetMission(missionId);
+                if (requirePartial && status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                    (uint8 completed,) = game.battleResolutionProgress(missionId);
+                    if (completed != 0) sawPartial = true;
+                    // Prove one bounded partial call; then use the supported maximum to finish.
+                    // A round/finalization can be indivisible and exceed a smaller keeper estimate.
+                    batchGas = 16_500_000;
+                }
+                assertEq(
+                    uint8(outcomes[0]),
+                    status == VeydriftGameStorage.FleetMissionStatus.Outbound
+                        ? uint8(MissionResolutionOutcome.Pending)
+                        : uint8(MissionResolutionOutcome.Settled)
+                );
+                assertTrue(
+                    outcomes[1] != MissionResolutionOutcome.Settled, "return must not credit early"
+                );
+            } else {
+                game.resolveFleetMission(missionId);
+            }
             (status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
         }

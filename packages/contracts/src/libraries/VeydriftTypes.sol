@@ -66,6 +66,23 @@ struct ProductionOrder {
     uint32 quantity;
 }
 
+/// @dev Typed resolution only: leg 0 = arrival/hold expiry, leg 1 = return.
+struct MissionResolutionItem {
+    uint256 missionId;
+    uint8 leg;
+}
+
+/// @dev Progress does not assert any work completed; canonical state remains authoritative.
+enum MissionResolutionOutcome {
+    Settled,
+    Pending,
+    AlreadySettled,
+    Invalid,
+    NotDue,
+    Failed,
+    GasLimited
+}
+
 enum Technology {
     Energy,
     Laser,

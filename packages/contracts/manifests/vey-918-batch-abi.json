@@ -1,0 +1,70 @@
+[
+  {
+    "type": "function",
+    "name": "resolveFleetMissionBatch",
+    "inputs": [
+      {
+        "name": "",
+        "type": "tuple[]",
+        "internalType": "struct MissionResolutionItem[]",
+        "components": [
+          {
+            "name": "missionId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "leg",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8[]",
+        "internalType": "enum MissionResolutionOutcome[]"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "FleetMissionBatchItem",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "missionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "leg",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "outcome",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum MissionResolutionOutcome"
+      },
+      {
+        "name": "errorSelector",
+        "type": "bytes4",
+        "indexed": false,
+        "internalType": "bytes4"
+      }
+    ],
+    "anonymous": false
+  }
+]
