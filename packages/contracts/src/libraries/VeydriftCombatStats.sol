@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 import {VeydriftGameStorage} from "../VeydriftGameStorage.sol";
 import {CombatCohort} from "./VeydriftCombatCohorts.sol";
 import {VeydriftCatalog} from "./VeydriftCatalog.sol";
+import {VeydriftBattleResearch} from "./VeydriftBattleResearch.sol";
 import {VeydriftResearchHistory} from "./VeydriftResearchHistory.sol";
 import {Ship, Defense, Technology} from "./VeydriftTypes.sol";
 
@@ -83,6 +84,41 @@ library VeydriftCombatStats {
                 ? VeydriftCatalog.shipBattleHull(Ship(unit))
                 : VeydriftCatalog.defenseBattleHull(Defense(unit - 16)),
             a
+        );
+    }
+
+    function battleCohort(
+        uint256 leader,
+        address owner,
+        uint8 unit,
+        uint32 count,
+        uint64 impact,
+        uint16 weapons,
+        uint16 shielding,
+        uint16 armor,
+        VeydriftGameStorage.ResearchQueue memory queue
+    ) public returns (CombatCohort memory c) {
+        VeydriftBattleResearch.Levels memory levels =
+            VeydriftBattleResearch.capture(leader, owner, impact, weapons, shielding, armor, queue);
+        c.unit = unit;
+        c.count = count;
+        c.attack = scaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleAttack(Ship(unit))
+                : VeydriftCatalog.defenseBattleAttack(Defense(unit - 16)),
+            levels.weapons
+        );
+        c.shield = scaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleShield(Ship(unit))
+                : VeydriftCatalog.defenseBattleShield(Defense(unit - 16)),
+            levels.shielding
+        );
+        c.hull = scaled(
+            unit < 16
+                ? VeydriftCatalog.shipBattleHull(Ship(unit))
+                : VeydriftCatalog.defenseBattleHull(Defense(unit - 16)),
+            levels.armor
         );
     }
 

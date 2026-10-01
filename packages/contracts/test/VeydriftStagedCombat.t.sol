@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -255,7 +256,7 @@ contract VeydriftStagedCombatTest is Test {
     {
         m.status = VeydriftGameStorage.FleetMissionStatus.Outbound;
         m.missionType = kind;
-        m.owner = address(uint160(100 + id));
+        m.owner = address(SafeCast.toUint160(100 + id));
         m.originPlanetId = 100 + id;
         m.targetPlanetId = TARGET;
         m.departureAt = 100;
@@ -291,10 +292,9 @@ contract VeydriftStagedCombatTest is Test {
             uint256 used = _resolve(g, ATTACK);
             if (used > peak) peak = used;
             (uint8 next,, uint256 nextWork, uint256 nextSeed) = g.progress(ATTACK);
-            if (phase != 0) {
-                assertGt(nextWork, work, "successful call made no durable progress");
-                assertEq(nextSeed, seed, "seed changed");
-            }
+            assertGt(nextWork, work, "successful call made no durable progress");
+            // Protection preparation (14/15) precedes the first oracle seed capture.
+            if (seed != 0) assertEq(nextSeed, seed, "seed changed");
             assertEq(g.bodyLock(TARGET), next == 13 ? 0 : ATTACK, "body lock released early");
             phase = next;
             work = nextWork;
@@ -306,7 +306,7 @@ contract VeydriftStagedCombatTest is Test {
     function _enroll() internal {
         for (uint256 i; i < 200; ++i) {
             (uint8 phase,,,) = game.progress(ATTACK);
-            if (phase >= 6) return;
+            if (phase >= 6 && phase <= 13) return;
             _resolve(game, ATTACK);
         }
         fail("enrollment did not finish");
@@ -339,7 +339,7 @@ contract VeydriftStagedCombatTest is Test {
         assertEq(phase, 12, "returns not ready");
         for (uint256 i; i < 20 && phase != 13; ++i) {
             vm.warp(block.timestamp + 100);
-            vm.prank(address(uint160(900 + i)));
+            vm.prank(address(SafeCast.toUint160(900 + i)));
             _resolve(game, ATTACK);
             (phase,,,) = game.progress(ATTACK);
         }
@@ -367,7 +367,7 @@ contract VeydriftStagedCombatTest is Test {
                 ? VeydriftGameStorage.FleetMissionType.AcsAttack
                 : VeydriftGameStorage.FleetMissionType.DefenseHold;
             game.seedMission(id, _mission(id, kind, 1000));
-            game.tech(address(uint160(100 + id)), uint16(8 + (id - 1) % 7));
+            game.tech(address(SafeCast.toUint160(100 + id)), SafeCast.toUint16(8 + (id - 1) % 7));
             if (id <= 7) game.link(ATTACK, id);
             else game.hold(id, IMPACT + 1000);
         }
@@ -576,9 +576,17 @@ contract VeydriftStagedCombatTest is Test {
         assertEq(seed, 0);
         assertEq(game.bodyLock(TARGET), 0);
         _resolve(game, ATTACK);
-        (phase,,, seed) = game.progress(ATTACK);
-        assertEq(phase, 1);
-        assertGt(seed, 0);
+        (phase,, work, seed) = game.progress(ATTACK);
+        assertTrue(phase != 0, "successful call did not start preparation");
+        assertGt(work, 0, "successful call made no durable progress");
+        assertEq(game.bodyLock(TARGET), ATTACK);
+        for (uint256 i; seed == 0 && i < 20; ++i) {
+            uint256 previousWork = work;
+            _resolve(game, ATTACK);
+            (phase,, work, seed) = game.progress(ATTACK);
+            assertGt(work, previousWork, "pre-seed preparation made no progress");
+        }
+        assertGt(seed, 0, "preparation never captured randomness");
     }
 
     function testSelfOnlyRoundEntryAndActiveBodyMutationProtection() public {

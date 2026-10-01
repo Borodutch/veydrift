@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftLegacyCombatMutation} from "./libraries/VeydriftLegacyCombatMutation.sol";
+import {VeydriftLegacyCombatReturnModule} from "./VeydriftLegacyCombatReturnModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
@@ -493,14 +495,17 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
     }
 
     address private immutable _rapidfireModule;
+    address private immutable _returnModule;
 
     constructor(address rapidfireModule) VeydriftResourceReserves(address(0)) {
         if (rapidfireModule == address(0)) revert UnsupportedGameplayModule();
         _rapidfireModule = rapidfireModule;
+        _returnModule = address(new VeydriftLegacyCombatReturnModule());
     }
 
     function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool complete) {
         FleetMission storage mission = _fleetMissions[missionId];
+
         BattleResolutionProgress storage progress = _battleResolutionProgress[missionId];
         if (progress.rounds == 0) {
             if (
@@ -1198,6 +1203,7 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
     {
         for (uint256 i = 0; i < losses.length;) {
             FleetMission storage mission = _fleetMissions[losses[i].missionId];
+
             _applyMissionShipLosses(mission.ships, losses[i].ships);
             resources = _add(resources, losses[i].resources);
             unchecked {
@@ -1218,6 +1224,7 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
         applied.resources = losses.resources;
         for (uint256 i = 0; i < losses.counterplay.length;) {
             FleetMission storage counterplay = _fleetMissions[losses.counterplay[i].missionId];
+
             _applyMissionShipLosses(counterplay.ships, losses.counterplay[i].ships);
             applied.resources = _add(applied.resources, losses.counterplay[i].resources);
             unchecked {
@@ -1230,17 +1237,7 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
     function _applyMissionShipLosses(MissionShips storage ships, MissionShips memory losses)
         private
     {
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship ship = Ship(i);
-            uint32 lost = _missionShipQuantity(losses, ship);
-            if (lost != 0) {
-                uint32 count = _missionShipQuantity(ships, ship);
-                _setMissionShipQuantity(ships, ship, count > lost ? count - lost : 0);
-            }
-            unchecked {
-                ++i;
-            }
-        }
+        VeydriftLegacyCombatMutation.subtract(ships, losses);
     }
 
     function _applyBodyShipLosses(uint256 planetId, bool isMoon, MissionShips memory losses)
@@ -1500,81 +1497,11 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
         return base + group * TARGET_LANE_STRIDE + unit;
     }
 
-    function _returnLinkedMissions(uint256 hostileMissionId, FleetMission storage hostile) private {
-        _returnJoinedAttackMissions(hostileMissionId, hostile);
-        _returnCounterplayMissions(hostileMissionId, hostile);
-    }
-
-    function _returnJoinedAttackMissions(uint256 attackMissionId, FleetMission storage attack)
-        private
-    {
-        uint256[] storage linkedMissionIds = _fleetCounterplayMissions[attackMissionId];
-        for (uint256 i = 0; i < linkedMissionIds.length;) {
-            uint256 joinedMissionId = linkedMissionIds[i];
-            FleetMission storage joined = _fleetMissions[joinedMissionId];
-            if (_isQualifiedJoinedAttack(attackMissionId, joined)) {
-                if (_missionShipTotal(joined.ships) == 0) {
-                    joined.status = FleetMissionStatus.Resolved;
-                    joined.returnAt = uint64(block.timestamp);
-                    activeFleetMissionCount[joined.owner] -= 1;
-                    _decreaseInternalResources(joined.cargo);
-                    delete joined.cargo;
-                } else {
-                    joined.status = FleetMissionStatus.Returning;
-                    joined.returnAt = uint64(
-                        block.timestamp + (uint256(joined.returnAt) - uint256(attack.arrivalAt))
-                    );
-                    _emitFleetMissionReturnExposed(
-                        joinedMissionId, joined, FleetMissionStatus.Returning
-                    );
-                }
-                emit FleetMissionResolved(
-                    joinedMissionId, msg.sender, joined.missionType, joined.returnAt
-                );
-            }
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    function _returnCounterplayMissions(uint256 hostileMissionId, FleetMission storage hostile)
-        private
-    {
-        uint256[] storage counterplayMissionIds = _fleetCounterplayMissions[hostileMissionId];
-        for (uint256 i = 0; i < counterplayMissionIds.length;) {
-            uint256 counterplayMissionId = counterplayMissionIds[i];
-            FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
-            // DefenseHold fleets keep holding after a battle to defend any further attack in their
-            // window; they are sent home by their owner once the hold elapses, not here.
-            if (
-                counterplay.missionType != FleetMissionType.DefenseHold
-                    && _isQualifiedCounterplay(hostileMissionId, counterplay)
-            ) {
-                if (_missionShipTotal(counterplay.ships) == 0) {
-                    counterplay.status = FleetMissionStatus.Resolved;
-                    counterplay.returnAt = uint64(block.timestamp);
-                    activeFleetMissionCount[counterplay.owner] -= 1;
-                    _decreaseInternalResources(counterplay.cargo);
-                    delete counterplay.cargo;
-                } else {
-                    counterplay.status = FleetMissionStatus.Returning;
-                    counterplay.returnAt = uint64(
-                        block.timestamp
-                            + (uint256(counterplay.returnAt) - uint256(hostile.arrivalAt))
-                    );
-                    _emitFleetMissionReturnExposed(
-                        counterplayMissionId, counterplay, FleetMissionStatus.Returning
-                    );
-                }
-                emit FleetMissionResolved(
-                    counterplayMissionId, msg.sender, counterplay.missionType, counterplay.returnAt
-                );
-            }
-            unchecked {
-                ++i;
-            }
-        }
+    function _returnLinkedMissions(uint256 id, FleetMission storage) private {
+        (bool ok, bytes memory data) = _returnModule.delegatecall(
+            abi.encodeCall(VeydriftLegacyCombatReturnModule.returnLinkedMissions, (id))
+        );
+        if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
     }
 
     function _isQualifiedCounterplay(uint256 hostileMissionId, FleetMission storage counterplay)
@@ -1641,25 +1568,6 @@ contract VeydriftLegacyCombatModule is VeydriftResourceReserves {
             uint256, uint256
         ) {}
             catch {}
-    }
-
-    function _setMissionShipQuantity(MissionShips storage ships, Ship ship, uint32 quantity)
-        private
-    {
-        if (ship == Ship.SmallCargo) ships.smallCargo = quantity;
-        else if (ship == Ship.LightFighter) ships.lightFighter = quantity;
-        else if (ship == Ship.Recycler) ships.recycler = quantity;
-        else if (ship == Ship.ColonyShip) ships.colonyShip = quantity;
-        else if (ship == Ship.LargeCargo) ships.largeCargo = quantity;
-        else if (ship == Ship.HeavyFighter) ships.heavyFighter = quantity;
-        else if (ship == Ship.Cruiser) ships.cruiser = quantity;
-        else if (ship == Ship.Battleship) ships.battleship = quantity;
-        else if (ship == Ship.Bomber) ships.bomber = quantity;
-        else if (ship == Ship.Destroyer) ships.destroyer = quantity;
-        else if (ship == Ship.Deathstar) ships.deathstar = quantity;
-        else if (ship == Ship.Battlecruiser) ships.battlecruiser = quantity;
-        else if (ship == Ship.Reaper) ships.reaper = quantity;
-        else if (ship == Ship.Pathfinder) ships.pathfinder = quantity;
     }
 
     function _setMissionShipQuantityMemory(MissionShips memory ships, Ship ship, uint32 quantity)

@@ -1560,7 +1560,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
         assertEq(cargo.metal, 0);
@@ -1591,7 +1591,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
         assertEq(cargo.metal, 0);
@@ -1646,7 +1646,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
         VeydriftGameStorage.Resources memory moonAfter = _moonResources(targetPlanetId);
@@ -1746,7 +1746,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 6524);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
         assertEq(
@@ -1785,7 +1785,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         assertEq(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 70);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
@@ -1823,7 +1823,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
 
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         vm.prank(defender);
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
@@ -2035,7 +2035,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (
             VeydriftGameStorage.FleetMissionStatus status,,,
@@ -2140,7 +2140,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
         (,,, cargo) = _fleetMission(missionId);
     }
 
@@ -2264,7 +2264,15 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         for (uint256 calls = 0; calls < 20_000; calls++) {
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) return;
-            game.resolveFleetMission(missionId);
+            (uint8 beforePhase,, uint256 beforeWork) = game.stagedBattleProgress(missionId);
+            game.resolveFleetMission{gas: 15_000_000}(missionId);
+            (uint8 afterPhase,, uint256 afterWork) = game.stagedBattleProgress(missionId);
+            if (beforePhase != 0) {
+                assertTrue(
+                    afterPhase != beforePhase || afterWork > beforeWork,
+                    "resolver made no durable progress"
+                );
+            }
         }
         revert("attack did not resolve");
     }
@@ -2783,7 +2791,7 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         game.resolveFleetMission(lateId);
         assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
         _resolveAttackFully(earlyId);
-        game.resolveFleetMission(lateId);
+        _resolveAttackFully(lateId);
         assertTrue(game.moonShipCount(target, Ship.LightFighter) > 0);
     }
 

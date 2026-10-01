@@ -60,6 +60,12 @@ library VeydriftStagedBattleStorage {
         mapping(uint256 => uint256) capacities;
         // One settlement epoch for every linked return, independent of continuation timing/order.
         uint64 returnSettlementAt;
+        uint8 scoreSide;
+        uint8 scorePhase;
+        bool scoreException;
+        bool scoreRift;
+        uint256 scoreCursor;
+        uint256[2] scores;
     }
 
     struct Layout {

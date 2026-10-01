@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
 
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
@@ -364,6 +365,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
+        VeydriftBattleResearch.markLaunchedAttack(missionId);
         address randomnessEngine = _randomnessEngine;
         if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
         return IVeydriftAttackRandomnessEngine(randomnessEngine)
@@ -414,6 +416,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 elapsed = uint64(
             VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
         );
+        _snapshotMissionScore(mission);
         mission.status = FleetMissionStatus.Recalled;
         mission.returnAt = uint64(currentTime + elapsed);
         _untrackMissionResolution(missionId, mission);
@@ -479,9 +482,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _emitPlanetSettled(mission.targetPlanetId);
             if (missionType == FleetMissionType.Transport) {
                 mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                _snapshotMissionScore(mission);
                 mission.status = FleetMissionStatus.Returning;
             } else {
                 _creditMissionShips(mission.targetPlanetId, mission.ships);
+                _snapshotMissionScore(mission);
                 mission.status = FleetMissionStatus.Resolved;
                 mission.returnAt = _currentTimestamp();
                 activeFleetMissionCount[mission.owner] -= 1;
@@ -498,6 +503,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             }
         } else if (missionType == FleetMissionType.Harvest) {
             _harvestDebris(mission);
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Returning;
             emit FleetMissionReturnExposed(
                 missionId,
@@ -515,6 +521,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             if (_fleetMissions[mission.randomnessRequestId].status == FleetMissionStatus.Outbound) {
                 return;
             }
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Returning;
         }
 
@@ -561,12 +568,19 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         private
         returns (bool complete)
     {
-        // One bounded stage per transaction, without gas-exhaustion probing.
-        (bool ok, bytes memory result) =
-            address(this).call(abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId));
-        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-        if (result.length != 32) revert UnsupportedGameplayModule();
-        return abi.decode(result, (bool));
+        // Permissionless continuations retain one bounded stage. A lazy self-call may drain a
+        // small battle so its following action gate does not roll all progress back. This is a
+        // fixed work budget, not OOG probing, and does not cap eligible participants or inventory.
+        uint256 stages = msg.sender == address(this) ? 64 : 1;
+        for (uint256 i; i < stages; ++i) {
+            if (i != 0 && gasleft() < 1_500_000) return false;
+            (bool ok, bytes memory result) =
+                address(this).call(abi.encodeWithSelector(RESOLVE_COMBAT_ROUND_SELECTOR, missionId));
+            if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+            if (result.length != 32) revert UnsupportedGameplayModule();
+            if (abi.decode(result, (bool))) return true;
+        }
+        return false;
     }
 
     function _harvestDebris(FleetMission storage mission) private {
@@ -782,23 +796,14 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _missionShipQuantity(MissionShips memory ships, Ship ship)
         private
         pure
-        returns (uint32)
+        returns (uint32 quantity)
     {
-        if (ship == Ship.SmallCargo) return ships.smallCargo;
-        if (ship == Ship.LightFighter) return ships.lightFighter;
-        if (ship == Ship.Recycler) return ships.recycler;
-        if (ship == Ship.ColonyShip) return ships.colonyShip;
-        if (ship == Ship.LargeCargo) return ships.largeCargo;
-        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
-        if (ship == Ship.Cruiser) return ships.cruiser;
-        if (ship == Ship.Battleship) return ships.battleship;
-        if (ship == Ship.Bomber) return ships.bomber;
-        if (ship == Ship.Destroyer) return ships.destroyer;
-        if (ship == Ship.Deathstar) return ships.deathstar;
-        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
-        if (ship == Ship.Reaper) return ships.reaper;
-        if (ship == Ship.Pathfinder) return ships.pathfinder;
-        return 0;
+        uint256 id = uint8(ship);
+        if (id == uint8(Ship.SolarSatellite) || id > uint8(Ship.Pathfinder)) return 0;
+        if (id > uint8(Ship.SolarSatellite)) --id;
+        assembly ("memory-safe") {
+            quantity := mload(add(ships, shl(5, id)))
+        }
     }
 
     function _delegateToCombatModule() private {

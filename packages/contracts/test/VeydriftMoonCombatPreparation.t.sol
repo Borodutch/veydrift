@@ -86,13 +86,7 @@ contract MoonPreparationHarness is VeydriftMoonSystem {
     function seedDefenses(uint256 total, uint64 firstReady) external {
         for (uint256 i; i < total; ++i) {
             Backlog.enqueue(
-                moonDefenseQueues,
-                1,
-                Defense(uint8(i % 6)),
-                1,
-                1,
-                firstReady - 1,
-                G.Resources(1, 2, 3)
+                moonDefenseQueues, 1, Defense(i % 6), 1, 1, firstReady - 1, G.Resources(1, 2, 3)
             );
         }
     }
@@ -270,9 +264,9 @@ contract VeydriftMoonCombatPreparationTest is Test {
         for (uint8 i; i < 14; ++i) {
             assertEq(game.moonShipCount(1, Ship(i)), i < 3 ? 2 : 1);
         }
-        uint256 beforeGas = gasleft();
+        uint256 releaseGasBefore = gasleft();
         game.release(moon, 1);
-        assertLt(beforeGas - gasleft(), 100_000);
+        assertLt(releaseGasBefore - gasleft(), 100_000);
     }
 
     function testAllDueAndAllFutureBacklogs() public {

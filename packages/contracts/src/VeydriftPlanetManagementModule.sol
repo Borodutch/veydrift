@@ -156,6 +156,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             }
         }
 
+        _snapshotPlanetScore(planetId);
         delete _planets[planetId];
         delete planetNames[planetId];
         occupiedCoordinates[
@@ -276,6 +277,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         }
         _creditBodyResources(mission.originPlanetId, returnToMoon, mission.cargo);
         _creditBodyMissionShips(mission.originPlanetId, returnToMoon, mission.ships);
+        _snapshotMissionScore(mission);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
         IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);

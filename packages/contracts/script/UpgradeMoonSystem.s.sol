@@ -16,9 +16,16 @@ contract UpgradeMoonSystem is Script {
     event MoonSystemUpgraded(address indexed proxy, address indexed implementation);
 
     function run() external returns (address newImplementation) {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
+        // Public identity only for a keyless dry run; all existing guards/payloads are shared.
+        // UPGRADE_DRY_RUN_OWNER must be the Moon owner. Never pass --broadcast for rehearsal.
+        address rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address broadcaster = rehearsalOwner;
+        if (rehearsalOwner == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(privateKey);
+        }
         address payable proxy = payable(vm.envAddress("MOON_PROXY_ADDRESS"));
-        address broadcaster = vm.addr(privateKey);
 
         VeydriftMoonSystem proxied = VeydriftMoonSystem(proxy);
         IVeydriftMoonGame game = proxied.game();
@@ -31,7 +38,8 @@ contract UpgradeMoonSystem is Script {
         require(delegationOk && delegationData.length >= 32, "GAME_DELEGATION_NOT_UPGRADED");
         VeydriftLiveUpgradePolicy.requireMoonUpgradeReady(address(game));
 
-        vm.startBroadcast(privateKey);
+        if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
+        else vm.startBroadcast(privateKey);
         VeydriftMoonSystem implementation =
             new VeydriftMoonSystem(address(game), address(randomness));
         newImplementation = address(implementation);

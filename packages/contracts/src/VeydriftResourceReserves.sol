@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
+import {VeydriftScoreSnapshot} from "./libraries/VeydriftScoreSnapshot.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage, IERC20ReserveToken} from "./VeydriftGameStorage.sol";
 import {Building, Resource, Technology} from "./libraries/VeydriftTypes.sol";
@@ -634,23 +636,19 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     }
 
     function _removeResolutionMissionForPlanet(uint256 planetId, uint256 missionId) internal {
-        uint256 indexPlusOne = _resolutionMissionIndexByPlanet[planetId][missionId];
-        if (indexPlusOne == 0) return;
-
-        uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
-        uint256 index = indexPlusOne - 1;
-        uint256 lastIndex = missionIds.length - 1;
-        if (index != lastIndex) {
-            uint256 movedMissionId = missionIds[lastIndex];
-            missionIds[index] = movedMissionId;
-            _resolutionMissionIndexByPlanet[planetId][movedMissionId] = indexPlusOne;
-        }
-        missionIds.pop();
-        delete _resolutionMissionIndexByPlanet[planetId][missionId];
+        if (_resolutionMissionIndexByPlanet[planetId][missionId] == 0) return;
+        VeydriftScoreSnapshot.removeIndex(
+            address(0),
+            false,
+            _resolutionMissionIdsByPlanet[planetId],
+            _resolutionMissionIndexByPlanet[planetId],
+            missionId
+        );
         _invalidateArrivalOrderIndex(planetId);
     }
 
-    function _invalidateArrivalOrderIndex(uint256 planetId) private {
+    function _invalidateArrivalOrderIndex(uint256 planetId) internal {
+        VeydriftArrivalProgress.invalidate(planetId);
         delete _arrivalOrderIndexByPlanet[planetId];
     }
 
@@ -662,19 +660,13 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     }
 
     function _removeResolutionMissionForPlayer(address player, uint256 missionId) internal {
-        uint256 indexPlusOne = _resolutionMissionIndexByPlayer[player][missionId];
-        if (indexPlusOne == 0) return;
-
-        uint256[] storage missionIds = _resolutionMissionIdsByPlayer[player];
-        uint256 index = indexPlusOne - 1;
-        uint256 lastIndex = missionIds.length - 1;
-        if (index != lastIndex) {
-            uint256 movedMissionId = missionIds[lastIndex];
-            missionIds[index] = movedMissionId;
-            _resolutionMissionIndexByPlayer[player][movedMissionId] = indexPlusOne;
-        }
-        missionIds.pop();
-        delete _resolutionMissionIndexByPlayer[player][missionId];
+        VeydriftScoreSnapshot.removeIndex(
+            player,
+            false,
+            _resolutionMissionIdsByPlayer[player],
+            _resolutionMissionIndexByPlayer[player],
+            missionId
+        );
     }
 
     function _untrackLinkedCounterplayMissionResolutions(uint256 hostileMissionId) private {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
@@ -270,6 +271,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         missionId = nextFleetId++;
         uint256 randomnessRequestId;
         if (isAttack) {
+            VeydriftBattleResearch.markLaunchedAttack(missionId);
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
         activeFleetMissionCount[player] += 1;
@@ -581,23 +583,17 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function _missionShipQuantity(MissionShips calldata ships, Ship ship)
         private
         pure
-        returns (uint32)
+        returns (uint32 quantity)
     {
-        if (ship == Ship.SmallCargo) return ships.smallCargo;
-        if (ship == Ship.LightFighter) return ships.lightFighter;
-        if (ship == Ship.Recycler) return ships.recycler;
-        if (ship == Ship.ColonyShip) return ships.colonyShip;
-        if (ship == Ship.LargeCargo) return ships.largeCargo;
-        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
-        if (ship == Ship.Cruiser) return ships.cruiser;
-        if (ship == Ship.Battleship) return ships.battleship;
-        if (ship == Ship.Bomber) return ships.bomber;
-        if (ship == Ship.Destroyer) return ships.destroyer;
-        if (ship == Ship.Deathstar) return ships.deathstar;
-        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
-        if (ship == Ship.Reaper) return ships.reaper;
-        if (ship == Ship.Pathfinder) return ships.pathfinder;
-        return 0;
+        uint256 id = uint8(ship);
+        if (id == uint8(Ship.SolarSatellite) || id > uint8(Ship.Pathfinder)) return 0;
+        uint256 satellite = uint8(Ship.SolarSatellite);
+        assembly ("memory-safe") {
+            // Bounds above exclude the satellite itself; subtracting 0/1 cannot underflow.
+            id := sub(id, gt(id, satellite))
+            quantity := calldataload(add(ships, shl(5, id)))
+            if gt(quantity, 0xffffffff) { revert(0, 0) }
+        }
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {

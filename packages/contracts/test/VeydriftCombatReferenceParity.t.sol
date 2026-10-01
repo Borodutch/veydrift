@@ -512,7 +512,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
         for (uint256 calls = 0; calls < 20_000; calls++) {
-            game.resolveFleetMission(missionId);
+            game.resolveFleetMission{gas: 15_000_000}(missionId);
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
         }

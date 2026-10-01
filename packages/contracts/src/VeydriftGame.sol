@@ -937,6 +937,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
         Building building = construction.building;
         delete buildingConstructions[planetId];
+        _snapshotPlanetScore(planetId);
         _buildingLevels[planetId][building] = construction.targetLevel;
         if (building == Building.Terraformer) {
             unchecked {

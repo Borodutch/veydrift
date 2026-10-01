@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
+import {VeydriftCombatProtectionModule} from "./VeydriftCombatProtectionModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCombatAttribution} from "./libraries/VeydriftCombatAttribution.sol";
 import {VeydriftCombatStats} from "./libraries/VeydriftCombatStats.sol";
@@ -36,6 +38,7 @@ interface IStagedMoonProduction {
 contract VeydriftStagedCombatModule is VeydriftResourceReserves {
     uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     address private immutable _rapidfireModule;
+    address private immutable _protectionModule;
     event CombatEvidenceComplete(
         uint256 indexed battleId,
         uint256 snapshotCount,
@@ -64,6 +67,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
 
     constructor(address rapidfire) VeydriftResourceReserves(address(0)) {
         _rapidfireModule = rapidfire;
+        _protectionModule = address(new VeydriftCombatProtectionModule());
     }
 
     // Phases: preparation, resident/leader/linked/held enrollment, round math,
@@ -71,28 +75,15 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
     function resolveFleetMissionCombatRound(uint256 id) external returns (bool) {
         Store.Battle storage b = Store.battle(id);
         FleetMission storage m = _fleetMissions[id];
-        if (b.phase == 0) {
-            uint256 lockId = Store.layout().bodyLock[m.targetPlanetId];
-            if (lockId != 0 && lockId != id) {
-                revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
-            }
-            Store.layout().bodyLock[m.targetPlanetId] = id;
-            b.battleId = id;
-            b.linkedLength = _fleetCounterplayMissions[id].length;
-            b.stationedLength = _stationedDefenseMissions[m.targetPlanetId].length;
-            (AttackBlockReason reason, uint16 plunder) =
-                _attackProtectionPreview(m.owner, m.targetPlanetId, m.targetIsMoon);
-            Resources storage locked = _riftLockedResources[m.targetPlanetId];
-            bool rift = !m.targetIsMoon
-                && (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0);
-            b.blocked = reason == AttackBlockReason.SameAlliance
-                || (reason == AttackBlockReason.ScoreProtection && !rift)
-                || (m.targetIsMoon
-                    && !_missionMoonExistsForOwner(
-                        id, m.targetPlanetId, _planets[m.targetPlanetId].owner, false
-                    ));
-            _battleRaidPlunderBps[id] = reason == AttackBlockReason.ScoreProtection ? 0 : plunder;
-            _battleRaidProtectionSnapshotted[id] = true;
+        if (b.phase == 0 || b.phase == 14) {
+            (bool ok, bytes memory result) = _protectionModule.delegatecall(
+                abi.encodeCall(VeydriftCombatProtectionModule.prepare, (id))
+            );
+            if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+            emit CombatStageAdvanced(id, b.phase, b.workDone, 0);
+            return false;
+        }
+        if (b.phase == 15) {
             if (!b.blocked) b.seed = _battleSeed(id, m);
             _battleResolutionProgress[id].seed = b.seed;
             b.phase = b.blocked ? 3 : 1;
@@ -101,6 +92,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 IStagedProduction(address(this))
                     .settleProductionUntil(m.targetPlanetId, construction.readyAt);
                 delete buildingConstructions[m.targetPlanetId];
+                _snapshotPlanetScore(m.targetPlanetId);
                 _buildingLevels[m.targetPlanetId][construction.building] = construction.targetLevel;
                 if (construction.building == Building.Terraformer) {
                     _planets[m.targetPlanetId].fields += 5;
@@ -110,10 +102,12 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 );
             }
             IStagedProduction(address(this)).settleProductionUntil(m.targetPlanetId, m.arrivalAt);
-            emit CombatStageAdvanced(id, b.phase, 0, 0);
+            ++b.workDone;
+            emit CombatStageAdvanced(id, b.phase, b.workDone, 0);
             return false;
         }
         if (b.phase == 1) {
+            _snapshotPlanetScore(m.targetPlanetId);
             (bool done,) = VeydriftCombatPreparation.advance(
                 b.preparation,
                 m.targetPlanetId,
@@ -129,7 +123,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 32
             );
             if (done) {
-                if (m.targetIsMoon && _moonSystem != address(0)) {
+                if (_moonSystem != address(0)) {
                     (bool versioned, bytes memory version) = _moonSystem.staticcall(
                         abi.encodeWithSignature("moonShipProductionVersion()")
                     );
@@ -142,9 +136,14 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                         }
                     }
                 }
-                VeydriftCombatStats.settleResearch(
-                    researchQueues, _technologyLevels, _planets[m.targetPlanetId].owner, m.arrivalAt
-                );
+                if (VeydriftBattleResearch.impactTimed(id)) {
+                    VeydriftCombatStats.settleResearch(
+                        researchQueues,
+                        _technologyLevels,
+                        _planets[m.targetPlanetId].owner,
+                        m.arrivalAt
+                    );
+                }
                 b.phase = 2;
             }
         } else if (b.phase == 2) {
@@ -167,15 +166,21 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             _enrollMission(b, id, 0, m.arrivalAt);
             b.phase = 4;
         } else if (b.phase == 4) {
-            if (b.cursor < b.linkedLength) {
+            // Bound cheap historical scans separately from expensive full-manifest enrollment.
+            // Never skip an eligible member: the first new enrollment ends this call's scan.
+            for (uint256 scanned; scanned < 32 && b.cursor < b.linkedLength; ++scanned) {
                 uint256 linked = _fleetCounterplayMissions[id][b.cursor++];
+                if (b.enrolled[linked]) continue;
                 FleetMission storage member = _fleetMissions[linked];
                 if (_isQualifiedJoinedAttack(id, member)) {
                     _enrollMission(b, linked, 0, m.arrivalAt);
+                    break;
                 } else if (_qualifiedDefender(id, linked)) {
                     _enrollMission(b, linked, 1, m.arrivalAt);
+                    break;
                 }
-            } else {
+            }
+            if (b.cursor == b.linkedLength) {
                 b.cursor = 0;
                 b.phase = 5;
             }
@@ -224,9 +229,13 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 uint256 memberId = b.missions[b.returnCursor++];
                 if (memberId != id) _returnMember(memberId, id, m);
             } else if (b.cursor < b.linkedLength) {
-                _untrackStagedCounterplay(
-                    id, _fleetMissions[_fleetCounterplayMissions[id][b.cursor++]]
-                );
+                // Fixed-cost index removals; unlike member settlement this cannot enroll or
+                // process a fleet manifest. The explicit record bound also covers cold writes.
+                for (uint256 scanned; scanned < 32 && b.cursor < b.linkedLength; ++scanned) {
+                    _untrackStagedCounterplay(
+                        id, _fleetMissions[_fleetCounterplayMissions[id][b.cursor++]]
+                    );
+                }
             } else {
                 _finish(id, b, m);
                 return true;
@@ -274,7 +283,8 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
         uint64 impact
     ) private {
         if (count == 0) return;
-        CombatCohort memory c = VeydriftCombatStats.cohort(
+        CombatCohort memory c = VeydriftCombatStats.battleCohort(
+            b.battleId,
             owner,
             unit,
             count,
@@ -477,7 +487,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             emit CombatDebrisSignaled(id, m.targetPlanetId, debris.metal, debris.crystal);
             _requestMoonChanceFromBattle(id, m.targetPlanetId, debris);
         }
-        if (!b.blocked && m.targetIsMoon && _moonSystem != address(0)) {
+        if (!b.blocked && _moonSystem != address(0)) {
             (bool versioned, bytes memory version) =
                 _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
             if (versioned && version.length >= 32) {

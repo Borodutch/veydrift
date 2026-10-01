@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage as G} from "../src/VeydriftGameStorage.sol";
 import {VeydriftCombatPreparation as P} from "../src/libraries/VeydriftCombatPreparation.sol";
 import {Ship, Defense} from "../src/libraries/VeydriftTypes.sol";
@@ -20,14 +21,15 @@ contract CombatPreparationHarness {
 
     function seed(uint256 start, uint256 count) external {
         for (uint256 i = start; i < start + count; ++i) {
-            G.Resources memory cost =
-                G.Resources(uint128(i + 101), uint128(i + 53), uint128(i + 17));
+            G.Resources memory cost = G.Resources(
+                SafeCast.toUint128(i + 101), SafeCast.toUint128(i + 53), SafeCast.toUint128(i + 17)
+            );
             G.ShipQueue memory s =
-                G.ShipQueue(true, Ship.LightFighter, 10, uint64(110 + i * 10), cost);
+                G.ShipQueue(true, Ship.LightFighter, 10, SafeCast.toUint64(110 + i * 10), cost);
             G.DefenseQueue memory d =
                 G.DefenseQueue(true, Defense.RocketLauncher, 10, s.readyAt, cost);
             G.ProductionQueueTiming memory t =
-                G.ProductionQueueTiming(uint64(100 + i * 10), 10, 7, 7);
+                G.ProductionQueueTiming(SafeCast.toUint64(100 + i * 10), 10, 7, 7);
             if (i == 0) {
                 ship = s;
                 defense = d;
@@ -217,7 +219,7 @@ contract VeydriftCombatPreparationTest is Test {
         uint256 seen;
         bool done;
         while (!done) {
-            seen |= 1 << h.phase();
+            seen |= uint256(2) ** h.phase();
             (done,) = _advance(125, 1);
         }
         assertEq(seen, 63, "every intermediate phase must resume");
@@ -310,7 +312,7 @@ contract VeydriftCombatPreparationTest is Test {
         uint256 produced = elapsed == 1000 || work == 0 ? original : uint256(elapsed) * rate / work;
         if (produced > original) produced = original;
         uint256 prior = original - remaining;
-        uint32 delta = produced > prior ? uint32(produced - prior) : 0;
+        uint32 delta = produced > prior ? SafeCast.toUint32(produced - prior) : 0;
         _finish(100 + elapsed, 1);
         assertEq(h.shipCounts(Ship.LightFighter), delta);
         assertEq(h.defenseCounts(Defense.RocketLauncher), delta);

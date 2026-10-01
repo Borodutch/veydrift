@@ -258,10 +258,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
                 || occupiedCoordinates[_coordinateKey(galaxy, system, position)]
                 || planetCountOf[mission.owner] >= limit
         ) {
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Returning;
         } else {
             _createColony(mission.owner, mission.originPlanetId, galaxy, system, position);
             mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
