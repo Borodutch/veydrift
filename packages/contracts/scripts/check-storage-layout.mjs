@@ -295,7 +295,7 @@ for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuteri
 
 console.log("Resource token storage layouts have no custom storage entries");
 
-const randomnessArtifactPath = join("out", "RandomnessEngine.sol", "RandomnessEngine.json");
+const randomnessArtifactPath = join(outDir, "RandomnessEngine.sol", "RandomnessEngine.json");
 const randomnessArtifact = JSON.parse(readFileSync(randomnessArtifactPath, "utf8"));
 const randomnessStorage = randomnessArtifact.storageLayout?.storage;
 if (!Array.isArray(randomnessStorage)) {
