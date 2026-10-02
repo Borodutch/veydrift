@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import type { Hex } from "viem";
+import { keccak256, type Hex } from "viem";
 import { emitObservabilityEvent } from "./observability";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
@@ -24,7 +24,15 @@ export type ResolverTransactionRequest = {
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number) => Promise<Hex>;
   /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
-  prepare?: (nonce: number) => Promise<{ hash: Hex; membership: string; broadcast: () => Promise<Hex> }>;
+  prepare?: (nonce: number, signing: {
+    /** Reserve identity under the lease, fence actual signer invocation, retain its public result. */
+    sign: (membership: string, signer: () => Promise<Hex>) => Promise<Hex>;
+  }) => Promise<{ hash: Hex; membership: string;
+    /** Read-only preflight after persistence; failure proves broadcast was never invoked. */
+    validateBeforeBroadcast?: () => Promise<void>;
+    /** Synchronous final guard, run after the last await and lease check. */
+    assertBeforeBroadcast?: () => void;
+    broadcast: () => Promise<Hex> }>;
   /** Reconcile any durable prepared intent under the shared signer lease, including other operations. */
   reconcilePrepared?: PreparedReconciler;
   /** A persisted confirmation is reusable only while its receipt remains canonical. */
@@ -69,7 +77,7 @@ export type ResolverTransactionCoordinatorOptions = {
 type StoredAttempt = {
   operationId?: string;
   nonce: number;
-  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled";
+  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled" | "prevented";
   transactionHash: Hex | null;
   updatedAt: string;
 };
@@ -136,6 +144,18 @@ export class ResolverTransactionCoordinator {
     this.database.exec("PRAGMA synchronous = FULL;");
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec(`
+      CREATE TABLE IF NOT EXISTS resolver_signing_reservations (
+        id TEXT PRIMARY KEY, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL,
+        operation_id TEXT NOT NULL, nonce INTEGER NOT NULL, membership TEXT NOT NULL,
+        transferred INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS resolver_signing_untransferred
+        ON resolver_signing_reservations(chain_id, resolver_address) WHERE transferred = 0;
+      -- Append-only public evidence, not ownership/admission state. A late signer result
+      -- may only INSERT against its unique reservation; it cannot update a successor.
+      CREATE TABLE IF NOT EXISTS resolver_signing_results (
+        reservation_id TEXT PRIMARY KEY, transaction_hash TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS resolver_prepared_intents (
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
         nonce INTEGER NOT NULL, transaction_hash TEXT NOT NULL, membership TEXT NOT NULL,
@@ -219,6 +239,10 @@ export class ResolverTransactionCoordinator {
 
   private async reconcileIntents(chainId: number, address: Hex,
     confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void): Promise<void> {
+    const signing = this.database.query(
+      "SELECT id FROM resolver_signing_reservations WHERE chain_id = ? AND resolver_address = ? AND transferred = 0 LIMIT 1"
+    ).get(chainId, normalizeAddress(address));
+    if (signing) throw new Error("resolver signed preparation requires explicit fenced recovery; never re-sign or resend");
     const key = resolverKey(chainId, address);
     confirm ??= this.preparedReconcilers.get(key);
     const started = performance.now();
@@ -268,6 +292,8 @@ export class ResolverTransactionCoordinator {
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
       for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) {
+        if (intent.status === "prevented") throw new Error(
+          "resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
         if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
           "durable batch intent cannot bypass canonical receipt/finality reconciliation");
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
@@ -595,20 +621,73 @@ export class ResolverTransactionCoordinator {
       let hash: Hex;
       try {
         if (request.prepare) {
+          let reservationId: string | undefined;
           let prepared: Awaited<ReturnType<NonNullable<typeof request.prepare>>>;
-          try {
-            prepared = await request.prepare(nonce);
-          } catch (error) {
-            // Nothing persisted or broadcast yet: release the nonce reservation cleanly.
-            this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+          try { prepared = await request.prepare(nonce, { sign: async (membership, signer) => {
+            if (reservationId) throw new Error("batch preparation cannot sign twice");
+            const id = randomUUID();
+            this.database.transaction(() => {
+              assertLease();
+              const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
+              if (attempt?.nonce !== nonce || attempt.transactionHash !== null || attempt.status !== "allocating")
+                throw new Error("batch signing allocation identity changed");
+              this.database.query("INSERT INTO resolver_signing_reservations (id,chain_id,resolver_address,operation_id,nonce,membership) VALUES (?, ?, ?, ?, ?, ?)")
+                .run(id, request.chainId, normalizeAddress(request.address), request.operationId, nonce, membership);
+            }).immediate();
+            reservationId = id;
+            assertLease(); // synchronous fence after the last await, immediately before actual signer
+            const signed = await signer();
+            // Immutable, reservation-scoped evidence only: even a late result cannot touch
+            // shared attempts/intents. The reservation already blocks all automatic writers.
+            this.database.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash) VALUES (?, ?)")
+              .run(id, keccak256(signed));
+            assertLease();
+            return signed;
+          } }); } catch (error) {
+            // Nothing signed yet (no reservation): release the nonce allocation cleanly, but only
+            // while this process still owns the lease; a successor owns the state otherwise.
+            if (!reservationId) {
+              let owned = true;
+              try { assertLease(); } catch { owned = false; }
+              if (owned) this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+            }
             throw error;
           }
-          assertLease();
-          this.database.query(
-            "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
-          ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
-          this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
-          assertLease();
+          this.database.transaction(() => {
+            assertLease();
+            const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
+            if (attempt?.nonce !== nonce || attempt.transactionHash !== null || attempt.status !== "allocating")
+              throw new Error("batch preparation allocation identity changed; explicit recovery required");
+            if (reservationId) {
+              const reserved = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.id = ? AND r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND s.transaction_hash = ? AND r.transferred = 0")
+                .get(reservationId, request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.membership, prepared.hash);
+              if (!reserved) throw new Error("signed preparation identity mismatch; explicit recovery required");
+            }
+            this.database.query(
+              "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
+            ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
+            this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
+            if (reservationId) this.database.query("UPDATE resolver_signing_reservations SET transferred = 1 WHERE id = ?").run(reservationId);
+          }).immediate();
+          try {
+            await prepared.validateBeforeBroadcast?.();
+            assertLease();
+            prepared.assertBeforeBroadcast?.();
+          } catch (error) {
+            // Only the current owner may transition the exact original pair. BEGIN
+            // IMMEDIATE makes ownership + identity checks + both writes atomic across processes.
+            this.database.transaction(() => {
+              assertLease();
+              const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
+              if (attempt?.nonce !== nonce || attempt.transactionHash !== prepared.hash || attempt.status !== "submitted")
+                throw new Error("batch prevention identity changed; retained intent requires explicit recovery");
+              const changed = this.database.query("UPDATE resolver_prepared_intents SET status = 'prevented' WHERE chain_id = ? AND resolver_address = ? AND operation_id = ? AND nonce = ? AND transaction_hash = ? AND membership = ? AND status = 'pending'")
+                .run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
+              if (changed.changes !== 1) throw new Error("batch prevention intent changed; explicit recovery required");
+              this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "prevented");
+            }).immediate();
+            throw error;
+          }
           hash = await prepared.broadcast();
           if (hash.toLowerCase() !== prepared.hash.toLowerCase()) throw new Error("broadcast hash differs from persisted local batch hash");
         } else hash = await request.submit(nonce);
@@ -788,8 +867,8 @@ export class ResolverTransactionCoordinator {
   ): void {
     const normalizedAddress = normalizeAddress(address);
     const now = new Date(this.now()).toISOString();
-    this.database.exec("BEGIN IMMEDIATE;");
-    try {
+    // Bun uses a savepoint when nested in the lease-fenced intent transition.
+    this.database.transaction(() => {
       this.database.query(`
         INSERT INTO resolver_transaction_attempts (
           chain_id, resolver_address, operation_id, nonce, transaction_hash, status, updated_at
@@ -805,11 +884,7 @@ export class ResolverTransactionCoordinator {
           chain_id, resolver_address, operation_id, nonce, transaction_hash, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now);
-      this.database.exec("COMMIT;");
-    } catch (error) {
-      this.database.exec("ROLLBACK;");
-      throw error;
-    }
+    }).immediate();
   }
 }
 

@@ -27,7 +27,7 @@ import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReco
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
-import { quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, usdCappedGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
+import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, usdCappedGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -881,7 +881,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       chainId, address: account.address, operationId,
       getTransactionCount: (blockTag) => client.getTransactionCount({ address: account.address, blockTag }),
       submit: async () => { throw new Error("batch requires persisted preparation"); },
-      prepare: async (currentNonce) => {
+      prepare: async (currentNonce, signing) => {
         if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
         const block = await client.getBlock({ blockTag: "latest" });
         if (block.number === null) throw new Error("canonical batch block unavailable");
@@ -889,16 +889,28 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         if (JSON.stringify(current) !== JSON.stringify(items)) throw new Error("batch canonical membership changed; repack next tick");
         const fees = await quote(items, currentNonce, block.number); // exact signed-gas productive simulation under lease
         const canonical = await client.getBlock({ blockNumber: block.number });
-        if (canonical.hash !== block.hash || Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30)
-          throw new Error("batch quote block changed or expired before signing");
-        const signed = await account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
-          nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
+        if (fees.provenance.blockNumber !== block.number || fees.provenance.blockHash !== block.hash
+          || fees.provenance.blockTimestamp !== block.timestamp || canonical.hash !== fees.provenance.blockHash)
+          throw new Error("batch quote block changed before signing");
+        assertBatchQuoteFresh(fees.provenance);
+        const signed = await signing.sign(JSON.stringify(items), () => {
+          assertBatchQuoteFresh(fees.provenance);
+          return account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
+            nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
+        });
         emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
           fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
           estimatedGas: fees.gas.toString(), maxTotalFeeWei: fees.totalWei.toString(), maxTotalUsdMicros: fees.usdMicros.toString(),
           l1FeeWei: fees.l1Fee.toString(), operatorFeeWei: fees.operatorFee.toString() });
         return { hash: keccak256(signed), membership: JSON.stringify(items),
+          validateBeforeBroadcast: async () => {
+            const canonical = await client.getBlock({ blockNumber: fees.provenance.blockNumber });
+            if (canonical.hash !== fees.provenance.blockHash) throw new Error("batch quote block changed before broadcast");
+            assertBatchQuoteFresh(fees.provenance);
+          },
+          // No asynchronous work between this final freshness check and the RPC invocation.
+          assertBeforeBroadcast: () => assertBatchQuoteFresh(fees.provenance),
           broadcast: () => client.sendRawTransaction({ serializedTransaction: signed }) };
       },
       reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),

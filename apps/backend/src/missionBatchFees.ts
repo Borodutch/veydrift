@@ -12,24 +12,44 @@ export const oracleAbi = parseAbi([
 ]);
 export const gasOracle = "0x420000000000000000000000000000000000000F" as const;
 
+/** Immutable provenance of the exact fee/simulation block and price used for USD exposure. */
+export type BatchQuoteProvenance = Readonly<{
+  blockNumber: bigint; blockHash: Hex; blockTimestamp: bigint;
+  priceFeed: Hex; priceRoundId: bigint; priceUpdatedAt: bigint; priceMaxAgeSeconds: number;
+}>;
+
+export function assertBatchQuoteFresh(provenance: BatchQuoteProvenance, nowMs = Date.now()): void {
+  if (Math.abs(nowMs / 1000 - Number(provenance.blockTimestamp)) > 30)
+    throw new Error("batch quote block expired");
+  const nowSeconds = BigInt(Math.floor(nowMs / 1000));
+  if (provenance.priceUpdatedAt <= 0n || provenance.priceUpdatedAt > nowSeconds
+    || nowSeconds - provenance.priceUpdatedAt > BigInt(provenance.priceMaxAgeSeconds))
+    throw new Error("missing or stale ETH/USD price; batch blocked");
+}
+
 export async function quoteMissionBatch(client: PublicClient, input: {
   blockNumber?: bigint; items: BatchLeg[]; nonce: number; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
 }) {
+  // Snapshot policy before any await; exposure and final checks use the same feed/age/cap.
   const priceFeed = input.policy.priceFeed ?? defaultEthUsdFeeds[input.chainId];
   if (![8453, 84532].includes(input.chainId) || !priceFeed) throw new Error("batch fee oracle requires Base and an ETH/USD feed");
+  const policy = Object.freeze({ ...input.policy, priceFeed });
   const data = batchCalldata(input.items);
   const block = await client.getBlock(input.blockNumber === undefined ? { blockTag: "latest" } : { blockNumber: input.blockNumber });
-  if (block.number === null || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
+  if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
   if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("stale fee block");
   const blockNumber = block.number;
   const cap = block.gasLimit < 16_777_216n ? block.gasLimit : 16_777_216n;
   const [reference, tip, decimals, round] = await Promise.all([
     simulateProductiveBatch(client, { ...input, data, blockNumber, gas: cap }),
     client.estimateMaxPriorityFeePerGas(),
-    client.readContract({ address: priceFeed, abi: priceAbi, functionName: "decimals", blockNumber }),
-    client.readContract({ address: priceFeed, abi: priceAbi, functionName: "latestRoundData", blockNumber })
+    client.readContract({ address: policy.priceFeed, abi: priceAbi, functionName: "decimals", blockNumber }),
+    client.readContract({ address: policy.priceFeed, abi: priceAbi, functionName: "latestRoundData", blockNumber })
   ]);
   if (round[4] < round[0]) throw new Error("ETH/USD oracle round incomplete");
+  const provenance: BatchQuoteProvenance = Object.freeze({ blockNumber, blockHash: block.hash,
+    blockTimestamp: block.timestamp, priceFeed: policy.priceFeed!, priceRoundId: round[0],
+    priceUpdatedAt: round[3], priceMaxAgeSeconds: policy.priceMaxAgeSeconds });
   // The returned meter starts inside the module: add intrinsic/calldata, proxy dispatch,
   // EIP-150 forwarding loss and tail/reserve before the existing 20% safety margin.
   const estimatedGas = measuredBatchGas(reference.executionGasUsed, data, input.items.length);
@@ -53,19 +73,20 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   // the measured estimate + 20%. A battle that cannot finish even at the cap (Progress) may
   // shrink below that estimate and simply commits fewer stages.
   const budgetWei = round[1] > 0n
-    ? input.policy.maxFeeUsdMicros * 10n ** BigInt(18 + decimals) / (round[1] * 1_000_000n) : 0n;
+    ? policy.maxFeeUsdMicros * 10n ** BigInt(18 + decimals) / (round[1] * 1_000_000n) : 0n;
   const reserved = l1Fee * 2n + operatorFee * 2n;
   const affordable = budgetWei > reserved && maxFeePerGas > 0n ? (budgetWei - reserved) / maxFeePerGas : 0n;
   let gas = affordable < cap ? affordable : cap;
   if (gas < minimumGas && !(reference.outcomes.includes(7) && gas > 0n)) gas = minimumGas < cap ? minimumGas : cap;
   const exposure = totalBatchExposure({ gas, blockGasLimit: block.gasLimit, maxFeePerGas,
     maxPriorityFeePerGas: tip, l1Fee, operatorFee, price: round[1], priceDecimals: decimals,
-    updatedAt: round[3], nowSeconds: Math.floor(Date.now() / 1000), policy: input.policy });
+    updatedAt: round[3], nowSeconds: Math.floor(Date.now() / 1000), policy });
   // Throws unless every leg is still Settled or Progress at the exact signed gas. Settled turning
   // into Progress is fine: the battle commits fewer stages and continues next tick.
   const exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
     maxFeePerGas, maxPriorityFeePerGas: tip });
-  return { ...exposure, blockNumber, outcomes: exact.outcomes, executionGasUsed: exact.executionGasUsed };
+  assertBatchQuoteFresh(provenance); // exact eth_call can outlive either freshness window
+  return Object.freeze({ ...exposure, blockNumber, provenance, outcomes: exact.outcomes, executionGasUsed: exact.executionGasUsed });
 }
 
 export const batchOutcomeNames = ["Settled", "Pending", "AlreadySettled", "Invalid", "NotDue", "Failed", "GasLimited", "Progress"] as const;
