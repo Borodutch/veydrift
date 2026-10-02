@@ -914,13 +914,13 @@ describe("ViemMissionResolutionChainClient", () => {
           expect(writes).toEqual([7, 7, 8]);
           expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
           expect(simulations).toHaveLength(6);
-          // Simulated at the exact USD-capped signing gas: 2^24 for staged arrivals, 1.2x estimate for returns.
+          // Simulated at the exact ETH-capped signing gas: 2^24 for staged arrivals, 1.2x estimate for returns.
           const gas = leg === "arrival" ? "0x1000000" : "0x1d4c0";
           for (const [index, params] of simulations.entries()) expect(params).toEqual([
             { from, to: config.gameContractAddress, data, gas, value: "0x0",
               nonce: index === 5 ? "0x8" : "0x7",
-              maxFeePerGas: index === 3 || index === 4 ? "0x64" : "0xb5",
-              maxPriorityFeePerGas: index === 3 || index === 4 ? "0xc" : "0x1" }, "latest"
+              maxFeePerGas: "0xb5",
+              maxPriorityFeePerGas: index === 3 || index === 4 ? "0xa" : "0x1" }, "latest"
           ]);
           for (let i = 0; i < events.length; i++) {
             if (events[i] === "simulate") expect(events[i - 1]).toBe("ordering");
@@ -1185,8 +1185,8 @@ describe("ViemMissionResolutionChainClient", () => {
     expect(writes[0]).toMatchObject({ gas: 16_777_216n, nonce: 7 });
     expect(writes[1]).toMatchObject({
       gas: 16_777_216n,
-      maxFeePerGas: 100n,
-      maxPriorityFeePerGas: 12n,
+      maxFeePerGas: 181n,
+      maxPriorityFeePerGas: 10n,
       nonce: 7
     });
   });

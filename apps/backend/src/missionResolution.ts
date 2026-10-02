@@ -28,7 +28,7 @@ import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, quoteResolverGas } from "./missionBatchFees";
+import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -1076,15 +1076,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     // to what the cap affords. A staged battle uses whatever gas it gets (fewer stages per tx).
     const cappedFees = async (nonce: number, previousHash?: Hex) => {
       const client = this.publicClient!;
-      const fees = previousHash ? await resolverReplacementFees(client, previousHash) : await initialResolverFees(client);
       const requested = functionName === "resolveFleetMission"
         ? fleetMissionResolutionGas
         : (await client.estimateGas({ account: from, to: targetAddress, data })) * 6n / 5n;
       const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
-        maxFeePerGas: fees.maxFeePerGas });
-      await preflight(quote.gas, nonce, fees);
+        ...(previousHash ? { previousHash } : {}) });
+      await preflight(quote.gas, nonce, { maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas });
       quote.assertFresh();
-      return { gas: quote.gas, ...fees, assertFresh: quote.assertFresh };
+      return quote;
     };
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce

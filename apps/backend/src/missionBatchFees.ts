@@ -1,6 +1,8 @@
 import { decodeFunctionResult, parseAbi, serializeTransaction, type Hex, type PublicClient } from "viem";
 import { BatchUnproductiveError, resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 
+import { resolverReplacementFees } from "./resolverReplacementFees";
+
 export const oracleAbi = parseAbi([
   "function getL1Fee(bytes data) view returns (uint256)",
   "function getL1FeeUpperBound(uint256 unsignedTxSize) view returns (uint256)",
@@ -114,34 +116,45 @@ export function rpcQuantity(value: unknown): bigint | null {
 export const singleResolverMaxFeeWei = resolverTransactionMaxFeeWei;
 export class ResolverFeeCapError extends Error {}
 
-export async function initialResolverFees(client: PublicClient): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+export async function initialResolverFees(client: PublicClient) {
   const [block, tip] = await Promise.all([client.getBlock({ blockTag: "latest" }), client.estimateMaxPriorityFeePerGas()]);
-  if (block.baseFeePerGas === null) throw new Error("EIP-1559 base fee unavailable");
-  return { maxFeePerGas: block.baseFeePerGas * 2n + tip, maxPriorityFeePerGas: tip };
+  if (typeof block.number !== "bigint" || block.number < 0n || !/^0x[0-9a-fA-F]{64}$/.test(block.hash ?? "")
+    || typeof block.baseFeePerGas !== "bigint" || block.baseFeePerGas < 0n
+    || typeof tip !== "bigint" || tip < 0n || block.baseFeePerGas * 2n + tip <= 0n)
+    throw new Error("fresh EIP-1559 fee inputs unavailable or invalid");
+  const provenance = Object.freeze({ blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp });
+  const assertFresh = () => assertBatchQuoteFresh(provenance);
+  assertFresh();
+  return Object.freeze({ fees: Object.freeze({ maxFeePerGas: block.baseFeePerGas * 2n + tip, maxPriorityFeePerGas: tip }),
+    provenance, assertFresh });
 }
 
 /** Largest gas whose execution max plus 2x Base L1/operator reserves fits 0.0002 ETH.
  * A quote-time ceiling, not a promise about variable inclusion-time Base charges. */
 export async function quoteResolverGas(client: PublicClient, input: {
-  chainId: number; dataBytes: number; gas: bigint; maxFeePerGas: bigint;
+  chainId: number; dataBytes: number; gas: bigint; previousHash?: Hex;
 }) {
   if (![8453, 84532].includes(input.chainId)) throw new Error("resolver fee cap requires Base");
-  const block = await client.getBlock({ blockTag: "latest" });
-  if (typeof block.number !== "bigint" || !block.hash) throw new Error("fresh fee block unavailable");
-  const provenance = Object.freeze({ blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp });
-  const assertFresh = () => assertBatchQuoteFresh(provenance);
+  // Execution maximum and all Base reserves share this one validated fee block.
+  // Never pair stale execution fees with a later fresh oracle snapshot.
+  const snapshot = await initialResolverFees(client);
+  const fees = input.previousHash
+    ? await resolverReplacementFees(client, input.previousHash, snapshot.fees) : snapshot.fees;
+  const assertFresh = snapshot.assertFresh;
+  const blockNumber = snapshot.provenance.blockNumber;
   assertFresh();
   const [l1Upper, operatorFee] = await Promise.all([
-    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt(input.dataBytes + 200)], blockNumber: block.number }),
-    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [input.gas], blockNumber: block.number })
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt(input.dataBytes + 200)], blockNumber }),
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [input.gas], blockNumber })
   ]);
-  if (l1Upper < 0n || operatorFee < 0n || input.gas <= 0n || input.maxFeePerGas <= 0n)
+  if (typeof l1Upper !== "bigint" || l1Upper < 0n || typeof operatorFee !== "bigint" || operatorFee < 0n
+    || typeof input.gas !== "bigint" || input.gas <= 0n || fees.maxFeePerGas <= 0n)
     throw new ResolverFeeCapError("invalid resolver fee estimate");
   const reserved = l1Upper * 2n + operatorFee * 2n;
   if (singleResolverMaxFeeWei <= reserved) throw new ResolverFeeCapError("network fees exceed the resolver ETH cap");
-  const affordable = (singleResolverMaxFeeWei - reserved) / input.maxFeePerGas;
+  const affordable = (singleResolverMaxFeeWei - reserved) / fees.maxFeePerGas;
   const gas = affordable < input.gas ? affordable : input.gas;
   if (gas <= 0n) throw new ResolverFeeCapError("network fees exceed the resolver ETH cap");
   assertFresh();
-  return Object.freeze({ gas, assertFresh });
+  return Object.freeze({ gas, ...fees, assertFresh });
 }

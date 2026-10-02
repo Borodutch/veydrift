@@ -15,7 +15,7 @@ const oldHash = `0x${"a".repeat(64)}` as const;
 const cancelHash = `0x${"b".repeat(64)}` as const;
 const nextHash = `0x${"c".repeat(64)}` as const;
 
-for (const failure of ["fee-spike", "replacement-escalation", "missing-fee-block", "stale-fee-block", "future-fee-block", "l1", "operator", "missing-l1", "missing-operator", "preflight", "quote-expiry", "lost-lease"] as const) {
+for (const failure of ["fee-spike", "replacement-escalation", "missing-base-fee", "negative-base-fee", "missing-tip", "negative-tip", "missing-fee-block", "stale-fee-block", "future-fee-block", "l1", "operator", "missing-l1", "missing-operator", "preflight", "quote-expiry", "lost-lease"] as const) {
   test(`stale cancellation ${failure} sends nothing and retains nonce ownership across restart`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "vey-cancel-cap-"));
     const path = join(dir, "journal.sqlite");
@@ -54,12 +54,15 @@ for (const failure of ["fee-spike", "replacement-escalation", "missing-fee-block
       getBlock: async () => {
         if (blocked && failure === "missing-fee-block") throw new Error("fee block unavailable");
         const now = BigInt(Math.floor(Date.now() / 1000));
-        return { baseFeePerGas: 1n, number: 1n, hash: oldHash,
+        return { baseFeePerGas: blocked && failure === "missing-base-fee" ? null
+          : blocked && failure === "negative-base-fee" ? -1n
+          : blocked && failure === "fee-spike" ? 500_000_000_000n : 1n, number: 1n, hash: oldHash,
           timestamp: blocked && failure === "stale-fee-block" ? now - 100n
             : blocked && failure === "future-fee-block" ? now + 100n : now };
       },
       estimateFeesPerGas: async () => ({ maxFeePerGas: blocked && failure === "fee-spike" ? 10n ** 12n : 90n, maxPriorityFeePerGas: 12n }),
-      estimateMaxPriorityFeePerGas: async () => 1n,
+      estimateMaxPriorityFeePerGas: async () => blocked && failure === "missing-tip" ? undefined
+        : blocked && failure === "negative-tip" ? -1n : 1n,
       estimateGas: async () => 100_000n,
       readContract: async ({ functionName }: { functionName: string }) => {
         const now = BigInt(Math.floor(Date.now() / 1000));
@@ -110,10 +113,10 @@ for (const failure of ["fee-spike", "replacement-escalation", "missing-fee-block
       await expect(makeClient().resolveFleetMission("88")).resolves.toBe(nextHash);
       expect(sends).toHaveLength(1);
       expect(sends[0]).toMatchObject({ to: account.address, data: "0x", value: 0n, gas: 21_000n,
-        nonce: 7, maxFeePerGas: 100n, maxPriorityFeePerGas: 12n });
+        nonce: 7, maxFeePerGas: 100n, maxPriorityFeePerGas: 10n });
       const cancellationCall = calls.filter((call) => call.to === account.address).at(-1);
       expect(cancellationCall).toEqual({ from: account.address, to: account.address, data: "0x", value: "0x0",
-        nonce: "0x7", gas: "0x5208", maxFeePerGas: "0x64", maxPriorityFeePerGas: "0xc" });
+        nonce: "0x7", gas: "0x5208", maxFeePerGas: "0x64", maxPriorityFeePerGas: "0xa" });
       expect(contractWrites[0]?.nonce).toBe(8);
       expect(db.query("SELECT nonce, status, transaction_hash FROM resolver_transaction_attempts WHERE operation_id = 'old-operation'").get())
         .toEqual({ nonce: 7, status: "cancelled", transaction_hash: cancelHash });

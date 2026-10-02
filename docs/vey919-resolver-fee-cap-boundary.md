@@ -16,7 +16,10 @@ USD/ETH conjunction: **ETH-only quote-time limits**, with no ETH/USD price feed.
   use one capped helper. A sibling cannot bypass a rejected mission cancellation.
 - Missing/invalid fee estimates, missing Base L1/operator oracle responses,
   unsupported chains, or fee-block quotes older than 30 seconds fail closed.
-  The block-age fence is checked after preflight and before the wallet/RPC call.
+  Execution fees and L1/operator reserves share one validated block snapshot;
+  replacement fees combine its explicit maximum/tip with the previous required
+  bump, never with an opaque or missing current estimate. That original snapshot
+  remains fenced after every intervening await, preflight and before wallet/RPC.
 - No runtime price lookup, no constant USD valuation, and no currency fallback.
   Retired MAX_USD, ETH_USD_FEED and PRICE_MAX_AGE_SECONDS settings do not determine
   spending or block resolution. The batch override is MAX_FEE_WEI, which must be

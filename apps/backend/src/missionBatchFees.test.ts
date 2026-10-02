@@ -97,18 +97,18 @@ test("raw Base RPC receipt extensions normalize quantities without bigint/string
   expect(100n + rpcQuantity("0x10")! + rpcQuantity("0x2")!).toBe(118n);
 });
 test("single quotes reserve L1/operator costs and cap at 0.0002 ETH independent of any USD price", async () => {
-  const base = { chainId: 8453, dataBytes: 36, gas: signedGas, maxFeePerGas: 100_000_000n };
+  const base = { chainId: 8453, dataBytes: 36, gas: signedGas };
   for (const ignoredPrice of [0n, 1000n, 2500n, 5000n]) {
     let priceReads = 0;
-    const client = fixture({ readContract: async ({ functionName }: { functionName: string }) => {
+    const client = fixture({ getBlock: async () => block(now, 49_999_995n), readContract: async ({ functionName }: { functionName: string }) => {
       if (functionName === "decimals" || functionName === "latestRoundData") { priceReads++; throw new Error("missing/stale price " + ignoredPrice); }
       return functionName === "getL1FeeUpperBound" ? 1_000_000_000n : 2_000_000_000n;
     } }).client;
     const quote = await quoteResolverGas(client, base);
-    expect(quote.gas).toBe((singleResolverMaxFeeWei - 6_000_000_000n) / base.maxFeePerGas);
-    expect(quote.gas * base.maxFeePerGas + 6_000_000_000n).toBeLessThanOrEqual(singleResolverMaxFeeWei);
+    expect(quote.gas).toBe((singleResolverMaxFeeWei - 6_000_000_000n) / quote.maxFeePerGas);
+    expect(quote.gas * quote.maxFeePerGas + 6_000_000_000n).toBeLessThanOrEqual(singleResolverMaxFeeWei);
     expect(priceReads).toBe(0);
-    expect((await quoteResolverGas(client, { ...base, maxFeePerGas: 1000n })).gas).toBe(signedGas);
+    expect((await quoteResolverGas(fixture().client, base)).gas).toBe(signedGas);
   }
   await expect(quoteResolverGas(fixture().client, { ...base, chainId: 31337 })).rejects.toThrow("requires Base");
   for (const timestamp of [0n, now - 100n, now + 100n])
