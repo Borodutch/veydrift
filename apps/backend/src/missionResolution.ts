@@ -27,7 +27,7 @@ import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReco
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
-import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, usdCappedGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
+import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, quoteResolverGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -1060,7 +1060,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       args: [BigInt(missionId)]
     });
     const from = typeof this.sender === "string" ? this.sender : this.sender.address;
-    const preflight = async (gas: bigint) => {
+    const preflight = async (gas: bigint, nonce: number, fees: ResolverReplacementFees) => {
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
       if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
@@ -1069,20 +1069,21 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       // the exact funded entrypoint at the exact capped gas under the nonce lease before both
       // submit and replacement: a leg that cannot fit the USD cap fails here, unpaid.
       // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
-      await this.publicClient.call({ account: from, to: targetAddress, data, gas, blockTag: "latest" });
+      await this.publicClient.call({ account: from, to: targetAddress, data, gas, nonce, value: 0n, ...fees, blockTag: "latest" });
     };
     // Every single-call write stays within singleResolverMaxUsdMicros: explicit fees, and gas shrunk
     // to what the cap affords. A staged battle uses whatever gas it gets (fewer stages per tx).
-    const cappedFees = async (previousHash?: Hex) => {
+    const cappedFees = async (nonce: number, previousHash?: Hex) => {
       const client = this.publicClient!;
       const fees = previousHash ? await resolverReplacementFees(client, previousHash) : await initialResolverFees(client);
       const requested = functionName === "resolveFleetMission"
         ? fleetMissionResolutionGas
         : (await client.estimateGas({ account: from, to: targetAddress, data })) * 6n / 5n;
-      const gas = await usdCappedGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
+      const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
         maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
-      await preflight(gas);
-      return { gas, ...fees };
+      await preflight(quote.gas, nonce, fees);
+      quote.assertFresh();
+      return { gas: quote.gas, ...fees };
     };
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
@@ -1109,7 +1110,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           functionName,
           args: [BigInt(missionId)],
           nonce,
-          ...await cappedFees()
+          ...await cappedFees(nonce)
         }),
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
@@ -1122,16 +1123,24 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           functionName,
           args: [BigInt(missionId)],
           nonce,
-          ...await cappedFees(previousHash)
+          ...await cappedFees(nonce, previousHash)
         }),
-        cancelStale: async (nonce, previousHash) => this.walletClient!.sendTransaction({
-          account,
-          chain: this.chain!,
-          nonce,
-          to: account.address,
-          value: 0n,
-          ...await resolverReplacementFees(this.publicClient!, previousHash)
-        }),
+        cancelStale: async (nonce, previousHash, assertLease) => {
+          const client = this.publicClient!;
+          const fees = await resolverReplacementFees(client, previousHash);
+          // A same-EOA cancellation is a paid resolver transaction too. Never let the
+          // wallet fill gas/fees or escape the cap while escalating a stale nonce.
+          const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: 0, gas: 21_000n,
+            maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
+          const gas = quote.gas;
+          if (gas < 21_000n) throw new Error("stale nonce cancellation exceeds resolver USD cap");
+          const envelope = { account, to: account.address, data: "0x" as Hex, value: 0n, nonce, gas, ...fees };
+          await client.call({ ...envelope, blockTag: "latest" });
+          quote.assertFresh();
+          assertLease();
+          // Throwing above leaves the original submitted attempt/nonce owned in the journal.
+          return this.walletClient!.sendTransaction({ ...envelope, chain: this.chain! });
+        },
         confirm: (hash) => this.confirm(hash)
       });
     }
@@ -1147,14 +1156,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         blockTag
       }),
       submit: async (nonce) => {
-        const { gas, ...fees } = await cappedFees();
+        const { gas, ...fees } = await cappedFees(nonce);
         return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => {
-        const { gas, ...fees } = await cappedFees(previousHash);
+        const { gas, ...fees } = await cappedFees(nonce, previousHash);
         return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       confirm: (hash) => this.confirm(hash)

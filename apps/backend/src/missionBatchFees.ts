@@ -33,7 +33,11 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   // Snapshot policy before any await; exposure and final checks use the same feed/age/cap.
   const priceFeed = input.policy.priceFeed ?? defaultEthUsdFeeds[input.chainId];
   if (![8453, 84532].includes(input.chainId) || !priceFeed) throw new Error("batch fee oracle requires Base and an ETH/USD feed");
-  const policy = Object.freeze({ ...input.policy, priceFeed });
+  // A batch is still one transaction: enforce the stricter $0.50 transaction ceiling
+  // as well as the configured (at most $1) aggregate batch policy.
+  const policy = Object.freeze({ ...input.policy, priceFeed,
+    maxFeeUsdMicros: input.policy.maxFeeUsdMicros < singleResolverMaxUsdMicros
+      ? input.policy.maxFeeUsdMicros : singleResolverMaxUsdMicros });
   const data = batchCalldata(input.items);
   const block = await client.getBlock(input.blockNumber === undefined ? { blockTag: "latest" } : { blockNumber: input.blockNumber });
   if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
@@ -141,12 +145,19 @@ export async function initialResolverFees(client: PublicClient): Promise<{ maxFe
 }
 
 /** Largest gas (at most `gas`) whose worst case — gas*maxFee plus 2x L1 data and operator fee —
- * stays within `maxUsdMicros`. Local chains without Base fee oracles are not capped. */
-export async function usdCappedGas(client: PublicClient, input: {
+ * stays within `maxUsdMicros` at the quoted price. Unsupported chains fail closed.
+ * OP L1/operator charges and USD prices cannot be capped by an EIP-1559 envelope at inclusion. */
+type ResolverGasBudget = {
   chainId: number; dataBytes: number; gas: bigint; maxFeePerGas: bigint; priceFeed?: Hex | undefined; maxUsdMicros: bigint;
-}): Promise<bigint> {
+};
+export async function usdCappedGas(client: PublicClient, input: ResolverGasBudget): Promise<bigint> {
+  return (await quoteResolverGas(client, input)).gas;
+}
+
+export async function quoteResolverGas(client: PublicClient, input: ResolverGasBudget) {
+  const startedAt = Date.now();
   const feed = input.priceFeed ?? defaultEthUsdFeeds[input.chainId];
-  if (!feed) return input.gas;
+  if (![8453, 84532].includes(input.chainId) || !feed) throw new Error("resolver fee cap requires Base and an ETH/USD feed");
   const [decimals, round, l1Upper, operatorFee] = await Promise.all([
     client.readContract({ address: feed, abi: priceAbi, functionName: "decimals" }),
     client.readContract({ address: feed, abi: priceAbi, functionName: "latestRoundData" }),
@@ -154,11 +165,21 @@ export async function usdCappedGas(client: PublicClient, input: {
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [input.gas] })
   ]);
   const age = Math.floor(Date.now() / 1000) - Number(round[3]);
-  if (round[1] <= 0n || round[4] < round[0] || age > resolverPriceMaxAgeSeconds)
+  if (round[1] <= 0n || round[3] <= 0n || round[4] < round[0] || age < 0 || age > resolverPriceMaxAgeSeconds
+    || !Number.isInteger(decimals) || decimals < 0 || decimals > 18)
     throw new Error("missing or stale ETH/USD price; resolver fee cap cannot be enforced");
+  if (l1Upper < 0n || operatorFee < 0n || input.gas <= 0n || input.maxUsdMicros <= 0n || input.maxUsdMicros > singleResolverMaxUsdMicros)
+    throw new ResolverFeeCapError("invalid resolver fee budget");
   const budgetWei = input.maxUsdMicros * 10n ** BigInt(18 + decimals) / (round[1] * 1_000_000n);
   const reserved = l1Upper * 2n + operatorFee * 2n;
   if (budgetWei <= reserved || input.maxFeePerGas <= 0n) throw new ResolverFeeCapError("network fees exceed the resolver USD cap");
   const affordable = (budgetWei - reserved) / input.maxFeePerGas;
-  return affordable < input.gas ? affordable : input.gas;
+  const assertFresh = () => {
+    const now = Date.now();
+    const priceAge = Math.floor(now / 1000) - Number(round[3]);
+    if (now < startedAt || now - startedAt > 30_000 || priceAge < 0 || priceAge > resolverPriceMaxAgeSeconds)
+      throw new ResolverFeeCapError("resolver fee quote expired before signing");
+  };
+  assertFresh();
+  return Object.freeze({ gas: affordable < input.gas ? affordable : input.gas, assertFresh });
 }

@@ -1,3 +1,4 @@
+import { assertStandaloneKeeperReleaseAllowed } from "./releaseGuard";
 import { loadKeeperConfig, safeConfigSummary } from "./config";
 import { KeeperJournal } from "./journal";
 import { BattleKeeper, consoleLogger } from "./keeper";
@@ -8,6 +9,7 @@ import { HttpJsonRpcTransport } from "./transport";
 import { WsBattleListener } from "./wsListener";
 
 function main(): void {
+  assertStandaloneKeeperReleaseAllowed();
   const { config, problems } = loadKeeperConfig();
   if (!config) {
     consoleLogger.error("[battle-keeper] invalid configuration:");

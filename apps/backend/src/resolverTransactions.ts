@@ -41,7 +41,7 @@ export type ResolverTransactionRequest = {
   isOperationComplete?: () => Promise<boolean>;
   shouldReplace?: (hash: Hex) => Promise<boolean>;
   replace?: (nonce: number, previousHash: Hex) => Promise<Hex>;
-  cancelStale?: (nonce: number, previousHash: Hex) => Promise<Hex>;
+  cancelStale?: (nonce: number, previousHash: Hex, assertLease: () => void) => Promise<Hex>;
   confirm: (hash: Hex) => Promise<void>;
 };
 
@@ -574,7 +574,7 @@ export class ResolverTransactionCoordinator {
           && (this.isStale(stale) || await request.shouldReplace(stale.transactionHash))
         ) {
           assertLease();
-          const cancellationHash = await request.cancelStale(latest, stale.transactionHash);
+          const cancellationHash = await request.cancelStale(latest, stale.transactionHash, assertLease);
           this.recordAttempt(
             request.chainId,
             request.address,

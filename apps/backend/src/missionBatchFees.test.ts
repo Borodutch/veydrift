@@ -127,8 +127,10 @@ test("single-call resolver gas shrinks so the worst-case fee never exceeds $0.50
   expect(await usdCappedGas(feeds(now), { ...input, maxFeePerGas: 1_000n })).toBe(16_777_216n);
   await expect(usdCappedGas(feeds(now - 7_200n), { ...input, maxFeePerGas })).rejects.toThrow("stale");
   await expect(usdCappedGas(feeds(now, 10n ** 15n), { ...input, maxFeePerGas })).rejects.toBeInstanceOf(ResolverFeeCapError);
-  // Local chains have no Base fee oracle: not capped.
-  expect(await usdCappedGas(feeds(now), { ...input, chainId: 31337, maxFeePerGas })).toBe(16_777_216n);
+  // Unsupported chains must not silently bypass the dollar guard.
+  await expect(usdCappedGas(feeds(now), { ...input, chainId: 31337, maxFeePerGas })).rejects.toThrow("requires Base");
+  await expect(usdCappedGas(feeds(now + 100n), { ...input, maxFeePerGas })).rejects.toThrow("stale");
+  await expect(usdCappedGas(feeds(0n), { ...input, maxFeePerGas })).rejects.toThrow("stale");
 });
 
 test("a tight USD budget signs between the measured minimum and the cap; unaffordable minimum fails", async () => {
@@ -143,4 +145,16 @@ test("a tight USD budget signs between the measured minimum and the cap; unaffor
   expect(quote.gas).toBeLessThan(16_777_216n);
   // A settling leg never signs below its measured minimum: fail closed on the USD cap instead.
   await expect(quoteMissionBatch(priced(answer * 10_000n), input)).rejects.toThrow("USD cap");
+});
+
+test("a $1 batch policy cannot spend over the stricter $0.50 per-transaction quote", async () => {
+  const client = fixture({
+    getBlock: async () => ({ number: 10n, hash: "0x" + "aa".repeat(32), timestamp: now,
+      baseFeePerGas: 50_000_000n, gasLimit: 30_000_000n }),
+    readContract: async ({ functionName }: { functionName: string }) => functionName === "decimals" ? 8
+      : functionName === "latestRoundData" ? [5n, 3000_00000000n, now, now, 5n] : 0n
+  }).client;
+  const quote = await quoteMissionBatch(client, { ...input, policy: { ...input.policy, maxFeeUsdMicros: 1_000_000n } });
+  expect(quote.usdMicros).toBeLessThanOrEqual(500_000n);
+  expect(quote.gas).toBeLessThan(signedGas);
 });
