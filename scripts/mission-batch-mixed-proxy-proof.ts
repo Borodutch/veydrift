@@ -72,22 +72,17 @@ try {
   }
   assert(ready, "owned Anvil did not start");
   const [account] = await raw({ method: "eth_accounts" }) as Hex[];
-  const feed = "0x2222222222222222222222222222222222222222" as Hex;
   const oracle = "0x420000000000000000000000000000000000000f";
-  const oracleAbi = parseAbi(["function decimals() view returns(uint8)",
-    "function latestRoundData() view returns(uint80,int256,uint256,uint256,uint80)",
+  const oracleAbi = parseAbi([
     "function getL1Fee(bytes) view returns(uint256)", "function getL1FeeUpperBound(uint256) view returns(uint256)",
     "function getOperatorFee(uint256) view returns(uint256)"]);
-  const syntheticInputs = { ethUsd: 3000_00000000n, decimals: 8, l1ExactWei: 1000n, l1UpperWei: 2000n, operatorWei: 300n, tipWei: 100n };
+  const syntheticInputs = { l1ExactWei: 1000n, l1UpperWei: 2000n, operatorWei: 300n, tipWei: 100n };
   const client = createPublicClient({ transport: custom({ async request(request) {
     if (request.method === "eth_maxPriorityFeePerGas") return toHex(syntheticInputs.tipWei);
     const call = (request.params as [{ to?: string; data?: Hex }] | undefined)?.[0];
-    if (request.method === "eth_call" && [feed, oracle].includes(call?.to?.toLowerCase() ?? "")) {
+    if (request.method === "eth_call" && call?.to?.toLowerCase() === oracle) {
       const { functionName } = decodeFunctionData({ abi: oracleAbi, data: call!.data! });
-      const now = BigInt(Math.floor(Date.now() / 1000));
-      const result = functionName === "decimals" ? syntheticInputs.decimals
-        : functionName === "latestRoundData" ? [1n, syntheticInputs.ethUsd, now, now, 1n]
-        : functionName === "getOperatorFee" ? syntheticInputs.operatorWei
+      const result = functionName === "getOperatorFee" ? syntheticInputs.operatorWei
         : functionName === "getL1FeeUpperBound" ? syntheticInputs.l1UpperWei : syntheticInputs.l1ExactWei;
       return encodeFunctionResult({ abi: oracleAbi, functionName, result } as never);
     }
@@ -111,7 +106,7 @@ try {
   const items: BatchLeg[] = [];
   for (const id of meta.returnIds) items.push({ missionId: String(id), leg: "return", dueAt: Number((await mission(id))[7]) });
   items.push({ missionId: String(meta.battleId), leg: "arrival", dueAt: Number((await mission(meta.battleId))[6]) });
-  const policy = { ...defaultMissionBatchPolicy, enabled: true, priceFeed: feed };
+  const policy = { ...defaultMissionBatchPolicy, enabled: true };
   const nonce = await client.getTransactionCount({ address: account });
   const packed = await packMissionBatch(items, policy.maxItems, selected => quoteMissionBatch(client, { items: selected, nonce, account, game, chainId: chain.id, policy }), () => {});
   assert.equal(packed.items.length, 3, stringify(packed.exclusions));
@@ -126,7 +121,7 @@ try {
   const rows: unknown[] = [];
   const allLogs: any[] = [];
   async function send(selected: BatchLeg[], quote: Awaited<ReturnType<typeof quoteMissionBatch>>) {
-    assert(quote.gas <= 16_777_216n && quote.usdMicros <= 500_000n);
+    assert(quote.gas <= 16_777_216n && quote.totalWei <= 200_000_000_000_000n);
     const before = await state();
     const data = batchCalldata(selected);
     const hash = await wallet.sendTransaction({ to: game, data, gas: quote.gas, maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas });
@@ -177,7 +172,7 @@ try {
   for (const id of meta.homeIds) assert.equal(await read("shipCount", [BigInt(id), 0]), 1);
   const repeat = await client.call({ account, to: game, data: batchCalldata(items), gas: 16_777_216n });
   assert.deepEqual(decodeFunctionResult({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch", data: repeat.data! })[0], [2, 2, 2], "settled legs cannot double-credit");
-  console.log(stringify({ proof: meta.scope, initialBlock: { number: initialBlock.number, hash: initialBlock.hash, timestamp: initialBlock.timestamp, baseFeePerGas: initialBlock.baseFeePerGas, gasLimit: initialBlock.gasLimit }, syntheticInputs, limits: { transactionGas: 16_777_216, maxUsdMicros: 500_000 }, game, implementation: meta.implementation, allocationAccountsVerified: Object.keys(alloc).length, compiledRuntimeAccountsVerified: Object.values(alloc).filter((x: any) => x.code !== "0x").length, naiveGas, naiveOutcomes, packEstimates: packed.estimates, before, rows, referenceSurvivorsLossesDebris: "PASS" }));
+  console.log(stringify({ proof: meta.scope, initialBlock: { number: initialBlock.number, hash: initialBlock.hash, timestamp: initialBlock.timestamp, baseFeePerGas: initialBlock.baseFeePerGas, gasLimit: initialBlock.gasLimit }, syntheticInputs, limits: { transactionGas: 16_777_216, maxTotalFeeWei: "200000000000000" }, game, implementation: meta.implementation, allocationAccountsVerified: Object.keys(alloc).length, compiledRuntimeAccountsVerified: Object.values(alloc).filter((x: any) => x.code !== "0x").length, naiveGas, naiveOutcomes, packEstimates: packed.estimates, before, rows, referenceSurvivorsLossesDebris: "PASS" }));
 } finally {
   node.kill();
   await node.exited;

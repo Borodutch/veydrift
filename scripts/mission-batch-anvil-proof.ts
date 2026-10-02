@@ -14,11 +14,8 @@ const port = 18518;
 const url = "http://127.0.0.1:" + port;
 const artifact = JSON.parse(readFileSync(new URL("../packages/contracts/out/VeydriftMissionBatch.t.sol/BatchResolutionHarness.json", import.meta.url), "utf8"));
 const game = "0x1111111111111111111111111111111111111111" as const;
-const feed = "0x2222222222222222222222222222222222222222" as const;
 const oracle = "0x420000000000000000000000000000000000000f";
 const oracleAbi = parseAbi([
-  "function decimals() view returns(uint8)",
-  "function latestRoundData() view returns(uint80,int256,uint256,uint256,uint80)",
   "function getL1Fee(bytes) view returns(uint256)",
   "function getL1FeeUpperBound(uint256) view returns(uint256)",
   "function getOperatorFee(uint256) view returns(uint256)"
@@ -38,15 +35,12 @@ try {
   const [account] = await raw({ method: "eth_accounts" }) as Hex[];
   assert(account);
   const client = createPublicClient({ transport: custom({ async request(request) {
-    if (request.method === "eth_maxPriorityFeePerGas") return "0x64"; // synthetic fee fixture; USD cap unchanged
+    if (request.method === "eth_maxPriorityFeePerGas") return "0x64"; // synthetic fee fixture; fixed ETH cap unchanged
     const params = request.params as [{ to?: string; data?: Hex }] | undefined;
     const call = params?.[0];
-    if (request.method === "eth_call" && [feed.toLowerCase(), oracle].includes(call?.to?.toLowerCase() ?? "")) {
+    if (request.method === "eth_call" && call?.to?.toLowerCase() === oracle) {
       const decoded = decodeFunctionData({ abi: oracleAbi, data: call!.data! });
-      const now = BigInt(Math.floor(Date.now() / 1000));
-      const result = decoded.functionName === "decimals" ? 8
-        : decoded.functionName === "latestRoundData" ? [1n, 3000_00000000n, now, now, 1n]
-        : decoded.functionName === "getOperatorFee" ? 0n : 1000n;
+      const result = decoded.functionName === "getOperatorFee" ? 0n : 1000n;
       return encodeFunctionResult({ abi: oracleAbi, functionName: decoded.functionName, result } as never);
     }
     return raw(request as never);
@@ -90,12 +84,12 @@ try {
     const naiveResult = outcomes(naiveCall.data!);
     assert(naiveResult.some(x => x !== 0), "fixture must reproduce successful no-op estimation");
     const quote = await quoteMissionBatch(client, { items, nonce: await client.getTransactionCount({ address: account }),
-      account, game, chainId: 8453, policy: { ...defaultMissionBatchPolicy, enabled: true, maxItems: 32, priceFeed: feed } });
+      account, game, chainId: 8453, policy: { ...defaultMissionBatchPolicy, enabled: true, maxItems: 32 } });
     const selected = await client.call({ account, to: game, data, gas: quote.gas });
     const result = outcomes(selected.data!);
     console.log(JSON.stringify({ count, naiveGas: naive.toString(), selectedGas: quote.gas.toString(), outcomes: result }));
     assert.deepEqual(result, Array(count).fill(0), "selected exact gas must settle every independent fixture return");
-    assert(quote.usdMicros <= 500_000n);
+    assert(quote.totalWei <= 200_000_000_000_000n);
     const hash = await wallet.sendTransaction({ to: game, data, gas: quote.gas, maxFeePerGas: quote.maxFeePerGas,
       maxPriorityFeePerGas: quote.maxPriorityFeePerGas, chain });
     const receipt = await client.waitForTransactionReceipt({ hash });
@@ -103,7 +97,7 @@ try {
     for (let id = 1; id <= count; id++) assert.equal(await client.readContract({ address: game, abi: artifact.abi,
       functionName: "status", args: [BigInt(id)] }), 4);
     rows.push({ count, naiveGas: naive.toString(), selectedGas: quote.gas.toString(), actualGas: receipt.gasUsed.toString(),
-      maxUsdMicros: quote.usdMicros.toString(), settledLegs: count });
+      maxTotalFeeWei: quote.totalWei.toString(), settledLegs: count });
     assert.equal(await raw({ method: "evm_revert", params: [snapshot] } as never), true);
   }
   console.log(JSON.stringify({ proof: "local synthetic chronology harness; oracle fees are fixtures, not live Base quotes", rows }, null, 2));
