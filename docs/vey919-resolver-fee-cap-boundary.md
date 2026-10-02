@@ -7,7 +7,17 @@ lets the wallet choose gas, or allocates past an unaffordable stale nonce.
 Missing, stale, future-dated or invalid ETH/USD data and missing Base L1/operator
 oracles fail closed. Cancellation preflight includes sender, recipient, empty data,
 zero value, exact gas, nonce and EIP-1559 fees; lease ownership is fenced afterward.
+All automatic cancellation callers (mission and randomness commit/fulfill) share this
+same helper, so another writer cannot bypass an unaffordable mission cancellation.
+The manual nonce-gap recovery CLI refuses broadcast before loading configuration;
+read-only planning remains available. Its multi-nonce aggregate spending policy is
+not authorized by this repair.
 Single arrival/return/moon-finalization preflight includes the exact nonce and fees too.
+Single submit/replacement sends are fenced after the last preflight await, and all
+coordinated submission journal transitions atomically recheck lease ownership so
+late completions cannot overwrite a successor.
+Randomness commit/fulfill payload pricing is a separate writer policy; this repair
+covers their ability to cancel the shared resolver nonce, not those payloads.
 Quotes expire after 30 seconds or the price freshness window, including during preflight.
 
 Batching remains disabled by default and is not enabled by this repair. Each batch

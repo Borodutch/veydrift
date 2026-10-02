@@ -13,6 +13,7 @@ type RecoveryArguments = {
 
 async function main(): Promise<void> {
   const args = parseArguments(process.argv.slice(2));
+  if (args.broadcast) throw new Error("resolver nonce recovery broadcast disabled pending capped per-transaction and aggregate recovery policy");
   const loaded = loadBackendConfig();
   if (!loaded.config.rpcUrl) throw new Error("resolver nonce recovery requires VEYDRIFT_RPC_URL");
   const keys = [

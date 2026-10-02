@@ -7,6 +7,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { createPublicClient, custom, type PublicClient, type WalletClient } from "viem";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ViemRandomnessCommitmentChainClient } from "./randomnessCommitter";
 
 const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
 const game = "0x3333333333333333333333333333333333333333" as const;
@@ -90,6 +91,18 @@ for (const failure of ["fee-spike", "replacement-escalation", "missing-price", "
       expect(contractWrites).toHaveLength(0);
       expect(db.query("SELECT * FROM resolver_transaction_attempts").all()).toEqual(original);
       expect([latest, pending]).toEqual([7, 8]);
+      // A sibling sharing this EOA must not bypass the rejected mission cancellation.
+      for (const operation of ["commit", "fulfill"] as const) {
+        if (failure === "lost-lease") db.query("DELETE FROM resolver_transaction_leases").run();
+        const sibling = new ViemRandomnessCommitmentChainClient(publicClient as unknown as PublicClient,
+          walletClient as unknown as WalletClient, game, account, { id: 8453 } as never,
+          new ResolverTransactionCoordinator(path, { staleTransactionMs: 0 }));
+        await expect(operation === "commit" ? sibling.commitRandomnessBatch([oldHash])
+          : sibling.fulfillRandomness(99n, 42n)).rejects.toThrow();
+        expect(sends).toHaveLength(0);
+        expect(contractWrites).toHaveLength(0);
+        expect(db.query("SELECT * FROM resolver_transaction_attempts").all()).toEqual(original);
+      }
       // Restart and retry must still address the original stale nonce, never allocate nonce 8.
       if (failure === "lost-lease") db.query("DELETE FROM resolver_transaction_leases").run();
       blocked = false;

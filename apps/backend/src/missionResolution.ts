@@ -27,6 +27,7 @@ import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReco
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
+import { cancelResolverTransaction } from "./resolverCancellation";
 import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, quoteResolverGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
@@ -1083,7 +1084,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
       await preflight(quote.gas, nonce, fees);
       quote.assertFresh();
-      return { gas: quote.gas, ...fees };
+      return { gas: quote.gas, ...fees, assertFresh: quote.assertFresh };
     };
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
@@ -1102,45 +1103,27 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           address: account.address,
           blockTag
         }),
-        submit: async (nonce) => this.walletClient!.writeContract({
-          abi: veydriftGameResolutionAbi,
-          account,
-          address: targetAddress,
-          chain: this.chain!,
-          functionName,
-          args: [BigInt(missionId)],
-          nonce,
-          ...await cappedFees(nonce)
-        }),
+        submit: async (nonce, assertLease) => {
+          const { assertFresh, ...fees } = await cappedFees(nonce);
+          assertFresh();
+          assertLease();
+          return this.walletClient!.writeContract({ abi: veydriftGameResolutionAbi, account,
+            address: targetAddress, chain: this.chain!, functionName, args: [BigInt(missionId)], nonce, ...fees });
+        },
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
-        replace: async (nonce, previousHash) => this.walletClient!.writeContract({
-          abi: veydriftGameResolutionAbi,
-          account,
-          address: targetAddress,
-          chain: this.chain!,
-          functionName,
-          args: [BigInt(missionId)],
-          nonce,
-          ...await cappedFees(nonce, previousHash)
-        }),
-        cancelStale: async (nonce, previousHash, assertLease) => {
-          const client = this.publicClient!;
-          const fees = await resolverReplacementFees(client, previousHash);
-          // A same-EOA cancellation is a paid resolver transaction too. Never let the
-          // wallet fill gas/fees or escape the cap while escalating a stale nonce.
-          const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: 0, gas: 21_000n,
-            maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
-          const gas = quote.gas;
-          if (gas < 21_000n) throw new Error("stale nonce cancellation exceeds resolver USD cap");
-          const envelope = { account, to: account.address, data: "0x" as Hex, value: 0n, nonce, gas, ...fees };
-          await client.call({ ...envelope, blockTag: "latest" });
-          quote.assertFresh();
+        replace: async (nonce, previousHash, assertLease) => {
+          const { assertFresh, ...fees } = await cappedFees(nonce, previousHash);
+          assertFresh();
           assertLease();
-          // Throwing above leaves the original submitted attempt/nonce owned in the journal.
-          return this.walletClient!.sendTransaction({ ...envelope, chain: this.chain! });
+          return this.walletClient!.writeContract({ abi: veydriftGameResolutionAbi, account,
+            address: targetAddress, chain: this.chain!, functionName, args: [BigInt(missionId)], nonce, ...fees });
         },
+        cancelStale: (nonce, previousHash, assertLease) => cancelResolverTransaction({
+          client: this.publicClient!, wallet: this.walletClient!, account, chain: this.chain!,
+          nonce, previousHash, assertLease, priceFeed: this.batchPolicy.priceFeed
+        }),
         confirm: (hash) => this.confirm(hash)
       });
     }
@@ -1155,15 +1138,19 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         address: from,
         blockTag
       }),
-      submit: async (nonce) => {
-        const { gas, ...fees } = await cappedFees(nonce);
+      submit: async (nonce, assertLease) => {
+        const { gas, assertFresh, ...fees } = await cappedFees(nonce);
+        assertFresh();
+        assertLease();
         return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
-      replace: async (nonce, previousHash) => {
-        const { gas, ...fees } = await cappedFees(nonce, previousHash);
+      replace: async (nonce, previousHash, assertLease) => {
+        const { gas, assertFresh, ...fees } = await cappedFees(nonce, previousHash);
+        assertFresh();
+        assertLease();
         return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       confirm: (hash) => this.confirm(hash)
