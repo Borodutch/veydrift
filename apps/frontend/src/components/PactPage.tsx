@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ArrowRight, Check, Coins, ExternalLink, Handshake, Lock, Repeat, Rocket, Swords, Users } from "lucide-preact";
+import { TrailerPlayer } from "../ComingSoonApp";
 import { submitPactInterest } from "../pactInterest";
 import { TelegramIcon } from "./TelegramIcon";
 
@@ -107,6 +108,9 @@ export function PactApp() {
               Message me on Telegram
             </a>
           </div>
+          <div className="mt-12">
+            <TrailerPlayer />
+          </div>
         </div>
       </section>
 
@@ -169,7 +173,6 @@ export function PactApp() {
           ))}
         </div>
         <div className="mt-6 flex flex-wrap gap-4 text-sm">
-          <ExternalLinkText href="/">Watch the trailer</ExternalLinkText>
           <ExternalLinkText href="/docs">Read the docs</ExternalLinkText>
         </div>
       </Section>
