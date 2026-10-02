@@ -6,26 +6,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { outputContainsFlaggedOutput } from "./ci-run-scoped-checks.mjs";
 
-test("PR and push CI select every check, while local preflight stays scoped", () => {
+test("PR and push CI select the same scoped checks for the same change", () => {
   const dir = mkdtempSync(join(tmpdir(), "veydrift-ci-parity-"));
   const scopeScript = new URL("./ci-scope.mjs", import.meta.url).pathname;
   const env = { ...process.env };
-  for (const key of ["BASE_REF", "HEAD_REF", "BEFORE_SHA", "GITHUB_SHA", "GITHUB_EVENT_PATH"]) {
+  for (const key of ["BASE_REF", "HEAD_REF", "BEFORE_SHA", "GITHUB_SHA", "GITHUB_EVENT_PATH", "EVENT_NAME", "GITHUB_EVENT_NAME"]) {
     delete env[key];
   }
   const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env });
   const scope = (event, base) => JSON.parse(execFileSync(process.execPath, [
     scopeScript, "--event", event, "--base", base, "--head", "HEAD", "--json",
   ], { cwd: dir, encoding: "utf8", env }));
+  const areas = (result) => ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"]
+    .filter((key) => result[key]);
+  const expected = {
+    "README.md": [],
+    "docs/guide.md": [],
+    "apps/backend/src/example.ts": ["backend"],
+    "apps/frontend/src/example.ts": ["frontend"],
+    "apps/stats/src/example.ts": ["stats"],
+    "apps/battle-keeper/src/example.ts": ["keeper"],
+    "packages/universe/src/example.ts": ["universe", "backend", "frontend"],
+    "packages/api-types/src/index.ts": ["backend", "frontend"],
+    "packages/contracts/test/Example.t.sol": ["contracts"],
+    "packages/contracts/src/Example.sol": ["backend", "contracts", "storage_layout"],
+    "package.json": ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"],
+    "Dockerfile": ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"],
+  };
   try {
     git("init", "--initial-branch=main");
     git("config", "user.name", "CI fixture");
     git("config", "user.email", "ci@example.invalid");
     git("commit", "--allow-empty", "-m", "base");
     const base = git("rev-parse", "HEAD").trim();
-    git("remote", "add", "origin", dir);
     git("checkout", "-b", "change");
-    for (const file of ["README.md", "apps/frontend/src/example.ts", "packages/contracts/test/Example.t.sol", "packages/contracts/src/Example.sol", "package.json"]) {
+    for (const [file, want] of Object.entries(expected)) {
       git("reset", "--hard", base);
       mkdirSync(join(dir, file, ".."), { recursive: true });
       writeFileSync(join(dir, file), "fixture\n");
@@ -34,30 +49,26 @@ test("PR and push CI select every check, while local preflight stays scoped", ()
       const pr = scope("pull_request", "main");
       const push = scope("push", base);
       assert.deepEqual(pr, push, file);
-      for (const key of ["frontend", "backend", "universe", "contracts", "storage_layout", "full_build", "any_package_check"]) {
-        assert.equal(pr[key], true, file + ": " + key);
-      }
-      if (file === "README.md") {
-        assert.equal(scope("local", base).any_package_check, false);
-      }
-      if (file === "packages/contracts/test/Example.t.sol") {
-        const local = scope("local", base);
-        assert.equal(local.contracts, true);
-        assert.equal(local.frontend, false);
-        assert.equal(local.full_build, false);
-        assert.equal(local.storage_layout, false);
-      }
+      assert.deepEqual(areas(pr).sort(), [...want].sort(), file);
     }
+    // A push whose previous tip is unknown checks everything.
+    assert.equal(scope("push", "0000000000000000000000000000000000000000").full, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("a changed script runs its own tests", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/a.test.mjs";
+  assert.deepEqual(changedScriptTests(["scripts/a.mjs", "scripts/a.test.mjs", "scripts/b.mjs", "docs/a.mjs"], exists), ["scripts/a.test.mjs"]);
 });
 
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
   // This child runs its own node:test process, rather than joining the parent's test context.
   delete env.NODE_TEST_CONTEXT;
-  for (const area of ["FRONTEND", "BACKEND", "UNIVERSE", "CONTRACTS", "STORAGE_LAYOUT", "FULL_BUILD"]) {
+  for (const area of ["UNIVERSE", "BACKEND", "FRONTEND", "STATS", "KEEPER", "CHICKEN", "CONTRACTS", "STORAGE_LAYOUT"]) {
     env["CI_SCOPE_" + area] = "false";
   }
   const result = spawnSync(process.execPath, ["scripts/ci-run-scoped-checks.mjs"], {
@@ -72,6 +83,7 @@ test("documentation checks run when no package checks are selected", () => {
 test("passing test names may describe warnings without being diagnostics", () => {
   assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge"), false);
   assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge\nwarning: unexpected diagnostic"), true);
+  assert.equal(outputContainsFlaggedOutput("✔ passing test names may describe warnings (0.6ms)"), false);
 });
 import { filesRequireContractChecks, filesRequireFrontendChecks, filesRequireBackendChecks } from "./ci-scope.mjs";
 
@@ -158,7 +170,7 @@ test("tolerates only the Vite dev-proxy noise from backend-less browser tests", 
 import { planChecks, CHECK_GROUPS } from "./ci-run-scoped-checks.mjs";
 import { shardTestFiles, parseShard } from "../packages/contracts/scripts/run-tests-separately.mjs";
 
-const FULL_SCOPE = { frontend: true, backend: true, universe: true, contracts: true, storage_layout: true, full_build: true };
+const FULL_SCOPE = { universe: true, backend: true, frontend: true, stats: true, keeper: true, chicken: true, contracts: true, storage_layout: true };
 const labels = (plan) => plan.map((step) => step.label);
 
 test("parallel check groups partition the full sequential plan", () => {
@@ -167,17 +179,24 @@ test("parallel check groups partition the full sequential plan", () => {
     .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
     .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-test")), ["contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-fast-check", "contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-storage")), ["contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "build")), ["frontend-precheck", "build"]);
-  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => ["build", "contracts-test", "frontend-touch-browser"].includes(label)));
+  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label === "frontend-touch-browser"));
   assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
 });
 
 test("groups with nothing in scope plan no checks", () => {
-  const docsOnly = { frontend: false, backend: false, universe: false, contracts: false, storage_layout: false, full_build: false };
+  const docsOnly = Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false]));
   assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
-  for (const group of ["build", "browser", "contracts-test"]) assert.deepEqual(planChecks(docsOnly, group), []);
+  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(docsOnly, group), []);
+});
+
+test("a backend-only change plans only cheap backend checks", () => {
+  const backend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), backend: true };
+  assert.deepEqual(labels(planChecks(backend, "rest")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
+    "backend-performance-tool-test", "release-diagnostics-test"]);
+  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(backend, group), []);
 });
 
 test("contract test shards cover every file exactly once and isolate the largest file", () => {
@@ -190,4 +209,10 @@ test("contract test shards cover every file exactly once and isolate the largest
   assert.equal(parseShard(""), null);
   assert.throws(() => shardTestFiles(files, counts, 4, 3), /invalid contract test shard/);
   assert.throws(() => parseShard("two"), /must look like/);
+});
+
+test("contract test files that mutate process state get their own forge process", async () => {
+  const { splitTestFiles } = await import("../packages/contracts/scripts/run-tests-separately.mjs");
+  const sources = { "A.t.sol": "vm.setEnv(\"X\", \"1\");", "B.t.sol": "vm.writeJson(json, path);", "C.t.sol": "assertEq(1, 1);", "VeydriftStagedCombat.t.sol": "" };
+  assert.deepEqual(splitTestFiles(Object.keys(sources), sources), { own: ["A.t.sol", "B.t.sol", "VeydriftStagedCombat.t.sol"], shared: ["C.t.sol"] });
 });

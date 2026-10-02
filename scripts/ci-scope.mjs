@@ -55,13 +55,23 @@ function changedFiles({ base, head = "HEAD", eventName = "local" } = {}) {
   const diffBase = base || process.env.BASE_REF || "";
   const diffHead = head || "HEAD";
 
-  if (eventName === "pull_request" || diffBase.startsWith("origin/")) {
-    const baseRef = diffBase.startsWith("origin/") ? diffBase : `origin/${diffBase}`;
-    git(["fetch", "--no-tags", "--depth=1", "origin", baseRef.replace(/^origin\//, "")]);
+  // A pull_request checkout is GitHub's merge commit: its first parent is the base branch tip,
+  // so HEAD^1..HEAD is exactly the change the PR introduces. A squash-merge push to main diffs
+  // against the previous main tip. Both therefore select the same checks for the same change.
+  if (eventName === "pull_request") {
     try {
-      return diffNames(`${baseRef}...${diffHead}`);
+      return diffNames(`${diffHead}^1..${diffHead}`);
     } catch {
-      return diffNames(`${baseRef}..${diffHead}`);
+      return ["package.json"];
+    }
+  }
+
+  if (diffBase.startsWith("origin/")) {
+    git(["fetch", "--no-tags", "--depth=1", "origin", diffBase.replace(/^origin\//, "")]);
+    try {
+      return diffNames(`${diffBase}...${diffHead}`);
+    } catch {
+      return diffNames(`${diffBase}..${diffHead}`);
     }
   }
 
@@ -73,31 +83,68 @@ function changedFiles({ base, head = "HEAD", eventName = "local" } = {}) {
     }
   }
 
-  return [];
+  // No usable base (new branch, force push, unfetched history): check everything.
+  return eventName === "local" ? [] : ["package.json"];
 }
 
 function anyMatch(files, pattern) {
   return files.some((file) => pattern.test(file));
 }
 
+// Each area's checks run when the area itself or anything it reads changes.
+export function filesRequireUniverseChecks(files) {
+  return anyMatch(files, /^packages\/universe\//);
+}
+
 export function filesRequireBackendChecks(files) {
   return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types))\//)
+    // Backend tests read contract sources and storage layouts.
+    || anyMatch(files, /^packages\/contracts\/(src|storage-layout)\//)
     || anyMatch(
       files,
-      /^scripts\/(ci-(run-scoped-checks|scope)|veydrift-api-(latency-report|route-benchmark)|veydrift-(redeploy-preflight|redeploy-readiness-probe|safe-diagnostics))(\.test)?\.mjs$/,
+      /^scripts\/(veydrift-api-(latency-report|route-benchmark)|veydrift-(redeploy-preflight|redeploy-readiness-probe|safe-diagnostics))(\.test)?\.mjs$/,
     );
 }
 
 export function filesRequireFrontendChecks(files) {
-  return anyMatch(files, /^(apps\/(frontend|stats)|packages\/(universe|api-types))\//);
+  return anyMatch(files, /^(apps\/frontend|packages\/(universe|api-types))\//)
+    || anyMatch(files, /^packages\/contracts\/combat-preview-catalog\.json$/)
+    || anyMatch(files, /^scripts\/veydrift-test-frontend-config-check\.mjs$/);
+}
+
+export function filesRequireStatsChecks(files) {
+  return anyMatch(files, /^apps\/stats\//);
+}
+
+export function filesRequireKeeperChecks(files) {
+  return anyMatch(files, /^apps\/battle-keeper\//);
+}
+
+export function filesRequireChickenChecks(files) {
+  return anyMatch(files, /^apps\/chicken-burn-listener\//);
 }
 
 export function filesRequireContractChecks(files) {
   return anyMatch(files, /^packages\/contracts\//)
+    || anyMatch(files, /^\.gitmodules$/)
     || anyMatch(
       files,
-      /^scripts\/veydrift-(apply-deployment-manifest|deployment-manifest|postdeploy-smoke|upgrade-receipt)(\.test)?\.mjs$/,
+      /^scripts\/(veydrift-(apply-deployment-manifest|deployment-manifest|postdeploy-smoke|upgrade-receipt|referral-migration-[a-z-]+)|mission-batch-[a-z-]+)(\.test)?\.(mjs|ts)$/,
     );
+}
+
+// Changes that affect every package (toolchain, lockfile, CI itself) run the full suite.
+const REPO_WIDE = /^(\.github\/workflows\/ci\.yml|package\.json|bun\.lockb|tsconfig\.base\.json|nixpacks(\.[a-z]+)?\.toml)$/;
+// Paths no check reads (beyond the docs checks, which always run).
+const NO_CHECKS = /^(docs\/|[^/]+\.md$|\.dockerignore$|\.gitignore$|LICENSE$|\.github\/(?!workflows\/ci\.yml))/;
+const AREA_PATHS = /^(apps\/(backend|frontend|stats|battle-keeper|chicken-burn-listener)|packages\/(universe|api-types|contracts))\//;
+
+// scripts/<name>.mjs and scripts/<name>.test.mjs: a change runs that script's own tests.
+export function changedScriptTests(files, exists = existsSync) {
+  const names = files
+    .map((file) => /^scripts\/([^/]+?)(\.test)?\.mjs$/.exec(file)?.[1])
+    .filter(Boolean);
+  return unique(names.map((name) => `scripts/${name}.test.mjs`)).filter((test) => exists(test));
 }
 
 export function computeScope(options = {}) {
@@ -114,54 +161,40 @@ export function computeScope(options = {}) {
     ...(eventName === "local" ? git(["ls-files", "--others", "--exclude-standard"]).split("\n") : []),
   ]);
 
-  const repoWide = anyMatch(files, /^(\.github\/workflows\/ci\.yml|package\.json|bun\.lockb)$/);
+  const scriptTests = changedScriptTests(files);
+  const known = (file) => AREA_PATHS.test(file) || NO_CHECKS.test(file) || /^scripts\//.test(file);
+  // Anything unclassified is treated as repo-wide rather than silently skipped.
+  const full = anyMatch(files, REPO_WIDE) || files.some((file) => !known(file));
+
   const scope = {
-    frontend: false,
-    backend: false,
-    universe: false,
-    contracts: false,
-    storage_layout: false,
-    full_build: false,
+    universe: full || filesRequireUniverseChecks(files),
+    backend: full || filesRequireBackendChecks(files),
+    frontend: full || filesRequireFrontendChecks(files),
+    stats: full || filesRequireStatsChecks(files),
+    keeper: full || filesRequireKeeperChecks(files),
+    chicken: full || filesRequireChickenChecks(files),
+    contracts: full || filesRequireContractChecks(files),
+    storage_layout:
+      full ||
+      anyMatch(
+        files,
+        /^packages\/contracts\/(src\/.*\.sol|foundry\.toml|package\.json|storage-layout\/|scripts\/(check|regen)-storage-layout\.mjs)/,
+      ),
+    full,
     changed_count: files.length,
   };
-
-  // CI must validate the same full tree before and after merge; only local preflight is scoped.
-  if (eventName !== "local") {
-    scope.frontend = true;
-    scope.backend = true;
-    scope.universe = true;
-    scope.contracts = true;
-    scope.full_build = true;
-  } else if (repoWide) {
-    scope.frontend = true;
-    scope.backend = true;
-    scope.universe = true;
-    scope.contracts = true;
-  } else {
-    scope.frontend = filesRequireFrontendChecks(files);
-    scope.backend = filesRequireBackendChecks(files);
-    scope.universe = anyMatch(files, /^packages\/universe\//);
-    scope.contracts = filesRequireContractChecks(files);
-  }
-
-  scope.storage_layout =
-    eventName !== "local" ||
-    repoWide ||
-    anyMatch(
-      files,
-      /^packages\/contracts\/(src\/.*\.sol|foundry\.toml|package\.json|storage-layout\/|scripts\/(check|regen)-storage-layout\.mjs)/,
-    );
-
-  scope.any_package_check =
-    scope.frontend || scope.backend || scope.universe || scope.contracts || scope.full_build;
+  scope.any_package_check = AREAS.some((area) => scope[area]);
+  scope.script_tests = scriptTests;
   scope.files = files;
   return scope;
 }
 
+export const AREAS = ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts"];
+
 function writeGithubOutput(path, scope) {
   const lines = [];
   for (const [key, value] of Object.entries(scope)) {
-    if (key === "files") continue;
+    if (key === "files" || key === "script_tests") continue;
     lines.push(`${key}=${value ? TRUE : FALSE}`);
   }
   appendFileSync(path, `${lines.join("\n")}\n`);
@@ -183,7 +216,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(JSON.stringify(scope, null, 2));
   } else {
     console.log(
-      `changed=${scope.changed_count} frontend=${scope.frontend} backend=${scope.backend} universe=${scope.universe} contracts=${scope.contracts} storage_layout=${scope.storage_layout} full_build=${scope.full_build}`,
+      `changed=${scope.changed_count} full=${scope.full} ` + AREAS.map((area) => `${area}=${scope[area]}`).join(" "),
     );
   }
 }

@@ -8,6 +8,8 @@ build/
 out/
 coverage/
 cache/
+out-storage/
+cache-storage/
 
 # Environment
 .env
