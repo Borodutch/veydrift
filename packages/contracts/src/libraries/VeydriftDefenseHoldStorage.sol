@@ -67,36 +67,4 @@ library VeydriftDefenseHoldStorage {
         }
         defenseHoldUntil[missionId] = 0;
     }
-
-    /// @notice Append every DefenseHold fleet that is holding over `attackArrivalAt` into the
-    ///         attack's counterplay roster so the existing battle machinery fights them alongside
-    ///         the planet's own ships and defenses. This is the on-chain realization of "station a
-    ///         fleet for a hold window, defend any attack that lands during it".
-    function linkQualifiedDefenders(
-        uint256[] storage stationedMissionIds,
-        uint256[] storage counterplayMissionIds,
-        mapping(
-            uint256 missionId => VeydriftGameStorage.FleetMission mission
-        ) storage missions,
-        mapping(uint256 missionId => uint64 holdUntil) storage defenseHoldUntil,
-        uint64 attackArrivalAt,
-        bool attackTargetIsMoon
-    ) public {
-        for (uint256 i = 0; i < stationedMissionIds.length;) {
-            uint256 stationedMissionId = stationedMissionIds[i];
-            VeydriftGameStorage.FleetMission storage stationed = missions[stationedMissionId];
-            if (
-                stationed.status == VeydriftGameStorage.FleetMissionStatus.Outbound
-                    && stationed.missionType == VeydriftGameStorage.FleetMissionType.DefenseHold
-                    && stationed.targetIsMoon == attackTargetIsMoon
-                    && stationed.arrivalAt <= attackArrivalAt
-                    && defenseHoldUntil[stationedMissionId] >= attackArrivalAt
-            ) {
-                counterplayMissionIds.push(stationedMissionId);
-            }
-            unchecked {
-                ++i;
-            }
-        }
-    }
 }

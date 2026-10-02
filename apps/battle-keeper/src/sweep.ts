@@ -18,6 +18,8 @@ export type LogSweepOptions = {
   /** Max block span per `eth_getLogs` request. Nodes cap the range (the self-hosted node caps at
    * 100k), so a deep backfill is split into chunks of this size. */
   maxRangeBlocks?: bigint;
+  /** Enable durable progressive history discovery from the verified Game deployment block. */
+  deploymentBlock?: bigint;
   logger?: KeeperLogger;
 };
 
@@ -60,6 +62,8 @@ const fleetMissionStatusAbi = [
  * which submits due legs.
  */
 export class LogBackfillSweep {
+  private sweeping = false;
+  private readonly deploymentBlock: bigint | undefined;
   private lastSweepAt: string | null = null;
   private lastSweepError: string | null = null;
   private sweepCount = 0;
@@ -75,6 +79,7 @@ export class LogBackfillSweep {
     private readonly keeper: BattleKeeper,
     options: LogSweepOptions = {}
   ) {
+    this.deploymentBlock = options.deploymentBlock;
     this.lookbackBlocks = options.lookbackBlocks ?? 2_000n;
     this.maxRangeBlocks = options.maxRangeBlocks ?? 90_000n;
     this.logger = options.logger;
@@ -98,6 +103,13 @@ export class LogBackfillSweep {
    * `maxRangeBlocks` chunks because nodes cap a single `eth_getLogs` span.
    */
   async sweep(lookbackOverride?: bigint): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try { await this.runSweep(lookbackOverride); }
+    finally { this.sweeping = false; }
+  }
+
+  private async runSweep(lookbackOverride?: bigint): Promise<void> {
     const errors: string[] = [];
     const pendingBefore = this.keeper.snapshot().pendingCount;
     // Only terminal missions that predate this canonical log scan need an authoritative status
@@ -125,6 +137,25 @@ export class LogBackfillSweep {
         }
       }
 
+      // Rolling replay handles reorgs/recent events promptly. Independently advance durable
+      // history by at most two RPC ranges per pass, so an arbitrarily old unfinished mission
+      // or events missed during a long outage remain discoverable after every restart.
+      if (this.deploymentBlock !== undefined) {
+        let start = this.keeper.discoveryNextBlock() ?? this.deploymentBlock;
+        for (let range = 0; range < 2 && start <= latest; range++) {
+          const end = start + this.maxRangeBlocks > latest ? latest : start + this.maxRangeBlocks;
+          const logs = await this.transport.request<RawLog[]>("eth_getLogs", [{
+            address: this.gameContractAddress,
+            fromBlock: `0x${start.toString(16)}`,
+            toBlock: `0x${end.toString(16)}`,
+            topics: [Array.from(subscribedTopic0)]
+          }]);
+          this.keeper.commitDiscoveryBatch(end + 1n, () => {
+            for (const log of logs) this.applyLog(log);
+          });
+          start = end + 1n;
+        }
+      }
       pendingAfterLogs = this.keeper.snapshot().pendingCount;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

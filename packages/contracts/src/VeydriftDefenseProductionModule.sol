@@ -103,6 +103,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         if (!_missionMoonExistsForOwner(missionId, mission.targetPlanetId, targetOwner, false)) {
             // The target moon disappeared in flight. Keep cargo and ships on the mission and send
             // the fleet home instead of writing ghost state that a future moon could inherit.
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Returning;
             emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
             emit FleetMissionReturnExposed(
@@ -124,9 +125,11 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _emitMoonResourcesChanged(mission.targetPlanetId);
         if (mission.missionType == FleetMissionType.Transport) {
             mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Returning;
         } else {
             _creditMoonMissionShips(mission.targetPlanetId, mission.ships);
+            _snapshotMissionScore(mission);
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
@@ -246,6 +249,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
     function _completeReadyDefenseProduction(uint256 planetId, DefenseQueue memory queue) private {
         uint32 total = _defenseCounts[planetId][queue.defense] + queue.quantity;
+        _snapshotPlanetScore(planetId);
         _defenseCounts[planetId][queue.defense] = total;
         emit DefenseCompleted(planetId, queue.defense, queue.quantity, total);
         delete _defenseQueueTimings[planetId][queue.readyAt];
@@ -314,6 +318,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
             active.cost.deuterium -= completedCost.deuterium;
 
             uint32 total = _defenseCounts[planetId][queue.defense] + newlyCompleted;
+            _snapshotPlanetScore(planetId);
             _defenseCounts[planetId][queue.defense] = total;
             emit DefenseCompleted(planetId, queue.defense, newlyCompleted, total);
             break;

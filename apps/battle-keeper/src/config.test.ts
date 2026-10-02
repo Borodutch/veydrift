@@ -93,3 +93,29 @@ describe("loadKeeperConfig", () => {
     expect(summary.rpcUrl).toBe("http://localhost:8545");
   });
 });
+
+
+test("durable discovery config keeps a safe genesis default and configurable managed-volume path", () => {
+  const defaults = loadKeeperConfig(validEnv).config!;
+  expect(defaults.statePath).toBe("/data/battle-keeper/state.sqlite");
+  expect(defaults.deploymentBlock).toBe(0);
+  const configured = loadKeeperConfig({ ...validEnv,
+    KEEPER_STATE_PATH: "/mounted/keeper/state.sqlite", GAME_DEPLOYMENT_BLOCK: "12345"
+  }).config!;
+  expect(configured.statePath).toBe("/mounted/keeper/state.sqlite");
+  expect(configured.deploymentBlock).toBe(12345);
+  for (const value of ["-1", "1.5", "not-a-block", "9007199254740992"]) {
+    expect(loadKeeperConfig({ ...validEnv, GAME_DEPLOYMENT_BLOCK: value }).problems)
+      .toContainEqual({ field: "GAME_DEPLOYMENT_BLOCK", message: "GAME_DEPLOYMENT_BLOCK must be a non-negative safe integer." });
+  }
+});
+
+
+test("arrival progress deployment capability requires exact implementation/runtime pairs", () => {
+  const pair = "0x" + "a".repeat(40) + ":0x" + "b".repeat(64);
+  const load = loadKeeperConfig;
+  const base = validEnv;
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: pair }).config?.arrivalProgressVersions).toEqual([pair]);
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: "*" }).problems.some(p => p.field === "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS")).toBe(true);
+  expect(load({ ...base, VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS: "0x" + "a".repeat(40) }).problems.some(p => p.field === "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS")).toBe(true);
+});

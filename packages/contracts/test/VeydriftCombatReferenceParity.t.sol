@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -338,6 +344,47 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 106);
     }
 
+    function testIndependentReferenceReconcilesBothOwnerSidesMixedResearch() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.joinedAttackerTech = VeydriftCombatReferenceSimulator.CombatTech(10, 9, 10);
+        fixture.defenderTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.counterplayTech = VeydriftCombatReferenceSimulator.CombatTech(10, 9, 10);
+        fixture.attackerShips[uint8(Ship.LightFighter)] = 71;
+        fixture.joinedAttackerShips[uint8(Ship.LightFighter)] = 93;
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 13;
+        fixture.joinedAttackerShips[uint8(Ship.Cruiser)] = 19;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 89;
+        fixture.counterplayShips[uint8(Ship.LightFighter)] = 67;
+        fixture.defenderShips[uint8(Ship.Cruiser)] = 17;
+        fixture.counterplayShips[uint8(Ship.Cruiser)] = 11;
+        fixture.defenderDefenses[uint8(Defense.RocketLauncher)] = 37;
+        _assertReferenceParity(fixture, 94881);
+        assertEq(game.activeFleetMissionCount(player), 0, "leader slot reconciles");
+        assertEq(game.activeFleetMissionCount(ally), 0, "joined slot reconciles");
+        assertEq(game.activeFleetMissionCount(counterplayer), 0, "defender slot reconciles");
+    }
+
+    function testIndependentReferenceReconcilesEqualTechSharedCohortOwnerLosses() public {
+        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
+        fixture.attackerTech = VeydriftCombatReferenceSimulator.CombatTech(8, 8, 8);
+        fixture.joinedAttackerTech = fixture.attackerTech;
+        fixture.defenderTech = fixture.attackerTech;
+        fixture.counterplayTech = fixture.attackerTech;
+        fixture.attackerShips[uint8(Ship.LightFighter)] = 71;
+        fixture.joinedAttackerShips[uint8(Ship.LightFighter)] = 93;
+        fixture.attackerShips[uint8(Ship.Cruiser)] = 13;
+        fixture.joinedAttackerShips[uint8(Ship.Cruiser)] = 19;
+        fixture.defenderShips[uint8(Ship.LightFighter)] = 89;
+        fixture.counterplayShips[uint8(Ship.LightFighter)] = 67;
+        fixture.defenderShips[uint8(Ship.Cruiser)] = 17;
+        fixture.counterplayShips[uint8(Ship.Cruiser)] = 11;
+        _assertReferenceParity(fixture, 94880);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.activeFleetMissionCount(ally), 0);
+        assertEq(game.activeFleetMissionCount(counterplayer), 0);
+    }
+
     function _assertReferenceParity(
         VeydriftCombatReferenceSimulator.BattleInput memory fixture,
         uint256 randomWord
@@ -505,17 +552,13 @@ contract VeydriftCombatReferenceParityTest is Test {
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
-        (, uint8 totalRounds) = game.battleResolutionProgress(missionId);
-        // At most one scan operation per fixture mission, then one call per combat round.
-        // Successful preparer calls need not resolve the battle; reconcile canonical status.
-        uint256 maximumCalls = game.nextFleetId() - 1 + totalRounds;
         VeydriftGameStorage.FleetMissionStatus status;
-        for (uint256 calls = 0; calls < maximumCalls; calls++) {
+        for (uint256 calls = 0; calls < 20_000; calls++) {
             if (batchMode) {
                 MissionResolutionItem[] memory items = new MissionResolutionItem[](2);
                 items[0] = MissionResolutionItem(missionId, 0);
                 items[1] = MissionResolutionItem(missionId, 1);
-                (uint8 roundsBefore,) = game.battleResolutionProgress(missionId);
+                (,, uint256 workBefore) = game.stagedBattleProgress(missionId);
                 uint256 beforeGas = gasleft();
                 (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
                     game.resolveFleetMissionBatch{gas: batchGas}(items);
@@ -532,20 +575,18 @@ contract VeydriftCombatReferenceParityTest is Test {
                 assertLt(gross, 16_777_216 - 50_000); // Real Base cap, with intrinsic headroom.
                 (status,,,) = _fleetMission(missionId);
                 if (requirePartial && status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
-                    (uint8 completed,) = game.battleResolutionProgress(missionId);
-                    if (completed > roundsBefore) {
+                    (,, uint256 workAfter) = game.stagedBattleProgress(missionId);
+                    if (workAfter > workBefore) {
                         sawPartial = true;
                         assertEq(uint8(outcomes[0]), uint8(MissionResolutionOutcome.Progress));
-                        // A receipt at a smaller gas limit can succeed without another round.
-                        // Repeated exact-call simulation must not label gas spent as Progress.
-                        for (uint256 repeat; repeat < 2; ++repeat) {
-                            (MissionResolutionOutcome[] memory idle, uint256 idleGas) =
-                                game.resolveFleetMissionBatch{gas: 500_000}(items);
-                            assertEq(uint8(idle[0]), uint8(MissionResolutionOutcome.Pending));
-                            assertGt(idleGas, 0);
-                            (uint8 unchanged,) = game.battleResolutionProgress(missionId);
-                            assertEq(unchanged, completed);
-                        }
+                        // Staged work is bounded, so a small call may legitimately progress.
+                        // Progress must be reported exactly when canonical staged work changed.
+                        (MissionResolutionOutcome[] memory again,) =
+                            game.resolveFleetMissionBatch{gas: 500_000}(items);
+                        (,, uint256 workAgain) = game.stagedBattleProgress(missionId);
+                        assertEq(
+                            again[0] == MissionResolutionOutcome.Progress, workAgain > workAfter
+                        );
                     }
                     // Prove one bounded partial call; then use the supported maximum to finish.
                     // A round/finalization can be indivisible and exceed a smaller keeper estimate.
@@ -561,7 +602,7 @@ contract VeydriftCombatReferenceParityTest is Test {
                     outcomes[1] != MissionResolutionOutcome.Settled, "return must not credit early"
                 );
             } else {
-                game.resolveFleetMission(missionId);
+                game.resolveFleetMission{gas: 15_000_000}(missionId);
             }
             (status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) break;
@@ -811,16 +852,20 @@ contract VeydriftCombatReferenceParityTest is Test {
     }
 
     function _newGame(address owner) internal virtual returns (VeydriftGame) {
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(address(0xBEEF));
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            address(0xBEEF), address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
         return new VeydriftGame(

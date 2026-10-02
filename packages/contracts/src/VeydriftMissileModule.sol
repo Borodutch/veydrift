@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {Defense, Technology} from "./libraries/VeydriftTypes.sol";
@@ -166,7 +167,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         if (arrivalOrder.ready && headMissionId != 0) {
             FleetMission storage cachedHead = _fleetMissions[headMissionId];
             if (!_isHostileArrivalForPlanet(cachedHead, planetId)) {
-                delete _arrivalOrderIndexByPlanet[planetId];
+                _invalidateArrivalOrderIndex(planetId);
                 headMissionId = 0;
             }
         }
@@ -174,6 +175,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         if (!arrivalOrder.ready) {
             uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
             uint256 cursor = arrivalOrder.cursor;
+            uint256 startCursor = cursor;
             uint256 end = cursor + MAX_ARRIVAL_ORDER_SCAN_OPERATIONS;
             if (end > missionIds.length) end = missionIds.length;
             for (; cursor < end;) {
@@ -194,6 +196,9 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
             // lifetime, so the packed cursor cannot truncate a reachable array index.
             // forge-lint: disable-next-line(unsafe-typecast)
             arrivalOrder.cursor = uint64(cursor);
+            VeydriftArrivalProgress.advance(
+                planetId, cursor - startCursor + (cursor == missionIds.length ? 1 : 0)
+            );
             // Mission ids are sequential and likewise cannot approach the packed 2^184 bound.
             // forge-lint: disable-next-line(unsafe-typecast)
             arrivalOrder.headMissionId = uint184(headMissionId);
@@ -354,6 +359,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         }
 
         uint32 total = _shipCounts[planetId][queue.ship] + newlyCompleted;
+        _snapshotPlanetScore(planetId);
         _shipCounts[planetId][queue.ship] = total;
         emit ShipCompleted(planetId, queue.ship, newlyCompleted, total);
         if (newlyCompleted != queue.quantity) {
@@ -419,6 +425,7 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         }
 
         uint32 total = _defenseCounts[planetId][queue.defense] + newlyCompleted;
+        _snapshotPlanetScore(planetId);
         _defenseCounts[planetId][queue.defense] = total;
         emit DefenseCompleted(planetId, queue.defense, newlyCompleted, total);
         if (newlyCompleted != queue.quantity) {

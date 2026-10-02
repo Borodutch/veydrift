@@ -3,7 +3,6 @@ import { encodeFunctionResult, keccak256, parseTransaction, type PublicClient } 
 import { privateKeyToAccount } from "viem/accounts";
 import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
-import { measuredBatchGas } from "./missionBatchFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
 // Synthetic fixture-only key, never loaded from runtime configuration.
@@ -28,7 +27,8 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
     sendRawTransaction: async ({ serializedTransaction }: { serializedTransaction: `0x${string}` }) => {
       broadcasts++;
       expect(parseTransaction(serializedTransaction).nonce).toBe(4);
-      expect(parseTransaction(serializedTransaction).gas).toBe((measuredBatchGas(100_000n, parseTransaction(serializedTransaction).data!, 1) * 120n + 99n) / 100n);
+      // Cheap fees: full-cap headroom, never below the measured minimum.
+      expect(parseTransaction(serializedTransaction).gas).toBe(16_777_216n);
       if (options.ambiguous) throw new Error("connection lost after send");
       mined = true; nonce++;
       return keccak256(serializedTransaction);
@@ -45,7 +45,7 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
       return { status: options.stale && reads > 1 ? "Returned" : "Outbound", arrivalAt: String(now - 5), returnAt: String(now + 5) } as never;
     }
   }, game, account, publicClient as unknown as PublicClient, undefined, chain, undefined, coordinator, undefined, undefined,
-  { ...defaultMissionBatchPolicy, enabled: true, priceFeed: game });
+  { ...defaultMissionBatchPolicy, enabled: true });
   const items = [{ missionId: "1", leg: "arrival" as const, dueAt: now - 5 }];
   return { client, coordinator, items, broadcasts: () => broadcasts, mine: () => { mined = true; nonce++; } };
 }

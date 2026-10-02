@@ -103,7 +103,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         (, uint64 firstArrival,,) = _fleetMission(id);
         vm.warp(firstArrival);
         _fulfillAttackBattleRandomness(id, 42);
-        game.resolveFleetMission(id);
+        _resolveAttackFully(id); // Establish an actual returning fleet before the second launch.
         // Fixture IMPACT_AT is 1,790,592,549; callers use only -4, 0 or 4 seconds.
         // Both signed and unsigned 64-bit conversions preserve that positive timestamp.
         // forge-lint: disable-next-line(unsafe-typecast)
@@ -144,7 +144,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         vm.recordLogs();
         if (lazy) {
             vm.prank(player);
-            game.renamePlanet(home, "chronological");
+            game.renamePlanet{gas: 15_000_000}(home, "chronological");
         } else {
             // The permissionless attack resolver is invoked before ANY explicit return tx.
             _resolveAttackFully(ATTACK_ID);
@@ -171,7 +171,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             uint32 beforeCount = isMoon
                 ? game.moonShipCount(home, Ship.SmallCargo)
                 : game.shipCount(home, Ship.SmallCargo);
-            vm.expectRevert();
+            // A concurrent repeat is a no-op, never a revert or a second credit.
             game.completeFleetMissionReturn(RETURN_ID);
             assertEq(
                 isMoon
@@ -333,9 +333,11 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         if (offset >= 0) {
             (MissionResolutionOutcome[] memory blocked, uint256 blockedGas) =
                 game.resolveFleetMissionBatch(items);
-            assertGt(blockedGas, 0); // Pending randomness is failed work, never Progress.
+            assertGt(blockedGas, 0);
+            // The later return stays blocked; the attack commits protection preparation, which
+            // needs no oracle, and stops at its pending combat seed.
             assertEq(uint8(blocked[0]), uint8(MissionResolutionOutcome.Failed));
-            assertEq(uint8(blocked[1]), uint8(MissionResolutionOutcome.Failed));
+            assertEq(uint8(blocked[1]), uint8(MissionResolutionOutcome.Progress));
             assertEq(uint8(blocked[2]), uint8(MissionResolutionOutcome.Failed));
             assertEq(
                 moon
@@ -514,9 +516,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         assertEq(game.shipCount(home, Ship.SmallCargo), 3);
         assertEq(game.activeFleetMissionCount(player), 0);
         assertEq(vm.load(address(game), registration), bytes32(0), "legacy stays legacy");
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, returnAt)
-        );
+        // A concurrent repeat is a no-op, never a revert or a second credit.
         game.completeFleetMissionReturn(id);
         assertEq(game.shipCount(home, Ship.SmallCargo), 3, "no double credit");
         // First new allocation immediately uses the prospective rules despite old clients
@@ -567,8 +567,19 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         (uint256 home,) = _fixture(true, -4);
         game.completeFleetMissionReturn(RETURN_ID);
         assertEq(game.moonShipCount(home, Ship.SmallCargo), 196);
-        vm.expectRevert();
-        game.resolveFleetMission(ATTACK_ID);
+        // Protection preparation may progress before the oracle is needed, but no round may
+        // execute without randomness. Drive bounded preparation to the actual oracle boundary.
+        bool waiting;
+        for (uint256 calls; calls < 64; ++calls) {
+            try game.resolveFleetMission{gas: 15_000_000}(ATTACK_ID) {}
+            catch {
+                waiting = true;
+                break;
+            }
+        }
+        assertTrue(waiting, "must stop at missing randomness");
+        (uint8 rounds,) = game.battleResolutionProgress(ATTACK_ID);
+        assertEq(rounds, 0, "no combat before randomness");
         _fulfillAttackBattleRandomness(ATTACK_ID, 7);
         _resolveAttackFully(ATTACK_ID);
         assertEq(game.activeFleetMissionCount(player), 0);
@@ -599,9 +610,9 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         vm.store(address(game), keccak256(abi.encode(ATTACK_ID, reverseBase)), bytes32(uint256(32)));
         _fulfillAttackBattleRandomness(ATTACK_ID, 7);
         bool done;
-        for (uint256 calls; calls < 20; ++calls) {
+        for (uint256 calls; calls < 2048; ++calls) {
             uint256 beforeGas = gasleft();
-            game.resolveFleetMission(ATTACK_ID);
+            game.resolveFleetMission{gas: 15_000_000}(ATTACK_ID);
             assertLt(beforeGas - gasleft(), 16_000_000, "bounded Base transaction gas");
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ATTACK_ID);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) {
@@ -824,7 +835,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             assertEq(game.shipCount(home, Ship.SmallCargo), 2);
             assertEq(game.moonShipCount(home, Ship.SmallCargo), 0);
             uint128 creditedMetal = game.planet(home).resources.metal;
-            vm.expectRevert();
+            // A concurrent repeat is a no-op, never a revert or a second credit.
             game.completeFleetMissionReturn(deployId);
             assertEq(game.planet(home).resources.metal, creditedMetal);
         } else {

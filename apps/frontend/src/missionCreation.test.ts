@@ -1384,10 +1384,18 @@ describe("mission creation", () => {
       defenderTechKnown: true,
       defenderTechLevels: { weapons: 0, shielding: 0, armor: 0 },
     });
+    const preparedOwner = preparePublicTargetBattleForecast(
+      selectedShips, target, { weapons: 10, shielding: 10, armor: 10 },
+      false, undefined, undefined, "0x0000000000000000000000000000000000000042",
+    );
+    expect(preparedOwner.status).toBe("simulate");
+    if (preparedOwner.status === "simulate") {
+      expect(preparedOwner.input.attackers[0]?.owner).toBe("0x0000000000000000000000000000000000000042");
+    }
     expect(techForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(techForecast).toMatchObject({
       kind: "win",
-      label: "98% win · 2% draw",
+      label: "94% win · 6% draw",
       attackerTechLevels: { weapons: 10, shielding: 10, armor: 10 },
     });
   });
@@ -1745,7 +1753,7 @@ describe("mission creation", () => {
     });
   });
 
-  test("join-attack forecast fails closed when participant tech or lane intel is missing", () => {
+  test("join-attack forecast requires participant tech but not legacy lane metadata", () => {
     const target = targetPlanet({
       publicState: {
         resources: { metal: "0", crystal: "0", deuterium: "0" },
@@ -1784,7 +1792,6 @@ describe("mission creation", () => {
           missionId: "lead-77",
           label: "Lead attack #77",
           owner: "0xlead",
-          laneGroup: 0,
           ships: { destroyer: "4" },
           combatTechnology: { weapons: 8, shielding: 7, armor: 6 },
         }],
@@ -1796,11 +1803,12 @@ describe("mission creation", () => {
     expect(missingTech).toMatchObject({ kind: "uncertain", defenderPower: null });
     expect(missingTech.detail).toContain("Lead attack #77");
     expect(missingTech.detail).toContain("combat technology");
-    expect(missingLane).toMatchObject({ kind: "uncertain", defenderPower: null });
-    expect(missingLane.detail).toContain("battle details are incomplete");
+    expect(missingLane.sampleReport?.attackers.map((participant) => participant.id))
+      .toEqual(["lead-77", "selected-attacker"]);
+    expect(missingLane.sampleReport?.attackers[0]?.technology).toEqual({ weapons: 8, shielding: 7, armor: 6 });
   });
 
-  test("battle forecast fails closed when a stationed defender lane is missing", () => {
+  test("battle forecast includes a qualified stationed defender without legacy lane metadata", () => {
     const forecast = publicTargetBattleForecast(
       { ...attackAction.ships, lightFighter: 3 },
       targetPlanet({
@@ -1830,9 +1838,9 @@ describe("mission creation", () => {
       { projectedAttackArrivalAt: 1900000500 },
     );
 
-    expect(forecast).toMatchObject({ kind: "uncertain", defenderPower: null });
-    expect(forecast.detail).toContain("legacy-hold");
-    expect(forecast.detail).toContain("incomplete battle details");
+    expect(forecast.sampleReport?.defender.counterplay.map((participant) => participant.id))
+      .toEqual(["stationed-legacy-hold"]);
+    expect(forecast.sampleReport?.defender.counterplay[0]?.technology).toEqual({ weapons: 1, shielding: 1, armor: 1 });
   });
 
   test("fails closed when a stationed defender's owner-specific combat technology is unavailable", () => {

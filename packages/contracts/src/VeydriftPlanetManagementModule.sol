@@ -157,6 +157,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             }
         }
 
+        _snapshotPlanetScore(planetId);
         delete _planets[planetId];
         delete planetNames[planetId];
         occupiedCoordinates[
@@ -272,6 +273,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         }
         _creditBodyResources(mission.originPlanetId, returnToMoon, mission.cargo);
         _creditBodyMissionShips(mission.originPlanetId, returnToMoon, mission.ships);
+        _snapshotMissionScore(mission);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
         IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);
@@ -340,9 +342,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
-        delete researchQueues[_actingPlayer()];
-        _technologyLevels[_actingPlayer()][queue.technology] = queue.targetLevel;
-        emit ResearchCompleted(_actingPlayer(), queue.technology, queue.targetLevel);
+        _settleResearchDue(_actingPlayer(), _currentTimestamp());
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {

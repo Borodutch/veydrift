@@ -239,3 +239,20 @@ export function missionTypeLabel(missionType: string): string {
   if (missionType === "DefenseHold") return "Stationed defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
 }
+
+// Due by its own clock but not resolvable yet: canonical ordering settles an earlier fleet event at
+// this location first (e.g. an attack before a fleetsave return). Not "en route", not "resolving".
+export function isMissionQueued(mission: FleetMissionSummary): boolean {
+  if (mission.resolutionEligible === true || mission.resolutionBlocker === "randomness_pending") return false;
+  if (mission.status === "Outbound") {
+    return mission.asOfNow?.arrived === true && mission.missionType !== "DefenseHold";
+  }
+  return (mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true;
+}
+
+// Staged battles prepare before round 1, so zero completed rounds is preparation, not "0/6".
+export function combatProgressLabel(progress: { roundsCompleted: number; totalRounds: number }): string {
+  return progress.roundsCompleted === 0
+    ? "Preparing battle"
+    : `Resolving ${progress.roundsCompleted}/${progress.totalRounds}`;
+}

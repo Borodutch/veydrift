@@ -111,6 +111,7 @@ contract VeydriftShipProductionModule is VeydriftResourceReserves {
 
     function _creditCompletedShips(uint256 planetId, Ship ship, uint32 quantity) private {
         uint32 total = _shipCounts[planetId][ship] + quantity;
+        _snapshotPlanetScore(planetId);
         _shipCounts[planetId][ship] = total;
         emit ShipCompleted(planetId, ship, quantity, total);
     }

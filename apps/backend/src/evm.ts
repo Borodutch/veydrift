@@ -1,3 +1,4 @@
+import { decodeStagedBattleEvidence, stagedMemberShips, stagedReportTopicList, stagedReportTopics, type StagedBattleEvidence } from "./stagedBattleReport";
 import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256, stringToHex, toFunctionSelector } from "viem";
@@ -660,7 +661,7 @@ export type FleetMissionSummary = {
   // Read-only simulation of the current permissionless leg, including event ordering.
   resolutionEligible?: boolean;
   // Canonical progress while a large Attack is resolving across gas-bounded transactions.
-  // Omitted before round 1 and after the terminal battle settlement clears contract progress.
+  // Zero rounds denotes staged preparation/sub-round work; omitted before combat and after settlement.
   combatResolutionProgress?: {
     roundsCompleted: number;
     totalRounds: number;
@@ -762,14 +763,16 @@ export type CombatRoundReport = {
 // One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
 // joined the same attack. `loot` is the resources this fleet personally hauled away — `report.loot`
 // (the AttackBattleResolved snapshot) for the main attacker, and the joiner's resulting return-leg
-// cargo for each joined fleet. Per-participant losses are not emitted on-chain (CombatLosses is a
-// single combined figure keyed by the main mission), so only loot is broken out per participant.
+// cargo for each legacy joined fleet. Staged battles instead use immutable snapshot/loss/loot
+// events and expose exact destroyed/surviving ships without treating carried cargo as new loot.
 export type BattleReportParticipant = {
   missionId: string;
   address: Address;
   isMainAttacker: boolean;
   ships: Record<string, string>;
   loot: Resources;
+  destroyedShips?: Record<string, string>;
+  survivingShips?: Record<string, string>;
 };
 
 export type BattleReportDefenderSnapshot = {
@@ -835,6 +838,7 @@ export type BattleReport = {
   // populates `participants` with the single main attacker so the frontend can render uniformly.
   attackGroupId: string | null;
   participants: BattleReportParticipant[];
+  stagedEvidence?: StagedBattleEvidence;
 };
 
 export type ShipyardState = {
@@ -2196,6 +2200,8 @@ export class VeydriftGameReader implements ChainReader {
       topics: [[
         attackBattleResolvedTopic,
         combatRoundResolvedTopic,
+        combatStageAdvancedTopic,
+        ...stagedReportTopicList,
         combatLossesTopic,
         combatDebrisSignaledTopic
       ], toTopic(missionId)]
@@ -2381,6 +2387,12 @@ export class VeydriftGameReader implements ChainReader {
       // available; round progress simply remains absent until the upgraded facade is reachable.
       return missions;
     }
+    let stagedResults: string[] = [];
+    try {
+      stagedResults = await this.batchCallContract(this.gameContractAddress, attackIndexes.map(({ mission }) => ({
+        selector: toFunctionSelector("stagedBattleProgress(uint256)"), args: [encodeUint(BigInt(mission.missionId))]
+      })));
+    } catch { /* Older implementations have no staged getter. */ }
     const next = [...missions];
     attackIndexes.forEach(({ mission, index }, resultIndex) => {
       const result = results[resultIndex] ?? "0x";
@@ -2388,7 +2400,11 @@ export class VeydriftGameReader implements ChainReader {
       const words = splitWords(result);
       const roundsCompleted = Number(decodeUintWord(wordAt(words, 0)));
       const totalRounds = Number(decodeUintWord(wordAt(words, 1)));
-      next[index] = roundsCompleted > 0
+      const staged = stagedResults[resultIndex] ?? "0x";
+      const phase = staged.length >= 194 ? Number(decodeUintWord(wordAt(splitWords(staged), 0))) : 0;
+      // Phase 13 is terminal; 14/15 prepare protection before the first combat round.
+      const stagedInProgress = (phase > 0 && phase < 13) || phase === 14 || phase === 15;
+      next[index] = phase !== 13 && (roundsCompleted > 0 || stagedInProgress)
         ? { ...mission, combatResolutionProgress: { roundsCompleted, totalRounds } }
         : mission;
     });
@@ -5273,6 +5289,8 @@ export class VeydriftGameReader implements ChainReader {
       topics: [[
         attackBattleResolvedTopic,
         combatRoundResolvedTopic,
+        combatStageAdvancedTopic,
+        ...stagedReportTopicList,
         combatLossesTopic,
         combatDebrisSignaledTopic
       ]]
@@ -5665,6 +5683,8 @@ export function isBattleReportLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === attackBattleResolvedTopic
     || topic === combatRoundResolvedTopic
+    || topic === combatStageAdvancedTopic
+    || stagedReportTopicList.includes(topic as typeof stagedReportTopicList[number])
     || topic === combatLossesTopic
     || topic === combatDebrisSignaledTopic;
 }
@@ -5672,7 +5692,12 @@ export function isBattleReportLog(log: RpcLog): boolean {
 export function decodeCombatResolutionProgressLog(log: RpcLog): {
   missionId: string;
   roundsCompleted: number;
+  terminal?: boolean;
 } | null {
+  if (topicAt(log.topics, 0) === combatStageAdvancedTopic) {
+    const words = splitWords(log.data);
+    return { missionId: decodeUint(topicAt(log.topics, 1)).toString(), roundsCompleted: Number(decodeUintWord(wordAt(words, 2))), terminal: decodeUintWord(wordAt(words, 0)) === 13n };
+  }
   if (topicAt(log.topics, 0) !== combatRoundResolvedTopic) return null;
   return {
     missionId: decodeUint(topicAt(log.topics, 1)).toString(),
@@ -5690,6 +5715,7 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
   let defenderLosses: Resources = emptyResources();
   let debris: BattleReport["debris"] = { metal: "0", crystal: "0" };
   const roundReports: CombatRoundReport[] = [];
+  const seenRoundLogs = new Set<string>();
 
   for (const log of logs) {
     const topic = topicAt(log.topics, 0);
@@ -5713,6 +5739,9 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
         logIndex: log.logIndex ?? "0x0"
       };
     } else if (topic === combatRoundResolvedTopic) {
+      const identity = log.transactionHash + ":" + (log.logIndex ?? "0x0");
+      if (seenRoundLogs.has(identity)) continue;
+      seenRoundLogs.add(identity);
       roundReports.push({
         round: Number(decodeUint(topicAt(log.topics, 2))),
         attackerUnits: decodeUintWord(wordAt(words, 0)).toString(),
@@ -5740,6 +5769,36 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
   }
 
   if (!base) return null;
+  const stagedEvidence = decodeStagedBattleEvidence(logs, base.missionId);
+  const battleLogs = logs.filter(log => !log.removed && decodeUint(topicAt(log.topics, 1)).toString() === base!.missionId);
+  const stagedStarted = battleLogs.some(log => topicAt(log.topics, 0) === combatStageAdvancedTopic);
+  if (stagedStarted && !stagedEvidence) return null;
+  if (stagedEvidence && (!battleLogs.some(log => topicAt(log.topics, 0) === combatLossesTopic)
+    || !battleLogs.some(log => topicAt(log.topics, 0) === combatDebrisSignaledTopic))) return null;
+  const stagedParticipants = stagedEvidence?.members.filter(member => member.side === 0).map(member => ({
+    missionId: member.missionId, address: member.owner, isMainAttacker: member.missionId === base!.missionId,
+    ships: stagedMemberShips(member, "starting"), destroyedShips: stagedMemberShips(member, "destroyed"),
+    survivingShips: stagedMemberShips(member, "remaining"), loot: member.loot
+  }));
+  if (stagedEvidence && !stagedEvidence.complete) return null;
+  if (stagedEvidence) {
+    const rounds = [...roundReports].sort((a, b) => a.round - b.round);
+    if (rounds.length !== base.rounds || rounds.some((round, index) => round.round !== index + 1)) return null;
+    const costs = deriveShipRows(() => 0);
+    for (const side of [0, 1] as const) {
+      const total = { metal: 0n, crystal: 0n, deuterium: 0n };
+      for (const member of stagedEvidence.members.filter(member => member.side === side)) {
+        for (const row of member.units.filter(row => row.unit < 16)) {
+          const cost = costs.find(ship => ship.id === row.unit)?.cost;
+          if (!cost) return null;
+          for (const key of ["metal", "crystal", "deuterium"] as const) total[key] += BigInt(cost[key]) * BigInt(row.destroyed);
+        }
+      }
+      const expected = side === 0 ? attackerLosses : defenderLosses;
+      if ((["metal", "crystal", "deuterium"] as const).some(key => total[key] !== BigInt(expected[key]))) return null;
+    }
+  }
+  if (stagedEvidence) base.loot = stagedParticipants?.find(member => member.isMainAttacker)?.loot ?? emptyResources();
 
   return {
     ...base,
@@ -5751,8 +5810,9 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
     // Default to a solo report: the main attacker is the only participant and its loot is the report
     // loot. attachAttackGroupParticipants() later folds in any ACS joiners and the group id once the
     // fleet-mission read model is available; a report decoded in isolation still carries the attacker.
-    attackGroupId: null,
-    participants: [
+    ...(stagedEvidence ? { stagedEvidence } : {}),
+    attackGroupId: stagedParticipants && stagedParticipants.length > 1 ? base.missionId : null,
+    participants: stagedParticipants ?? [
       {
         missionId: base.missionId,
         address: base.attacker,
@@ -5776,6 +5836,11 @@ export function attachAttackGroupParticipants(
   const missionById = new Map(missions.map((mission) => [mission.missionId, mission]));
   return reports.map((report) => {
     const mainMission = missionById.get(report.missionId);
+    if (report.stagedEvidence) return {
+      ...report,
+      originIsMoon: Boolean(mainMission?.originIsMoon ?? report.originIsMoon),
+      targetIsMoon: Boolean(mainMission?.targetIsMoon ?? report.targetIsMoon)
+    };
     const participants: BattleReportParticipant[] = [
       {
         missionId: report.missionId,
@@ -5975,6 +6040,7 @@ const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a57
 const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+export const combatStageAdvancedTopic = keccak256(stringToHex("CombatStageAdvanced(uint256,uint8,uint256,uint8)"));
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
@@ -6081,6 +6147,12 @@ const eventNamesByTopic = new Map<string, string>([
   [attackMissionJoinedTopic, "AttackMissionJoined"],
   [attackBattleResolvedTopic, "AttackBattleResolved"],
   [combatRoundResolvedTopic, "CombatRoundResolved"],
+  [combatStageAdvancedTopic, "CombatStageAdvanced"],
+  [stagedReportTopics.snapshot, "CombatMemberSnapshot"],
+  [stagedReportTopics.losses, "CombatMissionLosses"],
+  [stagedReportTopics.repair, "CombatDefenseRepair"],
+  [stagedReportTopics.loot, "CombatMissionLoot"],
+  [stagedReportTopics.complete, "CombatEvidenceComplete"],
   [combatLossesTopic, "CombatLosses"],
   [combatDebrisSignaledTopic, "CombatDebrisSignaled"],
   [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],

@@ -1,3 +1,4 @@
+import { cancelResolverTransaction } from "./resolverCancellation";
 import {
   createPublicClient,
   createWalletClient,
@@ -196,13 +197,9 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
         nonce,
         ...await resolverReplacementFees(this.publicClient, previousHash)
       }),
-      cancelStale: async (nonce, previousHash) => this.walletClient.sendTransaction({
-        account: this.account,
-        chain: this.chain,
-        nonce,
-        to: this.account.address,
-        value: 0n,
-        ...await resolverReplacementFees(this.publicClient, previousHash)
+      cancelStale: (nonce, previousHash, assertLease) => cancelResolverTransaction({
+        client: this.publicClient, wallet: this.walletClient, account: this.account, chain: this.chain,
+        nonce, previousHash, assertLease
       }),
       confirm: (hash) => this.confirm(hash)
     });
@@ -238,13 +235,9 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
         nonce,
         ...await resolverReplacementFees(this.publicClient, previousHash)
       }),
-      cancelStale: async (nonce, previousHash) => this.walletClient.sendTransaction({
-        account: this.account,
-        chain: this.chain,
-        nonce,
-        to: this.account.address,
-        value: 0n,
-        ...await resolverReplacementFees(this.publicClient, previousHash)
+      cancelStale: (nonce, previousHash, assertLease) => cancelResolverTransaction({
+        client: this.publicClient, wallet: this.walletClient, account: this.account, chain: this.chain,
+        nonce, previousHash, assertLease
       }),
       confirm: (hash) => this.confirm(hash)
     });

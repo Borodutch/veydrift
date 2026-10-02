@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftMigrationDiscardModule} from "./VeydriftMigrationDiscardModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
@@ -42,6 +43,7 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     uint128 private constant REFERRAL_STARTING_CRYSTAL_BONUS = 500;
 
     address private immutable _referralSystem;
+    address private immutable _discardModule;
     address private immutable _riftModule;
     address private immutable _combatRaidModule;
 
@@ -106,10 +108,14 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
 
     event MigrationStateImported(address indexed player, uint256 homePlanetId, uint256 planetCount);
 
-    constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
+    constructor(address referralSystemAddress, address combatRaidModule)
+        VeydriftResourceReserves(address(0))
+    {
         _referralSystem = referralSystemAddress;
+        _discardModule = address(new VeydriftMigrationDiscardModule());
         _riftModule = address(new VeydriftRiftModule());
-        _combatRaidModule = address(new VeydriftCombatRaidModule());
+        if (combatRaidModule == address(0)) revert UnsupportedGameplayModule();
+        _combatRaidModule = combatRaidModule;
     }
 
     /// @dev The VeydriftGame facade routes the size-sensitive Rift selectors here. This module
@@ -251,52 +257,10 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     }
 
     function _discardSingleStartedPlanetBeforeMigration(address player) private {
-        if (planetCountOf[player] != 1 || activeFleetMissionCount[player] != 0) {
-            revert AlreadyStarted();
-        }
-        uint256 planetId = homePlanetOf[player];
-        Planet storage planetRef = _planets[planetId];
-        if (planetId == 0 || planetRef.owner != player) revert AlreadyStarted();
-
-        bytes32 key = VeydriftPlanetGeneration.coordinateKey(
-            block.chainid,
-            planetRef.galaxy,
-            planetRef.system,
-            planetRef.position,
-            MAX_GALAXY,
-            MAX_SYSTEM,
-            MAX_POSITION
+        (bool ok, bytes memory result) = _discardModule.delegatecall(
+            abi.encodeCall(VeydriftMigrationDiscardModule.discardSingleStartedPlanet, (player))
         );
-        occupiedCoordinates[key] = false;
-        _decreaseInternalResources(planetRef.resources);
-        delete _planets[planetId];
-        delete planetNames[planetId];
-        delete buildingConstructions[planetId];
-        delete defenseQueues[planetId];
-        delete shipQueues[planetId];
-        delete _defenseQueueBacklogs[planetId];
-        delete _shipQueueBacklogs[planetId];
-        for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
-            delete _buildingLevels[planetId][Building(id)];
-            unchecked {
-                ++id;
-            }
-        }
-        for (uint8 id = 0; id <= MAX_SHIP_ID;) {
-            _setPlanetShipCount(planetId, Ship(id), 0);
-            unchecked {
-                ++id;
-            }
-        }
-        for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
-            _setPlanetDefenseCount(planetId, Defense(id), 0);
-            unchecked {
-                ++id;
-            }
-        }
-        _unregisterOwnedPlanet(player, planetId);
-        homePlanetOf[player] = 0;
-        planetCountOf[player] = 0;
+        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
     }
 
     function _importMigratedPlanet(address player, MigrationPlanetState memory planetState)
@@ -373,6 +337,7 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
             uint16 level = planetState.buildingLevels[id];
             if (level != 0) {
+                _snapshotPlanetScore(planetId);
                 _buildingLevels[planetId][Building(id)] = level;
                 emit BuildingCompleted(planetId, Building(id), level);
             }

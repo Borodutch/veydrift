@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -36,7 +42,9 @@ import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePol
 ///      already be complete or be implemented as separate resumable live migrations.
 ///
 ///      Required env:
-///        PRIVATE_KEY        deployer EOA; MUST be the ProxyAdmin owner (asserted below)
+///        PRIVATE_KEY        execution signer; MUST be the ProxyAdmin owner (asserted below)
+///        UPGRADE_DRY_RUN_OWNER optional PUBLIC owner address for a signer-free rehearsal;
+///                           when set, PRIVATE_KEY is never read. Do not use --broadcast.
 ///        GAME_PROXY_ADDRESS the live Base VeydriftGame proxy
 ///        GAME_PROXY_ADMIN   its OZ ProxyAdmin contract
 ///        MOON_PROXY_ADDRESS the configured MoonSystem proxy (its delegation-aware upgrade must
@@ -55,8 +63,15 @@ import {VeydriftLiveUpgradePolicy} from "../src/libraries/VeydriftLiveUpgradePol
 ///        forge script script/UpgradeGame.s.sol:UpgradeGame --rpc-url <base_mainnet> --broadcast
 contract UpgradeGame is Script {
     function run() external returns (address newImplementation) {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address broadcaster = vm.addr(privateKey);
+        // Only signer plumbing differs between rehearsal and execution. Both paths run every
+        // prerequisite below and emit identical constructor/upgrade transaction payloads.
+        address rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address broadcaster = rehearsalOwner;
+        if (rehearsalOwner == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(privateKey);
+        }
         address proxy = vm.envAddress("GAME_PROXY_ADDRESS");
         address proxyAdmin = vm.envAddress("GAME_PROXY_ADMIN");
         address moonProxy = vm.envAddress("MOON_PROXY_ADDRESS");
@@ -108,12 +123,17 @@ contract UpgradeGame is Script {
             "REFERRAL_GAME_MISMATCH"
         );
 
-        vm.startBroadcast(privateKey);
+        if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
+        else vm.startBroadcast(privateKey);
 
         if (configuredReferralGame == address(0)) referralSystem.setGame(proxy);
 
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
-        VeydriftCombatModule combatModule = new VeydriftCombatModule(address(rapidfire));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(rapidfire),
+            address(new VeydriftStagedCombatModule(address(rapidfire))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
@@ -121,8 +141,9 @@ contract UpgradeGame is Script {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(referralSystemAddress);
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            referralSystemAddress, address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule = new VeydriftFirstPlanetSettlementModule(
             referralSystemAddress, address(colonizationModule)
         );

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -25,7 +31,6 @@ import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimi
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
 import {VeydriftMoonShipBacklog} from "../src/libraries/VeydriftMoonShipBacklog.sol";
-import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftBodyAttackWindow} from "../src/libraries/VeydriftBodyAttackWindow.sol";
 import {
     Building,
@@ -91,37 +96,6 @@ contract MoonAttackWindowHarness is VeydriftGameStorage {
         bool targetIsMoon
     ) external view returns (uint32) {
         return _currentBodyAttackCount(attacker, defender, planetId, targetIsMoon);
-    }
-}
-
-contract MoonDefenseHoldIsolationHarness is VeydriftGameStorage {
-    constructor() VeydriftGameStorage(address(this)) {}
-
-    function seedPlanetHold(uint256 targetPlanetId, uint256 missionId, uint64 arrivalAt) external {
-        FleetMission storage stationed = _fleetMissions[missionId];
-        stationed.status = FleetMissionStatus.Outbound;
-        stationed.missionType = FleetMissionType.DefenseHold;
-        stationed.arrivalAt = arrivalAt;
-        stationed.targetIsMoon = false;
-        _defenseHoldUntil[missionId] = arrivalAt + 1 days;
-        _stationedDefenseMissions[targetPlanetId].push(missionId);
-    }
-
-    function link(
-        uint256 targetPlanetId,
-        uint256 attackMissionId,
-        uint64 arrivalAt,
-        bool targetIsMoon
-    ) external returns (uint256) {
-        VeydriftDefenseHoldStorage.linkQualifiedDefenders(
-            _stationedDefenseMissions[targetPlanetId],
-            _fleetCounterplayMissions[attackMissionId],
-            _fleetMissions,
-            _defenseHoldUntil,
-            arrivalAt,
-            targetIsMoon
-        );
-        return _fleetCounterplayMissions[attackMissionId].length;
     }
 }
 
@@ -208,28 +182,37 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
         randomness.setPrecommitRequired(false);
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(address(0xBEEF));
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            address(0xBEEF), address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
-        game = new VeydriftGame(
-            admin,
-            address(firstPlanetSettlementModule),
-            address(gameplayModule),
-            address(planetManagementModule),
-            address(attackProtectionModule),
-            address(colonizationModule),
-            address(defenseHoldModule),
-            address(stateMigrationModule),
-            address(new VeydriftAcsAttackModule())
+        game = VeydriftGame(
+            payable(deployCode(
+                    "VeydriftGame.sol:VeydriftGame",
+                    abi.encode(
+                        admin,
+                        address(firstPlanetSettlementModule),
+                        address(gameplayModule),
+                        address(planetManagementModule),
+                        address(attackProtectionModule),
+                        address(colonizationModule),
+                        address(defenseHoldModule),
+                        address(stateMigrationModule),
+                        address(new VeydriftAcsAttackModule())
+                    )
+                ))
         );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();
@@ -1580,7 +1563,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
         assertEq(cargo.metal, 0);
@@ -1616,7 +1599,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
         assertEq(cargo.metal, 0);
@@ -1671,7 +1654,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
         VeydriftGameStorage.Resources memory moonAfter = _moonResources(targetPlanetId);
@@ -1771,7 +1754,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 6524);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
         assertEq(
@@ -1810,7 +1793,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         assertEq(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 70);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
@@ -1848,7 +1831,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
 
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         vm.prank(defender);
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
@@ -1935,13 +1918,6 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         harness.recordMoonAttack(attacker, planetId);
         assertEq(harness.bodyAttackCount(attacker, defender, planetId, true), 1);
         assertEq(harness.bodyAttackCount(attacker, defender, planetId, false), 0);
-    }
-
-    function _testPlanetDefenseHoldDoesNotDefendMoonAttack() internal {
-        MoonDefenseHoldIsolationHarness harness = new MoonDefenseHoldIsolationHarness();
-        harness.seedPlanetHold(77, 1, 100);
-        assertEq(harness.link(77, 2, 200, true), 0);
-        assertEq(harness.link(77, 3, 200, false), 1);
     }
 
     function _testMoonAttackParityInitializerIsIdempotent() internal {
@@ -2060,7 +2036,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
 
         (
             VeydriftGameStorage.FleetMissionStatus status,,,
@@ -2165,7 +2141,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 659);
-        game.resolveFleetMission(missionId);
+        _resolveAttackFully(missionId);
         (,,, cargo) = _fleetMission(missionId);
     }
 
@@ -2286,10 +2262,18 @@ abstract contract VeydriftMoonSystemTestBase is Test {
     }
 
     function _resolveAttackFully(uint256 missionId) internal {
-        for (uint256 calls = 0; calls < 6; calls++) {
+        for (uint256 calls = 0; calls < 20_000; calls++) {
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
             if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) return;
-            game.resolveFleetMission(missionId);
+            (uint8 beforePhase,, uint256 beforeWork) = game.stagedBattleProgress(missionId);
+            game.resolveFleetMission{gas: 15_000_000}(missionId);
+            (uint8 afterPhase,, uint256 afterWork) = game.stagedBattleProgress(missionId);
+            if (beforePhase != 0) {
+                assertTrue(
+                    afterPhase != beforePhase || afterWork > beforeWork,
+                    "resolver made no durable progress"
+                );
+            }
         }
         revert("attack did not resolve");
     }
@@ -2647,10 +2631,6 @@ contract VeydriftMoonAttackParityTest is VeydriftMoonSystemTestBase {
         _testMoonBashingWindowInheritsActiveLegacyAllowanceAtUpgrade();
     }
 
-    function testPlanetDefenseHoldDoesNotDefendMoonAttack() public {
-        _testPlanetDefenseHoldDoesNotDefendMoonAttack();
-    }
-
     function testMoonAttackParityInitializerIsIdempotent() public {
         _testMoonAttackParityInitializerIsIdempotent();
     }
@@ -2805,6 +2785,7 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         _resolveAttackFully(lateId);
         assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
         _resolveAttackFully(earlyId);
+        _resolveAttackFully(lateId);
         assertEq(game.moonShipCount(target, Ship.LightFighter), 0);
         vm.prank(defender);
         moons.finishMoonShipProduction(target);

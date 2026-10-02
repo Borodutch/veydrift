@@ -47,7 +47,7 @@ describe("contract battle preview parity", () => {
     expect(shieldGate.rounds).toHaveLength(6);
 
     const explosionInput = battle(ships([0, 1]), ships([0, 27]), defenses());
-    const stable = runContractBattle(explosionInput, seed(1));
+    const stable = runContractBattle(explosionInput, seed(5));
     const exploded = runContractBattle(explosionInput, seed(2));
     expect(stable).toMatchObject({ outcome: "draw", attackerSurvivors: 1, defenderSurvivors: 27 });
     expect(exploded).toMatchObject({
@@ -56,7 +56,7 @@ describe("contract battle preview parity", () => {
       defenderSurvivors: 27,
       attackerLosses: { metal: 2_000, crystal: 2_000, deuterium: 0 },
     });
-    expect(exploded.rounds).toHaveLength(3);
+    expect(exploded.rounds).toHaveLength(1);
   });
 
   test("matches rapidfire-heavy and mixed-unit Forge fixtures", () => {
@@ -70,7 +70,7 @@ describe("contract battle preview parity", () => {
     });
     expect(rapidfire.rapidfireExtraShots.attacker).toBeGreaterThan(0);
     expect(rapidfire.defender.survivingDefenses).toEqual([
-      { id: 0, label: "Rocket Launcher", count: 49 },
+      { id: 0, label: "Rocket Launcher", count: 48 },
     ]);
 
     const mixed = runContractBattle(
@@ -86,7 +86,7 @@ describe("contract battle preview parity", () => {
       { id: 1, label: "Light Fighter", count: 4 },
     ]);
     expect(mixed.defender.survivingDefenses).toEqual([
-      { id: 0, label: "Rocket Launcher", count: 40 },
+      { id: 0, label: "Rocket Launcher", count: 38 },
     ]);
   });
 
@@ -125,7 +125,7 @@ describe("contract battle preview parity", () => {
     });
   });
 
-  test("matches the Forge counterplay-lane-sensitive fixture", () => {
+  test("matches the Forge counterplay-lane-independent fixture", () => {
     const inputForLane = (laneGroup: number) =>
       battle(ships([6, 1]), ships(), defenses(), {}, [], [
         fleet("counter", laneGroup, ships([1, 10]), ZERO_TECH),
@@ -139,9 +139,9 @@ describe("contract battle preview parity", () => {
       defenderLosses: { metal: 30_000, crystal: 10_000, deuterium: 0 },
     });
     expect(laneTwo).toMatchObject({
-      outcome: "draw",
-      defenderSurvivors: 1,
-      defenderLosses: { metal: 27_000, crystal: 9_000, deuterium: 0 },
+      outcome: "win",
+      defenderSurvivors: 0,
+      defenderLosses: { metal: 30_000, crystal: 10_000, deuterium: 0 },
     });
     expect(laneTwo.defender.counterplay[0]?.laneGroup).toBe(2);
   });

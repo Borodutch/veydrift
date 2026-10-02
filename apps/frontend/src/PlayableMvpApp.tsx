@@ -183,6 +183,7 @@ import {
   sendLaunchTransportBatchTransaction,
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
+  fetchMission,
   sendResolveFleetMissionTransaction,
   sendRevokeDelegateTransaction,
   sendSetDelegateTransaction,
@@ -5964,7 +5965,7 @@ export function PlayableMvpApp({
   );
 
   const runMissionTransaction = useCallback(
-    (label: string, request: (provider: Eip1193Provider) => Promise<string>, resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">) => {
+    (label: string, request: (provider: Eip1193Provider) => Promise<string>, resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">, prepare?: () => Promise<void>) => {
       if (!provider || !signerAccount || !account || !gameContract) {
         setMissionAction({
           status: "error",
@@ -5979,6 +5980,7 @@ export function PlayableMvpApp({
         planetIds: resourceChange ? [resourceChange.planetId] : [],
         label,
         send: request,
+        ...(prepare ? { prepare } : {}),
         indexing: resourceChange
           ? backendData!.indexing.all([
               backendData!.indexing.resourceChange(account, resourceChange.planetId, resourceChange.bodyKind),
@@ -6042,14 +6044,24 @@ export function PlayableMvpApp({
             }
           : undefined;
 
+      // A large battle can take several transactions, so one receipt only advances it.
+      const isBattle = kind === "arrival" && (mission?.missionType === "Attack" || mission?.missionType === "AcsAttack");
       runMissionTransaction(
-        `Resolve mission #${missionId}`,
+        isBattle ? `Advance battle for mission #${missionId}` : `Resolve mission #${missionId}`,
         (provider: Eip1193Provider) =>
           kind === "arrival" ? sendResolveFleetMissionTransaction(provider, signerAccount, gameContract, missionId) : sendCompleteFleetMissionReturnTransaction(provider, signerAccount, gameContract, missionId),
         changedBody,
+        // The resolver daemon may have settled this leg since the list rendered: never sign a no-op.
+        backendData
+          ? async () => {
+              const { mission: fresh } = await fetchMission(backendData.apiBaseUrl, missionId);
+              const pending = kind === "arrival" ? fresh.status === "Outbound" : fresh.status === "Returning" || fresh.status === "Recalled";
+              if (!pending) throw new Error(`Mission #${missionId} is already resolved.`);
+            }
+          : undefined,
       );
     },
-    [account, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, signerAccount, walletPlanets],
+    [account, backendData, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, signerAccount, walletPlanets],
   );
 
   // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -111,8 +117,11 @@ contract VeydriftTemperatureMigrationMainnetForkTest is Test {
     }
 
     function _newImplementation(address owner) private returns (VeydriftGame) {
-        VeydriftCombatModule combat =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combat = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         return new VeydriftGame(
@@ -127,7 +136,11 @@ contract VeydriftTemperatureMigrationMainnetForkTest is Test {
             address(new VeydriftAttackProtectionModule()),
             address(colonizationModule),
             address(new VeydriftDefenseHoldModule()),
-            address(new VeydriftStateMigrationModule(address(0xBEEF))),
+            address(
+                new VeydriftStateMigrationModule(
+                    address(0xBEEF), address(new VeydriftCombatRaidModule())
+                )
+            ),
             address(new VeydriftAcsAttackModule())
         );
     }

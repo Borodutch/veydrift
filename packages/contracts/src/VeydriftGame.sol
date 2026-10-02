@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftBatchTransportModule} from "./VeydriftBatchTransportModule.sol";
@@ -223,6 +224,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        uint256 lockId = Store.layout().bodyLock[planetId];
+        if (lockId != 0) revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
         if (cutoffAt == type(uint64).max) {
             _settleResources(planetId);
         } else {
@@ -244,6 +247,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         uint256[] storage planetIds = _ownedPlanetIds[player];
         uint64 settledAt = uint64(block.timestamp);
         for (uint256 i = 0; i < planetIds.length;) {
+            uint256 lockId = Store.layout().bodyLock[planetIds[i]];
+            if (lockId != 0) revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
             _settleResourcesUpTo(planetIds[i], settledAt);
             unchecked {
                 ++i;
@@ -515,6 +520,19 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     /// @notice Canonical progress for an Attack battle that is resolving across gas-bounded chunks.
+    function stagedBattleProgress(uint256 missionId)
+        external
+        view
+        returns (uint8 phase, uint8 round, uint256 workDone)
+    {
+        Store.Battle storage b = Store.battle(missionId);
+        return (
+            b.phase,
+            b.phase == 13 ? b.round : _battleResolutionProgress[missionId].rounds,
+            b.workDone + b.math.workDone
+        );
+    }
+
     function battleResolutionProgress(uint256 missionId)
         external
         view
@@ -526,6 +544,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function completeFleetMissionReturn(uint256 missionId) external {
         FleetMissionStatus status = _fleetMissions[missionId].status;
+        // Already landed via a concurrent resolver: no-op instead of reverting the caller.
+        if (status == FleetMissionStatus.Returned || status == FleetMissionStatus.Resolved) return;
         if (status != FleetMissionStatus.Returning && status != FleetMissionStatus.Recalled) {
             revert FleetMissionNotResolved(_fleetMissions[missionId].returnAt);
         }
@@ -534,12 +554,24 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
-    function _prepareChronology(uint256 id, bool returning) private returns (bool) {
-        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
-            abi.encodeWithSignature("prepareFleetChronology(uint256,bool)", id, returning)
-        );
-        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-        return abi.decode(result, (bool));
+    function _prepareChronology(uint256 id, bool returning) private returns (bool ready) {
+        address module = _batchTransportModule;
+        bytes4 selector = VeydriftBatchTransportModule.prepareFleetChronology.selector;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            mstore(add(ptr, 4), id)
+            mstore(add(ptr, 36), returning)
+            let ok := delegatecall(gas(), module, ptr, 68, 0, 0)
+            if iszero(ok) {
+                returndatacopy(ptr, 0, returndatasize())
+                revert(ptr, returndatasize())
+            }
+            if lt(returndatasize(), 32) { revert(0, 0) }
+            returndatacopy(ptr, 0, 32)
+            ready := mload(ptr)
+            if gt(ready, 1) { revert(0, 0) }
+        }
     }
 
     function registerFleetChronology(uint256) external {
@@ -547,25 +579,37 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function fleetMissionEligibility(uint256 id) external view returns (bool, uint256, bool) {
-        (bool ok, bytes memory result) =
-            address(this).staticcall(abi.encodeWithSelector(this.readFleetChronology.selector, id));
-        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-        return abi.decode(result, (bool, uint256, bool));
+        bytes4 selector = this.readFleetChronology.selector;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            mstore(add(ptr, 4), id)
+            let ok := staticcall(gas(), address(), ptr, 36, 0, 0)
+            returndatacopy(ptr, 0, returndatasize())
+            if iszero(ok) { revert(ptr, returndatasize()) }
+            if lt(returndatasize(), 96) { revert(0, 0) }
+            if or(gt(mload(ptr), 1), gt(mload(add(ptr, 64)), 1)) { revert(0, 0) }
+            return(ptr, 96)
+        }
     }
 
     function readFleetChronology(uint256 id) external returns (bool, uint256, bool) {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(
-            abi.encodeWithSelector(this.fleetMissionEligibility.selector, id)
-        );
-        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
+        address module = _batchTransportModule;
+        bytes4 selector = this.fleetMissionEligibility.selector;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            mstore(add(ptr, 4), id)
+            let ok := delegatecall(gas(), module, ptr, 36, 0, 0)
+            returndatacopy(ptr, 0, returndatasize())
+            if iszero(ok) { revert(ptr, returndatasize()) }
+            return(ptr, returndatasize())
+        }
     }
 
     function _delegateToChronology() private {
-        (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
-        if (!ok) assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
-        assembly ("memory-safe") { return(add(result, 32), mload(result)) }
+        _delegateToModule(_batchTransportModule);
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32)
@@ -805,16 +849,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         view
         returns (uint256 producedEnergy, uint256 requiredEnergy, uint256 energyScaleBps)
     {
-        Planet storage planetRef = _planets[planetId];
-        return VeydriftFormulas.energyBalance(
-            _buildingLevels[planetId][Building.MetalMine],
-            _buildingLevels[planetId][Building.CrystalMine],
-            _buildingLevels[planetId][Building.DeuteriumSynthesizer],
-            _buildingLevels[planetId][Building.SolarPlant],
-            _buildingLevels[planetId][Building.FusionReactor],
-            _shipCounts[planetId][Ship.SolarSatellite],
-            planetRef.temperature,
-            _technologyLevels[planetRef.owner][Technology.Energy]
+        return abi.decode(
+            _readFromFirstPlanetSettlementModule(
+                abi.encodeWithSelector(this.energyBalance.selector, planetId)
+            ),
+            (uint256, uint256, uint256)
         );
     }
 
@@ -823,11 +862,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         view
         returns (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap)
     {
-        if (_planets[planetId].owner == address(0)) revert NoPlanet();
-        return VeydriftFormulas.storageCaps(
-            _buildingLevels[planetId][Building.MetalStorage],
-            _buildingLevels[planetId][Building.CrystalStorage],
-            _buildingLevels[planetId][Building.DeuteriumTank]
+        return abi.decode(
+            _readFromFirstPlanetSettlementModule(
+                abi.encodeWithSelector(this.storageCaps.selector, planetId)
+            ),
+            (uint128, uint128, uint128)
         );
     }
 
@@ -943,6 +982,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _completeBuilding(uint256 planetId, BuildingConstruction memory construction) private {
         Building building = construction.building;
         delete buildingConstructions[planetId];
+        _snapshotPlanetScore(planetId);
         _buildingLevels[planetId][building] = construction.targetLevel;
         if (building == Building.Terraformer) {
             unchecked {
@@ -987,17 +1027,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         });
     }
 
+    /// @dev Same trusted-immutable forwarding and exact revert/return bytes as the wrappers.
+    function _delegateToModule(address module) private {
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            calldatacopy(ptr, 0, calldatasize())
+            let ok := delegatecall(gas(), module, ptr, calldatasize(), 0, 0)
+            returndatacopy(ptr, 0, returndatasize())
+            if iszero(ok) { revert(ptr, returndatasize()) }
+            return(ptr, returndatasize())
+        }
+    }
+
     function _delegateToPlayModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_gameplayModule);
     }
 
     function _delegateToFirstPlanetSettlementModule() private {
@@ -1033,27 +1077,11 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToPlanetManagementModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_planetManagementModule);
     }
 
     function _delegateToAttackProtectionModule() private {
-        (bool ok, bytes memory result) = _attackProtectionModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_attackProtectionModule);
     }
 
     function _launchColonizeMission() private returns (uint256 missionId) {
@@ -1081,54 +1109,22 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToColonizationModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_colonizationModule);
     }
 
     function _delegateToDefenseHoldModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_defenseHoldModule);
     }
 
     function _delegateToAcsAttackModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _acsAttackModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_acsAttackModule);
     }
 
     function _delegateToStateMigrationModule() private {
         _requireGameNotPaused();
-        (bool ok, bytes memory result) = _stateMigrationModule.delegatecall(msg.data);
-        if (!ok) {
-            assembly ("memory-safe") {
-                revert(add(result, 32), mload(result))
-            }
-        }
-        assembly ("memory-safe") {
-            return(add(result, 32), mload(result))
-        }
+        _delegateToModule(_stateMigrationModule);
     }
 
     function _delegateToStateMigrationModuleWithoutReturn() private {

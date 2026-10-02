@@ -13,6 +13,7 @@ import type { Coordinates } from "../types";
 import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import {
   isFleetRecallable,
+  isMissionQueued,
   manualMissionResolutionKind,
   missionLifecycleActions,
   missionStatusPill,
@@ -473,7 +474,7 @@ function MissionBattleReport({
   now: number;
   report?: BattleReport | undefined;
 }) {
-  if (!isCombatMission(mission)) {
+  if (!isCombatMission(mission) && !(report && ["AcsDefend", "DefenseHold"].includes(mission.missionType))) {
     return null;
   }
 
@@ -482,7 +483,10 @@ function MissionBattleReport({
       const { roundsCompleted, totalRounds } = mission.combatResolutionProgress;
       return (
         <Notice tone="warning">
-          Combat resolving: {roundsCompleted} of up to {totalRounds} rounds complete. Combat will continue automatically.
+          {roundsCompleted === 0
+            ? "Combat is preparing (large battles resolve across several transactions)."
+            : `Combat resolving: ${roundsCompleted} of up to ${totalRounds} rounds complete.`}{" "}
+          Combat will continue automatically.
         </Notice>
       );
     }
@@ -514,6 +518,13 @@ function MissionBattleReport({
         </Notice>
       );
     }
+    if (isMissionQueued(mission)) {
+      return (
+        <Notice tone="neutral">
+          Queued: an earlier fleet event at this location must resolve first.
+        </Notice>
+      );
+    }
     // A combat fleet only fights once it reaches its target. While it is still flying out (Outbound
     // and not yet due) — or was recalled before it ever arrived — no battle has happened, so the
     // "no report" notice is pure noise; the whole block is suppressed until combat is actually due.
@@ -535,7 +546,8 @@ function MissionBattleReport({
   // total loot here, then break each participant's loot share out in the Attack group panel below.
   const participants = report.participants ?? [];
   const isGroupedAttack = participants.length > 1;
-  const attackerShips = isGroupedAttack ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
+  const attackerShips = isGroupedAttack || participants.some(participant => participant.destroyedShips !== undefined)
+    ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
   const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
   const battleTimeFleetUnits = compositionUnits(report.defenderSnapshot?.fleet, shipCatalog, shipAssetByKey);
   const battleTimeDefenseUnits = compositionUnits(report.defenderSnapshot?.defenses, defenseCatalog, defenseAssetByKey);
@@ -598,7 +610,7 @@ function MissionBattleReport({
         <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
           <Row label={isGroupedAttack ? "Combat ships (combined)" : "Combat ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "combat")} />} />
           <Row label={isGroupedAttack ? "Civil ships (combined)" : "Civil ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "civil")} />} />
-          {isGroupedAttack ? null : <Row label="Cargo carried" value={formatResources(mission.cargo)} />}
+          {!isGroupedAttack && mission.missionId === report.missionId ? <Row label="Cargo carried" value={formatResources(mission.cargo)} /> : null}
           <Row label={isGroupedAttack ? "Fleet losses (combined)" : "Fleet losses"} value={formatResources(report.attackerLosses)} />
           <Row label={isGroupedAttack ? "Loot grabbed (total)" : "Loot grabbed"} value={formatResources(totalLoot)} />
         </Panel>
@@ -784,6 +796,8 @@ function AttackGroupPanel({
               <div className="mt-1.5">
                 <UnitIcons units={[...shipUnitsByKind(participant.ships, "combat"), ...shipUnitsByKind(participant.ships, "civil")]} />
               </div>
+              {participant.destroyedShips ? <div className="mt-2 text-xs text-slate-400">Destroyed<UnitIcons units={shipUnits(participant.destroyedShips)} /></div> : null}
+              {participant.survivingShips ? <div className="mt-2 text-xs text-slate-400">Survived<UnitIcons units={shipUnits(participant.survivingShips)} /></div> : null}
             </div>
             <div className="sm:text-right">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Loot share</p>

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -133,7 +139,11 @@ contract UpgradeGameForkTest is Test {
 
         // Mirror the script's fresh module graph and constructor inputs, not broadcast execution.
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
-        VeydriftCombatModule combatModule = new VeydriftCombatModule(address(rapidfire));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(rapidfire),
+            address(new VeydriftStagedCombatModule(address(rapidfire))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
@@ -141,8 +151,9 @@ contract UpgradeGameForkTest is Test {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(referralAddress);
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            referralAddress, address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(referralAddress, address(colonizationModule));
         VeydriftGame newImpl = new VeydriftGame(

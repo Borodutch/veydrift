@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftBatchTransportModule} from "../src/VeydriftBatchTransportModule.sol";
+import {VeydriftArrivalProgress} from "../src/libraries/VeydriftArrivalProgress.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 
 /// Minimal harness for prospective chronology plus unregistered pre-upgrade state.
@@ -90,6 +91,10 @@ contract FleetChronologyHarness is VeydriftBatchTransportModule {
 
     function setPlayerCursor(address player, uint256 next) external {
         _chronologyPlayerCursor[player] = next;
+    }
+
+    function work(uint256 id) external view returns (uint256) {
+        return VeydriftArrivalProgress.missionWork(id);
     }
 
     function cursor(uint256 id) external view returns (uint256) {
@@ -452,11 +457,65 @@ contract VeydriftFleetChronologyTest is Test {
         bool done;
         for (uint256 i; i < 32; ++i) {
             uint256 gasBefore = gasleft();
+            uint256 previousWork = h.work(301);
             done = h.prepareFleetChronology(301, false);
+            assertGt(h.work(301), previousWork, "actual scan must advance durable work");
+            assertLe(h.work(301) - previousWork, 12);
             assertLt(gasBefore - gasleft(), 2_000_000);
             if (done) break;
         }
         assertTrue(done);
+    }
+
+    function testNestedReturnPagesAdvanceParentWithoutRepeatedPaymentAtSameCheckpoint() public {
+        _seed(
+            1,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            VeydriftGameStorage.FleetMissionStatus.Returning,
+            1,
+            3,
+            700,
+            800
+        );
+        for (uint256 id = 2; id <= 301; ++id) {
+            _seed(
+                id,
+                VeydriftGameStorage.FleetMissionType.Deploy,
+                VeydriftGameStorage.FleetMissionStatus.Outbound,
+                2,
+                1,
+                2000,
+                4000
+            );
+        }
+        _seed(
+            302,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            VeydriftGameStorage.FleetMissionStatus.Outbound,
+            4,
+            1,
+            900,
+            1200
+        );
+        bool done;
+        bool nestedPage;
+        for (uint256 calls; calls < 128; ++calls) {
+            uint256 parentBefore = h.work(302);
+            uint256 childBefore = h.work(1);
+            uint256 cursorBefore = h.cursor(302);
+            done = h.prepareFleetChronology{gas: 2_000_000}(302, false);
+            assertGt(h.work(302), parentBefore, "every successful pending call performs work");
+            if (cursorBefore == h.entries(1) && h.work(1) > childBefore) {
+                nestedPage = true;
+                assertEq(
+                    h.work(302), parentBefore + 1, "nested progress earns one parent checkpoint"
+                );
+            }
+            if (done) break;
+        }
+        assertTrue(done);
+        assertTrue(nestedPage, "must exercise a child page without rescanning parent");
+        assertEq(uint8(h.status(1)), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
     }
 
     function testEarlierRandomnessBoundBattleDoesNotBlockUnrelatedBody() public {

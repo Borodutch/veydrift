@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftCombatRaidModule} from "../src/VeydriftCombatRaidModule.sol";
+import {VeydriftStagedCombatModule} from "../src/VeydriftStagedCombatModule.sol";
+import {
+    VeydriftLegacyCombatModule,
+    VeydriftLegacyCombatRapidfire
+} from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -36,16 +42,20 @@ contract VeydriftSpaceDockSystemTest is Test {
     VeydriftSpaceDockSystem internal spaceDock;
 
     function setUp() public {
-        VeydriftCombatModule combatModule =
-            new VeydriftCombatModule(address(new VeydriftCombatRapidfire()));
+        VeydriftCombatModule combatModule = new VeydriftCombatModule(
+            address(new VeydriftCombatRapidfire()),
+            address(new VeydriftStagedCombatModule(address(new VeydriftCombatRapidfire()))),
+            address(new VeydriftLegacyCombatModule(address(new VeydriftLegacyCombatRapidfire())))
+        );
         VeydriftGameplayModule gameplayModule = new VeydriftGameplayModule(address(combatModule));
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule =
-            new VeydriftStateMigrationModule(address(0xBEEF));
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
+            address(0xBEEF), address(new VeydriftCombatRaidModule())
+        );
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
         game = new VeydriftGame(

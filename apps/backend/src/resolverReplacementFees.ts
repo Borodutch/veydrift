@@ -28,16 +28,22 @@ export async function resolverTransactionNeedsReplacement(
  */
 export async function resolverReplacementFees(
   publicClient: PublicClient,
-  transactionHash: Hex
+  transactionHash: Hex,
+  validatedCurrent?: ResolverReplacementFees
 ): Promise<ResolverReplacementFees> {
   const [previous, current] = await Promise.all([
     publicClient.getTransaction({ hash: transactionHash }),
-    publicClient.estimateFeesPerGas()
+    validatedCurrent ?? publicClient.estimateFeesPerGas()
   ]);
-  const previousMaxFee = previous.maxFeePerGas ?? previous.gasPrice ?? 0n;
-  const previousPriorityFee = previous.maxPriorityFeePerGas ?? previous.gasPrice ?? 0n;
-  const currentMaxFee = current.maxFeePerGas ?? current.gasPrice ?? 0n;
-  const currentPriorityFee = current.maxPriorityFeePerGas ?? 0n;
+  const previousMaxFee = previous.maxFeePerGas ?? previous.gasPrice;
+  const previousPriorityFee = previous.maxPriorityFeePerGas ?? previous.gasPrice;
+  const currentMaxFee = current.maxFeePerGas;
+  const currentPriorityFee = current.maxPriorityFeePerGas;
+  if (typeof previousMaxFee !== "bigint" || previousMaxFee <= 0n
+    || typeof previousPriorityFee !== "bigint" || previousPriorityFee < 0n || previousPriorityFee > previousMaxFee
+    || typeof currentMaxFee !== "bigint" || currentMaxFee <= 0n
+    || typeof currentPriorityFee !== "bigint" || currentPriorityFee < 0n || currentPriorityFee > currentMaxFee)
+    throw new Error("missing or invalid EIP-1559 replacement fee inputs");
   const maxPriorityFeePerGas = maxBigInt(
     bumpReplacementFee(previousPriorityFee),
     currentPriorityFee

@@ -1,10 +1,8 @@
 import { decodeFunctionResult, parseAbi, serializeTransaction, type Hex, type PublicClient } from "viem";
-import { BatchCapacityError, BatchUnproductiveError, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
+import { BatchUnproductiveError, resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 
-const priceAbi = parseAbi([
-  "function decimals() view returns (uint8)",
-  "function latestRoundData() view returns (uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)"
-]);
+import { resolverReplacementFees } from "./resolverReplacementFees";
+
 export const oracleAbi = parseAbi([
   "function getL1Fee(bytes data) view returns (uint256)",
   "function getL1FeeUpperBound(uint256 unsignedTxSize) view returns (uint256)",
@@ -12,68 +10,71 @@ export const oracleAbi = parseAbi([
 ]);
 export const gasOracle = "0x420000000000000000000000000000000000000F" as const;
 
-/** Immutable provenance of the exact fee/simulation block and price used for USD exposure. */
+/** Immutable provenance of the exact fee/simulation block used for ETH exposure. */
 export type BatchQuoteProvenance = Readonly<{
   blockNumber: bigint; blockHash: Hex; blockTimestamp: bigint;
-  priceFeed: Hex; priceRoundId: bigint; priceUpdatedAt: bigint; priceMaxAgeSeconds: number;
 }>;
 
 export function assertBatchQuoteFresh(provenance: BatchQuoteProvenance, nowMs = Date.now()): void {
-  if (Math.abs(nowMs / 1000 - Number(provenance.blockTimestamp)) > 30)
+  if (typeof provenance.blockTimestamp !== "bigint" || provenance.blockTimestamp <= 0n
+    || Math.abs(nowMs / 1000 - Number(provenance.blockTimestamp)) > 30)
     throw new Error("batch quote block expired");
-  const nowSeconds = BigInt(Math.floor(nowMs / 1000));
-  if (provenance.priceUpdatedAt <= 0n || provenance.priceUpdatedAt > nowSeconds
-    || nowSeconds - provenance.priceUpdatedAt > BigInt(provenance.priceMaxAgeSeconds))
-    throw new Error("missing or stale ETH/USD price; batch blocked");
+
 }
 
 export async function quoteMissionBatch(client: PublicClient, input: {
   blockNumber?: bigint; items: BatchLeg[]; nonce: number; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
 }) {
-  if (![8453, 84532].includes(input.chainId) || !input.policy.priceFeed) throw new Error("batch fee oracle requires Base and configured ETH/USD feed");
-  // Snapshot policy before any await; exposure and final checks use the same feed/age/cap.
+  if (![8453, 84532].includes(input.chainId)) throw new Error("batch fee oracle requires Base");
+  // The batch API emits exactly one envelope, bounded by both the configured batch
+  // aggregate and the stricter immutable per-transaction ETH ceiling.
   const policy = Object.freeze({ ...input.policy });
   const data = batchCalldata(input.items);
   const block = await client.getBlock(input.blockNumber === undefined ? { blockTag: "latest" } : { blockNumber: input.blockNumber });
-  if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
+  if (typeof block.number !== "bigint" || !block.hash || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
   if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("stale fee block");
   const blockNumber = block.number;
   const cap = block.gasLimit < 16_777_216n ? block.gasLimit : 16_777_216n;
-  const [reference, tip, decimals, round] = await Promise.all([
+  const [reference, tip] = await Promise.all([
     simulateProductiveBatch(client, { ...input, data, blockNumber, gas: cap }),
-    client.estimateMaxPriorityFeePerGas(),
-    client.readContract({ address: policy.priceFeed!, abi: priceAbi, functionName: "decimals", blockNumber }),
-    client.readContract({ address: policy.priceFeed!, abi: priceAbi, functionName: "latestRoundData", blockNumber })
+    client.estimateMaxPriorityFeePerGas()
   ]);
-  if (round[4] < round[0]) throw new Error("ETH/USD oracle round incomplete");
   const provenance: BatchQuoteProvenance = Object.freeze({ blockNumber, blockHash: block.hash,
-    blockTimestamp: block.timestamp, priceFeed: policy.priceFeed!, priceRoundId: round[0],
-    priceUpdatedAt: round[3], priceMaxAgeSeconds: policy.priceMaxAgeSeconds });
+    blockTimestamp: block.timestamp });
   // The returned meter starts inside the module: add intrinsic/calldata, proxy dispatch,
   // EIP-150 forwarding loss and tail/reserve before the existing 20% safety margin.
   const estimatedGas = measuredBatchGas(reference.executionGasUsed, data, input.items.length);
-  const gas = (estimatedGas * 120n + 99n) / 100n;
-  if (gas > cap) throw new BatchCapacityError("productive batch gas envelope exceeded");
+  const minimumGas = (estimatedGas * 120n + 99n) / 100n;
   const maxFeePerGas = block.baseFeePerGas * 2n + tip;
+  // L1 data and operator fees are quoted at the cap: an upper bound for any smaller signed gas.
   const transaction = { type: "eip1559" as const, chainId: input.chainId, to: input.game, data,
-    value: 0n, nonce: input.nonce, gas, maxFeePerGas, maxPriorityFeePerGas: tip };
+    value: 0n, nonce: input.nonce, gas: cap, maxFeePerGas, maxPriorityFeePerGas: tip };
   // GasPriceOracle getL1Fee expects the unsigned serialized tx and adds signature overhead.
   // Do NOT use viem estimateOperatorFee: it catches RPC errors and silently returns zero.
   const serialized = serializeTransaction(transaction);
   const [l1Exact, l1Upper, operatorFee] = await Promise.all([
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1Fee", args: [serialized], blockNumber }),
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt((serialized.length - 2) / 2)], blockNumber }),
-    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [gas], blockNumber })
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [cap], blockNumber })
   ]);
   if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("fee quote expired during estimation");
-  const exposure = totalBatchExposure({ estimatedGas, blockGasLimit: block.gasLimit, maxFeePerGas,
-    maxPriorityFeePerGas: tip, l1Fee: l1Exact > l1Upper ? l1Exact : l1Upper, operatorFee, price: round[1], priceDecimals: decimals,
-    updatedAt: round[3], nowSeconds: Math.floor(Date.now() / 1000), policy });
+  const l1Fee = l1Exact > l1Upper ? l1Exact : l1Upper;
+  // Staged battles use whatever gas they get and only start another stage with headroom left, so
+  // sign as much as the ETH cap affords (unused gas is not charged), up to the cap, never below
+  // the measured estimate + 20%. A battle that cannot finish even at the cap (Progress) may
+  // shrink below that estimate and simply commits fewer stages.
+  const budgetWei = policy.maxFeeWei < resolverTransactionMaxFeeWei ? policy.maxFeeWei : resolverTransactionMaxFeeWei;
+  const reserved = l1Fee * 2n + operatorFee * 2n;
+  const affordable = budgetWei > reserved && maxFeePerGas > 0n ? (budgetWei - reserved) / maxFeePerGas : 0n;
+  let gas = affordable < cap ? affordable : cap;
+  if (gas < minimumGas && !(reference.outcomes.includes(7) && gas > 0n)) gas = minimumGas < cap ? minimumGas : cap;
+  const exposure = totalBatchExposure({ gas, blockGasLimit: block.gasLimit, maxFeePerGas,
+    maxPriorityFeePerGas: tip, l1Fee, operatorFee, policy });
+  // Throws unless every leg is still Settled or Progress at the exact signed gas. Settled turning
+  // into Progress is fine: the battle commits fewer stages and continues next tick.
   const exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
     maxFeePerGas, maxPriorityFeePerGas: tip });
-  if (exact.outcomes.some((outcome, i) => outcome !== reference.outcomes[i]))
-    throw new BatchCapacityError("exact signed gas changed productive progress; repack without raising cap");
-  assertBatchQuoteFresh(provenance); // exact eth_call can outlive either freshness window
+  assertBatchQuoteFresh(provenance); // exact eth_call can outlive the freshness window
   return Object.freeze({ ...exposure, blockNumber, provenance, outcomes: exact.outcomes, executionGasUsed: exact.executionGasUsed });
 }
 
@@ -109,4 +110,51 @@ export function rpcQuantity(value: unknown): bigint | null {
   if (typeof value === "string" && /^(0x[0-9a-fA-F]+|[0-9]+)$/.test(value)) return BigInt(value);
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
   return null;
+}
+
+/** Fixed per-transaction quote ceiling, independent of ETH/USD. */
+export const singleResolverMaxFeeWei = resolverTransactionMaxFeeWei;
+export class ResolverFeeCapError extends Error {}
+
+export async function initialResolverFees(client: PublicClient) {
+  const [block, tip] = await Promise.all([client.getBlock({ blockTag: "latest" }), client.estimateMaxPriorityFeePerGas()]);
+  if (typeof block.number !== "bigint" || block.number < 0n || !/^0x[0-9a-fA-F]{64}$/.test(block.hash ?? "")
+    || typeof block.baseFeePerGas !== "bigint" || block.baseFeePerGas < 0n
+    || typeof tip !== "bigint" || tip < 0n || block.baseFeePerGas * 2n + tip <= 0n)
+    throw new Error("fresh EIP-1559 fee inputs unavailable or invalid");
+  const provenance = Object.freeze({ blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp });
+  const assertFresh = () => assertBatchQuoteFresh(provenance);
+  assertFresh();
+  return Object.freeze({ fees: Object.freeze({ maxFeePerGas: block.baseFeePerGas * 2n + tip, maxPriorityFeePerGas: tip }),
+    provenance, assertFresh });
+}
+
+/** Largest gas whose execution max plus 2x Base L1/operator reserves fits 0.0002 ETH.
+ * A quote-time ceiling, not a promise about variable inclusion-time Base charges. */
+export async function quoteResolverGas(client: PublicClient, input: {
+  chainId: number; dataBytes: number; gas: bigint; previousHash?: Hex;
+}) {
+  if (![8453, 84532].includes(input.chainId)) throw new Error("resolver fee cap requires Base");
+  // Execution maximum and all Base reserves share this one validated fee block.
+  // Never pair stale execution fees with a later fresh oracle snapshot.
+  const snapshot = await initialResolverFees(client);
+  const fees = input.previousHash
+    ? await resolverReplacementFees(client, input.previousHash, snapshot.fees) : snapshot.fees;
+  const assertFresh = snapshot.assertFresh;
+  const blockNumber = snapshot.provenance.blockNumber;
+  assertFresh();
+  const [l1Upper, operatorFee] = await Promise.all([
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt(input.dataBytes + 200)], blockNumber }),
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [input.gas], blockNumber })
+  ]);
+  if (typeof l1Upper !== "bigint" || l1Upper < 0n || typeof operatorFee !== "bigint" || operatorFee < 0n
+    || typeof input.gas !== "bigint" || input.gas <= 0n || fees.maxFeePerGas <= 0n)
+    throw new ResolverFeeCapError("invalid resolver fee estimate");
+  const reserved = l1Upper * 2n + operatorFee * 2n;
+  if (singleResolverMaxFeeWei <= reserved) throw new ResolverFeeCapError("network fees exceed the resolver ETH cap");
+  const affordable = (singleResolverMaxFeeWei - reserved) / fees.maxFeePerGas;
+  const gas = affordable < input.gas ? affordable : input.gas;
+  if (gas <= 0n) throw new ResolverFeeCapError("network fees exceed the resolver ETH cap");
+  assertFresh();
+  return Object.freeze({ gas, ...fees, assertFresh });
 }

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
+import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {
     Technology,
     Ship,
@@ -60,11 +62,17 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external virtual {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
+        // Already settled (e.g. by a concurrent batch or manual resolver): no-op, never revert.
+        if (mission.status != FleetMissionStatus.Outbound) return;
         FleetMissionType missionType = mission.missionType;
-        if (
-            mission.status == FleetMissionStatus.Outbound
-                && !prepareFleetChronology(missionId, false)
-        ) return;
+        uint256 lockId = Store.layout().bodyLock[mission.targetPlanetId];
+        if (lockId != 0 && lockId != missionId) {
+            revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
+        }
+        // A staged body snapshot is immutable once preparation begins. Chronology runs first.
+        if (Store.battle(missionId).phase == 0 && !prepareFleetChronology(missionId, false)) {
+            return;
+        }
         if (
             missionType == FleetMissionType.Colonize
                 || ((missionType == FleetMissionType.Transport
@@ -213,6 +221,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             abi.encode(
                 _chronologyScans[id],
                 _battleResolutionProgress[id].rounds,
+                Store.battle(id).workDone,
+                Store.battle(id).math.workDone,
                 _chronologyScans[prerequisite],
                 _fleetMissions[prerequisite].status
             )
@@ -232,6 +242,9 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     function _registerChronologyMission(uint256 id) internal {
         FleetMission storage m = _fleetMissions[id];
         _chronologyRegistered[id] = true;
+        // Registration is real durable work; initialize once at launch, avoiding a cold
+        // zero-to-nonzero counter write on the first bounded impact scan.
+        VeydriftArrivalProgress.advanceMission(id, 1);
         _chronologyMissionsByPlayer[m.owner].push(id);
         address targetOwner = _planets[m.targetPlanetId].owner;
         if (targetOwner != address(0) && targetOwner != m.owner) {
@@ -274,6 +287,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             } else if (
                 m.missionType != FleetMissionType.Colonize
                     && m.missionType != FleetMissionType.MissileAttack
+                    && !(m.missionType == FleetMissionType.Attack
+                        && _battleResolutionProgress[id].rounds == 0)
             ) {
                 _settleScheduledTarget(
                     m,
@@ -310,7 +325,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         }
         uint256[] storage ids = _chronologyMissionsByBody[body];
         uint256 i = scan.cursor;
-        for (uint256 operations; operations < 12 && i < ids.length; ++operations) {
+        uint256 operations;
+        for (; operations < 12 && i < ids.length; ++operations) {
             if (!_active(_fleetMissions[ids[i]])) {
                 ids[i] = ids[ids.length - 1];
                 ids.pop();
@@ -336,9 +352,16 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             }
             ++i;
         }
+        VeydriftArrivalProgress.advanceMission(id, operations);
         scan.cursor = i;
         scan.generation = _scanGeneration(body);
         if (i != ids.length) return false;
+        // Split substantial cold scans from missile impact; retain the <=4-record fast path.
+        // The cached next call has no scan work. The500k spam regression stays unchanged.
+        if (
+            !returning && m.missionType == FleetMissionType.MissileAttack && operations > 4
+                && scan.blocker == 0
+        ) return false;
         if (scan.blocker != 0) {
             FleetMission storage earlier = _fleetMissions[scan.blocker];
             if (
@@ -348,7 +371,17 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
             ) {
                 // Exactly one earlier return per preparatory call. Its own guard runs through the
                 // same ordering, and never recursively auto-resolves another return.
+                uint256 previousWork = VeydriftArrivalProgress.missionWork(scan.blocker);
+                FleetMissionStatus previousStatus = earlier.status;
                 IVeydriftMoonArrivalResolver(address(this)).completeFleetMissionReturn(scan.blocker);
+                // A nested bounded return may advance without changing status. Count only proven
+                // work/state changes, never a successful but unchanged child call.
+                if (
+                    earlier.status != previousStatus
+                        || VeydriftArrivalProgress.missionWork(scan.blocker) > previousWork
+                ) {
+                    VeydriftArrivalProgress.advanceMission(id, 1);
+                }
                 return false;
             }
             revert FleetMissionNotResolved(scan.blockerAt);
@@ -357,6 +390,8 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         if (
             !returning && m.missionType != FleetMissionType.MissileAttack
                 && m.missionType != FleetMissionType.Colonize
+                && !(m.missionType == FleetMissionType.Attack
+                    && _battleResolutionProgress[id].rounds == 0)
         ) _settleScheduledTarget(m, at);
         // Ordinary settlement removes events or moves them later. Newly allocated IDs are
         // appended and scanned before completion. Recalls invalidate their origin-body epochs

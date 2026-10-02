@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
@@ -276,6 +277,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         missionId = nextFleetId++;
         uint256 randomnessRequestId;
         if (isAttack) {
+            VeydriftBattleResearch.markLaunchedAttack(missionId);
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
         activeFleetMissionCount[player] += 1;
@@ -584,17 +586,17 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function _missionShipQuantity(MissionShips calldata ships, Ship ship)
         private
         pure
-        returns (uint32)
+        returns (uint32 quantity)
     {
-        // MissionShips follows the mobile Ship order, omitting SolarSatellite and Crawler.
-        // Calldata struct fields are ABI-validated uint32 words. This replaces the identical
-        // 14-way selector to keep the new resolution-index invalidation under EIP-170.
-        if (ship == Ship.SolarSatellite || ship == Ship.Crawler) return 0;
-        uint256 index = uint8(ship);
-        if (ship > Ship.SolarSatellite) --index;
-        uint32 quantity;
-        assembly ("memory-safe") { quantity := calldataload(add(ships, mul(index, 32))) }
-        return quantity;
+        uint256 id = uint8(ship);
+        if (id == uint8(Ship.SolarSatellite) || id > uint8(Ship.Pathfinder)) return 0;
+        uint256 satellite = uint8(Ship.SolarSatellite);
+        assembly ("memory-safe") {
+            // Bounds above exclude the satellite itself; subtracting 0/1 cannot underflow.
+            id := sub(id, gt(id, satellite))
+            quantity := calldataload(add(ships, shl(5, id)))
+            if gt(quantity, 0xffffffff) { revert(0, 0) }
+        }
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {

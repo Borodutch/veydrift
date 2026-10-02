@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftScoreSnapshot} from "./libraries/VeydriftScoreSnapshot.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
@@ -1024,19 +1025,9 @@ abstract contract VeydriftGameStorage is Initializable {
     }
 
     function _unregisterOwnedPlanet(address player, uint256 planetId) internal {
-        uint256 indexPlusOne = _ownedPlanetIndex[planetId];
-        if (indexPlusOne == 0) return;
-
-        uint256[] storage planetIds = _ownedPlanetIds[player];
-        uint256 index = indexPlusOne - 1;
-        uint256 lastIndex = planetIds.length - 1;
-        if (index != lastIndex) {
-            uint256 movedPlanetId = planetIds[lastIndex];
-            planetIds[index] = movedPlanetId;
-            _ownedPlanetIndex[movedPlanetId] = indexPlusOne;
-        }
-        planetIds.pop();
-        delete _ownedPlanetIndex[planetId];
+        VeydriftScoreSnapshot.removeIndex(
+            player, true, _ownedPlanetIds[player], _ownedPlanetIndex, planetId
+        );
     }
 
     /// @dev Canonical topic0 hashes for the two count-changed events. Both are emitted through the
@@ -1057,6 +1048,16 @@ abstract contract VeydriftGameStorage is Initializable {
     ///      `emit` of the matching event. Folding the store + log here means the nested-mapping write
     ///      and the LOG3 bytecode each exist once, rather than once per ship/defense setter — the
     ///      headroom the size-critical combat module needs to stay within EIP-170.
+    function _snapshotPlanetScore(uint256 planetId) internal {
+        VeydriftScoreSnapshot.capturePlanet(
+            planetId, _planets, _buildingLevels, _defenseCounts, _shipCounts, _moonShipCounts
+        );
+    }
+
+    function _snapshotMissionScore(FleetMission storage mission) internal {
+        VeydriftScoreSnapshot.captureMission(mission);
+    }
+
     function _writeUnitCount(
         uint256 baseSlot,
         bytes32 topic0,
@@ -1064,6 +1065,7 @@ abstract contract VeydriftGameStorage is Initializable {
         uint256 unitId,
         uint32 total
     ) private {
+        _snapshotPlanetScore(planetId);
         assembly ("memory-safe") {
             mstore(0x00, planetId)
             mstore(0x20, baseSlot)

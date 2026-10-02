@@ -1,7 +1,9 @@
-import { decodeFunctionResult, encodeFunctionData, type Abi } from "viem";
+import { decodeFunctionResult, encodeFunctionData, parseTransaction, toHex, type Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { JsonRpcTransport } from "./transport";
+import { readMissionProgress, type MissionProgress } from "./progress";
+import { assertSignedTarget, signedAttempt, resumeSignedAttempt, PreBroadcastError, type AttemptStore } from "./transaction";
 
 /**
  * Permissionless settlement entrypoints — any funded EOA can call them. We keep the ABIs inline so
@@ -31,6 +33,9 @@ const completeFleetMissionReturnAbi = [
   }
 ] as const satisfies Abi;
 
+// Conservative transaction-envelope ceiling, below Base's 2^24 gas maximum.
+// https://docs.base.org/specifications/transactions/troubleshooting-transactions
+export const settlementGasLimit = 15_000_000n;
 const fleetMissionEligibilityAbi = [{
   type: "function", name: "fleetMissionEligibility", stateMutability: "view",
   inputs: [{ name: "missionId", type: "uint256" }],
@@ -50,6 +55,7 @@ export type CanonicalMissionStatus = {
   arrivalAt: number;
   returnAt: number;
   randomnessRequestId: string;
+  targetPlanetId?: string;
 };
 
 /** Raised when an attempted resolve reverts on simulation — almost always "randomness not committed
@@ -69,8 +75,13 @@ export type MissionResolver = {
    * completeFleetMissionReturn for "return"). Resolves with the tx hash once mined successfully.
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
-  resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
-  /** Canonical post-receipt state; every mission type and both legs may need several receipts. */
+  resolveMission(missionId: string, leg: MissionLeg, beforeSign?: () => Promise<MissionProgress | void>): Promise<string>;
+  bindAttemptStore?(store: AttemptStore): void;
+  pendingProgress?(missionId: string, leg: MissionLeg): MissionProgress | undefined;
+  hasSignedAttempt?(missionId: string, leg: MissionLeg): boolean;
+  acknowledgeReceipt?(missionId: string, leg: MissionLeg): void;
+  missionProgress?(missionId: string): Promise<MissionProgress>;
+  /** Canonical post-receipt state; combat and missile settlement can require several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
 };
@@ -129,6 +140,7 @@ export function encodeMissionCall(missionId: bigint, leg: MissionLeg): `0x${stri
 }
 
 type ViemResolverOptions = {
+  arrivalProgressVersions?: readonly string[];
   /** Poll interval / attempts while waiting for the tx receipt. */
   receiptPollIntervalMs?: number;
   receiptMaxPolls?: number;
@@ -145,6 +157,13 @@ export class ViemMissionResolver implements MissionResolver {
   private readonly account: ReturnType<typeof privateKeyToAccount>;
   private readonly to: `0x${string}`;
   private readonly chainId: number;
+  private attemptStore: AttemptStore | undefined;
+  bindAttemptStore(store: AttemptStore): void { this.attemptStore = store; }
+  hasSignedAttempt(id: string, leg: MissionLeg): boolean { return !!this.attemptStore?.getAttempt(id + ":" + leg); }
+  pendingProgress(id: string, leg: MissionLeg): MissionProgress | undefined {
+    return this.attemptStore?.getAttempt(id + ":" + leg)?.progress;
+  }
+  acknowledgeReceipt(id: string, leg: MissionLeg): void { this.attemptStore?.removeAttempt(id + ":" + leg); }
 
   constructor(
     private readonly transport: JsonRpcTransport,
@@ -162,7 +181,17 @@ export class ViemMissionResolver implements MissionResolver {
     return this.account.address;
   }
 
-  async resolveMission(missionId: string, leg: MissionLeg = "arrival"): Promise<string> {
+  async missionProgress(missionId: string): Promise<MissionProgress> {
+    const mission = await this.missionStatus(missionId);
+    return readMissionProgress(this.transport, this.to, missionId,
+      mission.status === 1 ? mission.targetPlanetId : undefined,
+      mission.missionType === 7, this.options.arrivalProgressVersions);
+  }
+
+  async resolveMission(missionId: string, leg: MissionLeg = "arrival", beforeSign?: () => Promise<MissionProgress | void>): Promise<string> {
+    const pending = this.attemptStore?.getAttempt(missionId + ":" + leg);
+    if (pending) return this.resume(missionId, leg);
+    if (this.attemptStore?.attemptKeys().length) throw new Error("another durable signed transaction owns the keeper nonce");
     const data = encodeMissionCall(BigInt(missionId), leg);
     const from = this.account.address;
 
@@ -182,20 +211,49 @@ export class ViemMissionResolver implements MissionResolver {
       // legacy and new missions without backfill. Simulate the exact existing entrypoint so
       // progress-only calls can run without bypassing its chronology/randomness guards.
       if (!orderingReady) throw new Error("fleet chronology ordering support unavailable");
-      await this.transport.request<string>("eth_call", [{ from, to: this.to, data }, "latest"]);
+await this.transport.request<string>("eth_call", [{ from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}` }, "latest"]);
     } catch (error) {
       throw new MissionNotResolvableError(missionId, error);
     }
 
     // 2) Build the EIP-1559 tx: nonce (pending), gas estimate + buffer, dynamic fees, chainId.
-    const [nonceHex, gasHex, feeData] = await Promise.all([
+    const [nonceHex, latestNonceHex, gasHex, feeData] = await Promise.all([
       this.transport.request<string>("eth_getTransactionCount", [from, "pending"]),
-      this.transport.request<string>("eth_estimateGas", [{ from, to: this.to, data }]),
+      this.transport.request<string>("eth_getTransactionCount", [from, "latest"]),
+      this.transport.request<string>("eth_estimateGas", [{
+        from, to: this.to, data, gas: `0x${settlementGasLimit.toString(16)}`
+      }]),
       this.resolveFees()
     ]);
 
-    const gas = applyBuffer(BigInt(gasHex), this.options.gasLimitBufferPercent ?? 20n);
+    // A previous send may have timed out or the keeper may have restarted while it was pending.
+    // Do not enqueue a second stage behind an unknown receipt (or reuse its nonce).
+    if (BigInt(nonceHex) !== BigInt(latestNonceHex)) {
+      throw new MissionNotResolvableError(missionId, new Error("keeper transaction still pending"));
+    }
+    const estimate = BigInt(gasHex);
+    if (estimate > settlementGasLimit) {
+      throw new MissionNotResolvableError(missionId, new Error("settlement exceeds gas ceiling"));
+    }
+    const buffered = applyBuffer(estimate, this.options.gasLimitBufferPercent ?? 20n);
+    // Arrival computation may stop at a gasleft checkpoint. A minimum-success estimate can
+    // otherwise select a receipt that makes little/no progress. Give it the unchanged full budget.
+    const gas = leg === "arrival" || buffered > settlementGasLimit
+      ? settlementGasLimit : buffered;
+    // Preflight the exact envelope we will sign, not an unlimited eth_call or an oversized buffer.
+    try {
+      await this.transport.request<string>("eth_call", [{
+        from, to: this.to, data, gas: `0x${gas.toString(16)}`,
+        maxFeePerGas: `0x${feeData.maxFeePerGas.toString(16)}`,
+        maxPriorityFeePerGas: `0x${feeData.maxPriorityFeePerGas.toString(16)}`,
+        nonce: nonceHex, type: "0x2"
+      }, "latest"]);
+    } catch (error) {
+      throw new MissionNotResolvableError(missionId, error);
+    }
 
+    // The durable progress intent commits after read-only preflight and before signing/broadcast.
+    const progress = await beforeSign?.();
     const signed = await this.account.signTransaction({
       to: this.to,
       data,
@@ -207,10 +265,42 @@ export class ViemMissionResolver implements MissionResolver {
       type: "eip1559"
     });
 
-    // 3) Broadcast raw + wait for a successful receipt.
+    // Persistence is the only gateway to dispatch. A crash before this write is safe to rebuild;
+    // after it, restart can only resend these exact bytes, never allocate a replacement nonce.
+    if (this.attemptStore) {
+      this.attemptStore.putAttempt(missionId + ":" + leg, signedAttempt(signed, Number(BigInt(nonceHex)), progress || undefined));
+      return this.resume(missionId, leg);
+    }
+    // Legacy standalone adapters have no durable owner. Production always binds the keeper journal.
     const hash = await this.transport.request<`0x${string}`>("eth_sendRawTransaction", [signed]);
     await this.waitForSuccessfulReceipt(hash, missionId);
     return hash;
+  }
+
+  private async resume(missionId: string, leg: MissionLeg): Promise<string> {
+    const attempt = this.attemptStore!.getAttempt(missionId + ":" + leg)!;
+    await assertSignedTarget(attempt, { from: this.account.address, to: this.to,
+      data: encodeMissionCall(BigInt(missionId), leg), chainId: this.chainId, maxGas: settlementGasLimit });
+    // Paid reverts retain their envelope until the keeper durably consumes the checkpoint.
+    const transport: JsonRpcTransport = { request: async <T>(method: string, params: unknown[]): Promise<T> => {
+      if (method === "eth_sendRawTransaction") {
+        try {
+          const proof = await this.transport.request<`0x${string}`>("eth_call", [{ to: this.to,
+            data: encodeFunctionData({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", args: [BigInt(missionId)] }) }, "latest"]);
+          const [, , ready] = decodeFunctionResult({ abi: fleetMissionEligibilityAbi, functionName: "fleetMissionEligibility", data: proof });
+          if (!ready) throw new Error("fleet chronology ordering support unavailable");
+          const tx = parseTransaction(attempt.raw);
+          await this.transport.request("eth_call", [{ from: this.account.address, to: this.to, data: tx.data,
+            nonce: toHex(tx.nonce!), gas: toHex(tx.gas!), value: toHex(tx.value ?? 0n),
+            ...(tx.maxFeePerGas === undefined ? {} : { maxFeePerGas: toHex(tx.maxFeePerGas) }),
+            ...(tx.maxPriorityFeePerGas === undefined ? {} : { maxPriorityFeePerGas: toHex(tx.maxPriorityFeePerGas) }) }, "latest"]);
+        } catch (error) { throw new PreBroadcastError(error); }
+      }
+      return this.transport.request<T>(method, params);
+    } };
+    return resumeSignedAttempt(transport, attempt, {
+      polls: this.options.receiptMaxPolls ?? 40, intervalMs: this.options.receiptPollIntervalMs ?? 1500
+    });
   }
 
   async missionStatus(missionId: string): Promise<CanonicalMissionStatus> {
@@ -234,7 +324,8 @@ export class ViemMissionResolver implements MissionResolver {
       missionType: Number(decoded[1]),
       arrivalAt: Number(decoded[6]),
       returnAt: Number(decoded[7]),
-      randomnessRequestId: decoded[10].toString()
+      randomnessRequestId: decoded[10].toString(),
+      targetPlanetId: decoded[4].toString()
     };
   }
 

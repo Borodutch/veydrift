@@ -22,7 +22,7 @@ export type ResolverTransactionRequest = {
   address: `0x${string}`;
   operationId: string;
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
-  submit: (nonce: number) => Promise<Hex>;
+  submit: (nonce: number, assertLease: () => void) => Promise<Hex>;
   /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
   prepare?: (nonce: number, signing: {
     /** Reserve identity under the lease, fence actual signer invocation, retain its public result. */
@@ -40,8 +40,8 @@ export type ResolverTransactionRequest = {
   /** A canonical receipt can be one bounded chunk of a larger logical operation. */
   isOperationComplete?: () => Promise<boolean>;
   shouldReplace?: (hash: Hex) => Promise<boolean>;
-  replace?: (nonce: number, previousHash: Hex) => Promise<Hex>;
-  cancelStale?: (nonce: number, previousHash: Hex) => Promise<Hex>;
+  replace?: (nonce: number, previousHash: Hex, assertLease: () => void) => Promise<Hex>;
+  cancelStale?: (nonce: number, previousHash: Hex, assertLease: () => void) => Promise<Hex>;
   confirm: (hash: Hex) => Promise<void>;
 };
 
@@ -398,6 +398,11 @@ export class ResolverTransactionCoordinator {
     request: ResolverTransactionRequest,
     assertLease: () => void
   ): Promise<Hex> {
+    // A late RPC/preflight completion must never mutate a successor's shared journal.
+    // BEGIN IMMEDIATE fences ownership and writes atomically across coordinator processes.
+    const recordOwnedAttempt = (...args: Parameters<ResolverTransactionCoordinator["recordAttempt"]>) => {
+      this.database.transaction(() => { assertLease(); this.recordAttempt(...args); }).immediate();
+    };
     await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
     if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
     const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
@@ -410,7 +415,7 @@ export class ResolverTransactionCoordinator {
       }
       // Either a reorg removed the confirmation or the receipt completed only one bounded chunk.
       // Retire this attempt and allocate at the current pending nonce; never replay the old nonce.
-      this.recordAttempt(
+      recordOwnedAttempt(
         request.chainId,
         request.address,
         request.operationId,
@@ -425,7 +430,7 @@ export class ResolverTransactionCoordinator {
         request.getTransactionCount("pending")
       ]);
       if (previous.status === "allocating" && (latest > previous.nonce || pending > previous.nonce)) {
-        this.recordAttempt(
+        recordOwnedAttempt(
           request.chainId,
           request.address,
           request.operationId,
@@ -448,7 +453,7 @@ export class ResolverTransactionCoordinator {
           "the possibly accepted transaction is still pending"
         );
       }
-      this.recordAttempt(
+      recordOwnedAttempt(
         request.chainId,
         request.address,
         request.operationId,
@@ -472,7 +477,7 @@ export class ResolverTransactionCoordinator {
       if (!replaceImmediately) {
         try {
           await request.confirm(previous.transactionHash);
-          this.recordAttempt(
+          recordOwnedAttempt(
             request.chainId,
             request.address,
             request.operationId,
@@ -483,7 +488,7 @@ export class ResolverTransactionCoordinator {
           return previous.transactionHash;
         } catch (error) {
           if (isRevertedTransactionError(error)) {
-            this.recordAttempt(
+            recordOwnedAttempt(
               request.chainId,
               request.address,
               request.operationId,
@@ -513,7 +518,7 @@ export class ResolverTransactionCoordinator {
       assertLease();
       let replacementHash: Hex;
       try {
-        replacementHash = await request.replace(previous.nonce, previous.transactionHash);
+        replacementHash = await request.replace(previous.nonce, previous.transactionHash, assertLease);
       } catch (replacementError) {
         if (isReplacementUnderpricedError(replacementError)) {
           throw new ResolverNonceStalledError(
@@ -524,7 +529,7 @@ export class ResolverTransactionCoordinator {
         }
         throw replacementError;
       }
-      this.recordAttempt(
+      recordOwnedAttempt(
         request.chainId,
         request.address,
         request.operationId,
@@ -536,7 +541,7 @@ export class ResolverTransactionCoordinator {
         await request.confirm(replacementHash);
       } catch (replacementError) {
         if (isRevertedTransactionError(replacementError)) {
-          this.recordAttempt(
+          recordOwnedAttempt(
             request.chainId,
             request.address,
             request.operationId,
@@ -547,7 +552,7 @@ export class ResolverTransactionCoordinator {
         }
         throw replacementError;
       }
-      this.recordAttempt(
+      recordOwnedAttempt(
         request.chainId,
         request.address,
         request.operationId,
@@ -574,8 +579,8 @@ export class ResolverTransactionCoordinator {
           && (this.isStale(stale) || await request.shouldReplace(stale.transactionHash))
         ) {
           assertLease();
-          const cancellationHash = await request.cancelStale(latest, stale.transactionHash);
-          this.recordAttempt(
+          const cancellationHash = await request.cancelStale(latest, stale.transactionHash, assertLease);
+          recordOwnedAttempt(
             request.chainId,
             request.address,
             stale.operationId,
@@ -587,7 +592,7 @@ export class ResolverTransactionCoordinator {
             await request.confirm(cancellationHash);
           } catch (error) {
             if (isRevertedTransactionError(error)) {
-              this.recordAttempt(
+              recordOwnedAttempt(
                 request.chainId,
                 request.address,
                 stale.operationId,
@@ -598,7 +603,7 @@ export class ResolverTransactionCoordinator {
             }
             throw error;
           }
-          this.recordAttempt(
+          recordOwnedAttempt(
             request.chainId,
             request.address,
             stale.operationId,
@@ -616,13 +621,14 @@ export class ResolverTransactionCoordinator {
         .get(request.chainId, normalizeAddress(request.address), nonce) as { nonce: number } | null;
       if (retained) throw new ResolverSubmissionAmbiguousError(request.chainId, request.address, nonce,
         "nonce regression overlaps retained batch history; explicit recovery required");
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "allocating");
+      recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, null, "allocating");
       assertLease();
       let hash: Hex;
       try {
         if (request.prepare) {
           let reservationId: string | undefined;
-          const prepared = await request.prepare(nonce, { sign: async (membership, signer) => {
+          let prepared: Awaited<ReturnType<NonNullable<typeof request.prepare>>>;
+          try { prepared = await request.prepare(nonce, { sign: async (membership, signer) => {
             if (reservationId) throw new Error("batch preparation cannot sign twice");
             const id = randomUUID();
             this.database.transaction(() => {
@@ -642,7 +648,16 @@ export class ResolverTransactionCoordinator {
               .run(id, keccak256(signed));
             assertLease();
             return signed;
-          } });
+          } }); } catch (error) {
+            // Nothing signed yet (no reservation): release the nonce allocation cleanly, but only
+            // while this process still owns the lease; a successor owns the state otherwise.
+            if (!reservationId) {
+              let owned = true;
+              try { assertLease(); } catch { owned = false; }
+              if (owned) recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+            }
+            throw error;
+          }
           this.database.transaction(() => {
             assertLease();
             const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
@@ -656,7 +671,7 @@ export class ResolverTransactionCoordinator {
             this.database.query(
               "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
             ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
-            this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
+            recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
             if (reservationId) this.database.query("UPDATE resolver_signing_reservations SET transferred = 1 WHERE id = ?").run(reservationId);
           }).immediate();
           try {
@@ -674,35 +689,35 @@ export class ResolverTransactionCoordinator {
               const changed = this.database.query("UPDATE resolver_prepared_intents SET status = 'prevented' WHERE chain_id = ? AND resolver_address = ? AND operation_id = ? AND nonce = ? AND transaction_hash = ? AND membership = ? AND status = 'pending'")
                 .run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
               if (changed.changes !== 1) throw new Error("batch prevention intent changed; explicit recovery required");
-              this.recordAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "prevented");
+              recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "prevented");
             }).immediate();
             throw error;
           }
           hash = await prepared.broadcast();
           if (hash.toLowerCase() !== prepared.hash.toLowerCase()) throw new Error("broadcast hash differs from persisted local batch hash");
-        } else hash = await request.submit(nonce);
+        } else hash = await request.submit(nonce, assertLease);
       } catch (error) {
         if (request.prepare) throw error; // never discard a possibly broadcast durable hash
         if (!isReplacementUnderpricedError(error)) {
-          this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+          recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
           throw error;
         }
         const advanced = await this.waitForNonceAdvance(request.getTransactionCount, nonce);
         if (advanced) continue;
-        this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+        recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
         throw new ResolverNonceStalledError(request.chainId, request.address, nonce);
       }
 
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "submitted");
+      recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, hash, "submitted");
       try {
         await request.confirm(hash);
       } catch (error) {
         if (isRevertedTransactionError(error)) {
-          this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "reverted");
+          recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, hash, "reverted");
         }
         throw error;
       }
-      this.recordAttempt(request.chainId, request.address, request.operationId, nonce, hash, "confirmed");
+      recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, hash, "confirmed");
       if (request.prepare) await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
       return hash;
     }

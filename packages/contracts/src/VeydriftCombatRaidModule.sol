@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftRaidStorage} from "./libraries/VeydriftRaidStorage.sol";
+import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {Ship} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for post-battle raid settlement, split out of combat bytecode.
@@ -19,6 +20,10 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
         if (!_battleRaidProtectionSnapshotted[attackMissionId]) {
             revert MissingRaidProtectionSnapshot(attackMissionId);
+        }
+        if (Store.battle(attackMissionId).phase != 0) {
+            _stagedRaid(attackMissionId);
+            return;
         }
         uint16 plunderBps = _battleRaidPlunderBps[attackMissionId];
         FleetMission storage mission = _fleetMissions[attackMissionId];
@@ -58,6 +63,92 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
             }
         }
         _distributeAttackGroupLoot(attackMissionId, mission, loot, totalCapacity);
+    }
+
+    event CombatMissionLoot(
+        uint256 indexed battleId,
+        uint256 indexed missionId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+
+    function _stagedRaid(uint256 id) private {
+        Store.Battle storage b = Store.battle(id);
+        FleetMission storage attack = _fleetMissions[id];
+        if (b.prepared) return;
+        if (b.blocked || b.math.sides[0].total == 0 || b.math.sides[1].total != 0) {
+            b.prepared = true;
+            return;
+        }
+        if (b.raidPhase == 0) {
+            if (b.returnCursor < b.missions.length) {
+                uint256 memberId = b.missions[b.returnCursor++];
+                FleetMission storage member = _fleetMissions[memberId];
+                if (memberId == id || member.missionType == FleetMissionType.AcsAttack) {
+                    uint256 capacity =
+                        _remainingCargoCapacity(member.ships, member.cargo, member.fuelCost);
+                    b.capacities[memberId] = capacity;
+                    b.totalCapacity += capacity;
+                }
+            } else {
+                b.raidPhase = 1;
+                b.returnCursor = 0;
+            }
+        } else if (b.raidPhase == 1) {
+            if (b.totalCapacity == 0) {
+                b.prepared = true;
+                return;
+            }
+            Resources memory loot = attack.targetIsMoon
+                ? _raidMoonResources(
+                    attack.targetPlanetId,
+                    b.totalCapacity,
+                    _battleRaidPlunderBps[id],
+                    attack.lootRatio
+                )
+                : _raidResources(
+                    attack.targetPlanetId,
+                    b.totalCapacity,
+                    _battleRaidPlunderBps[id],
+                    attack.lootRatio
+                );
+            uint256 used = uint256(loot.metal) + loot.crystal + loot.deuterium;
+            if (!attack.targetIsMoon && used < b.totalCapacity) {
+                loot = _add(
+                    loot,
+                    _raidRiftResources(
+                        attack.owner,
+                        attack.targetPlanetId,
+                        b.totalCapacity - used,
+                        attack.lootRatio
+                    )
+                );
+            }
+            b.lootMetal = loot.metal;
+            b.lootCrystal = loot.crystal;
+            b.lootDeuterium = loot.deuterium;
+            b.raidPhase = 2;
+        } else {
+            if (b.returnCursor == b.missions.length) {
+                b.prepared = true;
+                return;
+            }
+            uint256 memberId = b.missions[b.returnCursor++];
+            uint256 capacity = b.capacities[memberId];
+            if (capacity == 0) return;
+            Resources memory share;
+            share.metal = _toUint128(uint256(b.lootMetal) * capacity / b.totalCapacity);
+            share.crystal = _toUint128(uint256(b.lootCrystal) * capacity / b.totalCapacity);
+            share.deuterium = _toUint128(uint256(b.lootDeuterium) * capacity / b.totalCapacity);
+            b.lootMetal -= share.metal;
+            b.lootCrystal -= share.crystal;
+            b.lootDeuterium -= share.deuterium;
+            b.totalCapacity -= capacity;
+            _fleetMissions[memberId].cargo = _add(_fleetMissions[memberId].cargo, share);
+            ++b.lootEventCount;
+            emit CombatMissionLoot(id, memberId, share.metal, share.crystal, share.deuterium);
+        }
     }
 
     function _raidRiftResources(

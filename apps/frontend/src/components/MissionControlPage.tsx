@@ -1,8 +1,8 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useMemo } from "preact/hooks";
-import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
-export { DEFAULT_MISSION_CONTROL_VIEW, EMPTY_MISSION_CONTROL_FILTERS, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, readPersistedMissionControlView, resolveMissionControlView, type MissionControlDirectionFilter, type MissionControlFilters, type MissionControlView } from "./missionControlModel";
+import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, combatProgressLabel, isMissionQueued, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
+export { DEFAULT_MISSION_CONTROL_VIEW, EMPTY_MISSION_CONTROL_FILTERS, combatProgressLabel, isMissionQueued, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, readPersistedMissionControlView, resolveMissionControlView, type MissionControlDirectionFilter, type MissionControlFilters, type MissionControlView } from "./missionControlModel";
 
 import { planetArtTypeForCoordinates } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
@@ -1639,12 +1639,17 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
   if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
-  if (isMissionReadyToResolve(mission)) {
-    const progress = mission.combatResolutionProgress;
+  if (mission.combatResolutionProgress) {
     return {
-      label: progress ? `Resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "Resolving",
+      label: combatProgressLabel(mission.combatResolutionProgress),
       tone: "border-amber-300/25 bg-amber-300/10 text-amber-100"
     };
+  }
+  if (isMissionReadyToResolve(mission)) {
+    return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
+  if (isMissionQueued(mission)) {
+    return { label: "Queued", tone: "border-slate-300/25 bg-slate-300/10 text-slate-200" };
   }
   if (mission.status === "Outbound") {
     if (mission.missionType === "DefenseHold" && mission.asOfNow?.arrived && !mission.asOfNow.returned) {
@@ -2842,6 +2847,7 @@ function isMissionReadyToResolve(mission: FleetMissionSummary): boolean {
   return mission.needsResolution === true && mission.resolutionEligible === true;
 }
 
+
 // The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
 // after arrival), reverting with "the recall cutoff has passed" — VeydriftGameStorage exposes
 // FLEET_RECALL_CUTOFF_SECONDS = 60. A fleet is therefore recallable only while it is still Outbound
@@ -3202,10 +3208,9 @@ function missionStatusLabel(status: string): string {
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
   if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
-  if (isMissionReadyToResolve(mission)) {
-    const progress = mission.combatResolutionProgress;
-    return progress ? `resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "resolving";
-  }
+  if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress).toLowerCase();
+  if (isMissionReadyToResolve(mission)) return "resolving";
+  if (isMissionQueued(mission)) return "queued";
   if (
     mission.status === "Outbound"
     && mission.missionType === "DefenseHold"

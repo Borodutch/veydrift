@@ -746,14 +746,16 @@ export type CombatRoundReport = {
 
 // One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
 // joined the same attack. `loot` is the resources this fleet personally hauled away. Per-participant
-// losses are not emitted on-chain (CombatLosses is a single combined figure), so only loot is broken
-// out per participant; the report's top-level losses/debris/outcome remain the combined group result.
+// losses are optional for legacy reports; staged combat supplies authoritative destroyed/surviving
+// counts. Top-level losses/debris/outcome remain the combined group result.
 export type BattleReportParticipant = {
   missionId: string;
   address: string;
   isMainAttacker: boolean;
   ships: Record<string, string>;
   loot: OnChainResources;
+  destroyedShips?: Record<string, string>;
+  survivingShips?: Record<string, string>;
 };
 
 export type BattleReportDefenderSnapshot = {
@@ -1893,7 +1895,8 @@ const contractRevertReasons: Record<string, string> = {
   "0xa3ab075a": "The selected debris field is empty. Refresh galaxy state and retry.",
   "0x84c69485": "This mission type is not supported for the selected fleet action.",
   "0xbacdb922": "The target attack is already too close to arrival for this fleet action.",
-  "0xb3439205": "A fleet mission involving this planet still needs resolution. Resolve it before launching another mission.",
+  "0xb3439205": "An earlier fleet mission involving this planet must resolve first. It resolves automatically; retry once it settles.",
+  "0x6eb4f8ed": "Battle randomness is still pending. It arrives automatically; retry shortly.",
   "0x1c31409a": "This fleet mission is no longer active. Refresh mission control and retry.",
   "0x828c1183": "This wallet does not own the selected fleet mission. Refresh mission control and retry.",
   "0xa8d5807a": "This fleet has not arrived yet. Wait for arrival or refresh mission control before retrying.",

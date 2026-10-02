@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BackendConfig } from "./config";
+import { ChainSyncService } from "./chainSync";
 import {
   aggregatePaidAllianceInviteCounts,
   paidAllianceInviteCapabilities,
@@ -54,6 +55,7 @@ function config(): BackendConfig {
   };
 }
 
+// Route-only fixtures inject chain-sync without a backfiller so no polling/RPC escapes the test.
 describe("paid alliance invites", () => {
   test("reports signing and recovery capabilities independently of public indexing", () => {
     const publicConfig: BackendConfig = {
@@ -85,6 +87,7 @@ describe("paid alliance invites", () => {
         canRecoverAllianceInvites: async () => true,
       },
       role: "writer",
+      chainSync: new ChainSyncService(config(), undefined),
     });
     for (const operation of ["resolve", "redeem", "store", "recover"]) {
       const response = await handler(new Request(`http://test/alliance-invites/${operation}`, {
@@ -144,6 +147,7 @@ describe("paid alliance invites", () => {
         canRecoverAllianceInvites: async () => true,
       },
       role: "writer",
+      chainSync: new ChainSyncService(config(), undefined),
     });
     const resolution = await handler(new Request("http://test/alliance-invites/resolve", {
       method: "POST",
@@ -235,6 +239,7 @@ describe("paid alliance invites", () => {
         },
         paidAllianceInviteSecretStore: restarted,
         role: "writer",
+        chainSync: new ChainSyncService(config(), undefined),
       });
       const response = await handler(new Request("http://test/alliance-invites/recover", {
         method: "POST",
@@ -324,6 +329,7 @@ describe("paid alliance invites", () => {
         },
         paidAllianceInviteSecretStore: store,
         role: "writer",
+        chainSync: new ChainSyncService(config(), undefined),
       });
       const response = await handler(new Request("http://test/alliance-invites/recover", {
         method: "POST",
@@ -353,6 +359,7 @@ describe("paid alliance invites", () => {
         },
         paidAllianceInviteSecretStore: store,
         role: "writer",
+        chainSync: new ChainSyncService(config(), undefined),
       });
       const denied = await memberHandler(new Request("http://test/alliance-invites/recover", {
         method: "POST",

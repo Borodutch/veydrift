@@ -164,20 +164,22 @@ describe("wallet message verifier", () => {
   });
 
   test("uses the RPC smart-wallet verifier with an explicit gas cap", async () => {
-    let rpcPayload: { method?: string; params?: Array<Record<string, string>> } | undefined;
-    const server = Bun.serve({
-      port: 0,
-      async fetch(request) {
-        rpcPayload = await request.json() as typeof rpcPayload;
-        return Response.json({
-          id: 1,
-          jsonrpc: "2.0",
-          result: `0x${"0".repeat(63)}1`,
-        });
-      },
-    });
+    let rpcPayload: { id: number; method?: string; params?: Array<Record<string, string>> } | undefined;
+    const rpcUrl = "https://wallet-verifier.test";
+    const previousFetch = globalThis.fetch;
+    // Keep the real viem HTTP serialization/verification, but no socket or proxy dependency.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url !== `${rpcUrl}/`) throw new Error(`Unexpected RPC URL: ${request.url}`);
+      rpcPayload = await request.json() as NonNullable<typeof rpcPayload>;
+      return Response.json({
+        id: rpcPayload.id,
+        jsonrpc: "2.0",
+        result: `0x${"0".repeat(63)}1`,
+      });
+    }) as typeof fetch;
     try {
-      const verify = createRpcWalletMessageVerifier([`http://127.0.0.1:${server.port}`]);
+      const verify = createRpcWalletMessageVerifier([rpcUrl]);
       expect(await verify({
         address: otherAccount.address,
         message: "counterfactual Base Account",
@@ -186,7 +188,7 @@ describe("wallet message verifier", () => {
       expect(rpcPayload?.method).toBe("eth_call");
       expect(rpcPayload?.params?.[0]?.gas).toBe(`0x${walletMessageVerificationGas.toString(16)}`);
     } finally {
-      server.stop(true);
+      globalThis.fetch = previousFetch;
     }
   });
 });

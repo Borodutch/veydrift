@@ -3638,6 +3638,22 @@ describe("Veydrift backend", () => {
     expect(materializationCalls).toBe(0);
   });
 
+  test("recalled surviving defense holds keep their historical shared report", async () => {
+    const indexer = testIndexer();
+    for (const log of activeFleetMissionLogs({ arrivalAt: 1_700_000_000n, missionId: 99n, missionTypeId: 9n, owner: player, originPlanetId: 7n, targetPlanetId: 9n })) indexer.applyLog(log);
+    const actual = indexer.fleetMission("99")!;
+    indexer.fleetMission = () => ({ ...actual, status: "Recalled", recallProvenance: "FleetMissionRecalled" });
+    const report = decodeBattleReportLogs([{
+      blockNumber: "0x100", transactionHash: "0xheld-report", logIndex: "0x1",
+      topics: [attackBattleResolvedTopic, topic(77n), addressTopic(player), topic(9n)],
+      data: abiWords(1n, 1n, 123n, 0n, 0n, 0n)
+    }], "77")!;
+    indexer.battleReport = () => report;
+    const response = await createRequestHandler({ config: configuredTestConfig, indexer })(new Request("http://localhost/mission/99"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).battleReport?.missionId).toBe("77");
+  });
+
   test("combat mission detail does not raw-decode missing battle reports on request", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
@@ -12539,12 +12555,20 @@ describe("worker role gating (VEY-KANEO-466)", () => {
         return { indexedState: "healthy", safeToServeIndexedState: true };
       }
     } as unknown as SettlementIndexer;
-    const handler = createRequestHandler({
-      chainReader: new MockChainReader(),
-      config: configuredTestConfig,
-      indexer,
-      missionResolution: service
-    });
+    // This health projection fixture owns each awaited tick. Handler startup must not
+    // race those ticks with a fire-and-forget run (which correctly skips overlaps).
+    const start = spyOn(service, "start").mockImplementation(() => {});
+    let handler: ReturnType<typeof createRequestHandler>;
+    try {
+      handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: configuredTestConfig,
+        indexer,
+        missionResolution: service
+      });
+    } finally {
+      start.mockRestore();
+    }
 
     const response = await handler(new Request("http://localhost/health"));
     const body = await response.json();
@@ -12579,6 +12603,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
 
     service.stop();
     expect(failedBody.missionResolution).toMatchObject({
+      inFlight: false,
+      skippedOverlappingRuns: 0,
       healthStatus: "degraded",
       healthWarnings: ["moon_chance_resolution_retrying"],
       moonChanceResolution: {

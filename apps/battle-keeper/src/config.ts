@@ -3,7 +3,10 @@
  * reads everything from `process.env` (documented in README.md) and never embeds secrets.
  */
 
+import { parseArrivalProgressVersions } from "./progress";
+
 export type KeeperConfig = {
+  arrivalProgressVersions?: readonly string[];
   rpcUrl: string;
   rpcFallbackUrls: string[];
   wsRpcUrl: string;
@@ -21,6 +24,8 @@ export type KeeperConfig = {
   /** Deep one-time backfill window (blocks) scanned at startup so the keeper picks up missions
    * launched long before it started — including overdue arrivals that block returns. */
   backfillBlocks: number;
+  statePath: string;
+  deploymentBlock: number;
 };
 
 export type ConfigProblem = {
@@ -65,6 +70,9 @@ function parsePositiveInt(
 
 export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResult {
   const problems: ConfigProblem[] = [];
+  let arrivalProgressVersions: string[] = [];
+  try { arrivalProgressVersions = parseArrivalProgressVersions(env.VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS); }
+  catch (error) { problems.push({ field: "VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS", message: String(error) }); }
   if (env.VEYDRIFT_MISSION_BATCH_ENABLED === "true" || env.MISSION_BATCH_ENABLED === "true") {
     problems.push({ field: "MISSION_BATCH_ENABLED", message: "Standalone batching is unsupported: use the backend durable shared mission/randomness coordinator. No single-call fallback when batch rollout is requested." });
   }
@@ -123,12 +131,19 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
     problems
   );
 
+  const statePath = env.KEEPER_STATE_PATH?.trim() || "/data/battle-keeper/state.sqlite";
+  const deploymentBlock = Number(env.GAME_DEPLOYMENT_BLOCK?.trim() || "0");
+  if (!Number.isSafeInteger(deploymentBlock) || deploymentBlock < 0) {
+    problems.push({ field: "GAME_DEPLOYMENT_BLOCK", message: "GAME_DEPLOYMENT_BLOCK must be a non-negative safe integer." });
+  }
+
   if (problems.length > 0) {
     return { config: null, problems };
   }
 
   return {
     config: {
+      arrivalProgressVersions,
       rpcUrl,
       rpcFallbackUrls,
       wsRpcUrl,
@@ -139,7 +154,9 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
       resolveIntervalMs,
       port,
       maxConcurrency,
-      backfillBlocks
+      backfillBlocks,
+      statePath,
+      deploymentBlock
     },
     problems: []
   };
@@ -158,7 +175,9 @@ export function safeConfigSummary(config: KeeperConfig): Record<string, unknown>
     sweepIntervalMs: config.sweepIntervalMs,
     resolveIntervalMs: config.resolveIntervalMs,
     port: config.port,
-    maxConcurrency: config.maxConcurrency
+    maxConcurrency: config.maxConcurrency,
+    statePath: config.statePath,
+    deploymentBlock: config.deploymentBlock
   };
 }
 

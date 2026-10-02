@@ -10,6 +10,7 @@ import {
   encodeResolveFleetMissionCall,
   MissionNotResolvableError,
   resolveFleetMissionSelector,
+  settlementGasLimit,
   ViemMissionResolver
 } from "./resolver";
 import { RpcError, type JsonRpcTransport } from "./transport";
@@ -221,7 +222,7 @@ describe("ViemMissionResolver", () => {
         }
         switch (method) {
           case "eth_getTransactionCount":
-            expect(params[1]).toBe("pending");
+            expect(["pending", "latest"]).toContain(params[1] as string);
             return "0x" + receipts.toString(16);
           case "eth_estimateGas": return "0x5208";
           case "eth_getBlockByNumber": return { baseFeePerGas: "0x3b9aca00" };
@@ -229,7 +230,7 @@ describe("ViemMissionResolver", () => {
           case "eth_sendRawTransaction": {
             const tx = parseTransaction(params[0] as `0x${string}`);
             expect(tx.nonce).toBe(receipts);
-            expect(tx.gas).toBe(25_200n); // Retain the estimate + 20% buffer.
+            expect(tx.gas).toBe(status === FleetMissionStatus.Outbound ? settlementGasLimit : 25_200n);
             expect(tx.maxFeePerGas).toBe(3_000_000_000n);
             expect(tx.maxPriorityFeePerGas).toBe(1_000_000_000n);
             expect(tx.data).toBe(status === FleetMissionStatus.Outbound
@@ -250,6 +251,10 @@ describe("ViemMissionResolver", () => {
         }
       });
       const resolver = new ViemMissionResolver(transport, testKey, gameContract, 84532);
+      // This fixture models committed chronology pages; production storage decoding has its
+      // separate canonical-hash tests. Both leg cursors are represented by cumulative receipts.
+      resolver.missionProgress = async () => ({ blockNumber: "100", blockHash: "0x" + "a".repeat(64),
+        version: "fixture-chronology", phase: 0, round: 0, workDone: "0", chronologyWorkDone: String(receipts) });
       const keeper = new BattleKeeper(resolver, {
         now: () => 1_000,
         logger: { info: () => {}, warn: () => {}, error: () => {} }
@@ -261,11 +266,11 @@ describe("ViemMissionResolver", () => {
           const before = receipts;
           await keeper.tick();
           expect(receipts).toBe(before + 1);
-          expect(canonicalReads).toBe(receipts);
+          expect(canonicalReads).toBe(receipts * 2); // pre-send and post-receipt canonical checks
           expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "42", leg })]);
         }
         await keeper.tick();
-        expect(canonicalReads).toBe(receipts);
+        expect(canonicalReads).toBe(receipts * 2); // pre-send and post-receipt canonical checks
         if (leg === "arrival") {
           expect(keeper.pendingMissions()).toEqual([expect.objectContaining({ missionId: "42", leg: "return" })]);
         } else {
@@ -288,6 +293,91 @@ describe("ViemMissionResolver", () => {
   });
 });
 
+
+describe("bounded staged settlement envelope", () => {
+  function transportFor(overrides: Responder = () => undefined): MockTransport {
+    return new MockTransport((method, params) => {
+      if (method === "eth_call" && (params[0] as {data:string}).data.startsWith("0xce02abe2")) return eligibilityProof();
+      const override = overrides(method, params);
+      if (override !== undefined) return override;
+      switch (method) {
+        case "eth_call": return "0x";
+        case "eth_estimateGas": return "0x5208";
+        case "eth_getTransactionCount": return "0x0";
+        case "eth_getBlockByNumber": return { baseFeePerGas: "0x1" };
+        case "eth_maxPriorityFeePerGas": return "0x1";
+        case "eth_sendRawTransaction": return "0xdeadbeef";
+        case "eth_getTransactionReceipt": return { status: "0x1" };
+        default: throw new Error(method);
+      }
+    });
+  }
+
+  {
+    const estimate = 21_000n;
+    test("low arrival estimate still uses full safe budget and exact preflight", async () => {
+      const transport = transportFor((method) => method === "eth_estimateGas"
+        ? `0x${estimate.toString(16)}` : undefined);
+      await new ViemMissionResolver(transport, testKey, gameContract, 8453).resolveMission("1");
+      const send = transport.calls.find((call) => call.method === "eth_sendRawTransaction")!;
+      const signed = parseTransaction(send.params[0] as `0x${string}`);
+      expect(signed.gas).toBe(settlementGasLimit);
+      const calls = transport.calls.filter((call) => call.method === "eth_call");
+      expect(calls).toHaveLength(3);
+      const preflight = calls[2]!.params[0] as Record<string, string>;
+      expect(BigInt(preflight.gas!)).toBe(signed.gas!);
+      expect(preflight.data).toBe(signed.data!);
+      expect(preflight.to?.toLowerCase()).toBe(signed.to?.toLowerCase());
+      expect(BigInt(preflight.maxFeePerGas!)).toBe(signed.maxFeePerGas!);
+      expect(BigInt(preflight.maxPriorityFeePerGas!)).toBe(signed.maxPriorityFeePerGas!);
+      expect(Number(BigInt(preflight.nonce!))).toBe(signed.nonce!);
+      const estimateCall = transport.calls.find((call) => call.method === "eth_estimateGas")!;
+      expect(BigInt((estimateCall.params[0] as { gas: string }).gas)).toBe(settlementGasLimit);
+    });
+  }
+
+  test("durable intent hook runs after exact preflight and blocks signing on failure", async () => {
+    const transport = transportFor();
+    const resolver = new ViemMissionResolver(transport, testKey, gameContract, 8453);
+    await expect(resolver.resolveMission("1", "arrival", async () => {
+      expect(transport.methodCalls("eth_call")).toBe(3);
+      expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+      throw new Error("journal unavailable");
+    })).rejects.toThrow("journal unavailable");
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+  });
+
+  test("over-ceiling estimate never signs/broadcasts", async () => {
+    const transport = transportFor((method) => method === "eth_estimateGas"
+      ? `0x${(settlementGasLimit + 1n).toString(16)}` : undefined);
+    await expect(new ViemMissionResolver(transport, testKey, gameContract, 8453)
+      .resolveMission("1")).rejects.toBeInstanceOf(MissionNotResolvableError);
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+  });
+
+  test("exact-envelope preflight failure never broadcasts", async () => {
+    const transport = transportFor((method, params) => method === "eth_call"
+      && "nonce" in (params[0] as object) ? new Error("out of gas") : undefined);
+    await expect(new ViemMissionResolver(transport, testKey, gameContract, 8453)
+      .resolveMission("1")).rejects.toBeInstanceOf(MissionNotResolvableError);
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+  });
+
+  test("restart with pending keeper nonce never queues another stage", async () => {
+    const transport = transportFor((method, params) => method === "eth_getTransactionCount"
+      ? params[1] === "pending" ? "0x1" : "0x0" : undefined);
+    await expect(new ViemMissionResolver(transport, testKey, gameContract, 8453)
+      .resolveMission("1")).rejects.toThrow("keeper transaction still pending");
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(0);
+  });
+
+  test("return buffer is capped and preflighted rather than exceeding Base envelope", async () => {
+    const transport = transportFor((method) => method === "eth_estimateGas" ? "0xe35fa0" : undefined);
+    await new ViemMissionResolver(transport, testKey, gameContract, 8453).resolveMission("1", "return");
+    const send = transport.calls.find((call) => call.method === "eth_sendRawTransaction")!;
+    expect(parseTransaction(send.params[0] as `0x${string}`).gas).toBe(settlementGasLimit);
+  });
+});
 function eligibilityProof(eligible = 1n, orderingReady = 1n): string {
   return "0x" + [eligible, 0n, orderingReady].map(n => n.toString(16).padStart(64, "0")).join("");
 }

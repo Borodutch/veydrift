@@ -697,3 +697,81 @@ describe("BattleKeeper safety sweep reconcile", () => {
     expect(keeper.snapshot().pendingMissionIds.sort()).toEqual(["1", "2"]);
   });
 });
+
+
+describe("staged combat continuation", () => {
+  test("staged battle remains arrival across chunks and uses canonical return time", async () => {
+    let now = 1_000;
+    const { keeper, resolver } = makeKeeper(async () => "0xchunk", {
+      now: () => now,
+      statusBehavior: async (missionId, index) => ({
+        missionId, missionType: MissionType.Attack,
+        status: index < 2 ? FleetMissionStatus.Outbound : index === 2 ? FleetMissionStatus.Returning : FleetMissionStatus.Returned,
+        arrivalAt: 900, returnAt: index < 2 ? 950 : 2_000, randomnessRequestId: "44"
+      })
+    });
+    keeper.recordLaunched(launch("91", MissionType.Attack, 900, 950));
+    for (let i = 0; i < 2; i++) {
+      await keeper.tick();
+      expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+      expect(keeper.snapshot().awaitingReturnCount).toBe(0);
+      expect(keeper.snapshot().resolvedCount).toBe(0);
+    }
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingReturnCount).toBe(1);
+    expect(keeper.snapshot().resolvedCount).toBe(1);
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["91:arrival", "91:arrival", "91:arrival"]);
+    now = 2_000;
+    await keeper.tick();
+    expect(resolver.calls.at(-1)).toBe("91:return");
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("restart discovers unfinished on-chain stage and duplicate launches/ticks do not reset it", async () => {
+    let chunks = 0;
+    const resolver = new MockResolver(async () => { chunks++; return "0xchunk"; }, async (missionId) => ({
+      missionId, missionType: MissionType.Attack,
+      status: chunks < 3 ? FleetMissionStatus.Outbound : FleetMissionStatus.Resolved,
+      arrivalAt: 900, returnAt: 950, randomnessRequestId: "44"
+    }));
+    let keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: silentLogger });
+    keeper.reconcilePending([launch("92", MissionType.Attack, 900, 950)]);
+    await keeper.tick();
+    expect(chunks).toBe(1);
+    keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: silentLogger });
+    keeper.reconcilePending([launch("92", MissionType.Attack, 900, 950)]);
+    keeper.reconcileMissionStatus(await resolver.missionStatus("92"));
+    keeper.recordLaunched(launch("92", MissionType.Attack, 900, 950));
+    await Promise.all([keeper.tick(), keeper.tick(), keeper.tick()]);
+    expect(chunks).toBe(2);
+    expect(keeper.snapshot().resolvedCount).toBe(0);
+    await keeper.tick();
+    // Wiped fleet: terminal even though the launch's return timestamp is nonzero.
+    expect(keeper.snapshot().pendingCount).toBe(0);
+    expect(chunks).toBe(3);
+    await keeper.tick();
+    expect(chunks).toBe(3);
+  });
+
+  test("missing status reader cannot mark a combat chunk resolved", async () => {
+    const keeper = new BattleKeeper({
+      resolveMission: async () => "0xchunk", keeperAddress: () => "0xkeeper"
+    }, { now: () => 1_000, logger: silentLogger });
+    keeper.recordLaunched(launch("93", MissionType.Attack, 900, 950));
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+    expect(keeper.snapshot().resolvedCount).toBe(0);
+  });
+
+  test("failed canonical read preserves the pending stage for retry", async () => {
+    const { keeper } = makeKeeper(async () => "0xchunk", {
+      statusBehavior: async () => { throw new Error("status RPC unavailable"); }
+    });
+    keeper.recordLaunched(launch("94", MissionType.Attack, 900, 950));
+    await keeper.tick();
+    expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+    expect(keeper.snapshot().resolvedCount).toBe(0);
+    expect(keeper.snapshot().submitFailureCount).toBe(1);
+  });
+});
