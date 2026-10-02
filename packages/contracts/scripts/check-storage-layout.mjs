@@ -1,7 +1,9 @@
 import {readFileSync} from "node:fs";
 import {join} from "node:path";
 
-const artifactPath = join("out", "VeydriftGame.sol", "VeydriftGame.json");
+// The storage build uses its own output dir so it never clobbers optimized artifacts.
+const outDir = process.env.STORAGE_LAYOUT_OUT || "out";
+const artifactPath = join(outDir, "VeydriftGame.sol", "VeydriftGame.json");
 const expectedPath = join("storage-layout", "VeydriftGame.v1.json");
 
 const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
@@ -275,7 +277,7 @@ console.log(
 );
 
 for (const contractName of ["VeydriftMetal", "VeydriftCrystal", "VeydriftDeuterium"]) {
-  const tokenArtifactPath = join("out", "VeydriftResourceToken.sol", `${contractName}.json`);
+  const tokenArtifactPath = join(outDir, "VeydriftResourceToken.sol", `${contractName}.json`);
   const tokenArtifact = JSON.parse(readFileSync(tokenArtifactPath, "utf8"));
   const tokenStorage = tokenArtifact.storageLayout?.storage;
 

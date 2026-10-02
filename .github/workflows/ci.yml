@@ -13,38 +13,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Checks run as parallel jobs on GitHub-hosted runners (free for this public repository),
-  # so a run takes as long as its slowest group instead of the sum of every check.
+  # Check groups run as parallel jobs (one per Mac runner instance), so a run takes as long
+  # as its slowest group instead of the sum of every check.
   checks:
-    name: checks (${{ matrix.group }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
-    runs-on: ubuntu-latest
+    name: checks (${{ matrix.group }})
+    # Main pushes and PRs from branches of this repository (only collaborators can push them)
+    # run on the self-hosted Mac runners; fork PRs never execute on that machine.
+    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS) || 'ubuntu-latest' }}
     permissions:
       contents: read
-    timeout-minutes: 120
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - group: rest
           - group: browser
-          - group: contracts-build
+          - group: contracts
           - group: contracts-storage
-          - group: contracts-test
-            shard: 1/3
-          - group: contracts-test
-            shard: 2/3
-          - group: contracts-test
-            shard: 3/3
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       BASE_REF: ${{ github.base_ref }}
       BEFORE_SHA: ${{ github.event.before }}
       HEAD_REF: ${{ github.sha }}
     steps:
+      # Self-hosted workspaces persist between runs: keep ignored build outputs (node_modules,
+      # Foundry out/cache, animation variants) warm, but drop any other untracked leftovers.
       - name: Check out repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 2
+          clean: false
+
+      - name: Remove untracked files from previous runs
+        run: git clean -ffd -q && git submodule foreach --recursive git clean -ffd -q
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -76,7 +78,7 @@ jobs:
           bun-version: 1.1.42
 
       - name: Cache Bun packages
-        if: steps.plan.outputs.work == 'true'
+        if: steps.plan.outputs.work == 'true' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -90,22 +92,22 @@ jobs:
         with:
           version: v1.7.1
 
-      # Per job: each job compiles a different set (and the storage job a different profile),
-      # so a shared key let the first, smallest job's near-empty cache win for everyone.
+      # Hosted runners only (fork PRs). Keyed per job: a key shared with jobs that compile less
+      # once let a near-empty cache win for everyone.
       - name: Cache Foundry build artifacts
-        if: steps.plan.outputs.foundry == 'true' && matrix.group != 'contracts-storage'
+        if: steps.plan.outputs.foundry == 'true' && matrix.group == 'contracts' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: |
             packages/contracts/cache
             packages/contracts/out
-          key: foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/script/**/*.sol', 'packages/contracts/foundry.toml') }}
+          key: foundry-${{ runner.os }}-${{ matrix.group }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/script/**/*.sol', 'packages/contracts/foundry.toml') }}
           restore-keys: |
-            foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-
+            foundry-${{ runner.os }}-${{ matrix.group }}-
 
       # Generated animated-planet derivatives take minutes to encode from scratch.
       - name: Cache frontend animation variants
-        if: steps.plan.outputs.frontend == 'true'
+        if: steps.plan.outputs.frontend == 'true' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: apps/frontend/.animation-variants
@@ -119,8 +121,6 @@ jobs:
 
       - name: Run scoped checks
         if: steps.plan.outputs.docs == 'true'
-        env:
-          CONTRACT_TEST_SHARD: ${{ matrix.shard }}
         run: |
           node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
 

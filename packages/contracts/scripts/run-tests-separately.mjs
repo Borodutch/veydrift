@@ -41,31 +41,46 @@ function forgeTestArgs(file) {
   return args;
 }
 
+// Files that mutate process-global state (env, files) or need their own flags get their own
+// forge process; every other file runs in one shared `forge test`, which parallelises across cores.
+const OWN_PROCESS = /vm\.(setEnv|writeFile|writeJson|writeLine|removeFile|ffi)\b/;
+
+export function splitTestFiles(files, sources) {
+  const own = [];
+  const shared = [];
+  for (const file of files) {
+    const special = forgeTestArgs(file).length > 3 || OWN_PROCESS.test(sources[file] ?? "");
+    (special ? own : shared).push(file);
+  }
+  return {own, shared};
+}
+
+function forge(args) {
+  console.log(`\n$ forge ${args.join(" ")}`);
+  const result = spawnSync("forge", args, {stdio: "inherit"});
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
 function main() {
   let testFiles = readdirSync("test")
     .filter((file) => file.endsWith(".t.sol"))
     .sort();
+  const sources = Object.fromEntries(testFiles.map((file) => [file, readFileSync(`test/${file}`, "utf8")]));
 
   const shard = parseShard(process.env.CONTRACT_TEST_SHARD);
   if (shard) {
-    const counts = Object.fromEntries(testFiles.map((file) => [
-      file,
-      (readFileSync(`test/${file}`, "utf8").match(TEST_FUNCTION) || []).length,
-    ]));
+    const counts = Object.fromEntries(testFiles.map((file) => [file, (sources[file].match(TEST_FUNCTION) || []).length]));
     testFiles = shardTestFiles(testFiles, counts, shard.index, shard.count);
     console.log(`Contract test shard ${shard.index}/${shard.count}: ${testFiles.join(", ")}`);
   }
 
-  for (const file of testFiles) {
-    const testPath = `test/${file}`;
-    console.log(`\n== ${testPath} ==`);
-    const result = spawnSync("forge", forgeTestArgs(file), {
-      stdio: "inherit",
-    });
-
-    if (result.error) throw result.error;
-    if (result.status !== 0) process.exit(result.status ?? 1);
+  const {own, shared} = splitTestFiles(testFiles, sources);
+  if (shared.length) {
+    const glob = shared.length === 1 ? `test/${shared[0]}` : `test/{${shared.join(",")}}`;
+    forge(["test", "--match-path", glob]);
   }
+  for (const file of own) forge(forgeTestArgs(file));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

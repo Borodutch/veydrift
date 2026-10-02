@@ -41,6 +41,7 @@ function scopeFromEnvOrGit(args) {
 const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
 const allowedFlaggedOutputLines = [
   /^\((?:pass|skip)\) /,
+  /^[✔﹣] /, // node --test passing/skipped test names
   /^Missing dependencies found\. Installing now\.\.\.$/,
   /^[╭╮╰╯├┤┬┴┼─│╞╪╡═+|]/,
   /^- Adjust chunk size limit for this warning via build\.chunkSizeWarningLimit\.$/,
@@ -102,13 +103,14 @@ async function runLogged(label, command, args) {
 
 // Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
 // Without a group (local preflight) every applicable check runs in one process, as before.
-export const CHECK_GROUPS = ["all", "rest", "browser", "contracts-build", "contracts-storage", "contracts-test"];
+export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-storage"];
 const HEAVY = {
   "frontend-touch-browser": "browser",
-  "contracts-build": "contracts-build",
-  "contracts-fast-check": "contracts-build",
+  "contracts-build": "contracts",
+  "contracts-fast-check": "contracts",
+  "contracts-test": "contracts",
+  // Separate optimizer-off profile in its own out dir: runs in parallel with the main build.
   "contracts-storage-check": "contracts-storage",
-  "contracts-test": "contracts-test",
 };
 
 export function planChecks(scope, group = "all") {

@@ -83,6 +83,7 @@ test("documentation checks run when no package checks are selected", () => {
 test("passing test names may describe warnings without being diagnostics", () => {
   assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge"), false);
   assert.equal(outputContainsFlaggedOutput("(pass) warning UI > renders a warning badge\nwarning: unexpected diagnostic"), true);
+  assert.equal(outputContainsFlaggedOutput("✔ passing test names may describe warnings (0.6ms)"), false);
 });
 import { filesRequireContractChecks, filesRequireFrontendChecks, filesRequireBackendChecks } from "./ci-scope.mjs";
 
@@ -178,8 +179,7 @@ test("parallel check groups partition the full sequential plan", () => {
     .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
     .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-test")), ["contracts-test"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-build")), ["contracts-build", "contracts-fast-check"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-fast-check", "contracts-test"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-storage")), ["contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
   assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label === "frontend-touch-browser"));
@@ -189,14 +189,14 @@ test("parallel check groups partition the full sequential plan", () => {
 test("groups with nothing in scope plan no checks", () => {
   const docsOnly = Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false]));
   assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
-  for (const group of ["browser", "contracts-build", "contracts-storage", "contracts-test"]) assert.deepEqual(planChecks(docsOnly, group), []);
+  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(docsOnly, group), []);
 });
 
 test("a backend-only change plans only cheap backend checks", () => {
   const backend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), backend: true };
   assert.deepEqual(labels(planChecks(backend, "rest")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
     "backend-performance-tool-test", "release-diagnostics-test"]);
-  for (const group of ["browser", "contracts-build", "contracts-storage", "contracts-test"]) assert.deepEqual(planChecks(backend, group), []);
+  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(backend, group), []);
 });
 
 test("contract test shards cover every file exactly once and isolate the largest file", () => {
@@ -209,4 +209,10 @@ test("contract test shards cover every file exactly once and isolate the largest
   assert.equal(parseShard(""), null);
   assert.throws(() => shardTestFiles(files, counts, 4, 3), /invalid contract test shard/);
   assert.throws(() => parseShard("two"), /must look like/);
+});
+
+test("contract test files that mutate process state get their own forge process", async () => {
+  const { splitTestFiles } = await import("../packages/contracts/scripts/run-tests-separately.mjs");
+  const sources = { "A.t.sol": "vm.setEnv(\"X\", \"1\");", "B.t.sol": "vm.writeJson(json, path);", "C.t.sol": "assertEq(1, 1);", "VeydriftStagedCombat.t.sol": "" };
+  assert.deepEqual(splitTestFiles(Object.keys(sources), sources), { own: ["A.t.sol", "B.t.sol", "VeydriftStagedCombat.t.sol"], shared: ["C.t.sol"] });
 });
