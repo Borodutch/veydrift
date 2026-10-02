@@ -17,9 +17,9 @@ const chain = { id: 8453, name: "inert", nativeCurrency: { name: "Ether", symbol
 const inertBytes = "0x1234" as const; // not a signed transaction; no key or network used
 
 type Options = {
-  priceAge?: number; exactDelayMs?: number; canonicalDelayMs?: number; signingDelayMs?: number;
+  blockAge?: number; exactDelayMs?: number; canonicalDelayMs?: number; signingDelayMs?: number;
   broadcastReadDelayMs?: number; mismatchQuote?: boolean; reorgAfterSign?: boolean;
-  incompleteRound?: boolean; futurePrice?: boolean; ambiguous?: boolean;
+  missingFee?: boolean; futureBlock?: boolean; ambiguous?: boolean;
   loseLeaseBeforeSign?: boolean; loseLeaseDuringSigning?: boolean; seedSuccessor?: boolean;
 };
 async function scenario(options: Options, check: (f: ReturnType<typeof fixture>) => Promise<void>) {
@@ -32,7 +32,7 @@ async function scenario(options: Options, check: (f: ReturnType<typeof fixture>)
 }
 function fixture(path: string, options: Options, advance: (ms: number) => void) {
   let signs = 0, sends = 0, blocks = 0, exactCalls = 0, mined = false;
-  const updatedAt = BigInt(base - (options.priceAge ?? 119) + (options.futurePrice ? 122 : 0));
+
   const receipt = { status: "success", blockNumber: 1n, blockHash, gasUsed: 100_000n,
     effectiveGasPrice: 100n, l1Fee: 200n, operatorFee: 0n };
   const loseLease = () => {
@@ -55,12 +55,14 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
       if (blocks === 6) advance(options.broadcastReadDelayMs ?? 0);
       return { number: 1n, hash: (options.mismatchQuote && blocks === 4) || (options.reorgAfterSign && blocks === 6)
         ? "0x" + "bb".repeat(32) : blockHash,
-        timestamp: BigInt(base), baseFeePerGas: 100n, gasLimit: 30_000_000n };
+        timestamp: BigInt(base - (options.blockAge ?? 29) + (options.futureBlock ? 100 : 0)), baseFeePerGas: 100n, gasLimit: 30_000_000n };
     },
     estimateMaxPriorityFeePerGas: async () => 10n,
-    readContract: async ({ functionName }: { functionName: string }) => functionName === "decimals" ? 8
-      : functionName === "latestRoundData" ? [5n, 3000_00000000n, updatedAt, updatedAt, options.incompleteRound ? 4n : 5n]
-      : functionName === "fleetMissionEligibility" ? [false, 9n, true] : 100n,
+    readContract: async ({ functionName }: { functionName: string }) => {
+      if (functionName === "decimals" || functionName === "latestRoundData") throw new Error("no USD dependency");
+      if (options.missingFee && functionName === "getOperatorFee") throw new Error("operator fee unavailable");
+      return functionName === "fleetMissionEligibility" ? [false, 9n, true] : 100n;
+    },
     call: async () => {
       // Simulations alternate reference/exact: packing (1, 2), final leased quote (3, 4).
       if (++exactCalls === 4) advance(options.exactDelayMs ?? 0);
@@ -87,8 +89,7 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
     getCanonicalFleetMission: async () => ({ status: "Outbound", arrivalAt: String(base - 5), returnAt: String(base + 5) }) as never
   }, game, sender as never, publicClient as unknown as PublicClient, undefined, chain, undefined,
   new ResolverTransactionCoordinator(path), undefined, undefined,
-  // Boundary tests pin the strict 120s window; production defaults to the feed heartbeat (1h).
-  { ...defaultMissionBatchPolicy, enabled: true, maxItems: 2, priceFeed: game, priceMaxAgeSeconds: 120 });
+  { ...defaultMissionBatchPolicy, enabled: true, maxItems: 2 });
   const rows = () => {
     const db = new Database(path);
     try { return db.query("SELECT nonce, transaction_hash AS hash, membership, status FROM resolver_prepared_intents").all(); }
@@ -108,9 +109,9 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
     items: [{ missionId: "1", leg: "arrival" as const, dueAt: base - 5 }] };
 }
 
-test("actual batch path accepts fresh119 and exact120 price / exact30 quote boundaries", async () => {
+test("actual batch path accepts fresh29 and exact30 fee quote boundaries", async () => {
   for (const options of [{}, { exactDelayMs: 1000 }, { signingDelayMs: 1000 },
-    { priceAge: 90, signingDelayMs: 30_000 }, { priceAge: 90, exactDelayMs: 30_000 }]) {
+    { blockAge: 0, signingDelayMs: 30_000 }, { blockAge: 0, exactDelayMs: 30_000 }]) {
     await scenario(options, async (f) => {
       expect((await f.client.resolveMissionBatch(f.items)).hash).toBe(keccak256(inertBytes));
       expect(f.counts()).toEqual({ signs: 1, sends: 1 });
@@ -118,10 +119,10 @@ test("actual batch path accepts fresh119 and exact120 price / exact30 quote boun
   }
 });
 
-test("actual exact simulation and final canonical await cannot age a price/quote into signing", async () => {
-  for (const options of [{ priceAge: 121 }, { exactDelayMs: 2000 }, { canonicalDelayMs: 2000 },
-    { priceAge: 0, exactDelayMs: 30_001 }, { priceAge: 0, canonicalDelayMs: 30_001 },
-    { mismatchQuote: true }, { incompleteRound: true }, { futurePrice: true }]) {
+test("actual exact simulation and final canonical await cannot age a fee quote into signing", async () => {
+  for (const options of [{ blockAge: 31 }, { exactDelayMs: 2000 }, { canonicalDelayMs: 2000 },
+    { blockAge: 0, exactDelayMs: 30_001 }, { blockAge: 0, canonicalDelayMs: 30_001 },
+    { mismatchQuote: true }, { missingFee: true }, { futureBlock: true }]) {
     await scenario(options, async (f) => {
       await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
       expect(f.counts()).toEqual({ signs: 0, sends: 0 });
@@ -130,10 +131,10 @@ test("actual exact simulation and final canonical await cannot age a price/quote
   }
 });
 
-test("signing/pre-send awaits expiring price or quote preserve locally prevented intent across restart", async () => {
+test("signing/pre-send awaits expiring fee quote preserve locally prevented intent across restart", async () => {
   for (const options of [{ signingDelayMs: 2000 }, { signingDelayMs: 31_000 },
-    { priceAge: 0, signingDelayMs: 30_001 }, { broadcastReadDelayMs: 2000 },
-    { priceAge: 0, broadcastReadDelayMs: 30_001 }, { reorgAfterSign: true }]) {
+    { blockAge: 0, signingDelayMs: 30_001 }, { broadcastReadDelayMs: 2000 },
+    { blockAge: 0, broadcastReadDelayMs: 30_001 }, { reorgAfterSign: true }]) {
     await scenario(options, async (f) => {
       await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
       expect(f.counts()).toEqual({ signs: 1, sends: 0 });

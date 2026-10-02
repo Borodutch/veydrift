@@ -15,7 +15,7 @@ const oldHash = `0x${"a".repeat(64)}` as const;
 const cancelHash = `0x${"b".repeat(64)}` as const;
 const nextHash = `0x${"c".repeat(64)}` as const;
 
-for (const failure of ["fee-spike", "replacement-escalation", "missing-price", "stale-price", "future-price", "zero-price", "l1", "operator", "missing-l1", "missing-operator", "preflight", "quote-expiry", "lost-lease"] as const) {
+for (const failure of ["fee-spike", "replacement-escalation", "missing-fee-block", "stale-fee-block", "future-fee-block", "l1", "operator", "missing-l1", "missing-operator", "preflight", "quote-expiry", "lost-lease"] as const) {
   test(`stale cancellation ${failure} sends nothing and retains nonce ownership across restart`, async () => {
     const dir = mkdtempSync(join(tmpdir(), "vey-cancel-cap-"));
     const path = join(dir, "journal.sqlite");
@@ -51,18 +51,19 @@ for (const failure of ["fee-spike", "replacement-escalation", "missing-price", "
       getStorageAt: async () => "0x00",
       getTransactionCount: async ({ blockTag }: { blockTag: "latest" | "pending" }) => counts(blockTag),
       getTransaction: async () => ({ maxFeePerGas: blocked && failure === "replacement-escalation" ? 10n ** 12n : 80n, maxPriorityFeePerGas: 8n }),
-      getBlock: async () => ({ baseFeePerGas: 1n }),
+      getBlock: async () => {
+        if (blocked && failure === "missing-fee-block") throw new Error("fee block unavailable");
+        const now = BigInt(Math.floor(Date.now() / 1000));
+        return { baseFeePerGas: 1n, number: 1n, hash: oldHash,
+          timestamp: blocked && failure === "stale-fee-block" ? now - 100n
+            : blocked && failure === "future-fee-block" ? now + 100n : now };
+      },
       estimateFeesPerGas: async () => ({ maxFeePerGas: blocked && failure === "fee-spike" ? 10n ** 12n : 90n, maxPriorityFeePerGas: 12n }),
       estimateMaxPriorityFeePerGas: async () => 1n,
       estimateGas: async () => 100_000n,
       readContract: async ({ functionName }: { functionName: string }) => {
         const now = BigInt(Math.floor(Date.now() / 1000));
-        if (functionName === "decimals") return 8;
-        if (functionName === "latestRoundData") {
-          if (blocked && failure === "missing-price") throw new Error("missing price");
-          const updated = blocked && failure === "stale-price" ? now - 7200n : blocked && failure === "future-price" ? now + 600n : now;
-          return [1n, blocked && failure === "zero-price" ? 0n : 3000_00000000n, updated, updated, 1n];
-        }
+        if (functionName === "decimals" || functionName === "latestRoundData") throw new Error("no USD dependency");
         if (functionName === "getL1FeeUpperBound") {
           if (blocked && failure === "missing-l1") throw new Error("missing L1 oracle");
           return blocked && failure === "l1" ? 10n ** 15n : 1_000_000_000n;
@@ -117,7 +118,7 @@ for (const failure of ["fee-spike", "replacement-escalation", "missing-price", "
       expect(db.query("SELECT nonce, status, transaction_hash FROM resolver_transaction_attempts WHERE operation_id = 'old-operation'").get())
         .toEqual({ nonce: 7, status: "cancelled", transaction_hash: cancelHash });
       const quotedWei = 21_000n * 100n + 2n * (1_000_000_000n + 2_000_000_000n);
-      expect(quotedWei * 3000n * 1_000_000n).toBeLessThanOrEqual(500_000n * 10n ** 18n);
+      expect(quotedWei).toBeLessThanOrEqual(200_000_000_000_000n);
     } finally { Date.now = originalNow; db.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 }

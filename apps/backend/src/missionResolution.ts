@@ -28,7 +28,7 @@ import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, quoteResolverGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
+import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -858,7 +858,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     // index before a process restarts, but its durable intent must still release the signer.
     await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
     if (!Number.isInteger(this.batchPolicy.maxItems) || this.batchPolicy.maxItems < 1 || this.batchPolicy.maxItems > 32
-      || this.batchPolicy.maxFeeUsdMicros <= 0n || this.batchPolicy.maxFeeUsdMicros > 1_000_000n)
+      || this.batchPolicy.maxFeeWei <= 0n || this.batchPolicy.maxFeeWei > 400_000_000_000_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
     const exclusions: BatchExclusion[] = [];
     const initialBlock = await client.getBlock({ blockTag: "latest" });
@@ -902,7 +902,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
           fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
-          estimatedGas: fees.gas.toString(), maxTotalFeeWei: fees.totalWei.toString(), maxTotalUsdMicros: fees.usdMicros.toString(),
+          estimatedGas: fees.gas.toString(), maxTotalFeeWei: fees.totalWei.toString(),
           l1FeeWei: fees.l1Fee.toString(), operatorFeeWei: fees.operatorFee.toString() });
         return { hash: keccak256(signed), membership: JSON.stringify(items),
           validateBeforeBroadcast: async () => {
@@ -1068,11 +1068,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       }
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
       // the exact funded entrypoint at the exact capped gas under the nonce lease before both
-      // submit and replacement: a leg that cannot fit the USD cap fails here, unpaid.
+      // submit and replacement: a leg that cannot fit the ETH cap fails here, unpaid.
       // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
       await this.publicClient.call({ account: from, to: targetAddress, data, gas, nonce, value: 0n, ...fees, blockTag: "latest" });
     };
-    // Every single-call write stays within singleResolverMaxUsdMicros: explicit fees, and gas shrunk
+    // Every single-call quote stays within 0.0002 ETH: explicit fees, and gas shrunk
     // to what the cap affords. A staged battle uses whatever gas it gets (fewer stages per tx).
     const cappedFees = async (nonce: number, previousHash?: Hex) => {
       const client = this.publicClient!;
@@ -1081,7 +1081,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         ? fleetMissionResolutionGas
         : (await client.estimateGas({ account: from, to: targetAddress, data })) * 6n / 5n;
       const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
-        maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
+        maxFeePerGas: fees.maxFeePerGas });
       await preflight(quote.gas, nonce, fees);
       quote.assertFresh();
       return { gas: quote.gas, ...fees, assertFresh: quote.assertFresh };
@@ -1122,7 +1122,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         },
         cancelStale: (nonce, previousHash, assertLease) => cancelResolverTransaction({
           client: this.publicClient!, wallet: this.walletClient!, account, chain: this.chain!,
-          nonce, previousHash, assertLease, priceFeed: this.batchPolicy.priceFeed
+          nonce, previousHash, assertLease
         }),
         confirm: (hash) => this.confirm(hash)
       });

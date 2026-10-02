@@ -1,56 +1,66 @@
-# VEY-919 resolver fee-cap repair boundary
+# VEY-919 resolver fee-cap policy
 
-The backend quotes all single resolver writes, replacements and same-EOA stale-nonce
-cancellations against a $0.50 transaction budget. Cancellation requires the full
-21,000 gas self-transfer envelope to fit; it never lowers the replacement fee bump,
-lets the wallet choose gas, or allocates past an unaffordable stale nonce.
-Missing, stale, future-dated or invalid ETH/USD data and missing Base L1/operator
-oracles fail closed. Cancellation preflight includes sender, recipient, empty data,
-zero value, exact gas, nonce and EIP-1559 fees; lease ownership is fenced afterward.
-All automatic cancellation callers (mission and randomness commit/fulfill) share this
-same helper, so another writer cannot bypass an unaffordable mission cancellation.
-The manual nonce-gap recovery CLI refuses broadcast before loading configuration;
-read-only planning remains available. Its multi-nonce aggregate spending policy is
-not authorized by this repair.
-Single arrival/return/moon-finalization preflight includes the exact nonce and fees too.
-Single submit/replacement sends are fenced after the last preflight await, and all
-coordinated submission journal transitions atomically recheck lease ownership so
-late completions cannot overwrite a successor.
-Randomness commit/fulfill payload pricing is a separate writer policy; this repair
-covers their ability to cancel the shared resolver nonce, not those payloads.
-Quotes expire after 30 seconds or the price freshness window, including during preflight.
+Owner decision Telegram 22011 (2026-10-01 21:02 PDT) supersedes the earlier
+USD/ETH conjunction: **ETH-only quote-time limits**, with no ETH/USD price feed.
 
-Batching remains disabled by default and is not enabled by this repair. Each batch
-transaction is also bounded by the stricter $0.50 quoted exposure, within the existing
-$1 aggregate batch ceiling. Retained batches still have no automatic replacements or
-cancellations; unknown receipts retain shared-signer ownership.
+- Each mission arrival, return, moon finalization, replacement and same-EOA
+  cancellation quotes at most **200000000000000 wei (0.0002 ETH)** total.
+- Total quote = signed gas × signed EIP-1559 maximum fee + **2×** the Base L1
+  upper-bound fee + **2×** the Base operator fee at the requested gas envelope.
+  Batch quoting also reads the exact unsigned-envelope L1 estimate and reserves
+  the larger of that estimate and the L1 upper bound.
+- Gas shrinks within the fixed budget, then the exact funded envelope is simulated.
+  The replacement bump is never reduced to fit. A cancellation requires all 21000
+  gas; unaffordable cancellation retains the old attempt and nonce without a send.
+- All automatic cancellation callers (mission and randomness commit/fulfill)
+  use one capped helper. A sibling cannot bypass a rejected mission cancellation.
+- Missing/invalid fee estimates, missing Base L1/operator oracle responses,
+  unsupported chains, or fee-block quotes older than 30 seconds fail closed.
+  The block-age fence is checked after preflight and before the wallet/RPC call.
+- No runtime price lookup, no constant USD valuation, and no currency fallback.
+  Retired MAX_USD, ETH_USD_FEED and PRICE_MAX_AGE_SECONDS settings do not determine
+  spending or block resolution. The batch override is MAX_FEE_WEI, which must be
+  a positive integer no greater than 400000000000000 wei (0.0004 ETH).
 
-## Not an absolute inclusion-time USD guarantee
+## Batch and signer boundaries
 
-The guard reserves twice the quoted Base L1 and operator fees, plus gas times the
-signed EIP-1559 max fee, converted using the validated Chainlink price. EIP-1559
-caps execution gas price, **not** Base L1/operator fees or the ETH/USD exchange rate
-at eventual inclusion. A transaction can remain pending after the quote expires.
-No off-chain quote can prove an absolute future USD spend ceiling under arbitrary
-L1/operator/price changes. Therefore this repair must not be described as satisfying
-an unconditional inclusion-time $0.50/$1 guarantee or authorizing activation on that
-basis. That requirement remains a release blocker pending an explicitly accepted
-quoted-exposure policy or a separately designed enforceable funding mechanism.
-No fee limit is loosened; no real signing, broadcasting, deployment or activation is
-part of this repair.
+Batching remains disabled by default; this change does not enable it. The current
+batch API emits exactly **one** transaction, bounded by both its configured
+aggregate budget (at most 0.0004 ETH) and the stricter 0.0002 ETH transaction cap.
+It has no multi-transaction fan-out, automatic replacements, or cancellations.
+Thus one invocation cannot exceed the aggregate ceiling. Any future multi-envelope
+batch must reserve at most 0.0004 ETH across the whole batch, while preserving the
+0.0002 ETH limit for every constituent transaction, before it may be activated.
+An unknown batch receipt retains the shared signer and never causes another send.
 
-## Standalone keeper remains unavailable
+Single initial/replacement preflight includes sender, target, data, zero value,
+exact nonce, gas and both EIP-1559 fee fields. Sends are lease-fenced after the last
+await, and submission journal writes atomically recheck ownership. Late results
+cannot overwrite a successor. Randomness commit/fulfill payload pricing remains
+a separate writer policy; their shared-nonce cancellation uses this ETH cap.
 
-The standalone battle-keeper resolver still has an uncapped 15M-gas signing path and
-retained-envelope resend path. Its production entrypoint now unconditionally rejects
-startup **before** configuration, signer construction, journal access, transport,
-listeners or loops; there is no environment-variable enable override. Its adapter
-remains available only for existing offline unit fixtures, not an approved production
-writer. Do not remove the startup gate or deploy an alternate entrypoint until both
-fresh and retained envelopes enforce the reviewed spend policy. No live service state
-was inspected or changed here; already-running older binaries are not disabled by a
-source-code change.
+The manual nonce-gap recovery CLI refuses broadcast before configuration is read;
+read-only planning remains available. Its multi-nonce aggregate budget is not an
+approved alternative write path.
 
-No Solidity sources, ABIs or upgrade scripts change in this repair. Existing exact-head
-contract-upgrade approval and release gates remain in force; this is not an upgrade
-approval, merge decision, deployment, or Kaneo review transition.
+## Quote-time, not an inclusion-time guarantee
+
+Base L1/operator charges can change before inclusion. EIP-1559 caps execution
+fees, not those variable Base charges. The 2× reserve is conservative quote-time
+headroom, **not a guaranteed bound on the eventual receipt's ETH or USD cost**.
+The owner accepted this quote-time policy; the earlier absolute-USD-proof blocker
+is superseded. That decision is not a contract-upgrade/broadcast approval.
+
+## Standalone keeper stays disabled
+
+The standalone battle-keeper retains uncapped 15M-gas fresh/retained-envelope
+adapters for offline tests. Its production entrypoint unconditionally rejects
+startup before configuration, signer, journal, transport, listeners or loops;
+there is no environment enable override. Do not activate an alternate entrypoint
+or remove that guard without implementing and reviewing the same spend policy.
+Already-running older deployments are not disabled by a source change.
+
+No Solidity source, ABI or upgrade script changes here. Legacy combat semantics
+and the separate persisted mission #95855 keyless liveness replay are unchanged.
+Exact-head independent review, CI and the separate upgrades-topic approval still
+apply. This repair is not a merge, upgrade, signing, deployment or activation.

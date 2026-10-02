@@ -45,7 +45,7 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
       return { status: options.stale && reads > 1 ? "Returned" : "Outbound", arrivalAt: String(now - 5), returnAt: String(now + 5) } as never;
     }
   }, game, account, publicClient as unknown as PublicClient, undefined, chain, undefined, coordinator, undefined, undefined,
-  { ...defaultMissionBatchPolicy, enabled: true, priceFeed: game });
+  { ...defaultMissionBatchPolicy, enabled: true });
   const items = [{ missionId: "1", leg: "arrival" as const, dueAt: now - 5 }];
   return { client, coordinator, items, broadcasts: () => broadcasts, mine: () => { mined = true; nonce++; } };
 }

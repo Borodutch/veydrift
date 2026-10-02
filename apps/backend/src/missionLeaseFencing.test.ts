@@ -42,7 +42,7 @@ for (const mode of ["private-key", "unlocked"] as const) {
           call: async () => { if (lostAt === "preflight") loseLease(); return { data: "0x" }; },
           getStorageAt: async () => "0x00", getTransactionCount: async ({ blockTag }: { blockTag: "latest" | "pending" }) => counts(blockTag),
           getTransaction: async () => ({ maxFeePerGas: 80n, maxPriorityFeePerGas: 8n }),
-          getBlock: async () => ({ baseFeePerGas: 1n }), estimateMaxPriorityFeePerGas: async () => 1n,
+          getBlock: async () => ({ baseFeePerGas: 1n, number: 1n, hash: oldHash, timestamp: BigInt(Math.floor(Date.now() / 1000)) }), estimateMaxPriorityFeePerGas: async () => 1n,
           estimateFeesPerGas: async () => ({ maxFeePerGas: 90n, maxPriorityFeePerGas: 12n }),
           readContract: async ({ functionName }: { functionName: string }) => {
             const now = BigInt(Math.floor(Date.now() / 1000));

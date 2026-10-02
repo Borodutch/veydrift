@@ -3,38 +3,39 @@ import { decodeFunctionData } from "viem";
 import { BatchCapacityError, batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, loadMissionBatchPolicy,
   missionBatchAbi, packMissionBatch, totalBatchExposure, type BatchLeg } from "./missionBatch";
 
-const policy = { ...defaultMissionBatchPolicy, enabled: true, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 };
+const policy = { ...defaultMissionBatchPolicy, enabled: true, maxFeeWei: 200_000_000_000_000n };
 const feeInput = { gas: 120_000n, blockGasLimit: 30_000_000n, maxFeePerGas: 1_000_000n,
   maxPriorityFeePerGas: 100n, l1Fee: 20_000_000n, operatorFee: 30_000_000n,
-  price: 3000_00000000n, priceDecimals: 8, updatedAt: 1000n, nowSeconds: 1000, policy };
+  policy };
 const item = (id: number, leg: BatchLeg["leg"] = "arrival", dueAt = id): BatchLeg => ({ missionId: String(id), leg, dueAt });
 
 describe("mission batch fee envelope", () => {
-  test("counts safety gas, max EIP1559, L1 and operator exposure with upward USD rounding", () => {
+  test("counts max EIP1559 plus reserved L1/operator fees in wei", () => {
     const quote = totalBatchExposure(feeInput);
     expect(quote.gas).toBe(120_000n);
     expect(quote.totalWei).toBe(120_100_000_000n);
-    expect(quote.usdMicros).toBe(361n);
-    expect(() => totalBatchExposure({ ...feeInput, policy: { ...policy, maxFeeUsdMicros: 360n } })).toThrow(BatchCapacityError);
-    expect(totalBatchExposure({ ...feeInput, policy: { ...policy, maxFeeUsdMicros: 361n } }).usdMicros).toBe(361n);
+    expect(() => totalBatchExposure({ ...feeInput, policy: { ...policy, maxFeeWei: quote.totalWei - 1n } })).toThrow(BatchCapacityError);
+    expect(totalBatchExposure({ ...feeInput, policy: { ...policy, maxFeeWei: quote.totalWei } }).totalWei).toBe(quote.totalWei);
   });
-  test("fails closed on price staleness/future/missing and cap crossings including L1/operator", () => {
-    for (const updatedAt of [0n, 879n, 1001n]) expect(() => totalBatchExposure({ ...feeInput, updatedAt })).toThrow("price");
-    expect(() => totalBatchExposure({ ...feeInput, price: 0n })).toThrow("price");
+  test("fails closed on invalid fees and ETH cap crossings including L1/operator", () => {
+    for (const change of [{ maxFeePerGas: 0n }, { maxPriorityFeePerGas: -1n }, { l1Fee: -1n }, { operatorFee: -1n }])
+      expect(() => totalBatchExposure({ ...feeInput, ...change })).toThrow("fee estimate");
     for (const change of [{ maxFeePerGas: 10_000_000_000n }, { l1Fee: 100_000_000_000_000n },
-      { operatorFee: 100_000_000_000_000n }, { price: 9_000_000_00000000n }])
-      expect(() => totalBatchExposure({ ...feeInput, ...change })).toThrow(BatchCapacityError);
+      { operatorFee: 100_000_000_000_000n }]) expect(() => totalBatchExposure({ ...feeInput, ...change })).toThrow(BatchCapacityError);
     expect(() => totalBatchExposure({ ...feeInput, gas: 18_000_000n })).toThrow("gas envelope");
     expect(() => totalBatchExposure({ ...feeInput, blockGasLimit: 119_999n })).toThrow("gas envelope");
   });
-  test("defaults disabled and rejects looser configured cap", () => {
+  test("defaults disabled, ignores retired USD inputs and rejects looser ETH configuration", () => {
     const problems: Array<{ field: string; message: string }> = [];
-    expect(loadMissionBatchPolicy({}, problems).enabled).toBe(false);
+    expect(loadMissionBatchPolicy({}, problems)).toEqual({ enabled: false, maxItems: 16, maxFeeWei: 400_000_000_000_000n });
+    expect(loadMissionBatchPolicy({ VEYDRIFT_MISSION_BATCH_MAX_USD: "0", VEYDRIFT_MISSION_BATCH_ETH_USD_FEED: "missing" }, problems))
+      .toEqual(defaultMissionBatchPolicy);
     expect(problems).toEqual([]);
-    expect(loadMissionBatchPolicy({}, problems).maxFeeUsdMicros).toBe(1_000_000n); // $1 batch guard
-    loadMissionBatchPolicy({ VEYDRIFT_MISSION_BATCH_ENABLED: "true", VEYDRIFT_MISSION_BATCH_MAX_USD: "1.01", VEYDRIFT_MISSION_BATCH_MAX_ITEMS: "33" }, problems);
+    loadMissionBatchPolicy({ VEYDRIFT_MISSION_BATCH_ENABLED: "true", VEYDRIFT_MISSION_BATCH_MAX_FEE_WEI: "400000000000001",
+      VEYDRIFT_MISSION_BATCH_MAX_ITEMS: "33" }, problems);
     expect(problems.map((problem) => problem.field).sort()).toEqual([
-      "VEYDRIFT_MISSION_BATCH_ENABLED", "VEYDRIFT_MISSION_BATCH_MAX_ITEMS", "VEYDRIFT_MISSION_BATCH_MAX_USD"]);
+      "VEYDRIFT_MISSION_BATCH_ENABLED", "VEYDRIFT_MISSION_BATCH_MAX_FEE_WEI", "VEYDRIFT_MISSION_BATCH_MAX_ITEMS"
+    ]);
   });
 });
 

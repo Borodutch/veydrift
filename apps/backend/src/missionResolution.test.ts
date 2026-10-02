@@ -32,7 +32,9 @@ const config: BackendConfig = {
 function addResolverFeeReads<T extends object>(client: T): T {
   const mock = client as Record<string, unknown>;
   const inner = mock.readContract as ((args: { functionName: string }) => Promise<unknown>) | undefined;
-  mock.getBlock ??= async () => ({ baseFeePerGas: 1n });
+  const originalGetBlock = mock.getBlock as ((args: unknown) => Promise<object>) | undefined;
+  mock.getBlock = async (args: unknown) => ({ number: 1n, hash: "0x" + "a".repeat(64),
+    timestamp: BigInt(Math.floor(Date.now() / 1000)), baseFeePerGas: 1n, ...await originalGetBlock?.(args) });
   mock.estimateMaxPriorityFeePerGas ??= async () => 1n;
   mock.estimateGas ??= async () => 100_000n;
   mock.readContract = async (args: { functionName: string }) => {
@@ -53,7 +55,7 @@ describe("MissionResolutionService", () => {
     let batchCalls = 0;
     client.resolveMissionBatch = async (items) => { batchCalls++; return { hash: "0xabc", items }; };
     client.isMissionLegComplete = async (id) => id !== "2";
-    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
       { chainClient: client, logger: silentLogger() });
     await service.tick();
     expect(batchCalls).toBe(1);
@@ -69,7 +71,7 @@ describe("MissionResolutionService", () => {
       return { hash: "0xabc", items, outcomes: [{ item: items[0]!, outcome: "Progress", errorSelector: null, blockedDependency: null, complete: false }] };
     };
     client.isMissionLegComplete = async () => false;
-    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
       { chainClient: client, logger: silentLogger() });
     await service.tick();
     await service.tick();
@@ -79,7 +81,7 @@ describe("MissionResolutionService", () => {
     const calls: string[] = [];
     const client = fakeClient({ calls, resolvable: ["1"], returnable: [] });
     client.resolveMissionBatch = async () => { throw new Error("missing price"); };
-    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
       { chainClient: client, logger: silentLogger() });
     await service.tick();
     expect(calls).toEqual([]);

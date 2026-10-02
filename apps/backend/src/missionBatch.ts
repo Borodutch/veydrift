@@ -9,29 +9,23 @@ export type BatchLegOutcome = { item: BatchLeg; outcome: string; errorSelector: 
 export type MissionBatchPolicy = {
   enabled: boolean;
   maxItems: number;
-  maxFeeUsdMicros: bigint;
-  priceFeed?: Hex;
-  priceMaxAgeSeconds: number;
+  maxFeeWei: bigint;
 };
+export const resolverTransactionMaxFeeWei = 200_000_000_000_000n;
+export const resolverBatchMaxFeeWei = 400_000_000_000_000n;
 export const defaultMissionBatchPolicy: MissionBatchPolicy = {
-  enabled: false, maxItems: 16, maxFeeUsdMicros: 1_000_000n, priceMaxAgeSeconds: 3_600
+  enabled: false, maxItems: 16, maxFeeWei: resolverBatchMaxFeeWei
 };
 export function loadMissionBatchPolicy(env: Record<string, string | undefined>, problems: Array<{ field: string; message: string }>): MissionBatchPolicy {
   const prefix = "VEYDRIFT_MISSION_BATCH_";
   const enabled = env[prefix + "ENABLED"] === "true";
   const maxItems = Number(env[prefix + "MAX_ITEMS"] ?? 16);
-  const usd = Number(env[prefix + "MAX_USD"] ?? 1);
-  const age = Number(env[prefix + "PRICE_MAX_AGE_SECONDS"] ?? 3_600);
-  const feed = env[prefix + "ETH_USD_FEED"];
-  const validFeed = feed !== undefined && /^0x[0-9a-fA-F]{40}$/.test(feed);
+  const rawWei = env[prefix + "MAX_FEE_WEI"] ?? resolverBatchMaxFeeWei.toString();
+  const maxFeeWei = /^[0-9]{1,18}$/.test(rawWei) ? BigInt(rawWei) : 0n;
   if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 32) problems.push({ field: prefix + "MAX_ITEMS", message: "must be 1..32" });
-  if (!Number.isFinite(usd) || usd <= 0 || usd > 1) problems.push({ field: prefix + "MAX_USD", message: "must be positive and at most the $1 batch guard" });
-  // Base's ETH/USD feed heartbeat is 20 minutes, so a stricter age would block most quotes.
-  if (!Number.isInteger(age) || age < 1 || age > 3_600) problems.push({ field: prefix + "PRICE_MAX_AGE_SECONDS", message: "must be 1..3600" });
-  if (feed !== undefined && !validFeed) problems.push({ field: prefix + "ETH_USD_FEED", message: "must be an address" });
+  if (maxFeeWei <= 0n || maxFeeWei > resolverBatchMaxFeeWei) problems.push({ field: prefix + "MAX_FEE_WEI", message: "must be positive and at most 400000000000000 wei (0.0004 ETH)" });
   if (enabled && !env.VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY) problems.push({ field: prefix + "ENABLED", message: "requires local signer; unlocked batching unsupported" });
-  return { enabled, maxItems, maxFeeUsdMicros: Number.isFinite(usd) && usd > 0 && usd <= 1 ? BigInt(Math.floor(usd * 1_000_000)) : 1_000_000n,
-    priceMaxAgeSeconds: age, ...(validFeed ? { priceFeed: feed as Hex } : {}) };
+  return { enabled, maxItems, maxFeeWei };
 }
 export function batchCalldata(items: readonly BatchLeg[]): Hex {
   return encodeFunctionData({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch",
@@ -49,17 +43,14 @@ export class BatchUnproductiveError extends BatchCapacityError {
 }
 export type BatchQuote = {
   gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint;
-  l1Fee: bigint; operatorFee: bigint; totalWei: bigint; usdMicros: bigint;
+  l1Fee: bigint; operatorFee: bigint; totalWei: bigint;
 };
 export function totalBatchExposure(input: {
   gas: bigint; blockGasLimit: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint;
-  l1Fee: bigint; operatorFee: bigint; price: bigint; priceDecimals: number; updatedAt: bigint;
-  nowSeconds: number; policy: MissionBatchPolicy;
+  l1Fee: bigint; operatorFee: bigint; policy: MissionBatchPolicy;
 }): BatchQuote {
   const { policy } = input;
-  if (input.price <= 0n || input.updatedAt <= 0n || input.updatedAt > BigInt(input.nowSeconds)
-    || BigInt(input.nowSeconds) - input.updatedAt > BigInt(policy.priceMaxAgeSeconds)
-    || input.priceDecimals < 0 || input.priceDecimals > 18) throw new Error("missing or stale ETH/USD price; batch blocked");
+  if (policy.maxFeeWei <= 0n || policy.maxFeeWei > resolverBatchMaxFeeWei) throw new Error("invalid batch ETH budget");
   if (input.gas <= 0n || input.maxFeePerGas <= 0n || input.maxPriorityFeePerGas < 0n
     || input.maxPriorityFeePerGas > input.maxFeePerGas || input.l1Fee < 0n || input.operatorFee < 0n) throw new Error("invalid batch fee estimate");
   const { gas } = input;
@@ -69,11 +60,9 @@ export function totalBatchExposure(input: {
   const l1Fee = input.l1Fee * 2n;
   const operatorFee = input.operatorFee * 2n;
   const totalWei = gas * input.maxFeePerGas + l1Fee + operatorFee;
-  const denominator = 10n ** BigInt(18 + input.priceDecimals);
-  const usdMicros = (totalWei * input.price * 1_000_000n + denominator - 1n) / denominator;
-  if (usdMicros > policy.maxFeeUsdMicros) throw new BatchCapacityError("total batch network fee exceeds USD cap");
+  if (totalWei > policy.maxFeeWei || totalWei > resolverTransactionMaxFeeWei) throw new BatchCapacityError("total batch transaction network fee exceeds ETH cap");
   return { gas, maxFeePerGas: input.maxFeePerGas, maxPriorityFeePerGas: input.maxPriorityFeePerGas,
-    l1Fee, operatorFee, totalWei, usdMicros };
+    l1Fee, operatorFee, totalWei };
 }
 
 /** Bounded greedy chronological packing: at most 2N estimates; skip an indivisible poison,
