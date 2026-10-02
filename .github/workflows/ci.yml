@@ -15,11 +15,13 @@ concurrency:
 jobs:
   # Check groups run as parallel jobs (one per Mac runner instance), so a run takes as long
   # as its slowest group instead of the sum of every check.
-  checks:
+  # The job id must stay `check`: the Mac runners' job-started hook only authorizes job `check`
+  # of this workflow, on pull_request events, for PRs authored by backmeupplz.
+  check:
     name: checks (${{ matrix.group }})
-    # Main pushes and PRs from branches of this repository (only collaborators can push them)
-    # run on the self-hosted Mac runners; fork PRs never execute on that machine.
-    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    # Same rule as that hook, so other PRs (forks, other authors) and main pushes use
+    # GitHub-hosted runners instead of being denied on the Mac.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS) || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 60
@@ -125,10 +127,11 @@ jobs:
           node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
 
   # Branch protection requires this single "check" status; it passes only if every group passed.
-  check:
-    needs: checks
+  all-checks:
+    name: check
+    needs: check
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: All check groups passed
-        run: test "${{ needs.checks.result }}" = success
+        run: test "${{ needs.check.result }}" = success
