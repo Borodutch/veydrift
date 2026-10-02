@@ -147,10 +147,13 @@ Backend payload changes require frontend consumer tests too. Contract/event
 changes require contract/indexer tests and a state-preservation review.
 Workspace-wide `bun run test`, `bun run check`, and `bun run build` are for broad changes.
 
-GitHub Actions remains the CI entry point. The workflow uses repository variable
-`VEYDRIFT_LOCAL_CI_RUNNER_LABELS` for eligible `backmeupplz` PRs, checking both
-login and numeric user ID; other PRs and main pushes use hosted runners.
-This does not imply a configured self-hosted runner is currently online.
+GitHub Actions remains the CI entry point, on hosted runners. PRs and pushes to main use the
+same rule: only the areas a change touches, plus the areas that read them, are checked (a
+backend-only PR runs only backend checks; contracts are compiled and tested only when contract
+code changes). Toolchain, lockfile, CI and unclassified files check everything. Because the
+merge gate merges the latest main into a PR first, the PR and its merge commit select the same
+checks. Heavy groups (browser tests, contract build, storage layout, three contract test shards)
+run as parallel jobs.
 
 Run the same scoped runner locally when needed:
 

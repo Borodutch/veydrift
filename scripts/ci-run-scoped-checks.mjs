@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { computeScope } from "./ci-scope.mjs";
+import { AREAS, computeScope } from "./ci-scope.mjs";
 
 function parseArgs(argv) {
   const args = {};
@@ -27,22 +27,15 @@ function envBool(name) {
 }
 
 function scopeFromEnvOrGit(args) {
-  const fromEnv = {
-    frontend: envBool("CI_SCOPE_FRONTEND"),
-    backend: envBool("CI_SCOPE_BACKEND"),
-    universe: envBool("CI_SCOPE_UNIVERSE"),
-    contracts: envBool("CI_SCOPE_CONTRACTS"),
-    storage_layout: envBool("CI_SCOPE_STORAGE_LAYOUT"),
-    full_build: envBool("CI_SCOPE_FULL_BUILD"),
-  };
-
+  // Tests and dry runs can pin the scope with CI_SCOPE_<AREA>=true|false.
+  const keys = [...AREAS, "storage_layout"];
+  const fromEnv = Object.fromEntries(keys.map((key) => [key, envBool("CI_SCOPE_" + key.toUpperCase())]));
   if (Object.values(fromEnv).some((value) => value !== undefined)) {
-    return Object.fromEntries(
-      Object.entries(fromEnv).map(([key, value]) => [key, value === true]),
-    );
+    const scope = Object.fromEntries(keys.map((key) => [key, fromEnv[key] === true]));
+    scope.script_tests = (process.env.CI_SCOPE_SCRIPT_TESTS || "").split(/\s+/).filter(Boolean);
+    return scope;
   }
-
-  return computeScope({ base: args.base, head: args.head, eventName: args.event || "local" });
+  return computeScope({ base: args.base, head: args.head, eventName: args.event || process.env.GITHUB_EVENT_NAME || "local" });
 }
 
 const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
@@ -109,8 +102,14 @@ async function runLogged(label, command, args) {
 
 // Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
 // Without a group (local preflight) every applicable check runs in one process, as before.
-export const CHECK_GROUPS = ["all", "rest", "build", "browser", "contracts-test"];
-const HEAVY = { build: "build", "frontend-touch-browser": "browser", "contracts-test": "contracts-test" };
+export const CHECK_GROUPS = ["all", "rest", "browser", "contracts-build", "contracts-storage", "contracts-test"];
+const HEAVY = {
+  "frontend-touch-browser": "browser",
+  "contracts-build": "contracts-build",
+  "contracts-fast-check": "contracts-build",
+  "contracts-storage-check": "contracts-storage",
+  "contracts-test": "contracts-test",
+};
 
 export function planChecks(scope, group = "all") {
   if (!CHECK_GROUPS.includes(group)) throw new Error(`unknown check group "${group}" (use ${CHECK_GROUPS.join(", ")})`);
@@ -121,6 +120,9 @@ export function planChecks(scope, group = "all") {
   // Documentation-only changes must run these too; neither needs Bun or installed packages.
   add("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
   add("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
+  for (const testFile of scope.script_tests ?? []) {
+    add(`script-test ${testFile}`, "node", ["--test", testFile]);
+  }
 
   if (scope.universe) {
     add("universe-check", "bun", ["run", "check:universe"]);
@@ -135,11 +137,25 @@ export function planChecks(scope, group = "all") {
   }
 
   if (scope.frontend) {
-    add("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
+    // Image and animation derivatives that Vite, the unit tests and the browser tests all read.
+    add("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs && "
+      + "bun -e 'import(\"./scripts/animation-variants.mjs\").then((m) => m.prepareAnimationVariants())'"]);
     add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
     add("frontend-test", "bun", ["run", "test:frontend"]);
+    add("frontend-build", "bun", ["run", "build:frontend"]);
     add("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
-    add("stats-check", "bun", ["run", "check:stats"]);
+  }
+
+  if (scope.stats) add("stats-check", "bun", ["run", "check:stats"]);
+
+  if (scope.keeper) {
+    add("keeper-check", "bun", ["run", "check:keeper"]);
+    add("keeper-test", "bun", ["run", "test:keeper"]);
+  }
+
+  if (scope.chicken) {
+    add("chicken-burn-listener-check", "bun", ["run", "check:chicken-burn-listener"]);
+    add("chicken-burn-listener-test", "bun", ["run", "test:chicken-burn-listener"]);
   }
 
   if (scope.contracts) {
@@ -153,6 +169,8 @@ export function planChecks(scope, group = "all") {
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",
     ]);
+    // Full build first: the fast check's size build then reuses its artifacts.
+    add("contracts-build", "bun", ["run", "build:contracts"]);
     add("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     add("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {
@@ -162,15 +180,11 @@ export function planChecks(scope, group = "all") {
     }
   }
 
-  if (scope.full_build) {
-    add("build", "bun", ["run", "build"]);
-  }
-
   if (group === "all") return plan;
   const selected = plan.filter(({ label }) => (HEAVY[label] || "rest") === group);
-  // Heavy groups run in their own job, so they repeat the cheap frontend asset preparation they rely on.
+  // The browser job repeats the cheap frontend asset preparation it relies on.
   const precheck = plan.find(({ label }) => label === "frontend-precheck");
-  if (precheck && ["browser", "build"].includes(group) && selected.length) selected.unshift(precheck);
+  if (precheck && group === "browser" && selected.length) selected.unshift(precheck);
   return selected;
 }
 

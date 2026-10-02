@@ -6,8 +6,7 @@ on:
     branches:
       - main
 
-# One self-hosted runner serves every PR: a new push to a PR cancels that PR's
-# superseded run instead of queueing behind it. Pushes to main are never cancelled,
+# A new push to a PR cancels that PR's superseded run. Pushes to main are never cancelled,
 # because every merge commit's run gates deployment and contract releases.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
@@ -27,8 +26,9 @@ jobs:
       matrix:
         include:
           - group: rest
-          - group: build
           - group: browser
+          - group: contracts-build
+          - group: contracts-storage
           - group: contracts-test
             shard: 1/3
           - group: contracts-test
@@ -37,6 +37,9 @@ jobs:
             shard: 3/3
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      BASE_REF: ${{ github.base_ref }}
+      BEFORE_SHA: ${{ github.event.before }}
+      HEAD_REF: ${{ github.sha }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -52,40 +55,28 @@ jobs:
         if: matrix.group == 'rest'
         run: node --test scripts/ci-run-scoped-checks.test.mjs
 
-      - name: Determine changed areas
-        id: scope
-        env:
-          BASE_REF: ${{ github.base_ref }}
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          HEAD_REF: ${{ github.sha }}
-        run: |
-          node scripts/ci-scope.mjs --github-output "$GITHUB_OUTPUT"
-
+      # PRs and pushes to main use the same rule: only the areas a change touches (plus
+      # what depends on them) are checked; toolchain/CI/unclassified changes check everything.
       - name: Plan this group's checks
         id: plan
-        env:
-          CI_SCOPE_FRONTEND: ${{ steps.scope.outputs.frontend }}
-          CI_SCOPE_BACKEND: ${{ steps.scope.outputs.backend }}
-          CI_SCOPE_UNIVERSE: ${{ steps.scope.outputs.universe }}
-          CI_SCOPE_CONTRACTS: ${{ steps.scope.outputs.contracts }}
-          CI_SCOPE_STORAGE_LAYOUT: ${{ steps.scope.outputs.storage_layout }}
-          CI_SCOPE_FULL_BUILD: ${{ steps.scope.outputs.full_build }}
         run: |
+          node scripts/ci-scope.mjs
           planned="$(node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}" --list | grep -v ' (Skipped' || true)"
           echo "$planned"
           needs_packages="$(printf '%s\n' "$planned" | grep -v -e '^docs-' -e '^$' || true)"
-          echo "work=$([ -n "$planned" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "packages=$([ -n "$needs_packages" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "work=$([ -n "$needs_packages" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "docs=$([ -n "$planned" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "foundry=$(printf '%s\n' "$planned" | grep -q '^contracts-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(printf '%s\n' "$planned" | grep -q '^frontend-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
-        if: steps.plan.outputs.packages == 'true'
+        if: steps.plan.outputs.work == 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.1.42
 
       - name: Cache Bun packages
-        if: steps.plan.outputs.packages == 'true'
+        if: steps.plan.outputs.work == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -94,35 +85,41 @@ jobs:
             bun-${{ runner.os }}-
 
       - name: Set up Foundry
-        if: steps.plan.outputs.packages == 'true' && steps.scope.outputs.contracts == 'true'
+        if: steps.plan.outputs.foundry == 'true'
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.7.1
 
+      # Per job: each job compiles a different set (and the storage job a different profile),
+      # so a shared key let the first, smallest job's near-empty cache win for everyone.
       - name: Cache Foundry build artifacts
-        if: steps.plan.outputs.packages == 'true' && steps.scope.outputs.contracts == 'true'
+        if: steps.plan.outputs.foundry == 'true' && matrix.group != 'contracts-storage'
         uses: actions/cache@v4
         with:
           path: |
             packages/contracts/cache
             packages/contracts/out
-          key: foundry-${{ runner.os }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/foundry.toml') }}
+          key: foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/script/**/*.sol', 'packages/contracts/foundry.toml') }}
           restore-keys: |
-            foundry-${{ runner.os }}-
+            foundry-${{ runner.os }}-${{ matrix.group }}-${{ strategy.job-index }}-
+
+      # Generated animated-planet derivatives take minutes to encode from scratch.
+      - name: Cache frontend animation variants
+        if: steps.plan.outputs.frontend == 'true'
+        uses: actions/cache@v4
+        with:
+          path: apps/frontend/.animation-variants
+          key: animation-variants-${{ runner.os }}-${{ hashFiles('apps/frontend/planetAnimationConfig.ts', 'apps/frontend/scripts/animation-variants.mjs', 'apps/frontend/public/assets/game/planet-animations/**', 'apps/frontend/public/assets/game/moon-animations/**', 'bun.lockb') }}
+          restore-keys: |
+            animation-variants-${{ runner.os }}-
 
       - name: Install dependencies
-        if: steps.plan.outputs.packages == 'true'
+        if: steps.plan.outputs.work == 'true'
         run: bun install --frozen-lockfile
 
       - name: Run scoped checks
-        if: steps.plan.outputs.work == 'true'
+        if: steps.plan.outputs.docs == 'true'
         env:
-          CI_SCOPE_FRONTEND: ${{ steps.scope.outputs.frontend }}
-          CI_SCOPE_BACKEND: ${{ steps.scope.outputs.backend }}
-          CI_SCOPE_UNIVERSE: ${{ steps.scope.outputs.universe }}
-          CI_SCOPE_CONTRACTS: ${{ steps.scope.outputs.contracts }}
-          CI_SCOPE_STORAGE_LAYOUT: ${{ steps.scope.outputs.storage_layout }}
-          CI_SCOPE_FULL_BUILD: ${{ steps.scope.outputs.full_build }}
           CONTRACT_TEST_SHARD: ${{ matrix.shard }}
         run: |
           node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
