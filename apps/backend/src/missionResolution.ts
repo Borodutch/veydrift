@@ -27,7 +27,7 @@ import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReco
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
-import { quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi } from "./missionBatchFees";
+import { quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, initialResolverFees, usdCappedGas, singleResolverMaxUsdMicros } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -536,8 +536,13 @@ export class MissionResolutionService {
         for (const excluded of result.exclusions ?? []) {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
           const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
-          if (candidate) this.scheduleRetry(candidateRetryKey(candidate));
-          emitObservabilityEvent({ kind: "mission_batch_skip", ...excluded.item, reason: excluded.reason, terminal: excluded.terminal ?? false }, "warn");
+          const key = candidate && candidateRetryKey(candidate);
+          // Settled elsewhere (e.g. a concurrent manual resolve) is success, not a failure.
+          if (excluded.terminal) { if (key) this.failedCandidateRetries.delete(key); continue; }
+          // Unpaid ordering/oracle waits clear on their own: flat short retry, no escalation.
+          if (key) excluded.unproductive ? this.scheduleFlatRetry(key) : this.scheduleRetry(key);
+          emitObservabilityEvent({ kind: "mission_batch_skip", ...excluded.item, reason: excluded.reason,
+            terminal: false }, excluded.unproductive ? "info" : "warn");
         }
         let settled = 0;
         for (const item of result.items) {
@@ -545,6 +550,11 @@ export class MissionResolutionService {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(item.missionId);
           if (!await this.chainClient.isMissionLegComplete?.(item.missionId, item.leg)) {
             const outcome = result.outcomes?.find((o) => o.item.missionId === item.missionId && o.item.leg === item.leg);
+            if (outcome?.outcome === "Progress") {
+              // A staged battle committed more stages: continue next tick without backoff.
+              this.failedCandidateRetries.delete(candidateRetryKey(candidate));
+              continue;
+            }
             emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: outcome?.outcome ?? "canonical-leg-incomplete",
               errorSelector: outcome?.errorSelector ?? null, blockedDependency: outcome?.blockedDependency ?? null }, "warn");
             this.scheduleRetry(candidateRetryKey(candidate));
@@ -560,7 +570,9 @@ export class MissionResolutionService {
         emitObservabilityEvent({ kind: "mission_batch_outcomes", hash: result.hash, requestedLegs: result.items.length,
           settledLegs: settled, blockedOrPartialLegs: result.items.length - settled });
       } catch (error) {
-        for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
+        // A concurrent settlement or fresh block only invalidates this packing: repack next tick.
+        const transient = error instanceof Error && /membership changed|block changed or expired/.test(error.message);
+        if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
         this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
         emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
       }
@@ -716,6 +728,12 @@ export class MissionResolutionService {
           );
         }
       }
+      // An earlier event at this body or a pending oracle word: the preflight caught it unpaid and
+      // it clears on its own, so retry on a flat short interval instead of escalating backoff.
+      if (isOrderingOrOracleWait(error)) {
+        this.scheduleFlatRetry(candidateRetryKey(candidate));
+        return false;
+      }
       const retryAfterMs = this.scheduleRetry(candidateRetryKey(candidate));
       this.logger.warn(
         `[mission-resolution] ${method}(${candidate.mission.missionId}) failed; retry in ${Math.ceil(retryAfterMs / 1_000)}s: ${conciseReasonText(error)}`
@@ -727,6 +745,10 @@ export class MissionResolutionService {
   private canAttempt(candidate: MissionSettlementCandidate): boolean {
     const retry = this.failedCandidateRetries.get(candidateRetryKey(candidate));
     return !retry || retry.retryAtMs <= this.now();
+  }
+
+  private scheduleFlatRetry(key: string): void {
+    this.failedCandidateRetries.set(key, { failures: 0, retryAtMs: this.now() + initialFailureRetryMs });
   }
 
   private scheduleRetry(key: string, error?: string): number {
@@ -761,6 +783,12 @@ export class MissionResolutionService {
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
+}
+
+// FleetMissionNotResolved(uint64), PendingRandomness(uint256), or chronology ordering not ready.
+function isOrderingOrOracleWait(error: unknown): boolean {
+  const reason = reasonText(error);
+  return reason.includes("0xb3439205") || reason.includes("0x6eb4f8ed") || /ordering is not ready/i.test(reason);
 }
 
 function needsCanonicalMissionReconciliation(error: unknown): boolean {
@@ -829,7 +857,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     // index before a process restarts, but its durable intent must still release the signer.
     await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
     if (!Number.isInteger(this.batchPolicy.maxItems) || this.batchPolicy.maxItems < 1 || this.batchPolicy.maxItems > 32
-      || this.batchPolicy.maxFeeUsdMicros <= 0n || this.batchPolicy.maxFeeUsdMicros > 500_000n)
+      || this.batchPolicy.maxFeeUsdMicros <= 0n || this.batchPolicy.maxFeeUsdMicros > 1_000_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
     const exclusions: BatchExclusion[] = [];
     const initialBlock = await client.getBlock({ blockTag: "latest" });
@@ -1019,21 +1047,30 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       functionName,
       args: [BigInt(missionId)]
     });
-    const preflight = async () => {
-      if (functionName === "finalizeMoonChance") return;
-      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
+    const from = typeof this.sender === "string" ? this.sender : this.sender.address;
+    const preflight = async (gas: bigint) => {
+      if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
+      if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
       }
-      if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
-      // the exact funded entrypoint under the nonce lease before both submit and replacement.
+      // the exact funded entrypoint at the exact capped gas under the nonce lease before both
+      // submit and replacement: a leg that cannot fit the USD cap fails here, unpaid.
       // Empty return data is valid bounded progress; only canonical post-receipt state settles it.
-      await this.publicClient.call({
-        account: typeof this.sender === "string" ? this.sender : this.sender.address,
-        to: targetAddress,
-        data,
-        blockTag: "latest"
-      });
+      await this.publicClient.call({ account: from, to: targetAddress, data, gas, blockTag: "latest" });
+    };
+    // Every single-call write stays within singleResolverMaxUsdMicros: explicit fees, and gas shrunk
+    // to what the cap affords. A staged battle uses whatever gas it gets (fewer stages per tx).
+    const cappedFees = async (previousHash?: Hex) => {
+      const client = this.publicClient!;
+      const fees = previousHash ? await resolverReplacementFees(client, previousHash) : await initialResolverFees(client);
+      const requested = functionName === "resolveFleetMission"
+        ? fleetMissionResolutionGas
+        : (await client.estimateGas({ account: from, to: targetAddress, data })) * 6n / 5n;
+      const gas = await usdCappedGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
+        maxFeePerGas: fees.maxFeePerGas, priceFeed: this.batchPolicy.priceFeed, maxUsdMicros: singleResolverMaxUsdMicros });
+      await preflight(gas);
+      return { gas, ...fees };
     };
     // The service probes once before scanning, but a long batch can straddle an operator pause.
     // Re-check at the final boundary before entering the persistent coordinator: no lease, nonce
@@ -1052,36 +1089,29 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           address: account.address,
           blockTag
         }),
-        submit: async (nonce) => {
-          await preflight();
-          return this.walletClient!.writeContract({
-            abi: veydriftGameResolutionAbi,
-            account,
-            address: targetAddress,
-            chain: this.chain!,
-            functionName,
-            args: [BigInt(missionId)],
-            nonce,
-            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {})
-          });
-        },
+        submit: async (nonce) => this.walletClient!.writeContract({
+          abi: veydriftGameResolutionAbi,
+          account,
+          address: targetAddress,
+          chain: this.chain!,
+          functionName,
+          args: [BigInt(missionId)],
+          nonce,
+          ...await cappedFees()
+        }),
         isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
         isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
         shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
-        replace: async (nonce, previousHash) => {
-          await preflight();
-          return this.walletClient!.writeContract({
-            abi: veydriftGameResolutionAbi,
-            account,
-            address: targetAddress,
-            chain: this.chain!,
-            functionName,
-            args: [BigInt(missionId)],
-            nonce,
-            ...(functionName === "resolveFleetMission" ? { gas: fleetMissionResolutionGas } : {}),
-            ...await resolverReplacementFees(this.publicClient!, previousHash)
-          });
-        },
+        replace: async (nonce, previousHash) => this.walletClient!.writeContract({
+          abi: veydriftGameResolutionAbi,
+          account,
+          address: targetAddress,
+          chain: this.chain!,
+          functionName,
+          args: [BigInt(missionId)],
+          nonce,
+          ...await cappedFees(previousHash)
+        }),
         cancelStale: async (nonce, previousHash) => this.walletClient!.sendTransaction({
           account,
           chain: this.chain!,
@@ -1096,7 +1126,6 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (!this.rpcUrl || !this.publicClient || !this.chain) {
       throw new Error("unlocked-account mission resolver is missing RPC/public client");
     }
-    const from = this.sender as Address;
     return this.transactionCoordinator.submit({
       chainId: this.chain.id,
       address: from,
@@ -1106,28 +1135,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         blockTag
       }),
       submit: async (nonce) => {
-        await preflight();
-        return this.sendUnlockedTransaction(
-          from,
-          targetAddress,
-          data,
-          nonce,
-          functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined
-        );
+        const { gas, ...fees } = await cappedFees();
+        return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: () => this.isResolutionOperationComplete(functionName, missionId),
       shouldReplace: (hash) => resolverTransactionNeedsReplacement(this.publicClient!, hash),
       replace: async (nonce, previousHash) => {
-        await preflight();
-        return this.sendUnlockedTransaction(
-          from,
-          targetAddress,
-          data,
-          nonce,
-          functionName === "resolveFleetMission" ? fleetMissionResolutionGas : undefined,
-          await resolverReplacementFees(this.publicClient!, previousHash)
-        );
+        const { gas, ...fees } = await cappedFees(previousHash);
+        return this.sendUnlockedTransaction(from, targetAddress, data, nonce, gas, fees);
       },
       confirm: (hash) => this.confirm(hash)
     });

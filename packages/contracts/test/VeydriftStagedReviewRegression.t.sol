@@ -149,6 +149,32 @@ contract VeydriftStagedReviewRegressionTest is VeydriftMoonSystemTestBase {
         assertEq(game.shipCount(target, Ship.LightFighter), 15 - lost);
     }
 
+    /// A manual resolve racing the batch resolver lands after the mission settled. It must no-op
+    /// even while a later battle holds the same body's lock, not revert the caller's tx.
+    function testResolvingSettledMissionNoOpsWhileBodyLocked() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 10);
+        uint256 early = _launch(origin, target, false);
+        uint256 late = _launch(origin, target, false);
+        (, uint64 earlyAt,,) = _fleetMission(early);
+        (, uint64 lateAt,,) = _fleetMission(late);
+        _fulfillAttackBattleRandomness(early, 662);
+        _fulfillAttackBattleRandomness(late, 663);
+        vm.warp(lateAt > earlyAt ? lateAt : earlyAt);
+        _finishCapped(early);
+        for (uint256 i; i < 2000; ++i) {
+            (uint8 phase,,) = game.stagedBattleProgress(late);
+            if (phase != 0) break;
+            game.resolveFleetMission{gas: 1_500_000}(late);
+        }
+        (uint8 latePhase,,) = game.stagedBattleProgress(late);
+        assertTrue(latePhase != 0 && latePhase != 13, "later battle must hold the body lock");
+        (G.FleetMissionStatus before,,,) = _fleetMission(early);
+        game.resolveFleetMission(early);
+        (G.FleetMissionStatus afterStatus,,,) = _fleetMission(early);
+        assertEq(uint8(afterStatus), uint8(before));
+    }
+
     function testScoreProtectedBounceDoesNotWaitForOracle() public {
         (uint256 origin, uint256 target, address defender) = _fixture();
         uint256 id = _launch(origin, target, false);

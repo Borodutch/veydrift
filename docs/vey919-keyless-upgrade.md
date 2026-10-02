@@ -41,49 +41,12 @@ It uses valid empty local referral migration and inert old constructor pointers;
 it is not deployed-state or maximum-gas evidence. Its environment-mutating cases
 run serially because Foundry environment variables are process-global.
 
-## Full fresh graph and storage proof
+## Storage and size checks
 
-Game replaces FirstPlanetSettlement, Gameplay, PlanetManagement, AttackProtection,
-Colonization, DefenseHold, StateMigration, ACSAttack and embedded BatchTransport.
-Gameplay routes to Combat, Staged/current Rapidfire and Legacy/LegacyRapidfire.
-Staged creates CombatProtection; Legacy creates LegacyCombatReturn; StateMigration
-creates Rift and MigrationDiscard and references fresh CombatRaid. Colonization
-creates DefenseProduction/UniverseRules and references fresh ShipProduction.
-PlanetManagement creates Missile. Moon and every transitive compiler library link
-are included. Constructor-created helpers are not optional inventory entries.
-
-```sh
-# Build a frozen source snapshot with compiled layouts.
-cd packages/contracts
-forge build --skip test --skip script --extra-output storageLayout --sizes --deny warnings
-cd ../..
-node scripts/vey919-keyless-closure.mjs \
-  "$CANDIDATE_OUT" "$REPORT" "$OLD_OUT" "$PINNED_MAIN_GAME_ARTIFACT"
-```
-
-`OLD_OUT` is mandatory: it must contain the independently compiled original
-artifacts, not their container directory. Missing old artifacts fail closed unless
-they are among the five explicitly reviewed fresh nodes. Every old layout is
-compared recursively, including nested widths, mapping keys and array elements.
-
-Default comparison is exact. The optional final argument permits **only** the
-eleven chronology appends imported from main commit
-`936007eca841b62c5e172f97dc64ce11633a96a5`: slots 77–87, after the original 75
-inherited entries. The unmodified-main artifact is source-hash anchored; its old
-prefix, exact labels/positions and complete recursive candidate layout must match.
-Arbitrary appends, changed old fields, different tail widths and missing baselines
-still fail. The report distinguishes exact matches from this explicit append mode.
-
-Closure rejects stale source, uncovered creation/link edges, EIP-170 runtime
-overflow and EIP-3860 initcode overflow **including constructor arguments**.
-Compiler layouts do not enumerate assembly namespaces: separate semantic and
-deployed-history review remains required. A repository baseline is not deployed
-provenance. The authenticated old immutable/library graph and inherited layout
-comparison are separate evidence, not inferred from current source.
-
-Fixture library addresses are synthetic, not live owner-nonce predictions. Before
-execution approval, rebind every reviewed library, immutable, runtime and exact
-transaction payload to the actual release plan and canonical on-chain reads.
+CI's `check:contracts:storage` compares Game storage against
+`storage-layout/VeydriftGame.v1.json`, and `check:upgrade-sizes` enforces EIP-170 on every
+upgraded module. Before execution approval, rebind every library, immutable, runtime and
+exact transaction payload to the actual release plan and canonical on-chain reads.
 
 ## Progress and compatible consumer rollout
 
@@ -95,7 +58,7 @@ counts, elapsed time or journal deletion.
 After the approved Game upgrade, verify the actual implementation address and
 keccak256 of its complete deployed runtime. Install the reviewed
 `implementation-address:runtime-keccak256` pair in
-`VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS` for both backend and keeper before enabling
+`VEYDRIFT_ARRIVAL_PROGRESS_VERSIONS` for the keeper before enabling
 settlement. Empty/unknown pairs fail closed, including return-leg chronology.
 Do not whitelist unlinked templates, arbitrary code hashes or getter success.
 Verified zero counters can bootstrap once; paid no-op/revert checkpoints persist.

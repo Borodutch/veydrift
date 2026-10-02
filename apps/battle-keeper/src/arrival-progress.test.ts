@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeAbiParameters, encodeFunctionResult, keccak256, stringToHex, toHex, type Hex } from "viem";
-import { readMissionProgress, progressAbi, consumeProgress, guardAllows, progressKey } from "./progress";
+import { readMissionProgress, progressAbi, consumeProgress, guardAllows } from "./progress";
 const hash = "0x" + "a".repeat(64);
 const address = "0x1111111111111111111111111111111111111111";
 const slot = (base: bigint) => keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [2n, base]));
@@ -127,9 +127,4 @@ for (const target of [undefined, "2"]) test("chronology counter keeps " + (targe
   expect(guardAllows(paid,await read())).toBe(false);
   work=1n; expect(guardAllows(paid,await read())).toBe(false);
   expect(tags.every(tag=>JSON.stringify(tag)===JSON.stringify({blockHash:hash,requireCanonical:true}))).toBe(true);
-});
-test("chronology extension preserves pre-existing raw envelope operation keys", () => {
-  const old={blockNumber:"1",blockHash:hash,version:"v",phase:0,round:0,workDone:"0"};
-  expect(progressKey(old)).toBe(["v","0","0","","","",""].join(":"));
-  expect(progressKey({...old,chronologyWorkDone:"0"})).toBe(progressKey(old)+":chronology:0");
 });

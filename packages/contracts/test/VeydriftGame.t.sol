@@ -9291,7 +9291,7 @@ contract VeydriftGameTest is Test {
         vm.expectRevert();
         vm.prank(ally);
         game.recallFleetMission(holdId);
-        vm.expectRevert();
+        // A concurrent repeat is a no-op, never a revert or a second credit.
         game.completeFleetMissionReturn(holdId);
         assertEq(game.shipCount(home, Ship.Battleship), 1);
         assertEq(game.planet(home).resources.metal, creditedMetal);

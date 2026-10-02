@@ -62,16 +62,17 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external virtual {
         _requireGameNotPaused();
         FleetMission storage mission = _fleetMissions[missionId];
+        // Already settled (e.g. by a concurrent batch or manual resolver): no-op, never revert.
+        if (mission.status != FleetMissionStatus.Outbound) return;
         FleetMissionType missionType = mission.missionType;
         uint256 lockId = Store.layout().bodyLock[mission.targetPlanetId];
         if (lockId != 0 && lockId != missionId) {
             revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
         }
         // A staged body snapshot is immutable once preparation begins. Chronology runs first.
-        if (
-            mission.status == FleetMissionStatus.Outbound && Store.battle(missionId).phase == 0
-                && !prepareFleetChronology(missionId, false)
-        ) return;
+        if (Store.battle(missionId).phase == 0 && !prepareFleetChronology(missionId, false)) {
+            return;
+        }
         if (
             missionType == FleetMissionType.Colonize
                 || ((missionType == FleetMissionType.Transport

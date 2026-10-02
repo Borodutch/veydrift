@@ -76,7 +76,7 @@ import {
   formatGalaxyHeatLabel,
 } from "./GalaxyView";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
-import { missionTypeLabel } from "./missionControlModel";
+import { combatProgressLabel, isMissionQueued, missionTypeLabel } from "./missionControlModel";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -1454,10 +1454,9 @@ function overviewMissionStatus(
   mission: FleetMissionVisibilityResponse["outgoing"][number],
 ): string {
   if (mission.resolutionBlocker === "randomness_pending") return "Awaiting randomness";
-  if (mission.needsResolution === true) {
-    const progress = mission.combatResolutionProgress;
-    return progress ? `Resolving ${progress.roundsCompleted}/${progress.totalRounds}` : "Resolving";
-  }
+  if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress);
+  if (mission.needsResolution === true) return "Resolving";
+  if (isMissionQueued(mission)) return "Queued";
   if (
     mission.missionType === "DefenseHold"
     && mission.status === "Outbound"
@@ -1466,7 +1465,8 @@ function overviewMissionStatus(
   ) {
     return "Stationed";
   }
-  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true) {
+  if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true
+    && mission.resolutionEligible === true) {
     return "Resolving";
   }
   return mission.status;

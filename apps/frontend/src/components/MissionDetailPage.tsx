@@ -13,6 +13,7 @@ import type { Coordinates } from "../types";
 import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import {
   isFleetRecallable,
+  isMissionQueued,
   manualMissionResolutionKind,
   missionLifecycleActions,
   missionStatusPill,
@@ -482,7 +483,10 @@ function MissionBattleReport({
       const { roundsCompleted, totalRounds } = mission.combatResolutionProgress;
       return (
         <Notice tone="warning">
-          Combat resolving: {roundsCompleted} of up to {totalRounds} rounds complete. Combat will continue automatically.
+          {roundsCompleted === 0
+            ? "Combat is preparing (large battles resolve across several transactions)."
+            : `Combat resolving: ${roundsCompleted} of up to ${totalRounds} rounds complete.`}{" "}
+          Combat will continue automatically.
         </Notice>
       );
     }
@@ -511,6 +515,13 @@ function MissionBattleReport({
       return (
         <Notice tone="warning">
           Battle randomness is still pending, so this combat mission cannot resolve yet.
+        </Notice>
+      );
+    }
+    if (isMissionQueued(mission)) {
+      return (
+        <Notice tone="neutral">
+          Queued: an earlier fleet event at this location must resolve first.
         </Notice>
       );
     }

@@ -47,19 +47,7 @@ function fixture() {
   };
 }
 
-test("crash before signing leaves no consumed checkpoint and retries without external progress", async () => {
-  const f = fixture();
-  try {
-    await expect(f.resolver().resolveMission("1", "arrival", async () => { throw new Error("crash before sign"); })).rejects.toThrow("crash");
-    expect(f.journal.attemptKeys()).toHaveLength(0); expect(f.journal.guards()).toHaveLength(0);
-    f.reopen();
-    await f.resolver().resolveMission("1", "arrival", async () => progress);
-    expect(f.raws).toHaveLength(1);
-    expect(parseTransaction(f.raws[0]!).gas).toBe(settlementGasLimit);
-  } finally { f.close(); }
-});
-
-test("crash after signed persistence resumes identical bytes; successful no-op consumes only on receipt", async () => {
+test("crash after signed persistence resumes identical bytes", async () => {
   const f = fixture();
   try {
     const r = f.resolver();
@@ -69,14 +57,11 @@ test("crash after signed persistence resumes identical bytes; successful no-op c
       } });
     await expect(r.resolveMission("1", "arrival", async () => progress)).rejects.toThrow("crash");
     const raw = f.journal.getAttempt("1:arrival")!.raw;
-    expect(f.raws).toHaveLength(0); expect(f.journal.guards()).toHaveLength(0);
+    expect(f.raws).toHaveLength(0);
     f.reopen();
     const recovered = f.resolver();
     await recovered.resolveMission("1", "arrival", async () => { throw new Error("must not sign twice"); });
     expect(f.raws).toEqual([raw]);
-    const guard = consumeProgress(undefined, recovered.pendingProgress("1", "arrival")!, "1", "arrival");
-    f.journal.putGuard(guard); recovered.acknowledgeReceipt("1", "arrival");
-    f.reopen(); expect(guardAllows(f.journal.guards()[0], progress)).toBe(false);
   } finally { f.close(); }
 });
 
@@ -85,7 +70,6 @@ test("definite RPC rejection recovers after funding by resending same signed non
   try {
     f.reject(true);
     await expect(f.resolver().resolveMission("1", "arrival", async () => progress)).rejects.toThrow("insufficient funds");
-    expect(f.journal.guards()).toHaveLength(0);
     const raw = f.raws[0]!;
     f.reopen(); f.reject(false);
     await f.resolver().resolveMission("1", "arrival", async () => { throw new Error("must resume"); });

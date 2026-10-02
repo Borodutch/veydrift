@@ -43,7 +43,7 @@ export function consumeProgress(guard: ProgressGuard | undefined, before: Missio
     p.version !== before.version || (progressKey(p) !== progressKey(before) && !progressAdvanced(p, before))) };
 }
 
-export function progressKey(progress: MissionProgress): string {
+function progressKey(progress: MissionProgress): string {
   // Exclude observation block/hash: time passing is not permission to buy another attempt.
   const legacyKey = [progress.version, progress.workDone, progress.round, progress.queueProgress ?? "", progress.arrivalOrderCursor ?? "", progress.arrivalGeneration ?? "", progress.arrivalWorkDone ?? ""].join(":");
   // Preserve operation identities of already-persisted pre-chronology raw envelopes.

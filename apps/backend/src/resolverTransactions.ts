@@ -595,7 +595,14 @@ export class ResolverTransactionCoordinator {
       let hash: Hex;
       try {
         if (request.prepare) {
-          const prepared = await request.prepare(nonce);
+          let prepared: Awaited<ReturnType<NonNullable<typeof request.prepare>>>;
+          try {
+            prepared = await request.prepare(nonce);
+          } catch (error) {
+            // Nothing persisted or broadcast yet: release the nonce reservation cleanly.
+            this.recordAttempt(request.chainId, request.address, request.operationId, nonce, null, "rejected");
+            throw error;
+          }
           assertLease();
           this.database.query(
             "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"

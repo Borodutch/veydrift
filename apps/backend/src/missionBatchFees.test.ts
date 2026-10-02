@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { encodeFunctionResult, parseTransaction, type PublicClient } from "viem";
 import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
-import { quoteMissionBatch, measuredBatchGas, rpcQuantity } from "./missionBatchFees";
+import { quoteMissionBatch, measuredBatchGas, rpcQuantity, usdCappedGas, singleResolverMaxUsdMicros, ResolverFeeCapError } from "./missionBatchFees";
 
 const now = BigInt(Math.floor(Date.now() / 1000));
 const input = { items: [{ missionId: "1", leg: "arrival" as const, dueAt: Number(now - 5n) }], nonce: 99,
@@ -58,7 +58,30 @@ test("reference no-progress and exact-signed-gas no-progress never produce a quo
   }
   const progress = await quoteMissionBatch(fixture({ call: async () => result(7) }).client, input);
   expect(progress.outcomes).toEqual([7]); // genuine partial work is not settlement
-  await expect(quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas === 16_777_216n ? 0 : 7) }).client, input)).rejects.toThrow("changed productive progress");
+  // Fewer committed stages at the exact signed gas is still productive: it continues next tick.
+  const fewerStages = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas === 16_777_216n ? 0 : 7) }).client, input);
+  expect(fewerStages.outcomes).toEqual([7]);
+});
+
+test("a staged battle measured near the cap is clamped, not excluded", async () => {
+  const used = 15_000_000n;
+  const quote = await quoteMissionBatch(fixture({ call: async () => result(7, used),
+    readContract: async (args: { functionName: string }) => args.functionName === "decimals" ? 8
+      : args.functionName === "latestRoundData" ? [5n, 3000_00000000n, now, now, 5n] : 100n }).client, input);
+  expect(quote.gas).toBe(16_777_216n);
+  expect(quote.outcomes).toEqual([7]);
+});
+
+test("an unfinished battle shrinks its gas to the USD cap instead of being excluded", async () => {
+  const policy = { ...input.policy, maxFeeUsdMicros: 100_000n }; // $0.10
+  // A staged battle uses (almost) all gas it is given and still reports Progress.
+  const quote = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(7, gas - gas / 10n),
+    getBlock: async () => ({ number: 10n, timestamp: now, baseFeePerGas: 10_000_000n, gasLimit: 30_000_000n }),
+    readContract: async (args: { functionName: string }) => args.functionName === "decimals" ? 8
+      : args.functionName === "latestRoundData" ? [5n, 3000_00000000n, now, now, 5n] : 0n }).client, { ...input, policy });
+  expect(quote.gas).toBeLessThan(16_777_216n);
+  expect(quote.gas).toBeGreaterThan(1_000_000n);
+  expect(quote.usdMicros).toBeLessThanOrEqual(100_000n);
 });
 test("raw Base RPC receipt extensions normalize quantities without bigint/string concatenation", () => {
   expect(rpcQuantity("0x10")).toBe(16n);
@@ -66,4 +89,23 @@ test("raw Base RPC receipt extensions normalize quantities without bigint/string
   expect(rpcQuantity(undefined)).toBeNull();
   expect(rpcQuantity("bad")).toBeNull();
   expect(100n + rpcQuantity("0x10")! + rpcQuantity("0x2")!).toBe(118n);
+});
+
+test("single-call resolver gas shrinks so the worst-case fee never exceeds $0.50", async () => {
+  const feeds = (updatedAt: bigint, l1 = 1_000_000_000n) => ({ readContract: async ({ functionName }: { functionName: string }) =>
+    functionName === "decimals" ? 8 : functionName === "latestRoundData" ? [5n, 3000_00000000n, updatedAt, updatedAt, 5n]
+      : functionName === "getL1FeeUpperBound" ? l1 : 0n }) as unknown as PublicClient;
+  const input = { chainId: 8453, dataBytes: 36, gas: 16_777_216n, maxUsdMicros: singleResolverMaxUsdMicros };
+  // 0.1 gwei max fee: 16.7M gas would cost ~$5; the cap leaves ~1.66M gas.
+  const maxFeePerGas = 100_000_000n;
+  const gas = await usdCappedGas(feeds(now), { ...input, maxFeePerGas });
+  expect(gas).toBeLessThan(16_777_216n);
+  const worstWei = gas * maxFeePerGas + 2n * 1_000_000_000n;
+  expect(worstWei * 3000n * 1_000_000n / 10n ** 18n).toBeLessThanOrEqual(500_000n);
+  // Cheap fees leave the full envelope; stale price and unaffordable L1 fail closed.
+  expect(await usdCappedGas(feeds(now), { ...input, maxFeePerGas: 1_000n })).toBe(16_777_216n);
+  await expect(usdCappedGas(feeds(now - 7_200n), { ...input, maxFeePerGas })).rejects.toThrow("stale");
+  await expect(usdCappedGas(feeds(now, 10n ** 15n), { ...input, maxFeePerGas })).rejects.toBeInstanceOf(ResolverFeeCapError);
+  // Local chains have no Base fee oracle: not capped.
+  expect(await usdCappedGas(feeds(now), { ...input, chainId: 31337, maxFeePerGas })).toBe(16_777_216n);
 });

@@ -171,7 +171,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             uint32 beforeCount = isMoon
                 ? game.moonShipCount(home, Ship.SmallCargo)
                 : game.shipCount(home, Ship.SmallCargo);
-            vm.expectRevert();
+            // A concurrent repeat is a no-op, never a revert or a second credit.
             game.completeFleetMissionReturn(RETURN_ID);
             assertEq(
                 isMoon
@@ -516,9 +516,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         assertEq(game.shipCount(home, Ship.SmallCargo), 3);
         assertEq(game.activeFleetMissionCount(player), 0);
         assertEq(vm.load(address(game), registration), bytes32(0), "legacy stays legacy");
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, returnAt)
-        );
+        // A concurrent repeat is a no-op, never a revert or a second credit.
         game.completeFleetMissionReturn(id);
         assertEq(game.shipCount(home, Ship.SmallCargo), 3, "no double credit");
         // First new allocation immediately uses the prospective rules despite old clients
@@ -837,7 +835,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             assertEq(game.shipCount(home, Ship.SmallCargo), 2);
             assertEq(game.moonShipCount(home, Ship.SmallCargo), 0);
             uint128 creditedMetal = game.planet(home).resources.metal;
-            vm.expectRevert();
+            // A concurrent repeat is a no-op, never a revert or a second credit.
             game.completeFleetMissionReturn(deployId);
             assertEq(game.planet(home).resources.metal, creditedMetal);
         } else {

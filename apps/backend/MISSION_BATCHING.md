@@ -52,16 +52,20 @@ Structured per-leg exclusions cause canonical row reconciliation and individual
 backoff, including stale/settled, ordering-unavailable and indivisible candidates.
 No delay waiting to fill a lone due item. Mixed-cost candidates can fill gaps after
 an indivisible oversized mission; its explicit blocker event asks for gas/prerequisite
-review, never raising the cap or splitting mission semantics. Candidate retries use
-existing 30–300-second backoff. Final canonical membership change aborts and repacks
-next tick rather than signing stale calldata.
+review, never raising the cap or splitting mission semantics. Capacity retries use
+the 30–300-second backoff; unpaid ordering/oracle waits retry on a flat 30 seconds, a
+Progress leg (staged battle) is resent next tick, and an already-settled leg is success.
+Final canonical membership change aborts and repacks next tick rather than signing
+stale calldata.
 
 Gas does NOT use eth_estimateGas(success): caught OOG/no-op is still RPC success.
 An explicit eth_call at min(Base 2^24,current block gas) returns gross internal
 execution gas. Add intrinsic/calldata, EIP150 (64/63), 120k proxy/tail reserve and
-8k/item overhead, then 20% margin. The result must remain within the unchanged
-Base/block cap. The EXACT signed gas/nonce/fees/value/calldata is re-simulated at
-the same block and must return the same productive outcomes (only Settled/Progress).
+8k/item overhead, then 20% margin, clamped to the unchanged Base/block cap. A staged
+battle uses whatever gas it gets, so an unfinished one (Progress at the cap) also
+shrinks its signed gas to fit the USD cap instead of being excluded. The EXACT signed
+gas/nonce/fees/value/calldata is re-simulated at the same block and every leg must
+still be productive (Settled or Progress; Settled may become Progress).
 Pending, Failed, NotDue, GasLimited or missing/invalid return data never authorize
 a signature. Progress is explicitly not counted as settlement. An indivisible item
 that cannot fit is a visible blocker, not permission to raise gas or USD guards.

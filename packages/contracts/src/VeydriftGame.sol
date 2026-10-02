@@ -544,6 +544,8 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function completeFleetMissionReturn(uint256 missionId) external {
         FleetMissionStatus status = _fleetMissions[missionId].status;
+        // Already landed via a concurrent resolver: no-op instead of reverting the caller.
+        if (status == FleetMissionStatus.Returned || status == FleetMissionStatus.Resolved) return;
         if (status != FleetMissionStatus.Returning && status != FleetMissionStatus.Recalled) {
             revert FleetMissionNotResolved(_fleetMissions[missionId].returnAt);
         }

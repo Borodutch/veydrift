@@ -1587,7 +1587,8 @@ describe("Mission Control battle reports", () => {
       },
       battleReport: null,
     }))).join(" ").replace(/\s+/g, " ");
-    expect(text).toContain("Combat resolving: 0 of up to 6 rounds complete");
+    expect(text).toContain("Combat is preparing");
+    expect(text).not.toContain("0 of up to 6");
     expect(text).toContain("Combat will continue automatically");
     expect(text).not.toContain("Generating battle report");
   });
@@ -3297,5 +3298,34 @@ describe("Harvest mission reports (VEY-KANEO-538)", () => {
 
     expect(text).toContain("Debris collected");
     expect(text).toContain("3,300 metal / 2,700 crystal / 0 deuterium");
+  });
+});
+
+describe("chronology-queued and staged battle labels", () => {
+  const now = Date.parse("2026-06-05T12:00:00.000Z");
+  const arrivedAsOfNow = { arrived: true, returned: true, secondsUntilArrival: 0, secondsUntilReturn: 0 };
+
+  test("a due leg the backend cannot resolve yet reads Queued, not en route or resolving", () => {
+    const queuedArrival: FleetMissionSummary = {
+      ...mission("95", "Transport", "Outbound", undefined, "7", "9", now - 60_000),
+      needsResolution: false, resolutionEligible: false, asOfNow: arrivedAsOfNow,
+    };
+    const queuedReturn: FleetMissionSummary = { ...queuedArrival, status: "Returning" };
+    for (const queued of [queuedArrival, queuedReturn]) {
+      expect(missionStatusPill(queued, now).label).toBe("Queued");
+      expect(collectText(MissionDetailPage(missionDetailProps(now, { mission: { ...queued, missionType: "Attack" }, battleReport: null }))).join(" "))
+        .toContain("an earlier fleet event at this location must resolve first");
+    }
+  });
+
+  test("a staged battle shows its stage even when the eligibility probe failed closed", () => {
+    const staged: FleetMissionSummary = {
+      ...mission("96", "Attack", "Outbound", undefined, "7", "9", now - 60_000),
+      needsResolution: false, resolutionEligible: false, asOfNow: arrivedAsOfNow,
+      combatResolutionProgress: { roundsCompleted: 0, totalRounds: 6 },
+    };
+    expect(missionStatusPill(staged, now).label).toBe("Preparing battle");
+    expect(missionStatusPill({ ...staged, combatResolutionProgress: { roundsCompleted: 2, totalRounds: 6 } }, now).label)
+      .toBe("Resolving 2/6");
   });
 });

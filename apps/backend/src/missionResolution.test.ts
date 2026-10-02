@@ -27,6 +27,25 @@ const config: BackendConfig = {
   wsRpcSource: "missing"
 };
 
+// Reads behind the resolver's USD fee cap: base fee, tip, gas estimate, a fresh $3,000 ETH/USD round
+// and negligible Base L1/operator fees. Added in place so later mock mutations still apply.
+function addResolverFeeReads<T extends object>(client: T): T {
+  const mock = client as Record<string, unknown>;
+  const inner = mock.readContract as ((args: { functionName: string }) => Promise<unknown>) | undefined;
+  mock.getBlock ??= async () => ({ baseFeePerGas: 1n });
+  mock.estimateMaxPriorityFeePerGas ??= async () => 1n;
+  mock.estimateGas ??= async () => 100_000n;
+  mock.readContract = async (args: { functionName: string }) => {
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    if (args.functionName === "decimals") return 8;
+    if (args.functionName === "latestRoundData") return [1n, 3000_00000000n, now, now, 1n];
+    if (args.functionName === "getL1FeeUpperBound" || args.functionName === "getOperatorFee") return 0n;
+    if (!inner) throw new Error("unexpected readContract " + args.functionName);
+    return inner(args);
+  };
+  return client;
+}
+
 describe("MissionResolutionService", () => {
   test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
     const calls: string[] = [];
@@ -41,6 +60,20 @@ describe("MissionResolutionService", () => {
     expect(calls).toEqual([]);
     expect(service.snapshot().resolvedCount).toBe(1);
     expect(service.snapshot().returnedCount).toBe(1);
+  });
+  test("batch Progress on a staged battle is resent next tick, not backed off", async () => {
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    let batchCalls = 0;
+    client.resolveMissionBatch = async (items) => {
+      batchCalls++;
+      return { hash: "0xabc", items, outcomes: [{ item: items[0]!, outcome: "Progress", errorSelector: null, blockedDependency: null, complete: false }] };
+    };
+    client.isMissionLegComplete = async () => false;
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeUsdMicros: 500_000n, priceMaxAgeSeconds: 120 } },
+      { chainClient: client, logger: silentLogger() });
+    await service.tick();
+    await service.tick();
+    expect(batchCalls).toBe(2);
   });
   test("enabled unsupported/failed batch path never silently sends legacy singles", async () => {
     const calls: string[] = [];
@@ -414,6 +447,7 @@ describe("MissionResolutionService", () => {
       async getTransactionReceipt() { return { status: "success" }; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       async writeContract(input: { functionName: string; nonce: number }) {
         broadcasts.push(`${input.functionName}:${input.nonce}`);
@@ -831,7 +865,7 @@ describe("ViemMissionResolutionChainClient", () => {
         const coordinator = new ResolverTransactionCoordinator(":memory:");
         const makeClient = () => new ViemMissionResolutionChainClient(
           reader, config.gameContractAddress!, mode === "private-key" ? account : from,
-          publicClient as unknown as PublicClient, walletClient as unknown as WalletClient,
+          addResolverFeeReads(publicClient) as unknown as PublicClient, walletClient as unknown as WalletClient,
           { id: config.chainId } as never, config.rpcUrl, coordinator
         );
         // Recreate the client on each retry to exercise durable attempt reuse.
@@ -878,8 +912,10 @@ describe("ViemMissionResolutionChainClient", () => {
           expect(writes).toEqual([7, 7, 8]);
           expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
           expect(simulations).toHaveLength(6);
+          // Simulated at the exact USD-capped signing gas: 2^24 for staged arrivals, 1.2x estimate for returns.
+          const gas = leg === "arrival" ? "0x1000000" : "0x1d4c0";
           for (const params of simulations) expect(params).toEqual([
-            { from, to: config.gameContractAddress, data }, "latest"
+            { from, to: config.gameContractAddress, data, gas }, "latest"
           ]);
           for (let i = 0; i < events.length; i++) {
             if (events[i] === "simulate") expect(events[i - 1]).toBe("ordering");
@@ -941,6 +977,7 @@ describe("ViemMissionResolutionChainClient", () => {
         async getTransactionReceipt() { return { status: "success" }; },
         async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
+      addResolverFeeReads(publicClient);
       const walletClient = {
         async writeContract(input: { nonce: number }) {
           nonces.push(input.nonce);
@@ -1005,6 +1042,7 @@ describe("ViemMissionResolutionChainClient", () => {
       async getTransactionReceipt() { return { status: "success" }; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       async writeContract(input: { nonce: number }) {
         nonces.push(input.nonce);
@@ -1043,6 +1081,7 @@ describe("ViemMissionResolutionChainClient", () => {
       async getStorageAt() { return `0x${"0".repeat(64)}`; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       async writeContract(input: { functionName: string; gas?: bigint; nonce: number }) {
         activeBroadcasts += 1;
@@ -1079,7 +1118,7 @@ describe("ViemMissionResolutionChainClient", () => {
 
     expect(broadcasts).toEqual([
       { functionName: "resolveFleetMission", gas: 16_777_216n, nonce: 7 },
-      { functionName: "completeFleetMissionReturn", gas: undefined, nonce: 8 }
+      { functionName: "completeFleetMissionReturn", gas: 120_000n, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
   });
@@ -1115,6 +1154,7 @@ describe("ViemMissionResolutionChainClient", () => {
         return { status: "success" };
       }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       async writeContract(input: Record<string, unknown>) {
         writes.push(input);
@@ -1168,6 +1208,7 @@ describe("ViemMissionResolutionChainClient", () => {
         async getStorageAt() { return `0x${"0".repeat(64)}`; },
         async waitForTransactionReceipt() { return { status: "success" }; }
       } as unknown as PublicClient;
+      addResolverFeeReads(publicClient);
       const client = new ViemMissionResolutionChainClient(
         {
           async isFleetChronologyOrderingReady() { return true; },
@@ -1187,7 +1228,8 @@ describe("ViemMissionResolutionChainClient", () => {
 
       expect(transactions[0]?.gas).toBe("0x1000000");
       expect(transactions[0]?.nonce).toBe("0x7");
-      expect(transactions[1]).not.toHaveProperty("gas");
+      // Returns sign an explicit, USD-capped gas too (1.2x the estimate), never wallet defaults.
+      expect(transactions[1]?.gas).toBe("0x1d4c0");
       expect(transactions[1]?.nonce).toBe("0x8");
     } finally {
       globalThis.fetch = previousFetch;
@@ -1203,6 +1245,7 @@ describe("ViemMissionResolutionChainClient", () => {
         return `0x${"1".padStart(64, "0")}`;
       }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const client = new ViemMissionResolutionChainClient(
       {
         async isFleetChronologyOrderingReady() { return true; },
@@ -1231,6 +1274,7 @@ describe("ViemMissionResolutionChainClient", () => {
       async getTransactionCount() { nonceReads += 1; return 7; },
       async waitForTransactionReceipt() { return { status: "success" }; }
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       async writeContract() {
         broadcasts += 1;
@@ -1366,6 +1410,7 @@ describe("moon chance resolution", () => {
       waitForTransactionReceipt: async () => ({ status: "success" }),
       getTransactionReceipt: async () => ({ status: "success" })
     } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
     const walletClient = {
       writeContract: async (call: typeof writes[number]) => {
         writes.push(call);
