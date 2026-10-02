@@ -71,8 +71,16 @@ contract VeydriftCombatArchitectureProxyTest is VeydriftMoonSystemTestBase {
         vm.cool(address(moons));
         vm.cool(address(randomness));
         uint256 gasBefore = gasleft();
-        // Below one stage budget plus reserve: exactly one bounded stage per step.
-        game.resolveFleetMission{gas: 5_000_000}(id);
+        // A call runs exactly one stage when its gas is below that stage's cost plus the 1.5M
+        // floor+reserve. Climbing in 1.4M steps, the first gas that fits the stage stays below it.
+        for (uint256 budget = 1_500_000;; budget += 1_400_000) {
+            (bool ok, bytes memory data) =
+                address(game).call{gas: budget}(abi.encodeCall(game.resolveFleetMission, (id)));
+            if (ok) break;
+            if (data.length != 0 || budget > 15_000_000) {
+                assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
+            }
+        }
         used = gasBefore - gasleft();
         (uint8 phase,, uint256 afterWork) = game.stagedBattleProgress(id);
         assertTrue(afterWork > beforeWork || phase == 13, "successful receipt without progress");

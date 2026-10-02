@@ -8,7 +8,9 @@ const input = { items: [{ missionId: "1", leg: "arrival" as const, dueAt: Number
   account: "0x1111111111111111111111111111111111111111" as const,
   game: "0x2222222222222222222222222222222222222222" as const, chainId: 8453,
   policy: { ...defaultMissionBatchPolicy, priceFeed: "0x3333333333333333333333333333333333333333" as const } };
-const signedGas = (measuredBatchGas(100_000n, batchCalldata(input.items), 1) * 120n + 99n) / 100n;
+// Cheap fees: the quote signs the full cap as headroom (unused gas is not charged).
+const signedGas = 16_777_216n;
+const minimumGas = (measuredBatchGas(100_000n, batchCalldata(input.items), 1) * 120n + 99n) / 100n;
 const result = (outcome: number, used = 100_000n) => ({ data: encodeFunctionResult({ abi: missionBatchAbi,
   functionName: "resolveFleetMissionBatch", result: [[outcome], used] }) });
 function fixture(overrides: Record<string, unknown> = {}) {
@@ -54,12 +56,15 @@ test("stale base block, failed estimate, operator failure, stale price and cap s
 test("reference no-progress and exact-signed-gas no-progress never produce a quote", async () => {
   for (const outcome of [1, 2, 3, 4, 5, 6]) {
     await expect(quoteMissionBatch(fixture({ call: async () => result(outcome) }).client, input)).rejects.toThrow();
-    await expect(quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas === 16_777_216n ? 0 : outcome) }).client, input)).rejects.toThrow();
+    // First simulation is the reference, second the exact signed-gas re-simulation.
+    let calls = 0;
+    await expect(quoteMissionBatch(fixture({ call: async () => result(calls++ === 0 ? 0 : outcome) }).client, input)).rejects.toThrow();
   }
   const progress = await quoteMissionBatch(fixture({ call: async () => result(7) }).client, input);
   expect(progress.outcomes).toEqual([7]); // genuine partial work is not settlement
   // Fewer committed stages at the exact signed gas is still productive: it continues next tick.
-  const fewerStages = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas === 16_777_216n ? 0 : 7) }).client, input);
+  let calls = 0;
+  const fewerStages = await quoteMissionBatch(fixture({ call: async () => result(calls++ === 0 ? 0 : 7) }).client, input);
   expect(fewerStages.outcomes).toEqual([7]);
 });
 
@@ -108,4 +113,18 @@ test("single-call resolver gas shrinks so the worst-case fee never exceeds $0.50
   await expect(usdCappedGas(feeds(now, 10n ** 15n), { ...input, maxFeePerGas })).rejects.toBeInstanceOf(ResolverFeeCapError);
   // Local chains have no Base fee oracle: not capped.
   expect(await usdCappedGas(feeds(now), { ...input, chainId: 31337, maxFeePerGas })).toBe(16_777_216n);
+});
+
+test("a tight USD budget signs between the measured minimum and the cap; unaffordable minimum fails", async () => {
+  // $1 at $3,000/ETH and 210 wei max fee affords ~1.58e12 gas: lower the price feed answer instead.
+  const priced = (answer: bigint) => fixture({ readContract: async (args: { functionName: string }) =>
+    args.functionName === "decimals" ? 8 : args.functionName === "latestRoundData" ? [5n, answer, now, now, 5n] : 0n }).client;
+  // At a tiny max fee budget the affordable gas lands between minimum and cap.
+  const budgetGas = 1_000_000n;
+  const answer = 1_000_000n * 10n ** 26n / (210n * budgetGas * 1_000_000n);
+  const quote = await quoteMissionBatch(priced(answer), input);
+  expect(quote.gas).toBeGreaterThanOrEqual(minimumGas);
+  expect(quote.gas).toBeLessThan(16_777_216n);
+  // A settling leg never signs below its measured minimum: fail closed on the USD cap instead.
+  await expect(quoteMissionBatch(priced(answer * 10_000n), input)).rejects.toThrow("USD cap");
 });

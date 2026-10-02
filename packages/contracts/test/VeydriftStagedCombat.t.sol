@@ -281,15 +281,18 @@ contract VeydriftStagedCombatTest is Test {
         assertLt(used, GAS_LIMIT, "resolve envelope exceeds 15M");
     }
 
-    /// Below one stage budget plus reserve: commits exactly one bounded stage. A stage heavier
-    /// than that budget runs out of gas atomically and is retried with the full envelope.
+    /// Commits exactly one bounded stage: a call runs one stage when its gas is below that stage's
+    /// cost plus the 1.5M floor+reserve, and climbing in 1.4M steps the first fit stays below it.
     function _stage(uint256 id) internal {
-        (bool ok, bytes memory data) = address(game).call{gas: 5_450_000}(
-            abi.encodeCall(IStagedLifecycle.resolveFleetMission, (id))
-        );
-        if (ok) return;
-        if (data.length != 0) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
-        _resolve(game, id);
+        for (uint256 budget = 1_500_000;; budget += 1_400_000) {
+            (bool ok, bytes memory data) = address(game).call{gas: budget}(
+                abi.encodeCall(IStagedLifecycle.resolveFleetMission, (id))
+            );
+            if (ok) return;
+            if (data.length != 0 || budget > 15_000_000) {
+                assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
+            }
+        }
     }
 
     function _finish(StagedLifecycleFacade g) internal returns (uint256 calls, uint256 peak) {

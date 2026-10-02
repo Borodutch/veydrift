@@ -33,30 +33,31 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   // The returned meter starts inside the module: add intrinsic/calldata, proxy dispatch,
   // EIP-150 forwarding loss and tail/reserve before the existing 20% safety margin.
   const estimatedGas = measuredBatchGas(reference.executionGasUsed, data, input.items.length);
-  // A staged battle consumes whatever gas it is given, so its measurement can approach the cap;
-  // the exact signed-gas simulation below still has to prove every leg productive.
-  let gas = (estimatedGas * 120n + 99n) / 100n;
-  if (gas > cap) gas = cap;
+  const minimumGas = (estimatedGas * 120n + 99n) / 100n;
   const maxFeePerGas = block.baseFeePerGas * 2n + tip;
+  // L1 data and operator fees are quoted at the cap: an upper bound for any smaller signed gas.
   const transaction = { type: "eip1559" as const, chainId: input.chainId, to: input.game, data,
-    value: 0n, nonce: input.nonce, gas, maxFeePerGas, maxPriorityFeePerGas: tip };
+    value: 0n, nonce: input.nonce, gas: cap, maxFeePerGas, maxPriorityFeePerGas: tip };
   // GasPriceOracle getL1Fee expects the unsigned serialized tx and adds signature overhead.
   // Do NOT use viem estimateOperatorFee: it catches RPC errors and silently returns zero.
   const serialized = serializeTransaction(transaction);
   const [l1Exact, l1Upper, operatorFee] = await Promise.all([
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1Fee", args: [serialized], blockNumber }),
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt((serialized.length - 2) / 2)], blockNumber }),
-    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [gas], blockNumber })
+    client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [cap], blockNumber })
   ]);
   if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("fee quote expired during estimation");
   const l1Fee = l1Exact > l1Upper ? l1Exact : l1Upper;
-  if (reference.outcomes.includes(7) && round[1] > 0n && maxFeePerGas > 0n) {
-    // An unfinished battle still progresses with less gas: shrink to the USD cap rather than
-    // excluding it forever. Fees quoted at the larger gas are an upper bound for the smaller.
-    const budgetWei = input.policy.maxFeeUsdMicros * 10n ** BigInt(18 + decimals) / (round[1] * 1_000_000n);
-    const affordable = (budgetWei - l1Fee * 2n - operatorFee * 2n) / maxFeePerGas;
-    if (affordable > 0n && affordable < gas) gas = affordable;
-  }
+  // Staged battles use whatever gas they get and only start another stage with headroom left, so
+  // sign as much as the USD cap affords (unused gas is not charged), up to the cap, never below
+  // the measured estimate + 20%. A battle that cannot finish even at the cap (Progress) may
+  // shrink below that estimate and simply commits fewer stages.
+  const budgetWei = round[1] > 0n
+    ? input.policy.maxFeeUsdMicros * 10n ** BigInt(18 + decimals) / (round[1] * 1_000_000n) : 0n;
+  const reserved = l1Fee * 2n + operatorFee * 2n;
+  const affordable = budgetWei > reserved && maxFeePerGas > 0n ? (budgetWei - reserved) / maxFeePerGas : 0n;
+  let gas = affordable < cap ? affordable : cap;
+  if (gas < minimumGas && !(reference.outcomes.includes(7) && gas > 0n)) gas = minimumGas < cap ? minimumGas : cap;
   const exposure = totalBatchExposure({ gas, blockGasLimit: block.gasLimit, maxFeePerGas,
     maxPriorityFeePerGas: tip, l1Fee, operatorFee, price: round[1], priceDecimals: decimals,
     updatedAt: round[3], nowSeconds: Math.floor(Date.now() / 1000), policy: input.policy });

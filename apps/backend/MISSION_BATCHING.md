@@ -11,9 +11,9 @@ existing single-call signer policy or the independent QA wallet $0.20 cap.
 Set only after review:
 - `VEYDRIFT_MISSION_BATCH_ENABLED=true`
 - `VEYDRIFT_MISSION_BATCH_MAX_ITEMS`: default 16; range 1–32 (must also fit contract bound).
-- `VEYDRIFT_MISSION_BATCH_MAX_USD`: default 0.50; may lower, never exceed the provisional $0.50 guard.
-- `VEYDRIFT_MISSION_BATCH_ETH_USD_FEED`: reviewed Chainlink-compatible ETH/USD aggregator on the selected Base chain. No hardcoded/stale price fallback.
-- `VEYDRIFT_MISSION_BATCH_PRICE_MAX_AGE_SECONDS`: default 120, range 1–300. Verify actual feed heartbeat; a slower feed blocks instead of relaxing freshness.
+- `VEYDRIFT_MISSION_BATCH_MAX_USD`: default 1.00; may lower, never exceed the $1 batch guard. (Single-call resolver writes have their own fixed $0.50 cap.)
+- `VEYDRIFT_MISSION_BATCH_ETH_USD_FEED`: optional override. Defaults to Chainlink ETH/USD on Base (`0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70`) and Base Sepolia (`0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1`). No stale price fallback.
+- `VEYDRIFT_MISSION_BATCH_PRICE_MAX_AGE_SECONDS`: default 3600, range 1–3600. The Base ETH/USD feed heartbeat is 20 minutes, so a stricter age blocks most quotes.
 
 Local signer, persistent resolver SQLite and Base 8453/84532 are required. Unlocked
 account batching is unsupported. Standalone keeper fails startup if either
@@ -61,9 +61,11 @@ stale calldata.
 Gas does NOT use eth_estimateGas(success): caught OOG/no-op is still RPC success.
 An explicit eth_call at min(Base 2^24,current block gas) returns gross internal
 execution gas. Add intrinsic/calldata, EIP150 (64/63), 120k proxy/tail reserve and
-8k/item overhead, then 20% margin, clamped to the unchanged Base/block cap. A staged
-battle uses whatever gas it gets, so an unfinished one (Progress at the cap) also
-shrinks its signed gas to fit the USD cap instead of being excluded. The EXACT signed
+8k/item overhead, then 20% margin: the minimum signed gas. Staged battles use whatever
+gas they get and only start another stage with headroom left, so the signed gas is as much
+as the USD cap affords up to the Base/block cap (unused gas is not charged), never below
+that minimum. A battle that cannot finish even at the cap (Progress) may shrink below the
+minimum to fit the USD cap instead of being excluded. The EXACT signed
 gas/nonce/fees/value/calldata is re-simulated at the same block and every leg must
 still be productive (Settled or Progress; Settled may become Progress).
 Pending, Failed, NotDue, GasLimited or missing/invalid return data never authorize
@@ -80,7 +82,7 @@ are pinned; a new quote and canonical block-hash/age check occur under the nonce
 lease before signing.
 
 **Protocol limitation:** EIP-1559 caps execution price, not Base L1/operator fees or
-USD exchange rate at eventual inclusion. The $0.50 limit is a fresh conservative
+USD exchange rate at eventual inclusion. The $1 limit is a fresh conservative
 pre-send total exposure envelope, not an impossible protocol-enforced dollar cap.
 No replacement/cancellation automatically increases exposure. Release review must
 accept this limitation, live-measure the fee oracle, and keep batching disabled if
@@ -105,9 +107,8 @@ gate regenerates the ignored fixture state and runs that proof once (CI shard 1)
 Those prices remain synthetic, not live Base estimates. Read-only live Base fee
 component sampling and keyless upgrade/fork proofs are recorded in
 `packages/contracts/manifests/vey-918-upgrade-handoff.md`. The candidate price feed
-was 225 seconds old and correctly blocked by the default 120-second policy. Keep
-batching disabled until its fresh-price configuration and operational envelope
-are explicitly reviewed; no guard was relaxed.
+was 225 seconds old; the feed's 20-minute heartbeat is why the default age is now one
+hour. Batching stays disabled until `VEYDRIFT_MISSION_BATCH_ENABLED=true`.
 
 ## Durability and operations
 

@@ -33,6 +33,12 @@ import {VeydriftMoonShipDependencies} from "../src/libraries/VeydriftMoonShipDep
 import {VeydriftMoonShipProduction} from "../src/libraries/VeydriftMoonShipProduction.sol";
 import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftReserveRelease} from "../src/libraries/VeydriftReserveRelease.sol";
+import {VeydriftCombatAttribution} from "../src/libraries/VeydriftCombatAttribution.sol";
+import {VeydriftCombatPreparation} from "../src/libraries/VeydriftCombatPreparation.sol";
+import {VeydriftCombatStats} from "../src/libraries/VeydriftCombatStats.sol";
+import {VeydriftLegacyCombatMutation} from "../src/libraries/VeydriftLegacyCombatMutation.sol";
+import {VeydriftScoreSnapshot} from "../src/libraries/VeydriftScoreSnapshot.sol";
+import {VeydriftStagedCohorts} from "../src/libraries/VeydriftStagedCohorts.sol";
 
 /// Synthetic genesis only: no fork, broadcast, credentials, or production state.
 /// Existing reference fixture cheatcodes seed resources/ships/technology/coordinates/randomness.
@@ -165,6 +171,12 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
         vm.etch(address(VeydriftMoonShipProduction), address(VeydriftMoonShipProduction).code);
         vm.etch(address(VeydriftRaidStorage), address(VeydriftRaidStorage).code);
         vm.etch(address(VeydriftReserveRelease), address(VeydriftReserveRelease).code);
+        vm.etch(address(VeydriftCombatAttribution), address(VeydriftCombatAttribution).code);
+        vm.etch(address(VeydriftCombatPreparation), address(VeydriftCombatPreparation).code);
+        vm.etch(address(VeydriftCombatStats), address(VeydriftCombatStats).code);
+        vm.etch(address(VeydriftLegacyCombatMutation), address(VeydriftLegacyCombatMutation).code);
+        vm.etch(address(VeydriftScoreSnapshot), address(VeydriftScoreSnapshot).code);
+        vm.etch(address(VeydriftStagedCohorts), address(VeydriftStagedCohorts).code);
         // dumpState exports journal-touched accounts, not every setup-created account.
         // Enumerate actual CREATE addresses/nonces recursively; copy code to itself so unused
         // modules (combat, return, rapidfire, etc.) are included before their first invocation.

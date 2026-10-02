@@ -52,8 +52,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     // Leave enough gas in the parent frame to catch an out-of-gas child round and return the
     // already-committed rounds successfully. EIP-150 also retains 1/64 of forwarded gas.
     uint256 private constant COMBAT_ROUND_PARENT_GAS_RESERVE = 500_000;
-    // Above the heaviest measured staged step (~4.5M); later stages start only if one fits.
-    uint256 private constant COMBAT_STAGE_GAS = 5_000_000;
+    // Most stages cost well under 1M. A rarer heavy stage (up to ~4.5M in huge battles) may run out
+    // of gas as a later stage; it rolls back alone and runs first, with full gas, next call.
+    uint256 private constant COMBAT_STAGE_GAS = 1_000_000;
     bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
         keccak256(
             "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
