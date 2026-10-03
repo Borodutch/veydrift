@@ -1,16 +1,14 @@
 name: CI
 
+# PRs only. Branch protection requires this check and up-to-date branches (strict), so a PR
+# merges only after passing on the exact tree that lands on main; a main run would repeat it.
 on:
   pull_request:
-  push:
-    branches:
-      - main
 
-# A new push to a PR cancels that PR's superseded run. Pushes to main are never cancelled,
-# because every merge commit's run gates deployment and contract releases.
+# A new push to a PR cancels that PR's superseded run.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   # Check groups run as parallel jobs (one per Mac runner instance), so a run takes as long
@@ -19,8 +17,8 @@ jobs:
   # of this workflow, on pull_request events, for PRs authored by backmeupplz.
   check:
     name: checks (${{ matrix.group }})
-    # Same rule as that hook, so other PRs (forks, other authors) and main pushes use
-    # GitHub-hosted runners instead of being denied on the Mac.
+    # Same rule as that hook, so other PRs (forks, other authors) use GitHub-hosted runners
+    # instead of being denied on the Mac.
     # Each group has its own Mac runner (label veydrift-ci-<group>), so it always lands in the
     # workspace it warmed last time: node_modules, Foundry artifacts, animation variants.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(format('["veydrift-backmeupplz-ci","veydrift-ci-{0}"]', matrix.group)) || 'ubuntu-latest' }}
@@ -38,7 +36,6 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       BASE_REF: ${{ github.base_ref }}
-      BEFORE_SHA: ${{ github.event.before }}
       HEAD_REF: ${{ github.sha }}
     steps:
       # Self-hosted workspaces persist between runs: keep ignored build outputs (node_modules,
@@ -61,8 +58,8 @@ jobs:
         if: matrix.group == 'rest'
         run: node --test scripts/ci-run-scoped-checks.test.mjs
 
-      # PRs and pushes to main use the same rule: only the areas a change touches (plus
-      # what depends on them) are checked; toolchain/CI/unclassified changes check everything.
+      # Only the areas a change touches (plus what depends on them) are checked;
+      # toolchain/CI/unclassified changes check everything.
       - name: Plan this group's checks
         id: plan
         run: |
