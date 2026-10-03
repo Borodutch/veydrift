@@ -1,20 +1,23 @@
-import type { ContractBattleForecastSummary, ContractBattleInput } from "./battlePreview";
+import { CONTRACT_COMBAT_MODEL_VERSION, type ContractBattleForecastSummary, type ContractBattleInput } from "./battlePreview";
 
 export const ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS = 350;
 export const ATTACK_BATTLE_PREVIEW_TIMEOUT_MS = 4_000;
 
 export type BattlePreviewWorkerRequest = {
   requestId: number;
+  modelVersion: number;
   input: ContractBattleInput;
 };
 
 export type BattlePreviewWorkerResponse =
   | {
       requestId: number;
+      modelVersion: number;
       forecast: ContractBattleForecastSummary;
     }
   | {
       requestId: number;
+      modelVersion: number;
       error: string;
     };
 
@@ -87,7 +90,9 @@ export class BattlePreviewScheduler {
         worker.onmessage = (event) => {
           if (requestId !== this.activeRequestId || event.data.requestId !== requestId) return;
           this.finishWorker(worker);
-          if ("forecast" in event.data) {
+          if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
+            onError("This battle preview is out of date. Please refresh.");
+          } else if ("forecast" in event.data) {
             onResult(event.data.forecast);
           } else {
             onError(event.data.error);
@@ -98,7 +103,7 @@ export class BattlePreviewScheduler {
           this.finishWorker(worker);
           onError("The battle preview failed. Please retry.");
         };
-        worker.postMessage({ requestId, input });
+        worker.postMessage({ requestId, input, modelVersion: CONTRACT_COMBAT_MODEL_VERSION });
         this.workerTimer = this.setTimer(() => {
           this.workerTimer = undefined;
           if (requestId !== this.activeRequestId || this.worker !== worker) return;
@@ -154,5 +159,5 @@ export class BattlePreviewScheduler {
 }
 
 export function battlePreviewInputKey(input: ContractBattleInput): string {
-  return JSON.stringify(input);
+  return JSON.stringify({ model: CONTRACT_COMBAT_MODEL_VERSION, input });
 }

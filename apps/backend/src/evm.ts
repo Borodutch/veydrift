@@ -1409,6 +1409,7 @@ export type DebrisFieldEvent = {
 };
 
 export interface ChainReader {
+  getCombatModelVersion?(): Promise<number | null>;
   canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
   getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
@@ -2345,6 +2346,19 @@ export class VeydriftGameReader implements ChainReader {
 
   async listFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
     return this.readFleetMissionSummaries();
+  }
+
+  async getCombatModelVersion(): Promise<number | null> {
+    try {
+      const [result] = await this.batchCallContract(this.gameContractAddress, [{
+        selector: toFunctionSelector("combatModelVersion()"), args: []
+      }]);
+      if (!result || result.length !== 66) return null;
+      const version = BigInt(result);
+      return version <= 255n ? Number(version) : null;
+    } catch {
+      return null;
+    }
   }
 
   async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {

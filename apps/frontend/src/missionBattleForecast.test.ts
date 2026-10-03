@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { prepareMissionBattleForecast } from "./components/MissionBattleForecastPanel";
-import { preparePublicTargetBattleForecast } from "./components/MissionCreationPage";
+import { preparePublicTargetBattleForecast, resolveVerifiedPublicTargetBattleForecast } from "./components/MissionCreationPage";
 import { emptyMissionShips } from "./galaxyActions";
 import type { MissionDetailResponse, MissionBattleForecast } from "./walletFlow";
 
@@ -98,4 +98,26 @@ describe("en-route whole-battle forecast", () => {
     expect(prepareMissionBattleForecast({ ...detail(), battleForecast: null }, now)).toBeNull();
     expect(prepareMissionBattleForecast({ ...detail(), battleReport: {} as NonNullable<MissionDetailResponse["battleReport"]> }, now)).toBeNull();
   });
+});
+
+
+test("both launch and en-route forecasts reject unverified models and previously cached odds", () => {
+  const value = detail();
+  const mission = prepareMissionBattleForecast(value, now)!;
+  const launch = preparePublicTargetBattleForecast({ ...emptyMissionShips(), cruiser: 3 }, { ...value.battleForecast!.target!, occupiedBy: null }, tech, false, undefined, { projectedAttackArrivalAt: now / 1000 + 600 });
+  for (const prepared of [mission, launch]) {
+    expect(prepared.status).toBe("simulate");
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, false).kind).toBe("uncertain");
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true).kind).not.toBe("uncertain");
+    const downgraded = resolveVerifiedPublicTargetBattleForecast(prepared, false);
+    expect(downgraded.kind).toBe("uncertain");
+    expect(downgraded.sampleReport).toBeUndefined();
+    expect(downgraded.reportInput).toBeUndefined();
+  }
+});
+
+test("already-started historical battles are never simulated with corrected math", () => {
+  const value = detail();
+  value.mission.combatResolutionProgress = { roundsCompleted: 0, totalRounds: 6 };
+  expect(uncertain(value)).toContain("already in progress");
 });

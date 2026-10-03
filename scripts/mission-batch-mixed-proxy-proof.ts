@@ -97,7 +97,7 @@ try {
   assert.equal((await client.getStorageAt({ address: game, slot: implementationSlot }))?.slice(-40), meta.implementation.slice(2).toLowerCase());
   const read = (functionName: string, args: unknown[] = []) => client.readContract({ address: game, abi: artifact.abi, functionName, args } as never) as Promise<any>;
   const mission = (id: number) => read("fleetMission", [BigInt(id)]);
-  const state = async () => ({ missions: await Promise.all([meta.battleId, meta.counterplayId, ...meta.returnIds].map(async (id: number) => ({ id, values: await mission(id) }))), progress: await read("battleResolutionProgress", [BigInt(meta.battleId)]) });
+  const state = async () => ({ missions: await Promise.all([meta.battleId, meta.counterplayId, ...meta.returnIds].map(async (id: number) => ({ id, values: await mission(id) }))), progress: await read("battleResolutionProgress", [BigInt(meta.battleId)]), staged: await read("stagedBattleProgress", [BigInt(meta.battleId)]) });
   const before = await state();
   const initialBlock = await client.getBlock();
   assert.equal(initialBlock.gasLimit, 16_777_216n);
@@ -112,7 +112,8 @@ try {
   assert.equal(packed.items.length, 3, stringify(packed.exclusions));
   assert.equal(packed.exclusions.length, 0);
   assert(packed.quote);
-  assert.deepEqual(packed.quote.outcomes, [0, 0, 0]);
+  assert.deepEqual(packed.quote.outcomes.slice(0, 2), [0, 0], "both cheap returns must settle");
+  assert([0, 7].includes(packed.quote.outcomes[2]!), "battle must settle or durably progress");
   const data = batchCalldata(packed.items);
   const naiveGas = await client.estimateGas({ account, to: game, data });
   const naive = await client.call({ account, to: game, data, gas: (naiveGas * 120n + 99n) / 100n });
@@ -136,6 +137,12 @@ try {
     allLogs.push(...events);
     const outcomes = events.filter(x => x.eventName === "FleetMissionBatchItem").map(x => Number(x.args.outcome));
     assert.deepEqual(outcomes, quote.outcomes, "receipt outcomes must match productive quote");
+    if (selected.some(x => x.missionId === String(meta.battleId) && x.leg === "arrival")
+      && after.missions[0].values[0] === 1) {
+      assert(after.staged[0] !== before.staged[0] || after.staged[1] > before.staged[1]
+        || after.staged[2] > before.staged[2] || after.progress[0] > before.progress[0],
+      "successful battle receipt must commit durable progress, not merely report Progress");
+    }
     rows.push({ items: selected, quote, receiptOutcomes: outcomes, hash, actualGas: receipt.gasUsed, effectiveGasPrice: receipt.effectiveGasPrice, before, after });
     return after;
   }
@@ -147,13 +154,20 @@ try {
     after = await send(selected, quote);
   }
   assert.notEqual(after.missions[0].values[0], 1, "battle bounded completion");
-  const battle = allLogs.find(x => x.eventName === "AttackBattleResolved" && x.args.missionId === BigInt(meta.battleId));
+  const battles = allLogs.filter(x => x.eventName === "AttackBattleResolved" && x.args.missionId === BigInt(meta.battleId));
+  assert.equal(battles.length, 1, "battle must settle exactly once across all receipts");
+  for (const id of meta.returnIds) {
+    assert.equal(allLogs.filter(x => x.eventName === "FleetMissionReturned" && x.args.missionId === BigInt(id)).length, 1, "cheap return credited exactly once");
+  }
+  const battle = battles[0];
   assert(battle, "real receipt battle event");
   assert.equal(Number(battle.args.outcome), meta.outcome);
   assert.equal(Number(battle.args.rounds), meta.rounds);
   assert.equal(battle.args.randomSeed, BigInt(meta.seed));
   const [expected] = decodeAbiParameters(parseAbiParameters("(uint8 outcome,uint8 rounds,uint32[16] attackerShips,uint32[16] joinedAttackerShips,uint32[16] defenderShips,uint32[16] counterplayShips,uint32[8] defenderDefenses,(uint128 metal,uint128 crystal,uint128 deuterium) attackerLosses,(uint128 metal,uint128 crystal,uint128 deuterium) defenderLosses,(uint128 metal,uint128 crystal,uint128 deuterium) debris)"), meta.expectedBattle);
-  const losses = allLogs.find(x => x.eventName === "CombatLosses" && x.args.missionId === BigInt(meta.battleId));
+  const lossEvents = allLogs.filter(x => x.eventName === "CombatLosses" && x.args.missionId === BigInt(meta.battleId));
+  assert.equal(lossEvents.length, 1, "losses must be applied exactly once");
+  const losses = lossEvents[0];
   assert(losses);
   for (const side of ["attacker", "defender"] as const) for (const resource of ["Metal", "Crystal", "Deuterium"] as const)
     assert.equal(losses.args[side + resource], expected[side + "Losses"][resource.toLowerCase()]);

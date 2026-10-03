@@ -740,6 +740,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       });
     }
 
+    if (request.method === "GET" && url.pathname === "/combat-model") {
+      let version: number | null = null;
+      try { version = await missionEligibilityReader?.getCombatModelVersion?.() ?? null; } catch { /* Fail closed. */ }
+      return Response.json({ version, asOf: Date.now() }, { headers: { "cache-control": "no-store" } });
+    }
+
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
     }

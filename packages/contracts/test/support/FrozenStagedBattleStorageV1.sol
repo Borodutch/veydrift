@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {VeydriftCombatPreparation} from "./VeydriftCombatPreparation.sol";
-import {VeydriftStagedCohorts} from "./VeydriftStagedCohorts.sol";
+// Historical continuation fixture from 33573875f9f68e8afcab3f33cdcc60a7a4dbfc2c.
+// Only type/import names are adapted; this deliberately preserves the v1 defect.
+// It is NOT a corrected-model arithmetic oracle.
+
+import {VeydriftCombatPreparation} from "../../src/libraries/VeydriftCombatPreparation.sol";
+import {FrozenStagedCohortsV1} from "./FrozenStagedCohortsV1.sol";
 
 /// @dev Append-compatible namespaced state. Never delete a battle's dynamic state in one call.
-library VeydriftStagedBattleStorage {
+library FrozenStagedBattleStorageV1 {
     bytes32 private constant SLOT = keccak256("veydrift.storage.staged-battle.v1");
 
     struct Member {
@@ -52,7 +56,7 @@ library VeydriftStagedBattleStorage {
         bool prepared;
         bool blocked;
         VeydriftCombatPreparation.State preparation;
-        VeydriftStagedCohorts.State math;
+        FrozenStagedCohortsV1.State math;
         Member[] members;
         uint256[] missions;
         mapping(uint256 => bool) enrolled;
@@ -66,8 +70,6 @@ library VeydriftStagedBattleStorage {
         bool scoreRift;
         uint256 scoreCursor;
         uint256[2] scores;
-        // Zero denotes a battle prepared by v1, including every already-started phase.
-        uint8 combatMathVersion;
     }
 
     struct Layout {

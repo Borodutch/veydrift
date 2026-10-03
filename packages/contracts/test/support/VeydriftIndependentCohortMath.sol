@@ -68,9 +68,13 @@ library VeydriftIndependentCohortMath {
             uint256 extra = _rapidfire(firing, types, total, ctx);
             for (uint256 j; j < targets.length; ++j) {
                 Cohort memory target = targets[j];
-                uint256 shots = _round(
-                    firing.count * target.count, total, ctx, firing.key, target.key, 0
-                ) + _round(extra * target.count, total, ctx, firing.key, target.key, 0);
+                uint256 prefix;
+                for (uint256 k; k < targets.length; ++k) {
+                    if (targets[k].key < target.key) prefix += targets[k].count;
+                }
+                uint256 shots = assigned(
+                    firing.count, prefix, target.count, total, ctx, firing.key, 0
+                ) + assigned(extra, prefix, target.count, total, ctx, firing.key, 0);
                 result[j] += _destroyed(target, shots, firing, ctx);
                 if (result[j] > target.count) result[j] = target.count;
             }
@@ -87,6 +91,7 @@ library VeydriftIndependentCohortMath {
         uint256 shots = firing.count;
         for (uint256 depth; depth != 64; ++depth) {
             uint256 next;
+            uint256 prefix;
             for (uint8 target; target < 24; ++target) {
                 if (counts[target] == 0) continue;
                 uint256 rf = target < 16
@@ -94,9 +99,10 @@ library VeydriftIndependentCohortMath {
                     : VeydriftCatalog.shipRapidfireAgainstDefense(
                         Ship(firing.unit), Defense(target - 16)
                     );
-                if (rf < 2) continue;
                 uint256 chosen =
-                    _round(shots * counts[target], total, ctx, firing.key, target, depth + 1);
+                    assigned(shots, prefix, counts[target], total, ctx, firing.key, depth + 1);
+                prefix += counts[target];
+                if (rf < 2) continue;
                 next += _round(
                     chosen * ((rf - 1) * 10_000 / rf),
                     10_000,
@@ -112,6 +118,37 @@ library VeydriftIndependentCohortMath {
         }
     }
 
+    /// @dev Both endpoints have the SAME random offset, so adjacent intervals telescope.
+    function assigned(
+        uint256 shots,
+        uint256 prefix,
+        uint256 count,
+        uint256 total,
+        Context memory ctx,
+        uint256 firing,
+        uint256 lane
+    ) internal pure returns (uint256) {
+        if (shots == 0 || count == 0 || total == 0) return 0;
+        uint256 offset = _draw(ctx, firing, 0, lane) % total;
+        // ceil((endpoint - offset) / total), written without signed arithmetic.
+        uint256 lower = shots * prefix + total - 1 - offset;
+        uint256 upper = shots * (prefix + count) + total - 1 - offset;
+        return upper / total - lower / total;
+    }
+
+    function destroyed(
+        Cohort memory target,
+        uint256 shots,
+        uint256 attack,
+        Context memory ctx,
+        uint256 firingKey
+    ) internal pure returns (uint256) {
+        Cohort memory firing;
+        firing.attack = attack;
+        firing.key = firingKey;
+        return _destroyed(target, shots, firing, ctx);
+    }
+
     function _destroyed(
         Cohort memory target,
         uint256 shots,
@@ -121,14 +158,40 @@ library VeydriftIndependentCohortMath {
         if (shots == 0 || target.count == 0 || target.hull == 0) return 0;
         if (firing.attack <= target.shield / 100) return 0;
         uint256 exposed = shots > target.count ? target.count : shots;
-        uint256 perUnit = shots / exposed + (shots % exposed == 0 ? 0 : 1);
-        uint256 damage = perUnit * firing.attack;
-        if (damage <= target.shield) return 0;
+        uint256 ordinaryHits = shots / exposed;
+        uint256 extraHitUnits = shots - ordinaryHits * exposed;
+        return _group(
+            target,
+            exposed - extraHitUnits,
+            ordinaryHits * firing.attack,
+            firing.key,
+            ctx,
+            shots + 65_536
+        )
+            + _group(
+            target,
+            extraHitUnits,
+            (ordinaryHits + (extraHitUnits == 0 ? 0 : 1)) * firing.attack,
+            firing.key,
+            ctx,
+            shots + 131_072
+        );
+    }
+
+    function _group(
+        Cohort memory target,
+        uint256 count,
+        uint256 damage,
+        uint256 firingKey,
+        Context memory ctx,
+        uint256 lane
+    ) private pure returns (uint256) {
+        if (count == 0 || damage <= target.shield) return 0;
         damage -= target.shield;
-        if (damage >= target.hull) return exposed;
+        if (damage >= target.hull) return count;
         uint256 chance = 10_000 * damage / target.hull;
         if (chance <= 3000) return 0;
-        return _round(exposed * chance, 10_000, ctx, firing.key, target.key, shots + 65_536);
+        return _round(count * chance, 10_000, ctx, firingKey, target.key, lane);
     }
 
     function _round(
@@ -139,7 +202,20 @@ library VeydriftIndependentCohortMath {
         uint256 target,
         uint256 lane
     ) private pure returns (uint256) {
-        uint256 random = uint256(
+        uint256 random = _draw(ctx, firing, target, lane);
+        return numerator / denominator + (random % denominator < numerator % denominator ? 1 : 0);
+    }
+
+    function _draw(Context memory ctx, uint256 firing, uint256 target, uint256 lane)
+        private
+        pure
+        returns (uint256 random)
+    {
+        // ABI hash construction stays independent from production's scratch-word
+        // implementation. Reclaim this non-escaping encoding in the test oracle.
+        uint256 free;
+        assembly ("memory-safe") { free := mload(0x40) }
+        random = uint256(
             keccak256(
                 abi.encode(
                     keccak256("veydrift.cohort-combat-random-stream.v1"),
@@ -152,6 +228,6 @@ library VeydriftIndependentCohortMath {
                 )
             )
         );
-        return numerator / denominator + (random % denominator < numerator % denominator ? 1 : 0);
+        assembly ("memory-safe") { mstore(0x40, free) }
     }
 }
