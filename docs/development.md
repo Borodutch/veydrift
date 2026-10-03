@@ -148,9 +148,10 @@ changes require contract/indexer tests and a state-preservation review.
 Workspace-wide `bun run test`, `bun run check`, and `bun run build` are for broad changes.
 
 GitHub Actions remains the CI entry point. PRs authored by `backmeupplz` from this repository's
-branches run on the self-hosted Mac runners (label in repository variable
-`VEYDRIFT_LOCAL_CI_RUNNER_LABELS`; the runners' job-started hook enforces the same rule), whose
-persistent workspaces keep `node_modules`, Foundry artifacts and animation variants warm. Other
+branches run on the self-hosted Mac runners (the runners' job-started hook enforces the same
+rule). Each check group has its own runner (labels `veydrift-backmeupplz-ci` plus
+`veydrift-ci-<group>`), so its persistent workspace keeps `node_modules`, Foundry artifacts and
+animation variants warm from one PR to the next. Other
 PRs and pushes to main run on GitHub-hosted runners. PRs and pushes to main use the
 same rule: only the areas a change touches, plus the areas that read them, are checked (a
 backend-only PR runs only backend checks; contracts are compiled and tested only when contract
