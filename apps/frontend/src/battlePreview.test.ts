@@ -86,7 +86,8 @@ describe("contract battle preview parity", () => {
       { id: 1, label: "Light Fighter", count: 4 },
     ]);
     expect(mixed.defender.survivingDefenses).toEqual([
-      { id: 0, label: "Rocket Launcher", count: 38 },
+      // Independently checked in VeydriftCombatPreviewFixtures: conserved hits repair to 40, not 38.
+      { id: 0, label: "Rocket Launcher", count: 40 },
     ]);
   });
 

@@ -1,3 +1,4 @@
+import { renderMissionBattleForecastPanel } from "./components/MissionBattleForecastPanel";
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren } from "preact";
 
@@ -3048,6 +3049,7 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
     if (render.name === "Icon") return [];
+    if (render.name === "MissionBattleForecastPanel") return findElements(renderMissionBattleForecastPanel(vnode.props as never, false), tag);
     return findElements(render({ ...(vnode.props ?? {}) }), tag);
   }
   const self = vnode.type === tag ? [vnode] : [];
@@ -3072,6 +3074,7 @@ function findElement(node: unknown, match: (vnode: VNode) => boolean): VNode | u
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: { children?: unknown }) => unknown;
     if (render.name === "Icon") return undefined;
+    if (render.name === "MissionBattleForecastPanel") return findElement(renderMissionBattleForecastPanel(vnode.props as never, false), match);
     return findElement(render({ ...(vnode.props ?? {}) }), match);
   }
   return findElement(vnode.props?.children, match);
@@ -3087,6 +3090,7 @@ function collectText(node: unknown): string[] {
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: { children?: unknown }) => unknown;
     if (render.name === "Icon") return [];
+    if (render.name === "MissionBattleForecastPanel") return collectText(renderMissionBattleForecastPanel(vnode.props as never, false));
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
   // For intrinsic DOM nodes (string types), include the accessible label so icon-only controls

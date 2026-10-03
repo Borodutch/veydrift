@@ -143,8 +143,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         _fulfillAttackBattleRandomness(ATTACK_ID, 7);
         vm.recordLogs();
         if (lazy) {
-            vm.prank(player);
-            game.renamePlanet{gas: 15_000_000}(home, "chronological");
+            _renameAfterBoundedLazySettlement(home, isMoon);
         } else {
             // The permissionless attack resolver is invoked before ANY explicit return tx.
             _resolveAttackFully(ATTACK_ID);
@@ -152,6 +151,7 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bool fought;
         bool found;
+        uint256 battleEvents;
         bytes32 battleTopic = keccak256(
             "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
         );
@@ -161,9 +161,11 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
                     abi.decode(logs[i].data, (uint8, uint8, uint256, uint128, uint128, uint128));
                 fought = rounds != 0;
                 found = true;
+                ++battleEvents;
             }
         }
         assertTrue(found, "battle event missing");
+        assertEq(battleEvents, 1, "battle settled more than once");
         assertEq(fought, offset < 0, "snapshot must use scheduled return cutoff");
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(RETURN_ID);
         if (offset < 0) {
@@ -190,6 +192,72 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
             );
         }
         assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
+    function _renameAfterBoundedLazySettlement(uint256 home, bool moon) private {
+        (uint8 beforePhase, uint8 beforeRound, uint256 beforeWork) =
+            game.stagedBattleProgress(ATTACK_ID);
+        vm.prank(player);
+        try game.renamePlanet{gas: 15_000_000}(home, "chronological") {
+            return;
+        } catch (bytes memory reason) {
+            assertEq(
+                reason,
+                abi.encodeWithSelector(
+                    VeydriftGameStorage.FleetMissionNotResolved.selector, IMPACT_AT
+                ),
+                "unexpected lazy action failure"
+            );
+        }
+        // The action cannot commit a partial battle and then mutate the protected body. Its
+        // pending guard reverts ALL nested lazy work, including the earlier return credit.
+        (uint8 phase, uint8 round, uint256 work) = game.stagedBattleProgress(ATTACK_ID);
+        assertEq(phase, beforePhase);
+        assertEq(round, beforeRound);
+        assertEq(work, beforeWork);
+        (VeydriftGameStorage.FleetMissionStatus returnStatus,,,) = _fleetMission(RETURN_ID);
+        assertEq(uint8(returnStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(
+            moon
+                ? game.moonShipCount(home, Ship.SmallCargo)
+                : game.shipCount(home, Ship.SmallCargo),
+            0
+        );
+
+        // A keeper uses the public permissionless resolver: the lazy settler itself is
+        // self-call-only. Each capped transaction must commit work or finish the battle.
+        for (uint256 calls; calls < 16; ++calls) {
+            (beforePhase, beforeRound, beforeWork) = game.stagedBattleProgress(ATTACK_ID);
+            uint256 beforeChronology = _chronologyWork(ATTACK_ID) + _chronologyWork(RETURN_ID);
+            game.resolveFleetMission{gas: 15_000_000}(ATTACK_ID);
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ATTACK_ID);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                vm.prank(player);
+                game.renamePlanet{gas: 15_000_000}(home, "chronological");
+                assertEq(game.planetNames(home), "chronological");
+                emit log_named_uint("lazy keeper continuation calls", calls + 1);
+                return;
+            }
+            (phase, round, work) = game.stagedBattleProgress(ATTACK_ID);
+            assertTrue(
+                phase != beforePhase || round > beforeRound || work > beforeWork
+                    || _chronologyWork(ATTACK_ID) + _chronologyWork(RETURN_ID) > beforeChronology,
+                "lazy continuation made no durable progress"
+            );
+        }
+        revert("lazy continuation exceeded bound");
+    }
+
+    function _chronologyWork(uint256 id) private view returns (uint256) {
+        // Canonical append-only mission counter in VeydriftArrivalProgress.Layout.missions.
+        return uint256(
+            vm.load(
+                address(game),
+                keccak256(
+                    abi.encode(id, uint256(keccak256("veydrift.storage.arrival-progress.v1")) + 1)
+                )
+            )
+        );
     }
 
     function testBatchThirtyTwoIndependentReturnsFitOneReceipt() public {
@@ -352,13 +420,11 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
             game.resolveFleetMissionBatch{gas: 16_500_000}(items);
         uint256 total = beforeGas - gasleft();
-        // --isolate applies refunds; restore them for a conservative pre-refund bound.
         Vm.Gas memory callGas = vm.lastCallGas();
-        assertGe(callGas.gasRefunded, 0);
-        uint256 refund = uint256(uint64(callGas.gasRefunded));
-        uint256 gross = callGas.gasTotalUsed + refund;
+        uint256 gross = _grossBatchGas(callGas, measured);
         emit log_named_uint("mixed return/combat batch execution gas", total);
         emit log_named_uint("mixed return/combat measured execution gas", measured);
+        emit log_named_uint("mixed return/combat gross call gas", gross);
         assertGt(measured, 0);
         assertLt(measured, gross);
         assertLt(gross, 16_777_216 - 50_000);
@@ -368,21 +434,29 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
                 ? uint8(MissionResolutionOutcome.Progress)
                 : uint8(MissionResolutionOutcome.Failed)
         );
-        assertEq(uint8(outcomes[2]), uint8(MissionResolutionOutcome.Settled));
+        if (offset < 0) {
+            assertEq(uint8(outcomes[1]), uint8(MissionResolutionOutcome.AlreadySettled));
+            _continueChronologicalBatch(items, outcomes[2]);
+        } else {
+            assertEq(uint8(outcomes[2]), uint8(MissionResolutionOutcome.Settled));
+        }
         Vm.Log[] memory entries = vm.getRecordedLogs();
         bytes32 topic = keccak256(
             "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
         );
         bool found;
+        uint256 battleEvents;
         for (uint256 i; i < entries.length; ++i) {
             if (entries[i].topics[0] == topic && uint256(entries[i].topics[1]) == ATTACK_ID) {
                 (, uint8 rounds,,,,) =
                     abi.decode(entries[i].data, (uint8, uint8, uint256, uint128, uint128, uint128));
                 assertEq(rounds != 0, offset < 0);
                 found = true;
+                ++battleEvents;
             }
         }
         assertTrue(found);
+        assertEq(battleEvents, 1, "batch battle settled more than once");
         uint32 ships = moon
             ? game.moonShipCount(home, Ship.SmallCargo)
             : game.shipCount(home, Ship.SmallCargo);
@@ -396,6 +470,68 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
                 : game.shipCount(home, Ship.SmallCargo),
             ships
         );
+    }
+
+    function _grossBatchGas(Vm.Gas memory callGas, uint256 measured)
+        private
+        pure
+        returns (uint256 gross)
+    {
+        // Forge applies refunds to lastCallGas only with --isolate. The module measures
+        // pre-refund execution, so a smaller reported call cost necessarily needs restoring.
+        // Shared runs already report gross; adding their refund again invents gas usage.
+        gross = callGas.gasTotalUsed;
+        if (gross < measured) {
+            assertGe(callGas.gasRefunded, 0);
+            gross += uint256(uint64(callGas.gasRefunded));
+        }
+    }
+
+    function _continueChronologicalBatch(
+        MissionResolutionItem[] memory items,
+        MissionResolutionOutcome lastOutcome
+    ) private {
+        for (uint256 calls; calls < 16; ++calls) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ATTACK_ID);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                assertEq(uint8(lastOutcome), uint8(MissionResolutionOutcome.Settled));
+                emit log_named_uint("mixed batch continuation calls", calls);
+                return;
+            }
+            assertEq(uint8(lastOutcome), uint8(MissionResolutionOutcome.Progress));
+            (uint8 phase, uint8 round, uint256 work) = game.stagedBattleProgress(ATTACK_ID);
+            (MissionResolutionOutcome[] memory outcomes, uint256 measured) =
+                game.resolveFleetMissionBatch{gas: 16_500_000}(items);
+            Vm.Gas memory callGas = vm.lastCallGas();
+            uint256 gross = _grossBatchGas(callGas, measured);
+            assertGt(measured, 0);
+            assertLt(measured, gross);
+            assertLt(gross, 16_777_216 - 50_000);
+            emit log_named_uint("mixed batch continuation gross call gas", gross);
+            assertEq(uint8(outcomes[1]), uint8(MissionResolutionOutcome.AlreadySettled));
+            assertTrue(
+                outcomes[0] == MissionResolutionOutcome.Progress
+                    || outcomes[0] == MissionResolutionOutcome.Settled,
+                "batch continuation did not advance attack"
+            );
+            (status,,,) = _fleetMission(ATTACK_ID);
+            if (status != VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                assertTrue(
+                    outcomes[2] == MissionResolutionOutcome.Settled
+                        || outcomes[2] == MissionResolutionOutcome.AlreadySettled
+                );
+                emit log_named_uint("mixed batch continuation calls", calls + 1);
+                return;
+            }
+            (uint8 nextPhase, uint8 nextRound, uint256 nextWork) =
+                game.stagedBattleProgress(ATTACK_ID);
+            assertTrue(
+                nextPhase != phase || nextRound > round || nextWork > work,
+                "batch continuation made no durable progress"
+            );
+            lastOutcome = outcomes[2];
+        }
+        revert("batch continuation exceeded bound");
     }
 
     function testBodyLaunchPreservesEveryMobileShipQuantity() public {

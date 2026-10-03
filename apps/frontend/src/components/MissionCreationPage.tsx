@@ -1,7 +1,9 @@
+import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
+  CONTRACT_COMBAT_MODEL_VERSION,
   contractCombatPower,
   forecastContractBattle,
   summarizeContractBattleForecast,
@@ -1125,12 +1127,27 @@ export function MissionCreationPage({
 
 const OUTCOME_PREVIEW_SAMPLE_COUNT = 16;
 const OUTCOME_PREVIEW_CACHE_LIMIT = 64;
-const outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
+let outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
 
 export function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
+  const verified = useVerifiedCombatModel();
+  return resolveVerifiedPublicTargetBattleForecast(prepared, verified);
+}
+
+export function resolveVerifiedPublicTargetBattleForecast(
+  prepared: PreparedPublicTargetBattleForecast,
+  verified: boolean,
+): BattleForecastState {
   if (prepared.status === "complete") return prepared.forecast;
+  if (!verified) {
+    outcomePreviewCache = new Map();
+    return {
+      ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false,
+      detail: "Battle estimates are temporarily unavailable. Try again shortly.",
+    };
+  }
   const previewKey = battlePreviewInputKey(prepared.input);
   try {
     let simulation = outcomePreviewCache.get(previewKey);
@@ -2676,11 +2693,15 @@ function LazySimulatedBattleReportControl({
       const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
       workerRef.current = worker;
       worker.onmessage = (event: MessageEvent<
-        | { report: ContractBattleResult; requestId: number }
-        | { error: string; requestId: number }
+        | { report: ContractBattleResult; requestId: number; modelVersion: number }
+        | { error: string; requestId: number; modelVersion: number }
       >) => {
         if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
         stopWorker();
+        if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
+          fail("This battle report is out of date. Please refresh.");
+          return;
+        }
         if ("report" in event.data) setState({ status: "ready", report: event.data.report });
         else setState({ status: "error", message: event.data.error });
       };
@@ -2689,6 +2710,7 @@ function LazySimulatedBattleReportControl({
       timeoutRef.current = setTimeout(() => fail("The battle report took too long. Please retry."), ATTACK_BATTLE_PREVIEW_TIMEOUT_MS);
       worker.postMessage({
         input: reportInput,
+        modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
         randomWord: reportSeed.randomWord,
         requestId,
         sampleId: reportSeed.sampleId,

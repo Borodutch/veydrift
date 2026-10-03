@@ -395,8 +395,10 @@ effective hull = base hull * (1 + armor level * 10%)
 combat preview power = effective attack + effective shield + floor(effective hull / 10)
 rounds = at most 6
 targeted units = min(target unit count, assigned shots)
-shots per target = ceil(assigned shots / targeted units)
-damage = effective attack * shots per target
+base hits = floor(assigned shots / targeted units)
+extra-hit targets = assigned shots % targeted units
+remaining targets receive base hits; only extra-hit targets receive base hits + 1
+damage per target = effective attack * its assigned hits
 no loss if effective attack <= effective shield / 100
 no loss if damage <= effective shield
 hull damage = damage - effective shield
@@ -407,6 +409,8 @@ small or large shield dome repair = 70% chance to repair one destroyed dome
 debris metal = floor((attacker metal losses + defender metal losses) * 30 / 100)
 debris crystal = floor((attacker crystal losses + defender crystal losses) * 30 / 100)
 ```
+
+For example, 100 shots against 99 targets give 98 targets one hit and one target two hits: exactly 100 hits. The two hit groups apply shields, hull thresholds and explosion sampling separately.
 
 Each surviving unit fires once per round before round losses are applied. Shots are distributed across the opposing side by live unit counts. If 100 shots fire into a defender with 80 Rocket Launchers and 20 Light Lasers, about 80 shots target Rocket Launchers and 20 target Light Lasers, with deterministic randomness deciding the remainder. Shields refresh every round, so damage does not carry over between rounds unless it destroys a unit in that round.
 

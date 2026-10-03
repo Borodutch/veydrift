@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {CombatCohort, VeydriftCombatCohorts} from "../src/libraries/VeydriftCombatCohorts.sol";
+import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
+import {
+    VeydriftIndependentCohortMath as Independent
+} from "./support/VeydriftIndependentCohortMath.sol";
 import {Test} from "forge-std/Test.sol";
 import {Defense, Ship} from "../src/libraries/VeydriftTypes.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -95,7 +100,7 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         assertEq(result.rounds, 1);
         assertEq(result.attackerShips[uint8(Ship.Cruiser)], 0);
         assertEq(result.defenderShips[uint8(Ship.LightFighter)], 4);
-        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 38);
+        assertEq(result.defenderDefenses[uint8(Defense.RocketLauncher)], 40);
         _assertResources(result.attackerLosses, 20_000, 7_000, 2_000);
         _assertResources(result.defenderLosses, 18_000, 6_000, 0);
     }
@@ -162,5 +167,43 @@ contract VeydriftCombatPreviewFixturesTest is Test {
         assertEq(result.joinedAttackerShips[uint8(Ship.SmallCargo)], 0);
         assertEq(result.attackerLosses.metal, uint256(type(uint32).max) * 2 * 2000);
         assertEq(result.attackerLosses.crystal, uint256(type(uint32).max) * 2 * 2000);
+    }
+
+    function fixtureCohort(uint8 kind, uint256 n) private pure returns (CombatCohort memory c) {
+        c.unit = kind;
+        c.count = n;
+        c.attack = kind < 16
+            ? VeydriftCatalog.shipBattleAttack(Ship(kind))
+            : VeydriftCatalog.defenseBattleAttack(Defense(kind - 16));
+        c.shield = kind < 16
+            ? VeydriftCatalog.shipBattleShield(Ship(kind))
+            : VeydriftCatalog.defenseBattleShield(Defense(kind - 16));
+        c.hull = kind < 16
+            ? VeydriftCatalog.shipBattleHull(Ship(kind))
+            : VeydriftCatalog.defenseBattleHull(Defense(kind - 16));
+        c.key = uint256(keccak256(abi.encode(kind, c.attack, c.shield, c.hull)));
+    }
+
+    /// Candidate production must agree with independent RF/target/loss arithmetic
+    /// BEFORE the changed seed404 frontend vector is accepted.
+    function testMixedPreviewVectorIndependentRoundArithmetic() public pure {
+        CombatCohort[] memory a = new CombatCohort[](1);
+        CombatCohort[] memory d = new CombatCohort[](2);
+        a[0] = fixtureCohort(uint8(Ship.Cruiser), 1);
+        d[0] = fixtureCohort(uint8(Ship.LightFighter), 10);
+        d[1] = fixtureCohort(16 + uint8(Defense.RocketLauncher), 50);
+        Independent.Cohort[] memory ia = new Independent.Cohort[](1);
+        Independent.Cohort[] memory id = new Independent.Cohort[](2);
+        ia[0] = Independent.Cohort(a[0].key, 1, a[0].attack, a[0].shield, a[0].hull, a[0].unit);
+        for (uint256 j; j < 2; ++j) {
+            CombatCohort memory c = d[j];
+            id[j] = Independent.Cohort(c.key, c.count, c.attack, c.shield, c.hull, c.unit);
+        }
+        uint256[] memory expectedD = Independent.losses(ia, id, 404, 1, 4);
+        uint256[] memory expectedA = Independent.losses(id, ia, 404, 1, 1);
+        assertEq(VeydriftCombatCohorts.losses(a, d, 404, 1, 4), expectedD);
+        assertEq(VeydriftCombatCohorts.losses(d, a, 404, 1, 1), expectedA);
+        assertEq(expectedD[0], 6);
+        assertEq(expectedA[0], 1);
     }
 }

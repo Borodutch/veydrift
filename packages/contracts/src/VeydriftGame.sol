@@ -63,6 +63,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         ) revert Unauthorized(msg.sender);
     }
 
+    /// @notice Math used by newly prepared battles; existing battles retain their frozen version.
+    function combatModelVersion() external pure returns (uint8) {
+        return 2;
+    }
+
     constructor(
         address admin,
         address firstPlanetSettlementModule,

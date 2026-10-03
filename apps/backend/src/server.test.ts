@@ -12894,3 +12894,25 @@ test("moon chance pending/terminal results converge in full system and watched p
     }
   }
 });
+
+
+test("combat model capability is uncached and fails closed during rollout", async () => {
+  class CombatModelReader extends MockChainReader {
+    version: number | null = 2;
+    fail = false;
+    async getCombatModelVersion() { if (this.fail) throw new Error("RPC unavailable"); return this.version; }
+  }
+  const reader = new CombatModelReader();
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader, indexer: new SettlementIndexer(reader, 100n), role: "reader", enableResponseCache: true });
+  for (const version of [2, 1, null, 2]) {
+    reader.version = version;
+    const response = await handler(new Request("https://api.veydrift.com/combat-model"));
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect((await response.json() as { version: number | null }).version).toBe(version);
+  }
+  reader.fail = true;
+  expect((await (await handler(new Request("https://api.veydrift.com/combat-model"))).json() as { version: null }).version).toBeNull();
+  const oldReader = new MockChainReader();
+  const old = createRequestHandler({ config: configuredTestConfig, chainReader: oldReader, indexer: new SettlementIndexer(oldReader, 100n), role: "reader" });
+  expect((await (await old(new Request("https://api.veydrift.com/combat-model"))).json() as { version: null }).version).toBeNull();
+});

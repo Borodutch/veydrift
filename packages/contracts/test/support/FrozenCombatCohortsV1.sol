@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {VeydriftCatalog} from "./VeydriftCatalog.sol";
-import {Ship, Defense} from "./VeydriftTypes.sol";
+// Historical continuation fixture from 33573875f9f68e8afcab3f33cdcc60a7a4dbfc2c.
+// Only type/import names are adapted; this deliberately preserves the v1 defect.
+// It is NOT a corrected-model arithmetic oracle.
+
+import {VeydriftCatalog} from "../../src/libraries/VeydriftCatalog.sol";
+import {Ship, Defense} from "../../src/libraries/VeydriftTypes.sol";
 
 /// @dev Unit 0..15 is a ship; 16..23 is a battlefield defense. Counts are side-wide,
 /// not uint32 storage quantities. Identity never enters combat randomness.
-struct CombatCohort {
+struct FrozenCohortV1 {
     uint256 key;
     uint256 count;
     uint256 attack;
@@ -15,7 +19,7 @@ struct CombatCohort {
     uint8 unit;
 }
 
-library VeydriftCombatCohorts {
+library FrozenCombatCohortsV1 {
     bytes32 private constant DOMAIN = keccak256("veydrift.cohort-combat-random-stream.v1");
 
     function key(uint8 unit, uint256 attack, uint256 shield, uint256 hull)
@@ -28,15 +32,15 @@ library VeydriftCombatCohorts {
 
     /// @dev Merge first, before any integer rounding or stochastic sampling. The
     /// at-most-one-cohort-per-input insertion loop is bounded by eligible groups/types.
-    function canonicalize(CombatCohort[] memory input)
+    function canonicalize(FrozenCohortV1[] memory input)
         internal
         pure
-        returns (CombatCohort[] memory cohorts)
+        returns (FrozenCohortV1[] memory cohorts)
     {
-        cohorts = new CombatCohort[](input.length);
+        cohorts = new FrozenCohortV1[](input.length);
         uint256 length;
         for (uint256 i; i < input.length; ++i) {
-            CombatCohort memory item = input[i];
+            FrozenCohortV1 memory item = input[i];
             if (item.count == 0) continue;
             item.key = key(item.unit, item.attack, item.shield, item.hull);
             uint256 j;
@@ -47,7 +51,7 @@ library VeydriftCombatCohorts {
                 for (uint256 k = length; k > j; --k) {
                     cohorts[k] = cohorts[k - 1];
                 }
-                cohorts[j] = CombatCohort(
+                cohorts[j] = FrozenCohortV1(
                     item.key, item.count, item.attack, item.shield, item.hull, item.unit
                 );
                 ++length;
@@ -57,41 +61,37 @@ library VeydriftCombatCohorts {
     }
 
     function losses(
-        CombatCohort[] memory firing,
-        CombatCohort[] memory targets,
+        FrozenCohortV1[] memory firing,
+        FrozenCohortV1[] memory targets,
         uint256 seed,
         uint8 round,
         uint8 side
     ) internal pure returns (uint256[] memory lost) {
         lost = new uint256[](targets.length);
         uint256 total;
-        uint256[] memory prefixes = new uint256[](targets.length);
         for (uint256 i; i < targets.length; ++i) {
             total += targets[i].count;
-            for (uint256 j; j < targets.length; ++j) {
-                if (targets[j].key < targets[i].key) prefixes[i] += targets[j].count;
-            }
         }
         if (total == 0) return lost;
         for (uint256 i; i < firing.length; ++i) {
-            CombatCohort memory shooter = firing[i];
+            FrozenCohortV1 memory shooter = firing[i];
             if (shooter.attack == 0) continue;
             uint256 extra = extraShots(shooter, targets, total, seed, round, side);
             for (uint256 j; j < targets.length; ++j) {
-                CombatCohort memory target = targets[j];
-                uint256 shots = distributeConserved(
+                FrozenCohortV1 memory target = targets[j];
+                uint256 shots = distribute(
                     shooter.count,
-                    prefixes[j],
                     target.count,
                     total,
                     seed,
                     round,
                     side,
                     shooter.key,
+                    target.key,
                     0
                 )
-                + distributeConserved(
-                    extra, prefixes[j], target.count, total, seed, round, side, shooter.key, 0
+                + distribute(
+                    extra, target.count, total, seed, round, side, shooter.key, target.key, 0
                 );
                 uint256 killed =
                     lossCount(target, shots, shooter.attack, seed, round, side, shooter.key);
@@ -109,8 +109,8 @@ library VeydriftCombatCohorts {
     }
 
     function extraShots(
-        CombatCohort memory shooter,
-        CombatCohort[] memory targets,
+        FrozenCohortV1 memory shooter,
+        FrozenCohortV1[] memory targets,
         uint256 total,
         uint256 seed,
         uint8 round,
@@ -124,22 +124,18 @@ library VeydriftCombatCohorts {
         for (uint256 i; i < targets.length; ++i) {
             counts[targets[i].unit] += targets[i].count;
         }
-        CombatCohort[] memory typePool = new CombatCohort[](24);
+        FrozenCohortV1[] memory typePool = new FrozenCohortV1[](24);
         uint256 typeCount;
         for (uint8 unit; unit < 24; ++unit) {
             if (counts[unit] == 0) continue;
-            typePool[typeCount++] = CombatCohort(uint256(unit), counts[unit], 0, 0, 0, unit);
+            typePool[typeCount++] = FrozenCohortV1(uint256(unit), counts[unit], 0, 0, 0, unit);
         }
         assembly ("memory-safe") { mstore(typePool, typeCount) }
         uint256 incoming = shooter.count;
         for (uint256 chain; chain < 64; ++chain) {
             uint256 generated;
-            uint256 prefix;
             for (uint256 j; j < typePool.length; ++j) {
-                generated += rapidfireAtConserved(
-                    shooter, typePool[j], incoming, chain, prefix, ctx
-                );
-                prefix += typePool[j].count;
+                generated += rapidfireAt(shooter, typePool[j], incoming, chain, ctx);
             }
             if (generated == 0) break;
             extra += generated;
@@ -147,46 +143,9 @@ library VeydriftCombatCohorts {
         }
     }
 
-    function rapidfireAtConserved(
-        CombatCohort memory shooter,
-        CombatCohort memory target,
-        uint256 incoming,
-        uint256 chain,
-        uint256 prefix,
-        FireContext memory ctx
-    ) internal pure returns (uint256) {
-        uint16 rapidfire = target.unit < 16
-            ? VeydriftCatalog.shipRapidfireAgainstShip(Ship(shooter.unit), Ship(target.unit))
-            : VeydriftCatalog.shipRapidfireAgainstDefense(
-                Ship(shooter.unit), Defense(target.unit - 16)
-            );
-        if (rapidfire <= 1) return 0;
-        uint256 selected = distributeConserved(
-            incoming,
-            prefix,
-            target.count,
-            ctx.total,
-            ctx.seed,
-            ctx.round,
-            ctx.side,
-            shooter.key,
-            1 + chain
-        );
-        return sample(
-            selected,
-            uint256(rapidfire - 1) * 10_000 / rapidfire,
-            ctx.seed,
-            ctx.round,
-            ctx.side,
-            shooter.key,
-            target.key,
-            30_000 + chain
-        );
-    }
-
-    function legacyRapidfireAt(
-        CombatCohort memory shooter,
-        CombatCohort memory target,
+    function rapidfireAt(
+        FrozenCohortV1 memory shooter,
+        FrozenCohortV1 memory target,
         uint256 incoming,
         uint256 chain,
         FireContext memory ctx
@@ -197,7 +156,7 @@ library VeydriftCombatCohorts {
                 Ship(shooter.unit), Defense(target.unit - 16)
             );
         if (rapidfire <= 1) return 0;
-        uint256 selected = legacyDistribute(
+        uint256 selected = distribute(
             incoming,
             target.count,
             ctx.total,
@@ -220,80 +179,8 @@ library VeydriftCombatCohorts {
         );
     }
 
-    /// @dev Each assigned shot belongs to exactly one low/high hit subgroup.
     function lossCount(
-        CombatCohort memory target,
-        uint256 shots,
-        uint256 attack,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 firingKey
-    ) internal pure returns (uint256) {
-        if (
-            shots == 0 || target.count == 0 || attack == 0 || target.hull == 0
-                || attack <= target.shield / 100
-        ) return 0;
-        uint256 targeted = shots < target.count ? shots : target.count;
-        uint256 remainder = shots % targeted;
-        uint256 damage = attack * (shots / targeted);
-        return subgroupLoss(
-            target, targeted - remainder, damage, seed, round, side, firingKey, 65_536 + shots
-        )
-            + subgroupLoss(
-            target,
-            remainder,
-            damage + (remainder == 0 ? 0 : attack),
-            seed,
-            round,
-            side,
-            firingKey,
-            131_072 + shots
-        );
-    }
-
-    function subgroupLoss(
-        CombatCohort memory target,
-        uint256 count,
-        uint256 damage,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 firingKey,
-        uint256 lane
-    ) private pure returns (uint256) {
-        if (count == 0 || damage <= target.shield) return 0;
-        uint256 hullDamage = damage - target.shield;
-        if (hullDamage >= target.hull) return count;
-        uint256 chance = hullDamage * 10_000 / target.hull;
-        if (chance <= 3_000) return 0;
-        return sample(count, chance, seed, round, side, firingKey, target.key, lane);
-    }
-
-    /// @dev Shared stochastic offset on contiguous cumulative intervals telescopes
-    /// to exactly shots. Prefix is the count of lower-key cohorts (or lower RF types).
-    function distributeConserved(
-        uint256 shots,
-        uint256 prefix,
-        uint256 count,
-        uint256 total,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 firingKey,
-        uint256 lane
-    ) internal pure returns (uint256) {
-        if (shots == 0 || count == 0 || total == 0) return 0;
-        uint256 draw = stream(seed, round, side, firingKey, 0, lane) % total;
-        uint256 lower = shots * prefix;
-        uint256 upper = shots * (prefix + count);
-        return upper / total + (draw < upper % total ? 1 : 0) - lower / total
-            - (draw < lower % total ? 1 : 0);
-    }
-
-    // Frozen v1 continuation only. Never use for newly prepared battles.
-    function legacyLossCount(
-        CombatCohort memory target,
+        FrozenCohortV1 memory target,
         uint256 shots,
         uint256 attack,
         uint256 seed,
@@ -314,7 +201,7 @@ library VeydriftCombatCohorts {
         return sample(targeted, damageBps, seed, round, side, firingKey, target.key, 65_536 + shots);
     }
 
-    function legacyDistribute(
+    function distribute(
         uint256 shots,
         uint256 count,
         uint256 total,

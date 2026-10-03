@@ -3385,3 +3385,24 @@ function fleetMissionLogs({
     })
   ];
 }
+
+describe("combat model capability getter", () => {
+  test("validates exact uint8 ABI response and fails closed", async () => {
+    let result = dataWords([word(2n)]);
+    let fail = false;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(): Promise<T> { throw new Error("unexpected single request"); },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        if (fail) throw new Error("old deployment");
+        const [call] = requests[0]!.params as [{ data: string }];
+        expect(call.data).toBe(toFunctionSelector("combatModelVersion()"));
+        return [result as T];
+      }
+    });
+    expect(await reader.getCombatModelVersion()).toBe(2);
+    for (const bad of ["0x", "0x02", dataWords([word(256n)]), dataWords([word(2n), word(0n)])]) {
+      result = bad; expect(await reader.getCombatModelVersion()).toBeNull();
+    }
+    fail = true; expect(await reader.getCombatModelVersion()).toBeNull();
+  });
+});

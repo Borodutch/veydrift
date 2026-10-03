@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
-import {VeydriftCombatProtectionModule} from "./VeydriftCombatProtectionModule.sol";
-import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
-import {VeydriftCombatAttribution} from "./libraries/VeydriftCombatAttribution.sol";
-import {VeydriftCombatStats} from "./libraries/VeydriftCombatStats.sol";
-import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
-import {CombatCohort, VeydriftCombatCohorts} from "./libraries/VeydriftCombatCohorts.sol";
-import {VeydriftStagedCohorts as Math} from "./libraries/VeydriftStagedCohorts.sol";
-import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
-import {VeydriftCombatPreparation} from "./libraries/VeydriftCombatPreparation.sol";
-import {VeydriftResearchHistory} from "./libraries/VeydriftResearchHistory.sol";
-import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage.sol";
-import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+
+// Historical continuation fixture from 33573875f9f68e8afcab3f33cdcc60a7a4dbfc2c.
+// Only type/import names are adapted; this deliberately preserves the v1 defect.
+// It is NOT a corrected-model arithmetic oracle.
+import {
+    VeydriftStagedBattleStorage as CurrentStore
+} from "../../src/libraries/VeydriftStagedBattleStorage.sol";
+import {CombatCohort} from "../../src/libraries/VeydriftCombatCohorts.sol";
+import {VeydriftBattleResearch} from "../../src/libraries/VeydriftBattleResearch.sol";
+import {VeydriftCombatProtectionModule} from "../../src/VeydriftCombatProtectionModule.sol";
+import {VeydriftResourceReserves} from "../../src/VeydriftResourceReserves.sol";
+import {VeydriftCombatAttribution} from "../../src/libraries/VeydriftCombatAttribution.sol";
+import {VeydriftCombatStats} from "../../src/libraries/VeydriftCombatStats.sol";
+import {VeydriftCatalog} from "../../src/libraries/VeydriftCatalog.sol";
+import {FrozenCohortV1, FrozenCombatCohortsV1} from "./FrozenCombatCohortsV1.sol";
+import {FrozenStagedCohortsV1 as Math} from "./FrozenStagedCohortsV1.sol";
+import {FrozenStagedBattleStorageV1 as Store} from "./FrozenStagedBattleStorageV1.sol";
+import {VeydriftCombatPreparation} from "../../src/libraries/VeydriftCombatPreparation.sol";
+import {VeydriftResearchHistory} from "../../src/libraries/VeydriftResearchHistory.sol";
+import {VeydriftDefenseHoldStorage} from "../../src/libraries/VeydriftDefenseHoldStorage.sol";
+import {Building, Defense, Ship, Technology} from "../../src/libraries/VeydriftTypes.sol";
 
 interface IVeydriftCombatMoonSystem {
     function requestMoonChanceFromBattle(uint256, uint256, uint128, uint128)
@@ -35,7 +43,7 @@ interface IStagedMoonProduction {
     function releaseMoonCombat(uint256) external;
 }
 
-contract VeydriftStagedCombatModule is VeydriftResourceReserves {
+contract FrozenStagedCombatModuleV1 is VeydriftResourceReserves {
     uint256 private constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     address private immutable _rapidfireModule;
     address private immutable _protectionModule;
@@ -75,7 +83,6 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
     function resolveFleetMissionCombatRound(uint256 id) external returns (bool) {
         Store.Battle storage b = Store.battle(id);
         FleetMission storage m = _fleetMissions[id];
-        if (b.phase == 0) b.combatMathVersion = 2;
         if (b.phase == 0 || b.phase == 14) {
             (bool ok, bytes memory result) = _protectionModule.delegatecall(
                 abi.encodeCall(VeydriftCombatProtectionModule.prepare, (id))
@@ -202,7 +209,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                     b.phase = 11;
                 } else {
                     b.round = 1;
-                    Math.startRoundVersion(b.math, b.seed, 1, b.combatMathVersion == 2);
+                    Math.startRound(b.math, b.seed, 1);
                     b.phase = 6;
                 }
             }
@@ -218,8 +225,8 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             // round or raid boundary. Same sequence/ties/accounting, fewer paid chunks and
             // retain the unchanged64-stage lazy budget; resolver envelopes remain capped at15M.
             for (uint256 operation; operation < 32 && b.phase >= 7 && b.phase <= 10; ++operation) {
-                if (b.phase == 7) VeydriftCombatAttribution.floors(b);
-                else if (b.phase == 8) VeydriftCombatAttribution.remainder(b);
+                if (b.phase == 7) VeydriftCombatAttribution.floors(CurrentStore.battle(id));
+                else if (b.phase == 8) VeydriftCombatAttribution.remainder(CurrentStore.battle(id));
                 else if (b.phase == 9) _applyMember(id, b, m);
                 else _applyCohort(id, b);
             }
@@ -293,7 +300,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
         uint64 impact
     ) private {
         if (count == 0) return;
-        CombatCohort memory c = VeydriftCombatStats.battleCohort(
+        CombatCohort memory current = VeydriftCombatStats.battleCohort(
             b.battleId,
             owner,
             unit,
@@ -304,6 +311,8 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             _technologyLevels[owner][Technology.Armor],
             researchQueues[owner]
         );
+        FrozenCohortV1 memory c;
+        assembly ("memory-safe") { c := current }
         uint256 index = Math.add(b.math, side, c);
         b.cohortMembers[side][index].push(b.members.length);
         b.members.push(Store.Member(id, owner, index, count, 0, 0, unit, side));
@@ -395,7 +404,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             b.phase = 11;
         } else {
             ++b.round;
-            Math.startRoundVersion(b.math, b.seed, b.round, b.combatMathVersion == 2);
+            Math.startRound(b.math, b.seed, b.round);
             b.phase = 6;
         }
     }

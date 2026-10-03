@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftIndependentCohortMath as Oracle} from "./support/VeydriftIndependentCohortMath.sol";
 import {Test} from "forge-std/Test.sol";
 import {CombatCohort, VeydriftCombatCohorts} from "../src/libraries/VeydriftCombatCohorts.sol";
 import {VeydriftStagedCohorts} from "../src/libraries/VeydriftStagedCohorts.sol";
@@ -76,99 +77,25 @@ contract StagedCohortHarness {
 /// @dev Independently implements ABI hashing, rounding, chain continuation and damage.
 /// Uses only catalog constants, never production cohort arithmetic helpers.
 contract StagedIndependentOracle {
-    bytes32 private constant DOMAIN = keccak256("veydrift.cohort-combat-random-stream.v1");
-
-    struct Context {
-        uint256 seed;
-        uint8 round;
-        uint8 side;
-        uint256 firingKey;
-    }
-
-    function draw(Context memory c, uint256 target, uint256 lane) private pure returns (uint256) {
-        return
-            uint256(
-                keccak256(abi.encode(DOMAIN, c.seed, c.round, c.side, c.firingKey, target, lane))
-            );
-    }
-
-    function rounded(
-        uint256 n,
-        uint256 weight,
-        uint256 denominator,
-        Context memory c,
-        uint256 target,
-        uint256 lane
-    ) private pure returns (uint256) {
-        if (n == 0 || weight == 0 || denominator == 0) return 0;
-        uint256 product = n * weight;
-        return product / denominator
-            + (draw(c, target, lane) % denominator < product % denominator ? 1 : 0);
-    }
-
     function losses(
         CombatCohort[] memory firing,
         CombatCohort[] memory targets,
         uint256 seed,
         uint8 round,
         uint8 side
-    ) external pure returns (uint256[] memory lost) {
-        lost = new uint256[](targets.length);
-        uint256 total;
-        uint256[24] memory counts;
-        for (uint256 j; j < targets.length; ++j) {
-            total += targets[j].count;
-            counts[targets[j].unit] += targets[j].count;
-        }
-        if (total == 0) return lost;
-        for (uint256 i; i < firing.length; ++i) {
-            CombatCohort memory s = firing[i];
-            if (s.attack == 0) continue;
-            Context memory ctx = Context(seed, round, side, s.key);
-            uint256 incoming = s.count;
-            uint256 extra;
-            if (s.unit < 16) {
-                for (uint256 chain; chain < 64; ++chain) {
-                    uint256 generated;
-                    for (uint8 kind; kind < 24; ++kind) {
-                        uint256 rf = kind < 16
-                            ? VeydriftCatalog.shipRapidfireAgainstShip(Ship(s.unit), Ship(kind))
-                            : VeydriftCatalog.shipRapidfireAgainstDefense(
-                                Ship(s.unit), Defense(kind - 16)
-                            );
-                        if (rf <= 1 || counts[kind] == 0) continue;
-                        uint256 selected =
-                            rounded(incoming, counts[kind], total, ctx, kind, 1 + chain);
-                        generated += rounded(
-                            selected, (rf - 1) * 10_000 / rf, 10_000, ctx, kind, 30_000 + chain
-                        );
-                    }
-                    if (generated == 0) break;
-                    extra += generated;
-                    incoming = generated;
-                }
-            }
-            for (uint256 j; j < targets.length; ++j) {
-                CombatCohort memory t = targets[j];
-                uint256 shots = rounded(s.count, t.count, total, ctx, t.key, 0)
-                    + rounded(extra, t.count, total, ctx, t.key, 0);
-                if (shots == 0 || t.count == 0 || t.hull == 0) continue;
-                uint256 hit = shots < t.count ? shots : t.count;
-                uint256 damage = s.attack * ((shots + hit - 1) / hit);
-                if (s.attack <= t.shield / 100 || damage <= t.shield) continue;
-                uint256 hullDamage = damage - t.shield;
-                uint256 killed;
-                if (hullDamage >= t.hull) {
-                    killed = hit;
-                } else {
-                    uint256 chance = hullDamage * 10_000 / t.hull;
-                    if (chance > 3_000) {
-                        killed = rounded(hit, chance, 10_000, ctx, t.key, 65_536 + shots);
-                    }
-                }
-                lost[j] += killed;
-                if (lost[j] > t.count) lost[j] = t.count;
-            }
+    ) external pure returns (uint256[] memory) {
+        return Oracle.losses(convert(firing), convert(targets), seed, round, side);
+    }
+
+    function convert(CombatCohort[] memory input)
+        private
+        pure
+        returns (Oracle.Cohort[] memory out)
+    {
+        out = new Oracle.Cohort[](input.length);
+        for (uint256 i; i < input.length; ++i) {
+            CombatCohort memory c = input[i];
+            out[i] = Oracle.Cohort(c.key, c.count, c.attack, c.shield, c.hull, c.unit);
         }
     }
 }
