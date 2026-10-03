@@ -152,12 +152,11 @@ branches run on the self-hosted Mac runners (the runners' job-started hook enfor
 rule). Each check group has its own runner (labels `veydrift-backmeupplz-ci` plus
 `veydrift-ci-<group>`), so its persistent workspace keeps `node_modules`, Foundry artifacts and
 animation variants warm from one PR to the next. Other
-PRs and pushes to main run on GitHub-hosted runners. PRs and pushes to main use the
-same rule: only the areas a change touches, plus the areas that read them, are checked (a
-backend-only PR runs only backend checks; contracts are compiled and tested only when contract
-code changes). Toolchain, lockfile, CI and unclassified files check everything. Because the
-merge gate merges the latest main into a PR first, the PR and its merge commit select the same
-checks. Heavy groups (browser tests, contracts, storage layout) run as parallel jobs. Contract
+PRs run on GitHub-hosted runners. CI runs on PRs only: branch protection requires the `check`
+status on an up-to-date branch, so the tree that lands on main is exactly the one the PR passed.
+Only the areas a change touches, plus the areas that read them, are checked (a backend-only PR
+runs only backend checks; contracts are compiled and tested only when contract code changes).
+Toolchain, lockfile, CI and unclassified files check everything. Heavy groups (browser tests, contracts, storage layout) run as parallel jobs. Contract
 tests take seconds; contract CI time is solc via-IR compilation, which is single-threaded and
 incremental, so only changed sources and their dependents recompile.
 
