@@ -29,11 +29,11 @@ export function parseShard(value) {
   return {index: Number(match[1]), count: Number(match[2])};
 }
 
-// Only this multi-transaction driver exceeds Forge's aggregate default. Every
+// Only these multi-transaction drivers exceed Forge's aggregate default. Every
 // actual resolver call remains explicitly capped at 15M in the Solidity fixture.
 function forgeTestArgs(file) {
   const args = ["test", "--match-path", `test/${file}`];
-  if (file === "VeydriftStagedCombat.t.sol") {
+  if (["VeydriftStagedCombat.t.sol", "VeydriftConservedProxyGas.t.sol"].includes(file)) {
     args.push("--isolate", "--gas-limit", "100000000000");
   }
   // vm.setEnv is process-global. Negative authority/migration fixtures must not race.
