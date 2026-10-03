@@ -63,6 +63,11 @@ const alternateAccount = "0x2222222222222222222222222222222222222222";
 const unrelatedOwner = "0x9999999999999999999999999999999999999999";
 const appRoot = document.querySelector("#app") as HTMLElement;
 const fixtureParams = new URLSearchParams(window.location.search);
+// Stalled-wallet fixtures wait out real bootstrap read timeouts; 1.5 s keeps the same
+// timeout/retry sequence (retry spacing stays 1.2 s) without 6 s per attempt.
+if (fixtureParams.get("stallBootstrapMethod")) {
+  (globalThis as { __veydriftTestWalletBootstrapReadTimeoutMs?: number }).__veydriftTestWalletBootstrapReadTimeoutMs = 1_500;
+}
 // Only the isolated memo probe needs this module up front. Eagerly importing it
 // in every fixture bypasses the real app's lazy-route failure path.
 const MissionControlPage = fixtureParams.get("missionMemoProbe") === "true"

@@ -57,7 +57,7 @@ import {
   settlementFundingShortfallWei,
   switchVeydriftNetwork,
   waitForVeydriftNetwork,
-  WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
+  walletBootstrapReadTimeoutMs,
   walletRequestErrorMessage,
   type Eip1193Provider,
   type MigrationReservation,
@@ -183,7 +183,7 @@ export async function walletConnectionAccounts(provider: Eip1193Provider, contex
   if (context.miniAppMode && context.walletProviderSource === "farcaster") {
     if (context.miniAppPlatformType === "web") {
       try {
-        const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, 1);
+        const accounts = await getCurrentAccounts(provider, walletBootstrapReadTimeoutMs(), 1);
         if (accounts[0]) {
           return accounts;
         }
@@ -990,7 +990,7 @@ export function FirstPlanetSettlementApp() {
     }, WALLET_BOOTSTRAP_FEEDBACK_MS);
     try {
       const attempt = walletBootstrapAttempts.current + 1;
-      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, attempt);
+      const accounts = preferredAccount ? [preferredAccount] : await getCurrentAccounts(injected, walletBootstrapReadTimeoutMs(), attempt);
       if (!isCurrent()) return;
       walletBootstrapActive.current!.account = accounts[0];
 
@@ -1019,7 +1019,7 @@ export function FirstPlanetSettlementApp() {
         return;
       }
 
-      const chainId = await getChainId(injected, WALLET_BOOTSTRAP_READ_TIMEOUT_MS, attempt);
+      const chainId = await getChainId(injected, walletBootstrapReadTimeoutMs(), attempt);
       if (!isCurrent()) return;
       clearTimeout(walletBootstrapFeedbackTimer.current);
       walletBootstrapRecovery.current = false;
@@ -1059,7 +1059,7 @@ export function FirstPlanetSettlementApp() {
             await setupVeydriftNetworkForWallet(injected, context);
             if (!isCurrent()) return;
             await waitForVeydriftNetwork(injected, requiredChain, {
-              readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
+              readTimeoutMs: walletBootstrapReadTimeoutMs(),
             });
             if (!isCurrent()) return;
             walletBootstrapActive.current = undefined;
@@ -1305,7 +1305,7 @@ export function FirstPlanetSettlementApp() {
       await setupVeydriftNetworkForWallet(provider, context);
       if (!isCurrent()) return;
       await waitForVeydriftNetwork(provider, requiredChain, {
-        readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
+        readTimeoutMs: walletBootstrapReadTimeoutMs(),
       });
       if (!isCurrent()) return;
       walletBootstrapActive.current = undefined;
