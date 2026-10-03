@@ -70,6 +70,12 @@ const FLEET_MISSION_RESOLUTION_GAS = "0x1000000";
 // answering the first eth_accounts/eth_chainId) is detected and retried
 // quickly instead of leaving the player on "Reading wallet link".
 export const WALLET_BOOTSTRAP_READ_TIMEOUT_MS = 6_000;
+// Browser fixtures that deliberately stall the wallet shorten the wait
+// (tests/fixtures/planetInspectorBrowser.tsx); nothing else sets it.
+export function walletBootstrapReadTimeoutMs(): number {
+  return (globalThis as { __veydriftTestWalletBootstrapReadTimeoutMs?: number })
+    .__veydriftTestWalletBootstrapReadTimeoutMs ?? WALLET_BOOTSTRAP_READ_TIMEOUT_MS;
+}
 const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WATCHED_PLANETS_API_READ_TIMEOUT_MS = 25_000;

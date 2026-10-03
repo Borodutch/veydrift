@@ -7,12 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
+import { freePort } from "./freePort.mjs";
 
 test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 120_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: 0 } });
+  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.BATCH_SUPPLY_ARTIFACTS;

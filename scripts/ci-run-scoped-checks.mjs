@@ -103,14 +103,14 @@ async function runLogged(label, command, args) {
 
 // Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
 // Without a group (local preflight) every applicable check runs in one process, as before.
-export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-storage"];
+export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
 const HEAVY = {
   "frontend-touch-browser": "browser",
   "contracts-build": "contracts",
-  "contracts-fast-check": "contracts",
   "contracts-test": "contracts",
-  // Separate optimizer-off profile in its own out dir: runs in parallel with the main build.
-  "contracts-storage-check": "contracts-storage",
+  // Both build into their own out dirs (src only), so they run in parallel with the main build.
+  "contracts-fast-check": "contracts-checks",
+  "contracts-storage-check": "contracts-checks",
 };
 
 export function planChecks(scope, group = "all") {
@@ -171,7 +171,6 @@ export function planChecks(scope, group = "all") {
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",
     ]);
-    // Full build first: the fast check's size build then reuses its artifacts.
     add("contracts-build", "bun", ["run", "build:contracts"]);
     add("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     add("contracts-test", "bun", ["run", "test:contracts"]);

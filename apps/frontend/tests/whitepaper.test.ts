@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { build, createServer, preview } from "vite";
 import { prepareAnimationVariants } from "../scripts/animation-variants.mjs";
+import { freePort } from "./freePort.mjs";
 import { frontendResponse } from "../scripts/serve.mjs";
 import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
 import { TopBar } from "../src/components/TopBar";
@@ -124,7 +125,7 @@ describe("hidden whitepaper", () => {
   });
 
   test("Vite development cannot serve the retained public PDF or page fallback", async () => {
-    const server = await createServer({ root, server: { host: "127.0.0.1", port: 0 } });
+    const server = await createServer({ root, server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
     try {
       await server.listen();
       const address = server.httpServer!.address() as { port: number };
@@ -140,7 +141,7 @@ describe("hidden whitepaper", () => {
     const existed = existsSync(stalePdf);
     mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
     if (!existed) writeFileSync(stalePdf, readFileSync(whitepaper));
-    const server = await preview({ root, preview: { host: "127.0.0.1", port: 0 } });
+    const server = await preview({ root, preview: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
     try {
       const address = server.httpServer.address() as { port: number };
       await assertDisabled(`http://127.0.0.1:${address.port}/`);
