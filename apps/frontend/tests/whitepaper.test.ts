@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer as createHttpServer, request } from "node:http";
+import { request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { build, createServer, preview } from "vite";
 import { prepareAnimationVariants } from "../scripts/animation-variants.mjs";
+import { freePort } from "./freePort.mjs";
 import { frontendResponse } from "../scripts/serve.mjs";
 import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
 import { TopBar } from "../src/components/TopBar";
@@ -124,24 +125,14 @@ describe("hidden whitepaper", () => {
   });
 
   test("Vite development cannot serve the retained public PDF or page fallback", async () => {
-    // Only Vite's middleware/static serving is under test, so run it in middleware mode on a
-    // plain loopback server. Vite's own listen() (hostname resolution + port probing) hung for
-    // 20 s whenever another Vite/Chrome browser suite ran concurrently on the CI Mac.
-    const vite = await createServer({
-      root,
-      appType: "spa",
-      optimizeDeps: { noDiscovery: true, include: [] },
-      server: { middlewareMode: true, ws: false, watch: null },
-    });
-    const server = createHttpServer(vite.middlewares);
+    const server = await createServer({ root, server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
     try {
-      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const address = server.address() as { port: number };
+      await server.listen();
+      const address = server.httpServer!.address() as { port: number };
       await assertDisabled(`http://127.0.0.1:${address.port}/`);
       await assertNormalAssets(`http://127.0.0.1:${address.port}/`, true);
     } finally {
-      await new Promise((resolve) => server.close(resolve));
-      await vite.close();
+      await server.close();
     }
   }, 20_000);
 
@@ -150,7 +141,7 @@ describe("hidden whitepaper", () => {
     const existed = existsSync(stalePdf);
     mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
     if (!existed) writeFileSync(stalePdf, readFileSync(whitepaper));
-    const server = await preview({ root, preview: { host: "127.0.0.1", port: 0 } });
+    const server = await preview({ root, preview: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
     try {
       const address = server.httpServer.address() as { port: number };
       await assertDisabled(`http://127.0.0.1:${address.port}/`);

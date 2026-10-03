@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
+import { freePort } from "./freePort.mjs";
 
 test("Resolved group mission labels, scope and actions survive desktop/mobile sizing", { timeout: 120_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-group-missions-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: 0 } });
+  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.GROUP_MISSIONS_ARTIFACTS;

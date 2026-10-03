@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import sharp from "sharp";
 import { createServer } from "vite";
+import { freePort } from "./freePort.mjs";
 import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig.ts";
 
 const chromeCandidates = [
@@ -273,8 +274,8 @@ before(async () => {
     }],
     server: {
       host: "127.0.0.1",
-      port: 0,
-      strictPort: false,
+      port: await freePort(),
+      strictPort: true,
     },
   });
   await server.listen();
