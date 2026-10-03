@@ -21,7 +21,9 @@ jobs:
     name: checks (${{ matrix.group }})
     # Same rule as that hook, so other PRs (forks, other authors) and main pushes use
     # GitHub-hosted runners instead of being denied on the Mac.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    # Each group has its own Mac runner (label veydrift-ci-<group>), so it always lands in the
+    # workspace it warmed last time: node_modules, Foundry artifacts, animation variants.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(format('["veydrift-backmeupplz-ci","veydrift-ci-{0}"]', matrix.group)) || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 60
