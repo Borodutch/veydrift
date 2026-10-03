@@ -179,8 +179,8 @@ test("parallel check groups partition the full sequential plan", () => {
     .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
     .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-fast-check", "contracts-test"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-storage")), ["contracts-storage-check"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["contracts-fast-check", "contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
   assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label === "frontend-touch-browser"));
   assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
@@ -189,14 +189,14 @@ test("parallel check groups partition the full sequential plan", () => {
 test("groups with nothing in scope plan no checks", () => {
   const docsOnly = Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false]));
   assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
-  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(docsOnly, group), []);
+  for (const group of ["browser", "contracts", "contracts-checks"]) assert.deepEqual(planChecks(docsOnly, group), []);
 });
 
 test("a backend-only change plans only cheap backend checks", () => {
   const backend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), backend: true };
   assert.deepEqual(labels(planChecks(backend, "rest")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
     "backend-performance-tool-test", "release-diagnostics-test"]);
-  for (const group of ["browser", "contracts", "contracts-storage"]) assert.deepEqual(planChecks(backend, group), []);
+  for (const group of ["browser", "contracts", "contracts-checks"]) assert.deepEqual(planChecks(backend, group), []);
 });
 
 test("contract test shards cover every file exactly once and isolate the largest file", () => {

@@ -124,7 +124,13 @@ describe("hidden whitepaper", () => {
   });
 
   test("Vite development cannot serve the retained public PDF or page fallback", async () => {
-    const server = await createServer({ root, server: { host: "127.0.0.1", port: 0 } });
+    // Only middleware/static serving is under test. Without dependency pre-bundling and the
+    // file watcher, server start cannot stall on a busy CI machine (it timed out at 20 s there).
+    const server = await createServer({
+      root,
+      optimizeDeps: { noDiscovery: true, include: [] },
+      server: { host: "127.0.0.1", port: 0, watch: null },
+    });
     try {
       await server.listen();
       const address = server.httpServer!.address() as { port: number };

@@ -10,6 +10,8 @@ coverage/
 cache/
 out-storage/
 cache-storage/
+out-sizes/
+cache-sizes/
 
 # Environment
 .env

@@ -32,7 +32,7 @@ jobs:
           - group: rest
           - group: browser
           - group: contracts
-          - group: contracts-storage
+          - group: contracts-checks
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       BASE_REF: ${{ github.base_ref }}
@@ -89,10 +89,18 @@ jobs:
             bun-${{ runner.os }}-
 
       - name: Set up Foundry
-        if: steps.plan.outputs.foundry == 'true'
+        if: steps.plan.outputs.foundry == 'true' && runner.environment == 'github-hosted'
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: v1.7.1
+
+      # The Mac runners share one ~/.foundry; installing it from concurrent jobs races.
+      - name: Use the Mac's Foundry
+        if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
+        run: |
+          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
+          "$HOME/.foundry/bin/forge" --version | grep -q 'Version: 1.7.1' \
+            || { echo "::error::Install Foundry 1.7.1 on this runner: foundryup --install 1.7.1"; exit 1; }
 
       # Hosted runners only (fork PRs). Keyed per job: a key shared with jobs that compile less
       # once let a near-empty cache win for everyone.
