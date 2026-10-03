@@ -183,6 +183,13 @@ contract VeydriftIndependentShotOracleTest is Test {
                         shots, prefix, counts[i], 23, Reference.Context(seed, 2, 4), 37, 0
                     );
                     assertEq(actual, expected, "independent allocation enumeration");
+                    assertEq(
+                        Production.distributeConserved(
+                            shots, prefix, counts[i], 23, seed, 2, 4, 37, 0
+                        ),
+                        expected,
+                        "production allocation disagrees with individual shot positions"
+                    );
                     assigned += actual;
                     prefix += counts[i];
                 }
@@ -197,6 +204,9 @@ contract VeydriftIndependentShotOracleTest is Test {
         uint256 b = Reference.assigned(n + 1, n, n, n * 2, Reference.Context(3, 2, 4), 37, 0);
         assertEq(a + b, n + 1);
         assertGt(a, type(uint32).max);
+        assertEq(Production.distributeConserved(n + 1, 0, n, n * 2, 3, 2, 4, 37, 0), a);
+        assertEq(Production.distributeConserved(n + 1, n, n, n * 2, 3, 2, 4, 37, 0), b);
+        assertEq(Production.distributeConserved(1, 0, 0, 0, 3, 2, 4, 37, 0), 0);
     }
 
     function testMixedTargetReferenceParityAndPermutation() public pure {
