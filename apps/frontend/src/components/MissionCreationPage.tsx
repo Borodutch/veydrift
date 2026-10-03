@@ -1,3 +1,4 @@
+import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -1125,12 +1126,27 @@ export function MissionCreationPage({
 
 const OUTCOME_PREVIEW_SAMPLE_COUNT = 16;
 const OUTCOME_PREVIEW_CACHE_LIMIT = 64;
-const outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
+let outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
 
 export function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
+  const verified = useVerifiedCombatModel();
+  return resolveVerifiedPublicTargetBattleForecast(prepared, verified);
+}
+
+export function resolveVerifiedPublicTargetBattleForecast(
+  prepared: PreparedPublicTargetBattleForecast,
+  verified: boolean,
+): BattleForecastState {
   if (prepared.status === "complete") return prepared.forecast;
+  if (!verified) {
+    outcomePreviewCache = new Map();
+    return {
+      ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false,
+      detail: "The live combat rules could not be verified. No battle odds are shown until the contract and simulator agree.",
+    };
+  }
   const previewKey = battlePreviewInputKey(prepared.input);
   try {
     let simulation = outcomePreviewCache.get(previewKey);

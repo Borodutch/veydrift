@@ -1,3 +1,4 @@
+import { renderMissionBattleForecastPanel } from "../src/components/MissionBattleForecastPanel";
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionDetailPage, type MissionDetailActionState } from "../src/components/MissionDetailPage";
@@ -137,7 +138,8 @@ describe("MissionDetailPage probable outcome", () => {
       expect(text).toContain("Shared battle # 1 · 2 attacking fleets");
       expect(text).toContain("Lead #1 · W 1 / S 2 / A 3");
       expect(text).toContain("Joined #2 · W 4 / S 5 / A 6");
-      expect(text).toMatch(/win|draw|defeat/);
+      expect(text).toContain("Uncertain");
+      expect(text).toContain("live combat rules could not be verified");
     }
   });
   test("actual report or inactive leader removes the preview rather than leaving stale predictions", () => {
@@ -835,6 +837,7 @@ function findElements(node: unknown, tag: string): FoundElement[] {
     // Manual VNode traversal has no hook owner; the optional sample-report popup needs
     // Preact rendering, not a direct function call. The forecast itself is still traversed.
     if (vnode.type.name === "LazySimulatedBattleReportControl") return [];
+    if (vnode.type.name === "MissionBattleForecastPanel") return findElements(renderMissionBattleForecastPanel(vnode.props as never, false), tag);
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
     return findElements(render({ ...(vnode.props ?? {}) }), tag);
   }
@@ -862,6 +865,7 @@ function textParts(node: ComponentChildren): string[] {
       return [];
     }
     if (vnode.type.name === "LazySimulatedBattleReportControl") return [];
+    if (vnode.type.name === "MissionBattleForecastPanel") return textParts(renderMissionBattleForecastPanel(vnode.props as never, false));
     return textParts((vnode.type as (props: unknown) => ComponentChildren)(vnode.props));
   }
   if ((vnode.props as { hidden?: boolean } | undefined)?.hidden) {

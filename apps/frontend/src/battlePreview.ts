@@ -8,6 +8,7 @@ const COMBAT_STREAM_DOMAIN = keccak256(stringToHex("veydrift.cohort-combat-rando
 const PREVIEW_SAMPLE_DOMAIN = keccak256(stringToHex("veydrift.attack-preview-sample.v1"));
 
 export const CONTRACT_BATTLE_SAMPLE_COUNT = 128;
+export const CONTRACT_COMBAT_MODEL_VERSION = 2;
 
 export type CombatTechnology = {
   weapons: number;
@@ -421,10 +422,19 @@ function combatCohorts(snapshot: MutableBattle, attacking: boolean): CombatCohor
   return [...cohorts.values()].sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
 }
 
-function cohortDistributed(shots: bigint, count: bigint, total: bigint, seed: bigint, round: number, side: number, firingKey: bigint, targetKey: bigint, lane: bigint): bigint {
+export function conservedShotAllocation(shots: bigint, count: bigint, prefix: bigint, total: bigint, draw: bigint): bigint {
   if (!shots || !count || !total) return 0n;
-  const weighted = shots * count;
-  return weighted / total + (combatStream(seed, round, side, firingKey, targetKey, lane) % total < weighted % total ? 1n : 0n);
+  // One shared draw over cumulative canonical intervals. Adjacent boundaries
+  // cancel, so all targets together receive exactly the assigned shots.
+  const boundary = (units: bigint) => {
+    const weighted = shots * units;
+    return weighted / total + (draw % total < weighted % total ? 1n : 0n);
+  };
+  return boundary(prefix + count) - boundary(prefix);
+}
+
+function cohortDistributed(shots: bigint, count: bigint, prefix: bigint, total: bigint, seed: bigint, round: number, side: number, firingKey: bigint, lane: bigint): bigint {
+  return conservedShotAllocation(shots, count, prefix, total, combatStream(seed, round, side, firingKey, 0n, lane));
 }
 
 function cohortExtraShots(shooter: CombatCohort, targets: CombatCohort[], total: bigint, seed: bigint, round: number, side: number): bigint {
@@ -437,10 +447,13 @@ function cohortExtraShots(shooter: CombatCohort, targets: CombatCohort[], total:
   let extra = 0n;
   for (let chain = 0; chain < MAX_RAPIDFIRE_CHAIN; chain++) {
     let generated = 0n;
+    let prefix = 0n;
     for (const target of typePool) {
+      const start = prefix;
+      prefix += target.count;
       const rapidfire = target.unit < 16 ? rapidfireAgainstShip(shooter.unit, target.unit) : rapidfireAgainstDefense(shooter.unit, target.unit - 16);
       if (rapidfire <= 1) continue;
-      const selected = cohortDistributed(incoming, target.count, total, seed, round, side, shooter.key, target.key, 1n + BigInt(chain));
+      const selected = cohortDistributed(incoming, target.count, start, total, seed, round, side, shooter.key, 1n + BigInt(chain));
       generated += sampleChance(selected, BigInt(rapidfire - 1) * BPS / BigInt(rapidfire), seed, round, side, shooter.key, target.key, 30_000n + BigInt(chain));
     }
     if (!generated) break;
@@ -450,16 +463,25 @@ function cohortExtraShots(shooter: CombatCohort, targets: CombatCohort[], total:
   return extra;
 }
 
+export function shotHitGroups(shots: bigint, count: bigint): { hits: bigint; count: bigint }[] {
+  if (!shots || !count) return [];
+  const targeted = shots < count ? shots : count;
+  const hits = shots / targeted;
+  const high = shots % targeted;
+  return [{ hits, count: targeted - high }, { hits: hits + 1n, count: high }];
+}
+
 function cohortLossCount(target: CombatCohort, shots: bigint, shooter: CombatCohort, seed: bigint, round: number, side: number): bigint {
-  if (!shots || !target.count || !shooter.attack || !target.hull) return 0n;
-  const targeted = shots < target.count ? shots : target.count;
-  const damage = shooter.attack * ((shots + targeted - 1n) / targeted);
-  if (shooter.attack <= target.shield / 100n || damage <= target.shield) return 0n;
-  const hullDamage = damage - target.shield;
-  if (hullDamage >= target.hull) return targeted;
-  const chance = hullDamage * BPS / target.hull;
-  if (chance <= 3_000n) return 0n;
-  return sampleChance(targeted, chance, seed, round, side, shooter.key, target.key, 65_536n + shots);
+  if (!shots || !target.count || !shooter.attack || !target.hull || shooter.attack <= target.shield / 100n) return 0n;
+  return shotHitGroups(shots, target.count).reduce((lost, group, index) => {
+    const damage = shooter.attack * group.hits;
+    if (!group.count || damage <= target.shield) return lost;
+    const hullDamage = damage - target.shield;
+    if (hullDamage >= target.hull) return lost + group.count;
+    const chance = hullDamage * BPS / target.hull;
+    if (chance <= 3_000n) return lost;
+    return lost + sampleChance(group.count, chance, seed, round, side, shooter.key, target.key, (index === 0 ? 65_536n : 131_072n) + shots);
+  }, 0n);
 }
 
 function cohortSideLosses(firing: CombatCohort[], targets: CombatCohort[], seed: bigint, round: number, side: number): { lost: bigint[]; extraShots: bigint } {
@@ -471,9 +493,11 @@ function cohortSideLosses(firing: CombatCohort[], targets: CombatCohort[], seed:
     if (!shooter.attack) continue;
     const extra = cohortExtraShots(shooter, targets, total, seed, round, side);
     extraShots += extra;
+    let prefix = 0n;
     targets.forEach((target, index) => {
-      const shots = cohortDistributed(shooter.count, target.count, total, seed, round, side, shooter.key, target.key, 0n)
-        + cohortDistributed(extra, target.count, total, seed, round, side, shooter.key, target.key, 0n);
+      const shots = cohortDistributed(shooter.count, target.count, prefix, total, seed, round, side, shooter.key, 0n)
+        + cohortDistributed(extra, target.count, prefix, total, seed, round, side, shooter.key, 0n);
+      prefix += target.count;
       const killed = (lost[index] ?? 0n) + cohortLossCount(target, shots, shooter, seed, round, side);
       lost[index] = killed < target.count ? killed : target.count;
     });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CONTRACT_COMBAT_MODEL_VERSION,
   forecastContractBattle,
   summarizeContractBattleForecast,
   type ContractBattleForecastSummary,
@@ -72,8 +73,21 @@ describe("BattlePreviewScheduler", () => {
     expect(workers).toHaveLength(1);
     expect(workers[0]?.requests).toHaveLength(1);
 
-    workers[0]?.respond({ requestId: workers[0].requests[0]?.requestId ?? -1, forecast });
+    workers[0]?.respond({ modelVersion: CONTRACT_COMBAT_MODEL_VERSION, requestId: workers[0].requests[0]?.requestId ?? -1, forecast });
     expect(results).toEqual([forecast]);
+  });
+
+  test("rejects a stale-model response even with a matching request id", () => {
+    const timers = new ManualTimers();
+    const workers: FakeWorker[] = [];
+    const scheduler = schedulerWithFakes(timers, workers);
+    const results: ContractBattleForecastSummary[] = [];
+    const errors: string[] = [];
+    scheduler.schedule(battlePreviewInputKey(mixedFleetInput), mixedFleetInput, result => results.push(result), error => errors.push(error));
+    timers.runPending();
+    workers[0]!.respond({ modelVersion: 1, requestId: workers[0]!.requests[0]!.requestId, forecast });
+    expect(results).toEqual([]);
+    expect(errors).toEqual(["The battle preview model changed. Please refresh."]);
   });
 
   test("does not resimulate an unchanged fleet and target", () => {
@@ -105,12 +119,12 @@ describe("BattlePreviewScheduler", () => {
 
     scheduler.schedule(battlePreviewInputKey(latest), latest, () => results.push("latest"), () => undefined);
     expect(staleWorker?.terminated).toBe(true);
-    staleWorker?.respond({ requestId: staleRequestId, forecast });
+    staleWorker?.respond({ modelVersion: CONTRACT_COMBAT_MODEL_VERSION, requestId: staleRequestId, forecast });
     expect(results).toEqual([]);
 
     timers.runPending();
     const latestWorker = workers[1];
-    latestWorker?.respond({ requestId: latestWorker.requests[0]?.requestId ?? -1, forecast });
+    latestWorker?.respond({ modelVersion: CONTRACT_COMBAT_MODEL_VERSION, requestId: latestWorker.requests[0]?.requestId ?? -1, forecast });
     expect(results).toEqual(["latest"]);
   });
 
