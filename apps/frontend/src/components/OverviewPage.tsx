@@ -652,7 +652,7 @@ export function OverviewPage({
       )}
 
       {/* Contract production queues */}
-      <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid min-w-0 gap-3 sm:auto-rows-fr sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
         <QueuePanel label="Buildings">
           {onChainQueues?.building?.active ? (
