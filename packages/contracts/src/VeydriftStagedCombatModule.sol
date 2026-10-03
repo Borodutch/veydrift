@@ -75,6 +75,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
     function resolveFleetMissionCombatRound(uint256 id) external returns (bool) {
         Store.Battle storage b = Store.battle(id);
         FleetMission storage m = _fleetMissions[id];
+        if (b.phase == 0) b.combatMathVersion = 2;
         if (b.phase == 0 || b.phase == 14) {
             (bool ok, bytes memory result) = _protectionModule.delegatecall(
                 abi.encodeCall(VeydriftCombatProtectionModule.prepare, (id))
@@ -201,7 +202,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                     b.phase = 11;
                 } else {
                     b.round = 1;
-                    Math.startRound(b.math, b.seed, 1);
+                    Math.startRoundVersion(b.math, b.seed, 1, b.combatMathVersion == 2);
                     b.phase = 6;
                 }
             }
@@ -394,7 +395,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             b.phase = 11;
         } else {
             ++b.round;
-            Math.startRound(b.math, b.seed, b.round);
+            Math.startRoundVersion(b.math, b.seed, b.round, b.combatMathVersion == 2);
             b.phase = 6;
         }
     }

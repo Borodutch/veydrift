@@ -14,7 +14,8 @@ library VeydriftStagedCohorts {
         Shooter,
         Rapidfire,
         Targets,
-        Done
+        Done,
+        Prefixes
     }
 
     struct Loss {
@@ -45,6 +46,20 @@ library VeydriftStagedCohorts {
         uint256 generated;
         uint256 extra;
         uint256 workDone;
+    }
+
+    // Separate namespace: State is embedded before existing Battle members.
+    // Appending State would corrupt their offsets on upgrade.
+    struct VersionState {
+        bool corrected;
+        mapping(uint8 => mapping(uint256 => uint256)) prefixes;
+    }
+
+    function versionState(State storage self) private pure returns (VersionState storage value) {
+        bytes32 stateSlot;
+        assembly ("memory-safe") { stateSlot := self.slot }
+        bytes32 slot = keccak256(abi.encode("veydrift.storage.cohort-conservation.v2", stateSlot));
+        assembly ("memory-safe") { value.slot := slot }
     }
 
     // Transient scalar cursors only; State/storage layout and cohort/loss mappings stay unchanged.
@@ -126,7 +141,14 @@ library VeydriftStagedCohorts {
     }
 
     function startRound(State storage self, uint256 seed, uint8 round) public {
+        startRoundVersion(self, seed, round, true);
+    }
+
+    function startRoundVersion(State storage self, uint256 seed, uint8 round, bool corrected)
+        public
+    {
         _mutable(self);
+        versionState(self).corrected = corrected;
         ++self.epoch;
         self.seed = seed;
         self.round = round;
@@ -173,6 +195,7 @@ library VeydriftStagedCohorts {
             if (phase == Phase.Done || phase == Phase.Idle) break;
             if (phase == Phase.ResetTypes) _resetType(self, cursor);
             else if (phase == Phase.BuildTotals) _buildTotal(self, cursor);
+            else if (phase == Phase.Prefixes) _prefix(self, cursor);
             else if (phase == Phase.Shooter) _shooter(self, cursor);
             else if (phase == Phase.Rapidfire) _rapidfire(self, cursor);
             else _target(self, cursor);
@@ -216,8 +239,35 @@ library VeydriftStagedCohorts {
                 cursor.firingSide = 1;
             } else {
                 cursor.firingSide = 0;
+                cursor.phase = versionState(self).corrected ? Phase.Prefixes : Phase.Shooter;
+            }
+        }
+    }
+
+    /// @dev One comparison per work unit; independent of insertion/mission order.
+    function _prefix(State storage self, Cursor memory cursor) private {
+        Side storage pool = self.sides[cursor.firingSide];
+        if (cursor.shooterIndex == pool.cohorts.length) {
+            cursor.shooterIndex = 0;
+            cursor.targetIndex = 0;
+            if (cursor.firingSide == 0) {
+                cursor.firingSide = 1;
+            } else {
+                cursor.firingSide = 0;
                 cursor.phase = Phase.Shooter;
             }
+            return;
+        }
+        VersionState storage v = versionState(self);
+        if (cursor.targetIndex == 0) v.prefixes[cursor.firingSide][cursor.shooterIndex] = 0;
+        if (pool.cohorts[cursor.targetIndex].key < pool.cohorts[cursor.shooterIndex].key) {
+            v.prefixes[
+                cursor.firingSide
+            ][cursor.shooterIndex] += pool.cohorts[cursor.targetIndex].count;
+        }
+        if (++cursor.targetIndex == pool.cohorts.length) {
+            cursor.targetIndex = 0;
+            ++cursor.shooterIndex;
         }
     }
 
@@ -251,17 +301,23 @@ library VeydriftStagedCohorts {
         uint8 unit = cursor.typeIndex;
         uint256 count = targets.typeCounts[unit];
         if (count != 0) {
-            cursor.generated += VeydriftCombatCohorts.rapidfireAt(
-                self.sides[cursor.firingSide].cohorts[cursor.shooterIndex],
-                CombatCohort(uint256(unit), count, 0, 0, 0, unit),
-                cursor.incoming,
-                cursor.chain,
-                VeydriftCombatCohorts.FireContext(
-                    targets.total, cursor.seed, cursor.round, cursor.firingSide == 0 ? 4 : 1
-                )
+            CombatCohort memory shooter = self.sides[cursor.firingSide].cohorts[cursor.shooterIndex];
+            CombatCohort memory target = CombatCohort(uint256(unit), count, 0, 0, 0, unit);
+            VeydriftCombatCohorts.FireContext memory ctx = VeydriftCombatCohorts.FireContext(
+                targets.total, cursor.seed, cursor.round, cursor.firingSide == 0 ? 4 : 1
             );
+            cursor.generated += versionState(self).corrected
+                ? VeydriftCombatCohorts.rapidfireAtConserved(
+                    shooter, target, cursor.incoming, cursor.chain, cursor.targetIndex, ctx
+                )
+                : VeydriftCombatCohorts.rapidfireAt(
+                    shooter, target, cursor.incoming, cursor.chain, ctx
+                );
         }
+        // targetIndex doubles as the RF type prefix, resetting on every chain.
+        if (versionState(self).corrected) cursor.targetIndex += count;
         if (++cursor.typeIndex == 24) {
+            cursor.targetIndex = 0;
             cursor.extra += cursor.generated;
             if (cursor.generated == 0 || cursor.chain == 63) {
                 cursor.phase = Phase.Targets;
@@ -289,37 +345,69 @@ library VeydriftStagedCohorts {
         uint256 previous = lost.epoch == cursor.epoch ? lost.count : 0;
         if (previous == target.count) return;
         CombatCohort memory shooter = self.sides[cursor.firingSide].cohorts[cursor.shooterIndex];
-        uint256 shots = VeydriftCombatCohorts.distribute(
-            shooter.count,
-            target.count,
-            targets.total,
-            cursor.seed,
-            cursor.round,
-            cursor.firingSide == 0 ? 4 : 1,
-            shooter.key,
-            target.key,
-            0
-        )
-        + VeydriftCombatCohorts.distribute(
-            cursor.extra,
-            target.count,
-            targets.total,
-            cursor.seed,
-            cursor.round,
-            cursor.firingSide == 0 ? 4 : 1,
-            shooter.key,
-            target.key,
-            0
-        );
-        uint256 killed = VeydriftCombatCohorts.lossCount(
-            target,
-            shots,
-            shooter.attack,
-            cursor.seed,
-            cursor.round,
-            cursor.firingSide == 0 ? 4 : 1,
-            shooter.key
-        );
+        uint256 shots;
+        uint256 killed;
+        if (versionState(self).corrected) {
+            uint256 prefix = versionState(self).prefixes[1 - cursor.firingSide][index];
+            uint8 side = cursor.firingSide == 0 ? 4 : 1;
+            shots = VeydriftCombatCohorts.distributeConserved(
+                shooter.count,
+                prefix,
+                target.count,
+                targets.total,
+                cursor.seed,
+                cursor.round,
+                side,
+                shooter.key,
+                0
+            )
+            + VeydriftCombatCohorts.distributeConserved(
+                cursor.extra,
+                prefix,
+                target.count,
+                targets.total,
+                cursor.seed,
+                cursor.round,
+                side,
+                shooter.key,
+                0
+            );
+            killed = VeydriftCombatCohorts.lossCount(
+                target, shots, shooter.attack, cursor.seed, cursor.round, side, shooter.key
+            );
+        } else {
+            shots = VeydriftCombatCohorts.distribute(
+                shooter.count,
+                target.count,
+                targets.total,
+                cursor.seed,
+                cursor.round,
+                cursor.firingSide == 0 ? 4 : 1,
+                shooter.key,
+                target.key,
+                0
+            )
+            + VeydriftCombatCohorts.distribute(
+                cursor.extra,
+                target.count,
+                targets.total,
+                cursor.seed,
+                cursor.round,
+                cursor.firingSide == 0 ? 4 : 1,
+                shooter.key,
+                target.key,
+                0
+            );
+            killed = VeydriftCombatCohorts.legacyLossCount(
+                target,
+                shots,
+                shooter.attack,
+                cursor.seed,
+                cursor.round,
+                cursor.firingSide == 0 ? 4 : 1,
+                shooter.key
+            );
+        }
         if (killed != 0) {
             uint256 sum = previous + killed;
             lost.epoch = cursor.epoch;

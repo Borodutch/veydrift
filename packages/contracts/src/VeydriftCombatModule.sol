@@ -34,6 +34,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     }
 
     function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool) {
+        // Pre-staged battles with committed rounds must finish their historical model.
+        // Newly prepared battles always enter staged v2; an existing staged battle
+        // keeps its stored version (zero for v1) through every remaining round.
         address module = Store.battle(missionId).phase == 0
             && _battleResolutionProgress[missionId].rounds != 0
             ? _legacyModule

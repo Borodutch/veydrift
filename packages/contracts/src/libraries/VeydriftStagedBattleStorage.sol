@@ -66,6 +66,8 @@ library VeydriftStagedBattleStorage {
         bool scoreRift;
         uint256 scoreCursor;
         uint256[2] scores;
+        // Zero denotes a battle prepared by v1, including every already-started phase.
+        uint8 combatMathVersion;
     }
 
     struct Layout {

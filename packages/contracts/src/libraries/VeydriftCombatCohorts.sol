@@ -65,8 +65,12 @@ library VeydriftCombatCohorts {
     ) internal pure returns (uint256[] memory lost) {
         lost = new uint256[](targets.length);
         uint256 total;
+        uint256[] memory prefixes = new uint256[](targets.length);
         for (uint256 i; i < targets.length; ++i) {
             total += targets[i].count;
+            for (uint256 j; j < targets.length; ++j) {
+                if (targets[j].key < targets[i].key) prefixes[i] += targets[j].count;
+            }
         }
         if (total == 0) return lost;
         for (uint256 i; i < firing.length; ++i) {
@@ -75,19 +79,19 @@ library VeydriftCombatCohorts {
             uint256 extra = extraShots(shooter, targets, total, seed, round, side);
             for (uint256 j; j < targets.length; ++j) {
                 CombatCohort memory target = targets[j];
-                uint256 shots = distribute(
+                uint256 shots = distributeConserved(
                     shooter.count,
+                    prefixes[j],
                     target.count,
                     total,
                     seed,
                     round,
                     side,
                     shooter.key,
-                    target.key,
                     0
                 )
-                + distribute(
-                    extra, target.count, total, seed, round, side, shooter.key, target.key, 0
+                + distributeConserved(
+                    extra, prefixes[j], target.count, total, seed, round, side, shooter.key, 0
                 );
                 uint256 killed =
                     lossCount(target, shots, shooter.attack, seed, round, side, shooter.key);
@@ -130,13 +134,54 @@ library VeydriftCombatCohorts {
         uint256 incoming = shooter.count;
         for (uint256 chain; chain < 64; ++chain) {
             uint256 generated;
+            uint256 prefix;
             for (uint256 j; j < typePool.length; ++j) {
-                generated += rapidfireAt(shooter, typePool[j], incoming, chain, ctx);
+                generated += rapidfireAtConserved(
+                    shooter, typePool[j], incoming, chain, prefix, ctx
+                );
+                prefix += typePool[j].count;
             }
             if (generated == 0) break;
             extra += generated;
             incoming = generated;
         }
+    }
+
+    function rapidfireAtConserved(
+        CombatCohort memory shooter,
+        CombatCohort memory target,
+        uint256 incoming,
+        uint256 chain,
+        uint256 prefix,
+        FireContext memory ctx
+    ) internal pure returns (uint256) {
+        uint16 rapidfire = target.unit < 16
+            ? VeydriftCatalog.shipRapidfireAgainstShip(Ship(shooter.unit), Ship(target.unit))
+            : VeydriftCatalog.shipRapidfireAgainstDefense(
+                Ship(shooter.unit), Defense(target.unit - 16)
+            );
+        if (rapidfire <= 1) return 0;
+        uint256 selected = distributeConserved(
+            incoming,
+            prefix,
+            target.count,
+            ctx.total,
+            ctx.seed,
+            ctx.round,
+            ctx.side,
+            shooter.key,
+            1 + chain
+        );
+        return sample(
+            selected,
+            uint256(rapidfire - 1) * 10_000 / rapidfire,
+            ctx.seed,
+            ctx.round,
+            ctx.side,
+            shooter.key,
+            target.key,
+            30_000 + chain
+        );
     }
 
     function rapidfireAt(
@@ -175,7 +220,79 @@ library VeydriftCombatCohorts {
         );
     }
 
+    /// @dev Each assigned shot belongs to exactly one low/high hit subgroup.
     function lossCount(
+        CombatCohort memory target,
+        uint256 shots,
+        uint256 attack,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint256 firingKey
+    ) internal pure returns (uint256) {
+        if (
+            shots == 0 || target.count == 0 || attack == 0 || target.hull == 0
+                || attack <= target.shield / 100
+        ) return 0;
+        uint256 targeted = shots < target.count ? shots : target.count;
+        uint256 remainder = shots % targeted;
+        uint256 damage = attack * (shots / targeted);
+        return subgroupLoss(
+            target, targeted - remainder, damage, seed, round, side, firingKey, 65_536 + shots
+        )
+            + subgroupLoss(
+            target,
+            remainder,
+            damage + (remainder == 0 ? 0 : attack),
+            seed,
+            round,
+            side,
+            firingKey,
+            131_072 + shots
+        );
+    }
+
+    function subgroupLoss(
+        CombatCohort memory target,
+        uint256 count,
+        uint256 damage,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint256 firingKey,
+        uint256 lane
+    ) private pure returns (uint256) {
+        if (count == 0 || damage <= target.shield) return 0;
+        uint256 hullDamage = damage - target.shield;
+        if (hullDamage >= target.hull) return count;
+        uint256 chance = hullDamage * 10_000 / target.hull;
+        if (chance <= 3_000) return 0;
+        return sample(count, chance, seed, round, side, firingKey, target.key, lane);
+    }
+
+    /// @dev Shared stochastic offset on contiguous cumulative intervals telescopes
+    /// to exactly shots. Prefix is the count of lower-key cohorts (or lower RF types).
+    function distributeConserved(
+        uint256 shots,
+        uint256 prefix,
+        uint256 count,
+        uint256 total,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint256 firingKey,
+        uint256 lane
+    ) internal pure returns (uint256) {
+        if (shots == 0 || count == 0 || total == 0) return 0;
+        uint256 draw = stream(seed, round, side, firingKey, 0, lane) % total;
+        uint256 lower = shots * prefix;
+        uint256 upper = shots * (prefix + count);
+        return upper / total + (draw < upper % total ? 1 : 0) - lower / total
+            - (draw < lower % total ? 1 : 0);
+    }
+
+    // Frozen v1 continuation only. Never use for newly prepared battles.
+    function legacyLossCount(
         CombatCohort memory target,
         uint256 shots,
         uint256 attack,
