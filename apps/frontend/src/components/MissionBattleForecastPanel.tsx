@@ -13,7 +13,7 @@ export function prepareMissionBattleForecast(detail: MissionDetailResponse, now:
   const uncertain = (message: string): PreparedPublicTargetBattleForecast => ({ status: "complete", forecast: {
     kind: "uncertain", label: "Uncertain", detail: message, attackerPower: 0, defenderPower: null,
   } });
-  if (mission.combatResolutionProgress) return uncertain("Battle resolution is already in progress. Waiting for the actual report, not a new-model forecast.");
+  if (mission.combatResolutionProgress) return uncertain("Battle resolution is already in progress. The battle report will appear when it finishes.");
   if (!preview) return uncertain("Whole-battle public intel is unavailable. A single fleet is not substituted for the shared battle.");
   const asOf = Number(preview.asOf) * 1_000;
   const arrivalAt = Number(preview.arrivalAt) * 1_000;

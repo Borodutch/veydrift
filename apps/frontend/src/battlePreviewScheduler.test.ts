@@ -87,7 +87,7 @@ describe("BattlePreviewScheduler", () => {
     timers.runPending();
     workers[0]!.respond({ modelVersion: 1, requestId: workers[0]!.requests[0]!.requestId, forecast });
     expect(results).toEqual([]);
-    expect(errors).toEqual(["The battle preview model changed. Please refresh."]);
+    expect(errors).toEqual(["This battle preview is out of date. Please refresh."]);
   });
 
   test("does not resimulate an unchanged fleet and target", () => {

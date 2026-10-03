@@ -1145,7 +1145,7 @@ export function resolveVerifiedPublicTargetBattleForecast(
     outcomePreviewCache = new Map();
     return {
       ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false,
-      detail: "The live combat rules could not be verified. No battle odds are shown until the contract and simulator agree.",
+      detail: "Battle estimates are temporarily unavailable. Try again shortly.",
     };
   }
   const previewKey = battlePreviewInputKey(prepared.input);
@@ -2699,7 +2699,7 @@ function LazySimulatedBattleReportControl({
         if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
         stopWorker();
         if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
-          fail("The battle report model changed. Please refresh.");
+          fail("This battle report is out of date. Please refresh.");
           return;
         }
         if ("report" in event.data) setState({ status: "ready", report: event.data.report });

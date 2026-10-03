@@ -14,7 +14,7 @@ const workerScope = self as unknown as BattlePreviewWorkerScope;
 workerScope.onmessage = (event) => {
   const { input, requestId } = event.data;
   try {
-    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("Battle model mismatch");
+    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("This battle preview is out of date. Please refresh.");
     workerScope.postMessage({
       requestId,
       modelVersion: CONTRACT_COMBAT_MODEL_VERSION,

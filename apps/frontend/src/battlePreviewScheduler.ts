@@ -91,7 +91,7 @@ export class BattlePreviewScheduler {
           if (requestId !== this.activeRequestId || event.data.requestId !== requestId) return;
           this.finishWorker(worker);
           if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
-            onError("The battle preview model changed. Please refresh.");
+            onError("This battle preview is out of date. Please refresh.");
           } else if ("forecast" in event.data) {
             onResult(event.data.forecast);
           } else {

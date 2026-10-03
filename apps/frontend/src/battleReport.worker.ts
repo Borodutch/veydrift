@@ -22,7 +22,7 @@ const workerScope = self as unknown as BattleReportWorkerScope;
 workerScope.onmessage = (event) => {
   const { input, randomWord, requestId, sampleId } = event.data;
   try {
-    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("Battle model mismatch");
+    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("This battle report is out of date. Please refresh.");
     workerScope.postMessage({
       report: runContractBattle(input, randomWord, sampleId),
       requestId,
