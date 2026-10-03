@@ -82,6 +82,6 @@ worker, owns rendered live proof.
 - Inherited and namespaced storage compatibility, semantic upgrade continuation,
   runtime/initcode limits, full affected tests, exact-head independent review and CI.
 
-Integrated evidence: physical-shot regression3/3; staged math7/7 including full independent roster; historical cutover4/4 with recursive88-field/26-type layout guard; full actual proxy114 calls with13,748,535 peak gas under15M; shared Solidity/TS seeded digests30/30 (7,680 exact outcomes). See the [independent reproduction report](../packages/contracts/test/reports/COMBAT10-INDEPENDENT-REPRO.md). Full-suite regressions, independent review and CI remain separately tracked.
+Integrated evidence: physical-shot regression3/3; staged math7/7 including full independent roster; historical cutover4/4 with recursive88-field/26-type layout guard; full actual proxy114 calls with13,748,535 peak gas under15M; shared Solidity/TS seeded digests30/30 (7,680 exact outcomes). See the [independent reproduction report](../packages/contracts/test/reports/COMBAT10-INDEPENDENT-REPRO.md). The full canonical contract runner passes916 tests with0 failures and2 skips; deployment-dependent fork checks remain separate release gates. Chronology tests explicitly preserve atomic lazy-action rollback and require bounded permissionless continuation with durable progress; they do not treat Progress as completion. Final UI lifecycle review and CI remain separately tracked.
 
 This document records the model and gates, not a claim that release/QA is complete.
