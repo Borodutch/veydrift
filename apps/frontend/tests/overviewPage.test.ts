@@ -318,6 +318,11 @@ describe("overview queue progress display", () => {
     expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
   });
 
+  test("only equalizes queue rows in the multi-column layout", () => {
+    expect(overviewSource).toContain("grid min-w-0 gap-3 sm:auto-rows-fr sm:grid-cols-2 xl:grid-cols-4");
+    expect(overviewSource).not.toContain("min-h-[8.5rem]");
+  });
+
   test("uses the shared anchored action layout for production queue cards", () => {
     for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
       expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
