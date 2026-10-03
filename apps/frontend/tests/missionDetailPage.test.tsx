@@ -139,7 +139,7 @@ describe("MissionDetailPage probable outcome", () => {
       expect(text).toContain("Lead #1 · W 1 / S 2 / A 3");
       expect(text).toContain("Joined #2 · W 4 / S 5 / A 6");
       expect(text).toContain("Uncertain");
-      expect(text).toContain("live combat rules could not be verified");
+      expect(text).toContain("Battle estimates are temporarily unavailable. Try again shortly.");
     }
   });
   test("actual report or inactive leader removes the preview rather than leaving stale predictions", () => {
