@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { request } from "node:http";
+import { createServer as createHttpServer, request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
@@ -124,20 +124,24 @@ describe("hidden whitepaper", () => {
   });
 
   test("Vite development cannot serve the retained public PDF or page fallback", async () => {
-    // Only middleware/static serving is under test. Without dependency pre-bundling and the
-    // file watcher, server start cannot stall on a busy CI machine (it timed out at 20 s there).
-    const server = await createServer({
+    // Only Vite's middleware/static serving is under test, so run it in middleware mode on a
+    // plain loopback server. Vite's own listen() (hostname resolution + port probing) hung for
+    // 20 s whenever another Vite/Chrome browser suite ran concurrently on the CI Mac.
+    const vite = await createServer({
       root,
+      appType: "spa",
       optimizeDeps: { noDiscovery: true, include: [] },
-      server: { host: "127.0.0.1", port: 0, watch: null },
+      server: { middlewareMode: true, ws: false, watch: null },
     });
+    const server = createHttpServer(vite.middlewares);
     try {
-      await server.listen();
-      const address = server.httpServer!.address() as { port: number };
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address() as { port: number };
       await assertDisabled(`http://127.0.0.1:${address.port}/`);
       await assertNormalAssets(`http://127.0.0.1:${address.port}/`, true);
     } finally {
-      await server.close();
+      await new Promise((resolve) => server.close(resolve));
+      await vite.close();
     }
   }, 20_000);
 
