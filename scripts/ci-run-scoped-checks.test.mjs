@@ -216,3 +216,13 @@ test("contract test files that mutate process state get their own forge process"
   const sources = { "A.t.sol": "vm.setEnv(\"X\", \"1\");", "B.t.sol": "vm.writeJson(json, path);", "C.t.sol": "assertEq(1, 1);", "VeydriftStagedCombat.t.sol": "" };
   assert.deepEqual(splitTestFiles(Object.keys(sources), sources), { own: ["A.t.sol", "B.t.sol", "VeydriftStagedCombat.t.sol"], shared: ["C.t.sol"] });
 });
+
+test("unoptimized contract test list rejects files that carry src logic or fork checks", async () => {
+  const { profileProblems, unoptimizedTestFiles } = await import("../packages/contracts/scripts/check-test-profiles.mjs");
+  const src = new Set(["VeydriftGame", "VeydriftCatalog"]);
+  assert.deepEqual(unoptimizedTestFiles('compilation_restrictions = [\n  { paths = "test/A.t.sol", max_optimizer_runs = 0 },\n]'), ["test/A.t.sol"]);
+  assert.deepEqual(profileProblems("test/A.t.sol", "contract ATest is Test {}", src), []);
+  assert.deepEqual(profileProblems("test/B.t.sol", "contract Harness is VeydriftGame {}", src), ["Harness inherits src VeydriftGame"]);
+  assert.deepEqual(profileProblems("test/C.t.sol", 'import {Deploy} from "../script/Deploy.s.sol";', src), ["imports a deploy script"]);
+  assert.deepEqual(profileProblems("test/DFork.t.sol", "", src), ["is a mainnet-fork test"]);
+});

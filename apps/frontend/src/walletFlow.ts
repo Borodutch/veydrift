@@ -69,7 +69,10 @@ const FLEET_MISSION_RESOLUTION_GAS = "0x1000000";
 // mobile wallet provider (e.g. Trust Wallet on Android intermittently not
 // answering the first eth_accounts/eth_chainId) is detected and retried
 // quickly instead of leaving the player on "Reading wallet link".
-export const WALLET_BOOTSTRAP_READ_TIMEOUT_MS = 6_000;
+// The touch browser tests shorten it through Vite `define`; production builds never set it.
+declare const __TEST_WALLET_BOOTSTRAP_READ_TIMEOUT_MS__: number | undefined;
+export const WALLET_BOOTSTRAP_READ_TIMEOUT_MS =
+  typeof __TEST_WALLET_BOOTSTRAP_READ_TIMEOUT_MS__ === "number" ? __TEST_WALLET_BOOTSTRAP_READ_TIMEOUT_MS__ : 6_000;
 const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
 export const WATCHED_PLANETS_API_READ_TIMEOUT_MS = 25_000;

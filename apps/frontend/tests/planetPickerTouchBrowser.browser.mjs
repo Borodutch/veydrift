@@ -259,7 +259,12 @@ before(async () => {
     logLevel: "error",
     root: new URL("..", import.meta.url).pathname,
     // Fixture stores and mocked requests must not depend on a developer's .env.local.
-    define: { "import.meta.env.VITE_VEYDRIFT_API_URL": JSON.stringify("/local-api") },
+    // The cold-bootstrap tests wait out real wallet read timeouts; 1.5 s keeps the same
+    // timeout/retry sequence (retry spacing stays 1.2 s) without 6 s per attempt.
+    define: {
+      "import.meta.env.VITE_VEYDRIFT_API_URL": JSON.stringify("/local-api"),
+      __TEST_WALLET_BOOTSTRAP_READ_TIMEOUT_MS__: "1500",
+    },
     plugins: [{
       name: "browser-proof-route-gate",
       configureServer(vite) {

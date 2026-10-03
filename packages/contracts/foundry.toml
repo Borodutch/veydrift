@@ -8,6 +8,40 @@ optimizer_runs = 1
 via_ir = true
 cbor_metadata = false
 bytecode_hash = "none"
+# Faster test builds. Tests link the optimized src artifacts instead of compiling their own copies,
+# and test files listed below are compiled WITHOUT the via-IR optimizer (their own code only; the
+# src contracts they deploy keep the production settings). Most of the build time was the
+# optimizer running over test contracts. A test file stays optimized (unlisted) when it inherits
+# src code (harness), imports a deploy script, is a mainnet-fork test, or needs optimized code
+# to fit stack/gas (e.g. VeydriftStagedCohorts, VeydriftCombatArchitectureProxy).
+# scripts/check-test-profiles.mjs guards the list.
+dynamic_test_linking = true
+additional_compiler_profiles = [{ name = "tests", via_ir = true, optimizer = false, optimizer_runs = 0 }]
+compilation_restrictions = [
+  { paths = "test/RandomnessEngine.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftAntiRaidPrimitives.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftBatchFixtureExport.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftBodyProtectionRouter.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftClassicRapidfireCatalog.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftCombatCohorts.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftCombatPreparation.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftCombatPreviewCatalog.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftCombatPreviewFixtures.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftCombatReferenceParity.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftDefenseRepair.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftFormulaConformance.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftGame.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftLiquidityLauncher.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftLiveUpgradePolicy.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftMissionBatch.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftPlanetGeneration.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftScheduledReturns.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftSettlement.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftShipCatalog.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftSpaceDockSystem.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftStagedReviewRegression.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftToken.t.sol", max_optimizer_runs = 0 },
+]
 fs_permissions = [
   { access = "read-write", path = "./manifests" },
   { access = "read", path = "./combat-preview-catalog.json" }
