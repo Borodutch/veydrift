@@ -58,8 +58,12 @@ The bounded Reaper-only independent simulator has no Reaper-on-Reaper rapidfire,
 
 Tests require corrected production math when integrated. Oracle branch deliberately contains only tests/reference changes, not a standalone production fix.
 
-## Full-roster validation gap
+## Integrated full-roster validation
 
-The full7owner all-mobile plus resident defenses fixture is preserved unchanged. Corrected staged execution completes595 bounded calls; maximum observed step3,546,233 gas under the unchanged15,000,000 cap. However the test driver then exhausts its1,073,720,760 gas/memory budget during whole-roster verification. The separate whole-roster independent-parity test also exceeds that driver budget. Five other staged lifecycle/chunk/parity tests pass. These two failures remain visible, not skipped or relaxed; they require integration follow-up and are not proof of live transaction-envelope readiness. Attempted comparator-frame isolation did not resolve total driver gas and was removed.
+The full7owner all-mobile plus resident defenses fixture is preserved unchanged. At integrated head89a956b2, the staged suite passes7/7 including whole-roster independent parity:595 bounded calls, maximum3,574,937 gas per step under the unchanged15,000,000 cap. The initial failures were aggregate Forge driver exhaustion (1.238B consumed against default1.073B), not a failed individual transaction. The canonical runner now applies the existing100B aggregate-only multi-transaction allowance to this suite and the repeated historical-cutover driver too; every actual bounded call remains capped at15M. No roster dimensions, seeds or assertions were removed.
+
+The added complete Game ERC1967Proxy→Gameplay→Combat→Staged→helper fixture separately finishes114 committed transactions, peak13,748,535 call gas,220 committed participant snapshots, with dirty-storage/transient probes proving transaction isolation. Baseline used71 calls/13,731,777 peak. Corrected arithmetic needs more rounds/work but remains durably resumable. This finite full-diversity fixture is not a claim of a maximum eligible owner count.
+
+The shared combat-shot-fixtures.json pins30 independently derived configuration digests across all256 seeds each. Solidity checks production loss arithmetic against the independent reference at every round; TypeScript checks all7,680 exact seeded outcomes/round counts/survivors against the same digests (30/30).
 
 Candidate files tested: VeydriftCombatCohorts.sol SHA256 86e3e9f984c63a457f6ec5f8719f0a9916205523308143468541b563805fdcfc; staged source snapshot from contract worker during implementation. Parent must rerun at exact integrated head. No deployment, upgrade-boundary or live settlement validation is claimed here.

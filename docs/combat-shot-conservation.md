@@ -2,7 +2,7 @@
 
 ## Baseline and independent failure
 
-At Base block 52124394 (2026-10-03), runtime bytecode, after normalizing compiler
+At Base block 52124564 (2026-10-03), runtime bytecode, after normalizing compiler
 immutable/link slots, matched release 135269499d79622069d8f3e78850d9f58ae425db:
 
 | Graph node | Live address |
@@ -81,5 +81,7 @@ worker, owns rendered live proof.
   is not a production transaction allowance and establishes no arbitrary-owner cap.
 - Inherited and namespaced storage compatibility, semantic upgrade continuation,
   runtime/initcode limits, full affected tests, exact-head independent review and CI.
+
+Integrated evidence: physical-shot regression3/3; staged math7/7 including full independent roster; historical cutover4/4 with recursive88-field/26-type layout guard; full actual proxy114 calls with13,748,535 peak gas under15M; shared Solidity/TS seeded digests30/30 (7,680 exact outcomes). See the [independent reproduction report](../packages/contracts/test/reports/COMBAT10-INDEPENDENT-REPRO.md). Full-suite regressions, independent review and CI remain separately tracked.
 
 This document records the model and gates, not a claim that release/QA is complete.

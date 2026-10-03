@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
+import {
+    CombatCohort,
+    VeydriftCombatCohorts as Production
+} from "../src/libraries/VeydriftCombatCohorts.sol";
 import {Ship} from "../src/libraries/VeydriftTypes.sol";
 import {
     VeydriftCombatReferenceSimulator as Reference
@@ -39,6 +43,45 @@ contract VeydriftReaperShotReproTest is Test {
                 Math.Context(seed, round, 4),
                 attacker.key
             );
+            // The report is reference-derived; production must agree at EVERY round/seed.
+            assertEq(
+                Production.lossCount(
+                    CombatCohort(
+                        attacker.key,
+                        attacker.count,
+                        attacker.attack,
+                        attacker.shield,
+                        attacker.hull,
+                        attacker.unit
+                    ),
+                    defender.count,
+                    defender.attack,
+                    seed,
+                    round,
+                    1,
+                    defender.key
+                ),
+                aLost
+            );
+            assertEq(
+                Production.lossCount(
+                    CombatCohort(
+                        defender.key,
+                        defender.count,
+                        defender.attack,
+                        defender.shield,
+                        defender.hull,
+                        defender.unit
+                    ),
+                    attacker.count,
+                    attacker.attack,
+                    seed,
+                    round,
+                    4,
+                    attacker.key
+                ),
+                dLost
+            );
             attacker.count -= aLost;
             defender.count -= dLost;
             result.rounds = round;
@@ -62,7 +105,7 @@ contract VeydriftReaperShotReproTest is Test {
         c.key = uint256(keccak256(abi.encode(c.unit, c.attack, c.shield, c.hull)));
     }
 
-    function testSpecializedReaperMatchesFullReferenceFixture() public {
+    function testSpecializedReaperMatchesFullReferenceFixture() public view {
         assertLe(VeydriftCatalog.shipRapidfireAgainstShip(Ship.Reaper, Ship.Reaper), 1);
         for (uint256 seed = 1; seed <= 8; ++seed) {
             Reference.BattleInput memory input;
@@ -91,10 +134,16 @@ contract VeydriftReaperShotReproTest is Test {
         uint256 maxA;
         uint256 minD = type(uint256).max;
         uint256 maxD;
+        bytes32 digest;
         for (uint256 seed = 1; seed <= 256; ++seed) {
             Reference.BattleResult memory result = this.simulate(a, d, at, dt, seed);
             uint256 leftA = result.attackerShips[uint8(Ship.Reaper)];
             uint256 leftD = result.defenderShips[uint8(Ship.Reaper)];
+            digest = keccak256(
+                abi.encode(
+                    digest, seed, leftA, leftD, uint256(result.rounds), uint8(result.outcome)
+                )
+            );
             assertLe(leftA, a);
             assertLe(leftD, d);
             assertLe(result.rounds, 6);
@@ -107,6 +156,18 @@ contract VeydriftReaperShotReproTest is Test {
             if (leftD > maxD) maxD = leftD;
         }
         assertEq(outcomes[0] + outcomes[1] + outcomes[2], 256);
+        emit log_named_string(
+            "fixture key", string.concat("case", vm.toString(keccak256(abi.encode(a, d, at, dt))))
+        );
+        assertEq(
+            digest,
+            vm.parseJsonBytes32(
+                vm.readFile("./combat-shot-fixtures.json"),
+                string.concat(".cases.case", vm.toString(keccak256(abi.encode(a, d, at, dt))))
+            ),
+            "reviewed cross-language seeded fixture drift"
+        );
+        emit log_named_bytes32("seeded outcomes digest", digest);
         emit log_named_uint("attacker initial", a);
         emit log_named_uint("defender initial", d);
         emit log_named_uint("attacker wins", outcomes[0]);

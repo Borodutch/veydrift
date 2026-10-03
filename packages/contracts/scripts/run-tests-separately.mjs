@@ -33,7 +33,7 @@ export function parseShard(value) {
 // actual resolver call remains explicitly capped at 15M in the Solidity fixture.
 function forgeTestArgs(file) {
   const args = ["test", "--match-path", `test/${file}`];
-  if (["VeydriftStagedCombat.t.sol", "VeydriftConservedProxyGas.t.sol"].includes(file)) {
+  if (["VeydriftStagedCombat.t.sol", "VeydriftStagedCohorts.t.sol", "VeydriftConservedProxyGas.t.sol", "VeydriftCombatCutover.t.sol"].includes(file)) {
     args.push("--isolate", "--gas-limit", "100000000000");
   }
   // vm.setEnv is process-global. Negative authority/migration fixtures must not race.
@@ -81,6 +81,11 @@ function main() {
     forge(["test", "--match-path", glob]);
   }
   for (const file of own) forge(forgeTestArgs(file));
+  if (testFiles.includes("VeydriftCombatCutover.t.sol")) {
+    const result = spawnSync(process.execPath, ["test/support/check-combat-cutover-layout.mjs"], {stdio: "inherit"});
+    if (result.error) throw result.error;
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

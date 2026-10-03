@@ -44,7 +44,8 @@ compilation_restrictions = [
 ]
 fs_permissions = [
   { access = "read-write", path = "./manifests" },
-  { access = "read", path = "./combat-preview-catalog.json" }
+  { access = "read", path = "./combat-preview-catalog.json" },
+  { access = "read", path = "./combat-shot-fixtures.json" }
 ]
 
 [rpc_endpoints]
