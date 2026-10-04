@@ -80,7 +80,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       await frame();
     }
     async function press(key) {
-      const code=key===' ' ? 'Space' : key, vk=key===' ' ? 32 : key==='Enter' ? 13 : 27;
+      const code=key===' ' ? 'Space' : key, vk=key===' ' ? 32 : key==='Enter' ? 13 : key==='Tab' ? 9 : 27;
       await send('Input.dispatchKeyEvent', {type:'keyDown',key,code,windowsVirtualKeyCode:vk,...(key==='Enter'?{text:'\r'}:{})});
       await send('Input.dispatchKeyEvent', {type:'keyUp',key,code,windowsVirtualKeyCode:vk});
       await frame();
@@ -145,7 +145,55 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...tooltipPoint});
     await new Promise(resolve=>setTimeout(resolve,200));
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Overview');
+    await press('Escape');
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'hover tooltip remains dismissible');
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
+    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Overview');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:500,y:20});
+    await new Promise(resolve=>setTimeout(resolve,200));
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'leaving the hover target dismisses its label');
+    // Real Tab navigation must retain labels when focus auto-scrolls the rail.
+    await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
+    const overview=desktop+' a[aria-label="Overview"]';
+    const earn=desktop+' a[aria-label="Earn $10"]';
+    const settle = async () => { await frame(); await frame(); await new Promise(resolve=>setTimeout(resolve,60)); };
+    async function assertFocusedTooltip(label) {
+      await settle();
+      const geometry=await evaluate('(() => {const link=document.activeElement,r=link.getBoundingClientRect(),t=document.querySelector("[role=tooltip]"),b=t?.getBoundingClientRect(),n=document.querySelector('+JSON.stringify(desktop)+').getBoundingClientRect();return {focus:link.getAttribute("aria-label"),label:t?.textContent,aligned:Boolean(b && Math.abs((b.top+b.bottom-r.top-r.bottom)/2)<1 && b.left===n.right+8),scroll:document.querySelector("#desktop-navigation-links").scrollTop};})()');
+      assert.equal(geometry.focus,label);
+      assert.equal(geometry.label,label,JSON.stringify(geometry));
+      assert.ok(geometry.aligned,JSON.stringify(geometry));
+      return geometry.scroll;
+    }
+    await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
+    await assertFocusedTooltip('Overview');
+    let scroll=0;
+    for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Earn $10']) {
+      await press('Tab');
+      scroll=await assertFocusedTooltip(label);
+    }
+    assert.ok(scroll>0,'Tab must exercise overflowing navigation');
+    // Focusing an offscreen link directly also auto-scrolls it into view.
+    await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()'); await settle();
+    await evaluate('document.querySelector('+JSON.stringify(earn)+').focus()');
+    await assertFocusedTooltip('Earn $10');
+    // Scrolling the focused link out of view hides it, and back restores it.
+    await evaluate('document.querySelector("#desktop-navigation-links").scrollTop=0'); await settle();
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
+    await evaluate('document.querySelector('+JSON.stringify(earn)+').scrollIntoView({block:"nearest"})');
+    await assertFocusedTooltip('Earn $10');
+    await press('Escape');
+    await evaluate('document.querySelector("#desktop-navigation-links").scrollTop-=1'); await settle();
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'scroll must not undo Escape dismissal');
+    await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
+    await assertFocusedTooltip('Overview');
+    // A desktop resize repositions the label; mobile must never retain its portal.
+    await send('Emulation.setDeviceMetricsOverride',{width:1024,height:600,deviceScaleFactor:1,mobile:false});
+    await assertFocusedTooltip('Overview');
+    await send('Emulation.setDeviceMetricsOverride',{width:390,height:800,deviceScaleFactor:1,mobile:true}); await settle();
+    assert.equal(await evaluate('getComputedStyle(document.querySelector('+JSON.stringify(desktop)+')).display'),'none');
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
+    await send('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false}); await settle();
     await evaluate('document.querySelector('+JSON.stringify(account)+').focus()'); await press('Enter');
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(account)+').parentElement.open'),true);
     await click(desktop+' button[aria-label="Expand Commander profile"]');

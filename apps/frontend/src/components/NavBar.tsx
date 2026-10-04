@@ -1082,21 +1082,32 @@ function RailTooltip({ label }: { label: string }) {
     const update = () => {
       if (dismissed || (!hovered && document.activeElement !== link)) { setPosition(null); return; }
       const rect = link.getBoundingClientRect();
+      const viewport = link.parentElement?.getBoundingClientRect();
+      if (!rect.width || !rect.height || !viewport
+        || rect.bottom <= Math.max(0, viewport.top) || rect.top >= Math.min(window.innerHeight, viewport.bottom)
+        || rect.right <= Math.max(0, viewport.left) || rect.left >= Math.min(window.innerWidth, viewport.right)) {
+        setPosition(null);
+        return;
+      }
       setPosition({ left: (link.closest("nav")?.getBoundingClientRect().right ?? rect.right) + 8, top: rect.top + rect.height / 2 });
     };
     const enter = () => { cancelHide(); hovered = true; dismissed = false; update(); };
     const leave = () => { hovered = false; if (document.activeElement !== link) scheduleHide(); };
-    const focus = () => { dismissed = false; update(); };
+    const focus = () => { cancelHide(); dismissed = false; update(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { dismissed = true; setPosition(null); } };
     link.addEventListener("mouseenter", enter);
     link.addEventListener("mouseleave", leave);
     link.addEventListener("focus", focus);
     link.addEventListener("blur", update);
     window.addEventListener("keydown", escape);
-    // Hide stale positions on scroll/resize, including switching to mobile.
-    const hide = () => setPosition(null);
-    window.addEventListener("scroll", hide, true);
-    window.addEventListener("resize", hide);
+    // Focus can auto-scroll the rail: reposition visible focused links, but
+    // dismiss hover-only labels and labels clipped away or hidden on mobile.
+    const reposition = () => {
+      if (document.activeElement === link) update();
+      else setPosition(null);
+    };
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
     update();
     return () => {
       cancelHide();
@@ -1105,8 +1116,8 @@ function RailTooltip({ label }: { label: string }) {
       link.removeEventListener("focus", focus);
       link.removeEventListener("blur", update);
       window.removeEventListener("keydown", escape);
-      window.removeEventListener("scroll", hide, true);
-      window.removeEventListener("resize", hide);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
     };
   }, []);
   return <>
