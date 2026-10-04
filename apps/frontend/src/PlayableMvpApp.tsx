@@ -1,5 +1,4 @@
-import { assertDefenseSettlementReady } from "./defenseSettlement";
-import { playerNotice } from "./playerNotice";
+import { AttackReadinessError, playerNotice } from "./playerNotice";
 import { evaluateProductionPlan, maxAddableProduction, productionDraftKey, type ProductionOrder } from "./productionBuildPlan";
 import { useProductionBuildPlan } from "./useProductionBuildPlan";
 import { productionPlanContext } from "./productionBuildPlanContext";
@@ -35,7 +34,6 @@ import { BatchSupplyModal } from "./components/BatchSupplyModal";
 import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { emptyMissionCargoDraft, normalizeMissionCargoDraft, type MissionCargoDraft } from "./components/missionCargoModel";
 import { EMPTY_MISSION_CONTROL_FILTERS, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, normalizeMissionControlFilters, persistMissionControlView, resolveMissionControlView, type MissionControlFilters, type MissionControlView } from "./components/missionControlModel";
-import { type ManualMissionResolutionKind } from "./components/MissionControlPage";
 import { type CombatTechLevels, type JoinAttackForecastContext, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { NavBar, type Page } from "./components/NavBar";
 import { type OverviewMyPlanetActionGroup, type PlanetRenameActionState } from "./components/OverviewPage";
@@ -164,7 +162,6 @@ import {
   sendBurningChickenMoonTransaction,
   sendBuyPaidAllianceInviteTransaction,
   sendCancelAllianceJoinRequestTransaction,
-  sendCompleteFleetMissionReturnTransaction,
   sendCreateAllianceTransaction,
   sendCreateColonyTransaction,
   sendDepositResourceTransaction,
@@ -184,12 +181,10 @@ import {
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
   fetchMission,
-  sendResolveFleetMissionTransaction,
   sendRevokeDelegateTransaction,
   sendSetDelegateTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
-  sendFinishDefenseProductionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
   sendStartMoonShipProductionTransaction,
@@ -328,7 +323,7 @@ export function missionOriginResources({
 
 function missionMoonResources(moonState: ChainMoonState | null | undefined): PlayableState["resources"] | undefined {
   if (!moonState?.moon?.exists) return undefined;
-  const resources = moonState.resources;
+  const resources = moonState.resourcesAsOfNow ?? moonState.resources;
   return {
     metal: safeResourceNumber(resources?.metal) ?? 0,
     crystal: safeResourceNumber(resources?.crystal) ?? 0,
@@ -344,7 +339,7 @@ export function missionMoonShipyardState({ moonState, shipyardState }: { moonSta
     homePlanetId: moonState.homePlanetId,
     planetId: moonState.moon.planetId,
     productionAvailable: true,
-    resources: moonState.resources ?? {
+    resources: moonState.resourcesAsOfNow ?? moonState.resources ?? {
       metal: "0",
       crystal: "0",
       deuterium: "0",
@@ -374,7 +369,7 @@ const buildingFinishLiveStateRequiredLabel = "Can't verify the current building 
 const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel = `${serverUnavailableRetryMessage()} Building actions are paused until current game state is available.`;
 export const infrastructureMissionResolutionPendingLabel =
-  "A mission is still resolving at this planet. Wait for it to finish, then refresh before starting another upgrade.";
+  "A mission is still in progress at this planet. Wait for it to finish before starting another upgrade.";
 
 
 export const previousMissionIndexingBlockerLabel = "Waiting for the previous mission to update.";
@@ -2877,12 +2872,6 @@ export function PlayableMvpApp({
   const defenseError = defenseSnapshot?.error;
 
   const [defenseAction, setDefenseAction] = useTransactionAction<DefenseActionState>(backendData, account, "defense", activePlanetId);
-  const finishDefenseSnapshot = useBackendDataSnapshot<WriteTransactionState>(backendData, backendData?.writeTransactionKey("defense:finish", account, activePlanetId));
-  const finishDefensePhase = finishDefenseSnapshot?.data?.phase;
-  // Unknown submissions must be reconciled, never retried by this finish control.
-  const finishDefensePending = finishDefensePhase !== undefined && !["idle", "success", "error"].includes(finishDefensePhase);
-  const defenseContextRef = useRef({ account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig });
-  defenseContextRef.current = { account, signerAccount, activePlanetId, activeBodyKind, runtimeConfig };
   const allianceQuery = backendData && account ? backendData.queries.alliance(account) : undefined;
   const { snapshot: allianceSnapshot, isInitialLoading: allianceLoading } = useBackendDataQuery<ChainAllianceState>(allianceQuery, shouldRefreshAllianceStateForPage(page));
   const allianceState = allianceSnapshot?.data ?? null;
@@ -4412,29 +4401,6 @@ export function PlayableMvpApp({
     [account, defenseState?.homePlanetId, defenseState?.queue, defenseState?.resourceSnapshot, gameContract, provider, backendData, runDefenseTransaction, signerAccount],
   );
 
-  const handleFinishDefense = useCallback(() => {
-    const planetId = activePlanetId;
-    if (!provider || !signerAccount || !account || !gameContract || !planetId || !backendData || activeBodyKind !== "planet" || finishDefensePending) return;
-    const context = defenseContextRef.current;
-    const assertContext = () => {
-      const current = defenseContextRef.current;
-      if (current.account !== context.account || current.signerAccount !== context.signerAccount || current.activePlanetId !== context.activePlanetId || current.activeBodyKind !== context.activeBodyKind || current.runtimeConfig !== context.runtimeConfig) {
-        throw new Error("Wallet or planet changed before submission. Please try again.");
-      }
-    };
-    void runDefenseTransaction(
-      "Finish defenses",
-      "defense:finish",
-      async transactionProvider => {
-        const fresh = await backendData.defenses(account, planetId, { fresh: true });
-        assertContext();
-        assertDefenseSettlementReady(fresh, account, planetId);
-        return sendFinishDefenseProductionTransaction(transactionWalletProvider(transactionProvider, assertContext), signerAccount, gameContract, planetId);
-      },
-      backendData.indexing.production(account, planetId, "defenses"),
-    );
-  }, [account, activeBodyKind, activePlanetId, backendData, finishDefensePending, gameContract, provider, runDefenseTransaction, signerAccount]);
-
   const handleCreateAlliance = useCallback(
     (tag: string, name: string, description: string) => {
       if (!provider || !signerAccount || !account || !allianceContract) {
@@ -5668,12 +5634,10 @@ export function PlayableMvpApp({
             if (!apiBaseUrl) throw new Error("Missing API connection");
             readiness = await backendData!.queries.randomnessReadiness().read();
           } catch {
-            throw new Error("Randomness safety status is unavailable. New attacks are temporarily paused.");
+            throw new AttackReadinessError();
           }
           if (readiness.ready !== true) {
-            throw new Error(Array.isArray(readiness.reasons) && typeof readiness.reasons[0] === "string"
-              ? playerNotice(readiness.reasons[0])
-              : "Randomness safety is not ready. New attacks are temporarily paused.");
+            throw new AttackReadinessError();
           }
         },
         validateAttackProtection,
@@ -6016,52 +5980,6 @@ export function PlayableMvpApp({
       );
     },
     [account, displayFleetVisibility, gameContract, provider, runMissionTransaction, signerAccount],
-  );
-
-  const handleResolveMission = useCallback(
-    (missionId: string, kind: ManualMissionResolutionKind) => {
-      if (!provider || !signerAccount || !account || !gameContract) {
-        setMissionAction({
-          status: "error",
-          label: "Wallet or game connection is unavailable.",
-        });
-        return;
-      }
-
-      const mission =
-        missionDetail?.mission?.missionId === missionId
-          ? missionDetail.mission
-          : [...(displayFleetVisibility?.incoming ?? []), ...(displayFleetVisibility?.outgoing ?? []), ...(displayFleetVisibility?.returning ?? []), ...displayAllActiveMissions].find(
-              (candidate) => candidate.missionId === missionId,
-            );
-      const destinationOwned = mission ? mission.targetPlanet?.owner?.toLowerCase() === account.toLowerCase() || walletPlanets.some((planet) => planet.planetId === mission.targetPlanetId) : false;
-      const originOwned = mission?.owner.toLowerCase() === account.toLowerCase();
-      const changedBody =
-        mission && ((kind === "arrival" && destinationOwned) || (kind === "return" && originOwned))
-          ? {
-              bodyKind: (kind === "arrival" ? mission.targetIsMoon : mission.originIsMoon) ? ("moon" as const) : ("planet" as const),
-              planetId: kind === "arrival" ? mission.targetPlanetId : mission.originPlanetId,
-            }
-          : undefined;
-
-      // A large battle can take several transactions, so one receipt only advances it.
-      const isBattle = kind === "arrival" && (mission?.missionType === "Attack" || mission?.missionType === "AcsAttack");
-      runMissionTransaction(
-        isBattle ? `Advance battle for mission #${missionId}` : `Resolve mission #${missionId}`,
-        (provider: Eip1193Provider) =>
-          kind === "arrival" ? sendResolveFleetMissionTransaction(provider, signerAccount, gameContract, missionId) : sendCompleteFleetMissionReturnTransaction(provider, signerAccount, gameContract, missionId),
-        changedBody,
-        // The resolver daemon may have settled this leg since the list rendered: never sign a no-op.
-        backendData
-          ? async () => {
-              const { mission: fresh } = await fetchMission(backendData.apiBaseUrl, missionId);
-              const pending = kind === "arrival" ? fresh.status === "Outbound" : fresh.status === "Returning" || fresh.status === "Recalled";
-              if (!pending) throw new Error(`Mission #${missionId} is already resolved.`);
-            }
-          : undefined,
-      );
-    },
-    [account, backendData, displayAllActiveMissions, displayFleetVisibility, gameContract, missionDetail, provider, runMissionTransaction, signerAccount, walletPlanets],
   );
 
   // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +
@@ -6674,7 +6592,6 @@ export function PlayableMvpApp({
           onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
-          onResolve={handleResolveMission}
           onRetry={loadMissionDetail}
           onSelectCoordinates={handleSelectPlanet}
           onSelectMoon={handleSelectMoon}
@@ -7029,7 +6946,6 @@ export function PlayableMvpApp({
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
-          onResolve={handleResolveMission}
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
@@ -7081,8 +6997,6 @@ export function PlayableMvpApp({
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
-          onFinish={handleFinishDefense}
-          finishPending={finishDefensePending}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}

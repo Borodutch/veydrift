@@ -1078,7 +1078,7 @@ describe("Playable MVP app display helpers", () => {
         },
         ships: { smallCargo: 1 },
       }),
-    ).toBe("Mission is still resolving. Refresh after it finishes before launching another fleet.");
+    ).toBe("Mission is still in progress. Try again after it finishes before launching another fleet.");
 
     const blocker = missionShipInventoryBlocker({
       shipyardState: {

@@ -764,28 +764,15 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Join");
   });
 
-  test("submits the correct permissionless resolution phase from the status control", () => {
+  test("never asks players to fund overdue mission completion", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    const requests: Array<[string, "arrival" | "return"]> = [];
     const page = MissionControlPage({
       ...missionControlProps(now, {
         outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true, resolutionEligible: true }],
       }),
-      onResolve: (missionId, kind) => requests.push([missionId, kind]),
     });
     const resolve = findElements(page, "button").find((button) => collectText(button).includes("Resolve"));
-    let prevented = false;
-    let stopped = false;
-
-    expect(resolve).toBeDefined();
-    (resolve?.props?.onClick as ((event: { preventDefault: () => void; stopPropagation: () => void }) => void) | undefined)?.({
-      preventDefault: () => { prevented = true; },
-      stopPropagation: () => { stopped = true; },
-    });
-
-    expect(requests).toEqual([["32", "arrival"]]);
-    expect(prevented).toBe(true);
-    expect(stopped).toBe(true);
+    expect(resolve).toBeUndefined();
   });
 
   test("partitions own, incoming, and joinable active missions so My missions reflects fleet-slot usage", () => {
@@ -1033,7 +1020,7 @@ describe("Mission Control battle reports", () => {
     expect(unknownText).toContain("All (…)");
   });
 
-  test("offers permissionless overdue resolution for other players in All active", () => {
+  test("shows other players overdue missions without a completion order", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const mine = mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000);
     // The contract resolution entrypoint is permissionless, so another player's mission gets the
@@ -1052,8 +1039,8 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("All (2)");
     // The other player's mission appears on the universe-wide All tab...
     expect(text).toContain("#90");
-    expect(text).toContain("Resolving");
-    expect(text).toContain("Resolve");
+    expect(text).toContain("Updating mission");
+    expect(text).not.toContain("Resolve");
   });
 
   test("adds My missions / All past tabs; All lists the paginated universe-wide completed archive (VEY-KANEO-402)", () => {
@@ -1547,7 +1534,7 @@ describe("Mission Control battle reports", () => {
     }))).join(" ").replace(/\s+/g, " ");
 
     expect(text).not.toContain("Needs orders now");
-    expect(text).toContain("Resolving 4/6");
+    expect(text).toContain("Battle in progress");
   });
 
   test("renders authoritative grouped casualty and survivor counts", () => {
@@ -1588,9 +1575,9 @@ describe("Mission Control battle reports", () => {
       },
       battleReport: null,
     }))).join(" ").replace(/\s+/g, " ");
-    expect(text).toContain("Combat is preparing");
+    expect(text).toContain("Preparing battle");
     expect(text).not.toContain("0 of up to 6");
-    expect(text).toContain("Combat will continue automatically");
+    expect(text).toContain("The report will appear when combat ends");
     expect(text).not.toContain("Generating battle report");
   });
 
@@ -1605,8 +1592,8 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ").replace(/\s+/g, " ");
 
-    expect(text).toContain("Combat resolving: 4 of up to 6 rounds complete");
-    expect(text).toContain("Combat will continue automatically");
+    expect(text).toContain("Battle in progress");
+    expect(text).toContain("The report will appear when combat ends");
     expect(text).not.toContain("Report generating, please hold");
   });
 
@@ -1638,10 +1625,9 @@ describe("Mission Control battle reports", () => {
 
     expect(text).not.toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
-    // The funded resolver has been late for three full minutes, so mission detail exposes the same
-    // permissionless fallback beside its Resolving pill.
-    expect(text).toContain("Resolving");
-    expect(text).toContain("Resolve");
+    // A completed report is authoritative; no completion order or interim badge.
+    expect(text).not.toContain("Updating mission");
+    expect(text).not.toContain("Resolve");
     // VEY-395 rework: the mission-detail page subtitle was removed.
     expect(text).not.toContain("Shareable mission state");
     // VEY-KANEO-339: the report header control is a share affordance (native share dialog + clipboard
@@ -1846,7 +1832,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Stationed");
     expect(text).toContain("Holds");
     expect(text).toContain("Recall fleet");
-    expect(text).not.toContain("Resolving");
+    expect(text).not.toContain("Updating mission");
     expect(text).not.toContain("The recall cutoff has passed");
   });
 
@@ -1866,7 +1852,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Recall fleet");
     expect(text).toContain("Recall cost");
     expect(text).toContain("No additional deuterium");
-    expect(text).not.toContain("resolving");
+    expect(text).not.toContain("updating mission");
     expect(text).not.toContain("Not recallable");
   });
 
@@ -2261,7 +2247,7 @@ describe("Mission Control battle reports", () => {
 
     // The fleet has not reached its target, so there is nothing to fight: the notice must be hidden.
     expect(text).not.toContain("No indexed battle report");
-    expect(text).not.toContain("Combat is due or resolving");
+    expect(text).not.toContain("Battle in progress");
     expect(text).not.toContain("Battle Report");
   });
 
@@ -2274,7 +2260,7 @@ describe("Mission Control battle reports", () => {
     }))).join(" ");
 
     expect(text).not.toContain("No indexed battle report");
-    expect(text).not.toContain("Combat is due or resolving");
+    expect(text).not.toContain("Battle in progress");
   });
 
   test("VEY-KANEO-571: hides the 'no battle report' notice for a returned recalled attack", () => {
@@ -2289,7 +2275,7 @@ describe("Mission Control battle reports", () => {
     }))).join(" ");
 
     expect(text).not.toContain("No indexed battle report");
-    expect(text).not.toContain("Combat is due or resolving");
+    expect(text).not.toContain("Battle in progress");
   });
 
   test("VEY-KANEO-571: still shows the missing-report notice for a normal returned attack", () => {
@@ -2316,7 +2302,7 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ");
 
-    expect(text).toContain("Combat is due or resolving");
+    expect(text).toContain("Battle in progress");
     expect(text).not.toContain("No indexed battle report");
   });
 
@@ -2993,7 +2979,6 @@ function missionControlProps(
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
-    onResolve: () => undefined,
     onRefresh: () => undefined,
   };
 }
@@ -3029,7 +3014,6 @@ function missionDetailProps(
     onBack: () => undefined,    onShareReport: () => undefined,
     onCounterplay: () => undefined,
     onRecall: () => undefined,
-    onResolve: () => undefined,
     onRetry: () => undefined,
     onSelectCoordinates: () => undefined,
     onSelectPlayer: () => undefined,
@@ -3204,7 +3188,7 @@ describe("VEY-905 ordered manual eligibility", () => {
     const control = MissionControlPage(missionControlProps(now, { returning: [ready] }));
     const detail = MissionDetailPage(missionDetailProps(now, { mission: ready, battleReport: null }));
     for (const tree of [control, detail]) {
-      expect(findElements(tree, "button").some(button => collectText(button).includes("Resolve"))).toBe(true);
+      expect(findElements(tree, "button").some(button => collectText(button).includes("Resolve"))).toBe(false);
     }
   });
 });
@@ -3257,8 +3241,8 @@ describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO
 
     expect(text).not.toContain("Game maintenance is active");
     expect(text).not.toContain("Paused for maintenance");
-    expect(text).toContain("Resolving");
-    expect(text).toContain("Resolve");
+    expect(text).toContain("Updating mission");
+    expect(text).not.toContain("Resolve");
     expect(missionControlSource).not.toContain("GAME_MAINTENANCE_MESSAGE");
   });
 });
@@ -3318,7 +3302,7 @@ describe("chronology-queued and staged battle labels", () => {
     for (const queued of [queuedArrival, queuedReturn]) {
       expect(missionStatusPill(queued, now).label).toBe("Queued");
       expect(collectText(MissionDetailPage(missionDetailProps(now, { mission: { ...queued, missionType: "Attack" }, battleReport: null }))).join(" "))
-        .toContain("an earlier fleet event at this location must resolve first");
+        .toContain("Waiting for earlier fleet activity at this location to finish");
     }
   });
 
@@ -3330,6 +3314,6 @@ describe("chronology-queued and staged battle labels", () => {
     };
     expect(missionStatusPill(staged, now).label).toBe("Preparing battle");
     expect(missionStatusPill({ ...staged, combatResolutionProgress: { roundsCompleted: 2, totalRounds: 6 } }, now).label)
-      .toBe("Resolving 2/6");
+      .toBe("Battle in progress");
   });
 });

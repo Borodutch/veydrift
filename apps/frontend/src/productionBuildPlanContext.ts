@@ -73,7 +73,8 @@ export function productionPlanContext(body: ProductionBody, states: {
     shipBacklogLength: shipQueue?.backlog?.length,
     defenseQueue: queueForPlan(defenseQueue, defenseCatalog),
     defenseBacklogLength: defenseQueue?.backlog?.length,
-    capacityQueue: moon?.defenseQueue ?? (defense?.unsettledQueue !== undefined ? defense.unsettledQueue : defense?.queue),
-    defenseCounts: (moon?.defenses ?? (defense?.unsettledQueue !== undefined ? defense?.defenses : defense?.launchableDefenses ?? defense?.defenses)) ?? [],
+    // Effective inventory and remaining queue are one pair on both bodies.
+    capacityQueue: defenseQueue,
+    defenseCounts: defenseRows,
   };
 }

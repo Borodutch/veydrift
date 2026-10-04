@@ -568,7 +568,7 @@ export function buildDebrisTargets({
 }): DebrisFinderTarget[] {
   const availableRecyclers = recyclerCount(shipyardState);
   const fleetSlots = shipyardState?.fleetSlots;
-  const deuterium = safeNumber(shipyardState?.resources?.deuterium);
+  const deuterium = safeNumber((shipyardState?.resourcesAsOfNow ?? shipyardState?.resources)?.deuterium);
 
   return targets.flatMap((target) => {
     const metal = positiveInt(safeNumber(target.debris.metal));

@@ -252,7 +252,5 @@ export function isMissionQueued(mission: FleetMissionSummary): boolean {
 
 // Staged battles prepare before round 1, so zero completed rounds is preparation, not "0/6".
 export function combatProgressLabel(progress: { roundsCompleted: number; totalRounds: number }): string {
-  return progress.roundsCompleted === 0
-    ? "Preparing battle"
-    : `Resolving ${progress.roundsCompleted}/${progress.totalRounds}`;
+  return progress.roundsCompleted === 0 ? "Preparing battle" : "Battle in progress";
 }

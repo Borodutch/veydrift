@@ -1,3 +1,4 @@
+import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
@@ -1987,7 +1988,7 @@ export function preparePublicTargetBattleForecast(
     return complete({
       kind: "uncertain",
       label: "Uncertain",
-      detail: playerNotice(joinAttackContext.unavailableReason),
+      detail: battleForecastUnavailableNotice(),
       attackerPower,
       defenderPower: null,
       ...forecastTech,

@@ -638,6 +638,7 @@ describe("mission creation", () => {
           jumpGateReadyAt: "0",
         },
         resources: { metal: "0", crystal: "0", deuterium: "100" },
+        resourcesAsOfNow: { metal: "0", crystal: "0", deuterium: "300" },
         buildings: [],
         defenses: [],
         queue: null,
@@ -660,6 +661,7 @@ describe("mission creation", () => {
       },
     });
 
+    expect(state?.resources?.deuterium).toBe("300");
     expect(state?.fleetSlots).toEqual({ active: 5, limit: 6 });
     expect(state?.ships.find((ship) => ship.id === 0)?.count).toBe(1);
     expect(playableMvpAppSource).toContain("backendData.shipyard(account, originPlanetId, { fresh: true })");

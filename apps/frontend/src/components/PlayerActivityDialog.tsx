@@ -339,7 +339,6 @@ export function PlayerActivitySkeleton({ rowCount = 3 }: { rowCount?: number } =
 
 export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: PlayerActivityItem }) {
   const Icon = activityCategoryIcon(item.category);
-  const transactionDelayed = item.transactionHash && Math.abs(Number(item.transactionAt) - Number(item.occurredAt)) > 60;
   const detail = activityDetail(item);
   return (
     <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-3">
@@ -366,7 +365,6 @@ export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: 
           <time className="block whitespace-nowrap text-[11px] font-medium text-slate-300" dateTime={activityIsoTime(item.occurredAt)}>
             {formatActivityTime(item.occurredAt)}
           </time>
-          {transactionDelayed ? <span className="block whitespace-nowrap text-[9px] text-slate-500">Recorded {formatActivityTime(item.transactionAt)}</span> : null}
         </div>
         {item.transactionHash ? (
           <a
@@ -437,7 +435,6 @@ function activityCategoryIcon(category: PlayerActivityCategory): LucideIcon {
 
 function activityIconTone(item: PlayerActivityItem): string {
   if (item.direction === "incoming") return "border-rose-300/20 bg-rose-300/10 text-rose-200";
-  if (item.reconciliation === "projected") return "border-amber-300/20 bg-amber-300/10 text-amber-100";
   return "border-cyan-300/20 bg-cyan-300/10 text-cyan-200";
 }
 

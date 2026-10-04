@@ -79,12 +79,12 @@ describe("en-route whole-battle forecast", () => {
     delete value.battleForecast!.participants[0]!.combatTechnology;
     expect(uncertain(value)).toContain("technology");
     const legacy = detail(); delete legacy.battleForecast;
-    expect(uncertain(legacy)).toContain("Whole-battle");
-    expect(uncertain(detail(), now + 31_000)).toContain("delayed");
+    expect(uncertain(legacy)).toContain("Battle intel is incomplete");
+    expect(uncertain(detail(), now + 31_000)).toContain("updating");
     const arrived = detail(); arrived.battleForecast!.arrivalAt = String(now / 1000);
-    expect(uncertain(arrived)).toContain("arrival has passed");
+    expect(uncertain(arrived)).toContain("outcome is not yet known");
     const pending = detail(); pending.battleForecast!.unavailableReason = "Return #90 scheduled before impact is not credited.";
-    expect(uncertain(pending)).toContain("not credited");
+    expect(uncertain(pending)).toContain("Battle intel is incomplete");
     const missing = detail(); missing.battleForecast!.target = null;
     expect(uncertain(missing)).toContain("unavailable");
   });
@@ -119,5 +119,5 @@ test("both launch and en-route forecasts reject unverified models and previously
 test("already-started historical battles are never simulated with corrected math", () => {
   const value = detail();
   value.mission.combatResolutionProgress = { roundsCompleted: 0, totalRounds: 6 };
-  expect(uncertain(value)).toContain("already in progress");
+  expect(uncertain(value)).toContain("Battle in progress");
 });

@@ -49,7 +49,6 @@ export type ProductionCatalogItem<Key extends string = string> = {
   countLabel: string;
   countValue: number | undefined;
   queued?: number | undefined;
-  pendingSettlement?: number | undefined;
   status: "ready" | "locked" | "queued" | "unavailable";
   statusLabel?: string | undefined;
   labelTone?: "normal" | "muted" | undefined;
@@ -487,7 +486,6 @@ function CatalogButton<Key extends string>({
         <p className="mt-0.5 truncate text-xs text-slate-400">
           {item.countLabel}: {item.countValue === undefined ? "unavailable" : format(item.countValue)}
           {item.queued ? ` · Queued: ${format(item.queued)}` : ""}
-          {item.pendingSettlement ? ` · Awaiting settlement: ${format(item.pendingSettlement)}` : ""}
         </p>
       </div>
       {item.statusLabel ? <span className={`text-xs font-semibold ${statusClass}`}>{item.statusLabel}</span> : null}
@@ -745,9 +743,6 @@ function SelectedProductionDetails<Key extends string>({
           label: "Queued",
           value: item.queued ? `${format(item.queued)} total` : "0",
         },
-        ...(item.pendingSettlement
-          ? [{ label: "Awaiting settlement", value: format(item.pendingSettlement) }]
-          : []),
         ...(item.durationSeconds === undefined
           ? []
           : [{ label: "Build time", value: formatDuration(item.durationSeconds) }]),

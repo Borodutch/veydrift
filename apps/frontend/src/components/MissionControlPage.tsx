@@ -51,12 +51,6 @@ type MissionControlActionState =
 
 export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "joinDefense" | "recall";
 
-export type ManualMissionResolutionKind = "arrival" | "return";
-
-// Give the funded resolver three full minutes after a leg becomes due before
-// surfacing the permissionless fallback. This avoids presenting a transaction
-// that can race the keeper's in-flight settlement.
-export const MANUAL_MISSION_RESOLUTION_DELAY_MS = 3 * 60_000;
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -135,7 +129,6 @@ interface MissionControlPageProps {
   onMissionFiltersChange?: ((filters: MissionControlFilters) => void) | undefined;
   onMissionNumberSearchChange?: ((value: string) => void) | undefined;
   onRecall: (missionId: string) => void;
-  onResolve?: ((missionId: string, kind: ManualMissionResolutionKind) => void) | undefined;
   onRefresh: () => void;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
@@ -252,7 +245,6 @@ export function renderMissionControlPage({
   onMissionFiltersChange,
   onMissionNumberSearchChange,
   onRecall,
-  onResolve = () => undefined,
   planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
   reportMissionId,
   reportUrlForMission,
@@ -344,7 +336,6 @@ export function renderMissionControlPage({
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
             onRecall={onRecall}
-            onResolve={onResolve}
             planetLookup={planetLookup}
             transactionUnavailableReason={transactionUnavailableReason}
             toolbarActions={(
@@ -876,7 +867,6 @@ function ActiveMissionSection({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   onTabChange,
   onPageChange,
   planetLookup,
@@ -906,7 +896,6 @@ function ActiveMissionSection({
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string, kind: ManualMissionResolutionKind) => void;
   onPageChange?: ((page: number) => void) | undefined;
   onTabChange?: ((tab: ActiveMissionTabKey) => void) | undefined;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -934,7 +923,6 @@ function ActiveMissionSection({
     onJoinAttack,
     onOpenReport,
     onRecall,
-    onResolve,
     planetLookup,
     transactionUnavailableReason,
     wallet,
@@ -1241,7 +1229,6 @@ function ActiveMissionList({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   planetLookup,
   rows,
   transactionUnavailableReason,
@@ -1260,7 +1247,6 @@ function ActiveMissionList({
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string, kind: ManualMissionResolutionKind) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: ActiveMissionRow[];
   transactionUnavailableReason?: string | undefined;
@@ -1307,7 +1293,6 @@ function ActiveMissionList({
               onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
-              onResolve={onResolve}
               planetLookup={planetLookup}
               transactionUnavailableReason={transactionUnavailableReason}
               wallet={wallet}
@@ -1335,7 +1320,6 @@ function MissionRow({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   planetLookup,
   transactionUnavailableReason,
   wallet,
@@ -1354,7 +1338,6 @@ function MissionRow({
   onJoinAttack: (mission: FleetMissionSummary, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string, kind: ManualMissionResolutionKind) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
@@ -1368,7 +1351,6 @@ function MissionRow({
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && !["Joinable attack", "Joinable defense"].includes(direction) ? direction : undefined;
-  const resolutionKind = manualMissionResolutionKind(mission, now);
   // A hostile attack heading for the player's planet is the one row that must not hide its
   // counterplay behind a click: flag it red and start it expanded.
   const hostileInbound = missionDirection === "incoming" && isOffensiveMissionType(mission.missionType);
@@ -1420,22 +1402,6 @@ function MissionRow({
       progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
       statusPill={missionStatusPill(mission, now)}
-      statusAction={resolutionKind ? (
-        <button
-          className="inline-flex h-6 w-full items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2 text-[11px] font-semibold text-amber-100 transition hover:bg-amber-300/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/50 disabled:cursor-not-allowed disabled:text-slate-500"
-          data-mission-status-action="resolve"
-          disabled={!canTransact}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onResolve(mission.missionId, resolutionKind);
-          }}
-          title={canTransact ? "Resolve this overdue mission" : transactionUnavailableReason}
-          type="button"
-        >
-          Resolve
-        </button>
-      ) : undefined}
       {...routeEndpointsForRow(origin, target, wallet)}
     />
   );
@@ -1634,7 +1600,7 @@ export function returnPhaseLosses(
 // by the indexed backend; live chain events refetch those fields after the index transaction commits.
 export function missionStatusPill(mission: FleetMissionSummary, _now: number): MissionStatusPill {
   if (mission.resolutionBlocker === "randomness_pending") {
-    return { label: "Awaiting randomness", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+    return { label: "Battle pending", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
     return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
@@ -1646,7 +1612,7 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
     };
   }
   if (isMissionReadyToResolve(mission)) {
-    return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+    return { label: "Updating mission", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   if (isMissionQueued(mission)) {
     return { label: "Queued", tone: "border-slate-300/25 bg-slate-300/10 text-slate-200" };
@@ -1659,7 +1625,7 @@ export function missionStatusPill(mission: FleetMissionSummary, _now: number): M
   }
   if (mission.status === "Returning" || mission.status === "Recalled") {
     if (mission.asOfNow?.returned === true && mission.resolutionEligible === true) {
-      return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+      return { label: "Updating mission", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
     }
     return mission.status === "Returning"
       ? { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
@@ -1753,7 +1719,6 @@ function MissionCard({
   progressPercent,
   routeSubtext,
   statusPill,
-  statusAction,
   subdued,
   target,
 }: {
@@ -1773,7 +1738,6 @@ function MissionCard({
   progressPercent?: number | undefined;
   routeSubtext?: string | undefined;
   statusPill?: MissionStatusPill | undefined;
-  statusAction?: ComponentChildren | undefined;
   subdued?: boolean | undefined;
   target: MissionEndpoint;
 }) {
@@ -1818,10 +1782,10 @@ function MissionCard({
               {headerTiming.value}
             </span>
           ) : null}
-          {statusPill || statusAction ? (
+          {statusPill ? (
             <span
-              className={`inline-flex min-w-[3.75rem] max-w-full ${statusAction ? "flex-col items-center gap-1" : "items-center justify-end gap-1.5"}`}
-              data-mission-status-layout={statusAction ? "stacked" : "status-only"}
+              className="inline-flex min-w-[3.75rem] max-w-full items-center justify-end gap-1.5"
+              data-mission-status-layout="status-only"
             >
               {statusPill ? (
                 statusPill.variant === "text" ? (
@@ -1836,7 +1800,6 @@ function MissionCard({
                   </span>
                 )
               ) : null}
-              {statusAction}
             </span>
           ) : null}
         </span>
@@ -2871,43 +2834,6 @@ export function isFleetRecallable(mission: FleetMissionSummary, now: number): bo
     && now <= (Number(mission.arrivalAt) - FLEET_RECALL_CUTOFF_SECONDS) * 1_000;
 }
 
-function missionDueAtMs(mission: FleetMissionSummary): number {
-  if (mission.missionType === "DefenseHold") return defenseHoldRecallUntilMs(mission);
-  return Number(mission.arrivalAt) * 1_000;
-}
-
-// The funded backend resolver should settle due mission legs promptly. If it cannot submit (for
-// example, its wallet runs out of gas funds), the contract entrypoints are permissionless, so any
-// connected player may rescue a leg after this grace period. Randomness-blocked combat remains
-// excluded: retrying it cannot succeed until the randomness engine has fulfilled the request.
-export function manualMissionResolutionKind(
-  mission: FleetMissionSummary,
-  now: number,
-): ManualMissionResolutionKind | undefined {
-  if (mission.resolutionEligible !== true || mission.resolutionBlocker === "randomness_pending") {
-    return undefined;
-  }
-
-  if (mission.status === "Outbound") {
-    const dueAt = missionDueAtMs(mission);
-    return isMissionReadyToResolve(mission)
-      && Number.isFinite(dueAt)
-      && now >= dueAt + MANUAL_MISSION_RESOLUTION_DELAY_MS
-      ? "arrival"
-      : undefined;
-  }
-
-  if (mission.status === "Returning" || mission.status === "Recalled") {
-    const returnAt = Number(mission.returnAt) * 1_000;
-    return mission.asOfNow?.returned === true
-      && Number.isFinite(returnAt) && now >= returnAt + MANUAL_MISSION_RESOLUTION_DELAY_MS
-      ? "return"
-      : undefined;
-  }
-
-  return undefined;
-}
-
 function defenseHoldRecallUntil(mission: FleetMissionSummary): string {
   return mission.defenseHoldUntil ?? mission.returnAt;
 }
@@ -3207,9 +3133,9 @@ function missionStatusLabel(status: string): string {
 // fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
-  if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
+  if (mission.resolutionBlocker === "randomness_pending") return "battle pending";
   if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress).toLowerCase();
-  if (isMissionReadyToResolve(mission)) return "resolving";
+  if (isMissionReadyToResolve(mission)) return "updating mission";
   if (isMissionQueued(mission)) return "queued";
   if (
     mission.status === "Outbound"
@@ -3218,7 +3144,7 @@ export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: nu
     && mission.asOfNow.returned !== true
   ) return "stationed";
   if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true && mission.resolutionEligible === true) {
-    return "resolving";
+    return "updating mission";
   }
   return missionStatusLabel(mission.status);
 }

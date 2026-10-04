@@ -7,8 +7,8 @@ export function playerNotice(message: string | null | undefined): string | null 
   if (/^Resource token reserves are not configured\b/.test(message)) return "Starting resources are currently unavailable. Please try again later.";
   if (/^Resource token addresses are not configured\b/.test(message)) return "Resource transfers are currently unavailable. Please try again later.";
   if (/^Settlement start price is not available from indexed\b/.test(message)) return "Settlement pricing is updating. Please try again shortly.";
-  if (/^A required randomness reveal mapping is unavailable/.test(message)) return "Battle randomness is unavailable. New attacks are temporarily paused.";
-  if (/^Randomness commitments are activating/.test(message)) return "Battle randomness is preparing. New attacks are temporarily paused.";
+  if (/^A required randomness reveal mapping is unavailable/.test(message)) return "Attacks are temporarily unavailable. Please try again shortly.";
+  if (/^Randomness commitments are activating/.test(message)) return "Attacks are temporarily unavailable. Please try again shortly.";
   const legacyFeature = message.match(/^The deployed contract only supports first-planet settlement\. (.+?) (?:is|are) not available/);
   if (legacyFeature) return `${legacyFeature[1]} ${/ are not available/.test(message) ? "are" : "is"} currently unavailable.`;
   if (/^This deployment does not expose Veydrift moon/.test(message)) return "Moon systems are currently unavailable.";
@@ -17,14 +17,27 @@ export function playerNotice(message: string | null | undefined): string | null 
   if (updating) return `${updating[1]} data is still updating. Refresh shortly.`;
   const mission = message.match(/\(mission ([^)]+)\)/)?.[1];
   if (/^Mission resolution is pending for this planet/.test(message) && /indexer or keeper/.test(message)) {
-    return `Mission${mission ? ` ${mission}` : ""} is still resolving at this planet. Refresh after it finishes before starting another upgrade.`;
+    return `Mission${mission ? ` ${mission}` : ""} is still in progress at this planet. Try again after it finishes before starting another upgrade.`;
   }
   if (/^Fleet slot state is waiting for mission settlement/.test(message)) {
-    return `Mission${mission ? ` ${mission}` : ""} is still resolving. Refresh after it finishes before launching another fleet.`;
+    return `Mission${mission ? ` ${mission}` : ""} is still in progress. Try again after it finishes before launching another fleet.`;
   }
   if (/^(?:Attack #|Joined attack #|Counterplay defender #|DefenseHold #|Stationed-defense storage order)/.test(message)
     && /index|contract lane|storage order/.test(message)) {
     return "Battle details for this group are incomplete, so the outcome cannot be estimated safely.";
   }
   return message;
+}
+
+/** Raw service reasons are diagnostic-only; forecast failures never pass them through. */
+export function battleForecastUnavailableNotice(): string {
+  return "Battle intel is incomplete. The outcome cannot be estimated yet; check back shortly.";
+}
+
+export const ATTACKS_UNAVAILABLE_NOTICE = "Attacks are temporarily unavailable. Please try again shortly.";
+
+/** Stable semantic failure; operational readiness reasons stay out of player errors. */
+export class AttackReadinessError extends Error {
+  readonly code = "ATTACKS_UNAVAILABLE";
+  constructor() { super(ATTACKS_UNAVAILABLE_NOTICE); this.name = "AttackReadinessError"; }
 }

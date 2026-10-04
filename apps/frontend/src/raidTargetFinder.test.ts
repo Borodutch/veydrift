@@ -602,7 +602,7 @@ describe("debris target finder", () => {
         fleetLaunchAvailable: false,
         fleetLaunchUnavailableReason: "Fleet slot state is waiting for mission settlement.",
       }),
-    })[0]!.harvestDisabledReason).toBe("Mission is still resolving. Refresh after it finishes before launching another fleet.");
+    })[0]!.harvestDisabledReason).toBe("Mission is still in progress. Try again after it finishes before launching another fleet.");
 
     expect(buildDebrisTargets({
       targets: [debrisTarget()],
@@ -686,4 +686,13 @@ describe("incomingThreats", () => {
 
     expect(threats.map((threat) => threat.missionId)).toEqual(["attack"]);
   });
+});
+
+test("debris fuel uses current balance, including an explicit zero after spending", () => {
+  const args = { targets: [debrisTarget()], origin: ORIGIN };
+  const fuel = buildDebrisTargets({ ...args, shipyardState: shipyard() })[0]!.fuelCost!;
+  const raw = { metal: "0", crystal: "0", deuterium: "0" };
+  const current = { ...raw, deuterium: String(fuel) };
+  expect(buildDebrisTargets({ ...args, shipyardState: shipyard({ resources: raw, resourcesAsOfNow: current }) })[0]!.harvestDisabledReason).toBeNull();
+  expect(buildDebrisTargets({ ...args, shipyardState: shipyard({ resources: current, resourcesAsOfNow: raw }) })[0]!.harvestDisabledReason).toContain("deuterium");
 });

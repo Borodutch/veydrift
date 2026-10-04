@@ -12,7 +12,7 @@ const page = renderMissionControlPage({
   initialView: { activeTab: "mine", activePage: 0, pastTab: "incomingAttacks", pastPage: 0 },
   fleetVisibility: { wallet: missions[0]!.targetPlanet!.owner!, homePlanetId: "812", incoming: [], outgoing: [], returning: [], joinableAttacks: [], completedMissions: missions, battleReports: [report] },
   incomingAttackArchive: { wallet: missions[0]!.targetPlanet!.owner!, homePlanetId: "812", rows: missions.map(mission => ({ kind: "mission", mission, report })), pagination: { page: 1, pageSize: 25, totalEntries: 4, totalPages: 1, hasNextPage: false, hasPreviousPage: false } },
-  onCounterplay() {}, onJoinAttack() {}, onRecall() {}, onRefresh() {}, onResolve() {}, onOpenReportList() {},
+  onCounterplay() {}, onJoinAttack() {}, onRecall() {}, onRefresh() {}, onOpenReportList() {},
   onOpenReport(id) { document.querySelector("output")!.textContent = id; },
 });
 render(<main style={{ maxWidth: "1056px", margin: "16px auto", padding: "0 12px" }}>{page}<output aria-label="Opened mission" /></main>, document.getElementById("app")!);
