@@ -101,6 +101,7 @@ export function supplyResourceShortfall(
 
 export function buildBatchSupplyPlan({
   targetCoordinates,
+  targetIsMoon = false,
   requested,
   selectedPlanetIds,
   sourceCargoOverrides = {},
@@ -109,6 +110,7 @@ export function buildBatchSupplyPlan({
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
   targetCoordinates: Coordinates;
+  targetIsMoon?: boolean;
   requested: Partial<SupplyResources>;
   selectedPlanetIds: ReadonlySet<string>;
   /** Exact per-source cargo chosen in the Supply modal. Sources without an override keep automatic allocation. */
@@ -133,7 +135,7 @@ export function buildBatchSupplyPlan({
       const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;
       const rightManual = sourceCargoOverrides[right.planetId] === undefined ? 0 : 1;
       if (leftManual !== rightManual) return rightManual - leftManual;
-      return fleetMissionDistance(left.coordinates, targetCoordinates) - fleetMissionDistance(right.coordinates, targetCoordinates);
+      return fleetMissionDistance(left.coordinates, targetCoordinates, { targetIsMoon }) - fleetMissionDistance(right.coordinates, targetCoordinates, { targetIsMoon });
     });
   const boundedMaxOrders = Math.max(0, Math.trunc(maxOrders));
   const sourceLimitReached = selected.length > boundedMaxOrders;
@@ -165,9 +167,9 @@ export function buildBatchSupplyPlan({
     // the preview exactly matches the generated child missions.
     const cargo = capCargoToCapacity(
       requestedFromSource,
-      maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels),
+      maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels, targetIsMoon),
     );
-    const loadout = transportLoadoutForCargo({ cargo, source, targetCoordinates });
+    const loadout = transportLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon });
     if (!loadout) {
       blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
       continue;
@@ -205,6 +207,7 @@ function maximumCargoCapacity(
   targetCoordinates: Coordinates,
   originCoordinates: Coordinates,
   driveLevels: FleetDriveLevels,
+  targetIsMoon: boolean,
 ): number {
   const ships = emptyMissionShips();
   for (const candidate of cargoShipKeys) {
@@ -212,7 +215,7 @@ function maximumCargoCapacity(
   }
   return fleetMissionAvailableCargoCapacity(
     ships,
-    fleetMissionDistance(originCoordinates, targetCoordinates),
+    fleetMissionDistance(originCoordinates, targetCoordinates, { targetIsMoon }),
     driveLevels,
   );
 }
@@ -232,13 +235,15 @@ function transportLoadoutForCargo({
   cargo: initialCargo,
   source,
   targetCoordinates,
+  targetIsMoon,
 }: {
   cargo: SupplyResources;
   source: BatchSupplySource;
   targetCoordinates: Coordinates;
+  targetIsMoon: boolean;
 }): { cargo: SupplyResources; ships: MissionShips; fuelCost: number; travelSeconds: number } | null {
   const cargo = { ...initialCargo };
-  const distance = fleetMissionDistance(source.coordinates, targetCoordinates);
+  const distance = fleetMissionDistance(source.coordinates, targetCoordinates, { targetIsMoon });
 
   // Fuel is paid from the source's deuterium reserve. Recalculate the smallest practical cargo
   // fleet after reducing deuterium cargo; this lets a metal/crystal shipment proceed even when the

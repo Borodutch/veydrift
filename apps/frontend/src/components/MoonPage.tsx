@@ -1,3 +1,4 @@
+import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
@@ -57,6 +58,7 @@ interface MoonPageProps {
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
   onStartShip?: ((shipId: number, label: string, quantity: number) => void) | undefined;
   parentPlanetLabel?: string | undefined;
@@ -89,6 +91,7 @@ export function MoonPage({
   onJumpGate,
   onOpenRequirement,
   onStartBuilding,
+  onSupplyLevel,
   onStartDefense,
   onStartShip,
   parentPlanetLabel,
@@ -131,6 +134,7 @@ export function MoonPage({
             onJumpGate={onJumpGate}
             onOpenRequirement={onOpenRequirement}
             onStartBuilding={onStartBuilding}
+            onSupplyLevel={onSupplyLevel}
             onStartDefense={onStartDefense}
             onStartShip={onStartShip}
             parentPlanetLabel={parentPlanetLabel}
@@ -345,6 +349,7 @@ function MoonSystemsPanel({
   onJumpGate,
   onOpenRequirement,
   onStartBuilding,
+  onSupplyLevel,
   onStartDefense,
   onStartShip,
   parentPlanetLabel,
@@ -365,6 +370,7 @@ function MoonSystemsPanel({
   onJumpGate?: MoonPageProps["onJumpGate"];
   onOpenRequirement?: MoonPageProps["onOpenRequirement"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   onStartDefense?: MoonPageProps["onStartDefense"];
   parentPlanetLabel?: string | undefined;
   parentPlanetType?: PlanetType | null | undefined;
@@ -453,6 +459,7 @@ function MoonSystemsPanel({
         now={now}
         onSelectBuilding={setSelectedBuildingKey}
         onStartBuilding={onStartBuilding}
+        onSupplyLevel={onSupplyLevel}
         pending={pending}
         selectedBuildingKey={selectedBuildingKey}
         transactionUnavailableReason={transactionUnavailableReason}
@@ -591,6 +598,7 @@ function MoonStructuresSection({
   now,
   onSelectBuilding,
   onStartBuilding,
+  onSupplyLevel,
   pending,
   selectedBuildingKey,
   transactionUnavailableReason,
@@ -603,6 +611,7 @@ function MoonStructuresSection({
   now: number;
   onSelectBuilding: (key: MoonBuilding["key"]) => void;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   pending: boolean;
   selectedBuildingKey: MoonBuilding["key"];
   transactionUnavailableReason?: string | undefined;
@@ -671,6 +680,7 @@ function MoonStructuresSection({
                   }
                 }}
                 onStartBuilding={onStartBuilding}
+                onSupplyLevel={onSupplyLevel}
                 pending={pending}
                 transactionUnavailableReason={transactionUnavailableReason}
               />
@@ -692,6 +702,7 @@ function MoonStructureDetailPanel({
   moonState,
   onOpenRequirement,
   onStartBuilding,
+  onSupplyLevel,
   pending,
   transactionUnavailableReason,
 }: {
@@ -702,6 +713,7 @@ function MoonStructureDetailPanel({
   moonState?: ChainMoonState | null | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   pending: boolean;
   transactionUnavailableReason?: string | undefined;
 }) {
@@ -717,7 +729,7 @@ function MoonStructureDetailPanel({
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
   const levelInfo = moonStructureHasLevelInfo(building.key)
-    ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows)
+    ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows, onSupplyLevel ? level => onSupplyLevel({ kind: "moon", key: building.key, label: building.label, level }) : undefined)
     : undefined;
 
   return (
@@ -812,6 +824,7 @@ export function moonStructureLevelInfoTable(
   buildingKey: MoonBuilding["key"],
   currentLevel: number,
   rows: MoonStructureLevelInfoRow[],
+  onSupply?: ((level: number) => void) | undefined,
 ): StructureLevelInfo {
   return {
     columns: moonStructureLevelInfoColumns(buildingKey),
@@ -822,6 +835,7 @@ export function moonStructureLevelInfoTable(
       duration: formatDuration(row.durationSeconds),
       effect: row.effect,
     },
+    onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
     key: row.level,
     level: row.level,
     status: row.status,
@@ -830,7 +844,7 @@ export function moonStructureLevelInfoTable(
 }
 
 export function moonStructureHasLevelInfo(key: MoonBuilding["key"]): boolean {
-  return key !== "jumpGate";
+  return ["lunarBase", "roboticsFactory", "shipyard", "jumpGate"].includes(key);
 }
 
 export function moonStructureLevelInfoColumns(_key: MoonBuilding["key"]): LevelInfoColumn[] {

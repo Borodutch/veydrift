@@ -2048,7 +2048,7 @@ function scaleBuildingCost(cost: Resources, key: BuildingKey, currentLevel: numb
   };
 }
 
-function buildingCostFactor(key: BuildingKey): [number, number] {
+export function buildingCostFactor(key: BuildingKey): [number, number] {
   if (
     key === "metalMine"
     || key === "deuteriumSynthesizer"
