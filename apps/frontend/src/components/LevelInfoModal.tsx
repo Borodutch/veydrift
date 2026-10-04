@@ -15,6 +15,7 @@ export type LevelInfoRow = {
   key: string | number;
   level: number;
   status: "current" | "next" | "future";
+  onSupply?: (() => void) | undefined;
 };
 
 export function LevelInfoButton({
@@ -111,6 +112,10 @@ export function LevelInfoModal({
                 >
                   <LevelInfoCell className="whitespace-nowrap" dataLabel="Level">
                     <span className="font-semibold text-white">Level {row.level}</span>
+                    {row.level > currentLevel && row.onSupply ? <button
+                      aria-label={`Supply ${itemLabel} Level ${row.level}`}
+                      className="mt-2 block min-h-10 rounded border border-sky-300/40 bg-sky-300/10 px-3 text-xs font-semibold text-sky-200 hover:bg-sky-300/20"
+                      onClick={row.onSupply} type="button">Supply</button> : null}
                   </LevelInfoCell>
                   <LevelInfoCell className="min-w-24" dataLabel="Status">
                     {row.status === "current" ? <LevelPill tone="current">Current</LevelPill> : null}

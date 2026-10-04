@@ -626,11 +626,11 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).not.toContain('<MoonMetric icon={Orbit} label="Jump Gate"');
   });
 
-  test("reuses the Infrastructure level popup for Moon structures and omits Jump Gate info", () => {
+  test("reuses the Infrastructure level popup including the one-time Jump Gate Supply row", () => {
     expect(moonStructureHasLevelInfo("lunarBase")).toBe(true);
     expect(moonStructureHasLevelInfo("roboticsFactory")).toBe(true);
     expect(moonStructureHasLevelInfo("shipyard")).toBe(true);
-    expect(moonStructureHasLevelInfo("jumpGate")).toBe(false);
+    expect(moonStructureHasLevelInfo("jumpGate")).toBe(true);
     expect(moonPageSource).toContain('from "./LevelInfoModal"');
     expect(infrastructurePageSource).toContain('from "./LevelInfoModal"');
     expect(moonPageSource).toContain("moonStructureHasLevelInfo(building.key)");

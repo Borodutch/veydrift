@@ -1,3 +1,5 @@
+import type { LevelSupplyRequest, LevelSupplyPreview } from "../levelSupply";
+import { createPortal } from "preact/compat";
 import { playerNotice } from "../playerNotice";
 import { Check, PackagePlus, X } from "lucide-preact";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
@@ -56,6 +58,9 @@ export function batchSupplySourceLimitReason({
 
 export function BatchSupplyModal({
   actionPending = false,
+  upgrade,
+  preview,
+  onRefresh,
   error,
   fleetSlotsKnown = true,
   initialRequested,
@@ -68,6 +73,9 @@ export function BatchSupplyModal({
   transactionState,
 }: {
   actionPending?: boolean | undefined;
+  upgrade?: LevelSupplyRequest | undefined;
+  preview?: LevelSupplyPreview | undefined;
+  onRefresh?: (() => void) | undefined;
   error?: string | undefined;
   fleetSlotsKnown?: boolean | undefined;
   initialRequested?: Partial<SupplyResources> | undefined;
@@ -79,6 +87,36 @@ export function BatchSupplyModal({
   target: ManagedPlanetResponse;
   transactionState?: Pick<WriteTransactionState, "label" | "phase" | "txHash"> | undefined;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const levelLayers = Array.from(document.querySelectorAll<HTMLElement>("[data-level-info-layer]"));
+    const hidden = levelLayers.map(layer => ({ layer, inert: layer.inert, ariaHidden: layer.getAttribute("aria-hidden") }));
+    for (const { layer } of hidden) { layer.inert = true; layer.setAttribute("aria-hidden", "true"); }
+    dialogRef.current?.querySelector<HTMLButtonElement>('button[aria-label="Close supply resources"]')?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopImmediatePropagation(); closeRef.current();
+      }
+      if (event.key === "Tab") {
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []);
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    };
+    window.addEventListener("keydown", handleKey, true);
+    return () => {
+      window.removeEventListener("keydown", handleKey, true);
+      for (const { layer, inert, ariaHidden } of hidden) {
+        layer.inert = inert;
+        if (ariaHidden === null) layer.removeAttribute("aria-hidden"); else layer.setAttribute("aria-hidden", ariaHidden);
+      }
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [shipTypesBySource, setShipTypesBySource] = useState<SupplyShipTypesBySource>({});
@@ -87,10 +125,12 @@ export function BatchSupplyModal({
 
   useEffect(() => {
     setRequested(supplyResourceInputValues(initialRequested));
-    setSelectedSourceIds(new Set());
     setSourceCargoOverrides({});
-    setShipTypesBySource({});
-    sourcesInitialized.current = false;
+    if (!upgrade) {
+      setSelectedSourceIds(new Set());
+      setShipTypesBySource({});
+      sourcesInitialized.current = false;
+    }
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId]);
 
   useEffect(() => {
@@ -107,13 +147,14 @@ export function BatchSupplyModal({
   }), [requested]);
   const plan = useMemo(() => buildBatchSupplyPlan({
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
+    targetIsMoon: upgrade?.kind === "moon",
     requested: requestedNumbers,
     selectedPlanetIds: selected,
     sourceCargoOverrides,
     shipTypesBySource,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system]);
+  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, upgrade?.kind]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -123,8 +164,8 @@ export function BatchSupplyModal({
     ? transactionState?.label
     : undefined;
   const missionLimitError = batchSupplyMissionLimitError(plan.orders.length);
-  const canSubmit = !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
-  const targetLabel = target.name?.trim() || target.coordinates;
+  const canSubmit = (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
+  const targetLabel = `${target.name?.trim() || target.coordinates}${upgrade?.kind === "moon" ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
       earliest: Math.min(...plan.orders.map((order) => order.travelSeconds)),
@@ -136,6 +177,7 @@ export function BatchSupplyModal({
   const setMax = (resource: keyof SupplyResources) => {
     const maximum = buildBatchSupplyPlan({
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
+      targetIsMoon: upgrade?.kind === "moon",
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
       selectedPlanetIds: selected,
       shipTypesBySource,
@@ -171,11 +213,12 @@ export function BatchSupplyModal({
     });
   };
 
-  return (
+  const layer = (
     <div
+      ref={dialogRef}
       aria-label={`Supply ${targetLabel}`}
       aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
+      className="modal-backdrop-enter fixed inset-0 z-[110] grid place-items-center bg-black/75 p-3 backdrop-blur-sm sm:p-6"
       role="dialog"
     >
       <div className="grid max-h-[calc(100dvh-1.5rem)] w-full min-w-0 max-w-3xl grid-cols-[minmax(0,1fr)] auto-rows-max gap-4 overflow-y-auto [overflow-wrap:anywhere] rounded-xl border border-cyan-300/25 bg-[#101827] p-4 shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:p-6">
@@ -191,6 +234,18 @@ export function BatchSupplyModal({
           </button>
         </header>
 
+        {upgrade ? <section aria-label="Upgrade requirement" className="grid gap-2 text-sm text-slate-300">
+          <strong className="text-white">{upgrade.label} · Level {upgrade.level} · {upgrade.kind === "moon" ? "Moon" : "Planet"} {target.coordinates}</strong>
+          <p>Cost for this level only, not the sum of prerequisite levels. Supply does not start or unlock the upgrade. Energy cannot be shipped.</p>
+          <p>Resources to send are your reviewed shipment. Production or arrivals may reduce the shortfall before delivery; refresh to reduce your shipment.</p>
+          {preview ? <>
+            <p>Requirement: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p>
+            <p>Destination shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}</p>
+            {resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
+          </> : <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p>}
+          {upgrade.kind === "moon" ? <p>Moon Supply uses one source per transport. Select a source and review before launching.</p> : null}
+          {onRefresh ? <button className="min-h-10 justify-self-start rounded border border-white/20 px-3" disabled={loading || actionPending} onClick={onRefresh} type="button">Refresh destination and shortfall</button> : null}
+        </section> : null}
         <section className="grid grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] gap-2" aria-label="Resources to send">
           {(["metal", "crystal", "deuterium"] as const).map((resource) => (
             <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5" key={resource}>
@@ -253,7 +308,7 @@ export function BatchSupplyModal({
                 || sourceCargo.crystal !== requestedSourceCargo.crystal
                 || sourceCargo.deuterium !== requestedSourceCargo.deuterium
               );
-              const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
+              const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position }, { targetIsMoon: upgrade?.kind === "moon" });
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, eligibleShips, source.driveLevels);
               return (
                 <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
@@ -340,13 +395,14 @@ export function BatchSupplyModal({
             </div>
             <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource)} type="button">
               <Check aria-hidden="true" className="shrink-0" size={16} />
-              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} in one call`}</span>
+              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} ${upgrade?.kind === "moon" ? "to moon" : "in one call"}`}</span>
             </button>
           </footer>
         </div>
       </div>
     </div>
   );
+  return typeof document === "undefined" ? layer : createPortal(layer, document.body);
 }
 
 export function supplyResourceInputValues(
