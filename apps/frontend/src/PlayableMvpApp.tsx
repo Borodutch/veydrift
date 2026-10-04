@@ -2314,10 +2314,10 @@ export async function prepareBatchSupplyConfirmation({
 }
 
 /** Shared production launch branch; the wallet still runs preflight before invoking it. */
-export function launchBatchSupplyTransaction(
+export const launchBatchSupplyTransaction = (
   provider: Eip1193Provider, signerAccount: string, gameContract: string,
   target: ManagedPlanetResponse, orders: BatchSupplyOrder[], levelSupply: LevelSupplyRequest | undefined,
-) {
+) => {
   if (levelSupply?.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per transport.");
   return levelSupply?.kind === "moon"
     ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
@@ -2339,7 +2339,7 @@ export function launchBatchSupplyTransaction(
         speedPercent: 100,
       })),
     });
-}
+};
 
 /** A confirmation-time replan must never silently alter a player's shipment. */
 export function batchSupplyPlanMatchesOrders(submitted: readonly BatchSupplyOrder[], refreshed: readonly BatchSupplyOrder[]): boolean {
