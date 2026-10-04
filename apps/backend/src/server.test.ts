@@ -1506,7 +1506,7 @@ describe("Veydrift backend", () => {
     expect(fleetBody.allianceId).toBeNull();
     expect(fleetBody.incoming).toEqual([]);
     expect(fleetBody.joinableDefenses).toEqual([]);
-    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+:\d+$/);
+    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+:fleet=(null|\d+):\d+$/);
     expect(fleetBody).toHaveProperty("indexedBlock");
     expect(Number.isNaN(Date.parse(fleetBody.generatedAt))).toBe(false);
 

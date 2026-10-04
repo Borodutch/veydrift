@@ -92,20 +92,24 @@ test("scalar Returning refresh cannot certify retained launch ships as survivors
  const launch=storedMission(indexer);
  const {ships, ...scalar}=launch;
  (indexer as any).upsertCanonicalFleetMission({...scalar,statusId:2,status:"Returning"});
+ indexer.recordResourceProjectionWatermark("2","1030","0x"+"a".repeat(64));
  expect(indexer.currentFleetResourceCredits("7",false)).toEqual({metal:"0",crystal:"0",deuterium:"0"});
  expect(indexer.fleetMission("1")?.status).toBe("Returning");
  const {indexer:proven}=fixture("ship");
  (proven as any).upsertCanonicalFleetMission({...launch,statusId:2,status:"Returning",ships:{smallCargo:"2"}});
+ proven.recordResourceProjectionWatermark("2","1030","0x"+"a".repeat(64));
  expect(proven.currentFleetResourceCredits("7",false).metal).toBe("8");
  expect(proven.displayedUnitCounts("7","ship")[0]?.count).toBe(5);
 });
 test("deterministic lifecycle agrees across active archive detail and slots",()=>{
  const {indexer}=fixture("ship"); storedMission(indexer,"1",0);
  setSystemTime(new Date(1010000));
+ indexer.recordResourceProjectionWatermark("2","1010","0x"+"a".repeat(64));
  expect(indexer.fleetMission("1")?.status).toBe("Returning");
  expect(indexer.allActiveFleetMissions()[0]?.status).toBe("Returning");
  expect(indexer.fleetSlots(owner).active).toBe(1);
  setSystemTime(new Date(1020000));
+ indexer.recordResourceProjectionWatermark("3","1020","0x"+"b".repeat(64));
  expect(indexer.fleetMission("1")?.status).toBe("Returned");
  expect(indexer.allActiveFleetMissions()).toHaveLength(0);
  expect(indexer.allCompletedFleetMissions().map(m=>m.missionId)).toEqual(["1"]);
@@ -119,6 +123,7 @@ test("reconciliation checkpoint never proves a missing moon launch incarnation",
   (indexer as any).moon=()=>({owner,blockNumber:"10"});
   const mission=storedMission(indexer,"1",1);
   (indexer as any).upsertCanonicalFleetMission({...mission,statusId:originIsMoon?2:1,originIsMoon,targetIsMoon:!originIsMoon});
+  indexer.recordResourceProjectionWatermark("20","1030","0x"+"a".repeat(64));
   expect(indexer.fleetMission("1")?.launchBlockNumber).toBe("0");
   expect(indexer.currentFleetResourceCredits("7",true).metal).toBe("0");
   expect(indexer.currentFleetResourceCredits("7",false).metal).toBe("0");
@@ -160,6 +165,7 @@ test("indexed staged lock covers moon target across every nonterminal combat pha
   // Canonical snapshot lacks launch provenance: install an older known moon for this fixture.
   (indexer as any).moon = () => ({owner,blockNumber:"0"});
   indexer.applyLog({blockNumber:"0x2",blockTimestamp:topic(1000n),transactionHash:"0xlaunch",logIndex:"0x1",topics:[fleetMissionLaunchedTopic,topic(1n),"0x"+owner.slice(2).padStart(64,"0"),topic(0n)],data:words(7n,7n,1010n,1020n,0n)});
+  indexer.recordResourceProjectionWatermark("2","1010","0x"+"a".repeat(64));
   expect(indexer.currentFleetResourceCredits("7",true).metal).toBe(phase===13?"8":"0");
  }
 });

@@ -4708,7 +4708,7 @@ function targetCombatIntelForMission(
   if (targetIsMoon && !moon?.moon) return null;
 
   const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
-  const targetState = moon ? { ...accrued, resources: moon.resources } : accrued;
+  const targetState = moon ? { ...accrued, resources: moon.resourcesAsOfNow ?? moon.resources } : accrued;
   const tactical = indexedPlanetTacticalSummary(
     targetState,
     targetIsMoon ? [] : indexer.infrastructureRows(planet.planetId),
@@ -4813,7 +4813,7 @@ function publicMoonStateRef(
     fields: moonState.moon.fields,
     diameterKm: moonState.moon.diameterKm,
     createdAt: moonState.moon.createdAt,
-    resources: moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resources: moonState.resourcesAsOfNow ?? moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
     buildings: moonState.buildings.map(({ id, level }) => ({ id, level })),
     fleet: (moonState.fleet ?? []).map(({ id, count }) => ({ id, count })),
     defenses: moonState.defenses.map(({ id, count }) => ({ id, count })),

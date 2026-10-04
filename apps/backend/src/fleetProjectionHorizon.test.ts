@@ -1,0 +1,116 @@
+import { afterEach, expect, setSystemTime, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { SettlementIndexer } from "./indexer";
+import { createRequestHandler } from "./server";
+import { fleetMissionLaunchedTopic, moonCreatedTopic, type SettledPlanetEvent } from "./evm";
+
+const owner = "0x2222222222222222222222222222222222222222" as const;
+const hash = "0x" + "a".repeat(64);
+const topic = (n: bigint) => "0x" + n.toString(16).padStart(64, "0");
+const words = (...ns: bigint[]) => "0x" + ns.map(n => topic(n).slice(2)).join("");
+afterEach(() => setSystemTime());
+
+function fixture(moon = false, returning = false, deploy = false) {
+  const db = new Database(":memory:");
+  const indexer = new SettlementIndexer({ async listSettledPlanetEvents() { return []; }, async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; } }, 1n, { database: db, runStartupBackfill: false });
+  const planet = { planetId: "7", name: null, owner, galaxy: 2, system: 44, position: 9, fields: 100, temperature: 0, resources: { metal: "100", crystal: "0", deuterium: "0" }, lastSettledAt: "1000", blockNumber: "1", transactionHash: "0xp", eventName: "PlanetStarted", metalMultiplierBps: 10000, crystalMultiplierBps: 10000, deuteriumMultiplierBps: 10000 } as SettledPlanetEvent;
+  indexer.applyEvent(planet);
+  if (moon) {
+    indexer.applyLog({ blockNumber: "0x2", blockTimestamp: topic(800n), transactionHash: "0xmoon", logIndex: "0x0", topics: [moonCreatedTopic, "0x" + owner.slice(2).padStart(64, "0"), topic(7n)], data: words(2n, 44n, 9n, 12n, 8777n) });
+    db.query("INSERT OR REPLACE INTO contract_moon_resources VALUES ('7','100','0','0','1000','0xmoon','2','0')").run();
+  }
+  indexer.applyLog({ blockNumber: "0x3", blockTimestamp: topic(900n), transactionHash: "0xlaunch", logIndex: "0x0", topics: [fleetMissionLaunchedTopic, topic(1n), "0x" + owner.slice(2).padStart(64, "0"), topic(deploy ? 1n : 0n)], data: words(7n, 7n, 1010n, 1020n, 0n) });
+  (indexer as any).upsertCanonicalFleetMission({ missionId: "1", statusId: returning ? 2 : 1, missionTypeId: deploy ? 1 : 0, status: returning ? "Returning" : "Outbound", missionType: deploy ? "Deploy" : "Transport", owner, originPlanetId: "7", targetPlanetId: "7", departureAt: "900", arrivalAt: "1010", returnAt: "1020", fuelCost: "0", cargo: { metal: "80", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: moon, targetIsMoon: moon, ships: { smallCargo: "9" } });
+  const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true });
+  const get = async (path: string) => {
+    const response = await handler(new Request("http://localhost" + path));
+    return { status: response.status, body: await response.json() as any };
+  };
+  const wallet = (route: string) => get("/wallet/" + owner + "/" + route + "?planetId=7");
+  const anchor = (at: number) => expect(indexer.recordResourceProjectionWatermark(String(at), String(at), hash)).toBe(true);
+  return { db, indexer, get, wallet, anchor };
+}
+
+for (const moon of [false, true]) for (const kind of ["transport", "return", "deploy"] as const) {
+  test(
+    `${kind} on ${moon ? "moon" : "planet"} shares indexed horizon across HTTP, lifecycle, slots and activity`,
+    async () => {
+      setSystemTime(new Date(1030000));
+      const { indexer, wallet, get, anchor } = fixture(moon, kind === "return", kind === "deploy");
+      const versions = () => [indexer.responseCacheVersion(), indexer.walletResponseCacheVersion(owner), indexer.missionResponseCacheVersion(), indexer.universeSystemSummaryVersion(2, 44)];
+      let previousVersions: string[] | undefined;
+      for (const at of [1009, 1010, 1011, 1019, 1020, 1021]) {
+        anchor(at);
+        if (previousVersions) versions().forEach((version, i) => expect(version).not.toBe(previousVersions![i]));
+        previousVersions = versions();
+        const arrived = kind !== "return" && at >= 1010;
+        const terminal = kind === "deploy" ? arrived : at >= 1020;
+        const credited = arrived || (kind === "return" && terminal);
+        const status = terminal ? kind === "deploy" ? "Resolved" : "Returned" : arrived || kind === "return" ? "Returning" : "Outbound";
+        const before = versions();
+        // Reader clock drift must neither add nor retract indexed effects.
+        for (const wall of [1030, 900, 5000]) {
+          setSystemTime(new Date(wall * 1000));
+          expect(indexer.fleetMission("1")?.status).toBe(status);
+          expect((await get("/mission/1")).body.mission.status).toBe(status);
+          expect(indexer.fleetSlots(owner).active).toBe(terminal ? 0 : 1);
+          const state = await wallet(moon ? "moon" : "shipyard");
+          expect(state.status).toBe(200);
+          expect(state.body.ships.find((s: any) => s.id === 0).count).toBe(terminal ? 9 : 0);
+          expect(state.body.launchableShips.find((s: any) => s.id === 0).count).toBe(terminal ? 9 : 0);
+          expect(state.body.resourcesAsOfNow.metal).toBe(credited ? "180" : "100");
+          if (!moon) {
+            expect((await wallet("infrastructure")).body.resourcesAsOfNow.metal).toBe(credited ? "180" : "100");
+            expect((await wallet("rift")).body.resources.find((r: any) => r.key === "metal").inGameBalance).toBe(credited ? "180" : "100");
+          }
+          // This route really is cached; re-read its warm response before moving the watermark.
+          const system = await get("/universe/galaxies/2/systems/44?detail=full");
+          expect(system.status).toBe(200);
+          const publicPlanet = system.body.planets.find((p: any) => p.occupiedBy?.planetId === "7");
+          const publicState = moon ? publicPlanet.publicMoonState : publicPlanet.publicState;
+          expect(publicState.resources.metal).toBe(credited ? "180" : "100");
+          expect(publicState.fleet.find((s: any) => s.id === 0).count).toBe(terminal ? 9 : 0);
+          expect(await get("/universe/galaxies/2/systems/44?detail=full")).toEqual(system);
+          const activity = indexer.playerActivity(owner, { page: 1, pageSize: 20, through: 6000 }).items.filter(i => i.reconciliation === "projected" && i.category === "mission");
+          expect((await wallet("activity")).body.items.filter((i: any) => i.reconciliation === "projected" && i.category === "mission")).toEqual(activity);
+          expect(activity.map(i => i.kind).sort()).toEqual([...(arrived ? ["mission-completed"] : []), ...(terminal && kind !== "deploy" ? ["mission-returned"] : [])].sort());
+          expect(versions()).toEqual(before);
+        }
+      }
+    }
+  );
+}
+
+test.each([false, true])("missing or invalid fleet watermark fails closed, including warm effects (moon=%s)", async moon => {
+  setSystemTime(new Date(1030000));
+  const { indexer, db, wallet, anchor } = fixture(moon, true);
+  const checkFrozen = async () => {
+    expect(indexer.fleetMission("1")?.status).toBe("Returning");
+    expect(indexer.fleetSlots(owner).active).toBe(1);
+    expect(indexer.currentFleetResourceCredits("7", moon, 9999).metal).toBe("0");
+    const state = await wallet(moon ? "moon" : "shipyard");
+    if (state.status === 200) {
+      expect(state.body.ships[0].count).toBe(0);
+      expect([null, "100"]).toContain(state.body.resourcesAsOfNow?.metal ?? null);
+    } else expect(state.status).toBe(503);
+    expect(indexer.playerActivity(owner, { page: 1, pageSize: 20, through: 9999 }).items.filter(i => i.reconciliation === "projected" && i.category === "mission")).toEqual([]);
+  };
+  await checkFrozen();
+  anchor(1020);
+  expect(indexer.fleetMission("1")?.status).toBe("Returned");
+  const warmVersion = indexer.responseCacheVersion();
+  (indexer as any).setMetadata("transportStaleReason", "test outage");
+  expect(indexer.responseCacheVersion()).not.toBe(warmVersion);
+  await checkFrozen();
+  db.query("DELETE FROM indexer_metadata WHERE key = 'transportStaleReason'").run();
+  expect(indexer.fleetMission("1")?.status).toBe("Returned");
+  // Revision mismatch and malformed metadata cannot resurrect warm credits.
+  for (const [key, value] of [["resourceProjectionRevision", "-1"], ["resourceProjectionTimestamp", "broken"]]) {
+    (indexer as any).setMetadata(key, value);
+    await checkFrozen();
+    anchor(1020);
+    expect(indexer.fleetMission("1")?.status).toBe("Returned");
+  }
+  indexer.invalidateResourceProjectionWatermark("removedLog");
+  await checkFrozen();
+});

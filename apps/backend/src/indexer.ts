@@ -1915,7 +1915,10 @@ export class SettlementIndexer {
     options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
   ): PlayerActivityPage {
     const normalizedWallet = wallet.toLowerCase() as Address;
-    const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    // The default window must include already-proven fleet effects even if this
+    // reader clock runs behind the indexed chain timestamp. Explicit historical
+    // windows still cap fleet effects through currentFleetEffects.
+    const through = Math.max(0, Math.floor(options.through ?? Math.max(nowSeconds(), this.fleetProjectionHorizon() ?? 0)));
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
     const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through) : [];
     for (const item of projected) {
@@ -3784,7 +3787,22 @@ export class SettlementIndexer {
 
   private currentFleetEffectsCache: { version: string; at: number; effects: ReturnType<typeof deterministicFleetEffects> } | null = null;
 
-  private currentFleetEffects(planetId: string, asOfSeconds = nowSeconds()) {
+  private fleetProjectionHorizon(): number | null {
+    const projection = this.resourceProjectionContext();
+    const at = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
+    return projection.safeToProject && Number.isSafeInteger(at) && at >= 0 ? at : null;
+  }
+
+  private currentFleetEffects(planetId: string, asOfSeconds?: number) {
+    // A timer cannot prove the absence of intervening attacks or body changes. All
+    // fleet consumers share the fully indexed resource horizon, including callers
+    // requesting a historical activity window. Missing/unsafe anchors fail closed.
+    const horizon = this.fleetProjectionHorizon();
+    if (horizon === null) {
+      this.currentFleetEffectsCache = null;
+      return [];
+    }
+    asOfSeconds = Math.min(asOfSeconds ?? horizon, horizon);
     const version = this.indexedStateCacheVersion() + ":" + this.currentMissionReadModelDbVersion() + ":" + this.currentBattleReportReadModelDbVersion();
     if (this.currentFleetEffectsCache?.version === version && this.currentFleetEffectsCache.at === asOfSeconds) return this.currentFleetEffectsCache.effects.filter((effect) => effect.planetId === planetId);
     // A transport return depends on its remote arrival, whose blockers may never
@@ -3847,7 +3865,7 @@ export class SettlementIndexer {
 
   private effectiveTerminalMissionIds(): string[] {
     this.currentFleetEffects("0");
-    return [...new Set(this.currentFleetEffectsCache!.effects.filter((effect) => effect.terminal).map((effect) => effect.missionId))];
+    return [...new Set((this.currentFleetEffectsCache?.effects ?? []).filter((effect) => effect.terminal).map((effect) => effect.missionId))];
   }
 
   private currentFleetShipCredits(planetId: string, isMoon: boolean): Map<number, number> {
@@ -3870,7 +3888,7 @@ export class SettlementIndexer {
     return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
   }
 
-  currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds = nowSeconds()): Resources {
+  currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds?: number): Resources {
     const resources = zeroResources();
     for (const effect of this.currentFleetEffects(planetId, asOfSeconds)) {
       if (effect.isMoon !== isMoon) continue;
@@ -4061,8 +4079,7 @@ export class SettlementIndexer {
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
-    const asOfSeconds = nowSeconds();
-    const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId, asOfSeconds)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
+    const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
     const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
@@ -4262,19 +4279,20 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}`;
   }
 
   walletResponseCacheVersion(wallet: `0x${string}`): string {
     // Overview includes fleet visibility, so retain the mission/report generations. Its queue
     // projection is wallet-scoped: a due queue belonging to a different player must not force a
     // cold rebuild of this wallet's response.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}`;
   }
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
       this.productionQueueProjectionCacheVersion(),
+      `fleet=${this.fleetProjectionHorizon()}`,
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
@@ -4354,7 +4372,7 @@ export class SettlementIndexer {
   }
 
   missionResponseCacheVersion(): string {
-    return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}`;
+    return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:fleet=${this.fleetProjectionHorizon()}`;
   }
 
   indexedStateCacheVersion(): string {
@@ -4405,12 +4423,6 @@ export class SettlementIndexer {
     for (const row of this.db.query("SELECT ready_at FROM contract_moon_building_queues").all() as Array<{ ready_at: string }>) {
       const at = Number(row.ready_at);
       if (at <= nowSec) completed++; else nextReadyAt = nextReadyAt === null ? at : Math.min(nextReadyAt, at);
-    }
-    for (const row of this.db.query("SELECT status_id, mission_type_id, arrival_at, return_at FROM contract_fleet_missions WHERE status_id IN (1,2,5)").all() as Array<{status_id: number; mission_type_id: number; arrival_at: string; return_at: string}>) {
-      const times = row.status_id === 1 ? [Number(row.arrival_at), ...(row.mission_type_id === 1 ? [] : [Number(row.return_at)])] : [Number(row.return_at)];
-      for (const at of times) {
-        if (at <= nowSec) completed++; else nextReadyAt = nextReadyAt === null ? at : Math.min(nextReadyAt, at);
-      }
     }
     const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
     this.productionQueueProjectionVersionCache = {

@@ -4084,6 +4084,7 @@ describe("SettlementIndexer", () => {
       }
     }
 
+    indexer.recordResourceProjectionWatermark("144", "1767225600", "0x" + "a".repeat(64));
     expect(indexer.allActiveFleetMissions()).toHaveLength(5);
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 6 });
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
