@@ -1,3 +1,4 @@
+import type { LevelSupplyRequest } from "../levelSupply";
 import { useEffect, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
@@ -81,6 +82,7 @@ interface InfrastructurePageProps {
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
@@ -106,6 +108,7 @@ export function InfrastructurePage({
   onOpenRequirement,
   onSelectBuilding,
   onSupply,
+  onSupplyLevel,
   planetProductionProfile,
   productionRates,
   selectedBuildingKey,
@@ -193,6 +196,7 @@ export function InfrastructurePage({
             chainDuration={chainDurations?.[selectedBuilding.key]}
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
+            onSupplyLevel={onSupplyLevel}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
             planetProductionProfile={planetProductionProfile}
@@ -281,6 +285,7 @@ function BuildingDetailPanel({
   chainDuration,
   onOpenRequirement,
   onSupply,
+  onSupplyLevel,
   onUpgrade,
   now,
   planetProductionProfile,
@@ -298,6 +303,7 @@ function BuildingDetailPanel({
   now: number;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
@@ -412,7 +418,7 @@ function BuildingDetailPanel({
       </>}
       isDimmed={!built}
       label={building.label}
-      levelInfo={!binary ? buildingLevelInfoTable(currentLevel, levelInfoRows) : undefined}
+      levelInfo={buildingLevelInfoTable(currentLevel, binary ? levelInfoRows.slice(0, 1) : levelInfoRows, onSupplyLevel ? level => onSupplyLevel({ kind: "building", key: building.key, label: building.label, level }) : undefined)}
       notice={visibleActionNotice ? { label: visibleActionNotice.label, tone: "error" } : undefined}
       statusReason={{
         disabled: status.disabled,
@@ -554,6 +560,7 @@ export function BuildingLevelInfoModal({
 export function buildingLevelInfoTable(
   currentLevel: number,
   rows: ReturnType<typeof buildingLevelInfoRows>,
+  onSupply?: ((level: number) => void) | undefined,
 ): StructureLevelInfo {
   const columns = buildingLevelInfoColumns(rows);
   const modalColumns: LevelInfoColumn[] = [
@@ -583,6 +590,7 @@ export function buildingLevelInfoTable(
         ? "N/A"
         : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`,
     },
+    onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
     key: row.level,
     level: row.level,
     status: row.current ? "current" : row.next ? "next" : "future",

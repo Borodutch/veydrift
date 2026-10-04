@@ -1,6 +1,8 @@
+import { LevelInfoModal } from "./LevelInfoModal";
+import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
-import { Info, PackagePlus, X } from "lucide-preact";
+import { Info, PackagePlus } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
@@ -35,7 +37,6 @@ import {
   useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { CatalogSkeleton } from "./LoadingSkeletons";
-import { escapeCloseRef } from "./modalDismiss";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
@@ -78,6 +79,7 @@ interface ResearchPageProps {
   onResearch: (technologyId: number, key: ResearchKey) => void;
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
   researchState: ChainResearchState | null;
@@ -99,6 +101,7 @@ export function ResearchPage({
   onResearch,
   onSelectResearch,
   onSupply,
+  onSupplyLevel,
   productionRates,
   progressState,
   researchState,
@@ -206,6 +209,7 @@ export function ResearchPage({
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
+            onSupplyLevel={onSupplyLevel}
             research={selectedResearch}
             researchState={researchState}
             productionRates={productionRates}
@@ -371,6 +375,7 @@ function ResearchDetailPanel({
   onResearch,
   onOpenRequirement,
   onSupply,
+  onSupplyLevel,
   research,
   researchState,
   productionRates,
@@ -387,6 +392,7 @@ function ResearchDetailPanel({
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
+  onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   productionRates?: Resources | undefined;
@@ -497,6 +503,7 @@ function ResearchDetailPanel({
           currentLevel={status.currentLevel}
           onClose={() => setIsInfoOpen(false)}
           researchLabel={research.label}
+          onSupply={onSupplyLevel ? level => onSupplyLevel({ kind: "research", key: research.key, label: research.label, level }) : undefined}
           rows={levelInfoRows}
         />
       )}
@@ -598,148 +605,23 @@ export function ResearchLevelInfoButton({
   );
 }
 
-export function ResearchLevelInfoModal({
-  currentLevel,
-  onClose,
-  researchLabel,
-  rows,
-}: {
+export function ResearchLevelInfoModal({ currentLevel, onClose, researchLabel, rows, onSupply }: {
   currentLevel: number;
   onClose: () => void;
   researchLabel: string;
   rows: ResearchLevelInfoRow[];
+  onSupply?: ((level: number) => void) | undefined;
 }) {
-  return (
-    <div
-      aria-labelledby="research-level-info-title"
-      aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      ref={escapeCloseRef(onClose)}
-      role="dialog"
-    >
-      <div className="modal-panel-enter max-h-[min(44rem,calc(100dvh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
-        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div className="min-w-0">
-            <h3 id="research-level-info-title" className="break-words text-base font-semibold text-white">
-              {researchLabel} levels
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Current Level {currentLevel}
-            </p>
-          </div>
-          <button
-            aria-label="Close level table"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} strokeWidth={2.2} />
-          </button>
-        </div>
-
-        <div className="max-h-[calc(100dvh-8rem)] overflow-auto">
-          <table className="level-info-table min-w-full border-separate border-spacing-0 text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
-              <tr>
-                <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Status</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-52">Research cost</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-32">Research time</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-52">Requirements</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-60">Effect</ResearchLevelInfoHeader>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  className={`border-t border-white/10 ${
-                    row.current
-                      ? "bg-emerald-300/10"
-                      : row.next
-                        ? "bg-cyan-300/10"
-                        : "odd:bg-white/[0.015]"
-                  }`}
-                  key={row.level}
-                >
-                  <ResearchLevelInfoCell className="whitespace-nowrap" dataLabel="Level">
-                    <span className="font-semibold text-white">Level {row.level}</span>
-                  </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell className="min-w-24" dataLabel="Status">
-                    <div className="flex flex-wrap gap-1">
-                      {row.current ? <ResearchLevelPill tone="current">Current</ResearchLevelPill> : null}
-                      {row.next ? <ResearchLevelPill tone="next">Next</ResearchLevelPill> : null}
-                      {!row.current && !row.next && row.requirementStatus !== "Met" ? (
-                        <ResearchLevelPill tone="locked">Locked</ResearchLevelPill>
-                      ) : null}
-                    </div>
-                  </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell dataLabel="Research cost">{formatCost(row.cost)}</ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell dataLabel="Research time">
-                    {row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds)}
-                  </ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell dataLabel="Requirements">{row.requirementStatus}</ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell dataLabel="Effect">{row.effect}</ResearchLevelInfoCell>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ResearchLevelInfoHeader({
-  children,
-  className = "",
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-}) {
-  return (
-    <th className={`border-b border-white/10 px-3 py-2 font-semibold ${className}`}>
-      {children}
-    </th>
-  );
-}
-
-function ResearchLevelInfoCell({
-  children,
-  className = "",
-  dataLabel,
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-  dataLabel?: string | undefined;
-}) {
-  return (
-    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`} data-label={dataLabel}>
-      {children}
-    </td>
-  );
-}
-
-function ResearchLevelPill({
-  children,
-  tone,
-}: {
-  children: string;
-  tone: "current" | "locked" | "next";
-}) {
-  const className = tone === "current"
-    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-200"
-    : tone === "next"
-      ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-200"
-      : "border-amber-300/30 bg-amber-300/10 text-amber-200";
-
-  return (
-    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
-      {children}
-    </span>
-  );
+  return <LevelInfoModal currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
+    columns={[
+      { key: "cost", label: "Research cost" }, { key: "time", label: "Research time" },
+      { key: "requirements", label: "Requirements" }, { key: "effect", label: "Effect" },
+    ]}
+    rows={rows.map(row => ({ key: row.level, level: row.level,
+      status: row.current ? "current" : row.next ? "next" : "future",
+      onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
+      cells: { cost: formatCost(row.cost), time: row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds), requirements: row.requirementStatus, effect: row.effect },
+    }))} />;
 }
 
 function researchLevelRequirementStatus(
