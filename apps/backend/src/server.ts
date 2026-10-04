@@ -1575,7 +1575,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           page,
           pageSize,
           ...(sinceValue === null ? {} : { since: Number(sinceValue) }),
-          includeProjected: url.searchParams.get("includeProjected") === "true"
+          includeProjected: url.searchParams.get("includeProjected") !== "false"
         });
         const totalPages = Math.max(1, Math.ceil(activity.totalEntries / pageSize));
         return indexedJsonResponse({
@@ -3730,7 +3730,7 @@ function watchedPlanetPayload(
       system: planet.system,
       position: planet.position
     }),
-    fields: planet.fields,
+    fields: indexer.planetFieldsAsOfNow(planet.planetId),
     temperature: planet.temperature,
     metalMultiplierBps: planet.metalMultiplierBps,
     crystalMultiplierBps: planet.crystalMultiplierBps,
@@ -3811,7 +3811,22 @@ function accruedPlanetState<T extends PlanetState | null>(
     ...planet,
     // Never project from a reader worker's wall clock. Until the writer publishes its first fully
     // indexed block timestamp, freeze at the canonical settled balance rather than overstate funds.
-    resources: accruedResourcesWithBuildingQueue(indexer, planet, projectionTimeMs)
+    resources: (() => {
+      const through = Math.floor(projectionTimeMs / 1_000);
+      const cutoff = indexer.resourceAccrualCutoff(planet.planetId, through);
+      let current = { ...planet };
+      for (const effect of indexer.currentFleetResourceEffects(planet.planetId, through)) {
+        // Arrival preparation settles the target through arrivalAt; returns only
+        // add cargo. Accruing before every return would invent storage headroom.
+        const balance = effect.leg === "arrival"
+          ? accruedResourcesWithBuildingQueue(indexer, current, Math.min(cutoff, effect.at) * 1_000)
+          : current.resources;
+        current = { ...current,
+          lastSettledAt: effect.leg === "arrival" ? String(Math.max(Number(current.lastSettledAt), Math.min(cutoff, effect.at))) : current.lastSettledAt,
+          resources: Object.fromEntries(Object.entries(balance).map(([key, value]) => [key, (BigInt(value) + BigInt(effect.cargo[key as keyof Resources])).toString()])) as Resources };
+      }
+      return accruedResourcesWithBuildingQueue(indexer, current, cutoff * 1_000);
+    })()
   };
 }
 
@@ -4192,7 +4207,7 @@ function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementInd
     fleetSlots: indexer.fleetSlots(wallet),
     fleetLaunchAvailable: !slotSettlementBlocker,
     ...(slotSettlementBlocker ? {
-      fleetLaunchUnavailableReason: `Fleet slot state is waiting for mission settlement (mission ${slotSettlementBlocker.missionId}). Refresh after the backend or keeper settles due fleet missions before launching another fleet.`,
+      fleetLaunchUnavailableReason: "A fleet operation is still in progress. Try again shortly.",
       stale: true
     } : {})
   };
@@ -4273,8 +4288,8 @@ function indexedDefenseState(
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
-    // Keep legacy in-flight work stable for cached clients. The additive field
-    // proves whether a launchable surplus still belongs to canonical production.
+    // Retain raw queue provenance for compatibility; effective counts above
+    // already include due units and clients must not add this metadata again.
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null,
     unsettledQueue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
@@ -4316,6 +4331,7 @@ function indexedRiftState(
   }
 ): RiftState {
   const state = indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  const currentResources = indexedCurrentResourcesForPlanet(indexer, planet);
   return {
     ...state,
     resources: state.resources.map((resource) => ({
@@ -4323,7 +4339,7 @@ function indexedRiftState(
       tokenAddress: resourceTokenAddresses[resource.key] ?? null,
       // Planet resources are the spendable in-game balance. Rift bridge event deltas were only a
       // historical ledger and must not be shown as a player's current mine balance.
-      inGameBalance: planet?.resources?.[resource.key] ?? "0"
+      inGameBalance: currentResources?.[resource.key] ?? "0"
     }))
   };
 }
@@ -4507,6 +4523,7 @@ function galaxySystemPayload({
       const reservedPlanet = occupiedPlanet ? undefined : reserved.get(planet.position);
       const summary: GalaxySystemSummaryPlanet = {
         ...planet,
+        ...(occupiedPlanet && indexer ? { fields: indexer.planetFieldsAsOfNow(occupiedPlanet.planetId) } : {}),
         ...(occupiedPlanetName ? { name: occupiedPlanetName } : {}),
         occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
         migrationReservation: migrationReservationRef(reservedPlanet),

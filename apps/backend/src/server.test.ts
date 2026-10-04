@@ -3993,7 +3993,7 @@ describe("Veydrift backend", () => {
     const warmDefenses = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`));
     const warmDefensesBody = await warmDefenses.json() as DefenseState;
     expect(warmDefensesBody.defenses.find((defense) => defense.id === 9)?.count).toBe(1);
-    expect(warmDefensesBody.launchableDefenses?.find((defense) => defense.id === 9)?.count).toBe(2);
+    expect(warmDefensesBody.launchableDefenses?.find((defense) => defense.id === 9)?.count).toBe(1);
 
     indexer.applyLog({
       blockNumber: "0x81",
@@ -8429,6 +8429,8 @@ describe("Veydrift backend", () => {
     expect(beforeWatermark.resourcesAsOfNow.metal).toBe("5000");
     expect(projected.resourcesAsOfNow.metal).toBe("5032");
     expect(projected.resourcesAsOfNow.metal).not.toBe("5064");
+    const rift = await (await handler(new Request(`http://localhost/wallet/${player}/rift`))).json() as RiftState;
+    expect(rift.resources.find((resource) => resource.key === "metal")?.inGameBalance).toBe(projected.resourcesAsOfNow.metal);
     expect(indexer.snapshot()).toMatchObject({
       resourceProjectionBlock: "130",
       resourceProjectionTimestamp: chainTimestamp.toString()
@@ -8947,7 +8949,7 @@ describe("Veydrift backend", () => {
       const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json() as ShipyardState;
       expect(afterVersion).not.toBe(beforeVersion);
       expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 1, count: 0 }));
-      expect(fresh.launchableShips).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
+      expect(fresh.launchableShips).toContainEqual(expect.objectContaining({ id: 1, count: 0 }));
       expect(fresh.queue).toBeNull();
 
       const db = new Database(databasePath);
@@ -10322,8 +10324,7 @@ describe("Veydrift backend", () => {
       { id: 0, count: 4 }
     ]);
     expect(shipyardBody.launchableShips.filter((ship: { count: number }) => ship.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
-      { id: 0, count: 7 },
-      { id: 2, count: 1 }
+      { id: 0, count: 4 }
     ]);
     expect(defensesBody.queue).toBeNull();
     expect(defensesBody.unsettledQueue).toMatchObject({ active: true, itemId: 1, quantity: 2, asOfNow: { complete: true } });
@@ -10331,8 +10332,7 @@ describe("Veydrift backend", () => {
       { id: 0, count: 10 }
     ]);
     expect(defensesBody.launchableDefenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
-      { id: 0, count: 15 },
-      { id: 1, count: 2 }
+      { id: 0, count: 10 }
     ]);
   });
 
@@ -10399,7 +10399,7 @@ describe("Veydrift backend", () => {
       expect(notDue.queue?.quantity).toBe(quantity);
       setSystemTime(new Date((now + 10) * 1_000));
       const partial = await read();
-      expect(canonicalCount(partial)).toBe(canonical);
+      expect(canonicalCount(partial)).toBe(canonical + 1);
       expect(count(partial)).toBe(canonical + 1);
       expect(partial.queue?.quantity ?? 0).toBe(quantity - 1);
       expect(partial.unsettledQueue).toMatchObject({ active: true, quantity, asOfNow: { completedQuantity: 1 } });
@@ -10420,7 +10420,7 @@ describe("Veydrift backend", () => {
       setSystemTime(new Date((now + quantity * 10) * 1_000));
       const due = await read();
       expect(due.queue).toBeNull(); // Legacy clients still see only not-yet-due work.
-      expect(canonicalCount(due)).toBe(canonical + partialSettled);
+      expect(canonicalCount(due)).toBe(canonical + quantity);
       expect(count(due)).toBe(canonical + quantity);
       expect(due.unsettledQueue).toMatchObject({ active: true, quantity: quantity - partialSettled, asOfNow: { complete: true, remainingQuantity: 0 } });
       // Restart before settlement must preserve legitimate due launchability.
@@ -12915,4 +12915,25 @@ test("combat model capability is uncached and fails closed during rollout", asyn
   const oldReader = new MockChainReader();
   const old = createRequestHandler({ config: configuredTestConfig, chainReader: oldReader, indexer: new SettlementIndexer(oldReader, 100n), role: "reader" });
   expect((await (await old(new Request("https://api.veydrift.com/combat-model"))).json() as { version: null }).version).toBeNull();
+});
+
+test("current state invalidates warm full-system and wallet caches at partial units without logs", async () => {
+ const db = new Database(":memory:"); const reader = new MockChainReader();
+ const indexer = new SettlementIndexer(reader,100n,{database:db,runStartupBackfill:false});
+ indexer.applyEvent({...planet,eventName:"PlanetStarted",transactionHash:"0xpartial",blockNumber:"123"});
+ const now = Math.floor(Date.now()/1000);
+ db.query("INSERT INTO contract_production_queues (queue_key,queue_kind,planet_id,owner,item_id,target_level,quantity,ready_at,started_at,original_quantity,unit_work_seconds,production_rate,metal_cost,crystal_cost,deuterium_cost,event_json) VALUES ('defense:7','defense','7',?,0,NULL,3,?,?,3,'100','10','0','0','0','{}')").run(player,String(now+30),String(now));
+ const handler=createRequestHandler({config:configuredTestConfig,chainReader:reader,indexer,role:"reader",enableResponseCache:true,prewarmResponseCache:false});
+ const read=async()=>{
+  const defense=await (await handler(new Request("http://localhost/wallet/"+player+"/defenses?planetId=7"))).json() as DefenseState;
+  const galaxy=await (await handler(new Request("http://localhost/universe/galaxies/"+planet.galaxy+"/systems/"+planet.system+"?detail=full"))).json();
+  const publicState=galaxy.planets.find((row:any)=>row.occupiedBy?.planetId==="7").publicState;
+  expect(publicState.defenses.find((row:any)=>row.id===0)?.count).toBe(defense.defenses[0]?.count);
+  return defense;
+ };
+ try {
+  expect((await read()).defenses[0]?.count).toBe(0);
+  setSystemTime(new Date((now+10)*1000));expect((await read()).defenses[0]?.count).toBe(1);
+  setSystemTime(new Date((now+20)*1000));expect((await read()).defenses[0]?.count).toBe(2);
+ } finally { setSystemTime(new Date(now*1000)); }
 });

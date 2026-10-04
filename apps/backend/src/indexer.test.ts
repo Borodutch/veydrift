@@ -1924,7 +1924,7 @@ describe("SettlementIndexer", () => {
       data: abiWords(8n, BigInt(readyAt), 0n, 0n, 0n)
     });
 
-    const history = indexer.playerActivity(player, { page: 1, pageSize: 25, through: readyAt + 10 });
+    const history = indexer.playerActivity(player, { page: 1, pageSize: 25, through: readyAt + 10, includeProjected: false });
     expect(history.items).toHaveLength(1);
     expect(history.items[0]).toMatchObject({
       kind: "building-started",
@@ -3981,8 +3981,8 @@ describe("SettlementIndexer", () => {
     expect(indexer.allCompletedFleetMissions().find((mission) => mission.missionId === "82")).toBeUndefined();
     expect(indexer.fleetMissionVisibility(player).returning.map((mission) => mission.missionId)).toEqual(["82", "83"]);
     expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toBeUndefined();
-    expect(indexer.fleetSlots(player)).toEqual({ active: 1, limit: 1 });
-    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual([]);
+    expect(indexer.fleetSlots(player)).toEqual({ active: 2, limit: 1 });
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual(["82"]);
     indexer.applyLog({
       blockNumber: "0x92", transactionHash: "0xreturned905", logIndex: "0x0",
       topics: [fleetMissionReturnedTopic, topic(82n), addressTopic(player), topic(7n)],
@@ -3992,7 +3992,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["83"]);
   });
 
-  test("frees due transport arrivals from projected fleet slots because launch lazily settles them (VEY-590)", () => {
+  test("keeps due transport arrivals in fleet slots until a proven return (VEY-590)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -4019,8 +4019,8 @@ describe("SettlementIndexer", () => {
       needsResolution: true,
       status: "Outbound"
     });
-    expect(indexer.fleetSlots(player)).toEqual({ active: 0, limit: 1 });
-    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player)).toEqual([]);
+    expect(indexer.fleetSlots(player)).toEqual({ active: 1, limit: 1 });
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual(["590"]);
   });
 
   test("projects an arrived moon Deploy into launchable moon ships while freeing its fleet slot (VEY-KANEO-722)", () => {
@@ -4087,7 +4087,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.allActiveFleetMissions()).toHaveLength(6);
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 6 });
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
-      ships: expect.arrayContaining([expect.objectContaining({ id: 0, count: 0 })]),
+      ships: expect.arrayContaining([expect.objectContaining({ id: 0, count: 1 })]),
       launchableShips: expect.arrayContaining([expect.objectContaining({ id: 0, count: 1 })])
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
@@ -5313,7 +5313,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("keeps legacy elapsed queues out of served rows while launchable ships include them", () => {
+  test("keeps legacy elapsed queues out of served rows and launchable rows without provenance", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -5367,7 +5367,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 23
+      count: 9
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
@@ -6568,7 +6568,7 @@ describe("SettlementIndexer", () => {
     const displayed = indexer.displayedUnitCounts(planet.planetId, kind);
     expect(displayed).toEqual(rows.map(({ id, count }) => ({ id, count })));
     expect(displayed[0]!.count).toBe(4);
-    expect(launchable[0]!.count).toBe(7);
+    expect(launchable[0]!.count).toBe(4);
     const reads = spyOn(indexer as any, "indexedLevelsById");
     try {
       expect(indexer.productionInventory(planet.planetId, kind, levels)).toEqual({ rows, launchable });
@@ -12721,8 +12721,7 @@ describe("SettlementIndexer", () => {
       { id: 0, count: 4 }
     ]);
     expect(indexer.availableShipRows("7").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 7 },
-      { id: 2, count: 1 }
+      { id: 0, count: 4 }
     ]);
     expect(indexer.defenseRows("7").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 10 }
