@@ -1915,9 +1915,13 @@ export class SettlementIndexer {
     options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
   ): PlayerActivityPage {
     const normalizedWallet = wallet.toLowerCase() as Address;
-    const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    const queueThrough = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    // Current fleets follow indexed chain time even when the reader clock lags.
+    // Explicit historical windows still cap both feeds; queues retain wall time.
+    const fleetThrough = options.through === undefined ? this.fleetProjectionHorizon() ?? 0 : queueThrough;
+    const through = Math.max(queueThrough, fleetThrough);
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
-    const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through) : [];
+    const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, queueThrough, fleetThrough) : [];
     for (const item of projected) {
       const existing = this.db.query("SELECT SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0)) AS quantity FROM indexed_player_activity_feed WHERE wallet = ? AND json_extract(activity_json, '$.id') = ? AND CAST(transaction_at AS INTEGER) <= ?").get(normalizedWallet, item.id, through) as {quantity: number | null};
       if (typeof item.metadata.quantity === "number") item.metadata.quantity += existing.quantity ?? 0;
@@ -1952,8 +1956,8 @@ export class SettlementIndexer {
     return { items, summary, totalEntries, through: through.toString() };
   }
 
-  private projectedPlayerActivity(wallet: Address, since: number, through: number): PlayerActivityItem[] {
-    if (through <= since) return [];
+  private projectedPlayerActivity(wallet: Address, since: number, queueThrough: number, fleetThrough: number): PlayerActivityItem[] {
+    if (Math.max(queueThrough, fleetThrough) <= since) return [];
     const rows = this.db.query(`
       SELECT queues.queue_kind, queues.planet_id, queues.item_id, queues.target_level,
         queues.quantity, queues.ready_at, queues.started_at, queues.original_quantity,
@@ -1972,7 +1976,7 @@ export class SettlementIndexer {
         const backlog = parseEvent<QueueState[]>(row.backlog_json);
         if (Array.isArray(backlog) && backlog.length > 0) queue.backlog = backlog;
       }
-      const after = settleQueueAsOfNow(queue, through).completed;
+      const after = settleQueueAsOfNow(queue, queueThrough).completed;
       let startEvent: Partial<IndexedQueueStartedEvent> = {};
       try {
         startEvent = parseEvent<IndexedQueueStartedEvent>(row.event_json);
@@ -2018,7 +2022,7 @@ export class SettlementIndexer {
         }
       }
     }
-    const effects = new Map(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId, through)).map((effect) => [effect.missionId + ":" + effect.leg, effect]));
+    const effects = new Map(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId, fleetThrough)).map((effect) => [effect.missionId + ":" + effect.leg, effect]));
     for (const effect of effects.values()) {
       if (effect.at <= since) continue;
       const mission = this.fleetMissionSummaryFromContractRow(effect.missionId);

@@ -27,11 +27,13 @@ Backend-only repair against integration base 676ac4e6 (second exact-head review 
 ## Fleet horizon follow-up (review #541)
 
 - Every deterministic fleet leg uses the validated fully indexed resource watermark, never the reader wall clock. Missing, stale, revision-mismatched or malformed anchors grant no projected ships/cargo or terminal lifecycle/slot credit. Resource accrual remains unchanged.
-- Activity fleet legs are capped by both the requested activity window and this safe horizon; existing queue/activity wall-clock semantics are preserved.
+- Default activity fleet legs use the safe indexed horizon even when the reader clock lags. Explicit historical `through` windows still cap those legs; queue projections retain their own wall-clock/requested window. The returned activity `through` includes the fleet horizon so indexed-proven returns are not hidden behind reader time. HTTP regressions cover slow-clock planet/moon arrivals and returns, `since`, `includeProjected=false`, queue boundaries, and unsafe warm-horizon invalidation.
 - Wallet, full-system and persisted-summary version tokens include the safe fleet horizon. Actual HTTP keys for all highscores variants, universe systems and finder routes use that version; resource-bearing public payloads are browser no-store. Landing shared stale data cannot cross versions. No-store mission responses retain their numeric indexedRevision format. Public/tactical moon resources use the same effective credit balance as moon inventory.
-- `fleetProjectionHorizon.test.ts` covers planet/moon transport, Deploy and known returns before/at/after arrival and return, forward/backward reader clock drift, warm full-system HTTP payloads, wallet shipyard/moon/infrastructure/Rift, mission detail, activity, and absent/unsafe watermark recovery.
+- `fleetProjectionHorizon.test.ts` covers planet/moon transport, Deploy and known returns before/at/after arrival and return, forward/backward reader clock drift, warm full-system HTTP payloads, wallet shipyard/moon/infrastructure/Rift, mission detail, activity, and absent/unsafe watermark recovery. Four isolated default `/highscores?live=1` regressions retain the independent review reproductions: planet/moon × horizon advancement/invalidation without new mission events, checking warm responses against explicit expected balances and `fresh=1`.
 
 ## Verification
+
+- Slow-reader horizon follow-up: full backend `bun test` passed 1,166 tests across 51 files, 9,043 assertions, zero failures (13.88s); `bun run check` and `git diff --check` passed. The horizon file contains 17 passing regressions (2,095 assertions).
 
 - Focused new/extended tests: currentState.test.ts, currentFleet.test.ts, server.test.ts; existing indexer legacy semantics and canonical activity clock fixtures updated.
 - Second review lane: `bun run check` passed; full `bun test` passed 1,149 tests across 50 files, 6,948 assertions, zero failures (14.32s); `git diff --check` passed. Added missing-launch origin/destination, uncertain possible-return, two-moon identity/restart, and >500 same-block/removed-history replay coverage.
