@@ -74,7 +74,7 @@ Open Galaxy or Raid Finder to choose a target. The mission composer previews rou
 | ACS Attack | Lets allied fleets join an attack group when available. |
 | ACS Defend | Stations allied defense at a target until the hostile attack lands or the hold expires. |
 
-Mission arrivals and returns normally settle automatically. If a mission stays **Resolving** for at least 60 seconds, a **Resolve** button appears beside that status. Any connected player can submit this permissionless fallback, which keeps missions moving if the funded resolver wallet is unavailable. Combat missions waiting for randomness show **Awaiting randomness** instead and cannot be resolved yet.
+Mission arrivals and returns update automatically. **Battle pending** or **Battle in progress** means the outcome is not known yet. Check the mission details again shortly for the result; no completion transaction is needed.
 
 ### Common Mistakes
 
@@ -98,7 +98,7 @@ Moons may also be granted by burning Burning Chicken NFTs through the Moon page.
 
 ### Resources And Queues
 
-Spending happens when the transaction succeeds on the blockchain; the displayed balance may take a little longer to update. Completed work can be collected explicitly or settled by a later relevant action where supported.
+Spending happens when your transaction succeeds. Completed work appears in your current levels and inventory automatically; queues show the work remaining. If current resources are unavailable, wait for them to refresh before starting another action.
 
 | Queue | Scope | Examples |
 | --- | --- | --- |
@@ -234,7 +234,7 @@ All costs are base costs before level scaling unless noted.
 
 ### Build Infrastructure
 
-Starting a building upgrade spends the required resources, records the target level and ready time, and occupies that body's building queue. When the ready time has passed, the upgrade can be completed or lazily settled by a later relevant action.
+Starting a building upgrade spends the required resources, records the target level and ready time, and occupies that body's building queue. When construction finishes, the new level appears automatically.
 
 ### Start Research
 
@@ -352,7 +352,7 @@ details.
 
 ### Storage And Fields
 
-Storage buildings increase their resource caps by level. If production would exceed a cap, settlement caps the resource at that cap. Buildings consume one field per level. Terraformer adds planet fields. Lunar Base adds 3 moon fields per completed level.
+Storage buildings increase their resource caps by level. Production stops adding to a resource once it reaches its storage cap. Buildings consume one field per level. Terraformer adds planet fields. Lunar Base adds 3 moon fields per completed level.
 
 ### Construction, Research, Ship, And Defense Time
 

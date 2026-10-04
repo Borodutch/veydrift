@@ -7,6 +7,18 @@ const mission = (overrides: Partial<FleetMissionSummary> = {}): FleetMissionSumm
   cargo: { metal: "10", crystal: "20", deuterium: "30" }, returnCargo: null, ...overrides
 } as FleetMissionSummary);
 const exists = () => true;
+test("unknown moon Deploy retains its possible return dependency", () => {
+  const deploy=mission({missionType:"Deploy", targetIsMoon:true});
+  const later=mission({missionId:"2",originPlanetId:"3",targetPlanetId:"1",arrivalAt:"300",returnAt:"400"});
+  expect(deterministicFleetEffects([deploy,later],350,(_id,moon)=>moon?null:true)).toEqual([]);
+});
+test("unknown origin incarnation reserves moon and parent return surfaces", () => {
+  const returning=mission({status:"Returning",originIsMoon:true,returnCargo:{metal:"1",crystal:"0",deuterium:"0"}});
+  for(const targetIsMoon of [true,false]) {
+    const later=mission({missionId:"2",originPlanetId:"3",targetPlanetId:"1",targetIsMoon,arrivalAt:"300",returnAt:"400"});
+    expect(deterministicFleetEffects([returning,later],350,(id,moon,_owner,m)=>id==="1"&&moon&&m?.missionId==="1"?null:true)).toEqual([]);
+  }
+});
 test("staged planet locks also block moon arrivals and their dependent returns", () => {
   const m = mission({targetIsMoon: true});
   expect(deterministicFleetEffects([m], 300, exists, new Map([["2", "9"]]))).toEqual([]);

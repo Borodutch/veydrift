@@ -1,6 +1,6 @@
 # Board #23 backend current-state coverage
 
-Backend-only repair against integration base ad12e062. No contracts, chain transactions, deployment, browser QA, or commit in this lane.
+Backend-only repair against integration base 676ac4e6 (second exact-head review follow-up). No contracts, chain transactions, deployment, browser QA, or commit in this lane.
 
 ## Shared read contract
 
@@ -18,23 +18,24 @@ Backend-only repair against integration base ad12e062. No contracts, chain trans
 
 - Scalar Returning reconciliation invalidates retained composition as survivor evidence. Only a same-snapshot composition/status marker or materialized participant survivors authorizes combat-return ships. Existing summary survivors are cleared before this proof selection.
 - Staged lock discovery uses indexed CombatStageAdvanced evidence for active missions, not an Attack-only classification. Every nonzero phase except terminal 13 retains the planet-ID lock across planet/moon arrivals. Tests cover 1, 12, 14, 15 and released 13; pure tests cover dependent return suppression.
-- Destination/origin moon identity distinguishes false (destroyed/replaced) from unknown. Same-block creation uses ordered launch/creation logs; absent launch provenance stays unknown rather than treating the moon as destroyed.
+- Destination/origin moon identity distinguishes false (destroyed/replaced) from unknown. Actual retained FleetMissionLaunched evidence is mandatory; lastReconciledBlock is never a launch/incarnation anchor. Same-block creation uses ordered launch/creation logs. Unknown Deploy destinations reserve the possible return dependency; unknown origin incarnations reserve both moon and parent surfaces.
 - Legacy retained queue start/end proves whole-batch readiness only. It no longer invents per-unit rates from rounded duration. Older synthetic timing is normalized conservatively; a retained modern timing event disambiguates genuine identical numeric timing. Malformed timing remains fail-closed. Legacy promoted backlog expectations now reflect batch semantics.
-- Activity allocates one object per batch, not per unit (billion-unit fixture). Partial settlements sum by immutable batch ID. Ranked SQL selects a deterministic latest game-time row, avoiding SQLite bare-row/MAX ambiguity. Startup V3 reconstruction streams 500 raw logs per batch and retains queue history in a temporary SQLite table. Original event keys still support removal/reorg rebuilds.
+- Activity allocates one object per batch, not per unit (billion-unit fixture). Partial settlements sum by immutable batch ID. Ranked SQL selects a deterministic latest game-time row, avoiding SQLite bare-row/MAX ambiguity. Startup V3 reconstruction uses one ordered SQLite iterator (numeric block, log width/value, stable event-ID tie-break), not repeated OFFSET prefix scans, and retains queue history in a temporary SQLite table. Moon-building queue context includes planetId; two-moon completion IDs survive projection, mining, forced replay, and reader restart without collisions. Original event keys still support removal/reorg rebuilds.
 - Resource order follows contracts: BatchTransport._settleScheduledTarget calls FirstPlanetSettlement.settleProductionUntil, then Colonization.completeAttackTargetSnapshotQueues (research, ships, defenses; **not buildings**). Each arrival accrues with the previous canonical/effectively settled rates, then updates ship/research inputs. The final passive collection applies the building two-window behavior. A two-arrival HTTP fixture covers building readiness before/between arrivals and satellite/research completion without retroactive accrual. Return cargo does not create an intermediate accrual/storage-headroom segment.
 - Moon resource consumers preserve explicit unknown values instead of falling back to raw snapshots. Rankings includes proven current moon credits without full read-model hydration.
 
 ## Verification
 
 - Focused new/extended tests: currentState.test.ts, currentFleet.test.ts, server.test.ts; existing indexer legacy semantics and canonical activity clock fixtures updated.
-- Final lane run: `bun run check` passed; `bun test` passed 1,145 tests across 50 files, 6,934 assertions, zero failures (13.19s). `git diff --check` passed. Rerun after integration edits.
+- Second review lane: `bun run check` passed; full `bun test` passed 1,149 tests across 50 files, 6,948 assertions, zero failures (14.32s); `git diff --check` passed. Added missing-launch origin/destination, uncertain possible-return, two-moon identity/restart, and >500 same-block/removed-history replay coverage.
+- Reproducible real-schema benchmark: `bun src/activityReplay.bench.ts`. 100k/200k/400k rows: ordered cursor 34/69/140 ms; actual forced V3 migration 178/349/724 ms. Previous reviewed OFFSET query-only times were 2.10/8.02/32.23 seconds. This fixture uses inert logs (actual queue-event work depends on its mix); both scans demonstrate approximately linear scaling.
 - Existing production backlog/spend/replay/reorg, moon destruction, resource boosts/segments/caps, resolver and activity suites retained.
 
 ## Boundaries, not claims of certainty
 
 - Unknown combat, harvest, linked ACS and hold outcomes remain blockers; no simulated win or loot is promoted into inventory. Indexed lock evidence is not a fresh RPC storage proof; absent relevant historical evidence cannot be reconstructed magically.
 - Legacy queues with no trustworthy retained provenance remain excluded; no RPC repair or live data mutation is introduced.
-- Activity is bounded in JS by batches/page, but SQL still groups a wallet's indexed history; startup migration is bounded-memory, not a benchmark of every production history size.
+- Activity is bounded in JS by batches/page, but SQL still groups a wallet's indexed history; startup migration is streaming and benchmarked through 400k real-schema rows, not every production event mix/history size.
 - Resource tests qualify scheduled target settlement and local rate transitions, not an exhaustive whole-universe cross-owner research/arrival permutation or live reserve-exhaustion proof.
 - Coverage is shared-source plus focused HTTP tests, not every route × account switch × reorg × production kind. Independent exact-head review and dedicated live Veydrift QA remain required.
 

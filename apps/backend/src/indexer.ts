@@ -3815,11 +3815,12 @@ export class SettlementIndexer {
       const body = moon ? this.moon(id) : this.planet(id);
       if (!body || (owner && body.owner.toLowerCase() !== owner.toLowerCase())) return false;
       if (moon && mission) {
-        const createdBlock = BigInt(body.blockNumber), launchedBlock = BigInt(mission.launchBlockNumber);
-        if (launchedBlock === 0n) return null;
+        // A reconciliation checkpoint is not evidence of when this fleet launched.
+        const launch = this.fleetMissionEventLogsForMissionIds([mission.missionId]).find((log) => log.topics[0]?.toLowerCase() === fleetMissionLaunchedTopic.toLowerCase());
+        if (!launch) return null;
+        const createdBlock = BigInt(body.blockNumber), launchedBlock = BigInt(launch.blockNumber);
         if (createdBlock > launchedBlock) return false;
         if (createdBlock === launchedBlock) {
-          const launch = this.fleetMissionEventLogsForMissionIds([mission.missionId]).find((log) => log.topics[0]?.toLowerCase() === fleetMissionLaunchedTopic.toLowerCase());
           const creation = this.db.query("SELECT event_json FROM indexed_moon_state_event_logs WHERE planet_id = ? AND removed = 0 AND lower(json_extract(event_json, '$.topics[0]')) = ? ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC LIMIT 1").get(id, moonCreatedTopic.toLowerCase()) as EventRow | null;
           const createdLog = creation ? parseEvent<IndexedRpcLog>(creation.event_json) : null;
           if (!launch?.logIndex || !createdLog?.logIndex) return null;
@@ -7643,39 +7644,36 @@ export class SettlementIndexer {
         if (!queues.length) this.db.query("DELETE FROM activity_replay_queues WHERE queue_key = ?").run(key);
         else this.db.query("INSERT OR REPLACE INTO activity_replay_queues VALUES (?, ?)").run(key, JSON.stringify(queues));
       };
-      let offset = 0;
-      while (true) {
-        const rows = this.db.query("SELECT event_id, event_json FROM indexed_event_logs WHERE removed = 0 ORDER BY CAST(block_number AS INTEGER), length(log_index), log_index LIMIT 500 OFFSET ?").all(offset) as Array<EventRow & {event_id: string}>;
-        if (!rows.length) break;
-        for (const row of rows) {
-          const log = parseEvent<IndexedRpcLog>(row.event_json);
-          let context: QueueState | null = null;
-          if (isIndexedQueueStartedLog(log)) {
-            const event = decodeIndexedQueueStartedLog(log), key = queueKey(event);
-            const queues = get(key), queue = queueStateFromEvent(event);
-            const same = queues.findIndex((entry) => projectedQueueActivityKey(entry) === projectedQueueActivityKey(queue));
-            if (same >= 0) queues[same] = { ...queues[same], ...queue };
-            else if (event.quantity !== undefined) queues.push(queue);
-            else queues.splice(0, queues.length, queue);
+      // One ordered cursor: OFFSET restarted the prefix scan for every batch.
+      // The source ledger is immutable throughout this transaction; only projections change.
+      const rows = this.db.query<EventRow & {event_id: string}, []>("SELECT event_id, event_json FROM indexed_event_logs WHERE removed = 0 ORDER BY CAST(block_number AS INTEGER), length(log_index), log_index, event_id").iterate();
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        let context: QueueState | null = null;
+        if (isIndexedQueueStartedLog(log)) {
+          const event = decodeIndexedQueueStartedLog(log), key = queueKey(event);
+          const queues = get(key), queue = queueStateFromEvent(event);
+          const same = queues.findIndex((entry) => projectedQueueActivityKey(entry) === projectedQueueActivityKey(queue));
+          if (same >= 0) queues[same] = { ...queues[same], ...queue };
+          else if (event.quantity !== undefined) queues.push(queue);
+          else queues.splice(0, queues.length, queue);
+          put(key, queues);
+        } else if (isProductionQueueTimingLog(log)) {
+          const event = decodeProductionQueueTimingLog(log), key = queueKey(event);
+          const queues = get(key), queue = queues.find((entry) => entry.readyAt === event.readyAt && entry.itemId === event.itemId);
+          if (queue) queue.productionTiming = {startedAt: event.startedAt, originalQuantity: event.originalQuantity, unitWorkSeconds: event.unitWorkSeconds, rate: event.rate};
+          put(key, queues);
+        } else if (isIndexedQueueCompletedLog(log)) {
+          const event = decodeIndexedQueueCompletedLog(log), key = queueKey(event), queues = get(key);
+          const index = queues.findIndex((entry) => entry.itemId === event.itemId && (event.level === undefined || entry.targetLevel === event.level));
+          if (index >= 0) {
+            context = { ...queues[index]! };
+            if (event.quantity !== undefined && event.quantity < (context.quantity ?? 0)) queues[index] = { ...context, quantity: context.quantity! - event.quantity };
+            else queues.splice(index, 1);
             put(key, queues);
-          } else if (isProductionQueueTimingLog(log)) {
-            const event = decodeProductionQueueTimingLog(log), key = queueKey(event);
-            const queues = get(key), queue = queues.find((entry) => entry.readyAt === event.readyAt && entry.itemId === event.itemId);
-            if (queue) queue.productionTiming = {startedAt: event.startedAt, originalQuantity: event.originalQuantity, unitWorkSeconds: event.unitWorkSeconds, rate: event.rate};
-            put(key, queues);
-          } else if (isIndexedQueueCompletedLog(log)) {
-            const event = decodeIndexedQueueCompletedLog(log), key = queueKey(event), queues = get(key);
-            const index = queues.findIndex((entry) => entry.itemId === event.itemId && (event.level === undefined || entry.targetLevel === event.level));
-            if (index >= 0) {
-              context = { ...queues[index]! };
-              if (event.quantity !== undefined && event.quantity < (context.quantity ?? 0)) queues[index] = { ...context, quantity: context.quantity! - event.quantity };
-              else queues.splice(index, 1);
-              put(key, queues);
-            }
           }
-          this.recordPlayerActivityFeedFromLog(row.event_id, log, { useCurrentQueue: false, historicalQueue: context });
         }
-        offset += rows.length;
+        this.recordPlayerActivityFeedFromLog(row.event_id, log, { useCurrentQueue: false, historicalQueue: context });
       }
       this.db.query("DROP TABLE activity_replay_queues").run();
       this.setMetadata("playerActivityFeedBackfilledV2", new Date().toISOString());
@@ -10873,6 +10871,7 @@ export class SettlementIndexer {
         const queue = {
           active: true,
           kind: "moon-building",
+          planetId: row.planet_id,
           itemId: row.moon_building_id,
           targetLevel: row.target_level,
           readyAt: row.ready_at,
@@ -13457,7 +13456,7 @@ export class SettlementIndexer {
       ships: canonicalStorageDetails?.ships ?? parseJson<Record<string, string>>(row.ships_json, {}),
       transactionHash: "0x",
       blockNumber: this.metadata("lastReconciledBlock") ?? "0",
-      launchBlockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      launchBlockNumber: "0",
       needsResolution: false
     };
     const mergedBase = canonicalEventMission

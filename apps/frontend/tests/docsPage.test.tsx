@@ -120,6 +120,15 @@ energy scale = produced / required
     expect(links.some((node) => node.props?.href === "/docs" && node.props?.children === "Docs")).toBe(false);
   });
 
+  test("player guidance matches automatic completion without settlement duties", () => {
+    const markdown = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");
+    expect(markdown).toContain("Mission arrivals and returns update automatically.");
+    expect(markdown).toContain("the outcome is not known yet");
+    expect(markdown).toContain("queues show the work remaining");
+    expect(markdown).not.toMatch(/\*\*Resolve\*\*|Awaiting randomness|funded resolver|lazily settled|collected explicitly|60 seconds/);
+    expect(markdown).toContain("settlement flow to claim a home planet");
+  });
+
   test("gameplay navigation exposes docs from the top bar, not the sidebar", () => {
     const navSource = readFileSync(new URL("../src/components/NavBar.tsx", import.meta.url), "utf8");
     const topBarSource = readFileSync(new URL("../src/components/TopBar.tsx", import.meta.url), "utf8");

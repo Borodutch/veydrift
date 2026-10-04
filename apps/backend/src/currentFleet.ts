@@ -20,7 +20,7 @@ export function deterministicFleetEffects(
     if (mission.status === "Outbound") legs.push({ mission, planetId: mission.targetPlanetId,
       isMoon: mission.targetIsMoon === true, at: Number(mission.defenseHoldUntil ?? mission.arrivalAt),
       kind: mission.missionType === "DefenseHold" ? 2 : 0 });
-    if (mission.missionType !== "MissileAttack" && (mission.status !== "Outbound" || mission.missionType !== "Deploy" || (mission.targetIsMoon === true && bodyExists(mission.targetPlanetId, true, undefined, mission) === false))) {
+    if (mission.missionType !== "MissileAttack" && (mission.status !== "Outbound" || mission.missionType !== "Deploy" || (typeof mission.targetIsMoon !== "boolean" || (mission.targetIsMoon && bodyExists(mission.targetPlanetId, true, undefined, mission) !== true)))) {
       legs.push({ mission, planetId: mission.originPlanetId,
         isMoon: mission.originIsMoon === true && bodyExists(mission.originPlanetId, true, mission.owner, mission) !== false,
         at: Number(mission.returnAt), kind: 1 });
@@ -34,6 +34,11 @@ export function deterministicFleetEffects(
   for (const leg of legs) {
     if (!Number.isSafeInteger(leg.at) || leg.at <= 0 || leg.at > now) continue;
     const m = leg.mission, body = leg.planetId + ":" + leg.isMoon;
+    // An unproven origin incarnation can land on either the moon or parent.
+    // Reserve both possible return surfaces before checking either surface lock.
+    if (leg.kind === 1 && m.originIsMoon === true && bodyExists(leg.planetId, true, m.owner, m) === null) {
+      blocked.add(leg.planetId + ":false"); blocked.add(leg.planetId + ":true"); continue;
+    }
     if (blocked.has(body)) continue;
     // The staged combat lock is keyed by planet ID in the contract, unlike
     // ordinary chronology which distinguishes planet and moon surfaces.

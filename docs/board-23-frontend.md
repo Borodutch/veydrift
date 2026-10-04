@@ -56,3 +56,7 @@ Backend must provide effective defense/ship counts, trusted legacy provenance, r
 - Full planet-picker browser suite: **122 passed, 0 failed** (107.40s), including completed defense before/after settlement, hard reload, incomplete-overview hydration, transaction recovery and account/body-switch safety. Initial overlapping cold invocation stalled before scenarios and was stopped; isolated warm invocation completed.
 - Final frontend TypeScript **passed**; production Vite build **passed** (6.34s; existing >500kB chunk warning). git diff --check passed.
 - No known remaining defect in the assigned frontend repairs. Broader backend provenance/reorg/chronology proof and independent integrated review remain parent/backend responsibilities; this is not a claim that every unchanged entrypoint has live mounted QA. No personal-profile, wallet or live QA, transaction, board/PR/deploy action or commit performed by this repair lane.
+
+### Second exact-head review repair
+
+Player documentation now matches automatic mission/production completion: removed the retired 60-second Resolve fallback, funded-resolver/randomness instructions, and explicit/lazy-completion duties. Battle outcomes remain unknown until available; planet-founding settlement and legitimate combat probability formulas remain. Added docs regression; six docs tests and content/link checks pass.
