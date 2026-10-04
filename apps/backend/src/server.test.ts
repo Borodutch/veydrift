@@ -1405,12 +1405,12 @@ describe("Veydrift backend", () => {
     expect(snapshots).toBe(1);
   });
 
-  test("serves a shared stale snapshot for the live landing leaderboard instead of rebuilding it on every reader", async () => {
+  test("serves a same-version shared stale snapshot for the live landing leaderboard", async () => {
     let staleKeyUsed = false;
     const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
       get(cacheKey: string, _now?: number, includeStale?: boolean) {
-        if (!includeStale || !cacheKey.endsWith(" indexer=stale")) return null;
+        if (!includeStale || !cacheKey.endsWith(":fleet=null")) return null;
         staleKeyUsed = true;
         return {
           body: staleBody,
@@ -1506,7 +1506,7 @@ describe("Veydrift backend", () => {
     expect(fleetBody.allianceId).toBeNull();
     expect(fleetBody.incoming).toEqual([]);
     expect(fleetBody.joinableDefenses).toEqual([]);
-    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+:fleet=(null|\d+):\d+$/);
+    expect(fleetBody.indexedRevision).toMatch(/^\d+:\d+:\d+$/);
     expect(fleetBody).toHaveProperty("indexedBlock");
     expect(Number.isNaN(Date.parse(fleetBody.generatedAt))).toBe(false);
 
@@ -10847,7 +10847,7 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
-  test("keeps cached highscores stable across mission-only read-model changes", async () => {
+  test("invalidates resource-bearing highscores across mission read-model changes", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -10878,10 +10878,10 @@ describe("Veydrift backend", () => {
     });
 
     expect((await handler(request.clone())).status).toBe(200);
-    expect(highscoreLeaderboardCalls).toBe(1);
+    expect(highscoreLeaderboardCalls).toBe(2);
   });
 
-  test("sends public browser cache headers for cached public API reads", async () => {
+  test("keeps resource-bearing public reads out of browser caches", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -10896,7 +10896,7 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request("http://localhost/highscores?category=total&page=1&pageSize=10"));
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=300");
+    expect(response.headers.get("cache-control")).toBe("public, no-store");
   });
 
   test("keeps live landing reads uncached and versioned by indexed changes", async () => {

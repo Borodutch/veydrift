@@ -37,7 +37,7 @@ for (const moon of [false, true]) for (const kind of ["transport", "return", "de
     async () => {
       setSystemTime(new Date(1030000));
       const { indexer, wallet, get, anchor } = fixture(moon, kind === "return", kind === "deploy");
-      const versions = () => [indexer.responseCacheVersion(), indexer.walletResponseCacheVersion(owner), indexer.missionResponseCacheVersion(), indexer.universeSystemSummaryVersion(2, 44)];
+      const versions = () => [indexer.responseCacheVersion(), indexer.walletResponseCacheVersion(owner), indexer.universeSystemSummaryVersion(2, 44)];
       let previousVersions: string[] | undefined;
       for (const at of [1009, 1010, 1011, 1019, 1020, 1021]) {
         anchor(at);
@@ -113,4 +113,65 @@ test.each([false, true])("missing or invalid fleet watermark fails closed, inclu
   }
   indexer.invalidateResourceProjectionWatermark("removedLog");
   await checkFrozen();
+});
+
+for (const moon of [false, true]) test("warm public resource routes follow watermark and invalidation (moon=" + moon + ")", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, anchor, get } = fixture(moon, true);
+  (indexer as any).setMetadata("lastReconciledAt", new Date().toISOString());
+  const rankings = [
+    "/highscores?category=total&live=1&pageSize=10",
+    "/highscores?category=total&pageSize=10",
+    "/highscores?category=total&live=1&page=1&pageSize=250",
+    "/highscores?category=total&pageSize=10&currentWallet=" + owner
+  ];
+  const systems = ["/universe/galaxies/2/systems/44?detail=full", "/universe/systems?galaxy=2&center=44&radius=0&detail=full"];
+  for (const stage of [1019, 1020, null]) {
+    if (stage !== null) anchor(stage);
+    else (indexer as any).setMetadata("transportStaleReason", "test outage");
+    const metal = stage === 1020 ? "180" : "100";
+    for (const route of rankings) for (let warm = 0; warm < 2; warm++) {
+      const response = await get(route);
+      expect(response.status).toBe(200);
+      const planet = response.body.rankings.total.find((row: any) => row.wallet === owner).planets[0];
+      expect(moon ? planet.moon.resourcesAsOfNow.metal : planet.tactical.currentResources.metal).toBe(metal);
+    }
+    for (const route of systems) for (let warm = 0; warm < 2; warm++) {
+      const response = await get(route);
+      expect(response.status).toBe(200);
+      const system = response.body.systems?.[0] ?? response.body;
+      const planet = system.planets.find((row: any) => row.occupiedBy?.planetId === "7");
+      expect((moon ? planet.publicMoonState : planet.publicState).resources.metal).toBe(metal);
+    }
+  }
+});
+
+test("shared public cache keys never reuse fleet credits across watermark changes", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, anchor } = fixture(false, true);
+  (indexer as any).setMetadata("lastReconciledAt", new Date().toISOString());
+  const stored = new Map<string, any>();
+  const cache = {
+    get(key: string) { return stored.get(key) ?? null; },
+    set(key: string, value: any) { stored.set(key, value); },
+    tryAcquireRefresh() { return "test-owner"; },
+    releaseRefresh() {},
+    async waitForFresh() { return null; }
+  } as any;
+  const paths = ["/highscores?live=1&pageSize=250", "/universe/systems?galaxy=2&center=44&radius=0&detail=full", "/raid-finder/debris", "/raid-finder/rifters"];
+  let previousKeys = new Set<string>();
+  for (const at of [1019, 1020, null]) {
+    if (at !== null) anchor(at); else (indexer as any).setMetadata("transportStaleReason", "test outage");
+    // A new reader instance has no local cache, forcing real shared-cache lookup.
+    const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, sharedResponseCache: cache, prewarmResponseCache: false });
+    for (const path of paths) {
+      const response = await handler(new Request("http://localhost" + path));
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("public, no-store");
+    }
+    const newKeys = new Set([...stored.keys()].filter(key => !previousKeys.has(key)));
+    expect(newKeys.size).toBe(paths.length);
+    for (const key of newKeys) expect(key).toContain("fleet=" + at);
+    previousKeys = new Set(stored.keys());
+  }
 });

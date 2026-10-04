@@ -2937,10 +2937,9 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
-  // Only the informational landing board can reuse data across committed versions.
-  return landingLeaderboardRequest(url)
-    ? `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`
-    : cacheKey;
+  // Even the landing board carries planet resource/fleet intel. Shared stale
+  // data is reusable only within the same indexed state and safe fleet horizon.
+  return cacheKey;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
@@ -2948,11 +2947,11 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
     // Protection changes when the canonical clock crosses an AFK boundary even if no
     // activity row changes. Never reuse a fresh OR stale response from the old clock.
     if (personalizedHighscoreRequest(url)) {
-      return `${indexer.indexedStateCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
+      return `${indexer.responseCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
     }
-    return landingLeaderboardRequest(url) ? "landing-leaderboard"
-      : livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
+    return indexer.responseCacheVersion();
   }
+  if (["/universe/systems", "/raid-finder/debris", "/raid-finder/rifters"].includes(url.pathname)) return indexer.responseCacheVersion();
   const system = url.pathname.match(/^\/universe\/galaxies\/([0-9]+)\/systems\/([0-9]+)$/);
   return system ? galaxySystemCacheVersion(indexer, galaxySystemDetail(url), Number(system[1]), Number(system[2])) : "ttl";
 }
@@ -2961,7 +2960,7 @@ function clientCacheControlHeader(url: URL, ttlMs: number): string {
   if (personalizedHighscoreRequest(url)) {
     return "private, no-store";
   }
-  if (livePublicDataRequest(url)) return "public, no-store";
+  if (livePublicDataRequest(url) || url.pathname === "/highscores" || url.pathname.startsWith("/universe/") || url.pathname.startsWith("/raid-finder/")) return "public, no-store";
   const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
   const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
   return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;

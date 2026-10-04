@@ -4369,7 +4369,7 @@ export class SettlementIndexer {
   }
 
   missionResponseCacheVersion(): string {
-    return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}`;
   }
 
   indexedStateCacheVersion(): string {
