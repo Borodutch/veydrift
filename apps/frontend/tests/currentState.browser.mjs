@@ -63,7 +63,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     while (!(await evaluate("Boolean(window.fixture)"))) { assert.ok(Date.now() < deadline, "fixture load"); await new Promise(r => setTimeout(r, 100)); }
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
-      for (const [surface, modes] of Object.entries({ defense: ["current", "partial", "loading", "empty", "error"], overview: ["current"], control: ["current", "randomness", "queued", "staged", "loading", "empty"], detail: ["current", "randomness", "queued", "staged", "report-pending", "report-failed", "loading", "empty", "error"], forecast: ["current", "missing", "stale", "arrived"], activity: ["current", "indexed"], readiness: ["current"], composer: ["current"] })) {
+      for (const [surface, modes] of Object.entries({ defense: ["current", "unknown", "partial", "missile-empty", "missile-partial", "loading", "empty", "error"], shipyard: ["unknown"], overview: ["current"], control: ["current", "randomness", "queued", "staged", "loading", "empty"], detail: ["current", "randomness", "queued", "staged", "report-pending", "report-failed", "loading", "empty", "error"], forecast: ["current", "missing", "stale", "arrived"], activity: ["current", "indexed"], readiness: ["current"], composer: ["current"], resources: ["unknown"] })) {
         for (const mode of modes) {
           await evaluate("window.fixture.show(" + JSON.stringify(surface) + "," + JSON.stringify(mode) + "); new Promise(requestAnimationFrame)");
           const text = await evaluate('document.querySelector("main").innerText');
@@ -71,6 +71,17 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
           assert.doesNotMatch(text + attrs, /Awaiting settlement|Finish defenses|\bResolve\b|randomness|Resolving \d|Recorded |INTERNAL|storage.order|indexing|snapshot|backend/i, surface + ":" + mode);
           if (surface === "defense" && mode === "current") assert.match(text, /Deployed: 101/);
           if (surface === "defense" && mode === "partial") { assert.match(text, /Deployed: 81/); assert.match(text, /Queued: 20/); }
+          if (["defense", "shipyard"].includes(surface) && mode === "unknown") {
+            assert.match(text + attrs, /Current resources are unavailable/);
+            assert.equal(await evaluate('[...document.querySelectorAll("button")].filter(e => e.textContent.trim() === "Build").every(e => e.disabled)'), true);
+          }
+          if (surface === "defense" && mode.startsWith("missile")) {
+            assert.match(text, /Deployed: 17/);
+            const max = mode === "missile-partial" ? 2 : 3;
+            await evaluate(`document.querySelector('[aria-label="Interplanetary Missile maximum affordable quantity"]').click(); new Promise(requestAnimationFrame)`);
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Interplanetary Missile quantity"]').value`), String(max));
+          }
+          if (surface === "resources") { assert.match(text, /Resources unavailable/); assert.doesNotMatch(text, /999999/); }
           if (surface === "overview") assert.match(text, /No active defense production/);
           if (["control", "detail"].includes(surface) && mode === "randomness") assert.match(text, /Battle pending/);
           if (["control", "detail"].includes(surface) && mode === "staged") assert.match(text, /Battle in progress/);

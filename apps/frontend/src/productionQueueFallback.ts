@@ -5,6 +5,8 @@ export function activeProductionQueue(
   fallbackQueue: QueueStateResponse | null | undefined,
   kind: "defense" | "ship",
 ): QueueStateResponse | undefined {
+  // Explicit empty/inactive is authoritative; only an absent detail snapshot may use overview.
+  if (primaryQueue === null || primaryQueue?.active === false) return undefined;
   if (primaryQueue?.active) {
     return matchingActiveProductionQueue(primaryQueue, fallbackQueue, kind)
       ? mergeProductionQueue(primaryQueue, fallbackQueue)

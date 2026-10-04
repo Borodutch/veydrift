@@ -1,52 +1,41 @@
 # Board #23 backend current-state coverage
 
-Base: 6c8d3de0d18bd160720640f142649cb581abe1c1. Backend-only lane; no contracts, production transactions, deploy, or browser QA.
+Backend-only repair against integration base ad12e062. No contracts, chain transactions, deployment, browser QA, or commit in this lane.
 
 ## Shared read contract
 
-| Consumer | Shared source / coverage |
+| Consumer | Shared source and evidence |
 | --- | --- |
-| Overview, managed planets, infrastructure, catalogs, research | effective building/research queues, Terraformer +5 fields; canonical remote research labs intentionally unchanged |
-| Shipyard, defenses, supply launch inventory | one effective production count for displayed/launchable rows; old unproven planet queue artifacts cannot authorize inventory |
-| Moon, moon supply, public moon, jump gate destinations | per-unit moon production and deterministic fleet effects share displayed/launchable rows; Lunar Base +3 preserved |
-| Public planet/system, tactical, finder, current combat intel/forecast composition | displayedUnitCounts/shipRows/defenseRows now include trustworthy matured production; full-system cache invalidates at per-unit boundaries |
-| Resources, overview, supply, public planet/finder, Rift | indexedCurrentPlanetState / accruedPlanetState; Rift no longer reads stale snapshot; original resources and snapshot remain unchanged |
-| Fleet launch slots and availability | same terminal deterministic effect proof as inventory, not needsResolution/timers alone |
-| Fleet history/detail | canonical lifecycle remains internal source; deterministic effects appear in current inventory/resources and default activity; uncertain mission status remains unaltered |
-| Activity | completions included by default, game-time ordering, stable per-unit occurrence IDs retained through partial/final mined completions, mission leg IDs shared before/after indexing |
+| Overview, managed planets, infrastructure, catalogs, research | Effective building/research queues and Terraformer +5 fields. Building/research-only clock invalidation tests. |
+| Shipyard, defenses, supply launch inventory | Effective display/launchable production counts, partial/final subtraction; ship/defense and moon variants exercised at unit boundaries. |
+| Moon, moon supply, public moon, jump gate destinations | Effective production and proven fleet credits. Rankings uses the same lightweight moon-resource helper, not full moon hydration. |
+| Public system, tactical, finder, forecast composition | Shared displayed unit rows; warm full-system HTTP partial-unit test. Summary memory and persisted caches invalidate at Terraformer completion (HTTP regression). |
+| Resources, supply, public planet/finder, Rift | Shared indexedCurrentPlanetState/accruedPlanetState, indexed block watermark, canonical snapshots preserved. Rift uses current resources. |
+| Fleet slots, active list, detail, archive | One deterministic leg proof determines current lifecycle and credits. Transport becomes Returning at proven delivery, Returned at proven return; Deploy resolves at delivery. Archive pages include effective terminals. |
+| Activity | Default effective completions, stable batch/mission-leg IDs, game time; bounded batch representation, SQL grouping/pagination, startup chronological history reconstruction. |
 
-## Implemented
+## Repair details
 
-- Planet defenses and moon ships advance at trustworthy completion boundaries once, with existing partial completion subtraction retained. Display, available rows, productionInventory and displayedUnitCounts agree.
-- Planet legacy provenance reuses the existing retained-log timing normalization. Missing provenance is rejected for both displayed and launchable inventory. Malformed modern timing cannot fall back to elapsed whole-batch credit.
-- Deterministic Transport arrival credits only cargo; return credits ships and frees slot. Deploy credits destination ships/cargo and frees slot. Known Returning/Recalled cargo requires return evidence; combat requires proven survivor composition (canonical storage or materialized participant), never launch composition.
-- A pure fleet-leg chronological sweep uses timestamp, arrival/return/hold priority, mission ID. Unknown earlier body events block later credits; unclassified body flags reserve both surfaces. Remote transport arrival dependencies use the full active graph. Missing/replaced origin moons land on parent; moon creation after launch rejects destination identity.
-- Cargo/production ordering preserves arrival-target settlement before cargo, return cargo before later passive collection; no retroactive satellites/crawlers/energy research. Passive collection caps at pending Attack/Harvest/MissileAttack arrivals per ResourceReserves._isPendingResolutionMission.
-- Projection fingerprints include partial unit quantities and next unit boundaries, global building/research/moon-building boundaries and fleet leg boundaries. State-version changes continue invalidating immediately.
-- Terraformer field capacity projects +5 per new level on managed and public metadata. Rift shares current resources once.
-- Activity uses per-unit game times rather than request/settlement time; canonical DB event keys remain distinct from public occurrence IDs for reorg removal. Existing saved occurrence identities survive startup feed repair when their raw logs remain canonical.
+- Scalar Returning reconciliation invalidates retained composition as survivor evidence. Only a same-snapshot composition/status marker or materialized participant survivors authorizes combat-return ships. Existing summary survivors are cleared before this proof selection.
+- Staged lock discovery uses indexed CombatStageAdvanced evidence for active missions, not an Attack-only classification. Every nonzero phase except terminal 13 retains the planet-ID lock across planet/moon arrivals. Tests cover 1, 12, 14, 15 and released 13; pure tests cover dependent return suppression.
+- Destination/origin moon identity distinguishes false (destroyed/replaced) from unknown. Same-block creation uses ordered launch/creation logs; absent launch provenance stays unknown rather than treating the moon as destroyed.
+- Legacy retained queue start/end proves whole-batch readiness only. It no longer invents per-unit rates from rounded duration. Older synthetic timing is normalized conservatively; a retained modern timing event disambiguates genuine identical numeric timing. Malformed timing remains fail-closed. Legacy promoted backlog expectations now reflect batch semantics.
+- Activity allocates one object per batch, not per unit (billion-unit fixture). Partial settlements sum by immutable batch ID. Ranked SQL selects a deterministic latest game-time row, avoiding SQLite bare-row/MAX ambiguity. Startup V3 reconstruction streams 500 raw logs per batch and retains queue history in a temporary SQLite table. Original event keys still support removal/reorg rebuilds.
+- Resource order follows contracts: BatchTransport._settleScheduledTarget calls FirstPlanetSettlement.settleProductionUntil, then Colonization.completeAttackTargetSnapshotQueues (research, ships, defenses; **not buildings**). Each arrival accrues with the previous canonical/effectively settled rates, then updates ship/research inputs. The final passive collection applies the building two-window behavior. A two-arrival HTTP fixture covers building readiness before/between arrivals and satellite/research completion without retroactive accrual. Return cargo does not create an intermediate accrual/storage-headroom segment.
+- Moon resource consumers preserve explicit unknown values instead of falling back to raw snapshots. Rankings includes proven current moon credits without full read-model hydration.
 
-## Contract trace and automation ownership
+## Verification
 
-Compared VeydriftBatchTransportModule.prepareFleetChronology/_earlierEvent/_before, GameplayModule Transport/Deploy resolution, PlanetManagementModule._landFleetReturn/_creditResources, DefenseProductionModule missing-moon arrival, ResourceReserves passive collection, and existing queue projection/event decrement code. No contract guard changed.
+- Focused new/extended tests: currentState.test.ts, currentFleet.test.ts, server.test.ts; existing indexer legacy semantics and canonical activity clock fixtures updated.
+- Final lane run: `bun run check` passed; `bun test` passed 1,145 tests across 50 files, 6,934 assertions, zero failures (13.19s). `git diff --check` passed. Rerun after integration edits.
+- Existing production backlog/spend/replay/reorg, moon destruction, resource boosts/segments/caps, resolver and activity suites retained.
 
-Existing writer-only MissionResolutionService is started in server.ts; it owns due mission/return progress, bounded batches, nonce/retry/receipt reconciliation. No second writer, player-funded settlement action, or production sweep was introduced. Production settles permissionlessly/lazily in existing contract actions; effective reads do not require a player to buy a completion.
+## Boundaries, not claims of certainty
 
-## Tests
+- Unknown combat, harvest, linked ACS and hold outcomes remain blockers; no simulated win or loot is promoted into inventory. Indexed lock evidence is not a fresh RPC storage proof; absent relevant historical evidence cannot be reconstructed magically.
+- Legacy queues with no trustworthy retained provenance remain excluded; no RPC repair or live data mutation is introduced.
+- Activity is bounded in JS by batches/page, but SQL still groups a wallet's indexed history; startup migration is bounded-memory, not a benchmark of every production history size.
+- Resource tests qualify scheduled target settlement and local rate transitions, not an exhaustive whole-universe cross-owner research/arrival permutation or live reserve-exhaustion proof.
+- Coverage is shared-source plus focused HTTP tests, not every route × account switch × reorg × production kind. Independent exact-head review and dedicated live Veydrift QA remain required.
 
-- New currentState.test.ts: planet/moon ship/defense exact first/middle/end boundaries, identical displayed/action counts, warm global/wallet fingerprint boundaries, building/research-only invalidation, Terraformer fields, default per-unit activity/incremental times and stable IDs, partial/final mined completion plus duplicate delivery, corrupt timing.
-- New currentFleet.test.ts: Transport legs, planet/moon Deploy, earlier unknown attack vs later return and body isolation, unknown attacks/harvest/holds/ACS/interception, survivor/cargo proof, stale terminal legs, missing body flags, destroyed origin moon fallback.
-- Added warm HTTP wallet/full-system cache regression across partial production without events; Rift versus current infrastructure resource equality.
-- Updated existing intentional canonical/effective split assertions. Existing extensive backlog, launch/spend, replay/reorg, moon destruction, resource segments/boost/order and resolver suites retained.
-- Final lane run: 1134 tests passed, zero failures (50 files, 6890 assertions); backend TypeScript check and git diff --check passed. Final integration run must rerun after cherry-pick.
-
-## Remaining exact gaps / review flags
-
-This is not a claim of full acceptance or live contract equivalence:
-
-1. Legacy normalization inherited from baseline infers per-unit rate from retained batch start/end/quantity. Exact modern work/rate evidence is stronger; historical ceil-rounding equivalence needs independent contract fixture qualification. Queues without retained proof are conservatively excluded, not repaired by RPC.
-2. Moon recreation in the same block as launch cannot be distinguished by block number alone; a generation/pointer or ordered-log proof is still needed for that rare identity edge. Missing-destination moon Transport/Deploy preserves original cargo/ships for its scheduled return rather than crediting ghost moon state.
-3. Conservative chronology treats linked ACS/hold legs as blockers instead of fully simulating battle grouping/body locks. It does not guess these outcomes. Mission lifecycle list counts remain canonical while inventory/slots/activity use effective effects.
-4. Historical activity completions whose original queue context is already gone retain their old aggregate IDs; no retrospective full queue-event reconstruction migration was added. New and retained context completions have stable per-unit IDs. Per-unit activity expansion is linear in due units; large queues need bounded SQL occurrence pagination before claiming scale parity.
-5. Resource accrual after an earlier deterministic arrival that itself completes production still uses existing canonical satellite/crawler/research inputs; it intentionally does not invent rates. Exact multi-arrival settlement-induced rate changes require further independent parity work. No new live pending-battle/Rift/cargo-cap matrix beyond unit chronology and existing resource suites is claimed.
-6. The complete requested cross-product matrix (all HTTP routes x account switches x reorg/restart x every production kind x deterministic fleet events) is not exhaustively added; focused shared-source and route regressions plus the pre-existing suite pass. Dedicated QA and independent exact-head review remain required.
+Existing writer-only MissionResolutionService retains ownership of automated due mission/return processing, nonce/retry/receipt reconciliation. No second resolver, player-paid settlement duty, or new transaction path was added.

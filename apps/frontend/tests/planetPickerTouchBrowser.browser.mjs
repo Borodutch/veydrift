@@ -159,7 +159,7 @@ async function launchChrome() {
   chromeProfile = mkdtempSync(join(tmpdir(), "veydrift-touch-browser-"));
   chrome = spawn(
     executable,
-    ["--headless=new", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--no-sandbox", "--remote-debugging-port=0", `--user-data-dir=${chromeProfile}`, "about:blank"],
+    ["--headless=new", "--use-mock-keychain", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check", "--no-sandbox", "--remote-debugging-port=0", `--user-data-dir=${chromeProfile}`, "about:blank"],
     {
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -2104,7 +2104,7 @@ for (const phase of ["complete", "settled"]) {
   test(`completed defense queue stays absent across route hydration and hard reload: ${phase} (VEY-891)`, async () => {
     const options = { defenseCompletion: phase, shell: "settlement" };
     await loadInspectorFixture("/defenses", 1280, options);
-    const deployed = phase === "settled" ? 9 : 8;
+    const deployed = 9;
     const assertDefense = async () => {
       await waitForExpression(`location.pathname === '/defenses' && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: ${deployed}') === true`);
       const state = await evaluate(`({
@@ -2115,12 +2115,8 @@ for (const phase of ["complete", "settled"]) {
         errors: window.inspectorProof.errors,
       })`);
       assert.equal(state.activeQueues, 0);
-      if (phase === "complete") {
-        assert.match(state.settlement, /Built · awaiting settlement/);
-        assert.match(state.settlement, /Rocket Launcher: 1(?:\D|$)/);
-      } else {
-        assert.equal(state.settlement, null);
-      }
+      assert.equal(state.settlement, null);
+      assert.doesNotMatch(state.detail, /awaiting settlement|Finish defenses/);
       assert.doesNotMatch(state.catalog, /Queued/);
       assert.match(state.detail, new RegExp('Deployed ' + deployed));
       assert.doesNotMatch(state.detail, /Queued [1-9]/);
@@ -2156,7 +2152,7 @@ for (const phase of ["complete", "settled"]) {
     await waitForExpression("window.inspectorProof?.appReady === true");
     await assertDefense();
     await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Overview')");
-    const overviewNotice = phase === "complete" ? "Built · awaiting settlement" : "No active defense production.";
+    const overviewNotice = "No active defense production.";
     await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Defenses"]')?.textContent?.includes(${JSON.stringify(overviewNotice)}) === true`);
     const overview = await evaluate(`({
       text: document.querySelector('main section[aria-label="Defenses"]')?.textContent,
@@ -2164,13 +2160,8 @@ for (const phase of ["complete", "settled"]) {
       settlement: document.querySelector('main section[aria-label="Defenses"] [aria-label="Defense settlement"]')?.textContent ?? null,
     })`);
     assert.equal(overview.activeQueues, 0);
-    if (phase === "complete") {
-      assert.match(overview.settlement, /Rocket Launcher: 1(?:\D|$)/);
-      assert.doesNotMatch(overview.text, /No active defense production\./);
-    } else {
-      assert.equal(overview.settlement, null);
-      assert.doesNotMatch(overview.text, /awaiting settlement/);
-    }
+    assert.equal(overview.settlement, null);
+    assert.doesNotMatch(overview.text, /awaiting settlement/);
     await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Defenses')");
     await assertDefense();
   });

@@ -7,6 +7,15 @@ const mission = (overrides: Partial<FleetMissionSummary> = {}): FleetMissionSumm
   cargo: { metal: "10", crystal: "20", deuterium: "30" }, returnCargo: null, ...overrides
 } as FleetMissionSummary);
 const exists = () => true;
+test("staged planet locks also block moon arrivals and their dependent returns", () => {
+  const m = mission({targetIsMoon: true});
+  expect(deterministicFleetEffects([m], 300, exists, new Map([["2", "9"]]))).toEqual([]);
+  expect(deterministicFleetEffects([m], 300, exists)).toHaveLength(2);
+});
+test("unknown moon identity is not a destroyed moon or a return fallback", () => {
+  expect(deterministicFleetEffects([mission({missionType:"Deploy",targetIsMoon:true})], 300, (_id, moon) => moon ? null : true)).toEqual([]);
+  expect(deterministicFleetEffects([mission({status:"Returning",originIsMoon:true,returnCargo:{metal:"0",crystal:"0",deuterium:"0"}})],300,(_id,moon)=>moon?null:true)).toEqual([]);
+});
 test("transport credits only cargo at arrival, ships and slot at return, never cargo twice", () => {
   expect(deterministicFleetEffects([mission()], 99, exists)).toEqual([]);
   const arrival = deterministicFleetEffects([mission()], 100, exists);

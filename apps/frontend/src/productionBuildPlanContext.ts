@@ -1,3 +1,4 @@
+import { currentResources } from "./currentResources";
 import { technologyLevelsByKey } from "./chainState";
 import { defenseCatalog, missingUnlockRequirements, shipyardCatalog } from "./playableMvp";
 import type { ProductionBody, ProductionPlanContext } from "./productionBuildPlan";
@@ -30,8 +31,8 @@ export function productionPlanContext(body: ProductionBody, states: {
   const shipyard = body === "planet" ? states.shipyard : null;
   const defense = body === "planet" ? states.defense : null;
   const resources = body === "moon"
-    ? moon?.resourcesAsOfNow ?? moon?.resources ?? null
-    : states.infrastructure?.resourcesAsOfNow ?? states.infrastructure?.resources ?? null;
+    ? currentResources(moon) ?? null
+    : currentResources(states.infrastructure) ?? null;
   const shipRows = moon?.ships ?? shipyard?.ships ?? [];
   const defenseRows = moon?.defenses ?? defense?.defenses ?? [];
   const shipyardLevel = moon

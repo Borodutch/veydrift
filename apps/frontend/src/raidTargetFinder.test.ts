@@ -696,3 +696,8 @@ test("debris fuel uses current balance, including an explicit zero after spendin
   expect(buildDebrisTargets({ ...args, shipyardState: shipyard({ resources: raw, resourcesAsOfNow: current }) })[0]!.harvestDisabledReason).toBeNull();
   expect(buildDebrisTargets({ ...args, shipyardState: shipyard({ resources: current, resourcesAsOfNow: raw }) })[0]!.harvestDisabledReason).toContain("deuterium");
 });
+
+test("unknown current resources never enable debris fuel from positive canonical balance", () => {
+ const row = buildDebrisTargets({ targets: [debrisTarget()], origin: ORIGIN, shipyardState: shipyard({ resourcesAsOfNow: null }) })[0]!;
+ expect(row.harvestDisabledReason).toBe("Current resources are unavailable. Please try again shortly.");
+});

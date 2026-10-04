@@ -1,3 +1,4 @@
+import { activeProductionQueue } from "../src/productionQueueFallback";
 import { productionPlanContext } from "../src/productionBuildPlanContext";
 import { expect, test } from "bun:test";
 import { defenseProductionItems } from "../src/components/DefensePage";
@@ -47,4 +48,16 @@ test("batch plan uses the same effective inventory and remaining queue as catalo
  expect(context.defenseCounts).toEqual(defense.defenses);
  expect(context.capacityQueue).toEqual(defense.queue);
  expect(context.capacityQueue).not.toEqual(defense.unsettledQueue);
+});
+
+test("effective missile count pairs with authoritative empty or partial queue, never stale overview", () => {
+ const missileId = defenseCatalog.find(d => d.key === "interplanetaryMissile")!.id;
+ for (const remaining of [null, queue(missileId, 1)]) {
+  const s = { ...state({ interplanetaryMissile: 17 }, remaining), missileSiloLevel: 4 };
+  const selected = activeProductionQueue(s.queue, queue(missileId, 2), "defense");
+  const row = defenseProductionItems({ actionPending: false, canTransact: true, defenseState: s, productionAvailable: true, quantities: { interplanetaryMissile: 2 }, queue: selected, resources: { metal: 9999999, crystal: 9999999, deuterium: 9999999 } }).find(d => d.key === "interplanetaryMissile")!;
+  expect(row.maxQuantity).toBe(remaining ? 2 : 3);
+  expect(row.queued).toBe(remaining ? 1 : 0);
+  expect(productionPlanContext("planet", { defense: s, shipyard: null, infrastructure: null, moon: null }).capacityQueue).toEqual(remaining);
+ }
 });

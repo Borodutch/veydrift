@@ -1118,7 +1118,7 @@ describe("Playable MVP app display helpers", () => {
       homePlanetId: "7",
       planetId: "8",
       productionAvailable: true,
-      resources: null,
+      resources: planet.resources,
       fleetLaunchAvailable: true,
       fleetSlots: { active: 1, limit: 5 },
       shipyardLevel: 1,
@@ -1769,7 +1769,7 @@ describe("Playable MVP app display helpers", () => {
     ).toBeUndefined();
   });
 
-  test("prefers settlement current resources over stale infrastructure top-bar resources (VEY-KANEO-517)", () => {
+  test("uses the selected infrastructure current snapshot before roster balances", () => {
     expect(
       walletCurrentResourcesFor({
         settlementResources: {
@@ -1788,7 +1788,7 @@ describe("Playable MVP app display helpers", () => {
           deuterium: "1200",
         },
       }),
-    ).toEqual({ metal: 5000, crystal: 2824, deuterium: 1359 });
+    ).toEqual({ metal: 2022, crystal: 1005, deuterium: 1259 });
 
     expect(
       walletCurrentResourcesFor({

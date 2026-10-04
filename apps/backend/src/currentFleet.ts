@@ -10,7 +10,8 @@ const zero = (): Resources => ({ metal: "0", crystal: "0", deuterium: "0" });
 // launch ships, not survivors. Callers supply canonical return cargo/survivors.
 export function deterministicFleetEffects(
   missions: readonly FleetMissionSummary[], now: number,
-  bodyExists: (id: string, moon: boolean, owner?: string, mission?: FleetMissionSummary) => boolean
+  bodyExists: (id: string, moon: boolean, owner?: string, mission?: FleetMissionSummary) => boolean | null,
+  stagedLocks: ReadonlyMap<string, string> = new Map()
 ): FleetEffect[] {
   type Leg = { mission: FleetMissionSummary; planetId: string; isMoon: boolean; at: number; kind: number };
   const legs: Leg[] = [];
@@ -19,9 +20,9 @@ export function deterministicFleetEffects(
     if (mission.status === "Outbound") legs.push({ mission, planetId: mission.targetPlanetId,
       isMoon: mission.targetIsMoon === true, at: Number(mission.defenseHoldUntil ?? mission.arrivalAt),
       kind: mission.missionType === "DefenseHold" ? 2 : 0 });
-    if (mission.missionType !== "MissileAttack" && (mission.status !== "Outbound" || mission.missionType !== "Deploy" || (mission.targetIsMoon === true && !bodyExists(mission.targetPlanetId, true, undefined, mission)))) {
+    if (mission.missionType !== "MissileAttack" && (mission.status !== "Outbound" || mission.missionType !== "Deploy" || (mission.targetIsMoon === true && bodyExists(mission.targetPlanetId, true, undefined, mission) === false))) {
       legs.push({ mission, planetId: mission.originPlanetId,
-        isMoon: mission.originIsMoon === true && bodyExists(mission.originPlanetId, true, mission.owner, mission),
+        isMoon: mission.originIsMoon === true && bodyExists(mission.originPlanetId, true, mission.owner, mission) !== false,
         at: Number(mission.returnAt), kind: 1 });
     }
   }
@@ -34,6 +35,10 @@ export function deterministicFleetEffects(
     if (!Number.isSafeInteger(leg.at) || leg.at <= 0 || leg.at > now) continue;
     const m = leg.mission, body = leg.planetId + ":" + leg.isMoon;
     if (blocked.has(body)) continue;
+    // The staged combat lock is keyed by planet ID in the contract, unlike
+    // ordinary chronology which distinguishes planet and moon surfaces.
+    const lock = stagedLocks.get(leg.planetId);
+    if (lock !== undefined && lock !== m.missionId) continue;
     // Unknown body flags may refer to either surface; reserve both rather than
     // letting a later moon event step around an unclassified earlier arrival.
     const bodyKnown = leg.kind === 1 ? typeof m.originIsMoon === "boolean" : typeof m.targetIsMoon === "boolean";
@@ -46,7 +51,7 @@ export function deterministicFleetEffects(
     // Missing body provenance is not permission to assume a planet. Replaced
     // moons cannot be proven from boolean flags alone; reject arrivals to them.
     const provenBody = leg.kind === 1 ? typeof m.originIsMoon === "boolean" : typeof m.targetIsMoon === "boolean";
-    if (arrival && leg.isMoon && !bodyExists(leg.planetId, true, undefined, m)) { aborted.add(m.missionId); continue; }
+    if (arrival && leg.isMoon && bodyExists(leg.planetId, true, undefined, m) === false) { aborted.add(m.missionId); continue; }
     if (!provenBody || (!arrival && !knownReturn) || !bodyExists(leg.planetId, leg.isMoon, leg.kind === 1 || deploy ? m.owner : undefined, m)) {
       blocked.add(body); continue;
     }

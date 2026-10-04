@@ -4084,7 +4084,7 @@ describe("SettlementIndexer", () => {
       }
     }
 
-    expect(indexer.allActiveFleetMissions()).toHaveLength(6);
+    expect(indexer.allActiveFleetMissions()).toHaveLength(5);
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 6 });
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
       ships: expect.arrayContaining([expect.objectContaining({ id: 0, count: 1 })]),
@@ -12554,11 +12554,11 @@ describe("SettlementIndexer", () => {
       productionTiming: {
         startedAt: String(startedAt),
         originalQuantity: 4,
-        unitWorkSeconds: "200",
+        unitWorkSeconds: "800",
         rate: "4"
       },
       asOfNow: {
-        completedQuantity: 2,
+        completedQuantity: 0,
         remainingQuantity: 2,
         currentUnitSecondsRemaining: expect.any(Number),
         currentUnitProgressBps: expect.any(Number),
@@ -12601,12 +12601,12 @@ describe("SettlementIndexer", () => {
     `).get(`defense:${planet.planetId}`)).toEqual({
       started_at: String(startedAt),
       original_quantity: 4,
-      unit_work_seconds: "200",
+      unit_work_seconds: "800",
       production_rate: "4"
     });
     expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
       startedAt: String(startedAt),
-      productionTiming: { originalQuantity: 4, unitWorkSeconds: "200", rate: "4" }
+      productionTiming: { originalQuantity: 4, unitWorkSeconds: "800", rate: "4" }
     });
     await indexer.startProductionQueueTimingRepairOnce("queue-timing-20260818");
     expect(indexer.snapshot()).toMatchObject({
@@ -12648,16 +12648,16 @@ describe("SettlementIndexer", () => {
     const queue = indexer.playerQueues(player, planet.planetId).defense;
     expect(queue).toMatchObject({
       itemId: 4,
-      quantity: 3,
+      quantity: 5,
       startedAt: String(now - 100),
       productionTiming: {
         originalQuantity: 5,
-        unitWorkSeconds: "200",
+        unitWorkSeconds: "1000",
         rate: "5"
       },
       asOfNow: {
-        completedQuantity: 2,
-        remainingQuantity: 3,
+        completedQuantity: 0,
+        remainingQuantity: 5,
         currentUnitSecondsRemaining: expect.any(Number),
         currentUnitProgressBps: expect.any(Number)
       }

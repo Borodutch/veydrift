@@ -1,3 +1,4 @@
+import { combatStageAdvancedTopic } from "./evm";
 import { deterministicFleetEffects } from "./currentFleet";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { stagedMemberShips } from "./stagedBattleReport";
@@ -1916,51 +1917,39 @@ export class SettlementIndexer {
     const normalizedWallet = wallet.toLowerCase() as Address;
     const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
-    const where = ["wallet = lower(?)", "CAST(transaction_at AS INTEGER) <= ?"];
-    const params: SQLQueryBindings[] = [normalizedWallet, through];
-    if (since !== undefined) {
-      where.push("(CAST(occurred_at AS INTEGER) > ? OR CAST(transaction_at AS INTEGER) > ?)");
-      params.push(since, since);
+    const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through) : [];
+    for (const item of projected) {
+      const existing = this.db.query("SELECT SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0)) AS quantity FROM indexed_player_activity_feed WHERE wallet = ? AND json_extract(activity_json, '$.id') = ? AND CAST(transaction_at AS INTEGER) <= ?").get(normalizedWallet, item.id, through) as {quantity: number | null};
+      if (typeof item.metadata.quantity === "number") item.metadata.quantity += existing.quantity ?? 0;
+      normalizeBatchActivity(item);
     }
-    const whereSql = where.join(" AND ");
-    const projected = options.includeProjected !== false
-      ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through)
-      : [];
-    const summaryRows = this.db.query(`
-      SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count
-      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_wallet_category_idx
-      WHERE ${whereSql}
-      GROUP BY json_extract(activity_json, '$.category')
-    `).all(...params) as PlayerActivitySummaryRow[];
-    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(
-      summaryRows.map((row) => [row.category, row.count])
-    );
-    const indexedTotal = summaryRows.reduce((total, row) => total + row.count, 0);
-    for (const item of projected) summary[item.category] = (summary[item.category] ?? 0) + 1;
-    const offset = Math.max(0, (options.page - 1) * options.pageSize);
-    const indexedLimit = projected.length ? offset + options.pageSize : options.pageSize;
-    const rows = this.db.query(`
-      SELECT activity_json
-      FROM indexed_player_activity_feed
-      WHERE ${whereSql}
-      ORDER BY CAST(occurred_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC,
-        length(log_index) DESC, log_index DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, indexedLimit, projected.length ? 0 : offset) as PlayerActivityFeedRow[];
-    const items = [
-      ...rows.map((row) => parseEvent<PlayerActivityItem>(row.activity_json)),
-      ...projected
-    ]
-      .sort(comparePlayerActivityNewestFirst)
-      .slice(projected.length ? offset : 0, (projected.length ? offset : 0) + options.pageSize)
-      .map((item) => this.withPlayerActivityPlanetContext(item));
-
-    return {
-      items,
-      summary,
-      totalEntries: indexedTotal + projected.length,
-      through: through.toString()
-    };
+    const cte = `WITH projected AS (SELECT value AS activity_json, json_extract(value, '$.id') AS id FROM json_each(?)),
+      ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY json_extract(activity_json, '$.id') ORDER BY CAST(occurred_at AS INTEGER) DESC, CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC) AS rank FROM indexed_player_activity_feed WHERE wallet = ? AND CAST(transaction_at AS INTEGER) <= ?),
+      grouped AS (
+        SELECT json_extract(activity_json, '$.id') AS id,
+          MAX(CAST(occurred_at AS INTEGER)) AS at,
+          MAX(CAST(transaction_at AS INTEGER)) AS tx_at,
+          CASE WHEN json_extract(activity_json, '$.metadata.quantity') IS NOT NULL AND json_extract(activity_json, '$.id') LIKE 'completion:%'
+            THEN json_set(MAX(CASE WHEN rank = 1 THEN activity_json END), '$.metadata.quantity', SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0))) ELSE MAX(CASE WHEN rank = 1 THEN activity_json END) END AS activity_json
+        FROM ranked
+        GROUP BY json_extract(activity_json, '$.id')
+        HAVING (? IS NULL OR at > ? OR tx_at > ?)
+      ), combined AS (
+        SELECT activity_json FROM grouped WHERE id NOT IN (SELECT id FROM projected)
+        UNION ALL SELECT activity_json FROM projected
+      )`;
+    const params: SQLQueryBindings[] = [JSON.stringify(projected), normalizedWallet, through, since ?? null, since ?? null, since ?? null];
+    const summaryRows = this.db.query(cte + " SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count FROM combined GROUP BY category").all(...params) as PlayerActivitySummaryRow[];
+    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(summaryRows.map((row) => [row.category, row.count]));
+    const totalEntries = summaryRows.reduce((sum, row) => sum + row.count, 0);
+    const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
+    const offset = Math.max(0, (Math.min(Math.max(1, Math.trunc(options.page) || 1), Math.max(1, Math.ceil(totalEntries / pageSize))) - 1) * pageSize);
+    const rows = this.db.query(cte + " SELECT activity_json FROM combined ORDER BY CAST(json_extract(activity_json, '$.occurredAt') AS INTEGER) DESC, CAST(json_extract(activity_json, '$.blockNumber') AS INTEGER) DESC, length(json_extract(activity_json, '$.logIndex')) DESC, json_extract(activity_json, '$.logIndex') DESC, json_extract(activity_json, '$.id') DESC LIMIT ? OFFSET ?").all(...params, pageSize, offset) as PlayerActivityFeedRow[];
+    const items = rows.map((row) => {
+      const item = parseEvent<PlayerActivityItem>(row.activity_json); normalizeBatchActivity(item);
+      return this.withPlayerActivityPlanetContext(item);
+    });
+    return { items, summary, totalEntries, through: through.toString() };
   }
 
   private projectedPlayerActivity(wallet: Address, since: number, through: number): PlayerActivityItem[] {
@@ -2628,7 +2617,7 @@ export class SettlementIndexer {
             planetId: planet.planetId,
             coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
             resources: moonState.resources,
-            ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+            ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
             ships: moonState.ships,
             defenses: moonState.defenses
           }
@@ -2692,7 +2681,7 @@ export class SettlementIndexer {
       wallet,
       [...ownedPlanetIds],
       includeJoinableAttacks && allianceId !== null
-    );
+    ).map((mission) => this.effectiveMissionLifecycle(mission));
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -2843,7 +2832,8 @@ export class SettlementIndexer {
       this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.completedFleetMissionsForWalletFromCanonicalRows(wallet, ownedPlanetIds);
+    const completedMissions = [...this.completedFleetMissionsForWalletFromCanonicalRows(wallet, ownedPlanetIds),
+      ...this.fleetMissionSummariesFromCanonicalRowsByIds(this.effectiveTerminalMissionIds()).filter((mission) => mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId)).map((mission) => this.effectiveMissionLifecycle(mission))].sort(compareFleetMissionsNewestFirst);
 
     return {
       wallet,
@@ -2939,7 +2929,8 @@ export class SettlementIndexer {
     // the result; on production history that occasionally blocked a reader for tens of seconds.
     // `UNION` de-duplicates self-targeted missions before the final primary-key lookup while
     // preserving the exact completed/returned and defender-return visibility rules.
-    const completedOrReturnedSql = "status_id IN (3, 4)";
+    const effectiveIds = this.effectiveTerminalMissionIds();
+    const completedOrReturnedSql = "(status_id IN (3, 4) OR mission_id IN (" + (effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL") + "))";
     const targetPlaceholders = targetIds.map(() => "?").join(",");
     let visibleMissionIdsSql: string;
     const visibleMissionParams: SQLQueryBindings[] = [];
@@ -3032,14 +3023,14 @@ export class SettlementIndexer {
       WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
         ${archiveFilters}
       ORDER BY
-        CAST(CASE WHEN status_id IN (2, 4, 5) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(CASE WHEN status_id IN (2, 4, 5) OR (mission_id IN (${effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL"}) AND mission_type_id != 1) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(mission_id AS INTEGER) DESC
       LIMIT ? OFFSET ?
     `).all(...visibleMissionParams, ...archiveFilterParams, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
       const mission = this.withFleetMissionPlanetReferences(summary, stateVersion);
-      return this.withDefenseHoldCombatOutcome(mission);
+      return this.effectiveMissionLifecycle(this.withDefenseHoldCombatOutcome(mission));
     });
 
     return {
@@ -3067,6 +3058,8 @@ export class SettlementIndexer {
     totalEntries: number;
   } {
     this.currentMissionReadModelDbVersion();
+    const effectiveIds = this.effectiveTerminalMissionIds();
+    const terminalSql = "(status_id IN (3, 4) OR mission_id IN (" + (effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL") + "))";
     const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
     const archiveFilterSql: string[] = [];
     const params: SQLQueryBindings[] = [];
@@ -3090,7 +3083,7 @@ export class SettlementIndexer {
     const countRow = this.db.query(`
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
-      WHERE status_id IN (3, 4)
+      WHERE ${terminalSql}
         ${archiveFilters}
     `).get(...params) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
@@ -3102,11 +3095,11 @@ export class SettlementIndexer {
     }
     const rows = this.db.query(`
       SELECT *
-      FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx
-      WHERE status_id IN (3, 4)
+      FROM contract_fleet_missions
+      WHERE ${terminalSql}
         ${archiveFilters}
       ORDER BY
-        CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(CASE WHEN status_id = 4 OR (mission_id IN (${effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL"}) AND mission_type_id != 1) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(COALESCE(
           json_extract(event_json, '$.blockNumber'),
           json_extract(event_json, '$.mission.blockNumber'),
@@ -3118,7 +3111,7 @@ export class SettlementIndexer {
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows)
       .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
-      .map((mission) => this.withDefenseHoldCombatOutcome(mission));
+      .map((mission) => this.effectiveMissionLifecycle(this.withDefenseHoldCombatOutcome(mission)));
 
     return { completedMissions, page, totalEntries };
   }
@@ -3436,7 +3429,7 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.activeFleetMissionsFromCanonicalRows();
+    return this.activeFleetMissionsFromCanonicalRows().map((mission) => this.effectiveMissionLifecycle(mission)).filter(isActiveFleetMissionStatusForSummary);
   }
 
   /**
@@ -3659,7 +3652,7 @@ export class SettlementIndexer {
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
   allCompletedFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().completed;
+    return [...this.indexedFleetMissionReferenceIndex().completed, ...this.fleetMissionSummariesFromCanonicalRowsByIds(this.effectiveTerminalMissionIds()).map((mission) => this.effectiveMissionLifecycle(mission))].sort(compareFleetMissionsNewestFirst);
   }
 
   activeFleetMissionsForTarget(planetId: string, targetIsMoon = false): FleetMissionSummary[] {
@@ -3799,24 +3792,61 @@ export class SettlementIndexer {
     const missions = this.activeFleetMissionsFromCanonicalRowsWhere("current-effects", "1 = 1", [], { includeOverduePendingRandomness: true });
     const proven = missions.map((mission) => {
       const row = this.db.query("SELECT * FROM contract_fleet_missions WHERE mission_id = ?").get(mission.missionId) as ContractFleetMissionRow;
-      const storage = parseCanonicalFleetMissionStorageDetails(row.event_json);
+      const storagePayload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+      const storage = storagePayload.compositionStatusId === row.status_id ? parseCanonicalFleetMissionStorageDetails(row.event_json) : null;
       const returning = mission.status === "Returning" || mission.status === "Recalled";
       if (!returning) return mission;
       if (!storage) {
         const participant = this.battleReportsForMissionIds([mission.missionId]).flatMap((report) => report.participants).find((member) => member.missionId === mission.missionId);
-        return participant?.survivingShips ? { ...mission, survivingShips: participant.survivingShips } : mission;
+        return { ...mission, survivingShips: participant?.survivingShips ?? null };
       }
       return { ...mission, ships: storage.ships, survivingShips: storage.ships, returnCargo: { metal: row.metal_cargo, crystal: row.crystal_cargo, deuterium: row.deuterium_cargo } };
     });
+    const stagedLocks = new Map<string, string>();
+    for (const mission of missions) {
+      if (mission.status !== "Outbound") continue;
+      const row = this.db.query("SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.topics[0]')) = ? AND lower(json_extract(event_json, '$.topics[1]')) = ? ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC LIMIT 1").get(combatStageAdvancedTopic, fleetMissionIdTopic(mission.missionId)) as EventRow | null;
+      if (!row) continue;
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      const phase = Number(BigInt("0x" + log.data.slice(2, 66)));
+      if (phase > 0 && phase !== 13) stagedLocks.set(mission.targetPlanetId, mission.missionId);
+    }
     const effects = deterministicFleetEffects(proven, asOfSeconds, (id, moon, owner, mission) => {
       const body = moon ? this.moon(id) : this.planet(id);
       if (!body || (owner && body.owner.toLowerCase() !== owner.toLowerCase())) return false;
-      // A recreated moon has a later creation block than the launched mission.
-      if (moon && mission && BigInt(body.blockNumber) > BigInt(mission.launchBlockNumber)) return false;
+      if (moon && mission) {
+        const createdBlock = BigInt(body.blockNumber), launchedBlock = BigInt(mission.launchBlockNumber);
+        if (launchedBlock === 0n) return null;
+        if (createdBlock > launchedBlock) return false;
+        if (createdBlock === launchedBlock) {
+          const launch = this.fleetMissionEventLogsForMissionIds([mission.missionId]).find((log) => log.topics[0]?.toLowerCase() === fleetMissionLaunchedTopic.toLowerCase());
+          const creation = this.db.query("SELECT event_json FROM indexed_moon_state_event_logs WHERE planet_id = ? AND removed = 0 AND lower(json_extract(event_json, '$.topics[0]')) = ? ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC LIMIT 1").get(id, moonCreatedTopic.toLowerCase()) as EventRow | null;
+          const createdLog = creation ? parseEvent<IndexedRpcLog>(creation.event_json) : null;
+          if (!launch?.logIndex || !createdLog?.logIndex) return null;
+          if (BigInt(createdLog.logIndex) >= BigInt(launch.logIndex)) return false;
+        }
+      }
       return true;
-    });
+    }, stagedLocks);
     this.currentFleetEffectsCache = { version, at: asOfSeconds, effects };
     return effects.filter((effect) => effect.planetId === planetId);
+  }
+
+  private effectiveMissionLifecycle(mission: FleetMissionSummary): FleetMissionSummary {
+    if (!isActiveFleetMissionStatus(mission.status)) return mission;
+    const effects = [...this.currentFleetEffects(mission.originPlanetId), ...this.currentFleetEffects(mission.targetPlanetId)]
+      .filter((effect) => effect.missionId === mission.missionId);
+    const terminal = effects.find((effect) => effect.terminal);
+    const arrival = effects.find((effect) => effect.leg === "arrival");
+    if (!terminal && !arrival) return mission;
+    const status = terminal ? terminal.leg === "return" ? "Returned" : "Resolved" : "Returning";
+    return withMissionAsOfNow({ ...mission, status, needsResolution: false,
+      ...(arrival && mission.missionType === "Transport" ? { returnCargo: zeroResources() } : {}) }, nowSeconds());
+  }
+
+  private effectiveTerminalMissionIds(): string[] {
+    this.currentFleetEffects("0");
+    return [...new Set(this.currentFleetEffectsCache!.effects.filter((effect) => effect.terminal).map((effect) => effect.missionId))];
   }
 
   private currentFleetShipCredits(planetId: string, isMoon: boolean): Map<number, number> {
@@ -3833,6 +3863,10 @@ export class SettlementIndexer {
 
   currentFleetResourceEffects(planetId: string, asOfSeconds: number) {
     return this.currentFleetEffects(planetId, asOfSeconds).filter((effect) => !effect.isMoon);
+  }
+
+  moonResourcesAsOfNow(planetId: string): Resources {
+    return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
   }
 
   currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds = nowSeconds()): Resources {
@@ -3866,6 +3900,20 @@ export class SettlementIndexer {
       ships: this.contractShipRows(planetId),
       technologyLevels: this.contractTechnologyLevels(owner)
     };
+  }
+
+  resourceProjectionRowsAfterArrival(planetId: string, owner: Address, at: number) {
+    const rows = this.resourceProjectionRows(planetId, owner);
+    const completed = new Map<number, number>();
+    for (const queue of this.queueSettlement("ship:" + planetId, at).completed) {
+      if (!queue.productionTiming || queue.itemId === undefined) continue;
+      completed.set(queue.itemId, (completed.get(queue.itemId) ?? 0) + (queue.quantity ?? 0));
+    }
+    const technologies = { ...rows.technologyLevels };
+    for (const queue of this.queueSettlement("research:" + owner.toLowerCase(), at).completed) {
+      if (queue.itemId !== undefined && queue.targetLevel !== undefined) technologies[String(queue.itemId)] = Math.max(technologies[String(queue.itemId)] ?? 0, queue.targetLevel);
+    }
+    return { ...rows, ships: rows.ships.map((ship) => ({ ...ship, count: ship.count + (completed.get(ship.id) ?? 0) })), technologyLevels: technologies };
   }
 
   completedBuildingQueues(planetId: string): QueueState[] {
@@ -4225,6 +4273,7 @@ export class SettlementIndexer {
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
+      this.productionQueueProjectionCacheVersion(),
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
@@ -4564,7 +4613,7 @@ export class SettlementIndexer {
       moonAvailable: true,
       ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
       resources,
-      resourcesAsOfNow: planetId ? sumCurrentResources(resources, this.currentFleetResourceCredits(planetId, true)) : resources,
+      resourcesAsOfNow: planetId ? this.moonResourcesAsOfNow(planetId) : resources,
       resourceSnapshot: this.moonResourceSnapshotMetadata(planetId),
       ships,
       launchableShips: planetId ? this.launchableMoonShipRows(planetId) : [],
@@ -6225,6 +6274,7 @@ export class SettlementIndexer {
         activity_json TEXT NOT NULL,
         PRIMARY KEY (wallet, event_id)
       );
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_occurrence_idx ON indexed_player_activity_feed(wallet, json_extract(activity_json, '$.id'));
       CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_game_time_idx
         ON indexed_player_activity_feed (wallet, CAST(occurred_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC);
       CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_time_order_idx
@@ -7576,33 +7626,59 @@ export class SettlementIndexer {
   }
 
   private backfillPlayerActivityFeed(): void {
-    const migrationKey = "playerActivityFeedBackfilledV2";
-    if (this.metadata(migrationKey) !== null) return;
-    const rows = this.db.query(`
-      SELECT event_id, event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
-    `).all() as Array<EventRow & { event_id: string }>;
+    const migrationKey = "playerActivityFeedBackfilledV3";
+    if (this.metadata(migrationKey) !== null && this.metadata("playerActivityFeedBackfilledV2") !== null) return;
     this.db.transaction(() => {
-      // The feed is a pure projection of the durable raw log ledger. Rebuilding it once lets new
-      // lifecycle rules remove old duplicates and backfill events introduced after V1 shipped.
-      const occurrences = this.db.query("SELECT event_id, activity_json FROM indexed_player_activity_feed WHERE json_extract(activity_json, '$.metadata.occurrenceId') IS NOT NULL OR json_extract(activity_json, '$.id') LIKE 'mission:%'").all() as Array<{event_id: string; activity_json: string}>;
+      // Queue history lives in SQLite, never an unbounded JS ledger or per-unit
+      // expansion. Chronological batches reconstruct identity even after all
+      // canonical queue rows have disappeared. No request path runs this migration.
+      this.db.query("CREATE TEMP TABLE IF NOT EXISTS activity_replay_queues (queue_key TEXT PRIMARY KEY, queue_json TEXT NOT NULL)").run();
+      this.db.query("DELETE FROM activity_replay_queues").run();
       this.db.query("DELETE FROM indexed_player_activity_feed").run();
-      for (const row of rows) {
-        this.recordPlayerActivityFeedFromLog(
-          row.event_id,
-          parseEvent<IndexedRpcLog>(row.event_json),
-          { useCurrentQueue: false }
-        );
+      const get = (key: string): QueueState[] => {
+        const row = this.db.query("SELECT queue_json FROM activity_replay_queues WHERE queue_key = ?").get(key) as {queue_json: string} | null;
+        return row ? parseEvent<QueueState[]>(row.queue_json) : [];
+      };
+      const put = (key: string, queues: QueueState[]) => {
+        if (!queues.length) this.db.query("DELETE FROM activity_replay_queues WHERE queue_key = ?").run(key);
+        else this.db.query("INSERT OR REPLACE INTO activity_replay_queues VALUES (?, ?)").run(key, JSON.stringify(queues));
+      };
+      let offset = 0;
+      while (true) {
+        const rows = this.db.query("SELECT event_id, event_json FROM indexed_event_logs WHERE removed = 0 ORDER BY CAST(block_number AS INTEGER), length(log_index), log_index LIMIT 500 OFFSET ?").all(offset) as Array<EventRow & {event_id: string}>;
+        if (!rows.length) break;
+        for (const row of rows) {
+          const log = parseEvent<IndexedRpcLog>(row.event_json);
+          let context: QueueState | null = null;
+          if (isIndexedQueueStartedLog(log)) {
+            const event = decodeIndexedQueueStartedLog(log), key = queueKey(event);
+            const queues = get(key), queue = queueStateFromEvent(event);
+            const same = queues.findIndex((entry) => projectedQueueActivityKey(entry) === projectedQueueActivityKey(queue));
+            if (same >= 0) queues[same] = { ...queues[same], ...queue };
+            else if (event.quantity !== undefined) queues.push(queue);
+            else queues.splice(0, queues.length, queue);
+            put(key, queues);
+          } else if (isProductionQueueTimingLog(log)) {
+            const event = decodeProductionQueueTimingLog(log), key = queueKey(event);
+            const queues = get(key), queue = queues.find((entry) => entry.readyAt === event.readyAt && entry.itemId === event.itemId);
+            if (queue) queue.productionTiming = {startedAt: event.startedAt, originalQuantity: event.originalQuantity, unitWorkSeconds: event.unitWorkSeconds, rate: event.rate};
+            put(key, queues);
+          } else if (isIndexedQueueCompletedLog(log)) {
+            const event = decodeIndexedQueueCompletedLog(log), key = queueKey(event), queues = get(key);
+            const index = queues.findIndex((entry) => entry.itemId === event.itemId && (event.level === undefined || entry.targetLevel === event.level));
+            if (index >= 0) {
+              context = { ...queues[index]! };
+              if (event.quantity !== undefined && event.quantity < (context.quantity ?? 0)) queues[index] = { ...context, quantity: context.quantity! - event.quantity };
+              else queues.splice(index, 1);
+              put(key, queues);
+            }
+          }
+          this.recordPlayerActivityFeedFromLog(row.event_id, log, { useCurrentQueue: false, historicalQueue: context });
+        }
+        offset += rows.length;
       }
-      const retained = new Set(rows.map((row) => row.event_id));
-      for (const occurrence of occurrences) {
-        const eventId = occurrence.event_id.split(":occurrence:")[0]!;
-        if (!retained.has(eventId)) continue;
-        this.db.query("DELETE FROM indexed_player_activity_feed WHERE event_id = ?").run(eventId);
-        this.insertPlayerActivityFeed(parseEvent<PlayerActivityItem>(occurrence.activity_json), occurrence.event_id);
-      }
+      this.db.query("DROP TABLE activity_replay_queues").run();
+      this.setMetadata("playerActivityFeedBackfilledV2", new Date().toISOString());
       this.setMetadata(migrationKey, new Date().toISOString());
     })();
   }
@@ -10845,10 +10921,8 @@ export class SettlementIndexer {
    * payload, so the old exact queue-row lookup cannot recover a timeline.
    *
    * The retained queue-start log still has the immutable final readyAt and the
-   * original quantity. Recover it locally from SQLite and represent its total
-   * duration as `unitWorkSeconds / rate`; this gives every read surface the
-   * exact batch start, current-unit boundary, and final completion without an
-   * RPC round trip or an indeterminate progress bar.
+   * original quantity. Recover only whole-batch completion at readyAt. Rounded
+   * batch duration does not prove modern per-unit timing; never infer that rate.
    */
   private hydrateRetainedProductionQueueTiming(queue: QueueState, fallbackPlanetId?: string): boolean {
     if (
@@ -10908,7 +10982,9 @@ export class SettlementIndexer {
         queue.productionTiming = {
           startedAt,
           originalQuantity,
-          unitWorkSeconds: duration.toString(),
+          // No timing event means the legacy contract completes only at readyAt.
+          // Do not infer modern per-unit work/rate from a rounded batch duration.
+          unitWorkSeconds: (duration * BigInt(originalQuantity)).toString(),
           rate: originalQuantity.toString()
         };
         return true;
@@ -10917,6 +10993,19 @@ export class SettlementIndexer {
       }
     }
     return false;
+  }
+
+  private hasProductionTimingEvidence(queue: QueueState): boolean {
+    // Synthetic legacy timing and genuine timing can have identical numbers.
+    // Only an explicit retained timing event distinguishes that collision.
+    return (this.db.query("SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.topics[1]')) = ? AND lower(json_extract(event_json, '$.topics[2]')) = ?").all(
+      fleetMissionIdTopic(queue.planetId ?? "0"), fleetMissionIdTopic(String(queue.itemId ?? 0))
+    ) as EventRow[]).some((row) => {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (!isProductionQueueTimingLog(log)) return false;
+      const event = decodeProductionQueueTimingLog(log);
+      return event.queueKind === queue.kind && event.readyAt === queue.readyAt;
+    });
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {
@@ -10954,6 +11043,14 @@ export class SettlementIndexer {
         unitWorkSeconds: row.unit_work_seconds,
         rate: row.production_rate
       };
+    }
+    // Repair the old writer's synthetic duration/quantity rate in memory. This
+    // signature cannot prove per-unit boundaries: use conservative legacy batch semantics.
+    const timing = queue.productionTiming;
+    if (timing && safeBigInt(timing.rate, -1n) === BigInt(timing.originalQuantity)
+      && safeBigInt(timing.unitWorkSeconds, -1n) === safeBigInt(queue.readyAt, 0n) - safeBigInt(timing.startedAt, 0n)
+      && !this.hasProductionTimingEvidence(queue)) {
+      queue.productionTiming = { ...timing, unitWorkSeconds: (BigInt(timing.unitWorkSeconds) * BigInt(timing.originalQuantity)).toString() };
     }
     return queue;
   }
@@ -12344,7 +12441,7 @@ export class SettlementIndexer {
   private recordPlayerActivityFeedFromLog(
     eventId: string,
     log: IndexedRpcLog,
-    options: { useCurrentQueue?: boolean } = {}
+    options: { useCurrentQueue?: boolean; historicalQueue?: QueueState | null } = {}
   ): void {
     const transactionAt = blockTimestampSeconds(log);
     if (!transactionAt) return;
@@ -12449,9 +12546,9 @@ export class SettlementIndexer {
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
         const owner = event.owner ?? this.ownerForPlanetActivity(event.planetId);
-        const queue = options.useCurrentQueue === false ? null : this.queueState(queueKey(event));
+        const queue = options.historicalQueue ?? (options.useCurrentQueue === false ? null : this.queueState(queueKey(event)));
         const label = queueActivityLabel(event.queueKind, event.itemId);
-        const occurrences = queue && queueMatchesCompletion(event, queue) ? queueCompletionOccurrences(queue, event.quantity ?? 1, false) : null;
+        const occurrences = queue && queue.itemId === event.itemId ? queueCompletionOccurrences(queue, event.quantity ?? 1, false) : null;
         for (const occurrence of occurrences ?? [null]) {
         add(owner, {
           category: queueActivityCategory(event.queueKind),
@@ -13771,10 +13868,10 @@ export class SettlementIndexer {
         fulfilledRandomnessRequestIds
       )
     };
-    return withMissionAsOfNow(
+    return this.effectiveMissionLifecycle(withMissionAsOfNow(
       withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
       asOfSeconds
-    );
+    ));
   }
 
   private battleReportsForMissionIds(
@@ -15099,22 +15196,29 @@ function battleActivityMetadata(report: BattleReport): Record<string, boolean | 
   };
 }
 
+// A production batch is one stable game activity, not one allocated JS object
+// per manufactured unit. Partial settlement updates its quantity/time; the
+// immutable batch identity survives projection, indexing, restart and pagination.
+function normalizeBatchActivity(item: PlayerActivityItem): void {
+  if (!item.id.startsWith("completion:") || typeof item.metadata.quantity !== "number") return;
+  const kind = String(item.metadata.queueKind ?? item.kind.replace("-completed", ""));
+  const label = queueActivityLabel(kind, Number(item.metadata.itemId));
+  item.title = queueCompletedTitle(kind, label, item.metadata.quantity);
+  item.detail = item.metadata.quantity + " completed";
+}
+
 function queueCompletionOccurrences(queue: QueueState, quantity: number, projected: boolean): Array<{ id: string; at: string; quantity: number }> {
-  if (!queue.readyAt) return [];
+  if (!queue.readyAt || quantity <= 0) return [];
   const timing = queue.productionTiming;
   const total = timing ? projected ? queue.asOfNow?.completedQuantity ?? quantity : timing.originalQuantity - (queue.quantity ?? 0) + quantity : quantity;
-  const first = total - quantity + 1;
-  const key = projectedQueueActivityKey(queue);
-  if (!timing) return [{ id: "completion:" + key, at: queue.readyAt, quantity }];
-  const result: Array<{ id: string; at: string; quantity: number }> = [];
-  for (let unit = first; unit <= total; unit++) {
-    const rate = BigInt(timing.rate), work = BigInt(timing.unitWorkSeconds) * BigInt(unit);
-    if (rate <= 0n) return [];
+  let at = queue.readyAt;
+  if (timing) {
+    const rate = safeBigInt(timing.rate, 0n), work = safeBigInt(timing.unitWorkSeconds, -1n) * BigInt(total);
+    if (rate <= 0n || work < 0n) return [];
     const boundary = BigInt(timing.startedAt) + (work + rate - 1n) / rate;
-    const at = (boundary < BigInt(queue.readyAt) ? boundary : BigInt(queue.readyAt)).toString();
-    result.push({ id: "completion:" + key + ":" + unit, at, quantity: 1 });
+    at = (boundary < BigInt(queue.readyAt) ? boundary : BigInt(queue.readyAt)).toString();
   }
-  return result;
+  return [{ id: "completion:" + projectedQueueActivityKey(queue), at, quantity }];
 }
 
 function projectedQueueActivityKey(queue: QueueState): string {
@@ -16034,7 +16138,10 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
 
 function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot, existingEventJson: string | null): string {
   const existingMission = parseCanonicalFleetMissionEvent(existingEventJson);
-  return JSON.stringify(existingMission ? { ...existingMission, ...mission } : mission);
+  return JSON.stringify({ ...(existingMission ?? {}), ...mission,
+    // A scalar refresh must invalidate retained launch/composition data as a
+    // survivor proof. Only ships read in this very snapshot certify this status.
+    compositionStatusId: "ships" in mission ? mission.statusId : null });
 }
 
 function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {

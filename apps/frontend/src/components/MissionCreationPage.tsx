@@ -1,3 +1,4 @@
+import { RESOURCES_UNAVAILABLE } from "../currentResources";
 import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
@@ -1616,7 +1617,8 @@ export function missionDraftBlocker({
   if (acsArrivalTooSlow) {
     return "Fleet cannot reach the planet before the attack — pick a faster speed or faster ships.";
   }
-  if ((resources?.deuterium ?? 0) < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;
+  if (!resources) return RESOURCES_UNAVAILABLE;
+  if (resources.deuterium < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;
   if (fuelCost > totalCargoCapacity) {
     return `Selected ships have ${totalCargoCapacity.toLocaleString()} cargo capacity, but this mission needs ${fuelCost.toLocaleString()} for fuel.`;
   }

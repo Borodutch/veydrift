@@ -46,7 +46,7 @@ describe("upgrade Supply handoff", () => {
     expect(preview.missing.metal).toBe(100000);
     expect(() => levelSupplyPreview(request, snapshot, "8")).toThrow("does not match");
     expect(() => levelSupplyPreview(request, { ...snapshot, stale: true }, "7")).toThrow("updating");
-    expect(() => levelSupplyPreview(request, { ...snapshot, resources: null, resourcesAsOfNow: null }, "7")).toThrow("unavailable");
+    expect(() => levelSupplyPreview(request, { ...snapshot, resources: requirement, resourcesAsOfNow: null }, "7")).toThrow("unavailable");
     expect(() => levelSupplyPreview(request, { ...snapshot, buildings: [{ ...snapshot.buildings[0]!, level: 9 }] }, "7")).toThrow("completed");
   });
 

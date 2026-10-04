@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
@@ -94,8 +95,9 @@ export function DefensePage({
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
   // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
   // defense affordability number can never disagree with the bar.
-  const resources = toResources(defenseState?.resourcesAsOfNow ?? defenseState?.resources);
-  const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
+  const resources = toResources(currentResources(defenseState));
+  // Inventory and remaining queue must come from the same response. Overview is only a loading fallback.
+  const queue = activeProductionQueue(defenseState?.queue, defenseState ? undefined : overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = shouldShowDefenseInitialLoader({ defenseState, loading });
 
@@ -124,7 +126,7 @@ export function DefensePage({
             productionAvailable,
             quantities,
             queue,
-            resources: spendableResources ?? resources,
+            resources: currentResources(defenseState) === null ? undefined : spendableResources ?? resources,
             productionRates,
             transactionUnavailableReason,
           })}
@@ -409,7 +411,7 @@ function getBlockedReason({
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
-  if (!resources) return "Resources unavailable";
+  if (!resources) return RESOURCES_UNAVAILABLE;
   if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;

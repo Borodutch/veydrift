@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { defenseQueueTimingSetTopic } from "./evm";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10392,7 +10393,8 @@ describe("Veydrift backend", () => {
         topics: [defenseQueuedTopic, topic(BigInt(planetId)), topic(BigInt(itemId))],
         data: abiWords(BigInt(quantity), BigInt(now + quantity * 10), 0n, 0n, 0n)
       }];
-      indexer.applyLog(logs[0]!);
+      logs.push({blockNumber:"0x81",transactionHash:"0xvey885-start",logIndex:"0x1",blockTimestamp:`0x${now.toString(16)}`,topics:[defenseQueueTimingSetTopic,topic(BigInt(planetId)),topic(BigInt(itemId)),topic(BigInt(now+quantity*10))],data:abiWords(BigInt(now),BigInt(quantity),100n,10n)});
+      for (const log of logs) indexer.applyLog(log);
       const notDue = await read();
       expect(notDue.unsettledQueue).toMatchObject({ active: true, quantity, asOfNow: { complete: false } });
       expect(count(notDue)).toBe(canonical);
@@ -12915,6 +12917,55 @@ test("combat model capability is uncached and fails closed during rollout", asyn
   const oldReader = new MockChainReader();
   const old = createRequestHandler({ config: configuredTestConfig, chainReader: oldReader, indexer: new SettlementIndexer(oldReader, 100n), role: "reader" });
   expect((await (await old(new Request("https://api.veydrift.com/combat-model"))).json() as { version: null }).version).toBeNull();
+});
+
+test("scheduled arrivals accrue with canonical buildings until passive completion", async () => {
+ for (const buildingAt of [1040,1080]) {
+  const db=new Database(":memory:"), reader=new MockChainReader();
+  const indexer=new SettlementIndexer(reader,100n,{database:db,runStartupBackfill:false});
+  indexer.applyEvent({...planet,eventName:"PlanetStarted",transactionHash:"0xchronology",blockNumber:"123",lastSettledAt:"1000",resources:{metal:"0",crystal:"0",deuterium:"0"}});
+  db.query("INSERT INTO contract_production_queues (queue_key,queue_kind,planet_id,owner,item_id,target_level,quantity,ready_at,started_at,original_quantity,unit_work_seconds,production_rate,metal_cost,crystal_cost,deuterium_cost,event_json) VALUES ('ship:7','ship','7',?,9,NULL,1,'1040','1000',1,'400','10','0','0','0','{}')").run(player);
+  db.query("INSERT INTO contract_production_queues (queue_key,queue_kind,planet_id,owner,item_id,target_level,quantity,ready_at,started_at,metal_cost,crystal_cost,deuterium_cost,event_json) VALUES ('building:7','building','7',?,0,2,NULL,?,'1000','0','0','0','{}')").run(player,String(buildingAt));
+  db.query("INSERT INTO contract_production_queues (queue_key,queue_kind,planet_id,owner,item_id,target_level,quantity,ready_at,started_at,metal_cost,crystal_cost,deuterium_cost,event_json) VALUES (?,'research','7',?,3,1,NULL,'1040','1000','0','0','0','{}')").run("research:"+player,player);
+  indexer.recordResourceProjectionWatermark("124","1180",`0x${"a".repeat(64)}`);
+  const rows=indexer.resourceProjectionRows("7",player);
+  indexer.resourceProjectionRows=()=>({...rows,buildings:rows.buildings.map(b=>({...b,level:b.id===0?1:0})),ships:rows.ships.map(s=>({...s,count:0}))});
+  indexer.currentFleetResourceEffects=()=>[
+   {missionId:"1",planetId:"7",isMoon:false,at:1060,leg:"arrival",ships:{},cargo:{metal:"5",crystal:"0",deuterium:"0"},terminal:false},
+   {missionId:"2",planetId:"7",isMoon:false,at:1120,leg:"arrival",ships:{},cargo:{metal:"7",crystal:"0",deuterium:"0"},terminal:false}
+  ];
+  const after=indexer.resourceProjectionRowsAfterArrival("7",player,1060);
+  expect(after.ships.find(s=>s.id===9)?.count).toBe(1);
+  expect(after.technologyLevels["3"]).toBe(1);
+  expect(after.buildings.find(b=>b.id===0)?.level).toBe(1);
+  const handler=createRequestHandler({config:configuredTestConfig,chainReader:reader,indexer,role:"reader",enableResponseCache:false});
+  try {
+   setSystemTime(new Date(1180000));
+   const state=await (await handler(new Request("http://localhost/wallet/"+player+"/infrastructure?planetId=7"))).json() as InfrastructureState;
+   const base=deriveInfrastructureFields(planet,indexer.resourceProjectionRows("7",player).buildings,rows.ships,rows.technologyLevels);
+   const middle=deriveInfrastructureFields(planet,after.buildings,after.ships,after.technologyLevels);
+   const enhanced=deriveInfrastructureFields(planet,after.buildings.map(b=>({...b,level:b.id===0?2:0})),after.ships,after.technologyLevels);
+   const expected=12n+BigInt(base.productionPerHour!.metal)*60n/3600n+BigInt(middle.productionPerHour!.metal)*60n/3600n+BigInt(enhanced.productionPerHour!.metal)*60n/3600n;
+   expect(state.resourcesAsOfNow?.metal).toBe(expected.toString());
+  } finally {setSystemTime();}
+ }
+});
+test("Terraformer invalidates warm memory and persisted summary routes at completion", async () => {
+ const db=new Database(":memory:"), reader=new MockChainReader();
+ const indexer=new SettlementIndexer(reader,100n,{database:db,runStartupBackfill:false});
+ indexer.applyEvent({...planet,eventName:"PlanetStarted",transactionHash:"0xterraform",blockNumber:"123"});
+ const now=Math.floor(Date.now()/1000);
+ db.query("INSERT INTO contract_production_queues (queue_key,queue_kind,planet_id,owner,item_id,target_level,quantity,ready_at,started_at,metal_cost,crystal_cost,deuterium_cost,event_json) VALUES ('building:7','building','7',?,12,1,NULL,?,?,'0','0','0','{}')").run(player,String(now+10),String(now));
+ const make=()=>createRequestHandler({config:configuredTestConfig,chainReader:reader,indexer,role:"reader",enableResponseCache:true,prewarmResponseCache:false});
+ const url="http://localhost/universe/galaxies/"+planet.galaxy+"/systems/"+planet.system;
+ const read=async(handler: ReturnType<typeof make>)=>{const body=await (await handler(new Request(url))).json() as any; return body.planets.find((p:any)=>p.occupiedBy?.planetId==="7");};
+ const warm=make();
+ try {
+  const before=await read(warm); const persisted=make(); expect(await read(persisted)).toEqual(before);
+  setSystemTime(new Date((now+10)*1000));
+  const after=await read(warm); expect(after.fields).toBe(before.fields+5);
+  expect(await read(persisted)).toEqual(after); expect(await read(make())).toEqual(after);
+ } finally {setSystemTime(new Date(now*1000));}
 });
 
 test("current state invalidates warm full-system and wallet caches at partial units without logs", async () => {

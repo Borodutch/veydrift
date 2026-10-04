@@ -65,6 +65,7 @@ test("Overview queues stay independently compact on phones and aligned at sm/xl"
         columns: getComputedStyle(panels[0].parentElement).gridTemplateColumns.split(' ').length,
         overflow: document.documentElement.scrollWidth > innerWidth,
         panels: panels.map(panel => ({ ...rect(panel), text: panel.textContent,
+          queueLabels: [...panel.querySelectorAll("[aria-label]")].map(node => node.getAttribute("aria-label")).join(" "),
           clipped: [panel, ...panel.querySelectorAll('p, li, [role=alert], button')].some(node => node.clientWidth > 0 && (node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1)),
           outside: [...panel.querySelectorAll('p, li, button, [role=alert]')].some(node => { const r = rect(node), p = rect(panel); return r.x < p.x || r.x + r.width > p.x + p.width + 1 || r.y + r.height > p.y + p.height + 1; }),
           buttons: [...panel.querySelectorAll('button')].map(button => ({ ...rect(button), type: button.type, label: button.textContent })),
@@ -81,7 +82,7 @@ test("Overview queues stay independently compact on phones and aligned at sm/xl"
     for (const width of [320, 375, 390, 430, 639, 640, 768, 1279, 1280, 1440]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height: 1400, deviceScaleFactor: 1, mobile: width < 640 });
       const results = [];
-      for (const [mode, count] of [['empty', 0], ['mixed', 1], ['mixed', 8], ['active', 8]]) {
+      for (const [mode, count] of [['empty', 0], ['mixed', 1], ['mixed', 16], ['active', 16]]) {
         await evaluate('fixture.show(' + JSON.stringify(mode) + ',' + count + '); new Promise(requestAnimationFrame)');
         const result = await evaluate('(' + inspect.toString() + ')()');
         const label = width + '-' + mode + '-' + count;
@@ -101,7 +102,9 @@ test("Overview queues stay independently compact on phones and aligned at sm/xl"
         } else {
           assert.ok(result.panels.every(panel => Math.abs(panel.height - result.panels[0].height) < 1), label + ': equal row alignment');
         }
-        if (mode !== 'empty') assert.match(result.panels[1].text, /Built · awaiting settlement.*Already paid for.*No need to buy them again/s);
+        assert.doesNotMatch(result.panels[1].text, /awaiting settlement|Finish defenses|Already paid for/i);
+        if (mode === 'empty') assert.match(result.panels[1].text, /No active defense production/);
+        else assert.match(result.panels[1].queueLabels, /Queue: Rocket Launcher/);
         if (mode === 'active') {
           assert.match(result.panels[0].text, /Construction blocked/);
           assert.match(result.panels[2].text, /Research request rejected/);
@@ -113,7 +116,7 @@ test("Overview queues stay independently compact on phones and aligned at sm/xl"
       }
       if (width < 640) {
         for (const index of [0, 2, 3]) {
-          assert.equal(results[1].panels[index].height, results[0].panels[index].height, width + ': empty card grew with settlement neighbor');
+          assert.equal(results[1].panels[index].height, results[0].panels[index].height, width + ': empty card grew with production neighbor');
           assert.equal(results[2].panels[index].height, results[0].panels[index].height, width + ': empty card grew with longer queue');
           assert.ok(results[0].panels[index].height < 110, width + ': empty card has unnecessary filler');
         }

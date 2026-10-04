@@ -334,8 +334,8 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   // The roster's `resources` is the canonical settled snapshot at `lastSettledAt`;
   // `resourcesAsOfNow` is the live production-accrued balance (the chain's
   // `previewResources`). Live consumers should prefer `resourcesAsOfNow` and fall
-  // back to `resources` for older backends/warming planets (VEY-KANEO-488).
-  resourcesAsOfNow?: OnChainResources;
+  // back to resources only when omitted by older backends; null means unknown.
+  resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   coordinates: string;
   isHomePlanet: boolean;
@@ -364,7 +364,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     planetId?: string;
     coordinates?: string;
     resources?: OnChainResources;
-    resourcesAsOfNow?: OnChainResources;
+    resourcesAsOfNow?: OnChainResources | null;
     resourceSnapshot?: ResourceSnapshotMetadata | null;
     ships?: ChainShipyardState["ships"];
     defenses?: ChainDefenseState["defenses"];

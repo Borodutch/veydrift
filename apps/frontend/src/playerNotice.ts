@@ -26,6 +26,13 @@ export function playerNotice(message: string | null | undefined): string | null 
     && /index|contract lane|storage order/.test(message)) {
     return "Battle details for this group are incomplete, so the outcome cannot be estimated safely.";
   }
+  // Only known machine-shaped service paths are generalized. Wallet rejection,
+  // network/auth notices and player-useful domain errors retain their recovery text.
+  if (/\b(?:indexed|indexer|indexing|DB-indexed|RPC|SQLITE|eth_call|revert data|storage order|contract address|deployed contract)\b/i.test(message)
+    || /^(?:TypeError|ReferenceError|SyntaxError|Error):/.test(message)
+    || /(?:\bat \S+ \([^)]*:\d+:\d+\)|0x[0-9a-f]{40,})/i.test(message)) {
+    return "Game information is temporarily unavailable. Please try again shortly.";
+  }
   return message;
 }
 

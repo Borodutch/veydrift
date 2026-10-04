@@ -3536,7 +3536,7 @@ function indexedMoonNotReadyResponse(
     moonAvailable: false,
     unavailableReason: detail,
     resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
-    resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resourcesAsOfNow: indexedState?.resourcesAsOfNow === undefined ? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" } : indexedState.resourcesAsOfNow,
     ships: indexedState?.ships ?? [],
     moon: null,
     fleet: indexedState?.fleet ?? [],
@@ -3771,7 +3771,7 @@ function indexedWalletPlanetState(
         planetId: planet.planetId,
         coordinates: planet.coordinates,
         resources: moonState.resources,
-        ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+        ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
         ships: moonState.ships,
         defenses: moonState.defenses
       }
@@ -3815,17 +3815,19 @@ function accruedPlanetState<T extends PlanetState | null>(
       const through = Math.floor(projectionTimeMs / 1_000);
       const cutoff = indexer.resourceAccrualCutoff(planet.planetId, through);
       let current = { ...planet };
+      let productionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
       for (const effect of indexer.currentFleetResourceEffects(planet.planetId, through)) {
         // Arrival preparation settles the target through arrivalAt; returns only
         // add cargo. Accruing before every return would invent storage headroom.
         const balance = effect.leg === "arrival"
-          ? accruedResourcesWithBuildingQueue(indexer, current, Math.min(cutoff, effect.at) * 1_000)
+          ? accruedResourcesWithBuildingQueue(indexer, current, Math.min(cutoff, effect.at) * 1_000, productionRows, true)
           : current.resources;
         current = { ...current,
           lastSettledAt: effect.leg === "arrival" ? String(Math.max(Number(current.lastSettledAt), Math.min(cutoff, effect.at))) : current.lastSettledAt,
           resources: Object.fromEntries(Object.entries(balance).map(([key, value]) => [key, (BigInt(value) + BigInt(effect.cargo[key as keyof Resources])).toString()])) as Resources };
+        if (effect.leg === "arrival") productionRows = indexer.resourceProjectionRowsAfterArrival(planet.planetId, planet.owner, effect.at);
       }
-      return accruedResourcesWithBuildingQueue(indexer, current, cutoff * 1_000);
+      return accruedResourcesWithBuildingQueue(indexer, current, cutoff * 1_000, productionRows);
     })()
   };
 }
@@ -4882,7 +4884,9 @@ function boostedProductionSeconds(
 function accruedResourcesWithBuildingQueue(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | PlanetState,
-  now: number
+  now: number,
+  rowsOverride?: ReturnType<SettlementIndexer["resourceProjectionRows"]>,
+  scheduledArrival = false
 ): Resources {
   const lastSettledAtSeconds = Number(planet.lastSettledAt);
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;
@@ -4893,7 +4897,7 @@ function accruedResourcesWithBuildingQueue(
   );
   if (nowSeconds <= lastSettledAtSeconds) return planet.resources;
 
-  const completed = indexer.completedBuildingQueues(planet.planetId)
+  const completed = (scheduledArrival ? [] : indexer.completedBuildingQueues(planet.planetId))
     .filter((queue) => typeof queue.itemId === "number" && typeof queue.targetLevel === "number")
     .filter((queue, index, queues) => (
       queues.findIndex((candidate) => (
@@ -4905,7 +4909,7 @@ function accruedResourcesWithBuildingQueue(
     .sort(compareQueueReadyAt);
 
   if (completed.length === 0) {
-    const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+    const { buildings, ships, technologyLevels } = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
     const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
     return resourcesWithClaimableAccrual(
       planet.resources,
@@ -4917,7 +4921,7 @@ function accruedResourcesWithBuildingQueue(
     );
   }
 
-  const projectionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+  const projectionRows = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
   let buildings = projectionRows.buildings;
   let resources = planet.resources;
   let cursor = lastSettledAtSeconds;
@@ -5999,7 +6003,7 @@ function rankedHighscorePlanets(
       ? {
           exists: true,
           resources: moonResources,
-          resourcesAsOfNow: moonResources
+          resourcesAsOfNow: indexer!.moonResourcesAsOfNow(planet.planetId)
         }
       : null;
 

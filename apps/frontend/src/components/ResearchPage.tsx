@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import { LevelInfoModal } from "./LevelInfoModal";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
@@ -853,7 +854,7 @@ export function researchActionStatus({
     ? undefined
     : researchCatalog.find((research) => research.id === activeQueue.itemId);
   const missingRequirement = unmetResearchRequirement(state, key);
-  const resourcesAvailable = Boolean(researchState?.resourcesAsOfNow ?? researchState?.resources);
+  const resourcesAvailable = Boolean(currentResources(researchState));
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
   const displayedActive = !ignoreActiveQueue && state.researchQueue?.key === key;
@@ -889,7 +890,7 @@ export function researchActionStatus({
                 : missingRequirement
                   ? "Locked by unmet prerequisites"
                   : !resourcesAvailable
-                    ? "Resources unavailable"
+                    ? RESOURCES_UNAVAILABLE
                     : !cost
                       ? "Research cost unavailable"
                       : !affordable
@@ -967,7 +968,7 @@ export function researchViewState(
     // and defense panels now read — falling back to the raw settled `resources` only when the
     // accrued field is absent. This is the fallback the gate uses when `spendableResources` is
     // unavailable; reading the raw snapshot here is what let the panel disagree with the top bar.
-    resources: resourcesFromChain(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    resources: resourcesFromChain(currentResources(researchState)) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 
