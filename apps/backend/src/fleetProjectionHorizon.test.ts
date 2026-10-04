@@ -240,3 +240,65 @@ for (const moon of [false, true]) test("slow-clock HTTP activity keeps fleet hor
   anchor(1020);
   expect(projectedKinds((await get(path)).body.items)).toEqual(["building-completed"]);
 });
+
+// Review 465f: delivery effects belong to the mission sender's activity, not
+// necessarily to an owned destination. Reuse real launched planet/moon fixtures.
+for (const moon of [false, true]) for (const crossOwner of [false, true]) test(
+  "proven transport delivery keeps launch and sender activity consistent (moon=" + moon + ", crossOwner=" + crossOwner + ")",
+  async () => {
+    setSystemTime(new Date(1011000));
+    const { indexer, db, anchor, get, wallet } = fixture(moon);
+    const recipient = "0x3333333333333333333333333333333333333333" as const;
+    const destinationOwner = crossOwner ? recipient : owner;
+    indexer.applyEvent({ ...indexer.planet("7")!, planetId: "8", owner: destinationOwner, position: 10, transactionHash: "0xother" });
+    if (moon) {
+      indexer.applyLog({ blockNumber: "0x2", blockTimestamp: topic(800n), transactionHash: "0xothermoon", logIndex: "0x0", topics: [moonCreatedTopic, "0x" + destinationOwner.slice(2).padStart(64, "0"), topic(8n)], data: words(2n, 44n, 10n, 12n, 8777n) });
+      db.query("INSERT OR REPLACE INTO contract_moon_resources VALUES ('8','100','0','0','1000','0xothermoon','2','0')").run();
+    }
+    // Keep mission identity / launch provenance and change only its destination.
+    (indexer as any).upsertCanonicalFleetMission({ missionId: "1", statusId: 1, missionTypeId: 0, status: "Outbound", missionType: "Transport", owner, originPlanetId: "7", targetPlanetId: "8", departureAt: "900", arrivalAt: "1010", returnAt: "1020", fuelCost: "0", cargo: { metal: "80", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: moon, targetIsMoon: moon, ships: { smallCargo: "9" } });
+    db.query("INSERT INTO contract_technology_levels (owner, technology_id, level) VALUES (?,4,5)").run(owner);
+    const projectedIds = (items: any[]) => items.filter(item => item.reconciliation === "projected" && item.category === "mission").map(item => item.id).sort();
+    for (const at of [1009, 1010, 1011, 1019, 1020, 1021]) {
+      anchor(at);
+      for (const wall of [1009, 1011, 1019, 1030]) {
+        setSystemTime(new Date(wall * 1000));
+        const arrived = at >= 1010, returned = at >= 1020;
+        expect(indexer.fleetMission("1")?.status).toBe(returned ? "Returned" : arrived ? "Returning" : "Outbound");
+        expect(indexer.fleetSlots(owner)).toEqual({ active: returned ? 0 : 1, limit: 6 });
+        expect(indexer.currentFleetResourceCredits("8", moon).metal).toBe(arrived ? "80" : "0");
+        // Unproven due arrivals/returns still block; a proven delivery never does.
+        const blocked = !returned && wall >= (arrived ? 1020 : 1010);
+        expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(mission => mission.missionId)).toEqual(blocked ? ["1"] : []);
+        const state = await wallet("shipyard");
+        expect(state.status).toBe(200);
+        expect(state.body.fleetLaunchAvailable).toBe(!blocked);
+        const expected = [...(arrived ? ["mission:1:arrival"] : []), ...(returned ? ["mission:1:return"] : [])];
+        const activity = await wallet("activity");
+        expect(activity.status).toBe(200);
+        expect(projectedIds(activity.body.items)).toEqual(expected);
+        expect(projectedIds(indexer.playerActivity(owner, { page: 1, pageSize: 20, through: 1009 }).items)).toEqual([]);
+        expect(projectedIds((await get("/wallet/" + recipient + "/activity")).body.items)).toEqual([]);
+        expect(projectedIds((await get("/wallet/" + owner + "/activity?includeProjected=false")).body.items)).toEqual([]);
+        expect(projectedIds((await get("/wallet/" + owner + "/activity?since=1010")).body.items)).toEqual(returned ? ["mission:1:return"] : []);
+      }
+    }
+    // Warm terminal effects must not hide genuine unresolved work after invalidation.
+    (indexer as any).setMetadata("transportStaleReason", "test outage");
+    setSystemTime(new Date(1030000));
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(mission => mission.missionId)).toEqual(["1"]);
+    expect(projectedIds((await wallet("activity")).body.items)).toEqual([]);
+  }
+);
+
+for (const moon of [false, true]) test("unresolved earlier combat still blocks delivery and fleet launch (moon=" + moon + ")", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, anchor, wallet } = fixture(moon);
+  (indexer as any).upsertCanonicalFleetMission({ missionId: "2", statusId: 1, missionTypeId: 2, status: "Outbound", missionType: "Attack", owner, originPlanetId: "7", targetPlanetId: "7", departureAt: "900", arrivalAt: "1005", returnAt: "1025", fuelCost: "0", cargo: { metal: "0", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: moon, targetIsMoon: moon, ships: { smallCargo: "1" } });
+  anchor(1030);
+  expect(indexer.fleetMission("1")?.status).toBe("Outbound");
+  expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(mission => mission.missionId)).toEqual(["2", "1"]);
+  expect(indexer.currentFleetResourceCredits("7", moon).metal).toBe("0");
+  expect((await wallet("shipyard")).body.fleetLaunchAvailable).toBe(false);
+  expect((await wallet("activity")).body.items.filter((item: any) => item.reconciliation === "projected" && item.category === "mission")).toEqual([]);
+});

@@ -31,6 +31,12 @@ Backend-only repair against integration base 676ac4e6 (second exact-head review 
 - Wallet, full-system and persisted-summary version tokens include the safe fleet horizon. Actual HTTP keys for all highscores variants, universe systems and finder routes use that version; resource-bearing public payloads are browser no-store. Landing shared stale data cannot cross versions. No-store mission responses retain their numeric indexedRevision format. Public/tactical moon resources use the same effective credit balance as moon inventory.
 - `fleetProjectionHorizon.test.ts` covers planet/moon transport, Deploy and known returns before/at/after arrival and return, forward/backward reader clock drift, warm full-system HTTP payloads, wallet shipyard/moon/infrastructure/Rift, mission detail, activity, and absent/unsafe watermark recovery. Four isolated default `/highscores?live=1` regressions retain the independent review reproductions: planet/moon × horizon advancement/invalidation without new mission events, checking warm responses against explicit expected balances and `fresh=1`.
 
+## Review 465f follow-up
+
+- Fleet launch blockers now evaluate the shared effective lifecycle first: a proven transport arrival advances the due leg to return; terminal effects no longer depend on the reader clock or owned-body enumeration. Unproven due arrivals/returns and earlier unresolved combat still block.
+- Projected mission activity reads the complete safe effect graph and filters by mission sender, not destination owner. Cross-owner planet/moon delivery is visible to its sender without leaking another sender's projected activity; historical windows and `since` remain enforced.
+- Independent review reproductions were expanded into planet/moon × same/cross-owner HTTP tests across arrival/return boundaries and clock drift, plus unresolved-combat and invalidation checks. Backend `bun test`: 1,172 passed across 51 files, 10,239 assertions (13.66s). `bun run check` and `git diff --check` passed; focused horizon suite: 23 passed, 3,291 assertions.
+
 ## Verification
 
 - Slow-reader horizon follow-up: full backend `bun test` passed 1,166 tests across 51 files, 9,043 assertions, zero failures (13.88s); `bun run check` and `git diff --check` passed. The horizon file contains 17 passing regressions (2,095 assertions).

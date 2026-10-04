@@ -2022,8 +2022,9 @@ export class SettlementIndexer {
         }
       }
     }
-    const effects = new Map(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId, fleetThrough)).map((effect) => [effect.missionId + ":" + effect.leg, effect]));
-    for (const effect of effects.values()) {
+    // Deliveries may credit another owner's body. Select the sender below, not
+    // destination ownership, from the same complete proven effect graph.
+    for (const effect of this.currentFleetEffects(undefined, fleetThrough)) {
       if (effect.at <= since) continue;
       const mission = this.fleetMissionSummaryFromContractRow(effect.missionId);
       if (!mission || mission.owner.toLowerCase() !== wallet.toLowerCase()) continue;
@@ -3732,13 +3733,14 @@ export class SettlementIndexer {
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
-    const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId, asOfSeconds)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
     return this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
+      // A proven delivery advances the due leg to return even before its canonical
+      // status is reconciled. Unproven due legs retain their existing safety gate.
+      .map((mission) => this.effectiveMissionLifecycle(mission))
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && mission.missionType !== "MissileAttack"
         && fleetSlotSettlementDue(mission, asOfSeconds)
-        && !terminal.has(mission.missionId)
       )
       .sort((left, right) => fleetSlotSettlementDueAt(left) - fleetSlotSettlementDueAt(right));
   }
@@ -3794,7 +3796,7 @@ export class SettlementIndexer {
     return projection.safeToProject && Number.isSafeInteger(at) && at >= 0 ? at : null;
   }
 
-  private currentFleetEffects(planetId: string, asOfSeconds?: number) {
+  private currentFleetEffects(planetId?: string, asOfSeconds?: number) {
     // A timer cannot prove the absence of intervening attacks or body changes. All
     // fleet consumers share the fully indexed resource horizon, including callers
     // requesting a historical activity window. Missing/unsafe anchors fail closed.
@@ -3805,7 +3807,7 @@ export class SettlementIndexer {
     }
     asOfSeconds = Math.min(asOfSeconds ?? horizon, horizon);
     const version = this.indexedStateCacheVersion() + ":" + this.currentMissionReadModelDbVersion() + ":" + this.currentBattleReportReadModelDbVersion();
-    if (this.currentFleetEffectsCache?.version === version && this.currentFleetEffectsCache.at === asOfSeconds) return this.currentFleetEffectsCache.effects.filter((effect) => effect.planetId === planetId);
+    if (this.currentFleetEffectsCache?.version === version && this.currentFleetEffectsCache.at === asOfSeconds) return this.currentFleetEffectsCache.effects.filter((effect) => planetId === undefined || effect.planetId === planetId);
     // A transport return depends on its remote arrival, whose blockers may never
     // touch this origin. Include the active graph, not just origin-touching rows.
     const missions = this.activeFleetMissionsFromCanonicalRowsWhere("current-effects", "1 = 1", [], { includeOverduePendingRandomness: true });
@@ -3849,7 +3851,7 @@ export class SettlementIndexer {
       return true;
     }, stagedLocks);
     this.currentFleetEffectsCache = { version, at: asOfSeconds, effects };
-    return effects.filter((effect) => effect.planetId === planetId);
+    return effects.filter((effect) => planetId === undefined || effect.planetId === planetId);
   }
 
   private effectiveMissionLifecycle(mission: FleetMissionSummary): FleetMissionSummary {
