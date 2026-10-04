@@ -147,13 +147,14 @@ export function BatchSupplyModal({
   }), [requested]);
   const plan = useMemo(() => buildBatchSupplyPlan({
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
+    targetIsMoon: upgrade?.kind === "moon",
     requested: requestedNumbers,
     selectedPlanetIds: selected,
     sourceCargoOverrides,
     shipTypesBySource,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system]);
+  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, upgrade?.kind]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -163,7 +164,7 @@ export function BatchSupplyModal({
     ? transactionState?.label
     : undefined;
   const missionLimitError = batchSupplyMissionLimitError(plan.orders.length);
-  const canSubmit = (!upgrade || Boolean(preview)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
+  const canSubmit = (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
   const targetLabel = `${target.name?.trim() || target.coordinates}${upgrade?.kind === "moon" ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
@@ -176,6 +177,7 @@ export function BatchSupplyModal({
   const setMax = (resource: keyof SupplyResources) => {
     const maximum = buildBatchSupplyPlan({
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
+      targetIsMoon: upgrade?.kind === "moon",
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
       selectedPlanetIds: selected,
       shipTypesBySource,
@@ -239,7 +241,7 @@ export function BatchSupplyModal({
           {preview ? <>
             <p>Requirement: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p>
             <p>Destination shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}</p>
-            {resourceTotal(preview.missing) === 0 ? <p role="status">{preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
+            {resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
           </> : <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p>}
           {upgrade.kind === "moon" ? <p>Moon Supply uses one source per transport. Select a source and review before launching.</p> : null}
           {onRefresh ? <button className="min-h-10 justify-self-start rounded border border-white/20 px-3" disabled={loading || actionPending} onClick={onRefresh} type="button">Refresh destination and shortfall</button> : null}
@@ -306,7 +308,7 @@ export function BatchSupplyModal({
                 || sourceCargo.crystal !== requestedSourceCargo.crystal
                 || sourceCargo.deuterium !== requestedSourceCargo.deuterium
               );
-              const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position });
+              const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position }, { targetIsMoon: upgrade?.kind === "moon" });
               const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, eligibleShips, source.driveLevels);
               return (
                 <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3 ${checked ? "border-cyan-300/35 bg-cyan-300/5" : "border-white/10 bg-black/15"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>

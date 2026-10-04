@@ -3,7 +3,7 @@ import type { SupplyResources } from "./batchSupplyPlanner";
 import type { ChainInfrastructureState, ChainMoonState, ChainResearchState } from "./walletFlow";
 
 export type LevelSupplyRequest = { kind: "building" | "research" | "moon"; key: string; label: string; level: number };
-export type LevelSupplyPreview = { requirement: SupplyResources; missing: SupplyResources; energyOnly: boolean };
+export type LevelSupplyPreview = { requirement: SupplyResources; missing: SupplyResources; energyOnly: boolean; inProgress?: boolean };
 const keys = ["metal", "crystal", "deuterium"] as const;
 
 /** Integer catalogue arithmetic; never round a formatted table cell back into cargo. */
@@ -42,6 +42,9 @@ export function levelSupplyPreview(request: LevelSupplyRequest, snapshot: Snapsh
     ? ("technologies" in snapshot ? snapshot.technologies.find(item => item.id === researchCatalog.find(item => item.key === request.key as ResearchKey)?.id) : undefined)
     : ("buildings" in snapshot ? snapshot.buildings.find(item => request.kind === "moon" ? "key" in item && item.key === request.key : item.id === buildingContractIds[request.key as BuildingKey]) : undefined);
   if (!entry || !Number.isSafeInteger(entry.level) || entry.level < 0 || entry.level >= request.level) throw new Error("This level is already completed or its current state is unavailable.");
+  // Queued upgrades have already paid. Other queues do not block preparation.
+  const queue = snapshot.queue;
+  const inProgress = Boolean(queue?.active && queue.itemId === entry.id && queue.targetLevel === request.level);
   const resources = snapshot.resourcesAsOfNow ?? snapshot.resources;
   if (!resources) throw new Error("Live destination resources are unavailable. Refresh before planning Supply.");
   const exact = levelSupplyCost(request);
@@ -60,16 +63,16 @@ export function levelSupplyPreview(request: LevelSupplyRequest, snapshot: Snapsh
     if (exact[key] > BigInt(Number.MAX_SAFE_INTEGER) / 3n) throw new Error("This level's cost is too large to prepare a safe Supply shipment.");
     requirement[key] = Number(exact[key]);
     const deficit = exact[key] - BigInt(resources[key]);
-    missing[key] = deficit > 0n ? Number(deficit) : 0;
+    missing[key] = !inProgress && deficit > 0n ? Number(deficit) : 0;
   }
-  return { requirement, missing, energyOnly: request.kind === "research" && request.key === "graviton" };
+  return { requirement, missing, inProgress, energyOnly: request.kind === "research" && request.key === "graviton" };
 }
 
 /** A confirmed shipment is an exact user-reviewed cargo amount, not a live balance sweep.
  * Passive production must not force an endless refresh/confirm loop. New deficits,
  * changed costs, and a fully funded destination do require another review. */
 export function levelSupplyNeedsReview(previous: LevelSupplyPreview | undefined, fresh: LevelSupplyPreview): boolean {
-  return !previous || keys.some(key => previous.requirement[key] !== fresh.requirement[key] || fresh.missing[key] > previous.missing[key])
+  return !previous || Boolean(previous.inProgress) !== Boolean(fresh.inProgress) || keys.some(key => previous.requirement[key] !== fresh.requirement[key] || fresh.missing[key] > previous.missing[key])
     || (keys.every(key => fresh.missing[key] === 0) && keys.some(key => previous.missing[key] > 0));
 }
 
