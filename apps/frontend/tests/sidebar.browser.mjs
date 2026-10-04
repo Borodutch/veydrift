@@ -85,6 +85,43 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       await send('Input.dispatchKeyEvent', {type:'keyUp',key,code,windowsVirtualKeyCode:vk});
       await frame();
     }
+    async function controlGeometry(collapsed) {
+      const geometry = await evaluate(`(() => {
+        const nav = document.querySelector(${JSON.stringify(desktop)});
+        const toggle = document.querySelector(${JSON.stringify(toggle)});
+        const box = node => {
+          const r = node.getBoundingClientRect(), s = getComputedStyle(node);
+          return { width:r.width, height:r.height, center:r.x+r.width/2, left:r.left, right:r.right,
+            border:s.borderTopWidth, background:s.backgroundColor, color:s.color, opacity:s.opacity,
+            stroke:node.getAttribute('stroke-width') };
+        };
+        return { rail:box(nav), target:box(toggle), visual:box(toggle.firstElementChild), icon:box(toggle.querySelector('svg')),
+          links:[...nav.querySelectorAll('#desktop-navigation-links a')].map(a => ({visual:box(a.firstElementChild), icon:box(a.querySelector('svg'))})),
+          account:nav.querySelector('summary') ? box(nav.querySelector('summary')) : null };
+      })()`);
+      assert.ok(geometry.target.width >= 44 && geometry.target.height >= 44, 'toggle retains a usable hit area');
+      assert.ok(geometry.target.left >= geometry.rail.left && geometry.target.right <= geometry.rail.right, 'toggle stays inside sidebar');
+      for (const link of geometry.links) {
+        for (const field of ['width','height','border','background','color','opacity']) {
+          assert.equal(geometry.visual[field], link.visual[field], 'matching visible control ' + field);
+        }
+        for (const field of ['width','height','stroke']) {
+          assert.equal(geometry.icon[field], link.icon[field], 'matching icon ' + field);
+        }
+        if (collapsed) {
+          assert.equal(geometry.visual.center, link.visual.center, 'toggle and nav centerline');
+          assert.equal(geometry.account.center, link.visual.center, 'account and nav centerline');
+        }
+      }
+      assert.equal(geometry.visual.width, 28);
+      assert.equal(geometry.visual.height, 28);
+      assert.equal(geometry.icon.width, 15);
+      if (collapsed) {
+        assert.ok(Math.abs(geometry.visual.center - geometry.rail.center) <= 0.5, 'centered inside bordered rail');
+        assert.ok(geometry.account.width >= 40 && geometry.account.height >= 40, 'account hit area retained');
+      }
+      return geometry;
+    }
     const expanded = () => evaluate('document.querySelector('+JSON.stringify(toggle)+').getAttribute("aria-expanded")');
     const measure = () => evaluate('(() => {const n=document.querySelector('+JSON.stringify(desktop)+').getBoundingClientRect(),m=document.querySelector("main").getBoundingClientRect(),r=document.querySelector("[data-right-rail]").getBoundingClientRect();return {nav:n.width,main:m.width,x:m.x,right:r.x,overlap:m.right>r.x,overflow:document.documentElement.scrollWidth>innerWidth};})()');
     await send('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
@@ -94,7 +131,9 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(toggle)+').getAttribute("aria-label")'), "Collapse sidebar");
     for(const width of [768,1024,1280]) {
       await send('Emulation.setDeviceMetricsOverride', {width,height:800,deviceScaleFactor:1,mobile:false});
+      await frame();
       const before=await measure();
+      const expandedControls=await controlGeometry(false);
       assert.equal(before.nav,208);
       if (artifacts && width === 1280) writeFileSync(join(artifacts, "expanded.png"), Buffer.from((await send("Page.captureScreenshot", {format:"png"})).data, "base64"));
       await click(toggle);
@@ -102,7 +141,8 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       assert.equal(after.nav,64); assert.equal(after.main-before.main,144);
       assert.equal(after.overlap,false); assert.equal(after.overflow,false);
       assert.equal(after.right,before.right);
-      measurements.push({ width, before, after });
+      const collapsedControls=await controlGeometry(true);
+      measurements.push({ width, before, after, expandedControls, collapsedControls });
       if (artifacts && width === 1280) writeFileSync(join(artifacts, "collapsed.png"), Buffer.from((await send("Page.captureScreenshot", {format:"png"})).data, "base64"));
       assert.equal(await expanded(),'false');
       await click(toggle);
@@ -195,6 +235,11 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false}); await settle();
     await evaluate('document.querySelector('+JSON.stringify(account)+').focus()'); await press('Enter');
+    assert.equal(await evaluate('document.querySelector('+JSON.stringify(account)+').parentElement.open'),true);
+    await press('Escape');
+    assert.equal(await evaluate('document.querySelector('+JSON.stringify(account)+').parentElement.open'),false);
+    assert.equal(await evaluate('document.activeElement===document.querySelector('+JSON.stringify(account)+')'),true);
+    await press(' ');
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(account)+').parentElement.open'),true);
     await click(desktop+' button[aria-label="Expand Commander profile"]');
     for (const [width,height] of [[768,480],[1024,600],[1280,800]]) {

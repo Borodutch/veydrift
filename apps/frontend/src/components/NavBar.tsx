@@ -87,6 +87,8 @@ export function commanderIdentityLabel(
   return playerDisplayLabel(playerProfile, account);
 }
 
+const sidebarIconClassName = "grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90";
+
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
   { key: "overview", label: "Overview", mobileLabel: "Overview", icon: Radar },
   { key: "infrastructure", label: "Infrastructure", mobileLabel: "Infra", icon: Factory },
@@ -491,7 +493,7 @@ export function NavBar({
       {/* Desktop sidebar */}
       <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
         <div className={`flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] shadow-[inset_-1px_0_rgba(255,255,255,0.04)] ${sidebarCollapsed ? "p-2" : "p-3"}`}>
-          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className={`flex items-center border-b border-white/10 pb-3 ${sidebarCollapsed ? "justify-center" : "justify-between"}`}>
             {!sidebarCollapsed && <p className="pl-2 text-sm font-semibold text-white">Veydrift</p>}
             <button
               type="button"
@@ -499,14 +501,16 @@ export function NavBar({
               aria-expanded={!sidebarCollapsed}
               aria-controls="desktop-navigation-links"
               title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 text-slate-200 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
               onClick={() => {
                 const collapsed = !sidebarCollapsed;
                 setSidebarCollapsed(collapsed);
                 writeSidebarCollapsed(collapsed);
               }}
             >
-              {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={18} /> : <PanelLeftClose aria-hidden="true" size={18} />}
+              <span className={sidebarIconClassName}>
+                {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={15} strokeWidth={1.9} /> : <PanelLeftClose aria-hidden="true" size={15} strokeWidth={1.9} />}
+              </span>
             </button>
           </div>
 
@@ -527,7 +531,7 @@ export function NavBar({
           {sidebarCollapsed ? (
             <details
               ref={compactAccount}
-              className="relative shrink-0"
+              className="relative mx-auto shrink-0"
               onKeyDown={(event) => {
                 if (event.key === "Escape" && compactAccount.current?.open) {
                   compactAccount.current.open = false;
@@ -541,7 +545,7 @@ export function NavBar({
               <summary aria-label="Commander account" title="Commander account" className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden">
                 <UserRound aria-hidden="true" size={18} />
               </summary>
-              <div className="absolute bottom-0 left-full z-30 ml-3 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] w-64 overflow-y-auto rounded-md border border-white/10 bg-[#07101d] p-3 shadow-2xl shadow-black/50">
+              <div className="absolute bottom-0 left-full z-30 ml-4 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] w-64 overflow-y-auto rounded-md border border-white/10 bg-[#07101d] p-3 shadow-2xl shadow-black/50">
                 {accountSummary("", "compact-commander-account-details")}
               </div>
             </details>
@@ -1055,7 +1059,7 @@ export function NavItem({
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90">
+      <span className={sidebarIconClassName}>
         <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
       <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>{label}</span>
