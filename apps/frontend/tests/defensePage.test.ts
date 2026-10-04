@@ -197,7 +197,7 @@ describe("Defense page display helpers", () => {
     { canonical: 0, launchable: 2, queue: undefined },
     { canonical: 2, launchable: 3, queue: { active: true, kind: "defense", itemId: 0, quantity: 1, readyAt: "1700000000", cost: { metal: "0", crystal: "0", deuterium: "0" }, asOfNow: { complete: true, secondsRemaining: 0, completedQuantity: 1 } } },
     { canonical: 3, launchable: 3, queue: undefined }
-  ])("Deployed stays canonical across absent, due and settled queues (VEY-885): $canonical/$launchable", ({ canonical, launchable, queue }) => {
+  ])("Deployed uses authoritative inventory across absent, due and settled queues (VEY-885): $canonical/$launchable", ({ canonical, launchable, queue }) => {
     const items = defenseProductionItems({
       actionPending: false, canTransact: true, productionAvailable: true, quantities: {}, queue,
       resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
@@ -219,7 +219,7 @@ describe("Defense page display helpers", () => {
     };
     const state = defenseState({
       shipyardLevel: 1,
-      defenses: [{ id: 0, count: phase === "settled" ? 10 : 8, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
+      defenses: [{ id: 0, count: 8 + completed, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
       launchableDefenses: [{ id: 0, count: 8 + completed }],
       queue: completed === 2 ? null : { ...canonicalQueue, quantity: 2 - completed },
       unsettledQueue: phase === "settled" ? null : canonicalQueue,
@@ -231,7 +231,7 @@ describe("Defense page display helpers", () => {
         resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
         defenseState: snapshot, queue: snapshot.queue,
       }).find(item => item.key === "rocketLauncher");
-      expect(item).toMatchObject({ countValue: phase === "settled" ? 10 : 8, queued: 2 - completed, status: completed === 2 ? "ready" : "queued" });
+      expect(item).toMatchObject({ countValue: 8 + completed, queued: 2 - completed, status: completed === 2 ? "ready" : "queued" });
     }
   });
 
@@ -247,12 +247,12 @@ describe("Defense page display helpers", () => {
         resources: { metal: 1000000, crystal: 1000000, deuterium: 1000000 },
         defenseState: defenseState({
           shipyardLevel: 10, missileSiloLevel: 1, technologyLevels: { "4": 10, "6": 10 },
-          defenses: [{ id, count: id === 3 ? 0 : 4, cost: { metal: "1000", crystal: "0", deuterium: "0" } }],
+          defenses: [{ id, count: id === 3 ? 1 : 5, cost: { metal: "1000", crystal: "0", deuterium: "0" } }],
           launchableDefenses: [{ id, count: id === 3 ? 1 : 5 }],
           unsettledQueue: complete,
         }),
       });
-      expect(items.find(item => item.id === id)).toMatchObject({ queued: 0, maxQuantity: 0, disabled: true, countValue: id === 3 ? 0 : 4 });
+      expect(items.find(item => item.id === id)).toMatchObject({ queued: 0, maxQuantity: 0, disabled: true, countValue: id === 3 ? 1 : 5 });
     }
   });
 
@@ -283,7 +283,7 @@ describe("Defense page display helpers", () => {
     expect(items.find(item => item.key === "interplanetaryMissile")).toMatchObject({ countValue: 1, queued: 2, maxQuantity: 2 });
   });
 
-  test.each([false, true])("new frontend keeps legacy missile capacity with additive metadata=%s (VEY-885)", additive => {
+  test.each([false, true])("effective missile inventory ignores optional canonical queue metadata=%s", additive => {
     for (const due of [1, 2]) {
       const canonicalQueue = { active: true, kind: "defense", itemId: 9, quantity: 2, readyAt: "1700000000", cost: { metal: "0", crystal: "0", deuterium: "0" } };
       const projectedQueue = due === 2 ? null : { ...canonicalQueue, quantity: 1 };
@@ -292,12 +292,12 @@ describe("Defense page display helpers", () => {
         resources: { metal: 1000000, crystal: 1000000, deuterium: 1000000 },
         defenseState: defenseState({
           missileSiloLevel: 1,
-          defenses: [{ id: 9, count: 1, cost: { metal: "12500", crystal: "2500", deuterium: "10000" } }],
+          defenses: [{ id: 9, count: 1 + due, cost: { metal: "12500", crystal: "2500", deuterium: "10000" } }],
           launchableDefenses: [{ id: 9, count: 1 + due }],
           ...(additive ? { unsettledQueue: canonicalQueue } : {})
         })
       });
-      expect(items.find(item => item.key === "interplanetaryMissile")).toMatchObject({ countValue: 1, maxQuantity: 2 });
+      expect(items.find(item => item.key === "interplanetaryMissile")).toMatchObject({ countValue: 1 + due, maxQuantity: 2 });
       // Old clients ignore the additive field and keep their original capacity pairing.
       expect(1 + due + (projectedQueue?.quantity ?? 0)).toBe(3);
     }

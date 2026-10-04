@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "./currentResources";
 import { playerNotice } from "./playerNotice";
 // Pure logic for the raid-target finder (VEY-KANEO-446).
 //
@@ -427,7 +428,7 @@ export function buildRaidTargets({
         ownerDisplayName: entry.displayName ?? null,
         alliance,
         hasMoon: Boolean(planet.hasMoon),
-        moonResources: planet.moon?.resourcesAsOfNow ?? planet.moon?.resources ?? null,
+        moonResources: currentResources(planet.moon) ?? null,
         distance: origin ? fleetMissionDistance(origin, planet.coordinates) : null,
         loot: safeNumber(tactical?.raidableResourceTotal),
         grossLoot: safeNumber(tactical?.grossResourceTotal),
@@ -568,7 +569,8 @@ export function buildDebrisTargets({
 }): DebrisFinderTarget[] {
   const availableRecyclers = recyclerCount(shipyardState);
   const fleetSlots = shipyardState?.fleetSlots;
-  const deuterium = safeNumber(shipyardState?.resources?.deuterium);
+  const resources = currentResources(shipyardState);
+  const deuterium = safeNumber(resources?.deuterium);
 
   return targets.flatMap((target) => {
     const metal = positiveInt(safeNumber(target.debris.metal));
@@ -593,6 +595,7 @@ export function buildDebrisTargets({
         ? "Shipyard state is still loading."
         : shipyardState.fleetLaunchAvailable === false
           ? playerNotice(shipyardState.fleetLaunchUnavailableReason) ?? playerNotice(shipyardState.unavailableReason) ?? "Fleet slot state is still syncing."
+        : !resources ? RESOURCES_UNAVAILABLE
         : availableRecyclers <= 0
           ? "Requires a recycler on your active planet."
           : !fleetSlots || fleetSlots.limit <= 0

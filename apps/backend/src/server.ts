@@ -1575,7 +1575,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           page,
           pageSize,
           ...(sinceValue === null ? {} : { since: Number(sinceValue) }),
-          includeProjected: url.searchParams.get("includeProjected") === "true"
+          includeProjected: url.searchParams.get("includeProjected") !== "false"
         });
         const totalPages = Math.max(1, Math.ceil(activity.totalEntries / pageSize));
         return indexedJsonResponse({
@@ -2937,10 +2937,9 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
-  // Only the informational landing board can reuse data across committed versions.
-  return landingLeaderboardRequest(url)
-    ? `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`
-    : cacheKey;
+  // Even the landing board carries planet resource/fleet intel. Shared stale
+  // data is reusable only within the same indexed state and safe fleet horizon.
+  return cacheKey;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
@@ -2948,11 +2947,11 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
     // Protection changes when the canonical clock crosses an AFK boundary even if no
     // activity row changes. Never reuse a fresh OR stale response from the old clock.
     if (personalizedHighscoreRequest(url)) {
-      return `${indexer.indexedStateCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
+      return `${indexer.responseCacheVersion()}:activity-clock=${indexedActivityNowSeconds(indexer)}`;
     }
-    return landingLeaderboardRequest(url) ? "landing-leaderboard"
-      : livePublicDataRequest(url) ? indexer.indexedStateCacheVersion() : "ttl";
+    return indexer.responseCacheVersion();
   }
+  if (["/universe/systems", "/raid-finder/debris", "/raid-finder/rifters"].includes(url.pathname)) return indexer.responseCacheVersion();
   const system = url.pathname.match(/^\/universe\/galaxies\/([0-9]+)\/systems\/([0-9]+)$/);
   return system ? galaxySystemCacheVersion(indexer, galaxySystemDetail(url), Number(system[1]), Number(system[2])) : "ttl";
 }
@@ -2961,7 +2960,7 @@ function clientCacheControlHeader(url: URL, ttlMs: number): string {
   if (personalizedHighscoreRequest(url)) {
     return "private, no-store";
   }
-  if (livePublicDataRequest(url)) return "public, no-store";
+  if (livePublicDataRequest(url) || url.pathname === "/highscores" || url.pathname.startsWith("/universe/") || url.pathname.startsWith("/raid-finder/")) return "public, no-store";
   const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
   const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
   return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
@@ -3536,7 +3535,7 @@ function indexedMoonNotReadyResponse(
     moonAvailable: false,
     unavailableReason: detail,
     resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
-    resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resourcesAsOfNow: indexedState?.resourcesAsOfNow === undefined ? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" } : indexedState.resourcesAsOfNow,
     ships: indexedState?.ships ?? [],
     moon: null,
     fleet: indexedState?.fleet ?? [],
@@ -3730,7 +3729,7 @@ function watchedPlanetPayload(
       system: planet.system,
       position: planet.position
     }),
-    fields: planet.fields,
+    fields: indexer.planetFieldsAsOfNow(planet.planetId),
     temperature: planet.temperature,
     metalMultiplierBps: planet.metalMultiplierBps,
     crystalMultiplierBps: planet.crystalMultiplierBps,
@@ -3771,7 +3770,7 @@ function indexedWalletPlanetState(
         planetId: planet.planetId,
         coordinates: planet.coordinates,
         resources: moonState.resources,
-        ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+        ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
         ships: moonState.ships,
         defenses: moonState.defenses
       }
@@ -3811,7 +3810,24 @@ function accruedPlanetState<T extends PlanetState | null>(
     ...planet,
     // Never project from a reader worker's wall clock. Until the writer publishes its first fully
     // indexed block timestamp, freeze at the canonical settled balance rather than overstate funds.
-    resources: accruedResourcesWithBuildingQueue(indexer, planet, projectionTimeMs)
+    resources: (() => {
+      const through = Math.floor(projectionTimeMs / 1_000);
+      const cutoff = indexer.resourceAccrualCutoff(planet.planetId, through);
+      let current = { ...planet };
+      let productionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+      for (const effect of indexer.currentFleetResourceEffects(planet.planetId, through)) {
+        // Arrival preparation settles the target through arrivalAt; returns only
+        // add cargo. Accruing before every return would invent storage headroom.
+        const balance = effect.leg === "arrival"
+          ? accruedResourcesWithBuildingQueue(indexer, current, Math.min(cutoff, effect.at) * 1_000, productionRows, true)
+          : current.resources;
+        current = { ...current,
+          lastSettledAt: effect.leg === "arrival" ? String(Math.max(Number(current.lastSettledAt), Math.min(cutoff, effect.at))) : current.lastSettledAt,
+          resources: Object.fromEntries(Object.entries(balance).map(([key, value]) => [key, (BigInt(value) + BigInt(effect.cargo[key as keyof Resources])).toString()])) as Resources };
+        if (effect.leg === "arrival") productionRows = indexer.resourceProjectionRowsAfterArrival(planet.planetId, planet.owner, effect.at);
+      }
+      return accruedResourcesWithBuildingQueue(indexer, current, cutoff * 1_000, productionRows);
+    })()
   };
 }
 
@@ -4192,7 +4208,7 @@ function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementInd
     fleetSlots: indexer.fleetSlots(wallet),
     fleetLaunchAvailable: !slotSettlementBlocker,
     ...(slotSettlementBlocker ? {
-      fleetLaunchUnavailableReason: `Fleet slot state is waiting for mission settlement (mission ${slotSettlementBlocker.missionId}). Refresh after the backend or keeper settles due fleet missions before launching another fleet.`,
+      fleetLaunchUnavailableReason: "A fleet operation is still in progress. Try again shortly.",
       stale: true
     } : {})
   };
@@ -4273,8 +4289,8 @@ function indexedDefenseState(
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
-    // Keep legacy in-flight work stable for cached clients. The additive field
-    // proves whether a launchable surplus still belongs to canonical production.
+    // Retain raw queue provenance for compatibility; effective counts above
+    // already include due units and clients must not add this metadata again.
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null,
     unsettledQueue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
@@ -4316,6 +4332,7 @@ function indexedRiftState(
   }
 ): RiftState {
   const state = indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  const currentResources = indexedCurrentResourcesForPlanet(indexer, planet);
   return {
     ...state,
     resources: state.resources.map((resource) => ({
@@ -4323,7 +4340,7 @@ function indexedRiftState(
       tokenAddress: resourceTokenAddresses[resource.key] ?? null,
       // Planet resources are the spendable in-game balance. Rift bridge event deltas were only a
       // historical ledger and must not be shown as a player's current mine balance.
-      inGameBalance: planet?.resources?.[resource.key] ?? "0"
+      inGameBalance: currentResources?.[resource.key] ?? "0"
     }))
   };
 }
@@ -4507,6 +4524,7 @@ function galaxySystemPayload({
       const reservedPlanet = occupiedPlanet ? undefined : reserved.get(planet.position);
       const summary: GalaxySystemSummaryPlanet = {
         ...planet,
+        ...(occupiedPlanet && indexer ? { fields: indexer.planetFieldsAsOfNow(occupiedPlanet.planetId) } : {}),
         ...(occupiedPlanetName ? { name: occupiedPlanetName } : {}),
         occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
         migrationReservation: migrationReservationRef(reservedPlanet),
@@ -4689,7 +4707,7 @@ function targetCombatIntelForMission(
   if (targetIsMoon && !moon?.moon) return null;
 
   const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
-  const targetState = moon ? { ...accrued, resources: moon.resources } : accrued;
+  const targetState = moon ? { ...accrued, resources: moon.resourcesAsOfNow ?? moon.resources } : accrued;
   const tactical = indexedPlanetTacticalSummary(
     targetState,
     targetIsMoon ? [] : indexer.infrastructureRows(planet.planetId),
@@ -4794,7 +4812,7 @@ function publicMoonStateRef(
     fields: moonState.moon.fields,
     diameterKm: moonState.moon.diameterKm,
     createdAt: moonState.moon.createdAt,
-    resources: moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resources: moonState.resourcesAsOfNow ?? moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
     buildings: moonState.buildings.map(({ id, level }) => ({ id, level })),
     fleet: (moonState.fleet ?? []).map(({ id, count }) => ({ id, count })),
     defenses: moonState.defenses.map(({ id, count }) => ({ id, count })),
@@ -4865,7 +4883,9 @@ function boostedProductionSeconds(
 function accruedResourcesWithBuildingQueue(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | PlanetState,
-  now: number
+  now: number,
+  rowsOverride?: ReturnType<SettlementIndexer["resourceProjectionRows"]>,
+  scheduledArrival = false
 ): Resources {
   const lastSettledAtSeconds = Number(planet.lastSettledAt);
   if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;
@@ -4876,7 +4896,7 @@ function accruedResourcesWithBuildingQueue(
   );
   if (nowSeconds <= lastSettledAtSeconds) return planet.resources;
 
-  const completed = indexer.completedBuildingQueues(planet.planetId)
+  const completed = (scheduledArrival ? [] : indexer.completedBuildingQueues(planet.planetId))
     .filter((queue) => typeof queue.itemId === "number" && typeof queue.targetLevel === "number")
     .filter((queue, index, queues) => (
       queues.findIndex((candidate) => (
@@ -4888,7 +4908,7 @@ function accruedResourcesWithBuildingQueue(
     .sort(compareQueueReadyAt);
 
   if (completed.length === 0) {
-    const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+    const { buildings, ships, technologyLevels } = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
     const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
     return resourcesWithClaimableAccrual(
       planet.resources,
@@ -4900,7 +4920,7 @@ function accruedResourcesWithBuildingQueue(
     );
   }
 
-  const projectionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+  const projectionRows = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
   let buildings = projectionRows.buildings;
   let resources = planet.resources;
   let cursor = lastSettledAtSeconds;
@@ -5982,7 +6002,7 @@ function rankedHighscorePlanets(
       ? {
           exists: true,
           resources: moonResources,
-          resourcesAsOfNow: moonResources
+          resourcesAsOfNow: indexer!.moonResourcesAsOfNow(planet.planetId)
         }
       : null;
 

@@ -1,3 +1,5 @@
+import { combatStageAdvancedTopic } from "./evm";
+import { deterministicFleetEffects } from "./currentFleet";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { stagedMemberShips } from "./stagedBattleReport";
 import { mkdirSync } from "node:fs";
@@ -1913,57 +1915,49 @@ export class SettlementIndexer {
     options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
   ): PlayerActivityPage {
     const normalizedWallet = wallet.toLowerCase() as Address;
-    const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    const queueThrough = Math.max(0, Math.floor(options.through ?? nowSeconds()));
+    // Current fleets follow indexed chain time even when the reader clock lags.
+    // Explicit historical windows still cap both feeds; queues retain wall time.
+    const fleetThrough = options.through === undefined ? this.fleetProjectionHorizon() ?? 0 : queueThrough;
+    const through = Math.max(queueThrough, fleetThrough);
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
-    const where = ["wallet = lower(?)", "CAST(transaction_at AS INTEGER) <= ?"];
-    const params: SQLQueryBindings[] = [normalizedWallet, through];
-    if (since !== undefined) {
-      where.push("(CAST(occurred_at AS INTEGER) > ? OR CAST(transaction_at AS INTEGER) > ?)");
-      params.push(since, since);
+    const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, queueThrough, fleetThrough) : [];
+    for (const item of projected) {
+      const existing = this.db.query("SELECT SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0)) AS quantity FROM indexed_player_activity_feed WHERE wallet = ? AND json_extract(activity_json, '$.id') = ? AND CAST(transaction_at AS INTEGER) <= ?").get(normalizedWallet, item.id, through) as {quantity: number | null};
+      if (typeof item.metadata.quantity === "number") item.metadata.quantity += existing.quantity ?? 0;
+      normalizeBatchActivity(item);
     }
-    const whereSql = where.join(" AND ");
-    const projected = options.includeProjected
-      ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through)
-      : [];
-    const summaryRows = this.db.query(`
-      SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count
-      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_wallet_category_idx
-      WHERE ${whereSql}
-      GROUP BY json_extract(activity_json, '$.category')
-    `).all(...params) as PlayerActivitySummaryRow[];
-    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(
-      summaryRows.map((row) => [row.category, row.count])
-    );
-    const indexedTotal = summaryRows.reduce((total, row) => total + row.count, 0);
-    for (const item of projected) summary[item.category] = (summary[item.category] ?? 0) + 1;
-    const offset = Math.max(0, (options.page - 1) * options.pageSize);
-    const indexedLimit = projected.length ? offset + options.pageSize : options.pageSize;
-    const rows = this.db.query(`
-      SELECT activity_json
-      FROM indexed_player_activity_feed
-      WHERE ${whereSql}
-      ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC,
-        length(log_index) DESC, log_index DESC
-      LIMIT ? OFFSET ?
-    `).all(...params, indexedLimit, projected.length ? 0 : offset) as PlayerActivityFeedRow[];
-    const items = [
-      ...rows.map((row) => parseEvent<PlayerActivityItem>(row.activity_json)),
-      ...projected
-    ]
-      .sort(comparePlayerActivityNewestFirst)
-      .slice(projected.length ? offset : 0, (projected.length ? offset : 0) + options.pageSize)
-      .map((item) => this.withPlayerActivityPlanetContext(item));
-
-    return {
-      items,
-      summary,
-      totalEntries: indexedTotal + projected.length,
-      through: through.toString()
-    };
+    const cte = `WITH projected AS (SELECT value AS activity_json, json_extract(value, '$.id') AS id FROM json_each(?)),
+      ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY json_extract(activity_json, '$.id') ORDER BY CAST(occurred_at AS INTEGER) DESC, CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC) AS rank FROM indexed_player_activity_feed WHERE wallet = ? AND CAST(transaction_at AS INTEGER) <= ?),
+      grouped AS (
+        SELECT json_extract(activity_json, '$.id') AS id,
+          MAX(CAST(occurred_at AS INTEGER)) AS at,
+          MAX(CAST(transaction_at AS INTEGER)) AS tx_at,
+          CASE WHEN json_extract(activity_json, '$.metadata.quantity') IS NOT NULL AND json_extract(activity_json, '$.id') LIKE 'completion:%'
+            THEN json_set(MAX(CASE WHEN rank = 1 THEN activity_json END), '$.metadata.quantity', SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0))) ELSE MAX(CASE WHEN rank = 1 THEN activity_json END) END AS activity_json
+        FROM ranked
+        GROUP BY json_extract(activity_json, '$.id')
+        HAVING (? IS NULL OR at > ? OR tx_at > ?)
+      ), combined AS (
+        SELECT activity_json FROM grouped WHERE id NOT IN (SELECT id FROM projected)
+        UNION ALL SELECT activity_json FROM projected
+      )`;
+    const params: SQLQueryBindings[] = [JSON.stringify(projected), normalizedWallet, through, since ?? null, since ?? null, since ?? null];
+    const summaryRows = this.db.query(cte + " SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count FROM combined GROUP BY category").all(...params) as PlayerActivitySummaryRow[];
+    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(summaryRows.map((row) => [row.category, row.count]));
+    const totalEntries = summaryRows.reduce((sum, row) => sum + row.count, 0);
+    const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
+    const offset = Math.max(0, (Math.min(Math.max(1, Math.trunc(options.page) || 1), Math.max(1, Math.ceil(totalEntries / pageSize))) - 1) * pageSize);
+    const rows = this.db.query(cte + " SELECT activity_json FROM combined ORDER BY CAST(json_extract(activity_json, '$.occurredAt') AS INTEGER) DESC, CAST(json_extract(activity_json, '$.blockNumber') AS INTEGER) DESC, length(json_extract(activity_json, '$.logIndex')) DESC, json_extract(activity_json, '$.logIndex') DESC, json_extract(activity_json, '$.id') DESC LIMIT ? OFFSET ?").all(...params, pageSize, offset) as PlayerActivityFeedRow[];
+    const items = rows.map((row) => {
+      const item = parseEvent<PlayerActivityItem>(row.activity_json); normalizeBatchActivity(item);
+      return this.withPlayerActivityPlanetContext(item);
+    });
+    return { items, summary, totalEntries, through: through.toString() };
   }
 
-  private projectedPlayerActivity(wallet: Address, since: number, through: number): PlayerActivityItem[] {
-    if (through <= since) return [];
+  private projectedPlayerActivity(wallet: Address, since: number, queueThrough: number, fleetThrough: number): PlayerActivityItem[] {
+    if (Math.max(queueThrough, fleetThrough) <= since) return [];
     const rows = this.db.query(`
       SELECT queues.queue_kind, queues.planet_id, queues.item_id, queues.target_level,
         queues.quantity, queues.ready_at, queues.started_at, queues.original_quantity,
@@ -1977,13 +1971,12 @@ export class SettlementIndexer {
     const items: PlayerActivityItem[] = [];
     for (const row of rows) {
       const queue = this.productionQueueFromRow(row);
+      this.hydrateRetainedProductionQueueTiming(queue);
       if (row.backlog_json) {
         const backlog = parseEvent<QueueState[]>(row.backlog_json);
         if (Array.isArray(backlog) && backlog.length > 0) queue.backlog = backlog;
       }
-      const before = settleQueueAsOfNow(queue, since).completed;
-      const after = settleQueueAsOfNow(queue, through).completed;
-      const beforeQuantities = completedQueueActivityQuantities(before);
+      const after = settleQueueAsOfNow(queue, queueThrough).completed;
       let startEvent: Partial<IndexedQueueStartedEvent> = {};
       try {
         startEvent = parseEvent<IndexedQueueStartedEvent>(row.event_json);
@@ -1991,42 +1984,57 @@ export class SettlementIndexer {
         // A canonical queue snapshot can omit a decodable originating event.
       }
       for (const completion of after) {
-        const key = projectedQueueActivityKey(completion);
-        const previousQuantity = beforeQuantities.get(key) ?? 0;
-        const completionQuantity = completion.quantity ?? 1;
-        const quantity = Math.max(0, completionQuantity - previousQuantity);
-        if (quantity === 0) continue;
-        const label = queueActivityLabel(completion.kind ?? row.queue_kind, completion.itemId ?? row.item_id);
-        const occurredAt = projectedQueueCompletionAt(completion, through);
-        const metadata: Record<string, boolean | number | string | null> = {
-          itemId: completion.itemId ?? row.item_id,
-          planetId: completion.planetId ?? row.planet_id ?? null,
-          quantity: completion.quantity === undefined ? null : quantity,
-          readyAt: completion.readyAt,
-          targetLevel: completion.targetLevel ?? null
-        };
-        items.push({
-          id: `projected:${startEvent.transactionHash ?? row.event_json.length}:${key}:${occurredAt}`,
-          wallet,
-          category: queueActivityCategory(completion.kind ?? row.queue_kind),
-          kind: `${completion.kind ?? row.queue_kind}-completed`,
-          direction: "personal",
-          title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity),
-          detail: completion.targetLevel !== undefined
-            ? `Level ${completion.targetLevel}`
-            : completion.quantity !== undefined
-              ? `${quantity} completed`
-              : null,
-          occurredAt,
-          transactionAt: through.toString(),
-          transactionHash: null,
-          relatedTransactionHash: startEvent.transactionHash ?? null,
-          blockNumber: startEvent.blockNumber ?? null,
-          logIndex: null,
-          reconciliation: "projected",
-          metadata
-        });
+        if (completion.quantity !== undefined && !completion.productionTiming && (row.queue_kind === "ship" || row.queue_kind === "defense")) continue;
+        for (const occurrence of queueCompletionOccurrences(completion, completion.quantity ?? 1, true)) {
+          if (Number(occurrence.at) <= since) continue;
+          const quantity = occurrence.quantity;
+          if (quantity === 0) continue;
+          const label = queueActivityLabel(completion.kind ?? row.queue_kind, completion.itemId ?? row.item_id);
+          const occurredAt = occurrence.at;
+          const metadata: Record<string, boolean | number | string | null> = {
+            itemId: completion.itemId ?? row.item_id,
+            planetId: completion.planetId ?? row.planet_id ?? null,
+            quantity: completion.quantity === undefined ? null : quantity,
+            readyAt: completion.readyAt,
+            targetLevel: completion.targetLevel ?? null
+          };
+          items.push({
+            id: occurrence.id,
+            wallet,
+            category: queueActivityCategory(completion.kind ?? row.queue_kind),
+            kind: `${completion.kind ?? row.queue_kind}-completed`,
+            direction: "personal",
+            title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity),
+            detail: completion.targetLevel !== undefined
+              ? `Level ${completion.targetLevel}`
+              : completion.quantity !== undefined
+                ? `${quantity} completed`
+                : null,
+            occurredAt,
+            transactionAt: occurredAt,
+            transactionHash: null,
+            relatedTransactionHash: startEvent.transactionHash ?? null,
+            blockNumber: startEvent.blockNumber ?? null,
+            logIndex: null,
+            reconciliation: "projected",
+            metadata
+          });
+        }
       }
+    }
+    // Deliveries may credit another owner's body. Select the sender below, not
+    // destination ownership, from the same complete proven effect graph.
+    for (const effect of this.currentFleetEffects(undefined, fleetThrough)) {
+      if (effect.at <= since) continue;
+      const mission = this.fleetMissionSummaryFromContractRow(effect.missionId);
+      if (!mission || mission.owner.toLowerCase() !== wallet.toLowerCase()) continue;
+      const returned = effect.leg === "return";
+      items.push({ id: "mission:" + effect.missionId + ":" + effect.leg, wallet, category: "mission",
+        kind: returned ? "mission-returned" : "mission-completed", direction: "personal",
+        title: returned ? "Fleet returned" : humanizeContractName(mission.missionType) + " completed",
+        detail: missionRouteDetail(mission), occurredAt: String(effect.at), transactionAt: String(effect.at),
+        transactionHash: null, relatedTransactionHash: mission.transactionHash, blockNumber: null, logIndex: null,
+        reconciliation: "projected", metadata: missionActivityMetadata(effect.missionId, mission) });
     }
     return items;
   }
@@ -2614,13 +2622,13 @@ export class SettlementIndexer {
             planetId: planet.planetId,
             coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
             resources: moonState.resources,
-            ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+            ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
             ships: moonState.ships,
             defenses: moonState.defenses
           }
         : null;
       return indexedManagedPlanet(
-        planet,
+        { ...planet, fields: this.planetFieldsAsOfNow(planet.planetId) },
         settlement.homePlanetId,
         this.infrastructureRows(planet.planetId),
         {
@@ -2678,7 +2686,7 @@ export class SettlementIndexer {
       wallet,
       [...ownedPlanetIds],
       includeJoinableAttacks && allianceId !== null
-    );
+    ).map((mission) => this.effectiveMissionLifecycle(mission));
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -2829,7 +2837,8 @@ export class SettlementIndexer {
       this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.completedFleetMissionsForWalletFromCanonicalRows(wallet, ownedPlanetIds);
+    const completedMissions = [...this.completedFleetMissionsForWalletFromCanonicalRows(wallet, ownedPlanetIds),
+      ...this.fleetMissionSummariesFromCanonicalRowsByIds(this.effectiveTerminalMissionIds()).filter((mission) => mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId)).map((mission) => this.effectiveMissionLifecycle(mission))].sort(compareFleetMissionsNewestFirst);
 
     return {
       wallet,
@@ -2925,7 +2934,8 @@ export class SettlementIndexer {
     // the result; on production history that occasionally blocked a reader for tens of seconds.
     // `UNION` de-duplicates self-targeted missions before the final primary-key lookup while
     // preserving the exact completed/returned and defender-return visibility rules.
-    const completedOrReturnedSql = "status_id IN (3, 4)";
+    const effectiveIds = this.effectiveTerminalMissionIds();
+    const completedOrReturnedSql = "(status_id IN (3, 4) OR mission_id IN (" + (effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL") + "))";
     const targetPlaceholders = targetIds.map(() => "?").join(",");
     let visibleMissionIdsSql: string;
     const visibleMissionParams: SQLQueryBindings[] = [];
@@ -3018,14 +3028,14 @@ export class SettlementIndexer {
       WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
         ${archiveFilters}
       ORDER BY
-        CAST(CASE WHEN status_id IN (2, 4, 5) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(CASE WHEN status_id IN (2, 4, 5) OR (mission_id IN (${effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL"}) AND mission_type_id != 1) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(mission_id AS INTEGER) DESC
       LIMIT ? OFFSET ?
     `).all(...visibleMissionParams, ...archiveFilterParams, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
       const mission = this.withFleetMissionPlanetReferences(summary, stateVersion);
-      return this.withDefenseHoldCombatOutcome(mission);
+      return this.effectiveMissionLifecycle(this.withDefenseHoldCombatOutcome(mission));
     });
 
     return {
@@ -3053,6 +3063,8 @@ export class SettlementIndexer {
     totalEntries: number;
   } {
     this.currentMissionReadModelDbVersion();
+    const effectiveIds = this.effectiveTerminalMissionIds();
+    const terminalSql = "(status_id IN (3, 4) OR mission_id IN (" + (effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL") + "))";
     const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
     const archiveFilterSql: string[] = [];
     const params: SQLQueryBindings[] = [];
@@ -3076,7 +3088,7 @@ export class SettlementIndexer {
     const countRow = this.db.query(`
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
-      WHERE status_id IN (3, 4)
+      WHERE ${terminalSql}
         ${archiveFilters}
     `).get(...params) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
@@ -3088,11 +3100,11 @@ export class SettlementIndexer {
     }
     const rows = this.db.query(`
       SELECT *
-      FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx
-      WHERE status_id IN (3, 4)
+      FROM contract_fleet_missions
+      WHERE ${terminalSql}
         ${archiveFilters}
       ORDER BY
-        CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(CASE WHEN status_id = 4 OR (mission_id IN (${effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL"}) AND mission_type_id != 1) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
         CAST(COALESCE(
           json_extract(event_json, '$.blockNumber'),
           json_extract(event_json, '$.mission.blockNumber'),
@@ -3104,7 +3116,7 @@ export class SettlementIndexer {
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows)
       .map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion))
-      .map((mission) => this.withDefenseHoldCombatOutcome(mission));
+      .map((mission) => this.effectiveMissionLifecycle(this.withDefenseHoldCombatOutcome(mission)));
 
     return { completedMissions, page, totalEntries };
   }
@@ -3422,7 +3434,7 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.activeFleetMissionsFromCanonicalRows();
+    return this.activeFleetMissionsFromCanonicalRows().map((mission) => this.effectiveMissionLifecycle(mission)).filter(isActiveFleetMissionStatusForSummary);
   }
 
   /**
@@ -3645,7 +3657,7 @@ export class SettlementIndexer {
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
   allCompletedFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().completed;
+    return [...this.indexedFleetMissionReferenceIndex().completed, ...this.fleetMissionSummariesFromCanonicalRowsByIds(this.effectiveTerminalMissionIds()).map((mission) => this.effectiveMissionLifecycle(mission))].sort(compareFleetMissionsNewestFirst);
   }
 
   activeFleetMissionsForTarget(planetId: string, targetIsMoon = false): FleetMissionSummary[] {
@@ -3722,9 +3734,13 @@ export class SettlementIndexer {
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
     return this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
+      // A proven delivery advances the due leg to return even before its canonical
+      // status is reconciled. Unproven due legs retain their existing safety gate.
+      .map((mission) => this.effectiveMissionLifecycle(mission))
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
-        && fleetSlotSettlementBlocksLaunch(mission, asOfSeconds)
+        && mission.missionType !== "MissileAttack"
+        && fleetSlotSettlementDue(mission, asOfSeconds)
       )
       .sort((left, right) => fleetSlotSettlementDueAt(left) - fleetSlotSettlementDueAt(right));
   }
@@ -3760,15 +3776,140 @@ export class SettlementIndexer {
     // Displayed ships advance only with indexed production timing. The canonical
     // mirror is unchanged; queue settlement subtracts already-indexed completion
     // events so a later commit cannot double-count these units.
-    return new Map(supportedShipIds.map(id => [id, (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0)]));
+    const fleet = this.currentFleetShipCredits(planetId, false);
+    return new Map(supportedShipIds.map(id => [id, (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0) + (fleet.get(id) ?? 0)]));
   }
 
   displayedUnitCounts(planetId: string, kind: "ship" | "defense"): Array<{ id: number; count: number }> {
     const counts = kind === "ship"
       ? this.displayedShipCounts(planetId, this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId))
-      : this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+      : new Map(this.defenseRows(planetId).map(({ id, count }) => [id, count]));
     const ids = kind === "ship" ? supportedShipIds : Array.from({ length: defenseCount }, (_, id) => id);
     return ids.map(id => ({ id, count: counts.get(id) ?? 0 }));
+  }
+
+  private currentFleetEffectsCache: { version: string; at: number; effects: ReturnType<typeof deterministicFleetEffects> } | null = null;
+
+  private fleetProjectionHorizon(): number | null {
+    const projection = this.resourceProjectionContext();
+    const at = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
+    return projection.safeToProject && Number.isSafeInteger(at) && at >= 0 ? at : null;
+  }
+
+  private currentFleetEffects(planetId?: string, asOfSeconds?: number) {
+    // A timer cannot prove the absence of intervening attacks or body changes. All
+    // fleet consumers share the fully indexed resource horizon, including callers
+    // requesting a historical activity window. Missing/unsafe anchors fail closed.
+    const horizon = this.fleetProjectionHorizon();
+    if (horizon === null) {
+      this.currentFleetEffectsCache = null;
+      return [];
+    }
+    asOfSeconds = Math.min(asOfSeconds ?? horizon, horizon);
+    const version = this.indexedStateCacheVersion() + ":" + this.currentMissionReadModelDbVersion() + ":" + this.currentBattleReportReadModelDbVersion();
+    if (this.currentFleetEffectsCache?.version === version && this.currentFleetEffectsCache.at === asOfSeconds) return this.currentFleetEffectsCache.effects.filter((effect) => planetId === undefined || effect.planetId === planetId);
+    // A transport return depends on its remote arrival, whose blockers may never
+    // touch this origin. Include the active graph, not just origin-touching rows.
+    const missions = this.activeFleetMissionsFromCanonicalRowsWhere("current-effects", "1 = 1", [], { includeOverduePendingRandomness: true });
+    const proven = missions.map((mission) => {
+      const row = this.db.query("SELECT * FROM contract_fleet_missions WHERE mission_id = ?").get(mission.missionId) as ContractFleetMissionRow;
+      const storagePayload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+      const storage = storagePayload.compositionStatusId === row.status_id ? parseCanonicalFleetMissionStorageDetails(row.event_json) : null;
+      const returning = mission.status === "Returning" || mission.status === "Recalled";
+      if (!returning) return mission;
+      if (!storage) {
+        const participant = this.battleReportsForMissionIds([mission.missionId]).flatMap((report) => report.participants).find((member) => member.missionId === mission.missionId);
+        return { ...mission, survivingShips: participant?.survivingShips ?? null };
+      }
+      return { ...mission, ships: storage.ships, survivingShips: storage.ships, returnCargo: { metal: row.metal_cargo, crystal: row.crystal_cargo, deuterium: row.deuterium_cargo } };
+    });
+    const stagedLocks = new Map<string, string>();
+    for (const mission of missions) {
+      if (mission.status !== "Outbound") continue;
+      const row = this.db.query("SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.topics[0]')) = ? AND lower(json_extract(event_json, '$.topics[1]')) = ? ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC LIMIT 1").get(combatStageAdvancedTopic, fleetMissionIdTopic(mission.missionId)) as EventRow | null;
+      if (!row) continue;
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      const phase = Number(BigInt("0x" + log.data.slice(2, 66)));
+      if (phase > 0 && phase !== 13) stagedLocks.set(mission.targetPlanetId, mission.missionId);
+    }
+    const effects = deterministicFleetEffects(proven, asOfSeconds, (id, moon, owner, mission) => {
+      const body = moon ? this.moon(id) : this.planet(id);
+      if (!body || (owner && body.owner.toLowerCase() !== owner.toLowerCase())) return false;
+      if (moon && mission) {
+        // A reconciliation checkpoint is not evidence of when this fleet launched.
+        const launch = this.fleetMissionEventLogsForMissionIds([mission.missionId]).find((log) => log.topics[0]?.toLowerCase() === fleetMissionLaunchedTopic.toLowerCase());
+        if (!launch) return null;
+        const createdBlock = BigInt(body.blockNumber), launchedBlock = BigInt(launch.blockNumber);
+        if (createdBlock > launchedBlock) return false;
+        if (createdBlock === launchedBlock) {
+          const creation = this.db.query("SELECT event_json FROM indexed_moon_state_event_logs WHERE planet_id = ? AND removed = 0 AND lower(json_extract(event_json, '$.topics[0]')) = ? ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC LIMIT 1").get(id, moonCreatedTopic.toLowerCase()) as EventRow | null;
+          const createdLog = creation ? parseEvent<IndexedRpcLog>(creation.event_json) : null;
+          if (!launch?.logIndex || !createdLog?.logIndex) return null;
+          if (BigInt(createdLog.logIndex) >= BigInt(launch.logIndex)) return false;
+        }
+      }
+      return true;
+    }, stagedLocks);
+    this.currentFleetEffectsCache = { version, at: asOfSeconds, effects };
+    return effects.filter((effect) => planetId === undefined || effect.planetId === planetId);
+  }
+
+  private effectiveMissionLifecycle(mission: FleetMissionSummary): FleetMissionSummary {
+    if (!isActiveFleetMissionStatus(mission.status)) return mission;
+    const effects = [...this.currentFleetEffects(mission.originPlanetId), ...this.currentFleetEffects(mission.targetPlanetId)]
+      .filter((effect) => effect.missionId === mission.missionId);
+    const terminal = effects.find((effect) => effect.terminal);
+    const arrival = effects.find((effect) => effect.leg === "arrival");
+    if (!terminal && !arrival) return mission;
+    const status = terminal ? terminal.leg === "return" ? "Returned" : "Resolved" : "Returning";
+    return withMissionAsOfNow({ ...mission, status, needsResolution: false,
+      ...(arrival && mission.missionType === "Transport" ? { returnCargo: zeroResources() } : {}) }, nowSeconds());
+  }
+
+  private effectiveTerminalMissionIds(): string[] {
+    this.currentFleetEffects("0");
+    return [...new Set((this.currentFleetEffectsCache?.effects ?? []).filter((effect) => effect.terminal).map((effect) => effect.missionId))];
+  }
+
+  private currentFleetShipCredits(planetId: string, isMoon: boolean): Map<number, number> {
+    const counts = new Map<number, number>();
+    for (const effect of this.currentFleetEffects(planetId)) {
+      if (effect.isMoon !== isMoon) continue;
+      for (const [key, raw] of Object.entries(effect.ships)) {
+        const id = shipKeyToId(key), quantity = Number(raw);
+        if (id !== null && Number.isSafeInteger(quantity) && quantity > 0) counts.set(id, (counts.get(id) ?? 0) + quantity);
+      }
+    }
+    return counts;
+  }
+
+  currentFleetResourceEffects(planetId: string, asOfSeconds: number) {
+    return this.currentFleetEffects(planetId, asOfSeconds).filter((effect) => !effect.isMoon);
+  }
+
+  moonResourcesAsOfNow(planetId: string): Resources {
+    return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
+  }
+
+  currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds?: number): Resources {
+    const resources = zeroResources();
+    for (const effect of this.currentFleetEffects(planetId, asOfSeconds)) {
+      if (effect.isMoon !== isMoon) continue;
+      for (const key of ["metal", "crystal", "deuterium"] as const) resources[key] = (BigInt(resources[key]) + BigInt(effect.cargo[key])).toString();
+    }
+    return resources;
+  }
+
+  resourceAccrualCutoff(planetId: string, through: number): number {
+    const missions = this.activeFleetMissionsFromCanonicalRowsForPlanetTouching(planetId, { includeOverduePendingRandomness: true });
+    return missions.reduce((cutoff, mission) => mission.status === "Outbound" && ["Attack", "Harvest", "MissileAttack"].includes(mission.missionType) && Number(mission.arrivalAt) <= through
+      ? Math.min(cutoff, Number(mission.arrivalAt)) : cutoff, through);
+  }
+
+  planetFieldsAsOfNow(planetId: string): number {
+    const canonical = this.indexedLevel("contract_building_levels", "building_id", planetId, 12);
+    const current = this.infrastructureRows(planetId).find((row) => row.id === 12)?.level ?? canonical;
+    return (this.planet(planetId)?.fields ?? 0) + Math.max(0, current - canonical) * 5;
   }
 
   resourceProjectionRows(planetId: string, owner: `0x${string}`): {
@@ -3781,6 +3922,20 @@ export class SettlementIndexer {
       ships: this.contractShipRows(planetId),
       technologyLevels: this.contractTechnologyLevels(owner)
     };
+  }
+
+  resourceProjectionRowsAfterArrival(planetId: string, owner: Address, at: number) {
+    const rows = this.resourceProjectionRows(planetId, owner);
+    const completed = new Map<number, number>();
+    for (const queue of this.queueSettlement("ship:" + planetId, at).completed) {
+      if (!queue.productionTiming || queue.itemId === undefined) continue;
+      completed.set(queue.itemId, (completed.get(queue.itemId) ?? 0) + (queue.quantity ?? 0));
+    }
+    const technologies = { ...rows.technologyLevels };
+    for (const queue of this.queueSettlement("research:" + owner.toLowerCase(), at).completed) {
+      if (queue.itemId !== undefined && queue.targetLevel !== undefined) technologies[String(queue.itemId)] = Math.max(technologies[String(queue.itemId)] ?? 0, queue.targetLevel);
+    }
+    return { ...rows, ships: rows.ships.map((ship) => ({ ...ship, count: ship.count + (completed.get(ship.id) ?? 0) })), technologyLevels: technologies };
   }
 
   completedBuildingQueues(planetId: string): QueueState[] {
@@ -3809,43 +3964,17 @@ export class SettlementIndexer {
 
   private moonShipRows(planetId: string): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_moon_ship_counts", "ship_id", "count", planetId);
+    const completed = this.completedQueueQuantities(`moon-ship:${planetId}`);
+    const fleet = this.currentFleetShipCredits(planetId, true);
     return deriveShipRows(
-      (id) => counts.get(id) ?? 0,
+      (id) => (counts.get(id) ?? 0) + (completed.get(id) ?? 0) + (fleet.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       { shipyardLevel: this.moonBuildingLevelAsOfNow(planetId, 3), naniteLevel: 0 }
     );
   }
 
-  private launchableMoonShipRows(planetId: string, asOfSeconds = nowSeconds()): ShipyardState["ships"] {
-    const counts = this.indexedLevelsById("contract_moon_ship_counts", "ship_id", "count", planetId);
-    const pendingDeployCredits = new Map<number, number>();
-
-    // launchBodyFleetMission settles the owner's due Deploy arrivals before it checks fleet slots or
-    // the selected origin body's inventory. Until that transaction emits MoonShipCountChanged, the
-    // canonical moon table is intentionally behind the inventory the launch will read. Project only
-    // body-proven moon Deploys that are already deterministically settleable; planet Deploys and
-    // in-flight moon Deploys must never leak into this roster.
-    for (const mission of this.activeFleetMissionsFromCanonicalRowsForTarget(planetId, { includeOverduePendingRandomness: true })) {
-      if (
-        mission.status !== "Outbound"
-        || mission.missionType !== "Deploy"
-        || mission.targetIsMoon !== true
-        || Number(mission.arrivalAt) > asOfSeconds
-        || mission.needsResolution !== true
-      ) continue;
-
-      for (const [shipKey, rawQuantity] of Object.entries(mission.ships)) {
-        const shipId = shipKeyToId(shipKey);
-        const quantity = Number(rawQuantity);
-        if (shipId === null || !Number.isSafeInteger(quantity) || quantity <= 0) continue;
-        pendingDeployCredits.set(shipId, (pendingDeployCredits.get(shipId) ?? 0) + quantity);
-      }
-    }
-
-    return deriveShipRows(
-      (id) => (counts.get(id) ?? 0) + (pendingDeployCredits.get(id) ?? 0),
-      this.planet(planetId)?.temperature
-    );
+  private launchableMoonShipRows(planetId: string): ShipyardState["ships"] {
+    return this.moonShipRows(planetId);
   }
 
   private moonDefenseRows(planetId: string): DefenseState["defenses"] {
@@ -3880,8 +4009,8 @@ export class SettlementIndexer {
   }
 
   launchableShipCounts(planetId: string, counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId)): Array<{ id: number; count: number }> {
-    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
-    return supportedShipIds.map(id => ({ id, count: (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0) }));
+    const displayed = this.displayedShipCounts(planetId, counts);
+    return supportedShipIds.map(id => ({ id, count: displayed.get(id) ?? 0 }));
   }
 
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
@@ -3903,8 +4032,9 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }, counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId)): DefenseState["defenses"] {
+    const completed = this.completedQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
-      (id) => counts.get(id) ?? 0,
+      (id) => (counts.get(id) ?? 0) + (completed.get(id) ?? 0),
       durationLevels
     );
   }
@@ -3914,20 +4044,11 @@ export class SettlementIndexer {
       ? this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId)
       : this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
     const rows = kind === "ship" ? this.shipRows(planetId, levels, counts) : this.defenseRows(planetId, levels, counts);
-    // Displayed and launchable inventories intentionally have different timing
-    // rules. Share the settled counts/catalog, not their projected quantities.
-    if (kind === "ship") return { rows, launchable: this.launchableShipCounts(planetId, counts) };
-    const completed = this.completedQueueQuantities(`defense:${planetId}`);
-    return { rows, launchable: rows.map(({ id }) => ({ id, count: (counts.get(id) ?? 0) + (completed.get(id) ?? 0) })) };
+    return { rows, launchable: rows.map(({ id, count }) => ({ id, count })) };
   }
 
   availableDefenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`defense:${planetId}`);
-    return deriveDefenseRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
-      durationLevels
-    );
+    return this.defenseRows(planetId, durationLevels);
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -3961,12 +4082,12 @@ export class SettlementIndexer {
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
-    const asOfSeconds = nowSeconds();
-    const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet)
+    const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
+    const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && mission.missionType !== "MissileAttack"
-        && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
+        && !terminal.has(mission.missionId)
       )
       .length;
     const technologyLevels = this.technologyLevels(wallet);
@@ -4010,7 +4131,7 @@ export class SettlementIndexer {
 
   private completedQueueQuantities(
     queueKeyValue: string,
-    options: { requireProductionTiming?: boolean } = {}
+    options: { requireProductionTiming?: boolean } = { requireProductionTiming: true }
   ): Map<number, number> {
     const quantities = new Map<number, number>();
     for (const queue of this.queueSettlement(queueKeyValue).completed) {
@@ -4018,7 +4139,7 @@ export class SettlementIndexer {
       // whole-batch readiness and historically may survive as stale artifacts;
       // do not promote those rows into public/energy inventory. Modern timing is
       // the canonical proof needed for 1/N and middle-unit projection.
-      if (options.requireProductionTiming && !queue.productionTiming) continue;
+      if (options.requireProductionTiming && !queue.productionTiming && !queueKeyValue.startsWith("moon-")) continue;
       if (typeof queue.itemId === "number" && typeof queue.quantity === "number") {
         quantities.set(queue.itemId, (quantities.get(queue.itemId) ?? 0) + queue.quantity);
       }
@@ -4161,18 +4282,20 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}`;
   }
 
   walletResponseCacheVersion(wallet: `0x${string}`): string {
     // Overview includes fleet visibility, so retain the mission/report generations. Its queue
     // projection is wallet-scoped: a due queue belonging to a different player must not force a
     // cold rebuild of this wallet's response.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}`;
   }
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
+      this.productionQueueProjectionCacheVersion(),
+      `fleet=${this.fleetProjectionHorizon()}`,
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
@@ -4278,26 +4401,32 @@ export class SettlementIndexer {
         original_quantity, unit_work_seconds, production_rate,
         metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
-      WHERE queue_kind IN ('ship', 'defense', 'moon-defense', 'moon-ship')
     `).all() as QueueRow[];
 
     let completed = 0;
     let nextReadyAt: number | null = null;
     for (const row of rows) {
       const queue = this.productionQueueFromRow(row);
+      this.hydrateRetainedProductionQueueTiming(queue);
       if (row.backlog_json) {
         const backlog = parseEvent<QueueState[]>(row.backlog_json);
         const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
         if (sanitizedBacklog.length > 0) queue.backlog = sanitizedBacklog;
       }
       const settlement = settleQueueAsOfNow(queue, nowSec);
-      completed += settlement.completed.length;
-      const readyAt = Number(settlement.queue?.readyAt);
+      completed += settlement.completed.reduce((sum, entry) => sum + (entry.quantity ?? 1), 0);
+      const readyAt = settlement.queue?.asOfNow?.currentUnitSecondsRemaining !== undefined
+        ? nowSec + settlement.queue.asOfNow.currentUnitSecondsRemaining
+        : Number(settlement.queue?.readyAt);
       if (Number.isFinite(readyAt) && readyAt > nowSec) {
         nextReadyAt = nextReadyAt === null ? readyAt : Math.min(nextReadyAt, readyAt);
       }
     }
 
+    for (const row of this.db.query("SELECT ready_at FROM contract_moon_building_queues").all() as Array<{ ready_at: string }>) {
+      const at = Number(row.ready_at);
+      if (at <= nowSec) completed++; else nextReadyAt = nextReadyAt === null ? at : Math.min(nextReadyAt, at);
+    }
     const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
     this.productionQueueProjectionVersionCache = {
       indexedStateVersion,
@@ -4337,23 +4466,27 @@ export class SettlementIndexer {
     let nextReadyAt: number | null = null;
     for (const row of rows) {
       const queue = this.productionQueueFromRow(row);
+      this.hydrateRetainedProductionQueueTiming(queue);
       if (row.backlog_json) {
         const backlog = parseEvent<QueueState[]>(row.backlog_json);
         const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
         if (sanitizedBacklog.length > 0) queue.backlog = sanitizedBacklog;
       }
       const settlement = settleQueueAsOfNow(queue, nowSec);
-      completed += settlement.completed.length;
-      const readyAt = Number(settlement.queue?.readyAt);
+      completed += settlement.completed.reduce((sum, entry) => sum + (entry.quantity ?? 1), 0);
+      const readyAt = settlement.queue?.asOfNow?.currentUnitSecondsRemaining !== undefined
+        ? nowSec + settlement.queue.asOfNow.currentUnitSecondsRemaining
+        : Number(settlement.queue?.readyAt);
       if (Number.isFinite(readyAt) && readyAt > nowSec) {
         nextReadyAt = nextReadyAt === null ? readyAt : Math.min(nextReadyAt, readyAt);
       }
     }
 
-    const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}`;
+    const global = this.productionQueueProjectionCacheVersion(nowSec);
+    const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}:${global}`;
     this.walletProductionQueueProjectionVersionCaches.set(normalizedWallet, {
       indexedStateVersion,
-      validThroughSecond: nextReadyAt,
+      validThroughSecond: nowSec + 1,
       value
     });
     return value;
@@ -4418,9 +4551,8 @@ export class SettlementIndexer {
       const asOfNow = projected.queue?.asOfNow ?? projected.completed[0]?.asOfNow;
       return { ...batch, ...(asOfNow ? { asOfNow } : {}) };
     };
-    // Due production is launchable, but is not deployed until its completion
-    // event arrives. Keep the canonical active batch (and quantities) visible:
-    // returning the settled-to-now null queue hid the source of that surplus.
+    // Internal provenance for canonical queue consumers and old clients. Player
+    // inventory is already effective; this must never be added to counts again.
     return {
       ...withProgress(queue),
       ...(queue.backlog ? { backlog: queue.backlog.map(withProgress) } : {})
@@ -4497,7 +4629,7 @@ export class SettlementIndexer {
       moonAvailable: true,
       ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
       resources,
-      resourcesAsOfNow: resources,
+      resourcesAsOfNow: planetId ? this.moonResourcesAsOfNow(planetId) : resources,
       resourceSnapshot: this.moonResourceSnapshotMetadata(planetId),
       ships,
       launchableShips: planetId ? this.launchableMoonShipRows(planetId) : [],
@@ -6158,6 +6290,9 @@ export class SettlementIndexer {
         activity_json TEXT NOT NULL,
         PRIMARY KEY (wallet, event_id)
       );
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_occurrence_idx ON indexed_player_activity_feed(wallet, json_extract(activity_json, '$.id'));
+      CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_game_time_idx
+        ON indexed_player_activity_feed (wallet, CAST(occurred_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC);
       CREATE INDEX IF NOT EXISTS indexed_player_activity_feed_wallet_time_order_idx
         ON indexed_player_activity_feed (
           wallet,
@@ -7507,25 +7642,56 @@ export class SettlementIndexer {
   }
 
   private backfillPlayerActivityFeed(): void {
-    const migrationKey = "playerActivityFeedBackfilledV2";
-    if (this.metadata(migrationKey) !== null) return;
-    const rows = this.db.query(`
-      SELECT event_id, event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, length(log_index) ASC, log_index ASC
-    `).all() as Array<EventRow & { event_id: string }>;
+    const migrationKey = "playerActivityFeedBackfilledV3";
+    if (this.metadata(migrationKey) !== null && this.metadata("playerActivityFeedBackfilledV2") !== null) return;
     this.db.transaction(() => {
-      // The feed is a pure projection of the durable raw log ledger. Rebuilding it once lets new
-      // lifecycle rules remove old duplicates and backfill events introduced after V1 shipped.
+      // Queue history lives in SQLite, never an unbounded JS ledger or per-unit
+      // expansion. Chronological batches reconstruct identity even after all
+      // canonical queue rows have disappeared. No request path runs this migration.
+      this.db.query("CREATE TEMP TABLE IF NOT EXISTS activity_replay_queues (queue_key TEXT PRIMARY KEY, queue_json TEXT NOT NULL)").run();
+      this.db.query("DELETE FROM activity_replay_queues").run();
       this.db.query("DELETE FROM indexed_player_activity_feed").run();
+      const get = (key: string): QueueState[] => {
+        const row = this.db.query("SELECT queue_json FROM activity_replay_queues WHERE queue_key = ?").get(key) as {queue_json: string} | null;
+        return row ? parseEvent<QueueState[]>(row.queue_json) : [];
+      };
+      const put = (key: string, queues: QueueState[]) => {
+        if (!queues.length) this.db.query("DELETE FROM activity_replay_queues WHERE queue_key = ?").run(key);
+        else this.db.query("INSERT OR REPLACE INTO activity_replay_queues VALUES (?, ?)").run(key, JSON.stringify(queues));
+      };
+      // One ordered cursor: OFFSET restarted the prefix scan for every batch.
+      // The source ledger is immutable throughout this transaction; only projections change.
+      const rows = this.db.query<EventRow & {event_id: string}, []>("SELECT event_id, event_json FROM indexed_event_logs WHERE removed = 0 ORDER BY CAST(block_number AS INTEGER), length(log_index), log_index, event_id").iterate();
       for (const row of rows) {
-        this.recordPlayerActivityFeedFromLog(
-          row.event_id,
-          parseEvent<IndexedRpcLog>(row.event_json),
-          { useCurrentQueue: false }
-        );
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        let context: QueueState | null = null;
+        if (isIndexedQueueStartedLog(log)) {
+          const event = decodeIndexedQueueStartedLog(log), key = queueKey(event);
+          const queues = get(key), queue = queueStateFromEvent(event);
+          const same = queues.findIndex((entry) => projectedQueueActivityKey(entry) === projectedQueueActivityKey(queue));
+          if (same >= 0) queues[same] = { ...queues[same], ...queue };
+          else if (event.quantity !== undefined) queues.push(queue);
+          else queues.splice(0, queues.length, queue);
+          put(key, queues);
+        } else if (isProductionQueueTimingLog(log)) {
+          const event = decodeProductionQueueTimingLog(log), key = queueKey(event);
+          const queues = get(key), queue = queues.find((entry) => entry.readyAt === event.readyAt && entry.itemId === event.itemId);
+          if (queue) queue.productionTiming = {startedAt: event.startedAt, originalQuantity: event.originalQuantity, unitWorkSeconds: event.unitWorkSeconds, rate: event.rate};
+          put(key, queues);
+        } else if (isIndexedQueueCompletedLog(log)) {
+          const event = decodeIndexedQueueCompletedLog(log), key = queueKey(event), queues = get(key);
+          const index = queues.findIndex((entry) => entry.itemId === event.itemId && (event.level === undefined || entry.targetLevel === event.level));
+          if (index >= 0) {
+            context = { ...queues[index]! };
+            if (event.quantity !== undefined && event.quantity < (context.quantity ?? 0)) queues[index] = { ...context, quantity: context.quantity! - event.quantity };
+            else queues.splice(index, 1);
+            put(key, queues);
+          }
+        }
+        this.recordPlayerActivityFeedFromLog(row.event_id, log, { useCurrentQueue: false, historicalQueue: context });
       }
+      this.db.query("DROP TABLE activity_replay_queues").run();
+      this.setMetadata("playerActivityFeedBackfilledV2", new Date().toISOString());
       this.setMetadata(migrationKey, new Date().toISOString());
     })();
   }
@@ -10720,6 +10886,7 @@ export class SettlementIndexer {
         const queue = {
           active: true,
           kind: "moon-building",
+          planetId: row.planet_id,
           itemId: row.moon_building_id,
           targetLevel: row.target_level,
           readyAt: row.ready_at,
@@ -10768,10 +10935,8 @@ export class SettlementIndexer {
    * payload, so the old exact queue-row lookup cannot recover a timeline.
    *
    * The retained queue-start log still has the immutable final readyAt and the
-   * original quantity. Recover it locally from SQLite and represent its total
-   * duration as `unitWorkSeconds / rate`; this gives every read surface the
-   * exact batch start, current-unit boundary, and final completion without an
-   * RPC round trip or an indeterminate progress bar.
+   * original quantity. Recover only whole-batch completion at readyAt. Rounded
+   * batch duration does not prove modern per-unit timing; never infer that rate.
    */
   private hydrateRetainedProductionQueueTiming(queue: QueueState, fallbackPlanetId?: string): boolean {
     if (
@@ -10831,7 +10996,9 @@ export class SettlementIndexer {
         queue.productionTiming = {
           startedAt,
           originalQuantity,
-          unitWorkSeconds: duration.toString(),
+          // No timing event means the legacy contract completes only at readyAt.
+          // Do not infer modern per-unit work/rate from a rounded batch duration.
+          unitWorkSeconds: (duration * BigInt(originalQuantity)).toString(),
           rate: originalQuantity.toString()
         };
         return true;
@@ -10840,6 +11007,19 @@ export class SettlementIndexer {
       }
     }
     return false;
+  }
+
+  private hasProductionTimingEvidence(queue: QueueState): boolean {
+    // Synthetic legacy timing and genuine timing can have identical numbers.
+    // Only an explicit retained timing event distinguishes that collision.
+    return (this.db.query("SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.topics[1]')) = ? AND lower(json_extract(event_json, '$.topics[2]')) = ?").all(
+      fleetMissionIdTopic(queue.planetId ?? "0"), fleetMissionIdTopic(String(queue.itemId ?? 0))
+    ) as EventRow[]).some((row) => {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (!isProductionQueueTimingLog(log)) return false;
+      const event = decodeProductionQueueTimingLog(log);
+      return event.queueKind === queue.kind && event.readyAt === queue.readyAt;
+    });
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {
@@ -10877,6 +11057,14 @@ export class SettlementIndexer {
         unitWorkSeconds: row.unit_work_seconds,
         rate: row.production_rate
       };
+    }
+    // Repair the old writer's synthetic duration/quantity rate in memory. This
+    // signature cannot prove per-unit boundaries: use conservative legacy batch semantics.
+    const timing = queue.productionTiming;
+    if (timing && safeBigInt(timing.rate, -1n) === BigInt(timing.originalQuantity)
+      && safeBigInt(timing.unitWorkSeconds, -1n) === safeBigInt(queue.readyAt, 0n) - safeBigInt(timing.startedAt, 0n)
+      && !this.hasProductionTimingEvidence(queue)) {
+      queue.productionTiming = { ...timing, unitWorkSeconds: (BigInt(timing.unitWorkSeconds) * BigInt(timing.originalQuantity)).toString() };
     }
     return queue;
   }
@@ -12267,7 +12455,7 @@ export class SettlementIndexer {
   private recordPlayerActivityFeedFromLog(
     eventId: string,
     log: IndexedRpcLog,
-    options: { useCurrentQueue?: boolean } = {}
+    options: { useCurrentQueue?: boolean; historicalQueue?: QueueState | null } = {}
   ): void {
     const transactionAt = blockTimestampSeconds(log);
     if (!transactionAt) return;
@@ -12291,7 +12479,7 @@ export class SettlementIndexer {
       activities.push({
         ...base,
         ...activity,
-        id: activity.direction === "incoming" ? `${eventId}:incoming:${wallet.toLowerCase()}` : eventId,
+        id: activity.kind === "mission-returned" ? "mission:" + activity.metadata.missionId + ":return" : activity.kind === "mission-completed" ? "mission:" + activity.metadata.missionId + ":arrival" : typeof activity.metadata.occurrenceId === "string" ? activity.metadata.occurrenceId : activity.direction === "incoming" ? `${eventId}:incoming:${wallet.toLowerCase()}` : eventId,
         wallet: wallet.toLowerCase() as Address
       });
     };
@@ -12372,17 +12560,20 @@ export class SettlementIndexer {
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
         const owner = event.owner ?? this.ownerForPlanetActivity(event.planetId);
-        const queue = options.useCurrentQueue === false ? null : this.queueState(queueKey(event));
+        const queue = options.historicalQueue ?? (options.useCurrentQueue === false ? null : this.queueState(queueKey(event)));
         const label = queueActivityLabel(event.queueKind, event.itemId);
+        const occurrences = queue && queue.itemId === event.itemId ? queueCompletionOccurrences(queue, event.quantity ?? 1, false) : null;
+        for (const occurrence of occurrences ?? [null]) {
         add(owner, {
           category: queueActivityCategory(event.queueKind),
           kind: `${event.queueKind}-completed`,
           direction: "personal",
-          title: queueCompletedTitle(event.queueKind, label, event.quantity),
-          detail: queueCompletionDetail(event),
-          occurredAt: indexedQueueCompletionAt(queue, event, transactionAt),
-          metadata: queueActivityMetadata(event)
+          title: queueCompletedTitle(event.queueKind, label, event.quantity === undefined ? undefined : occurrence?.quantity ?? event.quantity),
+          detail: event.quantity === undefined ? queueCompletionDetail(event) : (occurrence?.quantity ?? event.quantity) + " completed",
+          occurredAt: occurrence?.at ?? indexedQueueCompletionAt(queue, event, transactionAt),
+          metadata: { ...queueActivityMetadata(event), quantity: event.quantity === undefined ? null : occurrence?.quantity ?? event.quantity, occurrenceId: occurrence?.id ?? null }
         });
+        }
       } else if (isPlanetRenamedLog(log)) {
         const event = decodePlanetRenamedLog(log);
         add(event.owner, {
@@ -12588,17 +12779,17 @@ export class SettlementIndexer {
       return;
     }
 
-    for (const activity of activities) this.insertPlayerActivityFeed(activity);
+    for (const [index, activity] of activities.entries()) this.insertPlayerActivityFeed(activity, typeof activity.metadata.occurrenceId === "string" || activity.kind === "mission-returned" || activity.kind === "mission-completed" ? eventId + ":occurrence:" + index : undefined);
   }
 
-  private insertPlayerActivityFeed(activity: PlayerActivityItem): void {
+  private insertPlayerActivityFeed(activity: PlayerActivityItem, eventKey = activity.id): void {
     this.db.query(`
       INSERT OR REPLACE INTO indexed_player_activity_feed (
         wallet, event_id, occurred_at, transaction_at, block_number, log_index, activity_json
       ) VALUES (lower(?), ?, ?, ?, ?, ?, ?)
     `).run(
       activity.wallet,
-      activity.id,
+      eventKey,
       activity.occurredAt,
       activity.transactionAt,
       activity.blockNumber ?? "0",
@@ -12611,7 +12802,7 @@ export class SettlementIndexer {
     this.db.query(`
       DELETE FROM indexed_player_activity_feed
       WHERE event_id = ? OR event_id LIKE ?
-    `).run(eventId, `${eventId}:incoming:%`);
+    `).run(eventId, `${eventId}:%`);
   }
 
   private removePlayerLifecycleActivityForTransaction(wallet: Address, transactionHash: string): void {
@@ -13280,7 +13471,7 @@ export class SettlementIndexer {
       ships: canonicalStorageDetails?.ships ?? parseJson<Record<string, string>>(row.ships_json, {}),
       transactionHash: "0x",
       blockNumber: this.metadata("lastReconciledBlock") ?? "0",
-      launchBlockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      launchBlockNumber: "0",
       needsResolution: false
     };
     const mergedBase = canonicalEventMission
@@ -13691,10 +13882,10 @@ export class SettlementIndexer {
         fulfilledRandomnessRequestIds
       )
     };
-    return withMissionAsOfNow(
+    return this.effectiveMissionLifecycle(withMissionAsOfNow(
       withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
       asOfSeconds
-    );
+    ));
   }
 
   private battleReportsForMissionIds(
@@ -15019,37 +15210,33 @@ function battleActivityMetadata(report: BattleReport): Record<string, boolean | 
   };
 }
 
+// A production batch is one stable game activity, not one allocated JS object
+// per manufactured unit. Partial settlement updates its quantity/time; the
+// immutable batch identity survives projection, indexing, restart and pagination.
+function normalizeBatchActivity(item: PlayerActivityItem): void {
+  if (!item.id.startsWith("completion:") || typeof item.metadata.quantity !== "number") return;
+  const kind = String(item.metadata.queueKind ?? item.kind.replace("-completed", ""));
+  const label = queueActivityLabel(kind, Number(item.metadata.itemId));
+  item.title = queueCompletedTitle(kind, label, item.metadata.quantity);
+  item.detail = item.metadata.quantity + " completed";
+}
+
+function queueCompletionOccurrences(queue: QueueState, quantity: number, projected: boolean): Array<{ id: string; at: string; quantity: number }> {
+  if (!queue.readyAt || quantity <= 0) return [];
+  const timing = queue.productionTiming;
+  const total = timing ? projected ? queue.asOfNow?.completedQuantity ?? quantity : timing.originalQuantity - (queue.quantity ?? 0) + quantity : quantity;
+  let at = queue.readyAt;
+  if (timing) {
+    const rate = safeBigInt(timing.rate, 0n), work = safeBigInt(timing.unitWorkSeconds, -1n) * BigInt(total);
+    if (rate <= 0n || work < 0n) return [];
+    const boundary = BigInt(timing.startedAt) + (work + rate - 1n) / rate;
+    at = (boundary < BigInt(queue.readyAt) ? boundary : BigInt(queue.readyAt)).toString();
+  }
+  return [{ id: "completion:" + projectedQueueActivityKey(queue), at, quantity }];
+}
+
 function projectedQueueActivityKey(queue: QueueState): string {
   return [queue.kind ?? "queue", queue.planetId ?? "wallet", queue.itemId ?? -1, queue.targetLevel ?? "", queue.readyAt ?? ""].join(":");
-}
-
-function completedQueueActivityQuantities(queues: readonly QueueState[]): Map<string, number> {
-  const quantities = new Map<string, number>();
-  for (const queue of queues) {
-    const key = projectedQueueActivityKey(queue);
-    quantities.set(key, (quantities.get(key) ?? 0) + (queue.quantity ?? 1));
-  }
-  return quantities;
-}
-
-function projectedQueueCompletionAt(queue: QueueState, fallback: number): string {
-  const timing = queue.productionTiming;
-  const completedTotal = queue.asOfNow?.completedQuantity;
-  if (timing && completedTotal && completedTotal > 0) {
-    try {
-      const startedAt = BigInt(timing.startedAt);
-      const work = BigInt(timing.unitWorkSeconds) * BigInt(completedTotal);
-      const rate = BigInt(timing.rate);
-      if (rate > 0n) {
-        const boundary = startedAt + (work + rate - 1n) / rate;
-        const readyAt = queue.readyAt ? BigInt(queue.readyAt) : boundary;
-        return (boundary < readyAt ? boundary : readyAt).toString();
-      }
-    } catch {
-      // Fall back to the canonical readyAt below.
-    }
-  }
-  return queue.readyAt ?? fallback.toString();
 }
 
 function indexedQueueCompletionAt(
@@ -15079,8 +15266,8 @@ function indexedQueueCompletionAt(
 }
 
 function comparePlayerActivityNewestFirst(left: PlayerActivityItem, right: PlayerActivityItem): number {
-  const leftTime = BigInt(left.transactionAt || left.occurredAt || "0");
-  const rightTime = BigInt(right.transactionAt || right.occurredAt || "0");
+  const leftTime = BigInt(left.occurredAt || left.transactionAt || "0");
+  const rightTime = BigInt(right.occurredAt || right.transactionAt || "0");
   if (leftTime !== rightTime) return rightTime > leftTime ? 1 : -1;
   const leftBlock = BigInt(left.blockNumber ?? "0");
   const rightBlock = BigInt(right.blockNumber ?? "0");
@@ -15090,6 +15277,10 @@ function comparePlayerActivityNewestFirst(left: PlayerActivityItem, right: Playe
 
 function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {
   return value === "building" || value === "defense" || value === "ship";
+}
+
+function sumCurrentResources(left: Resources, right: Resources): Resources {
+  return { metal: (BigInt(left.metal) + BigInt(right.metal)).toString(), crystal: (BigInt(left.crystal) + BigInt(right.crystal)).toString(), deuterium: (BigInt(left.deuterium) + BigInt(right.deuterium)).toString() };
 }
 
 function safeBigInt(value: string | null | undefined, fallback: bigint): bigint {
@@ -15195,24 +15386,6 @@ function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: numbe
   return fleetSlotSettlementDueAt(mission) <= asOfSeconds;
 }
 
-function fleetSlotSettlementBlocksLaunch(mission: FleetMissionSummary, asOfSeconds: number): boolean {
-  // Timed missiles intentionally consume no fleet slot and therefore must never participate in
-  // the separate launch-blocker projection, even while their permissionless arrival is overdue.
-  if (mission.missionType === "MissileAttack") return false;
-  if (!isActiveFleetMissionStatus(mission.status) || !fleetSlotSettlementDue(mission, asOfSeconds)) return false;
-  return !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds);
-}
-
-function fleetSlotFreedByLazyLaunchSettlement(mission: FleetMissionSummary, asOfSeconds: number): boolean {
-  if (!fleetSlotSettlementDue(mission, asOfSeconds)) return false;
-  if (mission.status === "Returning" || mission.status === "Recalled") return true;
-  return (
-    mission.status === "Outbound"
-    && mission.needsResolution === true
-    && lazyLaunchSettleableOutboundMissionTypes.has(mission.missionType)
-  );
-}
-
 function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
   if (mission.status === "Returning" || mission.status === "Recalled") return Number(mission.returnAt);
   if (mission.status === "Outbound") {
@@ -15222,7 +15395,7 @@ function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
   return Number.POSITIVE_INFINITY;
 }
 
-const lazyLaunchSettleableOutboundMissionTypes = new Set(["Transport", "Deploy", "Attack", "Harvest"]);
+
 
 // Dispatch fuel is the complete mission fuel bill; Recall has no extra debit.
 function projectedFleetRecallCost(): string {
@@ -15979,7 +16152,10 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
 
 function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot, existingEventJson: string | null): string {
   const existingMission = parseCanonicalFleetMissionEvent(existingEventJson);
-  return JSON.stringify(existingMission ? { ...existingMission, ...mission } : mission);
+  return JSON.stringify({ ...(existingMission ?? {}), ...mission,
+    // A scalar refresh must invalidate retained launch/composition data as a
+    // survivor proof. Only ships read in this very snapshot certify this status.
+    compositionStatusId: "ships" in mission ? mission.statusId : null });
 }
 
 function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {

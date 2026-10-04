@@ -653,7 +653,7 @@ globalThis.fetch = (async (input, init) => {
     return Response.json({
       defenses: [{
         cost: { crystal: "0", deuterium: "0", metal: "2000" },
-        count: defenseCompletion === "settled" ? 9 : defenseCompletion === "complete" ? 8 : 3,
+        count: defenseCompletion ? 9 : 3,
         durationSeconds: 60,
         id: 0,
       }],

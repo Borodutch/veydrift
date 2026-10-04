@@ -1,3 +1,4 @@
+import { currentResources } from "./currentResources";
 import {
   buildingContractIds,
   buildingCatalog,
@@ -47,7 +48,7 @@ export function infrastructurePlayableState(
     // the bar and the affordability gate disagree (bar "51,561 metal" vs panel "Requires more").
     // Fall back to the raw settled `resources` only when the backend has not populated the accrued
     // field (older deploy / planet still warming).
-    resources: toResources(infrastructureState.resourcesAsOfNow ?? infrastructureState.resources) ?? state.resources,
+    resources: toResources(currentResources(infrastructureState)) ?? state.resources,
     queue: buildingQueueForDisplay(infrastructureState, now) ?? undefined,
   };
 }
@@ -83,7 +84,7 @@ export function researchPlayableState(
     // VEY-KANEO-473: same single-source rule as infrastructure — gate research affordability on the
     // canonical settled-to-now `resourcesAsOfNow`, falling back to the raw settled snapshot only when
     // the accrued field is absent.
-    resources: toResources(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    resources: toResources(currentResources(researchState)) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 

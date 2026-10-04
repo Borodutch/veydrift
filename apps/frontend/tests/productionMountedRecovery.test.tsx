@@ -302,7 +302,7 @@ test.each(["reject", "revert"] as const)("mounted %s releases controls and prese
 });
 
 
-test("mounted Defenses and Overview keep 23 matured units visible until canonical settlement (VEY-908)", () => {
+test("mounted Defenses and Overview consume completed units as current without settlement duty", () => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: document });
   const now = 1700001000000;
   const noop = () => {};
@@ -316,7 +316,7 @@ test("mounted Defenses and Overview keep 23 matured units visible until canonica
     wallet: "0x1111111111111111111111111111111111111111", homePlanetId: "189",
     resources: { metal: "0", crystal: "0", deuterium: "0" },
     shipyardLevel: 1, naniteLevel: 0, missileSiloLevel: 0, technologyLevels: {},
-    defenses: [{ id: 0, count: 78, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
+    defenses: [{ id: 0, count: 101, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
     launchableDefenses: [{ id: 0, count: 101 }], queue: null, unsettledQueue: queue,
   };
   const initial = createInitialPlayableState(now);
@@ -331,28 +331,27 @@ test("mounted Defenses and Overview keep 23 matured units visible until canonica
   for (const page of ["defenses", "overview"] as const) {
     // Before the remaining units mature, keep the existing building presentation.
     const building = { ...queue, asOfNow: { complete: false, secondsRemaining: 230, completedQuantity: 77, remainingQuantity: 23 } };
-    mount(page, { ...base, queue: building, unsettledQueue: building });
+    mount(page, { ...base, defenses: [{ ...base.defenses[0]!, count: 78 }], queue: building, unsettledQueue: building });
     expect(root.textContent).not.toContain("Built · awaiting settlement");
     // Partially matured but not credited: only 3 due; 20 still queued.
     const partial = { ...queue, asOfNow: { complete: false, secondsRemaining: 200, completedQuantity: 80, remainingQuantity: 20 } };
-    mount(page, { ...base, queue: { ...partial, quantity: 20 }, unsettledQueue: partial });
-    expect(root.query("Defense settlement")?.textContent).toContain("Rocket Launcher: 3");
+    mount(page, { ...base, defenses: [{ ...base.defenses[0]!, count: 81 }], queue: { ...partial, quantity: 20 }, unsettledQueue: partial });
+    expect(root.query("Defense settlement")).toBeUndefined();
+    if (page === "defenses") expect(root.textContent).toContain("Deployed: 81");
     // Fully matured, backend projected queue has disappeared, canonical queue remains.
     mount(page, base);
-    expect(root.query("Defense settlement")?.textContent).toContain("Rocket Launcher: 23");
-    expect(root.textContent).toContain("Already paid for and finished building");
-    expect(root.textContent).not.toContain("No active defense production.");
+    expect(root.query("Defense settlement")).toBeUndefined();
+    expect(root.textContent).not.toContain("Already paid for and finished building");
+    if (page === "overview") expect(root.textContent).toContain("No active defense production.");
     if (page === "defenses") {
-      expect(root.textContent).toContain("Deployed: 78");
-      expect(root.textContent).toContain("Awaiting settlement: 23");
-      expect(root.textContent).not.toContain("Deployed: 101");
+      expect(root.textContent).toContain("Deployed: 101");
+      expect(root.textContent).not.toContain("Awaiting settlement:");
     }
     // A new still-building backlog must coexist with the matured head notice.
     const backlog = { ...building, itemId: 1, quantity: 5,
       asOfNow: { complete: false, secondsRemaining: 50, completedQuantity: 0, remainingQuantity: 5 } };
     mount(page, { ...base, queue: backlog, unsettledQueue: { ...queue, backlog: [backlog] } });
-    expect(root.query("Defense settlement")?.textContent).toContain("Rocket Launcher: 23");
-    expect(root.query("Defense settlement")?.textContent).not.toContain("Light Laser");
+    expect(root.query("Defense settlement")).toBeUndefined();
     expect(root.query("Queue: Light Laser")).toBeDefined();
     // Repeated canonical settled snapshots remove the notice without double credit.
     const settled = { ...base, defenses: [{ ...base.defenses[0]!, count: 101 }], unsettledQueue: null };

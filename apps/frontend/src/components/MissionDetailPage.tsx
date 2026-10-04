@@ -14,11 +14,9 @@ import { type BattleReport, type BattleReportParticipant, type DefenderPlanetSta
 import {
   isFleetRecallable,
   isMissionQueued,
-  manualMissionResolutionKind,
   missionLifecycleActions,
   missionStatusPill,
   missionWasRecalled,
-  type ManualMissionResolutionKind,
   type MissionLifecycleAction,
 } from "./MissionControlPage";
 import {
@@ -57,7 +55,6 @@ interface MissionDetailPageProps {
   onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
-  onResolve?: ((missionId: string, kind: ManualMissionResolutionKind) => void) | undefined;
   onRetry: () => void;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
@@ -78,14 +75,12 @@ export function MissionDetailPage({
   onShareReport,
   onCounterplay,
   onRecall,
-  onResolve = () => undefined,
   onSelectCoordinates,
   onSelectMoon,
   onSelectPlayer,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
-  const resolutionKind = mission ? manualMissionResolutionKind(mission, now) : undefined;
   const statusPill = mission ? missionStatusPill(mission, now) : undefined;
   const canShareReport = Boolean(mission && mission.missionType !== "MissileAttack");
 
@@ -127,7 +122,7 @@ export function MissionDetailPage({
         )}
       />
 
-      {mission && resolutionKind && statusPill ? (
+      {mission && !report && statusPill ? (
         <div className="flex justify-end">
           <span className="inline-flex items-center gap-1.5">
             <span
@@ -136,14 +131,6 @@ export function MissionDetailPage({
             >
               {statusPill.label}
             </span>
-            <button
-              className="inline-flex h-8 items-center justify-center rounded border border-amber-300/30 bg-amber-300/10 px-2.5 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={!canTransact}
-              onClick={() => onResolve(mission.missionId, resolutionKind)}
-              type="button"
-            >
-              Resolve
-            </button>
           </span>
         </div>
       ) : null}
@@ -480,13 +467,9 @@ function MissionBattleReport({
 
   if (!report) {
     if (mission.combatResolutionProgress) {
-      const { roundsCompleted, totalRounds } = mission.combatResolutionProgress;
       return (
         <Notice tone="warning">
-          {roundsCompleted === 0
-            ? "Combat is preparing (large battles resolve across several transactions)."
-            : `Combat resolving: ${roundsCompleted} of up to ${totalRounds} rounds complete.`}{" "}
-          Combat will continue automatically.
+          Battle in progress. The report will appear when combat ends.
         </Notice>
       );
     }
@@ -500,28 +483,28 @@ function MissionBattleReport({
     if (materialization?.status === "failed") {
       return (
         <Notice tone="warning">
-          Battle report processing failed. It will retry automatically.
+          The battle report is temporarily unavailable. It will appear automatically; check back shortly.
         </Notice>
       );
     }
-    if (mission.needsResolution) {
+    if (mission.needsResolution && mission.resolutionEligible === true && mission.resolutionBlocker !== "randomness_pending") {
       return (
         <Notice tone="warning">
-          Combat is due or resolving; the battle report is not available yet.
+          Battle in progress. The report will appear when combat ends.
         </Notice>
       );
     }
     if (mission.resolutionBlocker === "randomness_pending") {
       return (
         <Notice tone="warning">
-          Battle randomness is still pending, so this combat mission cannot resolve yet.
+          The battle has not started yet. Its outcome is still unknown; check back shortly.
         </Notice>
       );
     }
     if (isMissionQueued(mission)) {
       return (
         <Notice tone="neutral">
-          Queued: an earlier fleet event at this location must resolve first.
+          Waiting for earlier fleet activity at this location to finish. This mission will continue automatically.
         </Notice>
       );
     }

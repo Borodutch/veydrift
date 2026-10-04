@@ -80,8 +80,6 @@ import { combatProgressLabel, isMissionQueued, missionTypeLabel } from "./missio
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
-import { DefenseSettlementNotice } from "./DefenseSettlementNotice";
-import { pendingDefenseSettlement } from "../defenseSettlement";
 import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
@@ -711,7 +709,6 @@ export function OverviewPage({
 
         {/* Defense queue */}
         <QueuePanel label="Defenses">
-          <DefenseSettlementNotice queue={onChainQueues?.unsettledDefense} />
           {onChainDefenseQueue ? (
             <QueuePanelContent>
               <ProductionQueuePanel
@@ -724,11 +721,9 @@ export function OverviewPage({
               />
             </QueuePanelContent>
           ) : (
-            pendingDefenseSettlement(onChainQueues?.unsettledDefense).size === 0 ? (
               <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
                 No active defense production.
               </EmptyQueue>
-            ) : null
           )}
         </QueuePanel>
 
@@ -1453,9 +1448,9 @@ function isOffensiveFleetMission(missionType: string): boolean {
 function overviewMissionStatus(
   mission: FleetMissionVisibilityResponse["outgoing"][number],
 ): string {
-  if (mission.resolutionBlocker === "randomness_pending") return "Awaiting randomness";
+  if (mission.resolutionBlocker === "randomness_pending") return "Battle pending";
   if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress);
-  if (mission.needsResolution === true) return "Resolving";
+  if (mission.needsResolution === true) return "Updating mission";
   if (isMissionQueued(mission)) return "Queued";
   if (
     mission.missionType === "DefenseHold"
@@ -1467,7 +1462,7 @@ function overviewMissionStatus(
   }
   if ((mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true
     && mission.resolutionEligible === true) {
-    return "Resolving";
+    return "Updating mission";
   }
   return mission.status;
 }

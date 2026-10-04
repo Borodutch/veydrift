@@ -429,7 +429,7 @@ describe("Overview fleets summary", () => {
       needsResolution: true,
       combatResolutionProgress: { roundsCompleted: 4, totalRounds: 6 },
     }] }), now).lines[0]).toMatchObject({
-      state: "Resolving 4/6",
+      state: "Battle in progress",
     });
 
     const returning = { ...outbound, status: "Returning", returnAt: Math.floor((now + 5 * 60_000) / 1_000).toString() };

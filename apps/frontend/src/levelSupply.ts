@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "./currentResources";
 import { buildingCatalog, buildingContractIds, buildingCostFactor, researchCatalog, isBinaryBuilding, type BuildingKey, type ResearchKey } from "./playableMvp";
 import type { SupplyResources } from "./batchSupplyPlanner";
 import type { ChainInfrastructureState, ChainMoonState, ChainResearchState } from "./walletFlow";
@@ -45,8 +46,8 @@ export function levelSupplyPreview(request: LevelSupplyRequest, snapshot: Snapsh
   // Queued upgrades have already paid. Other queues do not block preparation.
   const queue = snapshot.queue;
   const inProgress = Boolean(queue?.active && queue.itemId === entry.id && queue.targetLevel === request.level);
-  const resources = snapshot.resourcesAsOfNow ?? snapshot.resources;
-  if (!resources) throw new Error("Live destination resources are unavailable. Refresh before planning Supply.");
+  const resources = currentResources(snapshot);
+  if (!resources) throw new Error(RESOURCES_UNAVAILABLE);
   const exact = levelSupplyCost(request);
   if (entry.level + 1 === request.level) {
     if (keys.some(key => exact[key] > 0n) && keys.every(key => entry.cost?.[key] === "0")) throw new Error("Live upgrade cost is unavailable.");

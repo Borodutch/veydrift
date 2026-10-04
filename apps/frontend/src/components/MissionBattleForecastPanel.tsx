@@ -1,3 +1,4 @@
+import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { emptyMissionShips } from "../galaxyActions";
 import type { MissionDetailResponse } from "../walletFlow";
@@ -13,19 +14,19 @@ export function prepareMissionBattleForecast(detail: MissionDetailResponse, now:
   const uncertain = (message: string): PreparedPublicTargetBattleForecast => ({ status: "complete", forecast: {
     kind: "uncertain", label: "Uncertain", detail: message, attackerPower: 0, defenderPower: null,
   } });
-  if (mission.combatResolutionProgress) return uncertain("Battle resolution is already in progress. The battle report will appear when it finishes.");
-  if (!preview) return uncertain("Whole-battle public intel is unavailable. A single fleet is not substituted for the shared battle.");
+  if (mission.combatResolutionProgress) return uncertain("Battle in progress. The report will appear when combat ends.");
+  if (!preview) return uncertain("Battle intel is incomplete. The outcome cannot be estimated yet.");
   const asOf = Number(preview.asOf) * 1_000;
   const arrivalAt = Number(preview.arrivalAt) * 1_000;
   if (!Number.isFinite(asOf) || asOf <= 0 || now - asOf > 30_000 || asOf > now + 5_000) {
-    return uncertain("Battle intel is delayed. Waiting for a fresh participant and target snapshot.");
+    return uncertain("Battle intel is updating. Check back shortly for an estimate.");
   }
   if (!Number.isFinite(arrivalAt) || arrivalAt <= now) {
-    return uncertain("The scheduled battle arrival has passed. Waiting for resolution and the actual battle report.");
+    return uncertain("The fleet has reached its scheduled arrival. The battle outcome is not yet known.");
   }
-  if (preview.unavailableReason) return uncertain(preview.unavailableReason);
+  if (preview.unavailableReason) return uncertain(battleForecastUnavailableNotice());
   if (!preview.participants.length || !preview.participants.some(p => p.missionId === preview.leaderMissionId)) {
-    return uncertain("The lead attacking fleet is missing from the shared battle roster.");
+    return uncertain("The attacking fleet details are incomplete. The outcome cannot be estimated yet.");
   }
   return preparePublicTargetBattleForecast(
     emptyMissionShips(),

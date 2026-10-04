@@ -1,3 +1,4 @@
+import { ATTACKS_UNAVAILABLE_NOTICE } from "./playerNotice";
 import { GameApiError } from "./gameApiError";
 import { fetchEntityMedia, normalizeEntityMediaId, updateEntityMedia, type EntityMediaKind, type EntityMediaResponse } from "./entityMedia";
 import { GameStateStore, type GameStateEntry } from "./gameStateStore";
@@ -670,11 +671,7 @@ export class BackendDataStore {
       return this.query(key, () => this.refresh(key, async signal => {
         const payload = await fetchGameApiJson<{ ready?: unknown; reasons?: unknown }>(`${this.apiBaseUrl}/randomness-readiness`, "Randomness readiness", {
           signal, cache: "no-store", timeoutMs: 10_000,
-          httpErrorMessage: async response => {
-            const body = await response.json() as { reasons?: unknown };
-            return Array.isArray(body.reasons) && typeof body.reasons[0] === "string"
-              ? body.reasons[0] : `Randomness readiness API failed: ${response.status}`;
-          },
+          httpErrorMessage: async () => ATTACKS_UNAVAILABLE_NOTICE,
         });
         return {
           ready: payload.ready === true,

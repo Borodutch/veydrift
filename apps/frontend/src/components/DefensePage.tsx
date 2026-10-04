@@ -1,5 +1,4 @@
-import { DefenseSettlementNotice } from "./DefenseSettlementNotice";
-import { pendingDefenseSettlement } from "../defenseSettlement";
+import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
@@ -42,8 +41,6 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
-  onFinish?: (() => void) | undefined;
-  finishPending?: boolean | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
@@ -83,8 +80,6 @@ export function DefensePage({
   loading,
   now,
   onBuild,
-  onFinish,
-  finishPending,
   onOpenRequirement,
   onSelectDefense,
   onSupply,
@@ -100,8 +95,9 @@ export function DefensePage({
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
   // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
   // defense affordability number can never disagree with the bar.
-  const resources = toResources(defenseState?.resourcesAsOfNow ?? defenseState?.resources);
-  const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
+  const resources = toResources(currentResources(defenseState));
+  // Inventory and remaining queue must come from the same response. Overview is only a loading fallback.
+  const queue = activeProductionQueue(defenseState?.queue, defenseState ? undefined : overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = shouldShowDefenseInitialLoader({ defenseState, loading });
 
@@ -130,7 +126,7 @@ export function DefensePage({
             productionAvailable,
             quantities,
             queue,
-            resources: spendableResources ?? resources,
+            resources: currentResources(defenseState) === null ? undefined : spendableResources ?? resources,
             productionRates,
             transactionUnavailableReason,
           })}
@@ -146,14 +142,7 @@ export function DefensePage({
           queueProgress={progressState}
           queueTone="rose"
           selectedKey={selectedKey}
-        >
-          <DefenseSettlementNotice
-            queue={defenseState?.unsettledQueue}
-            onFinish={onFinish}
-            disabled={!canTransact || loading || !productionAvailable || actionState.status === "pending" || finishPending}
-            transactionUnavailableReason={transactionUnavailableReason}
-          />
-        </ProductionSection>
+        />
       )}
     </div>
   );
@@ -241,13 +230,11 @@ export function defenseProductionItems({
   productionRates?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
-  // New backends expose canonical unsettled quantities separately. Keep the
-  // legacy projected queue + launchable inventory pairing during rolling deploys.
-  const inventoryQueue = defenseState?.unsettledQueue !== undefined ? defenseState.unsettledQueue : queue;
-  const pendingSettlement = pendingDefenseSettlement(defenseState?.unsettledQueue);
+  // Effective totals already include completed units; reserve remaining work only.
+  const inventoryQueue = queue;
   return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity, quantityValid }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
-    // Deployed is the canonical on-chain count, not lazy-settlement launchability.
+    // Authoritative effective deployed inventory from the backend.
     const deployed = productionAvailable && chainDefense ? chainDefense.count : undefined;
     const baseCost = productionAvailable && chainDefense
       ? resolveDefenseUnitCost(defense.baseCost, chainDefense.cost)
@@ -274,8 +261,7 @@ export function defenseProductionItems({
       transactionUnavailableReason,
     }) : undefined;
     const disabled = Boolean(blockedReason) || actionPending;
-    // Queued describes remaining production, like Overview/progress. Canonical
-    // unsettled quantities still reserve capacity above until settlement arrives.
+    // Only remaining production reserves capacity.
     const queued = queuedDefenseCount(defense.id, queue);
     const combatStats = defenseCombatStats(defense);
     const stats = combatStats.rows.map((row) => `${row.label} ${formatStatValue(row.value)}`).join(" · ");
@@ -295,7 +281,6 @@ export function defenseProductionItems({
         inventoryQueue,
       ),
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
-      pendingSettlement: pendingSettlement.get(defense.id) ?? 0,
       countLabel: "Deployed",
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
@@ -426,7 +411,7 @@ function getBlockedReason({
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
-  if (!resources) return "Resources unavailable";
+  if (!resources) return RESOURCES_UNAVAILABLE;
   if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
@@ -461,9 +446,7 @@ function queuedDefenseCountByKey(key: DefenseKey, queue?: ChainDefenseState["que
 function defenseCount(defenseState: ChainDefenseState, key: DefenseKey): number {
   const defense = defenseCatalog.find((item) => item.key === key);
   if (!defense) return 0;
-  return (defenseState.unsettledQueue !== undefined
-    ? defenseState.defenses
-    : defenseState.launchableDefenses ?? defenseState.defenses)
+  return defenseState.defenses
     .find((item) => item.id === defense.id)?.count ?? 0;
 }
 

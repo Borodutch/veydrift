@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useState } from "preact/hooks";
@@ -99,8 +100,9 @@ export function ShipyardPage({
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
   // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
   // shipyard affordability number can never disagree with the bar.
-  const resources = resourcesFromChain(shipyardState?.resourcesAsOfNow ?? shipyardState?.resources);
-  const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
+  const resources = resourcesFromChain(currentResources(shipyardState));
+  // Inventory and remaining queue must come from the same response. Overview is only a loading fallback.
+  const queue = activeProductionQueue(shipyardState?.queue, shipyardState ? undefined : overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
 
@@ -128,7 +130,7 @@ export function ShipyardPage({
             productionAvailable,
             quantities,
             queue,
-            resources: spendableResources ?? resources,
+            resources: currentResources(shipyardState) === null ? undefined : spendableResources ?? resources,
             shipyardLevel,
             shipyardState,
             productionRates,
@@ -481,7 +483,7 @@ export function getBlockedReason({
   if (shipUnavailable) return "Ship currently unavailable";
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
-  if (!resources) return "Resources unavailable";
+  if (!resources) return RESOURCES_UNAVAILABLE;
   if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;

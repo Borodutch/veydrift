@@ -1693,7 +1693,7 @@
   },
   {
     "before": "Mission resolution is pending for this planet (mission 12). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.",
-    "after": "Mission 12 is still resolving at this planet. Refresh after it finishes before starting another upgrade.",
+    "after": "Mission 12 is still in progress at this planet. Try again after it finishes before starting another upgrade.",
     "locations": [
       "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
     ],
@@ -1702,7 +1702,7 @@
   },
   {
     "before": "Fleet slot state is waiting for mission settlement (mission 12). Refresh after the backend or keeper settles due fleet missions before launching another fleet.",
-    "after": "Mission 12 is still resolving. Refresh after it finishes before launching another fleet.",
+    "after": "Mission 12 is still in progress. Try again after it finishes before launching another fleet.",
     "locations": [
       "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
     ],
@@ -1711,7 +1711,7 @@
   },
   {
     "before": "A required randomness reveal mapping is unavailable. New attacks are temporarily paused.",
-    "after": "Battle randomness is unavailable. New attacks are temporarily paused.",
+    "after": "Attacks are temporarily unavailable. Please try again shortly.",
     "locations": [
       "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
     ],
@@ -1720,7 +1720,7 @@
   },
   {
     "before": "Randomness commitments are activating. New attacks are temporarily paused.",
-    "after": "Battle randomness is preparing. New attacks are temporarily paused.",
+    "after": "Attacks are temporarily unavailable. Please try again shortly.",
     "locations": [
       "apps/backend/src/{evm,server,indexer,randomness}.ts → frontend playerNotice consumers"
     ],

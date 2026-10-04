@@ -226,6 +226,7 @@ describe("VEY-KANEO-869 canonical activity", () => {
   });
 
   test("a planet-to-moon Deploy reaches the mission index without an activity ABI getter", async () => {
+    setSystemTime(new Date(now * 1000));
     const database = new Database(":memory:");
     const reader = new VeydriftGameReader(config, {
       async request<T>(method: string, params: unknown[]) {

@@ -89,7 +89,6 @@ function renderDetailPage(detail: MissionDetailResponse, fleetVisibility = visib
     onShareReport: noop,
     onCounterplay: noop,
     onRecall: noop,
-    onResolve: noop,
     onRetry: noop,
     onSelectCoordinates: noop,
     onSelectPlayer: noop,
@@ -113,7 +112,7 @@ describe("MissionDetailPage probable outcome", () => {
     const detail = { mission: combatMission({ status: "Outbound" }), battleReport: null };
     expect(renderDetailText(detail)).toContain("Probable outcome");
     expect(renderDetailText(detail)).toContain("Uncertain");
-    expect(renderDetailText(detail)).toContain("single fleet is not substituted");
+    expect(renderDetailText(detail)).toContain("Battle intel is incomplete");
     const section = findElements(renderDetailPage(detail), "section").find(node => node.props?.["aria-label"] === "Probable outcome");
     expect(section).toBeDefined();
     expect(findElements(section, "button").every(node => node.props?.disabled === true)).toBe(true);
@@ -784,7 +783,6 @@ describe("MissionDetailPage Share control", () => {
       onShareReport,
       onCounterplay: noop,
       onRecall: noop,
-      onResolve: noop,
       onRetry: noop,
       onSelectCoordinates: noop,
       onSelectPlayer: noop,

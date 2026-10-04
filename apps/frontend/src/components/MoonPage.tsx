@@ -1,3 +1,4 @@
+import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
@@ -935,7 +936,8 @@ function MoonDefenseSection({
 }
 
 function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<{ label: string; value: string }> {
-  const resources = moonState?.resourcesAsOfNow ?? moonState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
+  const resources = currentResources(moonState);
+  if (!resources) return ["Metal", "Crystal", "Deuterium"].map(label => ({ label, value: "Unavailable" }));
   return [
     { label: "Metal", value: formatMoonAmount(resources.metal) },
     { label: "Crystal", value: formatMoonAmount(resources.crystal) },
@@ -949,7 +951,7 @@ export function moonShipProductionItems({ moonState, quantities, canTransact = t
   canTransact?: boolean;
   actionPending?: boolean;
 }): ProductionCatalogItem<ShipKey>[] {
-  const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
+  const resources = toResources(currentResources(moonState));
   const levels = moonBuildingLevels(moonState);
   const chainState = moonState ? {
     wallet: moonState.wallet,
@@ -990,7 +992,7 @@ export function moonDefenseProductionItems({
   quantities: Record<string, ProductionQuantityInput>;
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
-  const resources = toResources(moonState?.resourcesAsOfNow ?? moonState?.resources);
+  const resources = toResources(currentResources(moonState));
   const sharedItems = defenseProductionItems({
     actionPending,
     canTransact,
@@ -1156,7 +1158,7 @@ export function moonStructureStatus(
   } = {},
 ): MoonStructureStatus {
   const cost = moonStructureUpgradeCost(building);
-  const spendable = resourcesFromChain(moonState?.resourcesAsOfNow ?? moonState?.resources);
+  const spendable = toResources(currentResources(moonState));
   const requirements = moonBuildingRequirementRows(building, moon, moonState);
   const targetLevel = moonStructureTargetLevel(building);
   const costAvailable = moonStructureCostAvailable(cost);
@@ -1210,6 +1212,7 @@ export function moonStructureStatus(
     };
   }
 
+  if (!spendable) return { ...base, disabled: true, reason: RESOURCES_UNAVAILABLE };
   if (!canAfford(spendable, cost)) {
     return {
       ...base,

@@ -88,6 +88,11 @@ function projectedProductionEntry(
     || unitWorkSeconds === null
     || rate === null
     || rate <= 0n
+    || startedAt < 0n
+    || unitWorkSeconds < 0n
+    || readyAt < startedAt
+    || !Number.isSafeInteger(timing.originalQuantity)
+    || !Number.isSafeInteger(remainingCanonical)
     || originalQuantity <= 0
     || originalQuantity < remainingCanonical
   ) {
@@ -188,6 +193,8 @@ export function settleQueueAsOfNow(queue: QueueState | null, nowSec: number): Qu
       }
       continue;
     }
+    // A corrupt modern proof must not fall back to elapsed legacy whole-batch credit.
+    if (entry.productionTiming) break;
     if (!deriveQueueAsOfNow(entry.readyAt, nowSec).complete) break;
     completed.push(withQueueTiming(withoutBacklog(entry), nowSec));
   }

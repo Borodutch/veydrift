@@ -8,25 +8,25 @@ describe("production queue fallback", () => {
   test("uses overview ship queue while detailed shipyard state catches up", () => {
     const queue = queueState("ship", 0, 2);
 
-    expect(activeProductionQueue(null, queue, "ship")).toBe(queue);
+    expect(activeProductionQueue(undefined, queue, "ship")).toBe(queue);
     expect(activeProductionQueue(queueState("ship", 2, 1), queue, "ship")?.itemId).toBe(2);
-    expect(activeProductionQueue(null, queueState("defense", 0, 2), "ship")).toBeUndefined();
+    expect(activeProductionQueue(undefined, queueState("defense", 0, 2), "ship")).toBeUndefined();
   });
 
   test("uses overview defense queue while detailed defense state catches up", () => {
     const queue = queueState("defense", 0, 2);
 
-    expect(activeProductionQueue(null, queue, "defense")).toBe(queue);
+    expect(activeProductionQueue(undefined, queue, "defense")).toBe(queue);
     expect(activeProductionQueue(queueState("defense", 1, 1), queue, "defense")?.itemId).toBe(1);
-    expect(activeProductionQueue(null, queueState("ship", 0, 2), "defense")).toBeUndefined();
+    expect(activeProductionQueue(undefined, queueState("ship", 0, 2), "defense")).toBeUndefined();
   });
 
-  test("feeds shared detail queue panels from overview fallbacks when page queues are empty", () => {
-    const defenseQueue = activeProductionQueue(null, queueState("defense", 0, 1, {
+  test("feeds shared detail queue panels from overview fallbacks when detail snapshots are absent", () => {
+    const defenseQueue = activeProductionQueue(undefined, queueState("defense", 0, 1, {
       readyAt: "1700000120",
       startedAt: "1700000000",
     }), "defense");
-    const shipQueue = activeProductionQueue(null, queueState("ship", 0, 2, {
+    const shipQueue = activeProductionQueue(undefined, queueState("ship", 0, 2, {
       readyAt: "1700000120",
       startedAt: "1700000000",
     }), "ship");
@@ -148,3 +148,7 @@ function queueState(
     ...overrides,
   };
 }
+
+test("authoritative empty/inactive queues never revive stale overview production", () => {
+ for (const kind of ["ship", "defense"] as const) { const old = queueState(kind, 0, 2); expect(activeProductionQueue(null, old, kind)).toBeUndefined(); expect(activeProductionQueue({ ...old, active: false }, old, kind)).toBeUndefined(); }
+});

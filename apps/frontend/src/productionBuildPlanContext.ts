@@ -1,3 +1,4 @@
+import { currentResources } from "./currentResources";
 import { technologyLevelsByKey } from "./chainState";
 import { defenseCatalog, missingUnlockRequirements, shipyardCatalog } from "./playableMvp";
 import type { ProductionBody, ProductionPlanContext } from "./productionBuildPlan";
@@ -30,8 +31,8 @@ export function productionPlanContext(body: ProductionBody, states: {
   const shipyard = body === "planet" ? states.shipyard : null;
   const defense = body === "planet" ? states.defense : null;
   const resources = body === "moon"
-    ? moon?.resourcesAsOfNow ?? moon?.resources ?? null
-    : states.infrastructure?.resourcesAsOfNow ?? states.infrastructure?.resources ?? null;
+    ? currentResources(moon) ?? null
+    : currentResources(states.infrastructure) ?? null;
   const shipRows = moon?.ships ?? shipyard?.ships ?? [];
   const defenseRows = moon?.defenses ?? defense?.defenses ?? [];
   const shipyardLevel = moon
@@ -73,7 +74,8 @@ export function productionPlanContext(body: ProductionBody, states: {
     shipBacklogLength: shipQueue?.backlog?.length,
     defenseQueue: queueForPlan(defenseQueue, defenseCatalog),
     defenseBacklogLength: defenseQueue?.backlog?.length,
-    capacityQueue: moon?.defenseQueue ?? (defense?.unsettledQueue !== undefined ? defense.unsettledQueue : defense?.queue),
-    defenseCounts: (moon?.defenses ?? (defense?.unsettledQueue !== undefined ? defense?.defenses : defense?.launchableDefenses ?? defense?.defenses)) ?? [],
+    // Effective inventory and remaining queue are one pair on both bodies.
+    capacityQueue: defenseQueue,
+    defenseCounts: defenseRows,
   };
 }
