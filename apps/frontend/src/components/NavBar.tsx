@@ -1,8 +1,8 @@
 import type { ComponentChildren, JSX } from "preact";
-import { flushSync } from "preact/compat";
+import { createPortal, flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -15,6 +15,7 @@ import {
   type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
+import { readSidebarCollapsed, writeSidebarCollapsed } from "../sidebarPreference";
 
 export type Page =
   | "overview"
@@ -121,7 +122,9 @@ export function NavBar({
   canEditPlayerProfile = false,
   planetPicker,
 }: NavBarProps) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const compactAccount = useRef<HTMLDetailsElement | null>(null);
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [delegateDraft, setDelegateDraft] = useState(delegation?.delegate ?? "");
@@ -163,6 +166,7 @@ export function NavBar({
       mobileNavigationDetails.current.open = false;
     }
     setMobileMenuOpen(false);
+    if (compactAccount.current) compactAccount.current.open = false;
   };
 
   useEffect(() => {
@@ -317,6 +321,7 @@ export function NavBar({
         onOpenActivity={account && onOpenActivity
           ? () => {
             setMobileMenuOpen(false);
+            if (compactAccount.current) compactAccount.current.open = false;
             onOpenActivity();
           }
           : undefined}
@@ -484,15 +489,28 @@ export function NavBar({
   return (
     <>
       {/* Desktop sidebar */}
-      <nav className="hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] w-52 shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[var(--topbar-h,2.75rem)] md:flex">
-        <div className="flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] p-3 shadow-[inset_-1px_0_rgba(255,255,255,0.04)]">
-          <div className="border-b border-white/10 px-2 pb-3">
-            <p className="text-sm font-semibold text-white">
-              Veydrift
-            </p>
+      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
+        <div className={`flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] shadow-[inset_-1px_0_rgba(255,255,255,0.04)] ${sidebarCollapsed ? "p-2" : "p-3"}`}>
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            {!sidebarCollapsed && <p className="pl-2 text-sm font-semibold text-white">Veydrift</p>}
+            <button
+              type="button"
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="desktop-navigation-links"
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 text-slate-200 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
+              onClick={() => {
+                const collapsed = !sidebarCollapsed;
+                setSidebarCollapsed(collapsed);
+                writeSidebarCollapsed(collapsed);
+              }}
+            >
+              {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={18} /> : <PanelLeftClose aria-hidden="true" size={18} />}
+            </button>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+          <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-1 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
             {pages.map((page) => (
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
@@ -500,12 +518,34 @@ export function NavBar({
                 icon={page.icon}
                 key={page.key}
                 label={page.label}
+                collapsed={sidebarCollapsed}
                 onClick={() => onNavigate(page.key)}
               />
             ))}
           </div>
 
-          {accountSummary(
+          {sidebarCollapsed ? (
+            <details
+              ref={compactAccount}
+              className="relative shrink-0"
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && compactAccount.current?.open) {
+                  compactAccount.current.open = false;
+                  compactAccount.current.querySelector("summary")?.focus();
+                }
+              }}
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+              }}
+            >
+              <summary aria-label="Commander account" title="Commander account" className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden">
+                <UserRound aria-hidden="true" size={18} />
+              </summary>
+              <div className="absolute bottom-0 left-full z-30 ml-3 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] w-64 overflow-y-auto rounded-md border border-white/10 bg-[#07101d] p-3 shadow-2xl shadow-black/50">
+                {accountSummary("", "compact-commander-account-details")}
+              </div>
+            </details>
+          ) : accountSummary(
             "sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur",
             "desktop-commander-account-details",
           )}
@@ -989,16 +1029,19 @@ export function NavItem({
   icon: Icon,
   label,
   onClick,
+  collapsed = false,
 }: {
   active: boolean;
   href: string;
   icon: LucideIcon;
   label: string;
   onClick: () => void;
+  collapsed?: boolean;
 }) {
   return (
     <a
-      className={`flex w-full items-center gap-2.5 rounded px-2.5 py-2 text-left text-sm transition ${
+      aria-label={label}
+      className={`relative flex w-full items-center rounded py-2 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 ${collapsed ? "justify-center" : "gap-2.5 px-2.5"} ${
         active
           ? "bg-white/10 font-medium text-white"
           : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
@@ -1015,9 +1058,72 @@ export function NavItem({
       <span className="grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90">
         <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
-      <span className="min-w-0 truncate">{label}</span>
+      <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>{label}</span>
+      {collapsed && <RailTooltip label={label} />}
     </a>
   );
+}
+
+// Portal only the tooltip so the independently scrolling link list cannot clip it.
+function RailTooltip({ label }: { label: string }) {
+  const marker = useRef<HTMLSpanElement | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const hideTimer = useRef<number | undefined>(undefined);
+  const cancelHide = () => window.clearTimeout(hideTimer.current);
+  const scheduleHide = () => {
+    cancelHide();
+    hideTimer.current = window.setTimeout(() => setPosition(null), 150);
+  };
+  useEffect(() => {
+    const link = marker.current?.closest("a");
+    if (!link) return;
+    let hovered = false;
+    let dismissed = false;
+    const update = () => {
+      if (dismissed || (!hovered && document.activeElement !== link)) { setPosition(null); return; }
+      const rect = link.getBoundingClientRect();
+      const viewport = link.parentElement?.getBoundingClientRect();
+      if (!rect.width || !rect.height || !viewport
+        || rect.bottom <= Math.max(0, viewport.top) || rect.top >= Math.min(window.innerHeight, viewport.bottom)
+        || rect.right <= Math.max(0, viewport.left) || rect.left >= Math.min(window.innerWidth, viewport.right)) {
+        setPosition(null);
+        return;
+      }
+      setPosition({ left: (link.closest("nav")?.getBoundingClientRect().right ?? rect.right) + 8, top: rect.top + rect.height / 2 });
+    };
+    const enter = () => { cancelHide(); hovered = true; dismissed = false; update(); };
+    const leave = () => { hovered = false; if (document.activeElement !== link) scheduleHide(); };
+    const focus = () => { cancelHide(); dismissed = false; update(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { dismissed = true; setPosition(null); } };
+    link.addEventListener("mouseenter", enter);
+    link.addEventListener("mouseleave", leave);
+    link.addEventListener("focus", focus);
+    link.addEventListener("blur", update);
+    window.addEventListener("keydown", escape);
+    // Focus can auto-scroll the rail: reposition visible focused links, but
+    // dismiss hover-only labels and labels clipped away or hidden on mobile.
+    const reposition = () => {
+      if (document.activeElement === link) update();
+      else setPosition(null);
+    };
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    update();
+    return () => {
+      cancelHide();
+      link.removeEventListener("mouseenter", enter);
+      link.removeEventListener("mouseleave", leave);
+      link.removeEventListener("focus", focus);
+      link.removeEventListener("blur", update);
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, []);
+  return <>
+    <span ref={marker} aria-hidden="true" />
+    {position && createPortal(<span role="tooltip" onMouseEnter={cancelHide} onMouseLeave={scheduleHide} className="fixed z-50 -translate-y-1/2 whitespace-nowrap rounded border border-white/20 bg-[#07101d] px-3 py-2 text-xs text-white shadow-xl" style={position}>{label}</span>, document.body)}
+  </>;
 }
 
 export function MobileTab({
