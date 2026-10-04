@@ -3,6 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import { ArrowRight, Check, Coins, ExternalLink, Handshake, Lock, Repeat, Rocket, Swords, Users } from "lucide-preact";
 import { submitPactInterest } from "../pactInterest";
 import { TelegramIcon } from "./TelegramIcon";
+import { TrailerPlayer } from "./TrailerPlayer";
 
 const telegramUrl = "https://t.me/borodutch";
 
@@ -110,6 +111,10 @@ export function PactApp() {
         </div>
       </section>
 
+      <section aria-label="Veydrift trailer" className="scroll-mt-16 px-5 pb-10 sm:px-8" id="trailer" tabIndex={-1}>
+        <TrailerPlayer />
+      </section>
+
       <Section eyebrow="Traction" title="Players who join, stay.">
         <p className="max-w-2xl text-slate-300">
           Veydrift hasn't done a launch push yet. What it has is a core of players who come back every single day and play
@@ -169,7 +174,7 @@ export function PactApp() {
           ))}
         </div>
         <div className="mt-6 flex flex-wrap gap-4 text-sm">
-          <ExternalLinkText href="/">Watch the trailer</ExternalLinkText>
+          <a className="inline-flex items-center gap-1.5 text-signal hover:underline" href="#trailer">Watch the trailer</a>
           <ExternalLinkText href="/docs">Read the docs</ExternalLinkText>
         </div>
       </Section>

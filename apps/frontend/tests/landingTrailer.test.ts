@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { frontendResponse, responseHeadersFor } from "../scripts/serve.mjs";
 
 const landingSource = new URL("../src/ComingSoonApp.tsx", import.meta.url);
+const playerSource = new URL("../src/components/TrailerPlayer.tsx", import.meta.url);
+const pactSource = new URL("../src/components/PactPage.tsx", import.meta.url);
 const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}`, import.meta.url);
 const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
 
@@ -13,11 +15,11 @@ describe("landing trailer", () => {
     const body = main.slice(main.indexOf(">") + 1, main.indexOf("</main>"));
     const sections = [...body.matchAll(/<(\w+)[\s/]/g)].map((match) => match[1]);
     expect(sections.slice(0, 3)).toEqual(["HeroSection", "LandingTrailer", "ScreenshotsSection"]);
-    expect(source).toContain('preload="none"');
+    expect(source).toContain('<TrailerPlayer />');
   });
 
   test("ships the referenced video, poster and captions under the repository file limit", async () => {
-    const source = await Bun.file(landingSource).text();
+    const source = await Bun.file(playerSource).text();
     for (const name of trailerFiles) {
       expect(source).toContain(`/assets/landing/${name}`);
       expect(existsSync(landingAsset(name))).toBe(true);
@@ -25,6 +27,26 @@ describe("landing trailer", () => {
     // GitHub rejects files over 100 MB; keep the web cut well below it.
     expect(statSync(landingAsset("veydrift-trailer-v1.mp4")).size).toBeLessThan(90 * 1024 * 1024);
     expect(await Bun.file(landingAsset("veydrift-trailer-v1.vtt")).text()).toStartWith("WEBVTT\n");
+  });
+
+  test("Pact shares the player below its hero and links to it without leaving the page", async () => {
+    const source = await Bun.file(pactSource).text();
+    expect(source).toContain('import { TrailerPlayer } from "./TrailerPlayer"');
+    expect(source).toContain('<TrailerPlayer />');
+    expect(source.indexOf('<TrailerPlayer />')).toBeLessThan(source.indexOf('<Section eyebrow="Traction"'));
+    expect(source).toContain('id="trailer" tabIndex={-1}');
+    expect(source).toContain('href="#trailer">Watch the trailer</a>');
+    expect(source).not.toContain('href="/">Watch the trailer');
+    for (const name of trailerFiles) expect(source).not.toContain(name);
+  });
+
+  test("keeps the shared player lightweight, inline, accessible and captioned", async () => {
+    const source = await Bun.file(playerSource).text();
+    expect(source).toContain('preload="none"');
+    expect(source).not.toContain("autoPlay");
+    expect(source).toContain("playsInline");
+    expect(source).toContain('aria-label="Play the two-minute Veydrift trailer"');
+    expect(source).toContain('<track kind="captions" label="English"');
   });
 
   test("labels trailer media for browsers", () => {
