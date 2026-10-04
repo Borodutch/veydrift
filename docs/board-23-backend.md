@@ -24,6 +24,13 @@ Backend-only repair against integration base 676ac4e6 (second exact-head review 
 - Resource order follows contracts: BatchTransport._settleScheduledTarget calls FirstPlanetSettlement.settleProductionUntil, then Colonization.completeAttackTargetSnapshotQueues (research, ships, defenses; **not buildings**). Each arrival accrues with the previous canonical/effectively settled rates, then updates ship/research inputs. The final passive collection applies the building two-window behavior. A two-arrival HTTP fixture covers building readiness before/between arrivals and satellite/research completion without retroactive accrual. Return cargo does not create an intermediate accrual/storage-headroom segment.
 - Moon resource consumers preserve explicit unknown values instead of falling back to raw snapshots. Rankings includes proven current moon credits without full read-model hydration.
 
+## Fleet horizon follow-up (review #541)
+
+- Every deterministic fleet leg uses the validated fully indexed resource watermark, never the reader wall clock. Missing, stale, revision-mismatched or malformed anchors grant no projected ships/cargo or terminal lifecycle/slot credit. Resource accrual remains unchanged.
+- Activity fleet legs are capped by both the requested activity window and this safe horizon; existing queue/activity wall-clock semantics are preserved.
+- Mission, wallet, full-system and persisted-summary version tokens include the safe fleet horizon, so watermark advancement or invalidation changes warm cache identity without new mission events. Public/tactical moon resources use the same effective credit balance as moon inventory.
+- `fleetProjectionHorizon.test.ts` covers planet/moon transport, Deploy and known returns before/at/after arrival and return, forward/backward reader clock drift, warm full-system HTTP payloads, wallet shipyard/moon/infrastructure/Rift, mission detail, activity, and absent/unsafe watermark recovery.
+
 ## Verification
 
 - Focused new/extended tests: currentState.test.ts, currentFleet.test.ts, server.test.ts; existing indexer legacy semantics and canonical activity clock fixtures updated.

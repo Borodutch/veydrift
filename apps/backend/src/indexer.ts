@@ -1915,10 +1915,7 @@ export class SettlementIndexer {
     options: { includeProjected?: boolean; page: number; pageSize: number; since?: number; through?: number }
   ): PlayerActivityPage {
     const normalizedWallet = wallet.toLowerCase() as Address;
-    // The default window must include already-proven fleet effects even if this
-    // reader clock runs behind the indexed chain timestamp. Explicit historical
-    // windows still cap fleet effects through currentFleetEffects.
-    const through = Math.max(0, Math.floor(options.through ?? Math.max(nowSeconds(), this.fleetProjectionHorizon() ?? 0)));
+    const through = Math.max(0, Math.floor(options.through ?? nowSeconds()));
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
     const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, through) : [];
     for (const item of projected) {

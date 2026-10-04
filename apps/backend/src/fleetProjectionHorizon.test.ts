@@ -72,7 +72,7 @@ for (const moon of [false, true]) for (const kind of ["transport", "return", "de
           expect(publicState.fleet.find((s: any) => s.id === 0).count).toBe(terminal ? 9 : 0);
           expect(await get("/universe/galaxies/2/systems/44?detail=full")).toEqual(system);
           const activity = indexer.playerActivity(owner, { page: 1, pageSize: 20, through: 6000 }).items.filter(i => i.reconciliation === "projected" && i.category === "mission");
-          expect((await wallet("activity")).body.items.filter((i: any) => i.reconciliation === "projected" && i.category === "mission")).toEqual(activity);
+          expect((await wallet("activity")).body.items.filter((i: any) => i.reconciliation === "projected" && i.category === "mission")).toEqual(activity.filter(i => Number(i.occurredAt) <= wall));
           expect(activity.map(i => i.kind).sort()).toEqual([...(arrived ? ["mission-completed"] : []), ...(terminal && kind !== "deploy" ? ["mission-returned"] : [])].sort());
           expect(versions()).toEqual(before);
         }
