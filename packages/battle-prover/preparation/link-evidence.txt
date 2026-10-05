@@ -1,0 +1,4 @@
+=== RUN   TestCombatLinkage
+--- PASS: TestCombatLinkage (0.31s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/preparation	0.796s

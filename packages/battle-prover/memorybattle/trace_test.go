@@ -21,17 +21,24 @@ func integer(v frontend.Variable) *big.Int {
 	case int:
 		return big.NewInt(int64(x))
 	default:
-		panic(fmt.Sprintf("unexpected variable %T", v))
+		panic(fmt.Sprintf("unexpected %T", v))
 	}
 }
 func scalarEqual(a, b frontend.Variable) bool { return integer(a).Cmp(integer(b)) == 0 }
-func clone(w *Step) *Step                     { c := *w; c.Openings = append([]Opening(nil), w.Openings...); return &c }
+func word(v U) Word {
+	var w Word
+	for i, x := range v {
+		w[i] = integer(x).Uint64()
+	}
+	return w
+}
+func clone(w *Step) *Step { c := *w; c.Openings = append([]Opening(nil), w.Openings...); return &c }
 func states(w *Step) (State, State) {
 	a := State{Memory: integer(w.BeforeMemory), Report: integer(w.BeforeReport)}
 	b := State{Memory: integer(w.AfterMemory), Report: integer(w.AfterReport)}
 	for i := range a.V {
-		a.V[i] = integer(w.Before[i]).Uint64()
-		b.V[i] = integer(w.After[i]).Uint64()
+		a.V[i] = word(w.Before[i])
+		b.V[i] = word(w.After[i])
 	}
 	return a, b
 }
@@ -39,69 +46,43 @@ func recommit(w *Step) {
 	a, b := states(w)
 	w.BeforeRoot = a.Commitment()
 	w.AfterRoot = b.Commitment()
+	w.Start = position(a.V[step])
+	w.End = position(b.V[step])
 }
 func solve(t *testing.T, cc constraint.ConstraintSystem, w *Step, valid bool) {
 	t.Helper()
-	fw, err := frontend.NewWitness(w, ecc.BN254.ScalarField())
-	if err != nil {
-		t.Fatal(err)
+	fw, e := frontend.NewWitness(w, ecc.BN254.ScalarField())
+	if e != nil {
+		t.Fatal(e)
 	}
-	err = cc.IsSolved(fw)
-	if (err == nil) != valid {
-		t.Fatalf("kind=%d start=%v valid=%v err=%v", w.Kind, w.Start, valid, err)
+	e = cc.IsSolved(fw)
+	if (e == nil) != valid {
+		t.Fatalf("kind=%d valid=%v err=%v", w.Kind, valid, e)
 	}
 }
-func compile(t *testing.T, kind int) constraint.ConstraintSystem {
+func compile(t *testing.T, k int) constraint.ConstraintSystem {
 	t.Helper()
-	cc, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, Shape(kind))
-	if err != nil {
-		t.Fatal(err)
+	cc, e := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, Shape(k))
+	if e != nil {
+		t.Fatal(e)
 	}
-	t.Logf("kind=%d constraints=%d", kind, cc.GetNbConstraints())
+	t.Logf("kind=%d constraints=%d", k, cc.GetNbConstraints())
 	return cc
 }
-
-// This is test transcript checking, not a proof verifier or recursive aggregate.
 func linked(ws []*Step) bool {
 	if len(ws) == 0 || !scalarEqual(ws[0].Start, 0) || !scalarEqual(ws[len(ws)-1].AfterDone, 1) {
 		return false
 	}
 	for i, w := range ws {
-		if !scalarEqual(w.BeforeDone, 0) || !scalarEqual(w.End, new(big.Int).Add(integer(w.Start), big.NewInt(1))) {
+		if !scalarEqual(w.BeforeDone, 0) {
 			return false
 		}
 		if i > 0 {
 			p := ws[i-1]
-			if !scalarEqual(w.Context, p.Context) || !scalarEqual(w.BeforeRoot, p.AfterRoot) || !scalarEqual(w.Start, p.End) || !scalarEqual(p.AfterDone, 0) {
+			if !scalarEqual(w.Input, p.Input) || !scalarEqual(w.BeforeRoot, p.AfterRoot) || !scalarEqual(w.Start, p.End) || !scalarEqual(p.AfterDone, 0) {
 				return false
 			}
 		}
 	}
 	return true
-}
-func run(t *testing.T, n int, systems map[int]constraint.ConstraintSystem) (*Machine, []*Step) {
-	t.Helper()
-	m, err := New(fixture(n))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var ws []*Step
-	for i := 0; m.State.V[phase] != Done && i < 4000; i++ {
-		w, err := m.Next()
-		if err != nil {
-			t.Fatal(err)
-		}
-		cc := systems[w.Kind]
-		if cc == nil {
-			cc = compile(t, w.Kind)
-			systems[w.Kind] = cc
-		}
-		solve(t, cc, w, true)
-		ws = append(ws, w)
-	}
-	if !linked(ws) {
-		t.Fatal("incomplete or unlinked trace")
-	}
-	t.Logf("units=%d constrained_steps=%d final_round=%d counter=%d", n, len(ws), m.State.V[round], m.State.V[counter0])
-	return m, ws
 }

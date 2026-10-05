@@ -15,7 +15,8 @@ Status: **inactive development checkpoint, not release-ready**. No resolver, mis
 - Recovered four-slot battle circuit at `350d5fcb6abb8ed33e4719495ea4d4f8c884b387` passed independent limited-scope review, fresh short suite (19.667s) and go vet. It proves full initialization/shot/RNG/terminal transitions with state preimage commitments, but linear elementary proof verification is not recursion and full four-slot images are not variable authenticated memory.
 - Source manifest and pinned Go modules verified. All original worktree artifacts preserved; continuation worktree is isolated.
 - Original target-host arithmetic benchmark log ends before terminal PASS and the remote process is gone. Do not use it as completed host performance evidence. No host/service changes were made during recovery.
-- Multi-chunk real-combat aggregation and variable-memory integration are still under development. No production setup, consumer integration, activation or QA completion is claimed.
+- Fixed-fixture real combat multi-chunk recursion and local EVM verification passed. Actual successful verifier execution:348734 gas; STATICCALL boundary:351722; separate local CREATE:1509024. Solidity proof384 bytes, full ABI payload676; compressed proof serialization196 bytes is a different format. These exclude rollup publication, transaction envelope and game preparation/application. Source/public artifacts and independent review are in aggregation/evm; no production setup or live Base fee claim.
+- Full-width protocol relations and per-cohort casualty attribution independently reviewed at dae4976e. Authenticated preparation, full-width memory, battle-wide result bridge and general recursive composition remain in progress. No consumer integration, activation or QA completion is claimed.
 
 ## Activation prerequisites (all remain required)
 

@@ -8,7 +8,7 @@ import "github.com/consensys/gnark/frontend"
 type Statement [8]frontend.Variable
 
 const (
-	ContextField = iota
+	InputField = iota
 	BeforeField
 	AfterField
 	StartField
@@ -19,10 +19,10 @@ const (
 )
 
 func (c *Step) Statement() Statement {
-	return Statement{c.Context, c.BeforeRoot, c.AfterRoot, c.Start, c.End, c.BeforeDone, c.AfterDone, c.Result}
+	return Statement{c.Input, c.BeforeRoot, c.AfterRoot, c.Start, c.End, c.BeforeDone, c.AfterDone, c.Result}
 }
 func AssertLinked(api frontend.API, left, right Statement) {
-	api.AssertIsEqual(left[ContextField], right[ContextField])
+	api.AssertIsEqual(left[InputField], right[InputField])
 	api.AssertIsEqual(left[AfterField], right[BeforeField])
 	api.AssertIsEqual(left[EndField], right[StartField])
 	api.AssertIsEqual(left[AfterDoneField], 0)
@@ -32,7 +32,7 @@ func AssertLinked(api frontend.API, left, right Statement) {
 
 // Apply to the first/last VERIFIED statements only after proving every adjacency.
 func AssertComplete(api frontend.API, first, last Statement) {
-	api.AssertIsEqual(first[ContextField], last[ContextField])
+	api.AssertIsEqual(first[InputField], last[InputField])
 	api.AssertIsEqual(first[StartField], 0)
 	api.AssertIsEqual(first[BeforeDoneField], 0)
 	api.AssertIsEqual(last[AfterDoneField], 1)

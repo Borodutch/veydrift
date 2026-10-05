@@ -1,0 +1,26 @@
+=== RUN   TestCrossPackageElementarySolvers
+--- PASS: TestCrossPackageElementarySolvers (13.21s)
+=== RUN   TestBoundaryHighBits
+--- PASS: TestBoundaryHighBits (0.83s)
+=== RUN   TestNegativeSteps
+    negative_test.go:73: expected valid=false: <nil>
+--- FAIL: TestNegativeSteps (2.10s)
+=== RUN   TestOmittedDuplicatedReorderedStreams
+=== RUN   TestOmittedDuplicatedReorderedStreams/omitted-member
+=== RUN   TestOmittedDuplicatedReorderedStreams/duplicate-member
+=== RUN   TestOmittedDuplicatedReorderedStreams/reordered-members
+=== RUN   TestOmittedDuplicatedReorderedStreams/omitted-cohort
+=== RUN   TestOmittedDuplicatedReorderedStreams/duplicated-cohort
+=== RUN   TestOmittedDuplicatedReorderedStreams/reordered-cohorts
+--- PASS: TestOmittedDuplicatedReorderedStreams (0.50s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/omitted-member (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/duplicate-member (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/reordered-members (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/omitted-cohort (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/duplicated-cohort (0.01s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/reordered-cohorts (0.00s)
+=== RUN   TestStatementObligations
+--- PASS: TestStatementObligations (0.31s)
+FAIL
+FAIL	github.com/Borodutch/veydrift/packages/battle-prover/resultbridge	17.424s
+FAIL

@@ -1,0 +1,43 @@
+=== RUN   TestAuthenticatedOwnerTechMismatch
+    attacks_test.go:18: kind=1 constraints=452953
+--- PASS: TestAuthenticatedOwnerTechMismatch (1.22s)
+=== RUN   TestMemberIntegerBoundaries
+    attacks_test.go:21: kind=2 constraints=1053134
+--- PASS: TestMemberIntegerBoundaries (4.53s)
+=== RUN   TestUint256ExpansionAndOverflow
+    boundaries_test.go:10: kind=3 constraints=487986
+--- PASS: TestUint256ExpansionAndOverflow (3.58s)
+=== RUN   TestCoverageAndZeroRows
+    boundaries_test.go:62: kind=2 constraints=1053134
+    boundaries_test.go:69: kind=4 constraints=89676
+--- PASS: TestCoverageAndZeroRows (4.69s)
+=== RUN   TestAuthenticatedSourceOwnerConflicts
+    boundaries_test.go:80: kind=1 constraints=452953
+--- PASS: TestAuthenticatedSourceOwnerConflicts (1.26s)
+=== RUN   TestRawIndexNoFieldAlias
+--- PASS: TestRawIndexNoFieldAlias (1.05s)
+=== RUN   TestCombatLinkage
+--- PASS: TestCombatLinkage (0.28s)
+=== RUN   TestOrdinaryOracleAndMemoryRoot
+--- PASS: TestOrdinaryOracleAndMemoryRoot (0.66s)
+=== RUN   TestCompleteTrace
+    preparation_test.go:56: kind=0 constraints=78204
+    preparation_test.go:56: kind=1 constraints=452953
+    preparation_test.go:56: kind=2 constraints=1053134
+    preparation_test.go:56: kind=3 constraints=487986
+    preparation_test.go:56: kind=4 constraints=89676
+--- PASS: TestCompleteTrace (32.18s)
+=== RUN   TestForgery
+    preparation_test.go:75: kind=0 constraints=78204
+    preparation_test.go:75: kind=1 constraints=452953
+    preparation_test.go:75: kind=2 constraints=1053134
+    preparation_test.go:75: kind=3 constraints=487986
+    preparation_test.go:75: kind=4 constraints=89676
+--- PASS: TestForgery (8.60s)
+=== RUN   TestDuplicateSource
+    preparation_test.go:97: kind=1 constraints=452953
+--- PASS: TestDuplicateSource (1.24s)
+=== RUN   TestUnitTreeHighBits
+--- PASS: TestUnitTreeHighBits (0.01s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/preparation	60.126s

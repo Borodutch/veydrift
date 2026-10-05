@@ -1,6 +1,7 @@
 package memorybattle
 
 import (
+	"github.com/Borodutch/veydrift/packages/battle-prover/protocol"
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
@@ -9,106 +10,82 @@ import (
 )
 
 type memoryRead struct {
-	Root, Index frontend.Variable
-	Opening     Opening
+	Root    frontend.Variable
+	Index   U
+	Opening Opening
+	Domain  uint64 `gnark:"-"`
 }
 
 func (c *memoryRead) Define(api frontend.API) error {
-	c.Opening.constrain(api, c.Root, c.Index)
+	c.Opening.Verify(api, c.Root, c.Domain, c.Index)
 	return nil
 }
 func TestFullAddressWidth(t *testing.T) {
 	m := NewMemory()
-	i := uint64(1)<<63 | 17
-	m.Write(i, Cell{1, 65535, 23, 45, 67, 89, 60, 40, 1})
-	m.Write(17, Cell{1})
-	w := memoryRead{Root: m.Root(), Index: i, Opening: m.Open(i)}
-	cc, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &memoryRead{})
-	if err != nil {
-		t.Fatal(err)
+	i := Big(new(big.Int).Add(new(big.Int).Lsh(big.NewInt(1), 255), num(17)))
+	k := key(UnitDomain, i)
+	m.Write(k, Cell{W(1), W(65535), i, W(45), W(67), i, W(60), W(40), W(1)})
+	m.Write(key(UnitDomain, W(17)), Cell{W(1)})
+	m.Write(key(RosterDomain, i), Cell{W(2)})
+	w := memoryRead{Root: m.Root(), Index: i.Circuit(), Opening: m.Open(k)}
+	cc, e := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &memoryRead{})
+	if e != nil {
+		t.Fatal(e)
 	}
-	check := func(w *memoryRead, valid bool) {
-		fw, err := frontend.NewWitness(w, ecc.BN254.ScalarField())
-		if err != nil {
-			t.Fatal(err)
+	check := func(valid bool) {
+		fw, e := frontend.NewWitness(&w, ecc.BN254.ScalarField())
+		if e != nil {
+			t.Fatal(e)
 		}
-		if err = cc.IsSolved(fw); (err == nil) != valid {
-			t.Fatalf("valid=%v err=%v", valid, err)
-		}
-	}
-	check(&w, true)
-	w.Index = 17
-	check(&w, false)
-	w.Index = new(big.Int).Add(num(i), new(big.Int).Lsh(big.NewInt(1), 64))
-	check(&w, false)
-}
-
-type sampler struct {
-	Bits                   [256]frontend.Variable
-	Bound, Value, Accepted frontend.Variable
-}
-
-func (c *sampler) Define(api frontend.API) error {
-	v, ok := uniform(api, c.Bits[:], c.Bound)
-	api.AssertIsEqual(v, c.Value)
-	api.AssertIsEqual(ok, c.Accepted)
-	return nil
-}
-func TestUniformFullWidthRejection(t *testing.T) {
-	cc, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &sampler{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	top := new(big.Int).Lsh(big.NewInt(1), 256)
-	for _, bound := range []uint64{1, 3, 1<<40 + 123, ^uint64(0)} {
-		for _, word := range []*big.Int{num(0), new(big.Int).Sub(top, big.NewInt(1)), new(big.Int).Sub(top, num(bound))} {
-			w := sampler{Bound: bound, Value: new(big.Int).Mod(word, num(bound)), Accepted: 1}
-			limit := new(big.Int).Sub(top, new(big.Int).Mod(top, num(bound)))
-			if word.Cmp(limit) >= 0 {
-				w.Accepted = 0
-			}
-			for i := range w.Bits {
-				w.Bits[i] = word.Bit(i)
-			}
-			fw, err := frontend.NewWitness(&w, ecc.BN254.ScalarField())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = cc.IsSolved(fw); err != nil {
-				t.Fatalf("bound=%d word=%s err=%v", bound, word, err)
-			}
+		if e = cc.IsSolved(fw); (e == nil) != valid {
+			t.Fatalf("valid=%v err=%v", valid, e)
 		}
 	}
+	check(true)
+	w.Index = W(17).Circuit()
+	check(false)
+	w.Index = i.Circuit()
+	w.Opening = m.Open(key(RosterDomain, i))
+	check(false)
+	w.Opening = m.Open(k)
+	w.Opening.Cell[Attack][3] = 0
+	check(false)
 }
 func TestCounterCarryAndRefusal(t *testing.T) {
-	m, err := New(fixture(2))
-	if err != nil {
-		t.Fatal(err)
+	m, e := New(fixture(2))
+	if e != nil {
+		t.Fatal(e)
 	}
-	m.State.V[phase] = DrawTarget
-	m.State.V[step] = 100
-	m.State.V[count0] = 1
-	m.State.V[count1] = 1
-	m.State.V[counter0] = ^uint64(0)
-	m.State.V[counter1] = 123
-	w, err := m.Next()
-	if err != nil {
-		t.Fatal(err)
+	m.State.V[phase] = W(DrawTarget)
+	m.State.V[step] = W(100)
+	m.State.V[count0] = W(1)
+	m.State.V[count1] = W(1)
+	m.State.V[counter] = Word{^uint64(0), 123}
+	w, e := m.Next()
+	if e != nil {
+		t.Fatal(e)
 	}
-	if m.State.V[counter0] != 0 || m.State.V[counter1] != 124 {
-		t.Fatal("counter carry lost")
+	if m.State.V[counter] != (Word{0, 124}) {
+		t.Fatal("carry lost")
 	}
-	solve(t, compile(t, DrawTarget), w, true)
-	for j := counter0; j <= counter3; j++ {
-		m.State.V[j] = ^uint64(0)
-	}
-	m.State.V[phase] = DrawTarget
-	before := m.State
-	if _, err = m.Next(); err == nil {
-		t.Fatal("counter wrapped")
-	}
-	if m.State.V != before.V {
-		t.Fatal("failed draw changed state")
+	cc := compile(t, DrawTarget)
+	solve(t, cc, w, true)
+	for _, field := range []int{counter, step} {
+		m.State.V[phase] = W(DrawTarget)
+		m.State.V[field] = Word{^uint64(0), ^uint64(0), ^uint64(0), ^uint64(0)}
+		before := m.State
+		if _, e = m.Next(); e == nil {
+			t.Fatal("wrapped")
+		}
+		if m.State.V != before.V {
+			t.Fatal("failure changed state")
+		}
+		bad := clone(w)
+		bad.Before[field] = m.State.V[field].Circuit()
+		bad.After[field] = protocol.Const(0)
+		recommit(bad)
+		solve(t, cc, bad, false)
+		m.State.V[field] = W(100)
 	}
 }
 func TestEmptyAndSixRoundTerminal(t *testing.T) {
@@ -116,28 +93,28 @@ func TestEmptyAndSixRoundTerminal(t *testing.T) {
 	for _, n := range []int{0, 1, 2} {
 		in := fixture(n)
 		for i := range in.Units {
-			in.Units[i][Attack] = 0
+			in.Units[i][Attack] = W(0)
 		}
-		m, err := New(in)
-		if err != nil {
-			t.Fatal(err)
+		m, e := New(in)
+		if e != nil {
+			t.Fatal(e)
 		}
 		var last *Step
-		for i := 0; m.State.V[phase] != Done && i < 1000; i++ {
-			last, err = m.Next()
-			if err != nil {
-				t.Fatal(err)
+		for i := 0; m.State.V[phase] != W(Done) && i < 1000; i++ {
+			last, e = m.Next()
+			if e != nil {
+				t.Fatal(e)
 			}
 		}
-		if m.State.V[phase] != Done {
-			t.Fatal("did not terminate")
+		if m.State.V[phase] != W(Done) {
+			t.Fatal("not terminal")
 		}
 		solve(t, cc, last, true)
-		if n == 2 && m.State.V[round] != 6 {
-			t.Fatal("wrong round limit")
+		if n == 2 && m.State.V[round] != W(6) {
+			t.Fatal("wrong round")
 		}
-		if _, err = m.Next(); err == nil {
-			t.Fatal("allowed post-terminal step")
+		if _, e = m.Next(); e == nil {
+			t.Fatal("postterminal")
 		}
 	}
 }

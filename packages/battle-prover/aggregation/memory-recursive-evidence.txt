@@ -1,0 +1,81 @@
+=== RUN   TestMemoryPinnedRecursiveProofs
+    tree_test.go:97: Groth16 compile constraints=8 public=9 time=375.459µs
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=e5990358ded1c5467b65b2158185b6b5fdb5c21e00b03f9597bd0d449110a2e2 time=4.711375ms
+    tree_test.go:97: Groth16 compile constraints=8 public=9 time=22µs
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=0a6594e5932306118b0ab7d5345a11cf88c9980e573f6e7dd8d8c83a8fe7df25 time=3.849708ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.768291ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.359875ms
+    tree_test.go:97: Groth16 compile constraints=2542059 public=9 time=5.411156584s
+    memory_range_test.go:103: accepted exact-transition heterogeneous keys and full-width descending position commitments
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=077cb59162a67bacf62396591973b37aa3291e4dff0c4a130c42c1c632bd69da time=2.956666ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.851583ms
+    memory_range_test.go:110: REJECTED unapproved genuine key with attempted witness-key replacement (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:112: REJECTED heterogeneous reorder (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer input (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer before (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer after (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer start (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer end (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer beforeDone (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer afterDone (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:118: REJECTED tampered outer result (compiled recursive constraints, not generated negative proof)
+    tree_test.go:97: Groth16 compile constraints=8 public=9 time=54.666µs
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=63743659d8faee85b5c3725cb45233492224f3ec640d66a1596fc153717dd1db time=2.951834ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.889834ms
+    tree_test.go:97: Groth16 compile constraints=1305927 public=9 time=2.646568792s
+    memory_range_test.go:128: REJECTED altered terminal result (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:139: REJECTED altered final input (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:139: REJECTED altered final after (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:139: REJECTED altered final end (compiled recursive constraints, not generated negative proof)
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=6550246709bbf0f2854d0d0d536400b548e22c2dc6da7be9914348a606b55b31 time=3.07125ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.012959ms
+    memory_range_test.go:143: REJECTED unapproved root and witness key override (compiled recursive constraints, not generated negative proof)
+--- PASS: TestMemoryPinnedRecursiveProofs (17.24s)
+=== RUN   TestMemoryAuthenticatedAdapterAttacks
+    tree_test.go:97: Groth16 compile constraints=8 public=9 time=47.5µs
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=81606b65101cc12ca980da23596e27f0e27b9a1d1a55fedf570dfca440a71839 time=3.316083ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.260292ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.892458ms
+    tree_test.go:97: Groth16 compile constraints=2542059 public=9 time=5.502748542s
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.081083ms
+    memory_range_test.go:178: REJECTED input link authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.942625ms
+    memory_range_test.go:178: REJECTED state link high bit authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.000792ms
+    memory_range_test.go:178: REJECTED position link high bit authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.016917ms
+    memory_range_test.go:178: REJECTED terminal before authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.786833ms
+    memory_range_test.go:178: REJECTED left terminal authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.83025ms
+    memory_range_test.go:178: REJECTED left result nonzero authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.773416ms
+    memory_range_test.go:178: REJECTED left before terminal authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.88ms
+    memory_range_test.go:178: REJECTED left invalid terminal flag authenticated claims fixture (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:180: REJECTED same-key replay (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:181: REJECTED same-key reorder (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.002292ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.810959ms
+    memory_range_test.go:188: REJECTED terminal identity padding rejected (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.924ms
+    memory_range_test.go:193: REJECTED nonterminal nonzero result (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.665834ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.969584ms
+    memory_range_test.go:201: REJECTED nonboolean right terminal (compiled recursive constraints, not generated negative proof)
+    tree_test.go:97: Groth16 compile constraints=1305927 public=9 time=2.775802167s
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.113416ms
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.098916ms
+    memory_range_test.go:220: REJECTED genesis genuine claims root (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.931ms
+    memory_range_test.go:220: REJECTED start position genuine claims root (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.961083ms
+    memory_range_test.go:220: REJECTED empty execution genuine claims root (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=2.009667ms
+    memory_range_test.go:220: REJECTED before terminal genuine claims root (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.783333ms
+    memory_range_test.go:220: REJECTED nonterminal genuine claims root (compiled recursive constraints, not generated negative proof)
+    memory_range_test.go:222: ADAPTER ONLY: real small claims proofs isolate guards; no battle or outer proof claim
+--- PASS: TestMemoryAuthenticatedAdapterAttacks (18.52s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	37.140s

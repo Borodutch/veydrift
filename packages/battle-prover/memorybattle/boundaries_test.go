@@ -8,19 +8,20 @@ import (
 func cell(o Opening) Cell {
 	var c Cell
 	for i, x := range o.Cell {
-		c[i] = integer(x).Uint64()
+		c[i] = word(x)
 	}
 	return c
 }
-func rootFrom(o Opening, index uint64, c Cell) frontend.Variable {
+func rootFrom(o Opening, index Key, c Cell) frontend.Variable {
 	h := cellHash(c)
+	idx := index.big()
 	for _, s := range o.Siblings {
-		if index&1 == 0 {
+		if idx.Bit(0) == 0 {
 			h = raw(h, integer(s))
 		} else {
 			h = raw(integer(s), h)
 		}
-		index >>= 1
+		idx.Rsh(idx, 1)
 	}
 	return h
 }
@@ -47,34 +48,34 @@ func TestDamageBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m.Memory.Write(0, Cell{0, 0, tc.attack, 0, 100, 0, 0, 0, 1})
-			m.Memory.Write(1, Cell{1, 1, 0, tc.maxShield, tc.maxHull, 1, tc.hull, tc.shield, 1})
+			m.Memory.Write(key(UnitDomain, W(0)), Cell{W(0), W(0), W(tc.attack), W(0), W(100), W(0), W(0), W(0), W(1)})
+			m.Memory.Write(key(UnitDomain, W(1)), Cell{W(1), W(1), W(0), W(tc.maxShield), W(tc.maxHull), W(1), W(tc.hull), W(tc.shield), W(1)})
 			m.State.Memory = m.Memory.Root()
-			m.State.V[phase] = Damage
-			m.State.V[round] = 1
-			m.State.V[target] = 1
-			m.State.V[count0] = 1
-			m.State.V[count1] = 1
-			m.State.V[step] = 100
+			m.State.V[phase] = W(Damage)
+			m.State.V[round] = W(1)
+			m.State.V[target] = W(1)
+			m.State.V[count0] = W(1)
+			m.State.V[count1] = W(1)
+			m.State.V[step] = W(100)
 			w, err := m.Next()
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := m.Memory.Read(1)
-			if got[Hull] != tc.wantHull || got[Shield] != tc.wantShield || m.State.V[phase] != uint64(tc.wantPhase) {
+			got := m.Memory.Read(key(UnitDomain, W(1)))
+			if got[Hull] != W(tc.wantHull) || got[Shield] != W(tc.wantShield) || m.State.V[phase] != W(uint64(tc.wantPhase)) {
 				t.Fatalf("wrong native damage: %v", got)
 			}
 			solve(t, cc, w, true)
 			forged := clone(w)
-			got[Attack]++ // changing immutable target stats is not a legal write
-			forged.AfterMemory = rootFrom(forged.Openings[0], 1, got)
+			got[Attack] = got[Attack].Add(W(1)) // changing immutable target stats is not a legal write
+			forged.AfterMemory = rootFrom(forged.Openings[0], key(UnitDomain, W(1)), got)
 			recommit(forged)
 			solve(t, cc, forged, false)
 		})
 	}
 }
 func TestInitializationCanonicality(t *testing.T) {
-	for _, mutate := range []func(*PreparedInput){func(i *PreparedInput) { i.Units[1][Type] = 0 }, func(i *PreparedInput) { i.Units[0][Cohort] = 1 }, func(i *PreparedInput) { i.Units[1][Cohort] = 0 }, func(i *PreparedInput) { i.Units[1][Hull] = 1 }} {
+	for _, mutate := range []func(*PreparedInput){func(i *PreparedInput) { i.Units[1][Type] = W(0) }, func(i *PreparedInput) { i.Units[0][Cohort] = W(1) }, func(i *PreparedInput) { i.Units[1][Cohort] = W(0) }, func(i *PreparedInput) { i.Units[1][Hull] = W(1) }} {
 		in := fixture(6)
 		mutate(&in)
 		if _, err := New(in); err == nil {
@@ -93,11 +94,11 @@ func TestInitializationCanonicality(t *testing.T) {
 	cc := compile(t, Init)
 	solve(t, cc, w, true)
 	u := cell(w.Openings[1])
-	u[Hull] = u[MaxHull] + 1
+	u[Hull] = u[MaxHull].Add(W(1))
 	u[Shield] = u[MaxShield]
-	u[Pool] = 1
+	u[Pool] = W(1)
 	bad := clone(w)
-	bad.AfterMemory = rootFrom(bad.Openings[0], 0, u)
+	bad.AfterMemory = rootFrom(bad.Openings[0], key(UnitDomain, W(0)), u)
 	recommit(bad)
 	solve(t, cc, bad, false)
 	// An authentic but non-canonical roster root must not turn a misordered pair
@@ -106,9 +107,9 @@ func TestInitializationCanonicality(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u = m.Roster.Read(1)
-	u[Type] = 0
-	m.Roster.Write(1, u)
+	u = m.Roster.Read(key(RosterDomain, W(1)))
+	u[Type] = W(0)
+	m.Roster.Write(key(RosterDomain, W(1)), u)
 	m.Context.Roster = m.Roster.Root()
 	m.Next()
 	m.Next()

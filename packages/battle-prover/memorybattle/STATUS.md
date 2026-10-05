@@ -1,57 +1,38 @@
-# Receipt — 2026-10-05
+# Full-width integration — solver verified, not production ready
 
-Implemented only the new memorybattle package. No battle/, aggregation/, oracle,
-go.mod, contract, service, deployment, board or git mutations by this worker.
+Final command: GOMAXPROCS=2 GOMEMLIMIT=2GiB go test ./memorybattle -count=1 -v -timeout=900s
+PASS376.336s. go vet ./memorybattle PASS. All owned processes collected.
+No setup, proving, board, git or deploy operations. Source receipts are in
+source-sha256.txt; complete final log is solver-evidence.txt. verify.sh reproduces.
 
-## Collected verification
+## Integrated guarantees
 
-- Bounded Boot+Init compile/solver passed before full trace expansion.
-- Full suite: PASS, 97.945s Go test; 98.25s measured wall time.
-- Max RSS: 2,419,654,656 bytes (~2.25 GiB). GOMAXPROCS=2,
-  GOMEMLIMIT=2GiB (soft limit, not a hard ceiling), test timeout 300s.
-- Six units: 132 constrained elementary transitions, 2 rounds, 18 RNG words.
-- Ten units: 346 constrained elementary transitions, 3 rounds, 38 RNG words.
-- BOTH rosters used the SAME cached eleven compiled constraint systems.
-- Live independent TypeScript candidate-2 oracle equality: final hull/shield,
-  RNG counter, round, winner, every round's shots and per-cohort survivors.
-- Negative tests reject valid-but-stale earlier target openings, stale write
-  roots, wrong index/sibling, modified seed/snapshot/roster, forged initial
-  memory/state/spec, skipped initialization, authentic noncanonical roster,
-  unauthorized immutable-field writes, invalid pools/ranks/reports, self-consistent
-  premature-terminal/result commitments, altered final result, missing/replayed
-  or context-mixed links. Linkage constraints also separately solver-tested.
-- Boundary tests: shield-only explosion eligibility, 30% strictness, bounce,
-  dead target/dead shooter scheduling, overkill, uint64-max damage/shield/hull,
-  index above 2^63 and rejection of 2^64 alias, >32-bit RNG bounds, full-digest
-  rejection, 256-bit counter carry and exhaustion refusal, empty/one-sided
-  battles and six-round terminal condition.
-- go vet ./memorybattle: PASS.
-- All worker-launched processes collected. No Setup/proving invocation.
+- Eleven fixed circuits; all478 transitions in6/10-unit battles solve under the
+  same per-operation systems. Independent TypeScript oracle matches final units,
+  every round shot/survivor report, rounds2/3 and RNG counters18/38.
+- Full uint256 cells, indices, counts, cohorts, cursor/rank, steps/shots/RNG.
+  Sparse key domain2||index256, standard MiMC/Merkle fold with canonical limb bits.
+- protocol.Arithmetic integrated into controller and authenticated random draws;
+  mathematical512-bit damage comparisons, checked actual uint256 arithmetic.
+- Latest roots/write preservation, initialization ordering, scans/reports,
+  seed/counter/rank, terminal and overflow refusals all adversarially tested.
+- High-bit sparse checkpoints test actual Init/Damage/FindTarget/Scan/DrawTarget/
+  Explosion transitions; max count/cursor/terminal, full sampler boundaries,
+  noncanonical limbs, address-domain confusion, wrong phase key and zero-anchor
+  forgery rejected. Independent stats-scaled2^220 battle oracle also matches.
+- Exported bridge APIs and full terminal checkpoint binding in bridge.go;
+  layout frozen in LAYOUT.md. Statement8 includes Input. Start/End commit full
+  uint256 steps and reserve zero for initial step; no native-field truncation.
 
-Constraints per operation (BN254 R1CS):
+Resource note: first all11-R1CS-retained run was stopped at~4.4GiB RSS despite
+soft2GiB; tests now retain one key at a time shared across both rosters. Final
+observed RSS~2.12GiB, consistent with soft-limit rather than hard isolation.
 
-| Kind | Constraints |
-|---|---:|
-| Boot | 35,211 |
-| Init | 224,404 |
-| Ready | 35,231 |
-| Reset | 131,134 |
-| FindShooter | 84,760 |
-| DrawTarget | 280,609 |
-| FindTarget | 84,755 |
-| Damage | 181,135 |
-| Explosion | 376,611 |
-| Rapidfire | 426,702 |
-| Scan | 133,446 |
+## Remaining bridge
 
-## Not proved / not shipped
-
-No generated proof for these memory circuits, no recursion integration or
-verified-key registry, no independent security review, no production ceremony.
-The sibling worker's tiny fixed-roster multi-chunk proof is a separate artifact.
-This foundation is **uint64 memory/stat/count limited**, not deployed uint256
-protocol complete. Group/research/catalog/on-chain preparation qualification,
-full-width arithmetic/address extension, source attribution and full settlement
-result derivation remain implementation work. Prepared-input roots/snapshot/seed
-must be authenticated externally. The README specifies the exact boundary.
-These are unfinished engineering, not a request for a user decision or blocker.
+Prepared effective stats/counts are authenticated inputs here, not proof of raw
+source IDs, owners, catalog/research or enrollment. preparation/ and resultbridge/
+share exact roster/Input/result encoding, but complete verified composition of
+preparation/combat/result/attribution proofs is still a separate obligation.
+RF qualification, seed lifecycle, settlement economics/exactly-once application,
+actual setup/proving/recursion/EVM activation are not solved by this package.
