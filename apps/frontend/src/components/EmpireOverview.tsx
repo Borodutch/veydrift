@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronRight, ChevronsDownUp, ChevronsUpDown, FlaskConical, Hammer, House, Rocket, Shield, Swords } from "lucide-preact";
+import { ChevronDown, ChevronsDownUp, ChevronsUpDown, FlaskConical, Hammer, House, Rocket, Shield, Swords } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { BackendDataStore } from "../backendDataStore";
@@ -140,6 +140,7 @@ export function EmpireOverview({
   planetNames,
   renderActions,
   researchQueue,
+  selectedActions,
   selectedBodyKind,
   selectedPlanetId,
 }: {
@@ -152,6 +153,7 @@ export function EmpireOverview({
   planetNames: ReadonlyMap<string, string>;
   renderActions?: ((group: OverviewMyPlanetActionGroup, kind: BodyKind) => ComponentChildren) | undefined;
   researchQueue: QueueStateResponse | null | undefined;
+  selectedActions?: ComponentChildren;
   selectedBodyKind: BodyKind;
   selectedPlanetId: string | undefined;
 }) {
@@ -197,11 +199,11 @@ export function EmpireOverview({
   );
 
   return (
-    <section aria-label="Empire" className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/[0.06] px-3 py-2">
+    <section aria-label="Empire">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/[0.08] px-2 pb-3">
         <div className="min-w-0">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Empire</h2>
-          <p className="text-[10px] text-slate-500">
+          <h1 className="text-lg font-semibold text-white">Empire</h1>
+          <p className="text-[11px] text-slate-500">
             {myPlanets.length} {myPlanets.length === 1 ? "planet" : "planets"}{moonCount > 0 ? ` · ${moonCount} ${moonCount === 1 ? "moon" : "moons"}` : ""}
           </p>
         </div>
@@ -220,9 +222,11 @@ export function EmpireOverview({
           {anyExpanded ? <ChevronsDownUp aria-hidden="true" size={14} /> : <ChevronsUpDown aria-hidden="true" size={14} />}
         </button>
       </header>
-      <ul className="divide-y divide-white/[0.06]">
-        {myPlanets.map((group) => {
+      <ul className="divide-y divide-white/[0.06] border-b border-white/[0.06]">
+        {[...myPlanets].sort((a, b) => Number(b.planet.planetId === selectedPlanetId) - Number(a.planet.planetId === selectedPlanetId)).map((group) => {
           const { planet } = group;
+          const planetSelected = planet.planetId === selectedPlanetId && selectedBodyKind === "planet";
+          const moonSelected = planet.planetId === selectedPlanetId && selectedBodyKind === "moon";
           const rowPlanet = planetFromSettlementPlanet(planet);
           const research = researchQueue?.planetId === planet.planetId ? researchQueue : undefined;
           const moon = planet.moon?.exists ? planet.moon : null;
@@ -231,7 +235,7 @@ export function EmpireOverview({
               <BodyRow
                 account={account}
                 backendData={backendData}
-                expanded={expanded.has(bodyKey(planet.planetId, "planet"))}
+                expanded={planetSelected || expanded.has(bodyKey(planet.planetId, "planet"))}
                 fleetVisibility={fleetVisibility}
                 group={group}
                 image={rowPlanet.image}
@@ -242,13 +246,14 @@ export function EmpireOverview({
                 planetNames={planetNames}
                 renderActions={renderActions}
                 researchQueue={research}
-                selected={planet.planetId === selectedPlanetId && selectedBodyKind === "planet"}
+                selected={planetSelected}
+                selectedActions={planetSelected ? selectedActions : undefined}
               />
               {moon ? (
                 <BodyRow
                   account={account}
                   backendData={backendData}
-                  expanded={expanded.has(bodyKey(planet.planetId, "moon"))}
+                  expanded={moonSelected || expanded.has(bodyKey(planet.planetId, "moon"))}
                   fleetVisibility={fleetVisibility}
                   group={group}
                   image={moonImageForType(rowPlanet.type)}
@@ -258,7 +263,8 @@ export function EmpireOverview({
                   onToggle={() => toggle(bodyKey(planet.planetId, "moon"))}
                   planetNames={planetNames}
                   renderActions={renderActions}
-                  selected={planet.planetId === selectedPlanetId && selectedBodyKind === "moon"}
+                  selected={moonSelected}
+                  selectedActions={moonSelected ? selectedActions : undefined}
                 />
               ) : null}
             </li>
@@ -284,6 +290,7 @@ function BodyRow({
   renderActions,
   researchQueue,
   selected,
+  selectedActions,
 }: {
   account: string | undefined;
   backendData: BackendDataStore | undefined;
@@ -299,6 +306,7 @@ function BodyRow({
   renderActions: ((group: OverviewMyPlanetActionGroup, kind: BodyKind) => ComponentChildren) | undefined;
   researchQueue?: QueueStateResponse | undefined;
   selected: boolean;
+  selectedActions?: ComponentChildren;
 }) {
   const { planet } = group;
   const isMoon = kind === "moon";
@@ -318,20 +326,29 @@ function BodyRow({
   const hostile = missions?.lines.some((line) => line.relation === "hostile" && line.direction === "incoming") ?? false;
 
   return (
-    <div className={isMoon ? "border-t border-white/[0.04] bg-black/10 pl-5" : undefined}>
-      <button
-        aria-expanded={expanded}
-        className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-x-2.5 gap-y-1 px-3 py-2 text-left transition hover:bg-white/[0.03] sm:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] ${selected ? "bg-cyan-300/[0.05]" : ""}`}
-        onClick={onToggle}
-        type="button"
+    <div className={isMoon ? "border-t border-white/[0.04] pl-6" : undefined}>
+      {/* The selected body stays open; elsewhere the row toggles and the name selects. */}
+      <div
+        className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 rounded-md px-2 py-2 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
+        onClick={selected ? undefined : onToggle}
       >
-        <ChevronRight aria-hidden="true" className={`shrink-0 text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`} size={14} />
         <span className={`relative shrink-0 overflow-hidden rounded-full bg-white/5 ${isMoon ? "h-6 w-6" : "h-8 w-8"} ${selected ? "ring-1 ring-cyan-300/60" : ""}`}>
           <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={image} />
         </span>
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className={`truncate font-semibold ${isMoon ? "text-xs text-slate-300" : "text-[13px] text-white"}`}>{name}</span>
+            <button
+              className={`truncate font-semibold transition hover:text-cyan-200 disabled:cursor-default disabled:hover:text-inherit ${isMoon ? "text-xs text-slate-300" : "text-[13px] text-white"}`}
+              disabled={selected || !onSwitch}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSwitch?.();
+              }}
+              title={selected ? undefined : `Select ${name}`}
+              type="button"
+            >
+              {name}
+            </button>
             {!isMoon && planet.isHomePlanet ? <House aria-label="Home planet" className="shrink-0 text-slate-500" size={11} /> : null}
           </span>
           <span className="block truncate font-mono text-[10px] text-slate-500">
@@ -350,8 +367,24 @@ function BodyRow({
             </span>
           ) : null}
         </span>
-        <ResourceCells caps={caps} className="col-span-4 col-start-3 sm:col-span-1 sm:col-start-auto" rates={rates} resources={resources} />
-      </button>
+        <ResourceCells caps={caps} className="col-span-3 col-start-2 row-start-2 sm:col-span-1 sm:col-start-auto sm:row-start-auto" rates={rates} resources={resources} />
+        {selected ? (
+          <span aria-hidden="true" className="w-3.5" />
+        ) : (
+          <button
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Collapse" : "Expand"} ${name}`}
+            className="-m-1 p-1 text-slate-500 hover:text-slate-200 sm:col-start-auto"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            type="button"
+          >
+            <ChevronDown aria-hidden="true" className={`transition-transform ${expanded ? "rotate-180" : ""}`} size={14} />
+          </button>
+        )}
+      </div>
       {expanded ? (
         <BodyDetails
           account={account}
@@ -360,9 +393,9 @@ function BodyRow({
           kind={kind}
           missions={missions}
           now={now}
-          onSwitch={onSwitch}
           queues={queues}
           renderActions={renderActions}
+          selectedActions={selectedActions}
         />
       ) : null}
     </div>
@@ -376,9 +409,9 @@ function BodyDetails({
   kind,
   missions,
   now,
-  onSwitch,
   queues: rosterQueues,
   renderActions,
+  selectedActions,
 }: {
   account: string | undefined;
   backendData: BackendDataStore | undefined;
@@ -386,9 +419,9 @@ function BodyDetails({
   kind: BodyKind;
   missions: ReturnType<typeof summarizeFleets> | undefined;
   now: number;
-  onSwitch: (() => void) | undefined;
   queues: QueueLine[];
   renderActions: ((group: OverviewMyPlanetActionGroup, kind: BodyKind) => ComponentChildren) | undefined;
+  selectedActions?: ComponentChildren;
 }) {
   const { planet } = group;
   const isMoon = kind === "moon";
@@ -424,7 +457,7 @@ function BodyDetails({
   const actions = renderActions?.(group, kind);
 
   return (
-    <div className="grid gap-3 px-3 pb-3 pt-1 sm:pl-[3.75rem]">
+    <div className="grid gap-3 px-2 pb-4 pt-1 sm:pl-[3.25rem]">
       {loadingMoon ? <p className="text-[11px] text-slate-500">Loading…</p> : null}
       {queues.length > 0 || hasMissions ? (
         <div className={`grid gap-3 ${queues.length > 0 && hasMissions ? "lg:grid-cols-2" : ""}`}>
@@ -442,18 +475,9 @@ function BodyDetails({
       ) : null}
       {units.length > 0 ? <DetailSection title="Fleet & defenses"><TileGrid tiles={units} /></DetailSection> : null}
       {buildings.length > 0 ? <DetailSection title="Infrastructure"><TileGrid labelled tiles={buildings} /></DetailSection> : null}
-      <div className="flex flex-wrap items-center justify-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5 empty:hidden">
+        {selectedActions}
         {actions}
-        {onSwitch ? (
-          <button
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-cyan-300/30 bg-cyan-300/10 px-2.5 text-[11px] font-semibold text-cyan-100 transition hover:bg-cyan-300/20"
-            onClick={onSwitch}
-            type="button"
-          >
-            {isMoon ? "Manage moon" : "Manage planet"}
-            <ArrowRight aria-hidden="true" size={12} />
-          </button>
-        ) : null}
       </div>
     </div>
   );

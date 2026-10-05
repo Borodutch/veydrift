@@ -4,7 +4,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
-  ChevronDown,
   Info,
   Package,
   PackagePlus,
@@ -18,40 +17,19 @@ import {
   Trash2,
   X,
 } from "lucide-preact";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import {
-  actionNoticeForBuilding,
-  buildingKeyForContractId,
-  type InfrastructureActionNotice,
-} from "../buildingActionNotice";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { BackendDataStore } from "../backendDataStore";
-import { researchQueueForDisplay } from "../chainState";
-import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { planetsFromSystemResponse } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import type { GalaxyAction } from "../galaxyActions";
-import { isImageReady } from "../imageLoadState";
 import {
-  buildingQueueAsset,
-  buildingQueueLabel,
-  buildingQueuePreview,
   displayPlanetStats,
   overviewPlanetEffects,
-  overviewQueueItemLabelClassName,
-  overviewQueueItemRemainingClassName,
-  queueProgressBarState,
-  queueProgressFillState,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
   type OverviewPlanetEffectsDisplay,
 } from "../overviewData";
-import { overviewHeroImage } from "../overviewHeroImage";
 import {
-  defenseCatalog,
-  queueProgress as queueProgressValue,
-  researchCatalog,
-  shipCatalog,
-  type MainQueueItem,
   type PlayableState,
   type Resources,
 } from "../playableMvp";
@@ -69,7 +47,6 @@ import {
   type WatchedPlanetsResponse
 } from "../walletFlow";
 import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
-import { AnimatedProgressBar } from "./AnimatedProgressBar";
 import { EmpireOverview } from "./EmpireOverview";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import {
@@ -80,10 +57,6 @@ import {
 } from "./GalaxyView";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 import { combatProgressLabel, isMissionQueued, missionTypeLabel } from "./missionControlModel";
-import { OptimizedImage } from "./OptimizedImage";
-import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
-import { ProductionQueuePanel, productionQueueViewModel } from "./ProductionCatalog";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 export { isOverviewResearchReadyToFinish } from "./overviewQueueModel";
@@ -96,13 +69,6 @@ export function compactOverviewResearchLabel(label: string): string {
   return label.replace(/\s+Technology(?=(?:\s+\d+)?$)/, "");
 }
 
-function queueRemaining(readyAt: string | null, now: number): string {
-  if (!readyAt) return "Pending";
-  return formatDurationUntil(Number(readyAt) * 1_000, now);
-}
-
-type BuildingQueueItem = Extract<MainQueueItem, { kind: "building" }>;
-
 export type PlanetRenameActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -110,11 +76,6 @@ export type PlanetRenameActionState =
   | { status: "error"; label: string };
 
 export type PlanetManagementActionState = PlanetRenameActionState;
-type OverviewResearchActionState =
-  | { status: "idle" }
-  | { status: "pending"; label: string }
-  | { status: "success"; label: string }
-  | { status: "error"; label: string };
 
 export type OverviewMyPlanetActionGroup = {
   planet: ManagedPlanetResponse;
@@ -127,30 +88,17 @@ interface OverviewPageProps {
   backendData?: BackendDataStore | undefined;
   researchQueue?: QueueStateResponse | null | undefined;
   selectedBodyKind?: "planet" | "moon";
-  state: PlayableState;
   settledState: PlayableState;
   rates: Resources;
-  caps: Resources;
-  constructionProgress?: Partial<Record<"building" | "defense" | "research" | "ship", ConstructionProgress | undefined>> | undefined;
-  queueProgress: number;
-  researchProgress: number;
-  shipProgress: number;
   now: number;
-  buildingQueue?: BuildingQueueItem | undefined;
   planet?: PlanetSummary | undefined;
   homePlanet?: Planet | undefined;
   isWalletConnected: boolean;
-  buildingActionNotice?: InfrastructureActionNotice | undefined;
-  buildingActionPendingLabel?: string | undefined;
-  researchAction?: OverviewResearchActionState | undefined;
-  onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectMoon?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlanet?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
-  // Fast planet switching from the My planets list: tapping one of the player's own planets (or its
-  // moon) makes it the selected body — the mobile equivalent of the desktop planet rail — instead of
-  // navigating away to the inspect screen.
+  // Tapping one of the player's own planet or moon names makes it the selected body.
   onSwitchPlanet?: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onRenamePlanet?: ((name: string) => void) | undefined;
@@ -177,7 +125,6 @@ interface OverviewPageProps {
   onWatchedMoonAction?: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   watchBusyPlanetId?: string | undefined;
   myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
-  currentCommanderLabel?: string | undefined;
   selectedPlanetId?: string | undefined;
   onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
   onSupplyPlanet?: ((planet: ManagedPlanetResponse) => void) | undefined;
@@ -190,20 +137,10 @@ export function OverviewPage({
   selectedBodyKind = "planet",
   settledState,
   rates,
-  caps,
-  constructionProgress,
-  queueProgress,
-  researchProgress,
-  shipProgress,
   now,
-  buildingQueue: activeBuildingQueue,
   planet,
   homePlanet,
   isWalletConnected,
-  buildingActionNotice,
-  buildingActionPendingLabel,
-  researchAction = { status: "idle" },
-  onNavigate,
   onSelectAlliance,
   onSelectMoon,
   onSelectPlanet,
@@ -234,7 +171,6 @@ export function OverviewPage({
   onWatchedMoonAction,
   watchBusyPlanetId,
   myPlanets = [],
-  currentCommanderLabel,
   selectedPlanetId,
   onMyPlanetAction,
   onSupplyPlanet,
@@ -249,57 +185,6 @@ export function OverviewPage({
     solarSatelliteCount: settledState.ships.solarSatellite,
     usedFields,
   });
-  const buildingQueue = activeBuildingQueue ?? (settledState.queue?.kind === "building" ? settledState.queue : undefined);
-  const buildingPreview = buildingQueuePreview(onChainQueues?.building);
-  const onChainBuildingQueue = buildingQueue
-    ? {
-      asset: buildingQueueAsset(buildingQueue.key),
-      label: compactOverviewLevelLabel(buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel)),
-    }
-    : {
-      ...buildingPreview,
-      label: compactOverviewLevelLabel(buildingPreview.label),
-    };
-  const localBuildingAsset = buildingQueue ? buildingQueueAsset(buildingQueue.key) : undefined;
-  const localBuildingLabel = buildingQueue
-    ? compactOverviewLevelLabel(buildingQueueLabel(buildingQueue.label, buildingQueue.targetLevel))
-    : settledState.queue?.label;
-  const onChainResearchQueue = researchQueueForDisplay(onChainQueues?.research ?? null, now, {
-    buildings: settledState.buildings,
-    research: settledState.research,
-  });
-  const onChainResearchAsset = onChainResearchQueue
-    ? researchCatalog.find((research) => research.key === onChainResearchQueue.key)?.asset
-    : onChainQueues?.research?.itemId === undefined
-      ? undefined
-      : researchCatalog.find((research) => research.id === onChainQueues.research?.itemId)?.asset;
-  const settledResearchAsset = settledState.researchQueue
-    ? researchCatalog.find((research) => research.key === settledState.researchQueue?.key)?.asset
-    : undefined;
-  const activeResearchProgress = constructionProgress?.research?.progress
-    ?? (onChainResearchQueue
-      ? onChainResearchQueue.startedAt === undefined
-        ? undefined
-        : queueProgressValue(onChainResearchQueue, now)
-      : settledState.researchQueue?.startedAt === undefined
-        ? undefined
-        : researchProgress);
-  const onChainDefenseQueue = productionQueueViewModel(onChainQueues?.defense, defenseCatalog);
-  const onChainShipQueue = productionQueueViewModel(onChainQueues?.ship, shipCatalog);
-  const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
-  const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
-  const pendingBuildingNotice = buildingActionPendingLabel
-    ? {
-        buildingKey: buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
-        label: buildingActionPendingLabel,
-        tone: "pending" as const,
-      }
-    : undefined;
-  const overviewBuildingNoticeToRender = overviewBuildingActionNoticeFor(
-    scopedBuildingNotice ?? pendingBuildingNotice,
-    buildingNoticeKey,
-  );
-  const shouldShowFleetsSummary = Boolean(isWalletConnected && fleetVisibility);
   const watchedPlanetRows = useMemo(() =>
     watchedPlanets
       ? planetsFromSystemResponse({
@@ -332,12 +217,7 @@ export function OverviewPage({
     return names;
   }, [myPlanets, watchedPlanets]);
 
-  // Only ever derive the planet name from real data: the loaded home planet's name, or a
-  // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
-  // name; the hero renders a skeleton until a real name exists, and the disconnected state shows a
-  // connect-wallet card instead of a fabricated home planet (VEY-KANEO-458).
-  const livePlanetName = overviewPlanetDisplayName(homePlanet, planet);
-  const planetName = livePlanetName ?? "";
+  const planetName = overviewPlanetDisplayName(homePlanet, planet) ?? "";
   const [renameDraft, setRenameDraft] = useState(planetName);
   const [renamePanelOpen, setRenamePanelOpen] = useState(false);
   const [renameValidation, setRenameValidation] = useState<string | undefined>(undefined);
@@ -346,35 +226,6 @@ export function OverviewPage({
     setEffectsPanelOpen(false);
     setRenamePanelOpen(false);
   }, [selectedBodyKind]);
-  const planetSubhead = homePlanet
-    ? `${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
-    : planet?.coordinates?.trim() || (selectedBodyKind === "moon" ? "Moon" : "Planet");
-  const currentPlanetKey = homePlanet
-    ? planetKeyFromCoordinates(homePlanet)
-    : onChainSettlement?.planet
-      ? planetKeyFromCoordinates(onChainSettlement.planet)
-      : planet?.coordinates;
-  const [lastKnownHeroImage, setLastKnownHeroImage] = useState<
-    { image: string; planetKey: string } | undefined
-  >(
-    homePlanet?.image && currentPlanetKey
-      ? { image: homePlanet.image, planetKey: currentPlanetKey }
-      : undefined
-  );
-  const [heroImageLoaded, setHeroImageLoaded] = useState(false);
-  const heroImageRef = useRef<HTMLImageElement>(null);
-
-  useEffect(() => {
-    if (homePlanet?.image && currentPlanetKey) {
-      setLastKnownHeroImage({ image: homePlanet.image, planetKey: currentPlanetKey });
-    }
-  }, [currentPlanetKey, homePlanet?.image]);
-
-  const heroImage = overviewHeroImage(homePlanet, lastKnownHeroImage, currentPlanetKey);
-
-  useLayoutEffect(() => {
-    setHeroImageLoaded(isImageReady(heroImageRef.current));
-  }, [heroImage]);
 
   useEffect(() => {
     if (!renamePanelOpen) {
@@ -427,11 +278,68 @@ export function OverviewPage({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [effectsPanelOpen, renameBusy, renamePanelOpen]);
 
+  const selectedBodyActions = (
+    <>
+      {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen ? (
+        <span className={`mr-auto max-w-full truncate text-[11px] ${renameStatusTone}`}>{planetRenameAction.label}</span>
+      ) : null}
+      {planetManagementAction.status !== "idle" ? (
+        <span className={`mr-auto max-w-full truncate text-[11px] ${managementStatusTone}`}>{planetManagementAction.label}</span>
+      ) : null}
+      <button
+        aria-controls="overview-planet-effects"
+        aria-expanded={effectsPanelOpen}
+        aria-haspopup="dialog"
+        aria-label="Show planet stats and effects"
+        className="inline-grid h-11 w-11 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 sm:h-8 sm:w-8"
+        onClick={() => {
+          setRenamePanelOpen(false);
+          setEffectsPanelOpen(true);
+        }}
+        title="Planet stats and effects"
+        type="button"
+      >
+        <Info aria-hidden="true" size={14} strokeWidth={2} />
+      </button>
+      {canShowRename ? (
+        <button
+          aria-controls="overview-planet-name-editor"
+          aria-expanded={renamePanelOpen}
+          aria-haspopup="dialog"
+          aria-label="Rename planet"
+          className="inline-grid h-11 w-11 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8 sm:w-8"
+          disabled={renameBusy}
+          onClick={() => {
+            setEffectsPanelOpen(false);
+            setRenamePanelOpen(true);
+            setRenameDraft(planetName);
+            setRenameValidation(undefined);
+          }}
+          title="Rename planet"
+          type="button"
+        >
+          <Pencil aria-hidden="true" size={13} strokeWidth={2} />
+        </button>
+      ) : null}
+      {showAbandonAction ? (
+        <button
+          aria-label="Abandon planet"
+          className="inline-flex h-11 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 sm:h-8"
+          onClick={() => onAbandonPlanet?.()}
+          title="Abandon planet"
+          type="button"
+        >
+          <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
+          Abandon
+        </button>
+      ) : null}
+    </>
+  );
+
   return (
     <div className="grid gap-3">
-      <div className={shouldShowFleetsSummary ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-stretch" : "grid gap-3"}>
-      {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
-          connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
+      {/* When the wallet is disconnected we show a clear connect-wallet card instead of a
+          fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
         <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] p-4 sm:p-5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Home planet</p>
@@ -440,127 +348,7 @@ export function OverviewPage({
             Connect your wallet to view your home planet and resources.
           </p>
         </div>
-      ) : (
-      <div className="relative min-h-[8.75rem] overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-        {(!heroImage || !heroImageLoaded) && (
-          <PlanetImageSkeleton className="absolute inset-0" />
-        )}
-        {heroImage ? (
-          <OptimizedImage
-            key={heroImage}
-            alt="Planet hero background"
-            className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-200 ${heroImageLoaded ? "opacity-95" : "opacity-0"}`}
-            imageRef={heroImageRef}
-            loading="eager"
-            onLoad={(event) => {
-              if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
-            }}
-            sizes="(min-width: 1024px) 40rem, 100vw"
-            src={heroImage}
-          />
-        ) : null}
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#101624]/80 via-[#101624]/45 to-[#101624]/10" />
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-[#101624]/70 via-[#101624]/10 to-transparent" />
-        {homePlanet?.hasMoon ? (
-          <PlanetMoonIndicator
-            className="right-3 top-3"
-            label={`Open ${homePlanet.moonName ?? "Moon"}`}
-            onClick={onSwitchPlanet && selectedPlanetId ? () => onSwitchPlanet(selectedPlanetId, "moon") : onSelectMoon ? () => onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position }) : undefined}
-            overviewHero
-            planetType={homePlanet.type}
-            title={`Open ${homePlanet.moonName ?? "Moon"} at [${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}]`}
-          />
-        ) : null}
-        <div className="relative grid min-h-[8.75rem] content-end gap-3 p-3 sm:min-h-[9.5rem] sm:p-4">
-          <div className="grid max-w-[36rem] min-w-0 gap-2">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.14em] text-slate-200/95 drop-shadow">{planetSubhead}</p>
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-                <h2 className="m-0 min-w-0 break-words text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl">
-                  {livePlanetName ?? (
-                    <span
-                      aria-label="Loading planet name"
-                      className="inline-block h-7 w-40 animate-pulse rounded bg-white/10 align-middle sm:h-8"
-                    />
-                  )}
-                </h2>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <button
-                    aria-controls="overview-planet-effects"
-                    aria-expanded={effectsPanelOpen}
-                    aria-haspopup="dialog"
-                    aria-label="Show planet stats and effects"
-                    className="inline-grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50 sm:h-6 sm:w-6"
-                    onClick={() => {
-                      setRenamePanelOpen(false);
-                      setEffectsPanelOpen(true);
-                    }}
-                    title="Planet stats and effects"
-                    type="button"
-                  >
-                    <Info aria-hidden="true" size={13} strokeWidth={2} />
-                  </button>
-                  {canShowRename && (
-                    <button
-                      aria-controls="overview-planet-name-editor"
-                      aria-expanded={renamePanelOpen}
-                      aria-haspopup="dialog"
-                      aria-label="Rename planet"
-                      className="relative inline-grid h-10 w-10 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-5 sm:w-5"
-                      disabled={renameBusy}
-                      onClick={() => {
-                        setEffectsPanelOpen(false);
-                        setRenamePanelOpen(true);
-                        setRenameDraft(planetName);
-                        setRenameValidation(undefined);
-                      }}
-                      title="Rename planet"
-                      type="button"
-                    >
-                      <Pencil aria-hidden="true" size={11} strokeWidth={2} />
-                    </button>
-                  )}
-                  {showAbandonAction && (
-                    <button
-                      aria-label="Abandon planet"
-                      className="inline-flex h-10 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50 sm:h-8"
-                      onClick={() => onAbandonPlanet?.()}
-                      title="Abandon planet"
-                      type="button"
-                    >
-                      <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
-                      Abandon
-                    </button>
-                  )}
-                </div>
-              </div>
-              {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen && (
-                <p className={`mt-1 max-w-full truncate text-xs ${renameStatusTone}`}>
-                  {planetRenameAction.label}
-                </p>
-              )}
-              {planetManagementAction.status !== "idle" && (
-                <p className={`mt-1 max-w-full truncate text-xs ${managementStatusTone}`}>
-                  {planetManagementAction.label}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      )}
-
-      {shouldShowFleetsSummary && fleetVisibility ? (
-        <FleetsSummary
-          bodyKind={selectedBodyKind}
-          fleetVisibility={fleetVisibility}
-          planetContextKey={selectedPlanetId}
-          planetNames={fleetPlanetNames}
-          now={now}
-          onOpenMissionControl={() => onNavigate("mission-control")}
-        />
       ) : null}
-      </div>
 
       {canShowRename && renamePanelOpen ? (
         <div
@@ -658,185 +446,6 @@ export function OverviewPage({
         </div>
       )}
 
-      {/* Contract production queues */}
-      <div className="grid min-w-0 gap-3 sm:auto-rows-fr sm:grid-cols-2 xl:grid-cols-4">
-        {/* Building queue */}
-        <QueuePanel label="Buildings">
-          {onChainQueues?.building?.active ? (
-            <QueuePanelContent>
-              {buildingQueue ? (
-                <QueueItemDisplay
-                  color="bg-amber-300"
-                  label={onChainBuildingQueue.label}
-                  remaining={formatDurationUntil(buildingQueue.readyAt, now)}
-                  progress={queueProgress}
-                  readyAt={buildingQueue.readyAt}
-                  startedAt={buildingQueue.startedAt}
-                  thumbnailSrc={onChainBuildingQueue.asset}
-                  now={now}
-                  progressState={constructionProgress?.building}
-                />
-              ) : (
-                <QueueItemDisplay
-                  color="bg-amber-300"
-                  label={onChainBuildingQueue.label}
-                  remaining={queueRemaining(onChainQueues.building.readyAt, now)}
-                  thumbnailSrc={onChainBuildingQueue.asset}
-                  indeterminate
-                />
-              )}
-              <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
-            </QueuePanelContent>
-          ) : (
-            <OverviewQueueFallback
-              progressState={constructionProgress?.building}
-              queue={buildingQueue}
-              renderEmpty={() => (
-                <EmptyQueue actionLabel="Build" onAction={() => onNavigate("infrastructure")}>
-                  No active construction.
-                </EmptyQueue>
-              )}
-              renderQueue={(fallbackBuildingQueue) => (
-                <QueuePanelContent>
-                  <QueueItemDisplay
-                    color="bg-amber-300"
-                    label={localBuildingLabel ?? fallbackBuildingQueue.label}
-                    remaining={formatDurationUntil(fallbackBuildingQueue.readyAt, now)}
-                    progress={queueProgress}
-                    readyAt={fallbackBuildingQueue.readyAt}
-                    startedAt={fallbackBuildingQueue.startedAt}
-                    thumbnailSrc={localBuildingAsset}
-                    now={now}
-                    progressState={constructionProgress?.building}
-                  />
-                  <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
-                </QueuePanelContent>
-              )}
-            />
-          )}
-        </QueuePanel>
-
-        {/* Defense queue */}
-        <QueuePanel label="Defenses">
-          {onChainDefenseQueue ? (
-            <QueuePanelContent>
-              <ProductionQueuePanel
-                embedded
-                now={now}
-                progressState={constructionProgress?.defense}
-                queue={onChainDefenseQueue}
-                showBacklogEta={false}
-                tone="rose"
-              />
-            </QueuePanelContent>
-          ) : (
-              <EmptyQueue actionLabel="Defenses" onAction={() => onNavigate("defenses")}>
-                No active defense production.
-              </EmptyQueue>
-          )}
-        </QueuePanel>
-
-        {/* Research queue */}
-        <QueuePanel label="Research">
-          {onChainResearchQueue ? (
-            <QueuePanelContent>
-              <QueueItemDisplay
-                label={`${compactOverviewResearchLabel(onChainResearchQueue.label)} ${onChainResearchQueue.targetLevel}`}
-                remaining={formatDurationUntil(onChainResearchQueue.readyAt, now)}
-                progress={activeResearchProgress}
-                readyAt={onChainResearchQueue.readyAt}
-                startedAt={onChainResearchQueue.startedAt}
-                thumbnailSrc={onChainResearchAsset}
-                color="bg-violet-300"
-                now={now}
-                progressState={constructionProgress?.research}
-              />
-              <OverviewResearchActionNotice actionState={researchAction} />
-            </QueuePanelContent>
-          ) : onChainQueues?.research?.active ? (
-            <QueuePanelContent>
-              <QueueItemDisplay
-                label={`${onChainQueues.research.kind === "research" ? "Research" : onChainQueues.research.kind} ${onChainQueues.research.targetLevel}`}
-                remaining={queueRemaining(onChainQueues.research.readyAt, now)}
-                indeterminate
-                thumbnailSrc={onChainResearchAsset}
-                color="bg-violet-300"
-              />
-              <OverviewResearchActionNotice actionState={researchAction} />
-            </QueuePanelContent>
-          ) : (
-            <OverviewQueueFallback
-              progressState={constructionProgress?.research}
-              queue={settledState.researchQueue}
-              renderEmpty={() => (
-                <QueuePanelContent>
-                  <EmptyQueue actionLabel="Research" onAction={() => onNavigate("research")}>
-                    No active research.
-                  </EmptyQueue>
-                  <OverviewResearchActionNotice actionState={researchAction} />
-                </QueuePanelContent>
-              )}
-              renderQueue={(fallbackResearchQueue) => (
-                <QueuePanelContent>
-                  <QueueItemDisplay
-                    label={compactOverviewResearchLabel(fallbackResearchQueue.label)}
-                    remaining={formatDurationUntil(fallbackResearchQueue.readyAt, now)}
-                    progress={activeResearchProgress}
-                    readyAt={fallbackResearchQueue.readyAt}
-                    startedAt={fallbackResearchQueue.startedAt}
-                    thumbnailSrc={settledResearchAsset}
-                    color="bg-violet-300"
-                    now={now}
-                    progressState={constructionProgress?.research}
-                  />
-                  <OverviewResearchActionNotice actionState={researchAction} />
-                </QueuePanelContent>
-              )}
-            />
-          )}
-        </QueuePanel>
-
-        {/* Shipyard queue */}
-        <QueuePanel label="Shipyard">
-          {onChainShipQueue ? (
-            <QueuePanelContent>
-              <ProductionQueuePanel
-                embedded
-                now={now}
-                progressState={constructionProgress?.ship}
-                queue={onChainShipQueue}
-                showBacklogEta={false}
-                tone="sky"
-              />
-            </QueuePanelContent>
-          ) : (
-            <OverviewQueueFallback
-              progressState={constructionProgress?.ship}
-              queue={settledState.queue?.kind === "ship" ? settledState.queue : undefined}
-              renderEmpty={() => (
-                <EmptyQueue actionLabel="Shipyard" onAction={() => onNavigate("shipyard")}>
-                  No active ship production.
-                </EmptyQueue>
-              )}
-              renderQueue={(fallbackShipQueue) => (
-                <QueuePanelContent>
-                  <QueueItemDisplay
-                    label={fallbackShipQueue.label}
-                    remaining={formatDurationUntil(fallbackShipQueue.readyAt, now)}
-                    progress={shipProgress}
-                    readyAt={fallbackShipQueue.readyAt}
-                    startedAt={fallbackShipQueue.startedAt}
-                    color="bg-sky-300"
-                    now={now}
-                    progressState={constructionProgress?.ship}
-                  />
-                </QueuePanelContent>
-              )}
-            />
-          )}
-        </QueuePanel>
-      </div>
-
       {isWalletConnected && myPlanets.length > 0 ? (
         <EmpireOverview
           account={account}
@@ -856,6 +465,7 @@ export function OverviewPage({
             />
           )}
           researchQueue={researchQueue}
+          selectedActions={selectedBodyActions}
           selectedBodyKind={selectedBodyKind}
           selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
@@ -968,14 +578,6 @@ function OverviewMoonActionButtons({
 
 export function managedPlanetOverviewDisplayName(planet: ManagedPlanetResponse): string {
   return planet.name?.trim() || `Planet ${planet.coordinates}`;
-}
-
-export function overviewBuildingActionNoticeFor(
-  actionNotice: InfrastructureActionNotice | undefined,
-  buildingKey: BuildingQueueItem["key"] | undefined,
-): InfrastructureActionNotice | undefined {
-  if (!buildingKey) return actionNotice;
-  return actionNoticeForBuilding(actionNotice, buildingKey);
 }
 
 function WatchedPlanetsPanel({
@@ -1150,44 +752,6 @@ export function shouldRenderWatchedPlanetsPanel({
 // Research completions settle automatically on-chain (lazy reconcile), so there is no manual
 // "complete" control. This predicate is still used to derive backend-state availability messaging.
 
-function OverviewBuildingActionNotice({
-  notice,
-}: {
-  notice?: InfrastructureActionNotice | undefined;
-}) {
-  if (!notice) return null;
-  const className = notice.tone === "error"
-    ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
-    : notice.tone === "pending"
-      ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"
-      : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
-  const role = notice.tone === "error" ? "alert" : "status";
-
-  return (
-    <div className={`min-w-0 max-w-full overflow-hidden whitespace-normal break-words rounded-md border px-3 py-2 text-xs leading-5 [overflow-wrap:anywhere] ${className}`} role={role}>
-      {notice.label}
-    </div>
-  );
-}
-
-function OverviewResearchActionNotice({
-  actionState,
-}: {
-  actionState: OverviewResearchActionState;
-}) {
-  const notice = overviewResearchActionNoticeFor(actionState);
-  if (!notice) return null;
-  const className = notice.tone === "error"
-    ? "border-rose-300/20 bg-rose-300/5 text-rose-100"
-    : "border-white/10 bg-white/5 text-slate-200";
-
-  return (
-    <div className={`rounded-md border px-3 py-2 text-xs ${className}`}>
-      {notice.label}
-    </div>
-  );
-}
-
 export function overviewPlanetDisplayName(
   homePlanet: Planet | undefined,
   planet: PlanetSummary | undefined,
@@ -1199,16 +763,6 @@ export function overviewPlanetDisplayName(
     ? `${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
     : planet?.coordinates?.trim();
   return coordinates ? `Planet ${coordinates}` : undefined;
-}
-
-export function overviewResearchActionNoticeFor(
-  actionState: OverviewResearchActionState,
-): { label: string; tone: "error" | "pending" } | undefined {
-  if (actionState.status === "idle" || actionState.status === "success") return undefined;
-  return {
-    label: actionState.label,
-    tone: actionState.status === "error" ? "error" : "pending",
-  };
 }
 
 export type FleetSummaryLine = {
@@ -1415,65 +969,6 @@ function compareOverviewFleetLines(left: FleetSummaryLine, right: FleetSummaryLi
   return leftEvent - rightEvent || left.key.localeCompare(right.key);
 }
 
-export function FleetsSummary({
-  bodyKind = "planet",
-  fleetVisibility,
-  now,
-  onOpenMissionControl,
-  planetContextKey,
-  planetNames,
-}: {
-  fleetVisibility: FleetMissionVisibilityResponse;
-  bodyKind?: "planet" | "moon";
-  now: number;
-  onOpenMissionControl: () => void;
-  planetContextKey?: string | undefined;
-  planetNames?: ReadonlyMap<string, string> | undefined;
-}) {
-  const summary = summarizeFleets(fleetVisibility, now, planetNames);
-  return (
-    <section aria-label="Fleets" className="flex h-full min-w-0 flex-col rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="inline-flex h-5 min-w-0 items-center text-xs font-semibold uppercase leading-none tracking-[0.14em] text-slate-400">Fleets</h2>
-        <button
-          className="inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/50 hover:bg-cyan-300/15 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
-          onClick={onOpenMissionControl}
-          type="button"
-        >
-          <span>Open Mission Control</span>
-          <ArrowRight aria-hidden="true" className="shrink-0" size={13} strokeWidth={2} />
-        </button>
-      </div>
-
-      {summary.activeCount === 0 ? (
-        <p className="mt-3 text-xs text-slate-500">{`No active fleets for this ${bodyKind}.`}</p>
-      ) : (
-        <div className="mt-3 min-w-0">
-          <ul className="grid gap-1" data-fleet-visible-count={summary.visibleLines.length}>
-            {summary.visibleLines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}
-          </ul>
-          {summary.hiddenCount > 0 ? (
-            <details
-              className="group/fleet-overflow mt-1.5"
-              data-hidden-count={summary.hiddenCount}
-              key={planetContextKey}
-            >
-              <summary className="flex min-h-8 cursor-pointer list-none items-center justify-center gap-1.5 rounded-md border border-white/10 bg-black/15 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.06] hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40 [&::-webkit-details-marker]:hidden">
-                <span className="group-open/fleet-overflow:hidden">+{summary.hiddenCount} more</span>
-                <span className="hidden group-open/fleet-overflow:inline">Show fewer</span>
-                <ChevronDown aria-hidden="true" className="shrink-0 transition-transform group-open/fleet-overflow:rotate-180" size={13} strokeWidth={2} />
-              </summary>
-              <ul className="mt-1 grid gap-1" data-fleet-hidden-count={summary.hiddenCount}>
-                {summary.hiddenLines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}
-              </ul>
-            </details>
-          ) : null}
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
   return (
     <li
@@ -1537,10 +1032,6 @@ function overviewMissionTypeTone(line: FleetSummaryLine): string {
   if (line.missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
   if (["AcsDefend", "DefenseHold", "Intercept"].includes(line.missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
   return "border-slate-300/20 bg-slate-300/10 text-slate-100";
-}
-
-function planetKeyFromCoordinates(coordinates: { galaxy: number; system: number; position: number }): string {
-  return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
 }
 
 function PlanetEffectsPanel({
@@ -1618,149 +1109,5 @@ function EffectMetric({ label, value, nowrap = false }: { label: string; value: 
         {value === "Loading" ? <SkeletonRegion label={`Loading ${label.toLowerCase()}`}><Skeleton className="h-4 w-20" /></SkeletonRegion> : value}
       </dd>
     </div>
-  );
-}
-
-function QueuePanel({
-  label,
-  children,
-}: {
-  label: string;
-  children: preact.ComponentChildren;
-}) {
-  return (
-    <section
-      aria-label={label}
-      className="flex w-full min-w-0 flex-col rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4"
-    >
-      <div className="flex flex-1 flex-col">{children}</div>
-    </section>
-  );
-}
-
-function QueuePanelContent({ children }: { children: preact.ComponentChildren }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">{children}</div>
-  );
-}
-
-export function OverviewQueueFallback<T>({
-  progressState,
-  queue,
-  renderEmpty,
-  renderQueue,
-}: {
-  progressState?: ConstructionProgress | undefined;
-  queue: T | undefined;
-  renderEmpty: () => preact.ComponentChild;
-  renderQueue: (queue: T) => preact.ComponentChild;
-}): preact.ComponentChild {
-  const displayedQueue = constructionQueueForDisplay(queue, progressState);
-  return displayedQueue === undefined ? renderEmpty() : renderQueue(displayedQueue);
-}
-
-function QueueItemDisplay({
-  detail,
-  label,
-  remaining,
-  progress,
-  progressState,
-  readyAt,
-  indeterminate,
-  color = "bg-signal",
-  thumbnailSrc,
-  now,
-  startedAt,
-}: {
-  detail?: string | undefined;
-  label: string;
-  remaining: string;
-  progress?: number | undefined;
-  progressState?: ConstructionProgress | undefined;
-  readyAt?: number | undefined;
-  indeterminate?: boolean | undefined;
-  color?: string;
-  thumbnailSrc?: string | undefined;
-  now?: number | undefined;
-  startedAt?: number | undefined;
-}) {
-  const hasCanonicalTimeline =
-    typeof readyAt === "number" && typeof startedAt === "number" && startedAt < readyAt;
-  const resolvedProgress = progressState?.progress ?? progress;
-  const resolvedRemaining = progressState?.remaining ?? remaining;
-  const shouldIndeterminate = progressState?.indeterminate ?? indeterminate ?? (!hasCanonicalTimeline && resolvedProgress === undefined);
-  const progressBar = queueProgressBarState({
-    indeterminate: shouldIndeterminate,
-    progress: resolvedProgress,
-    remaining: resolvedRemaining,
-  });
-  const progressFill = progressState
-    ? { animated: false, durationMs: 0, elapsedMs: 0, progress: progressState.progress }
-    : queueProgressFillState({
-      indeterminate: shouldIndeterminate,
-      now: now ?? Date.now(),
-      progress: resolvedProgress,
-      readyAt,
-      remaining: resolvedRemaining,
-      startedAt,
-    });
-  return (
-    <div className={thumbnailSrc ? "flex min-w-0 items-center gap-3" : undefined}>
-      {thumbnailSrc ? (
-        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/5">
-          <OptimizedImage
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            sizes="icon"
-            src={thumbnailSrc}
-          />
-        </div>
-      ) : null}
-      <div className="min-w-0 flex-1">
-        <div className="grid min-w-0 gap-1">
-          <p className={overviewQueueItemLabelClassName}>{label}</p>
-          <p className={overviewQueueItemRemainingClassName}>{resolvedRemaining}</p>
-          {detail ? <p className="truncate text-[11px] text-slate-400">{detail}</p> : null}
-        </div>
-        <AnimatedProgressBar
-          className="mt-2 h-1.5 bg-white/10"
-          fillClassName={color}
-          indeterminate={progressBar.indeterminate}
-          label={`${label} progress`}
-          value={progressFill.progress}
-        />
-      </div>
-    </div>
-  );
-}
-
-export function EmptyQueue({
-  actionLabel,
-  children,
-  onAction,
-}: {
-  actionLabel: string;
-  children: preact.ComponentChildren;
-  onAction: () => void;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 text-xs leading-5 text-slate-400">
-      <p className="min-w-0 break-words">{children}</p>
-      <QuickLink onClick={onAction}>{actionLabel}</QuickLink>
-    </div>
-  );
-}
-
-function QuickLink({ children, onClick }: { children: string; onClick: () => void }) {
-  return (
-    <button
-      className="mt-auto flex min-h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold leading-4 text-slate-200 transition hover:border-cyan-300/40 hover:bg-white/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
-      onClick={onClick}
-      type="button"
-    >
-      <span className="min-w-0 truncate">{children}</span>
-      <ArrowRight aria-hidden="true" className="shrink-0" size={13} strokeWidth={2} />
-    </button>
   );
 }

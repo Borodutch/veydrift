@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { FleetsSummary, overviewPlanetDisplayName, summarizeFleets } from "./components/OverviewPage";
+import { FleetSummaryRow, overviewPlanetDisplayName, summarizeFleets } from "./components/OverviewPage";
 import type { Planet } from "./types";
 import type { FleetMissionPlanetReference, FleetMissionSummary, FleetMissionVisibilityResponse } from "./walletFlow";
 
@@ -48,13 +48,11 @@ describe("Overview fleets summary", () => {
     const text = collectText(FleetsSummary({
       fleetVisibility,
       now,
-      onOpenMissionControl: () => undefined,
     })).join(" ");
 
     expect(text).not.toContain("2 active");
     expect(text).toContain("Attack Priority Outbound to 1517 [5:407:4] Outbound ETA");
     expect(text).toContain("Transport Returning from Outpost [6:12:3] Returning Lands");
-    expect(text).toContain("Open Mission Control");
     // Structured cells replace the former repeated sentence punctuation and raw id route.
     expect(text).not.toContain(" · ");
     expect(text).not.toContain("1 -> 40");
@@ -98,7 +96,6 @@ describe("Overview fleets summary", () => {
     const text = collectText(FleetsSummary({
       fleetVisibility,
       now,
-      onOpenMissionControl: () => undefined,
     })).join(" ");
 
     expect(text).toContain("Attack Priority Inbound from Raider [5:407:4]");
@@ -141,7 +138,6 @@ describe("Overview fleets summary", () => {
     expect(collectText(FleetsSummary({
       fleetVisibility,
       now,
-      onOpenMissionControl: () => undefined,
     })).join(" ")).not.toContain("arriving now");
   });
 
@@ -194,7 +190,6 @@ describe("Overview fleets summary", () => {
     const node = FleetsSummary({
       fleetVisibility,
       now,
-      onOpenMissionControl: () => undefined,
     });
     const rows = collectElementsByType(node, "li");
     expect(rows).toHaveLength(3);
@@ -206,7 +201,7 @@ describe("Overview fleets summary", () => {
     expect(rows[0]?.props?.["data-attack-priority"]).toBe("true");
   });
 
-  test("caps ETA-sorted non-attacks at four and exposes an accurate inline disclosure", () => {
+  test("caps ETA-sorted non-attacks at four", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const outgoing: FleetMissionSummary[] = Array.from({ length: 6 }, (_unused, index) =>
       mission({
@@ -227,28 +222,6 @@ describe("Overview fleets summary", () => {
     expect(summary.hiddenLines.map((line) => line.key)).toEqual(["out-o4", "out-o5"]);
     expect(summary.hiddenCount).toBe(2);
 
-    const node = FleetsSummary({
-      fleetVisibility: visibility({ outgoing }),
-      now,
-      onOpenMissionControl: () => undefined,
-      planetContextKey: "planet-7",
-    });
-    const text = collectText(node).join(" ");
-    const disclosure = collectElementsByType(node, "details")[0];
-    expect(text).toContain("Transport Outbound to T0 [1:1:0]");
-    expect(text.replace(/\s+/g, " ")).toContain("+ 2 more");
-    expect(text).toContain("Show fewer");
-    expect(text).toContain("Open Mission Control");
-    expect(disclosure?.props?.["data-hidden-count"]).toBe(2);
-    expect(disclosure?.props?.className).toContain("group/fleet-overflow");
-    expect(disclosure?.key).toBe("planet-7");
-
-    const exactlyFour = FleetsSummary({
-      fleetVisibility: visibility({ outgoing: outgoing.slice(0, 4) }),
-      now,
-      onOpenMissionControl: () => undefined,
-    });
-    expect(collectElementsByType(exactlyFour, "details")).toHaveLength(0);
   });
 
   test("never spends the four-row non-attack allowance on attacks", () => {
@@ -280,35 +253,6 @@ describe("Overview fleets summary", () => {
     expect(summary.visibleLines.filter((line) => line.isAttack)).toHaveLength(6);
     expect(summary.visibleLines.filter((line) => !line.isAttack)).toHaveLength(4);
     expect(summary.hiddenCount).toBe(2);
-  });
-
-  test("does not render the redundant active-count header pill", () => {
-    const node = FleetsSummary({
-      fleetVisibility: visibility({}),
-      now: Date.parse("2026-06-07T22:00:00.000Z"),
-      onOpenMissionControl: () => undefined,
-    });
-    const heading = collectElementsByType(node, "h2").find((element) => collectText(element).join(" ") === "Fleets");
-    const activeBadge = collectElementsByType(node, "span").find((element) => /active$/.test(collectText(element).join(" ")));
-
-    expect(heading?.props?.className).toContain("inline-flex h-5");
-    expect(heading?.props?.className).toContain("items-center");
-    expect(heading?.props?.className).toContain("leading-none");
-    expect(activeBadge).toBeUndefined();
-  });
-
-  test("renders the selected-planet empty state in the responsive fleets panel", () => {
-    const node = FleetsSummary({
-      fleetVisibility: visibility({}),
-      now: Date.parse("2026-06-07T22:00:00.000Z"),
-      onOpenMissionControl: () => undefined,
-    });
-    const section = collectElementsByType(node, "section")[0];
-    const text = collectText(node).join(" ");
-
-    expect(text).toContain("No active fleets for this planet.");
-    expect(section?.props?.className).toContain("min-w-0");
-    expect(section?.props?.className).toContain("sm:p-4");
   });
 
   test("falls back to a coordinate-free planet id when the planet reference is missing", () => {
@@ -459,7 +403,6 @@ describe("Overview fleets summary", () => {
         })],
       }),
       now,
-      onOpenMissionControl: () => undefined,
     });
     const row = collectElementsByType(node, "li")[0];
     const endpoint = collectElementsByType(node, "span").find((element) => element.props?.title === `${longName} [9:499:15]`);
@@ -487,6 +430,10 @@ describe("Overview planet display name", () => {
     })).toBe("Planet 2:44:9");
   });
 });
+
+function FleetsSummary({ fleetVisibility, now }: { fleetVisibility: FleetMissionVisibilityResponse; now: number }) {
+  return summarizeFleets(fleetVisibility, now).lines.map((line) => FleetSummaryRow({ line }));
+}
 
 function collectText(node: unknown): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];

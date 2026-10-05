@@ -7,7 +7,6 @@ import { formatGalaxyHeatLabel } from "../src/components/GalaxyView";
 import { planetDetailRefreshResultPlanet, publicPlanetDataRows } from "../src/components/PlanetDetail";
 import { missionEndpoint } from "../src/components/missionRoute";
 import { formatPlanetType, mergePlanetWithSettlement, planetArtTypeForCoordinates, planetArtTypeFromArchetypeOrCoords, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse } from "../src/data/mockUniverse";
-import { overviewHeroImage } from "../src/overviewHeroImage";
 import { buildDebrisTargets, buildRaidTargets } from "../src/raidTargetFinder";
 import type { FleetMissionSummary, HighscoreEntry, HighscorePlanet } from "../src/walletFlow";
 
@@ -61,7 +60,6 @@ describe("slot-aware artwork without climate changes (VEY-890)", () => {
         expect(publicPlanetDataRows(planet)).toContainEqual({ label: "Climate", value: "Scorching Molten" });
         expect(publicPlanetDataRows(planet).map(row => row.label)).not.toContain("Art family");
       }
-      expect(overviewHeroImage(owned, undefined, undefined)).toBe(image);
       expect(planetImageForManagedPlanet(live)).toBe(image);
       expect(playerInspectPlanetImage(live)).toBe(image);
       const ranked: HighscorePlanet = { planetId: live.planetId, name: "Colony", coordinates: live };

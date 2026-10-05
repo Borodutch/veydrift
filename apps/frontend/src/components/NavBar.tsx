@@ -90,7 +90,7 @@ export function commanderIdentityLabel(
 const sidebarIconClassName = "grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90";
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
-  { key: "overview", label: "Overview", mobileLabel: "Overview", icon: Radar },
+  { key: "overview", label: "Empire", mobileLabel: "Empire", icon: Radar },
   { key: "infrastructure", label: "Infrastructure", mobileLabel: "Infra", icon: Factory },
   { key: "defenses", label: "Defenses", mobileLabel: "Defense", icon: Shield },
   { key: "research", label: "Research", mobileLabel: "Research", icon: FlaskConical },

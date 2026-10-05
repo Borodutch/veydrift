@@ -136,16 +136,13 @@ describe("watched planets UI", () => {
 });
 
 describe("overview planet sections", () => {
-  test("orders production blocks before My planets and Watched planets", () => {
-    const queueIndex = overviewSource.indexOf("{/* Contract production queues */}");
-    const myPlanetsIndex = overviewSource.indexOf("<EmpireOverview");
+  test("orders the Empire panel before Watched planets", () => {
+    const empireIndex = overviewSource.indexOf("<EmpireOverview");
     const watchedPlanetsIndex = overviewSource.indexOf("<WatchedPlanetsPanel");
 
-    expect(queueIndex).toBeGreaterThan(-1);
-    expect(myPlanetsIndex).toBeGreaterThan(queueIndex);
-    expect(watchedPlanetsIndex).toBeGreaterThan(myPlanetsIndex);
+    expect(empireIndex).toBeGreaterThan(-1);
+    expect(watchedPlanetsIndex).toBeGreaterThan(empireIndex);
   });
-
 
   test("keeps four-action planet headers inline at normal mobile widths and wraps only when genuinely narrow", () => {
     expect(watchableRowSource).toContain("grid-cols-[minmax(0,1fr)_auto] max-[359px]:grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]");
