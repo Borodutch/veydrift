@@ -24,9 +24,7 @@ describe("empire overview", () => {
     expect(line).toMatchObject({ kind: "defense", label: "Rocket Launcher ×5", startedAt: 100_000, readyAt: 200_000 });
   });
 
-  test("lists built infrastructure from full levels, falling back to roster key levels", () => {
-    const keyLevels = { metalMine: 3, crystalMine: 0, deuteriumSynthesizer: 0, solarPlant: 2, roboticsFactory: 0, shipyard: 0, researchLab: 0, terraformer: 0 };
-    expect(planetBuildingTiles({ keyLevels }, undefined).map((tile) => `${tile.key}:${tile.value}`)).toEqual(["metalMine:3", "solarPlant:2"]);
-    expect(planetBuildingTiles({ keyLevels }, { buildings: [{ id: 0, level: 7, cost: { metal: "0", crystal: "0", deuterium: "0" } }] }).map((tile) => tile.value)).toEqual(["7"]);
+  test("lists built infrastructure in catalog order, skipping unbuilt levels", () => {
+    expect(planetBuildingTiles([{ id: 3, level: 2 }, { id: 0, level: 7 }, { id: 1, level: 0 }]).map((tile) => `${tile.key}:${tile.value}`)).toEqual(["metalMine:7", "solarPlant:2"]);
   });
 });

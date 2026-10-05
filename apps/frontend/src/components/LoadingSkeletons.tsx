@@ -42,28 +42,19 @@ export function DefenseSkeleton(): JSX.Element {
   return <ProductionCatalogSkeleton groups={[2, 4, 2, 2]} label="Loading defenses" />;
 }
 
+/** Mirrors the Empire screen: page header with totals, then one row per planet. */
 export function OverviewSkeleton(): JSX.Element {
   return (
-    <SkeletonRegion className="grid gap-3" label="Loading overview">
-      <div className="grid gap-3 xl:grid-cols-2">
-        <section className={`${CARD} flex min-h-48 flex-col justify-end`}>
-          <Skeleton className="h-3 w-48" /><Skeleton className="mt-3 h-8 w-56" />
-        </section>
-        <section className={CARD}>
-          <Skeleton className="mb-6 h-4 w-24" />
-          {skeletonList(2, index => <Skeleton className="mt-2 h-14 w-full" key={index} />)}
-        </section>
+    <SkeletonRegion className="grid" label="Loading empire">
+      <div className="flex items-center gap-4 border-b border-white/[0.08] px-2 pb-3">
+        <div className="grid gap-1.5"><Skeleton className="h-6 w-24" /><Skeleton className="h-3 w-28" /></div>
+        <Skeleton className="ml-auto h-8 w-40 sm:w-56" />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {skeletonList(4, index => <section className={`${CARD} grid min-h-32 content-between gap-4`} key={index}>
-          <Skeleton className="h-4 w-3/4" /><Skeleton className="h-8 w-full" />
-        </section>)}
-      </div>
-      <section className={`${CARD} grid gap-2`}>
-        {skeletonList(5, index => <div className="flex items-center gap-3 rounded border border-white/10 p-2" key={index}>
-          <Skeleton className="h-10 w-10 rounded-full" /><Skeleton className="h-4 w-36" /><Skeleton className="ml-auto h-8 w-8" />
-        </div>)}
-      </section>
+      {skeletonList(6, index => <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-2 border-b border-white/[0.06] px-2 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]" key={index}>
+        <Skeleton className="h-8 w-8 rounded-full" />
+        <div className="grid gap-1.5"><Skeleton className="h-3.5 w-28" /><Skeleton className="h-2.5 w-20" /></div>
+        <Skeleton className="col-start-2 h-7 w-full sm:col-start-auto sm:w-52" />
+      </div>)}
     </SkeletonRegion>
   );
 }

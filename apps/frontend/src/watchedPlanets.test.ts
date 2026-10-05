@@ -149,16 +149,12 @@ describe("overview planet sections", () => {
     expect(watchableRowSource).toContain(
       "col-start-2 row-start-1 self-center justify-end max-[359px]:col-span-full max-[359px]:col-start-1 max-[359px]:row-start-auto sm:col-span-1 sm:col-start-2 sm:row-start-1",
     );
-    expect(overviewSource.match(/h-11 w-11/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(overviewSource).toContain("flex flex-wrap justify-end gap-1.5");
   });
 
   test("keeps a one-action planet and its moon actions in compact inline rows", () => {
     expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
     expect(watchableRowSource).toContain("col-span-full min-w-0");
-    expect(overviewSource).toContain('aria-label="Open moon details"');
     expect(watchableRowSource).not.toContain('detail={currentMoon ? "Selected"');
-    expect(overviewSource).toContain("<OverviewMoonActionButtons");
   });
 
   test("protects long planet names and HOME badges from inline action overlap", () => {

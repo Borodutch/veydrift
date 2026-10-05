@@ -13,7 +13,6 @@ import type {
   ChainInfrastructureState,
   ChainMoonState,
   FleetMissionVisibilityResponse,
-  ManagedPlanetResponse,
   OnChainResources,
   QueueStateResponse,
 } from "../walletFlow";
@@ -21,6 +20,7 @@ import { formatCompactResource } from "./GalaxyView";
 import { moonBuildingAsset } from "./MoonPage";
 import { getSizedImageSrc } from "../utils/imageSizes";
 import { OptimizedImage } from "./OptimizedImage";
+import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import {
   compactOverviewLevelLabel,
   compactOverviewResearchLabel,
@@ -116,19 +116,25 @@ function unitTiles(
   });
 }
 
-export function planetBuildingTiles(
-  planet: Pick<ManagedPlanetResponse, "keyLevels">,
-  infrastructure: Pick<ChainInfrastructureState, "buildings"> | undefined,
-): Tile[] {
-  const levels = new Map<number, number>(
-    infrastructure
-      ? infrastructure.buildings.map((building) => [building.id, building.level])
-      : Object.entries(planet.keyLevels).map(([key, level]) => [buildingContractIds[key as keyof typeof buildingContractIds], level]),
-  );
+export function planetBuildingTiles(levels: ReadonlyArray<{ id: number; level: number }>): Tile[] {
+  const byId = new Map(levels.map((building) => [building.id, building.level]));
   return buildingCatalog.flatMap((building) => {
-    const level = levels.get(buildingContractIds[building.key]) ?? 0;
+    const level = byId.get(buildingContractIds[building.key]) ?? 0;
     return level > 0 ? [{ key: building.key, label: building.label, asset: building.asset, value: String(level) }] : [];
   });
+}
+
+type MoonDetails = {
+  buildings: ChainMoonState["buildings"];
+  queues: { building: QueueStateResponse | null; ship: QueueStateResponse | null; defense: QueueStateResponse | null };
+};
+
+function moonQueueLines(moon: MoonDetails | undefined): QueueLine[] {
+  return [
+    queueLine("building", moon?.queues.building, moon?.buildings),
+    queueLine("ship", moon?.queues.ship),
+    queueLine("defense", moon?.queues.defense),
+  ].filter((line): line is QueueLine => Boolean(line));
 }
 
 export function EmpireOverview({
@@ -315,8 +321,11 @@ function BodyRow({
   const resources = currentResources(isMoon ? planet.moon : planet);
   const caps = isMoon ? undefined : planet.tactical?.storageCaps;
   const rates = isMoon ? undefined : planet.tactical?.productionPerHour;
+  const rosterMoon = planet.moon?.buildings && planet.moon.queues
+    ? { buildings: planet.moon.buildings as ChainMoonState["buildings"], queues: planet.moon.queues }
+    : undefined;
   const queues = isMoon
-    ? []
+    ? moonQueueLines(rosterMoon)
     : [
         queueLine("building", planet.queues.building),
         queueLine("research", researchQueue),
@@ -352,6 +361,10 @@ function BodyRow({
               {name}
             </button>
             {!isMoon && planet.isHomePlanet ? <House aria-label="Home planet" className="shrink-0 text-slate-500" size={11} /> : null}
+            <span className="flex shrink-0 items-center gap-1 empty:hidden" onClick={(event) => event.stopPropagation()}>
+              {selectedActions}
+              {renderActions?.(group, kind)}
+            </span>
           </span>
           <span className="block truncate font-mono text-[10px] text-slate-500">
             {planet.coordinates}{!isMoon ? ` · ${planet.fieldsUsed}/${planet.fieldsCapacity}` : ""}
@@ -396,8 +409,7 @@ function BodyRow({
           missions={missions}
           now={now}
           queues={queues}
-          renderActions={renderActions}
-          selectedActions={selectedActions}
+          rosterMoon={rosterMoon}
         />
       ) : null}
     </div>
@@ -411,9 +423,8 @@ function BodyDetails({
   kind,
   missions,
   now,
-  queues: rosterQueues,
-  renderActions,
-  selectedActions,
+  queues: rowQueues,
+  rosterMoon,
 }: {
   account: string | undefined;
   backendData: BackendDataStore | undefined;
@@ -422,45 +433,43 @@ function BodyDetails({
   missions: ReturnType<typeof summarizeFleets> | undefined;
   now: number;
   queues: QueueLine[];
-  renderActions: ((group: OverviewMyPlanetActionGroup, kind: BodyKind) => ComponentChildren) | undefined;
-  selectedActions?: ComponentChildren;
+  rosterMoon: MoonDetails | undefined;
 }) {
   const { planet } = group;
   const isMoon = kind === "moon";
   const canQuery = Boolean(backendData && account);
+  // Current backends put every level and moon detail in the roster; older ones need one read per body.
   const { snapshot: infrastructure } = useBackendDataQuery<ChainInfrastructureState>(
-    canQuery && !isMoon ? backendData!.queries.infrastructure(account!, planet.planetId) : undefined,
+    canQuery && !isMoon && !planet.buildingLevels ? backendData!.queries.infrastructure(account!, planet.planetId) : undefined,
   );
   const { snapshot: moonSnapshot } = useBackendDataQuery<ChainMoonState>(
-    canQuery && isMoon ? backendData!.queries.moon(account!, planet.planetId) : undefined,
+    canQuery && isMoon && !rosterMoon ? backendData!.queries.moon(account!, planet.planetId) : undefined,
   );
-  const moon = moonSnapshot?.data;
+  const fetchedMoon = moonSnapshot?.data;
+  const moon: MoonDetails | undefined = rosterMoon ?? (fetchedMoon
+    ? { buildings: fetchedMoon.buildings, queues: { building: fetchedMoon.queue, ship: fetchedMoon.shipQueue ?? null, defense: fetchedMoon.defenseQueue ?? null } }
+    : undefined);
 
-  const queues = isMoon
-    ? [
-        queueLine("building", moon?.queue, moon?.buildings),
-        queueLine("ship", moon?.shipQueue),
-        queueLine("defense", moon?.defenseQueue),
-      ].filter((line): line is QueueLine => Boolean(line))
-    : rosterQueues;
+  const queues = isMoon ? (rosterMoon ? rowQueues : moonQueueLines(moon)) : rowQueues;
   const units = isMoon
-    ? [...unitTiles("ship", moon?.ships ?? planet.moon?.ships), ...unitTiles("defense", moon?.defenses ?? planet.moon?.defenses)]
+    ? [...unitTiles("ship", fetchedMoon?.ships ?? planet.moon?.ships), ...unitTiles("defense", fetchedMoon?.defenses ?? planet.moon?.defenses)]
     : [...unitTiles("ship", planet.tactical?.ships.units), ...unitTiles("defense", planet.tactical?.defenses.units)];
-  const buildings: Tile[] = isMoon
-    ? (moon?.buildings ?? []).filter((building) => building.level > 0).map((building) => ({
+  const levels = isMoon ? undefined : planet.buildingLevels ?? infrastructure?.data?.buildings;
+  const buildings: Tile[] | undefined = isMoon
+    ? moon?.buildings.filter((building) => building.level > 0).map((building) => ({
         key: building.key,
         label: building.label,
         asset: moonBuildingAsset(building.key),
         value: String(building.level),
       }))
-    : planetBuildingTiles(planet, infrastructure?.data);
-  const loadingMoon = isMoon && !moon;
+    : levels && planetBuildingTiles(levels);
+  const loading = buildings === undefined && (isMoon ? moonSnapshot?.freshness !== "failed" : infrastructure?.freshness !== "failed");
   const hasMissions = Boolean(missions && missions.lines.length > 0);
-  const actions = renderActions?.(group, kind);
+  const empty = !loading && queues.length === 0 && !hasMissions && units.length === 0 && !buildings?.length;
 
   return (
     <div className="grid gap-3 px-2 pb-4 pt-1 sm:pl-[3.25rem]">
-      {loadingMoon ? <p className="text-[11px] text-slate-500">Loading…</p> : null}
+      {empty ? <p className="text-[11px] text-slate-500">Nothing to show here yet.</p> : null}
       {queues.length > 0 || hasMissions ? (
         <div className={`grid gap-3 ${queues.length > 0 && hasMissions ? "lg:grid-cols-2" : ""}`}>
           {queues.length > 0 ? (
@@ -476,11 +485,13 @@ function BodyDetails({
         </div>
       ) : null}
       {units.length > 0 ? <DetailSection title="Fleet & defenses"><TileGrid tiles={units} /></DetailSection> : null}
-      {buildings.length > 0 ? <DetailSection title="Infrastructure"><TileGrid labelled tiles={buildings} /></DetailSection> : null}
-      <div className="flex flex-wrap items-center justify-end gap-1.5 empty:hidden">
-        {selectedActions}
-        {actions}
-      </div>
+      {loading ? (
+        <DetailSection title="Infrastructure">
+          <SkeletonRegion className="flex flex-wrap gap-1" label="Loading infrastructure">
+            {skeletonList(6, (index) => <Skeleton className="h-8 w-32 rounded" key={index} />)}
+          </SkeletonRegion>
+        </DetailSection>
+      ) : buildings?.length ? <DetailSection title="Infrastructure"><TileGrid labelled tiles={buildings} /></DetailSection> : null}
     </div>
   );
 }

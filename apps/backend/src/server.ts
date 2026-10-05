@@ -49,6 +49,7 @@ import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreB
 import {
   GameMaintenanceStateReader,
   indexedManagedPlanet,
+  managedMoonSummary,
   SettlementIndexer,
   type IndexedDebrisFieldEvent,
   type IndexedDebrisTarget,
@@ -3762,19 +3763,7 @@ function indexedWalletPlanetState(
   // balance separately as `resourcesAsOfNow` — the same split the infrastructure/shipyard/
   // research endpoints already use (VEY-KANEO-464/488). Tactical/raidable still derive from
   // the accrued state because plunderable loot reflects the live balance, not the snapshot.
-  const moonSummary = moonState.moon
-    ? {
-        bodyKind: "moon" as const,
-        exists: true,
-        parentPlanetId: planet.planetId,
-        planetId: planet.planetId,
-        coordinates: planet.coordinates,
-        resources: moonState.resources,
-        ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
-        ships: moonState.ships,
-        defenses: moonState.defenses
-      }
-    : null;
+  const moonSummary = managedMoonSummary(planet.planetId, planet.coordinates, moonState);
 
   return {
     ...planet,

@@ -1,9 +1,10 @@
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import {
   ArrowDownLeft,
-  ArrowRight,
   ArrowUpRight,
   Check,
+  Eye,
+  EyeOff,
   Info,
   Package,
   PackagePlus,
@@ -55,10 +56,12 @@ import {
   formatGalaxyCommanderLabel,
   formatGalaxyHeatLabel,
 } from "./GalaxyView";
-import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
+import { GalaxyRowsSkeleton, OverviewSkeleton } from "./LoadingSkeletons";
 import { combatProgressLabel, isMissionQueued, missionTypeLabel } from "./missionControlModel";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
-import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
+import { type PlanetMetaItem } from "./WatchablePlanetRow";
+import { moonImageForType } from "../gameAssets";
+import { getSizedImageSrc } from "../utils/imageSizes";
 export { isOverviewResearchReadyToFinish } from "./overviewQueueModel";
 
 export function compactOverviewLevelLabel(label: string): string {
@@ -280,18 +283,12 @@ export function OverviewPage({
 
   const selectedBodyActions = (
     <>
-      {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen ? (
-        <span className={`mr-auto max-w-full truncate text-[11px] ${renameStatusTone}`}>{planetRenameAction.label}</span>
-      ) : null}
-      {planetManagementAction.status !== "idle" ? (
-        <span className={`mr-auto max-w-full truncate text-[11px] ${managementStatusTone}`}>{planetManagementAction.label}</span>
-      ) : null}
       <button
         aria-controls="overview-planet-effects"
         aria-expanded={effectsPanelOpen}
         aria-haspopup="dialog"
         aria-label="Show planet stats and effects"
-        className="inline-grid h-11 w-11 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 sm:h-8 sm:w-8"
+        className="inline-grid h-7 w-7 place-items-center rounded text-slate-400 transition hover:bg-white/[0.06] hover:text-cyan-100 sm:h-6 sm:w-6"
         onClick={() => {
           setRenamePanelOpen(false);
           setEffectsPanelOpen(true);
@@ -299,7 +296,7 @@ export function OverviewPage({
         title="Planet stats and effects"
         type="button"
       >
-        <Info aria-hidden="true" size={14} strokeWidth={2} />
+        <Info aria-hidden="true" size={12} strokeWidth={2} />
       </button>
       {canShowRename ? (
         <button
@@ -307,7 +304,7 @@ export function OverviewPage({
           aria-expanded={renamePanelOpen}
           aria-haspopup="dialog"
           aria-label="Rename planet"
-          className="inline-grid h-11 w-11 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-500 sm:h-8 sm:w-8"
+          className="inline-grid h-7 w-7 place-items-center rounded text-slate-400 transition hover:bg-white/[0.06] hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-600 sm:h-6 sm:w-6"
           disabled={renameBusy}
           onClick={() => {
             setEffectsPanelOpen(false);
@@ -318,19 +315,18 @@ export function OverviewPage({
           title="Rename planet"
           type="button"
         >
-          <Pencil aria-hidden="true" size={13} strokeWidth={2} />
+          <Pencil aria-hidden="true" size={11} strokeWidth={2} />
         </button>
       ) : null}
       {showAbandonAction ? (
         <button
           aria-label="Abandon planet"
-          className="inline-flex h-11 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 sm:h-8"
+          className="inline-grid h-7 w-7 place-items-center rounded text-red-300/70 transition hover:bg-red-300/10 hover:text-red-200 sm:h-6 sm:w-6"
           onClick={() => onAbandonPlanet?.()}
           title="Abandon planet"
           type="button"
         >
-          <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
-          Abandon
+          <Trash2 aria-hidden="true" size={12} strokeWidth={2} />
         </button>
       ) : null}
     </>
@@ -446,6 +442,14 @@ export function OverviewPage({
         </div>
       )}
 
+      {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen ? (
+        <p className={`truncate text-xs ${renameStatusTone}`} role="status">{planetRenameAction.label}</p>
+      ) : null}
+      {planetManagementAction.status !== "idle" ? (
+        <p className={`truncate text-xs ${managementStatusTone}`} role="status">{planetManagementAction.label}</p>
+      ) : null}
+
+      {isWalletConnected && myPlanets.length === 0 && onChainStatus === "loading" ? <OverviewSkeleton /> : null}
       {isWalletConnected && myPlanets.length > 0 ? (
         <EmpireOverview
           account={account}
@@ -456,10 +460,11 @@ export function OverviewPage({
           onSwitchPlanet={onSwitchPlanet}
           planetNames={fleetPlanetNames}
           renderActions={(group, kind) => kind === "moon" ? (
-            <MyPlanetActionButtons actions={group.moonActions ?? []} onAction={(action) => onMyPlanetAction?.(action, group.planet)} />
+            <MyPlanetActionButtons actions={group.moonActions ?? []} compact onAction={(action) => onMyPlanetAction?.(action, group.planet)} />
           ) : (
             <MyPlanetActionButtons
               actions={group.actions}
+              compact
               onAction={(action) => onMyPlanetAction?.(action, group.planet)}
               onSupply={onSupplyPlanet ? () => onSupplyPlanet(group.planet) : undefined}
             />
@@ -507,69 +512,48 @@ export function OverviewPage({
 
 function MyPlanetActionButtons({
   actions,
+  compact = false,
   onAction,
   onSupply,
 }: {
   actions: GalaxyAction[];
+  compact?: boolean;
   onAction: (action: GalaxyAction) => void;
   onSupply?: (() => void) | undefined;
 }) {
+  const buttonClassName = compact
+    ? "inline-flex h-7 w-7 items-center justify-center rounded text-slate-400 transition hover:bg-white/[0.06] hover:text-signal sm:h-6 sm:w-6"
+    : "inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8";
+  const iconSize = compact ? 12 : 15;
   const enabledActions = actions.filter((action) => action.enabled);
   if (enabledActions.length === 0 && !onSupply) return null;
 
   return (
-    <span className="flex flex-wrap justify-end gap-1.5">
+    <span className={compact ? "flex items-center gap-1" : "flex flex-wrap justify-end gap-1.5"}>
       {enabledActions.map((action) => {
         const Icon = galaxyActionIcon(action.kind);
         return (
           <button
             aria-label={action.label}
-            className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+            className={buttonClassName}
             key={action.kind}
             onClick={() => onAction(action)}
             title={action.label}
             type="button"
           >
-            <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+            <Icon aria-hidden="true" size={iconSize} strokeWidth={1.9} />
           </button>
         );
       })}
       {onSupply ? (
         <button
           aria-label="Supply this planet"
-          className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
+          className={buttonClassName}
           onClick={onSupply}
           title="Supply this planet"
           type="button"
         >
-          <PackagePlus aria-hidden="true" size={15} strokeWidth={1.9} />
-        </button>
-      ) : null}
-    </span>
-  );
-}
-
-function OverviewMoonActionButtons({
-  actions,
-  onAction,
-  onInspect,
-}: {
-  actions: GalaxyAction[];
-  onAction: (action: GalaxyAction) => void;
-  onInspect?: (() => void) | undefined;
-}) {
-  return (
-    <span className="flex flex-wrap justify-end gap-1.5">
-      <MyPlanetActionButtons actions={actions} onAction={onAction} />
-      {onInspect ? (
-        <button
-          aria-label="Open moon details"
-          className="inline-flex h-11 w-11 items-center justify-center rounded border border-signal/30 bg-signal/10 text-signal transition hover:bg-signal/20 sm:h-8 sm:w-8"
-          onClick={onInspect}
-          title="Open moon details"
-          type="button"
-        >
-          <ArrowRight aria-hidden="true" size={15} strokeWidth={1.9} />
+          <PackagePlus aria-hidden="true" size={iconSize} strokeWidth={1.9} />
         </button>
       ) : null}
     </span>
@@ -626,10 +610,10 @@ function WatchedPlanetsPanel({
   const { start, end } = watchedPlanetsPanelRange({ page, pageSize, total });
 
   return (
-    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <section aria-label="Watched planets" className="mt-4 grid gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.08] px-2 pb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Watched planets</h3>
+          <h2 className="text-base font-semibold text-white">Watched planets</h2>
           {loading && total === 0 ? (
             <SkeletonRegion label="Loading watched planets"><Skeleton className="mt-1 h-3 w-24" /></SkeletonRegion>
           ) : <p className="text-xs text-slate-500">{total > 0 ? `${start}-${end} of ${total}` : "No watched planets"}</p>}
@@ -677,45 +661,120 @@ function WatchedPlanetsPanel({
       ) : null}
       {loading && planets.length === 0 ? <GalaxyRowsSkeleton rows={3} /> : null}
 
-      <div className="grid gap-1.5">
+      <ul className="-mt-2 divide-y divide-white/[0.06] border-b border-white/[0.06]">
         {planets.map((planet) => {
           const planetId = planet.occupiedBy?.planetId;
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
-          const actions = planetActionsForPlanet?.(planet) ?? [];
-          const moonActions = planet.hasMoon ? moonActionsForPlanet?.(planet) ?? [] : [];
+          const watched = Boolean(planetId && watchedPlanetIds.includes(planetId));
           return (
-            <WatchablePlanetRow
-              actionSlot={actions.length > 0 ? (
-                <MyPlanetActionButtons
-                  actions={actions}
-                  onAction={(action) => onPlanetAction?.(action, planet)}
-                />
-              ) : undefined}
-              allianceLabel={formatGalaxyAllianceIdentityLabel(planet.alliance)}
-              commanderLabel={formatGalaxyCommanderLabel(planet)}
-              coords={coords}
-              key={planetId ?? planet.id}
-              meta={watchedPlanetMeta(planet)}
-              moonActionSlot={moonActions.length > 0 ? (
-                <OverviewMoonActionButtons
-                  actions={moonActions}
-                  onAction={(action) => onMoonAction?.(action, planet)}
-                />
-              ) : undefined}
-              onInspect={onSelectPlanet ?? (() => undefined)}
-              onInspectMoon={onSelectMoon}
-              onSelectAlliance={onSelectAlliance}
-              onSelectPlayer={onSelectPlayer}
-              onToggleWatch={planetId ? () => onToggleWatchPlanet?.(planetId, watchedPlanetIds.includes(planetId)) : undefined}
-              planet={planet}
-              showMoonIndicator={false}
-              watchBusy={watchBusyPlanetId === planetId}
-              watched={Boolean(planetId && watchedPlanetIds.includes(planetId))}
-            />
+            <li key={planetId ?? planet.id}>
+              <WatchedBodyRow
+                actions={<MyPlanetActionButtons actions={planetActionsForPlanet?.(planet) ?? []} compact onAction={(action) => onPlanetAction?.(action, planet)} />}
+                image={planet.image}
+                meta={watchedPlanetMeta(planet).map((item) => item.label).join(" · ")}
+                name={planet.name}
+                onSelect={onSelectPlanet ? () => onSelectPlanet(coords) : undefined}
+                trailing={
+                  <span className="flex min-w-0 items-center justify-end gap-2 text-right text-[11px]">
+                    {planet.debrisField ? (
+                      <span className="shrink-0 rounded bg-amber-300/10 px-1.5 py-0.5 text-amber-200" title="Debris field">
+                        {formatCompactResource(planet.debrisField.metal)} M / {formatCompactResource(planet.debrisField.crystal)} C
+                      </span>
+                    ) : null}
+                    <span className="grid min-w-0">
+                      <button
+                        className="truncate text-slate-300 hover:text-cyan-200 disabled:cursor-default disabled:hover:text-slate-300"
+                        disabled={!onSelectPlayer || !planet.occupiedBy?.owner}
+                        onClick={() => planet.occupiedBy?.owner && onSelectPlayer?.(planet.occupiedBy.owner)}
+                        type="button"
+                      >
+                        {formatGalaxyCommanderLabel(planet)}
+                      </button>
+                      {planet.alliance ? (
+                        <button
+                          className="truncate text-[10px] text-cyan-300/80 hover:text-cyan-200"
+                          onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+                          type="button"
+                        >
+                          {formatGalaxyAllianceIdentityLabel(planet.alliance)}
+                        </button>
+                      ) : null}
+                    </span>
+                    {planetId ? (
+                      <button
+                        aria-label={watched ? "Unwatch planet" : "Watch planet"}
+                        aria-pressed={watched}
+                        className={`inline-grid h-7 w-7 shrink-0 place-items-center rounded transition hover:bg-white/[0.06] disabled:cursor-wait disabled:opacity-60 sm:h-6 sm:w-6 ${watched ? "text-cyan-200" : "text-slate-500"}`}
+                        disabled={watchBusyPlanetId === planetId}
+                        onClick={() => onToggleWatchPlanet?.(planetId, watched)}
+                        title={watched ? "Unwatch planet" : "Watch planet"}
+                        type="button"
+                      >
+                        {watched ? <Eye aria-hidden="true" size={12} /> : <EyeOff aria-hidden="true" size={12} />}
+                      </button>
+                    ) : null}
+                  </span>
+                }
+              />
+              {planet.hasMoon ? (
+                <div className="border-t border-white/[0.04] pl-6">
+                  <WatchedBodyRow
+                    actions={<MyPlanetActionButtons actions={moonActionsForPlanet?.(planet) ?? []} compact onAction={(action) => onMoonAction?.(action, planet)} />}
+                    image={moonImageForType(planet.type)}
+                    meta={`${planet.galaxy}:${planet.system}:${planet.position}`}
+                    moon
+                    name="Moon"
+                    onSelect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
+                  />
+                </div>
+              ) : null}
+            </li>
           );
         })}
-      </div>
+      </ul>
     </section>
+  );
+}
+
+function WatchedBodyRow({
+  actions,
+  image,
+  meta,
+  moon = false,
+  name,
+  onSelect,
+  trailing,
+}: {
+  actions?: preact.ComponentChildren;
+  image: string;
+  meta: string;
+  moon?: boolean;
+  name: string;
+  onSelect: (() => void) | undefined;
+  trailing?: preact.ComponentChildren;
+}) {
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1 px-2 py-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <span className={`shrink-0 overflow-hidden rounded-full bg-white/5 ${moon ? "h-6 w-6" : "h-8 w-8"}`}>
+        <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(image, 64)} />
+      </span>
+      <span className="min-w-0">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <button
+            className={`truncate font-semibold transition hover:text-cyan-200 disabled:cursor-default ${moon ? "text-xs text-slate-300" : "text-[13px] text-white"}`}
+            disabled={!onSelect}
+            onClick={onSelect}
+            title={`Open ${name}`}
+            type="button"
+          >
+            {name}
+          </button>
+          {actions}
+        </span>
+        <span className="block truncate font-mono text-[10px] text-slate-500">{meta}</span>
+      </span>
+      {trailing ? <span className="col-start-2 min-w-0 sm:col-start-auto">{trailing}</span> : null}
+    </div>
   );
 }
 
