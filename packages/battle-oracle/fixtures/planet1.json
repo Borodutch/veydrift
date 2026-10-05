@@ -1,0 +1,714 @@
+[
+  {
+    "id": "97808",
+    "seed": "0x88eede705604b4416120e139bb16253974180de83191ecb1444049b6f337b99a",
+    "groups": [
+      {
+        "side": 0,
+        "owner": "0xbba16f38a9c04b9d0e61765e7a920415c5aa7fd0",
+        "source": "97808",
+        "type": 8,
+        "count": 30,
+        "technology": {
+          "weapons": 10,
+          "shielding": 10,
+          "armor": 12
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0xbba16f38a9c04b9d0e61765e7a920415c5aa7fd0",
+        "source": "97808",
+        "type": 13,
+        "count": 100,
+        "technology": {
+          "weapons": 10,
+          "shielding": 10,
+          "armor": 12
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8",
+        "source": "97809",
+        "type": 8,
+        "count": 50,
+        "technology": {
+          "weapons": 11,
+          "shielding": 10,
+          "armor": 11
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8",
+        "source": "97809",
+        "type": 13,
+        "count": 139,
+        "technology": {
+          "weapons": 11,
+          "shielding": 10,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 1,
+        "count": 5,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 3,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 4,
+        "count": 37,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 5,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 6,
+        "count": 4,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 7,
+        "count": 42,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 9,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 10,
+        "count": 24,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 13,
+        "count": 28,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 15,
+        "count": 5,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 16,
+        "count": 1775,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 17,
+        "count": 70,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 18,
+        "count": 142,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 19,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 20,
+        "count": 85,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 21,
+        "count": 107,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 22,
+        "count": 44,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 23,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      }
+    ],
+    "evidence": {
+      "chainId": 8453,
+      "game": "0xf397910F005151b09644228573a4353818D3755d",
+      "planetId": 1,
+      "targetIsMoon": false,
+      "impactBlock": 52192623,
+      "resolvedBlock": 52192655,
+      "receipt": "0x4f4f1f6d904735293d65d888011916c0b8c3e0e6fab4b6c232709a05e4ab2ed1",
+      "sourceSha256": "60cb62d7becff81f7a07f25bcd8cb40f50e29a9a0f71a743f916661cfea99a88",
+      "frozenResearchSha256": "11ae5d317c9d6ca11db0e474384a547d66cf4d698c93ec3a30a49fc440677253",
+      "oldOutcome": "Draw",
+      "oldRounds": 6
+    }
+  },
+  {
+    "id": "97839",
+    "seed": "0x0c05dee9423a3bda8d09960c057c23f13235f58e59dc2c40323945c820893e2b",
+    "groups": [
+      {
+        "side": 0,
+        "owner": "0xbba16f38a9c04b9d0e61765e7a920415c5aa7fd0",
+        "source": "97839",
+        "type": 8,
+        "count": 30,
+        "technology": {
+          "weapons": 10,
+          "shielding": 10,
+          "armor": 12
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0xbba16f38a9c04b9d0e61765e7a920415c5aa7fd0",
+        "source": "97839",
+        "type": 13,
+        "count": 100,
+        "technology": {
+          "weapons": 10,
+          "shielding": 10,
+          "armor": 12
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8",
+        "source": "97840",
+        "type": 8,
+        "count": 50,
+        "technology": {
+          "weapons": 11,
+          "shielding": 10,
+          "armor": 11
+        }
+      },
+      {
+        "side": 0,
+        "owner": "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8",
+        "source": "97840",
+        "type": 13,
+        "count": 139,
+        "technology": {
+          "weapons": 11,
+          "shielding": 10,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 10,
+        "count": 7,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 13,
+        "count": 14,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 16,
+        "count": 1242,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 17,
+        "count": 49,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 18,
+        "count": 99,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 19,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 20,
+        "count": 59,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 21,
+        "count": 74,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 22,
+        "count": 34,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 23,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      }
+    ],
+    "evidence": {
+      "chainId": 8453,
+      "game": "0xf397910F005151b09644228573a4353818D3755d",
+      "planetId": 1,
+      "targetIsMoon": false,
+      "impactBlock": 52193636,
+      "resolvedBlock": 52193653,
+      "receipt": "0xf903fd7c783bfe2b27c4a4fdbe39e5b247c62a5804f9291694d32c0107525f00",
+      "sourceSha256": "da83f0685c031544bcbcbb66770c3b1740ffdbedbcf21160b44a67fc90822761",
+      "frozenResearchSha256": "11ae5d317c9d6ca11db0e474384a547d66cf4d698c93ec3a30a49fc440677253",
+      "oldOutcome": "AttackerWin",
+      "oldRounds": 4
+    }
+  },
+  {
+    "id": "97876",
+    "seed": "0xec3f0c9e221775fad3e63716f8dd9a04da109919778a1312bfa7bfd2d1caa1fc",
+    "groups": [
+      {
+        "side": 0,
+        "owner": "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8",
+        "source": "97876",
+        "type": 8,
+        "count": 50,
+        "technology": {
+          "weapons": 11,
+          "shielding": 10,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 16,
+        "count": 869,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 17,
+        "count": 34,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 18,
+        "count": 69,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 19,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 20,
+        "count": 41,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 21,
+        "count": 51,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 22,
+        "count": 23,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 23,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      }
+    ],
+    "evidence": {
+      "chainId": 8453,
+      "game": "0xf397910F005151b09644228573a4353818D3755d",
+      "planetId": 1,
+      "targetIsMoon": false,
+      "impactBlock": 52196123,
+      "resolvedBlock": 52196135,
+      "receipt": "0xea37a5ae5815fe2a3890f7a5ac500e1835b6d039a09d66330e279cfc1f21b366",
+      "sourceSha256": "5c76959b6202ce961ed794805d754a95433545fd54fa5bb36c4dbdbce445ae33",
+      "frozenResearchSha256": "11ae5d317c9d6ca11db0e474384a547d66cf4d698c93ec3a30a49fc440677253",
+      "oldOutcome": "AttackerWin",
+      "oldRounds": 5
+    }
+  },
+  {
+    "id": "97881",
+    "seed": "0x65ce93681790e67ce98444d91a720f1a415608376e23f23c48fd2856a9842282",
+    "groups": [
+      {
+        "side": 0,
+        "owner": "0xbba16f38a9c04b9d0e61765e7a920415c5aa7fd0",
+        "source": "97881",
+        "type": 8,
+        "count": 30,
+        "technology": {
+          "weapons": 10,
+          "shielding": 10,
+          "armor": 12
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 16,
+        "count": 608,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 17,
+        "count": 23,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 18,
+        "count": 48,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 19,
+        "count": 1,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 20,
+        "count": 28,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 21,
+        "count": 35,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      },
+      {
+        "side": 1,
+        "owner": "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+        "source": "0",
+        "type": 22,
+        "count": 16,
+        "technology": {
+          "weapons": 9,
+          "shielding": 9,
+          "armor": 11
+        }
+      }
+    ],
+    "evidence": {
+      "chainId": 8453,
+      "game": "0xf397910F005151b09644228573a4353818D3755d",
+      "planetId": 1,
+      "targetIsMoon": false,
+      "impactBlock": 52196187,
+      "resolvedBlock": 52196204,
+      "receipt": "0x5d2f70dc7f9aa0eb23a6b89f20a035a359de05a439b1613692fa65f29311eae9",
+      "sourceSha256": "03e05d7f036d09aee4751cb5c65ed03e6936d11afad9634e21f6d10eec152885",
+      "frozenResearchSha256": "11ae5d317c9d6ca11db0e474384a547d66cf4d698c93ec3a30a49fc440677253",
+      "oldOutcome": "AttackerWin",
+      "oldRounds": 5
+    }
+  }
+]

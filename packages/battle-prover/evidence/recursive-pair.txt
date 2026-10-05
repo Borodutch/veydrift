@@ -1,0 +1,53 @@
+=== RUN   TestRecursivePair
+    probe_test.go:90: outer constraints=2513157 compile=5.072763375s
+=== RUN   TestRecursivePair/altered_output
+=== RUN   TestRecursivePair/altered_seed
+=== RUN   TestRecursivePair/altered_rules
+=== RUN   TestRecursivePair/different_job
+=== RUN   TestRecursivePair/wrong_initial_counter
+=== RUN   TestRecursivePair/wrong_initial_state
+=== RUN   TestRecursivePair/premature_terminal_counter
+=== RUN   TestRecursivePair/replayed_chunk
+=== RUN   TestRecursivePair/reordered_chunks
+=== RUN   TestRecursivePair/skipped_chunk
+=== RUN   TestRecursivePair/discontinuous_state
+=== RUN   TestRecursivePair/unapproved_verification_key
+=== NAME  TestRecursivePair
+    probe_test.go:151: outer development setup=5m42.627881708s
+    probe_test.go:155: outer genuine proving=16.818671209s
+    probe_test.go:160: outer native verification=1.883667ms
+    probe_test.go:164: serialized proof bytes=196 public scalars=7 total=6m13.166496583s
+    probe_test.go:175: exported Solidity verifier bytes=36314
+--- PASS: TestRecursivePair (373.17s)
+    --- PASS: TestRecursivePair/altered_output (0.66s)
+    --- PASS: TestRecursivePair/altered_seed (0.66s)
+    --- PASS: TestRecursivePair/altered_rules (0.65s)
+    --- PASS: TestRecursivePair/different_job (0.66s)
+    --- PASS: TestRecursivePair/wrong_initial_counter (0.65s)
+    --- PASS: TestRecursivePair/wrong_initial_state (0.69s)
+    --- PASS: TestRecursivePair/premature_terminal_counter (0.65s)
+    --- PASS: TestRecursivePair/replayed_chunk (0.65s)
+    --- PASS: TestRecursivePair/reordered_chunks (0.64s)
+    --- PASS: TestRecursivePair/skipped_chunk (0.64s)
+    --- PASS: TestRecursivePair/discontinuous_state (0.65s)
+    --- PASS: TestRecursivePair/unapproved_verification_key (0.68s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/recursion	373.862s
+      375.39 real      1160.62 user         3.52 sys
+          6295830528  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              437532  page reclaims
+                1030  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               41392  signals received
+               27048  voluntary context switches
+              128891  involuntary context switches
+          3450134954  instructions retired
+          1525392384  cycles elapsed
+            27165392  peak memory footprint
