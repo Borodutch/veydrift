@@ -9,6 +9,14 @@ Status: **inactive development checkpoint, not release-ready**. No resolver, mis
 - Hetzner app host: x86_64, 12 logical CPUs, 257626 MiB RAM, 172349 MiB available at inspection, 115 GiB root filesystem available; load average 3.78/4.20/4.06. Backend sample: 6.209 GiB memory; this is a capacity snapshot, **not a prover benchmark or resource reservation**. No host/service mutations performed.
 - Located mandatory operator runbook at `/Users/borodutch/.openclaw/workspace/CONTRACT_UPGRADES.md`; only its `scripts/veydrift-contract-upgrade.sh` may broadcast a release. No broadcasts performed.
 
+## Recovery verification (2026-10-05)
+
+- Oracle candidate-2 fixes independently cleared at `cb552dfb0926860d34d055b9a6f6cab27805b57b`: 32 tests / 421 assertions. Historical starts replay to draw (97808), attacker (97839), defender (97876), defender (97881); these are separate frozen starts, not sequential alternate history.
+- Recovered four-slot battle circuit at `350d5fcb6abb8ed33e4719495ea4d4f8c884b387` passed independent limited-scope review, fresh short suite (19.667s) and go vet. It proves full initialization/shot/RNG/terminal transitions with state preimage commitments, but linear elementary proof verification is not recursion and full four-slot images are not variable authenticated memory.
+- Source manifest and pinned Go modules verified. All original worktree artifacts preserved; continuation worktree is isolated.
+- Original target-host arithmetic benchmark log ends before terminal PASS and the remote process is gone. Do not use it as completed host performance evidence. No host/service changes were made during recovery.
+- Multi-chunk real-combat aggregation and variable-memory integration are still under development. No production setup, consumer integration, activation or QA completion is claimed.
+
 ## Activation prerequisites (all remain required)
 
 1. A generated proof of a complete small battle, including initialization, authenticated per-unit memory, exact shot state transitions, result derivation and multi-chunk recursion. An arithmetic recursion example only establishes gadget plumbing.

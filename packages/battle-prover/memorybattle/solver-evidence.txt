@@ -1,0 +1,119 @@
+=== RUN   TestBoundedInitialization
+    battle_test.go:47: kind=0 constraints=35211
+    battle_test.go:47: kind=1 constraints=224404
+--- PASS: TestBoundedInitialization (0.97s)
+=== RUN   TestVariableRosterAndAdversarial
+    battle_test.go:102: kind=0 constraints=35211
+    battle_test.go:102: kind=1 constraints=224404
+    battle_test.go:102: kind=2 constraints=35231
+    battle_test.go:102: kind=3 constraints=131134
+    battle_test.go:102: kind=4 constraints=84760
+    battle_test.go:102: kind=5 constraints=280609
+    battle_test.go:102: kind=6 constraints=84755
+    battle_test.go:102: kind=7 constraints=181135
+    battle_test.go:102: kind=8 constraints=376611
+    battle_test.go:102: kind=9 constraints=426702
+    battle_test.go:102: kind=10 constraints=133446
+    battle_test.go:102: units=6 constrained_steps=132 final_round=2 counter=18
+    battle_test.go:102: units=10 constrained_steps=346 final_round=3 counter=38
+=== RUN   TestVariableRosterAndAdversarial/stale-read
+=== RUN   TestVariableRosterAndAdversarial/stale-write-root
+=== RUN   TestVariableRosterAndAdversarial/wrong-index
+=== RUN   TestVariableRosterAndAdversarial/wrong-sibling
+=== RUN   TestVariableRosterAndAdversarial/wrong-initial-root
+=== RUN   TestVariableRosterAndAdversarial/wrong-initial-state
+=== RUN   TestVariableRosterAndAdversarial/wrong-initialization-spec
+=== RUN   TestVariableRosterAndAdversarial/skip-initialization
+=== RUN   TestVariableRosterAndAdversarial/wrong-target-rank
+=== RUN   TestVariableRosterAndAdversarial/wrong-round-pool
+=== RUN   TestVariableRosterAndAdversarial/wrong-report
+=== RUN   TestVariableRosterAndAdversarial/premature-terminal
+=== RUN   TestVariableRosterAndAdversarial/changed-seed
+=== RUN   TestVariableRosterAndAdversarial/changed-snapshot
+=== RUN   TestVariableRosterAndAdversarial/changed-roster-root
+=== RUN   TestVariableRosterAndAdversarial/wrong-rf-lane
+=== RUN   TestVariableRosterAndAdversarial/forged-result
+=== RUN   TestVariableRosterAndAdversarial/link-skip
+=== RUN   TestVariableRosterAndAdversarial/link-replay
+=== RUN   TestVariableRosterAndAdversarial/link-truncate
+=== RUN   TestVariableRosterAndAdversarial/link-context
+=== RUN   TestVariableRosterAndAdversarial/link-stale-root
+--- PASS: TestVariableRosterAndAdversarial (88.59s)
+    --- PASS: TestVariableRosterAndAdversarial/stale-read (0.01s)
+    --- PASS: TestVariableRosterAndAdversarial/stale-write-root (0.26s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-index (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-sibling (0.26s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-initial-root (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-initial-state (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-initialization-spec (0.33s)
+    --- PASS: TestVariableRosterAndAdversarial/skip-initialization (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-target-rank (0.19s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-round-pool (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-report (0.01s)
+    --- PASS: TestVariableRosterAndAdversarial/premature-terminal (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/changed-seed (0.20s)
+    --- PASS: TestVariableRosterAndAdversarial/changed-snapshot (0.05s)
+    --- PASS: TestVariableRosterAndAdversarial/changed-roster-root (0.05s)
+    --- PASS: TestVariableRosterAndAdversarial/wrong-rf-lane (0.45s)
+    --- PASS: TestVariableRosterAndAdversarial/forged-result (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/link-skip (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/link-replay (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/link-truncate (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/link-context (0.00s)
+    --- PASS: TestVariableRosterAndAdversarial/link-stale-root (0.00s)
+=== RUN   TestDamageBoundaries
+    boundaries_test.go:28: kind=7 constraints=181135
+=== RUN   TestDamageBoundaries/bounce
+=== RUN   TestDamageBoundaries/shield-only-explosion
+=== RUN   TestDamageBoundaries/zero-power
+=== RUN   TestDamageBoundaries/exact-30-percent
+=== RUN   TestDamageBoundaries/over-30-percent
+=== RUN   TestDamageBoundaries/overkill
+=== RUN   TestDamageBoundaries/dead-target
+=== RUN   TestDamageBoundaries/uint64-max-shield
+=== RUN   TestDamageBoundaries/uint64-max-hull
+--- PASS: TestDamageBoundaries (5.14s)
+    --- PASS: TestDamageBoundaries/bounce (0.52s)
+    --- PASS: TestDamageBoundaries/shield-only-explosion (0.52s)
+    --- PASS: TestDamageBoundaries/zero-power (0.52s)
+    --- PASS: TestDamageBoundaries/exact-30-percent (0.52s)
+    --- PASS: TestDamageBoundaries/over-30-percent (0.52s)
+    --- PASS: TestDamageBoundaries/overkill (0.52s)
+    --- PASS: TestDamageBoundaries/dead-target (0.51s)
+    --- PASS: TestDamageBoundaries/uint64-max-shield (0.51s)
+    --- PASS: TestDamageBoundaries/uint64-max-hull (0.52s)
+=== RUN   TestInitializationCanonicality
+    boundaries_test.go:93: kind=1 constraints=224404
+--- PASS: TestInitializationCanonicality (1.25s)
+=== RUN   TestConstrainedLinkage
+--- PASS: TestConstrainedLinkage (0.00s)
+=== RUN   TestFullAddressWidth
+--- PASS: TestFullAddressWidth (0.26s)
+=== RUN   TestUniformFullWidthRejection
+--- PASS: TestUniformFullWidthRejection (0.29s)
+=== RUN   TestCounterCarryAndRefusal
+    ranges_test.go:101: kind=5 constraints=280609
+--- PASS: TestCounterCarryAndRefusal (0.77s)
+=== RUN   TestEmptyAndSixRoundTerminal
+    ranges_test.go:115: kind=2 constraints=35231
+--- PASS: TestEmptyAndSixRoundTerminal (0.27s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/memorybattle	97.945s
+       98.25 real       110.58 user         1.58 sys
+          2419654656  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              337238  page reclaims
+                 645  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                8186  signals received
+                 229  voluntary context switches
+              137463  involuntary context switches
+          2427386976  instructions retired
+           917010576  cycles elapsed
+            21873336  peak memory footprint

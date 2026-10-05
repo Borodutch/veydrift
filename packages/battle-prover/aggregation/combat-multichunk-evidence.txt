@@ -1,0 +1,53 @@
+=== RUN   TestActualCombatMultiChunkRecursiveProof
+    combat_multichunk_test.go:74: RESOURCE GOMAXPROCS=2 soft_GOMEMLIMIT=6442450944 per_circuit_ceiling=4000000
+    combat_multichunk_test.go:75: FIXTURE context_digest=e89001ebfe168c2a0d5b4d0e1e65eaf723e4a6eab71f8ae01ab103e0f21b8594 terminal={Phase:9 Round:1 Side:1 Shooter:3 Target:1 Cursor:0 Counter:4 Step:30 Hull:[1 0 0 0] Shield:[0 0 0 0] Pool:[1 0 0 0] Shots:[2 2] RoundShots:[[2 2] [0 0] [0 0] [0 0] [0 0] [0 0]] RoundSurvivors:[[1 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0]] Outcome:1}
+    tree_test.go:97: Groth16 compile constraints=1333086 public=8 time=2.930393333s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=26b09793fe326efd6030dc1765297bb74f05dac176b5a514a04c57cd73e92222 time=4m56.510485083s
+    tree_test.go:125: Groth16 proof start=0 end=15 count=15 time=15.2969835s
+    combat_multichunk_test.go:97: REJECTED chunk stale private state (compiled recursive constraints, not generated negative proof)
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=bf6584b3300ad8b65a513da466cdc7ceafc85b8e676eb737837dbb44f7ac288d time=4m25.758523792s
+    tree_test.go:125: Groth16 proof start=0 end=15 count=15 time=15.112407375s
+    combat_multichunk_test.go:105: CHUNK VERIFIED index=0 start=0 end=15
+    tree_test.go:97: Groth16 compile constraints=1333086 public=8 time=2.818591167s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=9e33341fbeb852c4458ccc704509b5a28b520cdbc1beb2a5ab23e27a27d3831f time=4m27.1254695s
+    tree_test.go:125: Groth16 proof start=15 end=30 count=15 time=15.180203333s
+    combat_multichunk_test.go:103: REJECTED chunk terminal result mutation (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:105: CHUNK VERIFIED index=1 start=15 end=30
+    tree_test.go:97: Groth16 compile constraints=3426219 public=8 time=7.282505625s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=a6f2b9e4d0b832137724bfa60002662ff479eb15463c4bebfc425a75b8c6171f time=12m44.561941333s
+    combat_multichunk_test.go:116: REJECTED pair output (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:119: REJECTED pair context (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:123: REJECTED pair replay (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:127: REJECTED pair unapproved actual-combat key (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=0 end=30 count=30 time=39.425135458s
+    combat_multichunk_test.go:129: PAIR RECURSIVE PROOF VERIFIED chunks=2 transitions=30
+    tree_test.go:97: Groth16 compile constraints=1748260 public=8 time=3.553123709s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=7442d9011e37bb38bb96cdd723fe2c5939a23e684fcf23a729367263c2ca07ad time=6m30.77756075s
+    combat_multichunk_test.go:154: REJECTED final genesis (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final terminal (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final nonzero start (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final empty execution (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final result (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:177: REJECTED changed outcome commitment against generated final proof
+    combat_multichunk_test.go:181: MULTI-CHUNK ACTUAL COMBAT FINAL VERIFIED chunks=2 transitions=30 public=7 proof_bytes=196 proof_sha256=0c6b5580a7556448b7ded9a2822f0a63376f50a5b4597a0adc1ba2b51daa7a9c rounds=1 outcome=1 time=35m12.11571025s
+--- PASS: TestActualCombatMultiChunkRecursiveProof (2112.12s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	2112.611s
+     2113.22 real      3896.89 user        10.92 sys
+          8332034048  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              550877  page reclaims
+                1043  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+              140641  signals received
+               48805  voluntary context switches
+              797324  involuntary context switches
+          3753568488  instructions retired
+          1488612931  cycles elapsed
+            26772128  peak memory footprint
