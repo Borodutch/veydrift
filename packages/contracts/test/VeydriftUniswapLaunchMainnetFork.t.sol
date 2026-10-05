@@ -309,15 +309,15 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             lock
         );
         VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory resourceConfigs;
-        resourceConfigs[0] = _resourceConfig(address(token), address(metal), 333_333_000);
-        resourceConfigs[1] = _resourceConfig(address(token), address(crystal), 222_222_000);
-        resourceConfigs[2] = _resourceConfig(address(token), address(deuterium), 133_333_000);
+        resourceConfigs[0] = _resourceConfig(address(token), address(metal), 86_666_667_000);
+        resourceConfigs[1] = _resourceConfig(address(token), address(crystal), 57_777_778_000);
+        resourceConfigs[2] = _resourceConfig(address(token), address(deuterium), 34_666_667_000);
 
         vm.startPrank(authority);
         token.approve(address(resourceLauncher), 150_000_000 ether);
-        metal.approve(address(resourceLauncher), 333_333_000);
-        crystal.approve(address(resourceLauncher), 222_222_000);
-        deuterium.approve(address(resourceLauncher), 133_333_000);
+        metal.approve(address(resourceLauncher), 86_666_667_000);
+        crystal.approve(address(resourceLauncher), 57_777_778_000);
+        deuterium.approve(address(resourceLauncher), 34_666_667_000);
         (, uint256[3] memory resourcePositionIds) =
             resourceLauncher.launchResourcePools(resourceConfigs, block.timestamp + 30 minutes);
         vm.stopPrank();
@@ -961,14 +961,14 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             lock
         );
         VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory noiseConfigs;
-        noiseConfigs[0] = _resourceConfig(address(noiseToken), address(noiseA), 333_333_000);
-        noiseConfigs[1] = _resourceConfig(address(noiseToken), address(noiseB), 222_222_000);
-        noiseConfigs[2] = _resourceConfig(address(noiseToken), address(noiseC), 133_333_000);
+        noiseConfigs[0] = _resourceConfig(address(noiseToken), address(noiseA), 86_666_667_000);
+        noiseConfigs[1] = _resourceConfig(address(noiseToken), address(noiseB), 57_777_778_000);
+        noiseConfigs[2] = _resourceConfig(address(noiseToken), address(noiseC), 34_666_667_000);
         vm.startPrank(authority);
         noiseToken.approve(address(noiseLauncher), 150_000_000 ether);
-        noiseA.approve(address(noiseLauncher), 333_333_000);
-        noiseB.approve(address(noiseLauncher), 222_222_000);
-        noiseC.approve(address(noiseLauncher), 133_333_000);
+        noiseA.approve(address(noiseLauncher), 86_666_667_000);
+        noiseB.approve(address(noiseLauncher), 57_777_778_000);
+        noiseC.approve(address(noiseLauncher), 34_666_667_000);
         noiseLauncher.launchResourcePools(noiseConfigs, block.timestamp + 30 minutes);
         vm.stopPrank();
     }
@@ -1023,7 +1023,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             );
 
         evidence.releaseAmount = VeydriftGameStorage.Resources({
-            metal: 333_333_000, crystal: 222_222_000, deuterium: 133_333_000
+            metal: 86_666_667_000, crystal: 57_777_778_000, deuterium: 34_666_667_000
         });
         evidence.margin = VeydriftGameStorage.Resources({
             metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000
