@@ -19,6 +19,7 @@ import type {
 } from "../walletFlow";
 import { formatCompactResource } from "./GalaxyView";
 import { moonBuildingAsset } from "./MoonPage";
+import { getSizedImageSrc } from "../utils/imageSizes";
 import { OptimizedImage } from "./OptimizedImage";
 import {
   compactOverviewLevelLabel,
@@ -333,7 +334,8 @@ function BodyRow({
         onClick={selected ? undefined : onToggle}
       >
         <span className={`relative shrink-0 overflow-hidden rounded-full bg-white/5 ${isMoon ? "h-6 w-6" : "h-8 w-8"} ${selected ? "ring-1 ring-cyan-300/60" : ""}`}>
-          <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={image} />
+          {/* Same fixed 64px animation variant as the planet rail; scaling the 512px master down aliases its edges. */}
+          <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(image, 64)} />
         </span>
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-1.5">
