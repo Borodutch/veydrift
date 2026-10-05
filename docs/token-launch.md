@@ -94,7 +94,7 @@ full-range vMETAL/VEYDRIFT, vCRYSTAL/VEYDRIFT, and vDEUT/VEYDRIFT v4 pools. The 
 venue, resource/WETH pair, resource/stable pair, or new hook is in the approved bundle.
 
 The approved whitepaper artifact is `apps/frontend/public/whitepaper.pdf`, SHA-256
-`b220d34a8bf6edc769b77793345d0a802ef3633e041ded0443be03fe7bf81180`.
+`6de34b4076bce356ad1bed9f038ed803af8b2ca88a27e9c5487f78118d042a5c`.
 
 ## Pinned official Base deployments
 
