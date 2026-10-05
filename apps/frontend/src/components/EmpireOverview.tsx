@@ -420,40 +420,28 @@ function BodyDetails({
       }))
     : planetBuildingTiles(planet, infrastructure?.data);
   const loadingMoon = isMoon && !moon;
+  const hasMissions = Boolean(missions && missions.lines.length > 0);
   const actions = renderActions?.(group, kind);
 
   return (
     <div className="grid gap-3 px-3 pb-3 pt-1 sm:pl-[3.75rem]">
-      <div className="grid gap-3 lg:grid-cols-2">
-        <DetailSection title="Queues">
+      {loadingMoon ? <p className="text-[11px] text-slate-500">Loading…</p> : null}
+      {queues.length > 0 || hasMissions ? (
+        <div className={`grid gap-3 ${queues.length > 0 && hasMissions ? "lg:grid-cols-2" : ""}`}>
           {queues.length > 0 ? (
-            <ul className="grid gap-1.5">{queues.map((line) => <QueueRow key={line.kind} line={line} now={now} />)}</ul>
-          ) : (
-            <p className="text-[11px] text-slate-500">{loadingMoon ? "Loading…" : "All queues idle"}</p>
-          )}
-        </DetailSection>
-        <DetailSection title="Missions">
-          {missions && missions.lines.length > 0 ? (
-            <ul className="grid gap-1">{missions.lines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}</ul>
-          ) : (
-            <p className="text-[11px] text-slate-500">No active missions</p>
-          )}
-        </DetailSection>
-      </div>
-      <DetailSection title="Fleet & defenses">
-        {units.length > 0 ? (
-          <TileGrid tiles={units} />
-        ) : (
-          <p className="text-[11px] text-slate-500">{loadingMoon ? "Loading…" : "No units stationed"}</p>
-        )}
-      </DetailSection>
-      <DetailSection title="Infrastructure">
-        {buildings.length > 0 ? (
-          <TileGrid labelled tiles={buildings} />
-        ) : (
-          <p className="text-[11px] text-slate-500">{loadingMoon ? "Loading…" : "Nothing built yet"}</p>
-        )}
-      </DetailSection>
+            <DetailSection title="Queues">
+              <ul className="grid gap-1.5">{queues.map((line) => <QueueRow key={line.kind} line={line} now={now} />)}</ul>
+            </DetailSection>
+          ) : null}
+          {hasMissions ? (
+            <DetailSection title="Missions">
+              <ul className="grid gap-1">{missions?.lines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}</ul>
+            </DetailSection>
+          ) : null}
+        </div>
+      ) : null}
+      {units.length > 0 ? <DetailSection title="Fleet & defenses"><TileGrid tiles={units} /></DetailSection> : null}
+      {buildings.length > 0 ? <DetailSection title="Infrastructure"><TileGrid labelled tiles={buildings} /></DetailSection> : null}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
         {actions}
         {onSwitch ? (
@@ -482,18 +470,18 @@ function DetailSection({ title, children }: { title: string; children: Component
 
 function TileGrid({ tiles, labelled = false }: { tiles: Tile[]; labelled?: boolean }) {
   return (
-    <ul className={`grid gap-1 ${labelled ? "grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))]" : "grid-cols-[repeat(auto-fill,minmax(5.25rem,1fr))]"}`}>
+    <ul className="flex flex-wrap gap-1">
       {tiles.map((tile) => (
         <li
-          className="flex min-w-0 items-center gap-1.5 rounded border border-white/[0.06] bg-white/[0.03] p-0.5 pr-2"
+          className="flex max-w-full items-center gap-1.5 rounded border border-white/[0.06] bg-white/[0.03] p-0.5 pr-2"
           key={tile.key}
           title={`${tile.label} ${labelled ? `level ${tile.value}` : tile.value}`}
         >
           <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
             {tile.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={tile.asset} /> : null}
           </span>
-          {labelled ? <span className="min-w-0 flex-1 truncate text-[11px] text-slate-300">{tile.label}</span> : null}
-          <span className={`shrink-0 text-[11px] font-semibold tabular-nums text-slate-100 ${labelled ? "" : "ml-auto"}`}>{tile.value}</span>
+          {labelled ? <span className="min-w-0 truncate text-[11px] text-slate-300">{tile.label}</span> : null}
+          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-100">{tile.value}</span>
         </li>
       ))}
     </ul>
