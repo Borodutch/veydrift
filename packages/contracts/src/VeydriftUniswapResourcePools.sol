@@ -38,9 +38,10 @@ contract VeydriftUniswapResourcePools {
     uint256 public constant VEYDRIFT_TOTAL_SUPPLY = 1_000_000_000 ether;
     uint256 public constant VEYDRIFT_PER_RESOURCE_POOL = 50_000_000 ether;
     uint256 public constant RESOURCE_TOTAL_SUPPLY = 10_000_000_000 * 1e6;
-    uint256 public constant METAL_AMOUNT = 333_333_000;
-    uint256 public constant CRYSTAL_AMOUNT = 222_222_000;
-    uint256 public constant DEUTERIUM_AMOUNT = 133_333_000;
+    // 50M VEYDRIFT at the $0.0026 CCA floor against $1.50 / $2.25 / $3.75 reference prices.
+    uint256 public constant METAL_AMOUNT = 86_666_667_000;
+    uint256 public constant CRYSTAL_AMOUNT = 57_777_778_000;
+    uint256 public constant DEUTERIUM_AMOUNT = 34_666_667_000;
     uint256 public constant MPS = 10_000_000;
     uint256 public constant MIN_INPUT_USAGE_MPS = 9_900_000;
     int24 public constant MIN_TICK = -887272;

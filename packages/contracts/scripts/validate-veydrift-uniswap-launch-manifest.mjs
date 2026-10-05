@@ -197,7 +197,7 @@ eq(uint("mainWethBidInputWei"), mainWethOutflow, "mainWethBidInputWei observed d
 eq(uint("veydriftPositionManagerDonationBefore"), 7n * 10n ** 18n, "veydrift donation before");
 eq(uint("veydriftPositionManagerDonationAfter"), uint("veydriftPositionManagerDonationBefore"), "veydrift donation isolation");
 
-const resourceRaw = [333_333_000n, 222_222_000n, 133_333_000n];
+const resourceRaw = [86_666_667_000n, 57_777_778_000n, 34_666_667_000n];
 const resourceDonations = [11n, 13n, 17n];
 const canonicalPositionIds = [uint("mainPositionTokenId")];
 for (let i = 0; i < 3; i += 1) {

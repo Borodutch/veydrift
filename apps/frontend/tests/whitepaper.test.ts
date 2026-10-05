@@ -12,7 +12,7 @@ import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
 import { TopBar } from "../src/components/TopBar";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const expectedHash = "8df4752e969a78aea041483daba10ee1a0a86873021d28d991a3ba3364e6ffaf";
+const expectedHash = "b075a57bc106cdad276e65ab5a76f8fb5e9b5cd256ef93746498e50806b06253";
 const whitepaper = new URL("../public/whitepaper.pdf", import.meta.url);
 // /whitepaper.pdf was the sole published document URL; also deny page-style
 // paths, query strings, encoded names and Vite's public/source aliases.
