@@ -43,7 +43,7 @@ func TestOrdinaryOracleAndMemoryRoot(t *testing.T) {
 	for variant, f := range fs {
 		rows := []Row{}
 		for _, g := range f.Groups {
-			r := Row{p.MustValue(parse(g.Owner[2:], 16)), p.MustValue(parse(g.Source, 10)), p.Const(g.Count), g.Side, g.Type, p.Technology{g.Technology.Weapons, g.Technology.Shielding, g.Technology.Armor}}
+			r := Row{p.MustValue(parse(g.Owner[2:], 16)), p.MustValue(parse(g.Source, 10)), p.Const(g.Count), g.Side, g.Type, p.Technology{Weapons: g.Technology.Weapons, Shielding: g.Technology.Shielding, Armor: g.Technology.Armor}}
 			rows = append(rows, r)
 		}
 		m, e := New(identity(), rows, base())
@@ -59,10 +59,10 @@ func TestOrdinaryOracleAndMemoryRoot(t *testing.T) {
 		mem := mb.NewMemory()
 		index := uint64(0)
 		for id, c := range f.Cohorts {
-			k := p.Key{Side: c.Side, Type: c.Type, Stats: p.Stats{p.MustValue(parse(c.Attack, 10)), p.MustValue(parse(c.Shield, 10)), p.MustValue(parse(c.Hull, 10))}}
+			k := p.Key{Side: c.Side, Type: c.Type, Stats: p.Stats{Attack: p.MustValue(parse(c.Attack, 10)), Shield: p.MustValue(parse(c.Shield, 10)), Hull: p.MustValue(parse(c.Hull, 10))}}
 			ch = CohortHash(ch, k, p.Const(uint64(id)), p.Const(c.Count))
 			for _, g := range c.Groups {
-				r := Row{p.MustValue(parse(g.Owner[2:], 16)), p.MustValue(parse(g.Source, 10)), p.Const(g.Count), g.Side, g.Type, p.Technology{g.Technology.Weapons, g.Technology.Shielding, g.Technology.Armor}}
+				r := Row{p.MustValue(parse(g.Owner[2:], 16)), p.MustValue(parse(g.Source, 10)), p.Const(g.Count), g.Side, g.Type, p.Technology{Weapons: g.Technology.Weapons, Shielding: g.Technology.Shielding, Armor: g.Technology.Armor}}
 				mh = MemberHash(mh, r, k, p.Const(uint64(id)))
 			}
 			for n := uint64(0); n < c.Count; n++ {

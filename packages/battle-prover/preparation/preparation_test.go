@@ -14,9 +14,11 @@ func identity() Identity {
 	return Identity{p.Const(8453), p.Const(1), p.Const(2), p.Const(3), p.Const(4), p.Const(5), p.Const(6), p.Const(7), p.Const(8), p.Const(9), 0}
 }
 func row(owner, source, count uint64) Row {
-	return Row{p.Const(owner), p.Const(source), p.Const(count), 0, 0, p.Technology{0, 0, 0}}
+	return Row{p.Const(owner), p.Const(source), p.Const(count), 0, 0, p.Technology{Weapons: 0, Shielding: 0, Armor: 0}}
 }
-func base() map[uint64]p.Stats { return map[uint64]p.Stats{0: {p.Const(20), p.Const(5), p.Const(100)}} }
+func base() map[uint64]p.Stats {
+	return map[uint64]p.Stats{0: {Attack: p.Const(20), Shield: p.Const(5), Hull: p.Const(100)}}
+}
 func compile(t *testing.T, kind int) constraint.ConstraintSystem {
 	t.Helper()
 	c, e := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, Shape(kind))
@@ -39,7 +41,7 @@ func solve(t *testing.T, c constraint.ConstraintSystem, w *Step, ok bool) {
 }
 func TestCompleteTrace(t *testing.T) {
 	systems := map[int]constraint.ConstraintSystem{}
-	for _, rows := range [][]Row{{row(2, 8, 1), row(1, 9, 2)}, {}, {row(1, 1, 0)}, {row(1, 1, 0), row(2, 2, 1)}, {func() Row { r := row(1, 1, 1); r.Tech = p.Technology{1, 2, 3}; return r }(), row(2, 2, 1)}} {
+	for _, rows := range [][]Row{{row(2, 8, 1), row(1, 9, 2)}, {}, {row(1, 1, 0)}, {row(1, 1, 0), row(2, 2, 1)}, {func() Row { r := row(1, 1, 1); r.Tech = p.Technology{Weapons: 1, Shielding: 2, Armor: 3}; return r }(), row(2, 2, 1)}} {
 		m, e := New(identity(), rows, base())
 		if e != nil {
 			t.Fatal(e)

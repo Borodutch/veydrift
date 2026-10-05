@@ -80,9 +80,11 @@ func (s State) values() []frontend.Variable {
 	return append(v, KeyValues(s.Key)...)
 }
 func (s State) Commitment() *big.Int { return Hash(StateDomain, s.values()...) }
-func zeroRow() Row                   { return Row{p.Const(0), p.Const(0), p.Const(0), 0, 0, p.Technology{0, 0, 0}} }
+func zeroRow() Row {
+	return Row{p.Const(0), p.Const(0), p.Const(0), 0, 0, p.Technology{Weapons: 0, Shielding: 0, Armor: 0}}
+}
 func zeroKey() p.Key {
-	return p.Key{Side: 0, Type: 0, Stats: p.Stats{p.Const(0), p.Const(0), p.Const(0)}}
+	return p.Key{Side: 0, Type: 0, Stats: p.Stats{Attack: p.Const(0), Shield: p.Const(0), Hull: p.Const(0)}}
 }
 func Initial() State {
 	return State{Phase: Boot, Step: p.Const(0), I: p.Const(0), J: p.Const(0), Processed: p.Const(0), Total: p.Const(0), Unit: p.Const(0), Cohort: p.Const(0), Offset: p.Const(0), Count: p.Const(0), Visited: NewTree(big.NewInt(0)).Root(), Members: 0, Cohorts: 0, UnitRoot: NewUnitTree().Root(), Previous: zeroRow(), Key: zeroKey()}

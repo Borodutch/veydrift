@@ -48,7 +48,7 @@ func effective(s p.Stats, t p.Technology) (p.Stats, [3]frontend.Variable, error)
 		out[i] = p.MustValue(q)
 		rem[i] = r
 	}
-	return p.Stats{out[0], out[1], out[2]}, rem, nil
+	return p.Stats{Attack: out[0], Shield: out[1], Hull: out[2]}, rem, nil
 }
 func New(id Identity, rows []Row, bases map[uint64]p.Stats) (*Machine, error) {
 	m := &Machine{Rows: append([]Row{}, rows...), Bases: bases, Raw: NewTree(big.NewInt(0)), Catalog: NewTree(big.NewInt(0)), Tech: NewTree(big.NewInt(0)), Visited: NewTree(big.NewInt(0)), Units: NewUnitTree(), State: Initial()}
