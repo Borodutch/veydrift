@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 // Candidate/reference-only rules, not the production combat algorithm or a proof verifier.
-export const RULES = "veydrift-individual-shot-candidate-1";
+export const RULES = "veydrift-individual-shot-candidate-2";
 const U256 = 1n << 256n;
 export type Side = 0 | 1;
 export interface Stats { attack: bigint; shield: bigint; hull: bigint }
@@ -106,8 +106,9 @@ export function hit(target: Unit, stats: Stats, attack: bigint, draw: (bound: bi
   target.shield -= absorbed;
   const damage = attack - absorbed;
   target.hull = damage >= target.hull ? 0n : target.hull - damage;
-  // A bounced, shield-only or zero-power hit does not trigger another explosion draw.
-  if (target.hull === 0n || damage === 0n) return { bounced:false, exploded:false };
+  // Every non-bouncing positive-power hit can explode damaged hull, even through shields.
+  // Zero power remains an explicit older-guide candidate choice (see the rules doc).
+  if (target.hull === 0n || attack === 0n) return { bounced:false, exploded:false };
   const missing = stats.hull - target.hull;
   if (missing * 10n > stats.hull * 3n && draw(stats.hull) < missing) {
     target.hull = 0n; return { bounced:false, exploded:true };

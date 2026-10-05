@@ -29,9 +29,39 @@ test("bounce threshold is full shield, strict and no health buckets", () => {
   hit(u,stats,11n,noExplosion); expect(u.hull).toBe(990n); expect(u.shield).toBe(0n);
   hit(u,stats,9n,noExplosion); expect(u.hull).toBe(981n);
 });
-test("shield-only hits never explode previously damaged hull", () => {
-  const u={cohort:0,hull:40n,shield:100n}; hit(u,base(0n,100n),20n,()=>{throw Error("unexpected explosion draw");});
-  expect(u.hull).toBe(40n); expect(u.shield).toBe(80n);
+test("non-bouncing shield-only hits check accumulated hull damage", () => {
+  const u={cohort:0,hull:40n,shield:100n}; let draws=0;
+  expect(hit(u,base(0n,100n),20n,n=>{expect(n).toBe(100n);draws++;return 0n;})).toEqual({bounced:false,exploded:true});
+  expect(draws).toBe(1); expect(u.hull).toBe(0n); expect(u.shield).toBe(80n);
+  const v={cohort:0,hull:40n,shield:100n};
+  hit(v,base(0n,100n),20n,()=>60n); expect(v.hull).toBe(40n);
+  hit(v,base(0n,100n),20n,()=>59n); expect(v.hull).toBe(0n);
+});
+test("bounce and strict 30 percent boundary skip shield-only explosion draws", () => {
+  const noDraw=()=>{throw Error("unexpected explosion draw");};
+  const u={cohort:0,hull:40n,shield:1000n};
+  expect(hit(u,base(0n,1000n),9n,noDraw).bounced).toBe(true);
+  expect(u).toEqual({cohort:0,hull:40n,shield:1000n});
+  expect(hit(u,base(0n,1000n),10n,()=>0n).exploded).toBe(true);
+  const v={cohort:0,hull:70n,shield:100n};
+  hit(v,base(0n,100n),20n,noDraw); expect(v.hull).toBe(70n);
+});
+test("shield-only explosion draw precedes RF and survives checkpoint restart", () => {
+  const i=input(); i.catalog=[{type:0,...base(20n)},{type:1,...base(0n,100n)}];
+  i.groups=[group(0,0),group(1,1)]; i.rapidfire=[{shooter:0,target:1,factor:5}];
+  const s=initialize(i); s.units[1]!.hull=40n;
+  // Deliberately damaged round-start state isolates regenerated-shield semantics.
+  const initial=checkpoint(s); const expected={seed:s.seed,counter:0n};
+  uniform(expected,1n); const explosion=uniform(expected,100n); const rf=uniform(expected,5n);
+  advance(s,1); expect(s.counter).toBe(expected.counter);
+  expect(s.units[1]!.hull).toBe(explosion<60n?0n:40n);
+  expect(s.units[1]!.shield).toBe(80n); expect(s.side).toBe(rf===0n?1:0);
+  const resumed=restore(checkpoint(s)); const reference=finish(restore(initial));
+  finish(resumed,1); expect(checkpoint(resumed)).toBe(checkpoint(reference));
+});
+test("previous candidate checkpoints cannot silently resume under corrected rules", () => {
+  const old=checkpoint(initialize(input())).replace(RULES,"veydrift-individual-shot-candidate-1");
+  expect(()=>restore(old)).toThrow("wrong checkpoint rules");
 });
 test("integer tech scaling and each owner's independent W/S/A", () => {
   expect(effective(base(11n,13n,19n),{weapons:1,shielding:2,armor:3})).toEqual(base(12n,15n,24n));

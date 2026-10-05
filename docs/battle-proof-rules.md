@@ -4,7 +4,7 @@
 not a release-ready settlement implementation.** Production remains model 2. This
 candidate exists to make subsequent circuit parity testable without calling a
 production combat helper. Its rules identifier is
-`veydrift-individual-shot-candidate-1` (backticks in this document denote identifiers).
+`veydrift-individual-shot-candidate-2` (backticks in this document denote identifiers).
 No proof or deployment result is implied by passing these ordinary tests.
 
 ## Inputs and canonical identity
@@ -63,11 +63,11 @@ are a canonicalization device, not shared HP, averaged tech, or pooled damage.
    amount; hullDamage = attack - shieldAbsorption. Subtract hullDamage from hull,
    saturating at zero. No percentage health buckets or quantized shield subtraction.
 5. If hull reaches zero, destruction is certain and consumes no explosion draw.
-   Otherwise, **only a hit that actually damages hull** may check explosion. Once
-   missingHull * 10 > maxHull * 3, sample uniform(maxHull); explode iff sample <
-   missingHull. The chance is the exact rational missingHull/maxHull, not a rounded
-   percentage. Exactly 30% damage does not check. Each later hull-damaging hit checks
-   independently against accumulated damage. Bounces, shield-only hits, zero-power
+   Otherwise, every non-bouncing positive-power hit checks accumulated hull damage,
+   **including a hit absorbed entirely by shields**. Once missingHull * 10 > maxHull * 3,
+   sample uniform(maxHull); explode iff sample < missingHull. The chance is the exact
+   rational missingHull/maxHull, not a rounded percentage. Exactly 30% damage does
+   not check. Each later qualifying hit checks independently. Bounces, zero-power
    hits and hits into dead units consume no explosion draw.
 6. RF uses the type of the unit actually selected, including a wreck. Missing RF lane
    means factor 1. For factor r > 1, sample uniform(r); another shot from the same
@@ -79,21 +79,35 @@ are a canonicalization device, not shared HP, averaged tech, or pooled damage.
    the next round excludes dead units. After six rounds, surviving sides draw. Both
    sides empty also draw. A sole surviving side wins.
 
-These are **explicit engineering candidate choices**, not a claim of byte-for-byte
-parity with every historical OGame server. In particular, round-start wreck targeting,
-full-shield strict bounce, non-quantized shield absorption, deterministic side order,
-and checking explosions only on hull-damaging hits must be retained in independent
-review. Some classical descriptions check damaged-hull explosions on every later hit,
-including shield-only hits; this candidate deliberately does not. Exact ordinary
-integer damage and Veydrift catalog values are retained. Changing any of these choices
-requires a new candidate identifier, expected traces and replay results before any
-production activation; they are not a quiet migration of model 2.
+### Classical evidence and candidate differences
+
+The official archived OGame guide [How a fight works](https://board.en.ogame.gameforge.com/index.php?thread/151317-how-a-fight-works/),
+Cassandra Vandales, 17 September 2006, explicitly says a damaged unit can explode
+when it absorbs a shot with **shield or hull**, with a full-shield/40%-hull-damage
+example and an ineffectualness exception. Candidate 1's hull-damage-only guard was
+incorrect for this classical behavior; candidate 2 fixes it. A target with maxHull
+100, hull 40 and shield 100 hit with power 20 now loses 20 shield and checks a 60%
+explosion chance, despite taking no new hull damage.
+
+This is still **not byte-for-byte parity with every historical OGame server**. The
+2006 post says "1% or less" is ineffectual; we retain a **strict below-1%** full-shield
+bounce (equality damages). The 29 September 2008 reply in that same thread describes
+integer-percentage shield subtraction; we retain exact, non-quantized absorption.
+Skipping zero-power explosion checks is an explicit **older-guide interpretation /
+candidate choice**, not an assertion that the archive proves all zero-power cases
+(in particular when no shield remains), or a claim about current server behavior.
+Round-start wreck targeting and deterministic side serialization also remain explicit
+rules for independent review. Exact ordinary integer damage and Veydrift catalog values
+are retained. Any rule change requires a new candidate identifier, expected traces and
+replays before activation; this is not a quiet migration of production model 2.
+Candidate 2 also changes the random-stream domain, so old checkpoints are rejected and
+historical result differences cannot be attributed solely to the corrected hit guard.
 
 ## Random stream and resumption
 
 The reference uses standard SHA-256, not custom cryptography:
 
-word = SHA256(UTF8("veydrift-individual-shot-candidate-1:random:") || seed32 || counter32BE)
+word = SHA256(UTF8("veydrift-individual-shot-candidate-2:random:") || seed32 || counter32BE)
 
 Counter starts at zero and increments for **every word**, including rejected words.
 For positive bound n < 2^256, limit = 2^256 - (2^256 mod n). Reject word >= limit,
@@ -155,9 +169,14 @@ this reference is not such a service.
 ## Four historical planet-1 counterfactuals
 
 fixtures/planet1.json (under packages/battle-oracle) was imported offline from the
-planet1-audit-22492 artifacts. The importer asserts complete staged membership; compares
-every initial unit lane, owner and source to the prior source-audited simulation input;
-uses onchain frozen research captures; checks the historical seed; records source file
+planet1-audit-22492 artifacts. The importer checks staged membership **bidirectionally**
+against the prior source-audited input; the complete flag alone is insufficient. Every
+expected attacker and resident defender must appear exactly once with the exact source
+ID, owner and side. Every nonzero source lane must appear with its exact starting count;
+the archive is sparse, so absent zero lanes are allowed. Duplicate lanes and lanes outside
+the source's ship/defense manifest are rejected, even if their count is zero. Pure validation
+of all four battles completes before any output write. It uses onchain frozen research
+captures; checks the historical seed; records source file
 hashes, chain/game, impact/final block and canonical receipt. It does not query current
 planet inventory or substitute present-day tech. The frozen catalog has its own hash.
 Reimport (requires the original private local audit directory) with:
@@ -173,10 +192,10 @@ stream does not reuse the old model-2 draws. No repair/loot/economy result is in
 
 | Battle | Candidate result | Rounds | Attacker start → survivors | Defender start → survivors | Physical shots |
 |---|---|---:|---:|---:|---:|
-| 97808 | Draw | 6 | 319 → 103 | 2373 → 142 | 9928 |
-| 97839 | Attacker | 4 | 319 → 297 | 1580 → 0 | 6005 |
-| 97876 | Defender | 3 | 50 → 0 | 1089 → 218 | 3157 |
-| 97881 | Defender | 2 | 30 → 0 | 759 → 335 | 1825 |
+| 97808 | Draw | 6 | 319 → 94 | 2373 → 305 | 10095 |
+| 97839 | Attacker | 4 | 319 → 279 | 1580 → 0 | 5935 |
+| 97876 | Defender | 3 | 50 → 0 | 1089 → 395 | 3095 |
+| 97881 | Defender | 2 | 30 → 0 | 759 → 289 | 1902 |
 
 Full per-round/mission output is fixtures/planet1-candidate-results.json and tested as
 an exact replay golden. It is not independent proof of algorithm correctness; separate
