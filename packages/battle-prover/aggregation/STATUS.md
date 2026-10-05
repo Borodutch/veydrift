@@ -36,3 +36,7 @@ Actual EVM verification/gas for this generated final proof remains **unmeasured*
 - Both independent review children and every owned process collected. No running owned test or review remains; unrelated countdown in original checkout left untouched.
 - `.log` is ignored by repository policy, so byte-identical trackable receipts are `combat-multichunk-evidence.txt`, `combat-multichunk-attacks-evidence.txt`, `combat-multichunk-short-evidence.txt`. Two source manifests plus completed source-check receipt retained.
 - One initial shell selector used an unquoted pipe and exited127; it did not invalidate the proof, was corrected with the task-scoped run-attacks.sh, and both named tests then passed.
+
+## Actual generated combat proof EVM gate — PASS (2026-10-05)
+
+Genuine two-chunk proof regenerated/exported within unchanged<=4M circuit ceiling, two threads, soft6GiB,60m timeout: PASS34m27s. Actual generated Solidity verifier accepted final proof in isolated local Foundry; all5 tests PASS, explicit context/result/proof rejections. Successful callee348,734 gas, staticcall351,722; separate deployment1,509,024;384-byte proof/676-byte calldata. Solc0.8.28/optimizer200/Cancun. Complete receipts/public artifacts/hashes: evm/README.md. Canonical serialization review fix tested separately and proven equivalent for exported fixture, exact original run source preserved. No RPC/broadcast, production ceremony, arbitrary-fleet or live-Base-fee claim.

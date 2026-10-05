@@ -4,6 +4,27 @@ Development-only feasibility work for agentboard #44. No production path imports
 this module. No service, verifier address, migration, resolver switch, or trusted
 setup artifacts are produced. Do not activate proof-settled battles from this code.
 
+## Additional inactive prerequisites
+
+The original arithmetic probe below is retained as plumbing evidence. Subsequent
+packages do not activate any production path:
+
+- [battle](battle/README.md): complete fixed-four-slot candidate-2 execution,
+  authenticated full-state commitments and genuine elementary proof bundle.
+- [aggregation](aggregation/README.md): genuine two-chunk complete combat
+  recursion (30 transitions), one final BN254 proof, seven public scalars.
+  The collected run took35m12s including development setups; compressed proof196
+  bytes, peak RSS8.33GB under a soft6GiB GC target. This is a fixed fixture/schedule,
+  not general battle aggregation; EVM execution remains a separate gate.
+- [memorybattle](memorybattle/README.md): fixed-size authenticated sparse-memory
+  controller, solver-tested on6/10-unit complete battles under identical keys.
+  No generated proof or recursion for these circuits yet. uint64 limits and
+  externally qualified prepared-input boundaries are explicit.
+
+These are separate artifacts: the generated recursive proof does not prove the
+variable-memory controller. Full protocol widths, upstream preparation,
+attribution/settlement, onchain qualification and production keys remain required.
+
 ## What the recursion probe establishes
 
 `recursion/Step` constrains one uint32 counter increment and one uint32 state

@@ -57,7 +57,7 @@ func rejectCombat(t *testing.T, l level, name string, a frontend.Circuit) {
 }
 
 // Genuine combat chunk proofs -> genuine RangePair proof -> genuine RangeFinal
-// proof. All keys are development-only, compile-time approved and memory-only.
+// proof. All setups are development-only; proving keys remain memory-only.
 // This fixed four-slot trace/schedule is NOT arbitrary-fleet aggregation.
 func TestActualCombatMultiChunkRecursiveProof(t *testing.T) {
 	if os.Getenv("RUN_COMBAT_MULTICHUNK") != "1" {
@@ -178,5 +178,6 @@ func TestActualCombatMultiChunkRecursiveProof(t *testing.T) {
 	var b bytes.Buffer
 	_, e = p.WriteTo(&b)
 	check(t, e)
+	exportCombatEVM(t, final.vk, p, pub)
 	t.Logf("MULTI-CHUNK ACTUAL COMBAT FINAL VERIFIED chunks=2 transitions=30 public=7 proof_bytes=%d proof_sha256=%x rounds=%d outcome=%d time=%s", b.Len(), sha256.Sum256(b.Bytes()), ss[30].Round, ss[30].Outcome, time.Since(started))
 }

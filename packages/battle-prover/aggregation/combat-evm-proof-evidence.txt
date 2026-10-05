@@ -1,0 +1,54 @@
+=== RUN   TestActualCombatMultiChunkRecursiveProof
+    combat_multichunk_test.go:74: RESOURCE GOMAXPROCS=2 soft_GOMEMLIMIT=6442450944 per_circuit_ceiling=4000000
+    combat_multichunk_test.go:75: FIXTURE context_digest=e89001ebfe168c2a0d5b4d0e1e65eaf723e4a6eab71f8ae01ab103e0f21b8594 terminal={Phase:9 Round:1 Side:1 Shooter:3 Target:1 Cursor:0 Counter:4 Step:30 Hull:[1 0 0 0] Shield:[0 0 0 0] Pool:[1 0 0 0] Shots:[2 2] RoundShots:[[2 2] [0 0] [0 0] [0 0] [0 0] [0 0]] RoundSurvivors:[[1 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0] [0 0 0 0]] Outcome:1}
+    tree_test.go:97: Groth16 compile constraints=1333086 public=8 time=5.06788175s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=a08e509c85a3524e6cb98e87e9b2559ae1791300f1c65532ba7bf49082b016af time=4m49.481310917s
+    tree_test.go:125: Groth16 proof start=0 end=15 count=15 time=15.015497916s
+    combat_multichunk_test.go:97: REJECTED chunk stale private state (compiled recursive constraints, not generated negative proof)
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=99333447bdceadf214cbcc9160568c8d94938bc5727230d3f168adce9d1de274 time=4m20.606249458s
+    tree_test.go:125: Groth16 proof start=0 end=15 count=15 time=14.789577083s
+    combat_multichunk_test.go:105: CHUNK VERIFIED index=0 start=0 end=15
+    tree_test.go:97: Groth16 compile constraints=1333086 public=8 time=2.593021417s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=7eb16d21be4883f1e0ec3f4035a0be7781d13acbc299f4686be896959505eec0 time=4m21.926442542s
+    tree_test.go:125: Groth16 proof start=15 end=30 count=15 time=15.124821042s
+    combat_multichunk_test.go:103: REJECTED chunk terminal result mutation (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:105: CHUNK VERIFIED index=1 start=15 end=30
+    tree_test.go:97: Groth16 compile constraints=3426219 public=8 time=7.173279792s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=34c85d9fe117b8abec248af0e8057ae8f2dbd6aa7c6589ac75d32f69c7089c3a time=12m24.59891875s
+    combat_multichunk_test.go:116: REJECTED pair output (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:119: REJECTED pair context (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:123: REJECTED pair replay (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:127: REJECTED pair unapproved actual-combat key (compiled recursive constraints, not generated negative proof)
+    tree_test.go:125: Groth16 proof start=0 end=30 count=30 time=39.143197125s
+    combat_multichunk_test.go:129: PAIR RECURSIVE PROOF VERIFIED chunks=2 transitions=30
+    tree_test.go:97: Groth16 compile constraints=1748260 public=8 time=3.586191792s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=fc6e1ab7d2c7c39876f0f19d7754060c2f460ca255d37d8e6ee2f6f7fd11caf9 time=6m22.499502542s
+    combat_multichunk_test.go:154: REJECTED final genesis (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final terminal (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final nonzero start (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final empty execution (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:154: REJECTED final result (compiled recursive constraints, not generated negative proof)
+    combat_multichunk_test.go:177: REJECTED changed outcome commitment against generated final proof
+    combat_multichunk_test.go:181: PUBLIC EVM EXPORT proof_bytes=384 proof_sha256=2e0d81afb52fbb7d2840147c6f7f05d26de43423a4cd1cd5965f541a3aa2d05f verifier_sha256=93bc7100bddc14b3526dab28b32ea2612ac576bc85a80cb4d9c0f1cd5a28d8c8 fixture_sha256=83596bee974419b2c666392b2436562d33b9ba9d755d98075f43cee3093e997e
+    combat_multichunk_test.go:182: MULTI-CHUNK ACTUAL COMBAT FINAL VERIFIED chunks=2 transitions=30 public=7 proof_bytes=196 proof_sha256=17822333490993fc5a939ea59054950e3f59812a194d79fd69daceeee8382884 rounds=1 outcome=1 time=34m27.073140791s
+--- PASS: TestActualCombatMultiChunkRecursiveProof (2067.07s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	2067.435s
+     2068.35 real      3827.47 user         9.13 sys
+          7876542464  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              510630  page reclaims
+                1044  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+              136714  signals received
+               39275  voluntary context switches
+              584482  involuntary context switches
+          3753883653  instructions retired
+          1511528435  cycles elapsed
+            27001528  peak memory footprint

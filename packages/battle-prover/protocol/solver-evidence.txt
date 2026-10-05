@@ -1,0 +1,95 @@
+=== RUN   TestRosterExpansionFullWidth
+    additional_test.go:10: *protocol.ExpandCircuit constraints=51310
+--- PASS: TestRosterExpansionFullWidth (0.19s)
+=== RUN   TestComparisonsAllBits
+    additional_test.go:54: *protocol.comparisonCircuit constraints=6770
+--- PASS: TestComparisonsAllBits (0.06s)
+=== RUN   TestDivisionRejectsNoncanonicalAdvice
+    additional_test.go:67: *protocol.mulDivCircuit constraints=7579
+--- PASS: TestDivisionRejectsNoncanonicalAdvice (0.02s)
+=== RUN   TestSamplerHighWordBitsMatter
+    additional_test.go:77: *protocol.SampleCircuit constraints=28732
+--- PASS: TestSamplerHighWordBitsMatter (0.09s)
+=== RUN   TestCheckedArithmetic
+    arithmetic_test.go:59: *protocol.arithmeticCircuit constraints=3678
+    arithmetic_test.go:59: *protocol.arithmeticCircuit constraints=9577
+    arithmetic_test.go:59: *protocol.arithmeticCircuit constraints=4139
+--- PASS: TestCheckedArithmetic (0.09s)
+=== RUN   TestEffectiveBoundaries
+    arithmetic_test.go:93: *protocol.effectiveCircuit constraints=7177
+--- PASS: TestEffectiveBoundaries (0.05s)
+=== RUN   TestMulDivFullProduct
+    arithmetic_test.go:121: *protocol.mulDivCircuit constraints=7579
+--- PASS: TestMulDivFullProduct (0.03s)
+=== RUN   TestFullWidthSampler
+    arithmetic_test.go:151: *protocol.SampleCircuit constraints=28732
+--- PASS: TestFullWidthSampler (0.33s)
+=== RUN   TestWitnessRefusesTruncation
+--- PASS: TestWitnessRefusesTruncation (0.00s)
+=== RUN   TestLiveTypeScriptOracle
+    oracle_test.go:46: *protocol.effectiveCircuit constraints=7177
+    oracle_test.go:53: *protocol.HitCircuit constraints=50881
+=== RUN   TestLiveTypeScriptOracle/0
+=== RUN   TestLiveTypeScriptOracle/1
+=== RUN   TestLiveTypeScriptOracle/2
+=== RUN   TestLiveTypeScriptOracle/3
+=== RUN   TestLiveTypeScriptOracle/4
+=== RUN   TestLiveTypeScriptOracle/5
+=== RUN   TestLiveTypeScriptOracle/6
+=== RUN   TestLiveTypeScriptOracle/7
+=== RUN   TestLiveTypeScriptOracle/8
+=== RUN   TestLiveTypeScriptOracle/9
+=== RUN   TestLiveTypeScriptOracle/10
+=== RUN   TestLiveTypeScriptOracle/11
+=== RUN   TestLiveTypeScriptOracle/12
+=== NAME  TestLiveTypeScriptOracle
+    oracle_test.go:82: live oracle: 15 scaling rows, 13 hit rows
+--- PASS: TestLiveTypeScriptOracle (0.54s)
+    --- PASS: TestLiveTypeScriptOracle/0 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/1 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/2 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/3 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/4 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/5 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/6 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/7 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/8 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/9 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/10 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/11 (0.03s)
+    --- PASS: TestLiveTypeScriptOracle/12 (0.03s)
+=== RUN   TestPreparationRangesAndForgery
+    preparation_test.go:13: *protocol.PrepareCircuit constraints=23373
+=== RUN   TestPreparationRangesAndForgery/0
+=== RUN   TestPreparationRangesAndForgery/1
+=== RUN   TestPreparationRangesAndForgery/2
+=== RUN   TestPreparationRangesAndForgery/3
+=== RUN   TestPreparationRangesAndForgery/4
+=== RUN   TestPreparationRangesAndForgery/5
+=== RUN   TestPreparationRangesAndForgery/6
+=== RUN   TestPreparationRangesAndForgery/7
+=== RUN   TestPreparationRangesAndForgery/8
+=== RUN   TestPreparationRangesAndForgery/9
+=== RUN   TestPreparationRangesAndForgery/10
+--- PASS: TestPreparationRangesAndForgery (0.08s)
+    --- PASS: TestPreparationRangesAndForgery/0 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/1 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/2 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/3 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/4 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/5 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/6 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/7 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/8 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/9 (0.00s)
+    --- PASS: TestPreparationRangesAndForgery/10 (0.00s)
+=== RUN   TestCanonicalAppendCounts
+    preparation_test.go:26: *protocol.AppendCircuit constraints=58991
+--- PASS: TestCanonicalAppendCounts (0.23s)
+=== RUN   TestSourceOwnerConsistency
+    preparation_test.go:66: *protocol.ConsistencyCircuit constraints=5573
+--- PASS: TestSourceOwnerConsistency (0.03s)
+=== RUN   TestWitnessConstructors
+--- PASS: TestWitnessConstructors (0.00s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/protocol	1.975s

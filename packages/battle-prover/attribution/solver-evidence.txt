@@ -1,0 +1,88 @@
+=== RUN   TestCompileAndSingleCohort
+    attribution_test.go:73: kind=0 constraints=79628
+    attribution_test.go:73: kind=1 constraints=63287
+    attribution_test.go:73: kind=2 constraints=80127
+    attribution_test.go:73: kind=3 constraints=137899
+--- PASS: TestCompileAndSingleCohort (5.58s)
+=== RUN   TestWitnessAttacks
+    attribution_test.go:99: kind=0 constraints=79628
+    attribution_test.go:99: kind=1 constraints=63287
+    attribution_test.go:99: kind=2 constraints=80127
+    attribution_test.go:99: kind=3 constraints=137899
+=== RUN   TestWitnessAttacks/member-source
+=== RUN   TestWitnessAttacks/member-owner
+=== RUN   TestWitnessAttacks/member-quantity
+=== RUN   TestWitnessAttacks/owner160
+=== RUN   TestWitnessAttacks/source-limb64
+=== RUN   TestWitnessAttacks/quantity32
+=== RUN   TestWitnessAttacks/duplicate
+=== RUN   TestWitnessAttacks/reordered
+=== RUN   TestWitnessAttacks/claimed-total
+=== RUN   TestWitnessAttacks/claimed-loss
+=== RUN   TestWitnessAttacks/casualty-bit
+=== RUN   TestWitnessAttacks/nonboolean-dead
+=== RUN   TestWitnessAttacks/casualty-root
+=== RUN   TestWitnessAttacks/floor-quotient
+=== RUN   TestWitnessAttacks/floor-remainder
+=== RUN   TestWitnessAttacks/q32
+=== RUN   TestWitnessAttacks/remainder-equal-divisor
+=== RUN   TestWitnessAttacks/rank-quotient
+=== RUN   TestWitnessAttacks/rank-increment
+=== RUN   TestWitnessAttacks/target-changes-midscan
+=== RUN   TestWitnessAttacks/wrong-output
+=== RUN   TestWitnessAttacks/wrong-lost-sum
+=== RUN   TestWitnessAttacks/skipped-inner-member
+=== RUN   TestWitnessAttacks/skipped-outer-member
+=== RUN   TestWitnessAttacks/premature-done
+=== RUN   TestWitnessAttacks/sum-overflow
+=== RUN   TestWitnessAttacks/public-result
+=== RUN   TestWitnessAttacks/public-context
+--- PASS: TestWitnessAttacks (1.73s)
+    --- PASS: TestWitnessAttacks/member-source (0.00s)
+    --- PASS: TestWitnessAttacks/member-owner (0.00s)
+    --- PASS: TestWitnessAttacks/member-quantity (0.01s)
+    --- PASS: TestWitnessAttacks/owner160 (0.00s)
+    --- PASS: TestWitnessAttacks/source-limb64 (0.00s)
+    --- PASS: TestWitnessAttacks/quantity32 (0.00s)
+    --- PASS: TestWitnessAttacks/duplicate (0.01s)
+    --- PASS: TestWitnessAttacks/reordered (0.00s)
+    --- PASS: TestWitnessAttacks/claimed-total (0.01s)
+    --- PASS: TestWitnessAttacks/claimed-loss (0.00s)
+    --- PASS: TestWitnessAttacks/casualty-bit (0.00s)
+    --- PASS: TestWitnessAttacks/nonboolean-dead (0.00s)
+    --- PASS: TestWitnessAttacks/casualty-root (0.01s)
+    --- PASS: TestWitnessAttacks/floor-quotient (0.00s)
+    --- PASS: TestWitnessAttacks/floor-remainder (0.01s)
+    --- PASS: TestWitnessAttacks/q32 (0.00s)
+    --- PASS: TestWitnessAttacks/remainder-equal-divisor (0.01s)
+    --- PASS: TestWitnessAttacks/rank-quotient (0.01s)
+    --- PASS: TestWitnessAttacks/rank-increment (0.01s)
+    --- PASS: TestWitnessAttacks/target-changes-midscan (0.02s)
+    --- PASS: TestWitnessAttacks/wrong-output (0.02s)
+    --- PASS: TestWitnessAttacks/wrong-lost-sum (0.01s)
+    --- PASS: TestWitnessAttacks/skipped-inner-member (0.00s)
+    --- PASS: TestWitnessAttacks/skipped-outer-member (0.01s)
+    --- PASS: TestWitnessAttacks/premature-done (0.01s)
+    --- PASS: TestWitnessAttacks/sum-overflow (0.00s)
+    --- PASS: TestWitnessAttacks/public-result (0.02s)
+    --- PASS: TestWitnessAttacks/public-context (0.04s)
+=== RUN   TestInputOrderAndMemberIdentity
+--- PASS: TestInputOrderAndMemberIdentity (0.05s)
+=== RUN   TestUint256LossAnd288BitProduct
+--- PASS: TestUint256LossAnd288BitProduct (0.04s)
+=== RUN   TestChunkLinksAndCoverage
+--- PASS: TestChunkLinksAndCoverage (0.03s)
+=== RUN   TestHighIdentityBitsAndOwnerTie
+    boundaries_test.go:129: kind=0 constraints=79628
+    boundaries_test.go:130: kind=3 constraints=137899
+--- PASS: TestHighIdentityBitsAndOwnerTie (0.56s)
+=== RUN   TestForgedCommittedLists
+    coverage_test.go:8: kind=0 constraints=79628
+    coverage_test.go:9: kind=3 constraints=137899
+--- PASS: TestForgedCommittedLists (0.61s)
+=== RUN   TestNativeRejectsMalformedMembers
+--- PASS: TestNativeRejectsMalformedMembers (0.00s)
+=== RUN   TestCandidate2OracleFixtures
+--- PASS: TestCandidate2OracleFixtures (0.15s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/attribution	9.819s

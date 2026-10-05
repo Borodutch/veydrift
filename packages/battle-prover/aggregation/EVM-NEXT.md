@@ -1,4 +1,8 @@
-# Next gate: actual local-EVM verification
+# Actual local-EVM verification gate — completed
+
+2026-10-05 follow-through: genuine combat proof and five isolated Foundry tests PASS. See [evm/README.md](evm/README.md) for hashes, gas accounting, review correction provenance and limitations. Successful callee gas348,734; call-boundary measurement351,722;384-byte proof/676-byte calldata. Original planning note follows for history.
+
+## Original next-gate plan
 
 Not executed by the current multi-chunk proof run. Native Groth16 verification with Solidity-target transcript options is not EVM execution or gas evidence. Current running test intentionally keeps final verifier/proof memory-only; no export was added during the run and no expensive setup was restarted merely to export.
 

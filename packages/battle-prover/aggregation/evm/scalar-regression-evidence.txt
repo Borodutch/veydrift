@@ -1,0 +1,7 @@
+=== RUN   TestCanonicalEVMScalars
+--- PASS: TestCanonicalEVMScalars (0.00s)
+=== RUN   TestExportedCombatEVMScalars
+    evm_scalar_test.go:50: exported seven canonical scalars equal reconstructed combat statement and original run serialization
+--- PASS: TestExportedCombatEVMScalars (0.05s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	1.391s

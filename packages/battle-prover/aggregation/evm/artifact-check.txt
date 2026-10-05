@@ -1,0 +1,5 @@
+aggregation/evm/public/Verifier.sol: OK
+aggregation/evm/public/fixture.json: OK
+aggregation/evm/test/CombatVerifier.t.sol: OK
+aggregation/evm/foundry.toml: OK
+aggregation/run-evm-test.sh: OK
