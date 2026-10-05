@@ -7302,6 +7302,9 @@ export function PlayableMvpApp({
 
     return (
       <OverviewPage
+        account={account}
+        backendData={backendData}
+        researchQueue={walletPlanetsSnapshot?.data?.queues?.research}
         selectedBodyKind={activeBodyKind}
         caps={caps}
         constructionProgress={{

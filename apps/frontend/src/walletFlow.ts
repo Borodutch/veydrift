@@ -383,10 +383,12 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
         ships: {
           count: number;
           power: string;
+          units?: Array<{ id: number; count: number }>;
         };
         defenses: {
           count: number;
           power: string;
+          units?: Array<{ id: number; count: number }>;
         };
         combatPower: string;
       }

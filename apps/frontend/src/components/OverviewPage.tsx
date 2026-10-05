@@ -24,9 +24,10 @@ import {
   buildingKeyForContractId,
   type InfrastructureActionNotice,
 } from "../buildingActionNotice";
+import type { BackendDataStore } from "../backendDataStore";
 import { researchQueueForDisplay } from "../chainState";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
-import { planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import { planetsFromSystemResponse } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import type { GalaxyAction } from "../galaxyActions";
 import { isImageReady } from "../imageLoadState";
@@ -55,7 +56,7 @@ import {
   type Resources,
 } from "../playableMvp";
 import { timestampToMs } from "../timestampFormat";
-import type { Coordinates, Planet } from "../types";
+import type { Planet } from "../types";
 import {
   decodeColonizationTargetId,
   type FleetMissionPlanetReference,
@@ -63,11 +64,13 @@ import {
   type ManagedPlanetResponse,
   type PlanetSummary,
   type PlayerQueuesResponse,
+  type QueueStateResponse,
   type WalletSettlementResponse,
   type WatchedPlanetsResponse
 } from "../walletFlow";
 import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
 import { AnimatedProgressBar } from "./AnimatedProgressBar";
+import { EmpireOverview } from "./EmpireOverview";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import {
   formatCompactResource,
@@ -120,6 +123,9 @@ export type OverviewMyPlanetActionGroup = {
 };
 
 interface OverviewPageProps {
+  account?: string | undefined;
+  backendData?: BackendDataStore | undefined;
+  researchQueue?: QueueStateResponse | null | undefined;
   selectedBodyKind?: "planet" | "moon";
   state: PlayableState;
   settledState: PlayableState;
@@ -178,6 +184,9 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({
+  account,
+  backendData,
+  researchQueue,
   selectedBodyKind = "planet",
   settledState,
   rates,
@@ -829,16 +838,26 @@ export function OverviewPage({
       </div>
 
       {isWalletConnected && myPlanets.length > 0 ? (
-        <MyPlanetsPanel
-          commanderLabel={currentCommanderLabel?.trim() || "You"}
+        <EmpireOverview
+          account={account}
+          backendData={backendData}
+          fleetVisibility={fleetVisibility}
           myPlanets={myPlanets}
-          onAction={onMyPlanetAction}
-          onSupplyPlanet={onSupplyPlanet}
-          onSelectMoon={onSelectMoon}
-          onSelectPlanet={onSelectPlanet}
+          now={now}
           onSwitchPlanet={onSwitchPlanet}
-          selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
+          planetNames={fleetPlanetNames}
+          renderActions={(group, kind) => kind === "moon" ? (
+            <MyPlanetActionButtons actions={group.moonActions ?? []} onAction={(action) => onMyPlanetAction?.(action, group.planet)} />
+          ) : (
+            <MyPlanetActionButtons
+              actions={group.actions}
+              onAction={(action) => onMyPlanetAction?.(action, group.planet)}
+              onSupply={onSupplyPlanet ? () => onSupplyPlanet(group.planet) : undefined}
+            />
+          )}
+          researchQueue={researchQueue}
           selectedBodyKind={selectedBodyKind}
+          selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
       ) : null}
 
@@ -873,75 +892,6 @@ export function OverviewPage({
       ) : null}
 
     </div>
-  );
-}
-
-function MyPlanetsPanel({
-  selectedBodyKind,
-  commanderLabel,
-  myPlanets,
-  onAction,
-  onSupplyPlanet,
-  onSelectMoon,
-  onSelectPlanet,
-  onSwitchPlanet,
-  selectedPlanetId,
-}: {
-  commanderLabel: string;
-  myPlanets: readonly OverviewMyPlanetActionGroup[];
-  onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
-  onSupplyPlanet: ((planet: ManagedPlanetResponse) => void) | undefined;
-  onSelectMoon: ((coords: Coordinates) => void) | undefined;
-  onSelectPlanet: ((coords: Coordinates) => void) | undefined;
-  onSwitchPlanet: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
-  selectedPlanetId: string | undefined;
-  selectedBodyKind: "planet" | "moon";
-}) {
-  return (
-    <section aria-label="My planets" className="grid gap-1 rounded-lg border border-white/10 bg-[#101624] p-2">
-      <div className="grid gap-1">
-        {myPlanets.map(({ actions, moonActions, planet }) => {
-          const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
-          const rowPlanet = overviewPlanetFromManagedPlanet(planet);
-          const isSelected = planet.planetId === selectedPlanetId;
-          return (
-            <WatchablePlanetRow
-              allianceLabel="No alliance"
-              commanderLabel={commanderLabel}
-              compact
-              coords={coords}
-              current={isSelected && selectedBodyKind === "planet"}
-              currentMoon={isSelected && selectedBodyKind === "moon"}
-              isHome={planet.isHomePlanet}
-              key={planet.planetId}
-              meta={[]}
-              mobileActionsInline
-              // Tapping one of the player's own planets switches the overview to it (the mobile
-              // planet rail); the inspect screen stays reachable from the hero and Galaxy.
-              onInspect={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "planet") : onSelectPlanet ?? (() => undefined)}
-              onInspectMoon={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "moon") : onSelectMoon}
-              planet={rowPlanet}
-              showIdentity={false}
-              showMoonIndicator={false}
-              actionSlot={actions.length > 0 || onSupplyPlanet ? (
-                <MyPlanetActionButtons
-                  actions={actions}
-                  onAction={(action) => onAction?.(action, planet)}
-                  onSupply={() => onSupplyPlanet?.(planet)}
-                />
-              ) : undefined}
-              moonActionSlot={moonActions?.length || onSelectMoon ? (
-                <OverviewMoonActionButtons
-                  actions={moonActions ?? []}
-                  onAction={(action) => onAction?.(action, planet)}
-                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
-                />
-              ) : undefined}
-            />
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
@@ -1014,20 +964,6 @@ function OverviewMoonActionButtons({
       ) : null}
     </span>
   );
-}
-
-function overviewPlanetFromManagedPlanet(planet: ManagedPlanetResponse): Planet {
-  const rowPlanet = planetFromSettlementPlanet(planet);
-  return {
-    ...rowPlanet,
-    name: managedPlanetOverviewDisplayName(planet),
-    occupiedBy: rowPlanet.occupiedBy
-      ? {
-          ...rowPlanet.occupiedBy,
-          ownerDisplayName: null,
-        }
-      : rowPlanet.occupiedBy,
-  };
 }
 
 export function managedPlanetOverviewDisplayName(planet: ManagedPlanetResponse): string {
@@ -1538,7 +1474,7 @@ export function FleetsSummary({
   );
 }
 
-function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
+export function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
   return (
     <li
       aria-label={line.text}
