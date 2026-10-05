@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { ArrowRight, Check, Coins, ExternalLink, Handshake, Lock, Repeat, Rocket, Swords, Users } from "lucide-preact";
+import { ArrowRight, Check, Coins, ExternalLink, Handshake, Repeat, Rocket, Swords, Users } from "lucide-preact";
 import { submitPactInterest } from "../pactInterest";
 import { TelegramIcon } from "./TelegramIcon";
 import { TrailerPlayer } from "./TrailerPlayer";
@@ -116,6 +116,17 @@ export function PactApp() {
         <TrailerPlayer />
       </section>
 
+      <Section eyebrow="Play it" title="First, check out the game itself.">
+        <p className="max-w-2xl text-slate-300">
+          Veydrift is already live on Base mainnet. No token has launched yet — every build, fleet and raid is a real onchain
+          transaction, played for the game alone.
+        </p>
+        <a className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-full bg-signal px-6 py-3 text-sm font-bold text-[#031014] shadow-[0_0_40px_rgba(128,241,255,0.3)] hover:brightness-110" href="https://veydrift.com" rel="noopener noreferrer" target="_blank">
+          Play Veydrift
+          <ExternalLink className="h-4 w-4" />
+        </a>
+      </Section>
+
       <Section eyebrow="Traction" title="Players who join, stay.">
         <p className="max-w-2xl text-slate-300">
           Veydrift hasn't done a launch push yet. What it has is a core of players who come back every single day and play
@@ -146,7 +157,7 @@ export function PactApp() {
 
       <Section eyebrow="Who is building it" title="Built by someone who has shipped to 106M+ users.">
         <p className="max-w-2xl text-slate-300">
-          I'm Nikita "Borodutch" Kolmogorov. My products have reached over 106 million users, one was acquired, and I've funded
+          I'm Nikita "Borodutch" Kolmogorov. My products have reached over 106 million users, and I've funded
           all of them myself. Veydrift is open source and built in public.
         </p>
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -230,10 +241,6 @@ export function PactApp() {
             </li>
           ))}
         </ul>
-        <p className="mt-6 flex items-start gap-2 text-sm text-slate-400">
-          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-signal" />
-          Half the supply goes to the public auction and its liquidity. The Pact's 5% comes out of the contributor allocation.
-        </p>
       </Section>
 
       <section className="scroll-mt-16 px-5 py-20 sm:px-8" id="join">
