@@ -6,14 +6,14 @@ const mission = (id: string, origin: string, target: string, extra: object = {})
   ({ missionId: id, originPlanetId: origin, targetPlanetId: target, ...extra }) as FleetMissionVisibilityResponse["incoming"][number];
 
 describe("empire overview", () => {
-  test("scopes missions to the body they arrive at, leave from, or return to", () => {
+  test("scopes missions to the body they arrive at (own transfers included), leave from, or return to", () => {
     const visibility = {
       incoming: [mission("a", "9", "1"), mission("b", "1", "2"), mission("m", "9", "1", { targetIsMoon: true })],
       outgoing: [mission("c", "1", "9"), mission("d", "2", "1")],
       returning: [mission("e", "1", "9"), mission("f", "1", "9", { originIsMoon: true })],
     } as FleetMissionVisibilityResponse;
     const planet = bodyFleetVisibility(visibility, "1", "planet");
-    expect([...planet.incoming, ...planet.outgoing, ...planet.returning].map((m) => m.missionId)).toEqual(["a", "c", "e"]);
+    expect([...planet.incoming, ...planet.outgoing, ...planet.returning].map((m) => m.missionId)).toEqual(["a", "d", "c", "e"]);
     const moon = bodyFleetVisibility(visibility, "1", "moon");
     expect([...moon.incoming, ...moon.outgoing, ...moon.returning].map((m) => m.missionId)).toEqual(["m", "f"]);
   });
