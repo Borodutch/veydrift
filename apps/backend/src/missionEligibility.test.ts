@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { toFunctionSelector } from "viem";
 import { applyMissionEligibility, missionEligibilityPath } from "./missionEligibility";
 import { VeydriftGameReader, type FleetMissionSummary, type HttpJsonRpcTransport } from "./evm";
 import type { BackendConfig } from "./config";
@@ -14,7 +15,8 @@ describe("authoritative mission eligibility", () => {
     const transport = { async request(method: string, params: unknown[]) {
       calls.push([method, params]);
       return (params[0] as { data: string }).data.startsWith("0xce02abe2")
-        ? "0x" + [1n, 0n, 1n].map(n => n.toString(16).padStart(64, "0")).join("") : "0x";
+        ? "0x" + [1n, 0n, 1n].map(n => n.toString(16).padStart(64, "0")).join("")
+        : (params[0] as { data: string }).data.startsWith(toFunctionSelector("stagedBattleProgress(uint256)")) ? "0x" + "0".repeat(192) : "0x";
     } } as Pick<HttpJsonRpcTransport, "request">;
     const config: BackendConfig = {
       chainId: 84532, deploymentMode: "test", qaSyntheticStationedDefenders: false,
@@ -28,6 +30,7 @@ describe("authoritative mission eligibility", () => {
     expect(await reader.canResolveFleetMission(93742n, "return")).toBe(true);
     expect(calls).toEqual([
       ["eth_call", [{ to: config.gameContractAddress, data: "0xce02abe2" + 93790n.toString(16).padStart(64, "0") }, "latest"]],
+      ["eth_call", [{ to: config.gameContractAddress, data: toFunctionSelector("stagedBattleProgress(uint256)") + 93790n.toString(16).padStart(64, "0") }, "latest"]],
       ["eth_call", [{ to: "0x1111111111111111111111111111111111111111", data: "0xde09e7cf" + 93790n.toString(16).padStart(64, "0") }, "latest"]],
       ["eth_call", [{ to: config.gameContractAddress, data: "0xce02abe2" + 93742n.toString(16).padStart(64, "0") }, "latest"]],
       ["eth_call", [{ to: "0x1111111111111111111111111111111111111111", data: "0xc2472852" + 93742n.toString(16).padStart(64, "0") }, "latest"]]

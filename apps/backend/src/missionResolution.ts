@@ -808,7 +808,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady" | "isOrdinaryMissionResolutionAvailable">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -945,6 +945,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
         continue;
       }
+      if (item.leg === "arrival" && this.reader.isOrdinaryMissionResolutionAvailable
+        && !await this.reader.isOrdinaryMissionResolutionAvailable(BigInt(item.missionId), blockNumber)) {
+        exclusions.push({ item, reason: "proof-wait" });
+        continue;
+      }
       fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
     }
     return fresh.sort(compareBatchLegs);
@@ -1065,6 +1070,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
       if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
+      }
+      if (functionName === "resolveFleetMission" && this.reader.isOrdinaryMissionResolutionAvailable
+        && !await this.reader.isOrdinaryMissionResolutionAvailable(BigInt(missionId))) {
+        throw new Error("proof wait: ordinary paid resolution unavailable");
       }
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
       // the exact funded entrypoint at the exact capped gas under the nonce lease before both

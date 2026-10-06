@@ -1,3 +1,4 @@
+import { parseProofBattleStatus } from "./proofBattleProgress";
 import { combatStageAdvancedTopic } from "./evm";
 import { deterministicFleetEffects } from "./currentFleet";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
@@ -10224,17 +10225,24 @@ export class SettlementIndexer {
     const progressPayload = payload.mission && typeof payload.mission === "object"
       ? payload.mission as Record<string, unknown>
       : payload;
-    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
+    const previous = JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]);
     if (terminal) {
+      delete progressPayload.proofBattleProgress;
       delete progressPayload.combatResolutionProgress;
-    } else if (progress) {
+    } else if (progress?.stagedPhase === 16 || progress?.stagedPhase === 17) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: progress.stagedPhase === 16 ? "randomness-wait" : "unavailable", stagedPhase: progress.stagedPhase };
+    } else if (progressPayload.proofBattleProgress && (progress?.stagedPhase === 11 || progress?.stagedPhase === 12)) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: "economics", stagedPhase: progress.stagedPhase };
+    } else if (progress && !progressPayload.proofBattleProgress) {
       const current = parseCombatResolutionProgress(JSON.stringify(payload));
       progressPayload.combatResolutionProgress = {
         roundsCompleted: Math.max(current?.roundsCompleted ?? 0, progress.roundsCompleted),
         totalRounds: 6
       };
     }
-    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -10255,10 +10263,13 @@ export class SettlementIndexer {
     let roundsCompleted = 0;
     let started = false;
     let terminal = false;
+    let proofStage: number | undefined;
     for (const candidate of sortedEventRows(rows)) {
       const progress = decodeCombatResolutionProgressLog(candidate);
       if (progress?.missionId === missionId) {
         started = true;
+        if (progress.stagedPhase === 16 || progress.stagedPhase === 17
+          || (proofStage !== undefined && (progress.stagedPhase === 11 || progress.stagedPhase === 12))) proofStage = progress.stagedPhase;
         terminal ||= progress.terminal === true;
         roundsCompleted = Math.max(roundsCompleted, progress.roundsCompleted);
       }
@@ -10277,13 +10288,18 @@ export class SettlementIndexer {
     const progressPayload = payload.mission && typeof payload.mission === "object"
       ? payload.mission as Record<string, unknown>
       : payload;
-    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
-    if (!terminal && started) {
+    const previous = JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]);
+    delete progressPayload.proofBattleProgress;
+    if (!terminal && proofStage !== undefined) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: proofStage === 16 ? "randomness-wait"
+        : proofStage === 11 || proofStage === 12 ? "economics" : "unavailable", stagedPhase: proofStage };
+    } else if (!terminal && started) {
       progressPayload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
     } else {
       delete progressPayload.combatResolutionProgress;
     }
-    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -13459,6 +13475,9 @@ export class SettlementIndexer {
     const canonicalEventMission = parseCanonicalFleetMissionEvent(row.event_json);
     const canonicalStorageDetails = parseCanonicalFleetMissionStorageDetails(row.event_json);
     const combatResolutionProgress = parseCombatResolutionProgress(row.event_json);
+    const progressPayload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+    const proofBattleProgress = row.status_id === 1 ? parseProofBattleStatus(progressPayload.proofBattleProgress
+      ?? (progressPayload.mission as Record<string, unknown> | undefined)?.proofBattleProgress) : undefined;
     const base = eventMission ?? {
       missionId: row.mission_id,
       recallCost: null,
@@ -13518,6 +13537,8 @@ export class SettlementIndexer {
         targetIsMoon: canonicalStorageDetails.targetIsMoon
       }
       : mergedBase;
+    if (proofBattleProgress && "combatResolutionProgress" in detailedBase) delete detailedBase.combatResolutionProgress;
+    if (!proofBattleProgress && "proofBattleProgress" in detailedBase) delete detailedBase.proofBattleProgress;
     // Mission storage is mutable: when a Transport finishes, the contract clears its cargo slot
     // after crediting the target. The indexed FleetMissionCargo launch event is immutable and is
     // therefore the authoritative payload for history. Prefer it whenever the event ledger has a
@@ -13537,7 +13558,7 @@ export class SettlementIndexer {
       fuelCost,
       cargo,
       recallCost: row.status_id === 1 && detailedBase.recallCost === null ? projectedFleetRecallCost() : detailedBase.recallCost,
-      ...(combatResolutionProgress ? { combatResolutionProgress } : {}),
+      ...(proofBattleProgress ? { proofBattleProgress } : combatResolutionProgress ? { combatResolutionProgress } : {}),
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -16153,6 +16174,8 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
 function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot, existingEventJson: string | null): string {
   const existingMission = parseCanonicalFleetMissionEvent(existingEventJson);
   return JSON.stringify({ ...(existingMission ?? {}), ...mission,
+    proofBattleProgress: mission.proofBattleProgress,
+    ...(mission.proofBattleProgress ? { combatResolutionProgress: undefined } : {}),
     // A scalar refresh must invalidate retained launch/composition data as a
     // survivor proof. Only ships read in this very snapshot certify this status.
     compositionStatusId: "ships" in mission ? mission.statusId : null });

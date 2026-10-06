@@ -510,7 +510,9 @@ export class BattleKeeper {
         if (!guardAllows(this.progressGuards.get(progressKey), before)) {
           throw new Error(before.arrivalCapability === false || (before.arrivalOrderCursor !== undefined && before.arrivalGeneration === undefined)
             ? "arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade"
-            : "no canonical mission progress since previous paid receipt; paid retries suppressed until state/version advances");
+            : before.phase === 16 || before.phase === 17 || before.proofCapability === false
+              ? "proof wait or unverified proof runtime; ordinary paid resolution suppressed"
+              : "no canonical mission progress since previous paid receipt; paid retries suppressed until state/version advances");
         }
         return before;
       };

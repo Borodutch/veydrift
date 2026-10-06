@@ -42,6 +42,8 @@ export async function applyMissionEligibility(
     const leg = mission.status === "Outbound" ? "arrival"
       : mission.status === "Returning" || mission.status === "Recalled" ? "return" : null;
     if (!leg || !/^\d+$/.test(mission.missionId)) continue;
+    if (leg === "arrival" && mission.proofBattleProgress
+      && !["preparing", "economics"].includes(mission.proofBattleProgress.state)) continue;
     const dueAt = Number(leg === "return" ? mission.returnAt
       : mission.missionType === "DefenseHold" ? mission.defenseHoldUntil ?? mission.returnAt : mission.arrivalAt);
     if (!Number.isFinite(dueAt) || dueAt <= 0 || dueAt > nowSeconds) continue;

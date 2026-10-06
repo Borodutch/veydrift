@@ -1,4 +1,5 @@
 import { decodeFunctionResult, encodeFunctionData, encodeAbiParameters, keccak256, parseAbi, stringToHex, toHex, type Hex } from "viem";
+import { proofAction, readProofProgress, reviewedProofProgressVersions, type ProofProgress } from "./proofProgress";
 import type { JsonRpcTransport } from "./transport";
 
 export const progressAbi = parseAbi([
@@ -14,6 +15,8 @@ export type MissionProgress = {
   phase: number;
   round: number;
   workDone: string;
+  proof?: ProofProgress;
+  proofCapability?: boolean;
   queueProgress?: string;
   chronologyWorkDone?: string; // Per-mission monotonic scans, including nested returns.
   arrivalOrderCursor?: string; // Legacy zero-namespace deployments only.
@@ -29,6 +32,7 @@ export function guardAllows(guard: ProgressGuard | undefined, current: MissionPr
   // Storage/getter success is not code provenance. Only a deployment-reviewed runtime can
   // bootstrap zero counters; its paid checkpoint then enforces ordinary monotonic progress.
   if (current.arrivalCapability === false || (current.arrivalOrderCursor !== undefined && current.arrivalGeneration === undefined)) return false;
+  if (proofAction(current.phase, current.proof, current.proofCapability === true) !== "resolve") return false;
   if (!guard) return true;
   if (BigInt(current.blockNumber) < BigInt(guard.before.blockNumber)) return false;
   const previous = [guard.before, ...(guard.history ?? [])].filter(p => p.version === current.version);
@@ -47,7 +51,8 @@ function progressKey(progress: MissionProgress): string {
   // Exclude observation block/hash: time passing is not permission to buy another attempt.
   const legacyKey = [progress.version, progress.workDone, progress.round, progress.queueProgress ?? "", progress.arrivalOrderCursor ?? "", progress.arrivalGeneration ?? "", progress.arrivalWorkDone ?? ""].join(":");
   // Preserve operation identities of already-persisted pre-chronology raw envelopes.
-  return progress.chronologyWorkDone === undefined ? legacyKey : legacyKey + ":chronology:" + progress.chronologyWorkDone;
+  const key = progress.chronologyWorkDone === undefined ? legacyKey : legacyKey + ":chronology:" + progress.chronologyWorkDone;
+  return progress.proof ? key + ":proof:" + progress.proof.identity + ":" + progress.proof.randomnessReady + ":" + progress.proof.settlement.nextIndex : key;
 }
 
 /** workDone is cumulative across preparation, cohort math and settlement. Phases are NOT ordered:
@@ -72,6 +77,16 @@ export function progressAdvanced(before: MissionProgress, after: MissionProgress
   if (after.version !== before.version) return true; // guardAllows checks previously seen versions.
   if (BigInt(after.workDone) < BigInt(before.workDone) || after.round < before.round) return false;
   let advanced = BigInt(after.workDone) > BigInt(before.workDone) || after.round > before.round;
+  if (before.proof) {
+    if (!after.proof || before.proof.identity !== after.proof.identity) return false;
+    const a = before.proof, b = after.proof;
+    // A reveal is an independent, request-bound one-time checkpoint. Stage numbers are not ordered.
+    if (a.phase === 2 && b.phase === 2 && a.randomnessReady && !b.randomnessReady) return false;
+    if (BigInt(b.settlement.nextIndex) < BigInt(a.settlement.nextIndex)
+      || b.settlement.phase < a.settlement.phase) return false;
+    advanced ||= (!a.randomnessReady && b.randomnessReady)
+      || BigInt(b.settlement.nextIndex) > BigInt(a.settlement.nextIndex);
+  }
   if (before.arrivalGeneration !== undefined) {
     if (after.arrivalGeneration === undefined || after.arrivalWorkDone === undefined
       || BigInt(after.arrivalGeneration) < BigInt(before.arrivalGeneration)
@@ -121,7 +136,7 @@ export async function readMissionProgress(
     || typeof block.number !== "string" || !/^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(block.number)) {
     throw new Error("canonical progress block unavailable or malformed; signing disabled");
   }
-  const tag = { blockHash: block.hash, requireCanonical: true };
+  const tag = { blockHash: block.hash, requireCanonical: true as const };
   const implementation = await transport.request<Hex>("eth_getStorageAt", [address, implementationSlot, tag]);
   if (!/^0x0{24}[0-9a-f]{40}$/i.test(implementation)) throw new Error("invalid implementation version");
   const codeAddress = BigInt(implementation) === 0n ? address : `0x${implementation.slice(-40)}` as Hex;
@@ -152,6 +167,12 @@ export async function readMissionProgress(
       data: await call("battleResolutionProgress") });
     round = values[0];
   }
+  const proofCapability = reviewedProofProgressVersions.includes(
+    `${codeAddress.toLowerCase()}:${codeHash.toLowerCase()}`);
+  // Unknown runtimes still recognize the exclusive wait stages, but can never authorize a write.
+  // Reviewed future runtimes read all records, including preparation/economics and legacy bypass.
+  const proof = phase === 16 || phase === 17 || proofCapability
+    ? await readProofProgress(transport, address, BigInt(missionId), tag) : undefined;
   // Missile preparation predates the public staged getter. Its append-only layout is pinned in
   // contracts/scripts/check-storage-layout.mjs: slot 73 packed cursors plus backlog lengths 44/45.
   // Compaction pop chunks emit no events and change only array length, so all three are required.
@@ -184,6 +205,7 @@ export async function readMissionProgress(
     }
   }
   return {
+    ...(proof ? { proof, proofCapability } : {}),
     arrivalCapability: capable,
     chronologyWorkDone: BigInt(chronology).toString(),
     ...(arrivalOrderCursor === undefined ? {} : { arrivalOrderCursor }),

@@ -965,7 +965,8 @@ describe("ViemMissionResolutionChainClient", () => {
       const reader = new VeydriftGameReader(config, {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           expect(method).toBe("eth_call");
-          expect((params[0] as { data: string }).data.startsWith("0xce02abe2")).toBe(true);
+          if (!(params[0] as { data: string }).data.startsWith("0xce02abe2"))
+            return ("0x" + "0".repeat(192)) as T; // legacy staged progress, not a proof wait
           // UI ordering remains false throughout the bounded scan, without any historical backfill.
           return ("0x" + [0n, 0n, BigInt(orderingReady)].map(n => n.toString(16).padStart(64, "0")).join("")) as T;
         }
