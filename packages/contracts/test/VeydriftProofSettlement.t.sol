@@ -21,6 +21,8 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
     bytes private gameCode;
     bool private moonFixture;
     bool private holdFixture;
+    bool private cargoJoinFixture;
+    bool private zeroJoinFixture;
     address private harness;
 
     function _inject(bytes memory data) private returns (bytes memory result) {
@@ -64,6 +66,7 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
         _setTechnologyLevel(defender, Technology.IntergalacticResearchNetwork, 3000);
         _fundPlanet(origin, 1_000_000, 1_000_000, 1_000_000);
         _setShipCount(origin, Ship.Battleship, 100);
+        if (cargoJoinFixture) _setShipCount(origin, Ship.SmallCargo, 100);
         _setTechnologyLevel(player, Technology.Computer, 100);
         _setShipCount(target, Ship.LightFighter, 7);
         if (moonFixture) {
@@ -90,13 +93,23 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
             G.FleetMissionType.Attack,
             ships,
             G.Resources(0, 0, 0),
-            100,
+            cargoJoinFixture ? 20 : 100,
             false,
             moonFixture
         );
+        if (cargoJoinFixture) {
+            ships.battleship = 0;
+            ships.smallCargo = 2;
+        }
         for (uint256 i; i < joined; ++i) {
             vm.prank(player);
-            game.joinAttackMission(origin, id, target, ships, G.Resources(0, 0, 0));
+            uint256 joinedId =
+                game.joinAttackMission(origin, id, target, ships, G.Resources(0, 0, 0));
+            if (zeroJoinFixture) {
+                // Model a source emptied before authoritative enrollment, not a post-proof loss.
+                _inject(abi.encodeCall(H.missionCount, (joinedId, Ship.Battleship, uint32(0))));
+                _inject(abi.encodeCall(H.creditCargo, (joinedId)));
+            }
         }
         (, uint64 arrival,,) = _fleetMission(id);
         if (holdFixture) {
@@ -492,6 +505,230 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
         assertEq(game.activeFleetMissionCount(player), 0);
         game.resolveFleetMission(id);
         assertEq(game.totalInternalResources().metal, liability.metal);
+    }
+
+    function _isolationProbe() private {
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGe(storageGas, 5000);
+        assertEq(transientValue, 0);
+    }
+
+    function _coldEconomicStep(uint256 id) private returns (uint256 gross) {
+        game.resolveFleetMission{gas: 1_200_000 - 21_000}(id);
+        Vm.Gas memory measured = vm.lastCallGas();
+        gross = measured.gasTotalUsed + uint256(uint64(measured.gasRefunded));
+        assertLt(gross, 1_200_000, "bounded cold economic transaction");
+    }
+
+    function _finishCold(uint256 id) private {
+        uint256 peak;
+        for (uint256 i; i < 64; ++i) {
+            (uint8 phase,,) = game.stagedBattleProgress(id);
+            if (phase == 13) {
+                emit log_named_uint("integration cold economics peak gross gas", peak);
+                return;
+            }
+            uint256 gross = _coldEconomicStep(id);
+            if (gross > peak) peak = gross;
+        }
+        fail("cold economics did not finish");
+    }
+
+    function _raidOrder(uint256 id) private returns (uint256[] memory) {
+        return abi.decode(_inject(abi.encodeCall(H.raidMissions, (id))), (uint256[]));
+    }
+
+    /// forge-config: default.isolate = true
+    function testOriginalRaidOrderWinsRoundingDespiteOppositeCanonicalLeafOrder() public {
+        cargoJoinFixture = true;
+        (uint256 id,) = _fixtureMany(1);
+        uint256[] memory order = _raidOrder(id);
+        assertEq(order.length, 2);
+        assertEq(order[0], id);
+        uint256 joined = order[1];
+        P.Row memory resident = abi.decode(game.proofBattleRecord(id, 2, 0), (P.Row));
+        P.Row memory leader = abi.decode(game.proofBattleRecord(id, 2, 1), (P.Row));
+        P.Row memory cargo = abi.decode(game.proofBattleRecord(id, 2, 2), (P.Row));
+        assertEq(cargo.source, joined);
+        assertEq(cargo.unit, uint8(Ship.SmallCargo));
+        assertEq(leader.source, id);
+        assertEq(leader.unit, uint8(Ship.Battleship));
+        // Canonical cohort order: side0 SmallCargo, side0 Battleship, then side1 Fighter.
+        // Raid enrollment order is leader Battleship THEN joined SmallCargo.
+        bytes32 binding = abi.decode(_inject(abi.encodeCall(H.binding, (id))), (bytes32));
+        S.Leaf[] memory leaves = new S.Leaf[](3);
+        bytes32 tail = keccak256(
+            abi.encode(keccak256("veydrift.proof-battle.output-tail.v1"), binding, uint256(3))
+        );
+        leaves[2] =
+            S.Leaf(2, resident.owner, 0, 1, resident.unit, resident.count, resident.count, 0, tail);
+        leaves[1] = S.Leaf(
+            1,
+            leader.owner,
+            id,
+            0,
+            leader.unit,
+            leader.count,
+            0,
+            leader.count,
+            _node(binding, 2, leaves[2])
+        );
+        leaves[0] = S.Leaf(
+            0,
+            cargo.owner,
+            joined,
+            0,
+            cargo.unit,
+            cargo.count,
+            0,
+            cargo.count,
+            _node(binding, 1, leaves[1])
+        );
+        uint256[2] memory totals = [uint256(leader.count) + cargo.count, uint256(0)];
+        // Explicit synthetic accepted root: not a final proof or production verifier.
+        _inject(abi.encodeCall(H.acceptTrusted, (id, _node(binding, 0, leaves[0]), 3, 1, totals)));
+        _inject(abi.encodeCall(H.oneUnitRaidPool, (id)));
+        _isolationProbe();
+        Application(address(game)).applyProofBattleLeaves{gas: 15_000_000 - 21_000}(id, leaves);
+        assertEq(keccak256(abi.encode(_raidOrder(id))), keccak256(abi.encode(order)));
+        _finishCold(id);
+        (,,, G.Resources memory leaderCargo) = _fleetMission(id);
+        (,,, G.Resources memory joinedCargo) = _fleetMission(joined);
+        (uint256 leaderCapacity, uint256 joinedCapacity) = abi.decode(
+            _inject(abi.encodeCall(H.raidCapacities, (id, id, joined))), (uint256, uint256)
+        );
+        assertGt(leaderCapacity, 0);
+        assertGt(joinedCapacity, 0);
+        // A canonical-first joined fleet would get0, proving these allocations distinguish order.
+        assertEq(joinedCapacity / (leaderCapacity + joinedCapacity), 0);
+        // Two strictly positive capacities: first gets floor(1*c/(c+d))=0, last gets1.
+        assertEq(leaderCargo.metal, 0);
+        assertEq(joinedCargo.metal, 1);
+        assertEq(leaderCargo.crystal + joinedCargo.crystal, 0);
+        assertEq(leaderCargo.deuterium + joinedCargo.deuterium, 0);
+        assertEq(keccak256(abi.encode(_raidOrder(id))), keccak256(abi.encode(order)));
+    }
+
+    /// forge-config: default.isolate = true
+    function testZeroShipEnrolledSourceWithoutOutputRowStillCleansUp() public {
+        zeroJoinFixture = true;
+        (uint256 id, uint256 target) = _fixtureMany(1);
+        uint256[] memory order = _raidOrder(id);
+        assertEq(order.length, 2);
+        uint256 empty = order[1];
+        G.FleetMission memory frozen =
+            abi.decode(game.proofBattleRecord(id, 3, empty), (G.FleetMission));
+        assertEq(frozen.ships.battleship, 0);
+        assertEq(frozen.cargo.metal, 11);
+        S.Leaf[] memory leaves = _allLeaves(id, type(uint256).max);
+        assertEq(leaves.length, 2);
+        for (uint256 i; i < leaves.length; ++i) {
+            assertTrue(leaves[i].source != empty);
+        }
+        (uint256 originIndex, uint256 targetIndex, uint256 playerIndex) = abi.decode(
+            _inject(abi.encodeCall(H.resolutionIndexes, (empty))), (uint256, uint256, uint256)
+        );
+        // Real ACS launch indexes the group leader, not the joined source individually.
+        assertEq(originIndex + targetIndex + playerIndex, 0);
+        (originIndex, targetIndex, playerIndex) = abi.decode(
+            _inject(abi.encodeCall(H.resolutionIndexes, (id))), (uint256, uint256, uint256)
+        );
+        assertGt(originIndex, 0);
+        assertGt(targetIndex, 0);
+        assertGt(playerIndex, 0);
+        assertEq(game.activeFleetMissionCount(player), 2);
+        _isolationProbe();
+        Application(address(game)).applyProofBattleLeaves{gas: 15_000_000 - 21_000}(id, leaves);
+        G.Resources memory beforeLiability = game.totalInternalResources();
+        _finishCold(id);
+        (G.FleetMissionStatus status,, uint64 returned, G.Resources memory cargo) =
+            _fleetMission(empty);
+        (uint64 epoch,,,) = abi.decode(
+            _inject(abi.encodeCall(H.settlementCursor, (id))), (uint64, uint256, uint8, uint256)
+        );
+        assertEq(uint8(status), uint8(G.FleetMissionStatus.Resolved));
+        assertEq(returned, epoch);
+        assertEq(cargo.metal + cargo.crystal + cargo.deuterium, 0);
+        assertEq(game.activeFleetMissionCount(player), 1);
+        (originIndex, targetIndex, playerIndex) = abi.decode(
+            _inject(abi.encodeCall(H.resolutionIndexes, (empty))), (uint256, uint256, uint256)
+        );
+        assertEq(originIndex + targetIndex + playerIndex, 0);
+        // The surviving leader remains enumerable for its later return; empty-source cleanup
+        // must not remove the group's still-needed indexes.
+        (originIndex, targetIndex, playerIndex) = abi.decode(
+            _inject(abi.encodeCall(H.resolutionIndexes, (id))), (uint256, uint256, uint256)
+        );
+        assertGt(originIndex, 0);
+        assertGt(targetIndex, 0);
+        assertGt(playerIndex, 0);
+        assertEq(abi.decode(_inject(abi.encodeCall(H.locked, (target))), (uint256)), 0);
+        G.Resources memory afterLiability = game.totalInternalResources();
+        assertEq(afterLiability.metal, beforeLiability.metal + 6300 - 11);
+        assertEq(afterLiability.crystal, beforeLiability.crystal + 2100 - 13);
+        assertEq(afterLiability.deuterium, beforeLiability.deuterium - 17);
+        game.resolveFleetMission{gas: 15_000_000 - 21_000}(empty);
+        assertEq(game.activeFleetMissionCount(player), 1);
+        assertEq(game.totalInternalResources().metal, afterLiability.metal);
+    }
+
+    /// forge-config: default.isolate = true
+    function testDelayedMulticallReturnsShareFrozenEpochAndLeaderSchedule() public {
+        (uint256 id,) = _fixtureMany(2);
+        uint256[] memory order = _raidOrder(id);
+        assertEq(order.length, 3);
+        (, uint64 impact, uint64 leaderReturn,) = _fleetMission(id);
+        (,, uint64 oldFirstReturn,) = _fleetMission(order[1]);
+        (,, uint64 oldSecondReturn,) = _fleetMission(order[2]);
+        S.Leaf[] memory leaves = _allLeaves(id, type(uint256).max);
+        vm.warp(uint256(impact) + 10_000); // Proof/application arrives well after original flight deadlines.
+        _isolationProbe();
+        Application(address(game)).applyProofBattleLeaves{gas: 15_000_000 - 21_000}(id, leaves);
+        uint64 epoch;
+        uint256 peak;
+        for (uint256 i; i < 32; ++i) {
+            (uint8 phase,,) = game.stagedBattleProgress(id);
+            if (phase == 12) break;
+            vm.warp(block.timestamp + 17);
+            uint256 gross = _coldEconomicStep(id);
+            if (gross > peak) peak = gross;
+        }
+        (uint8 returnPhase,,) = game.stagedBattleProgress(id);
+        assertEq(returnPhase, 12);
+        uint256 cursor;
+        (epoch, cursor,,) = abi.decode(
+            _inject(abi.encodeCall(H.settlementCursor, (id))), (uint64, uint256, uint8, uint256)
+        );
+        assertEq(epoch, block.timestamp);
+        assertEq(cursor, 0);
+        assertGt(epoch, uint256(impact) + 10_000);
+        for (uint256 i; i < 3; ++i) {
+            vm.warp(block.timestamp + 1000);
+            uint256 gross = _coldEconomicStep(id);
+            if (gross > peak) peak = gross;
+            (uint64 afterEpoch, uint256 afterCursor,,) = abi.decode(
+                _inject(abi.encodeCall(H.settlementCursor, (id))), (uint64, uint256, uint8, uint256)
+            );
+            assertEq(afterEpoch, epoch);
+            assertEq(afterCursor, i + 1);
+            if (i >= 1) {
+                (G.FleetMissionStatus firstStatus,, uint64 firstReturn,) = _fleetMission(order[1]);
+                assertEq(uint8(firstStatus), uint8(G.FleetMissionStatus.Returning));
+                assertEq(firstReturn, uint256(epoch) + oldFirstReturn - impact);
+            }
+        }
+        (,, uint64 secondReturn,) = _fleetMission(order[2]);
+        assertEq(secondReturn, uint256(epoch) + oldSecondReturn - impact);
+        _finishCold(id);
+        (G.FleetMissionStatus leaderStatus,, uint64 unchangedLeaderReturn,) = _fleetMission(id);
+        assertEq(uint8(leaderStatus), uint8(G.FleetMissionStatus.Returning));
+        assertEq(unchangedLeaderReturn, leaderReturn);
+        (,, uint64 finalFirstReturn,) = _fleetMission(order[1]);
+        assertEq(finalFirstReturn, uint256(epoch) + oldFirstReturn - impact);
+        emit log_named_uint("delayed cold multicall peak gross gas", peak);
+        assertEq(keccak256(abi.encode(_raidOrder(id))), keccak256(abi.encode(order)));
     }
 
     function testOutputbridgePinnedStaticAbiVector() public pure {

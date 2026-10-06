@@ -63,6 +63,46 @@ contract ProofSettlementHarness is G {
         _lockedWithdrawalResources = Resources(metal, crystal, deuterium);
     }
 
+    function raidMissions(uint256 id) external view returns (uint256[] memory) {
+        return Store.battle(id).missions;
+    }
+
+    function raidCapacities(uint256 id, uint256 first, uint256 second)
+        external
+        view
+        returns (uint256, uint256)
+    {
+        return (Store.battle(id).capacities[first], Store.battle(id).capacities[second]);
+    }
+
+    function settlementCursor(uint256 id) external view returns (uint64, uint256, uint8, uint256) {
+        Store.Battle storage b = Store.battle(id);
+        return (b.returnSettlementAt, b.returnCursor, b.raidPhase, b.totalCapacity);
+    }
+
+    function resolutionIndexes(uint256 id) external view returns (uint256, uint256, uint256) {
+        FleetMission storage m = _fleetMissions[id];
+        return (
+            _resolutionMissionIndexByPlanet[m.originPlanetId][id],
+            _resolutionMissionIndexByPlanet[m.targetPlanetId][id],
+            _resolutionMissionIndexByPlayer[m.owner][id]
+        );
+    }
+
+    // Synthetic live pool fixture. Preserve the actual frozen plunder rate and liabilities.
+    function oneUnitRaidPool(uint256 id) external {
+        uint128 rate = _battleRaidPlunderBps[id];
+        require(rate > 0);
+        Resources storage pool = _planets[_fleetMissions[id].targetPlanetId].resources;
+        uint128 metal = (9999 + rate) / rate;
+        _totalInternalResources.metal = _totalInternalResources.metal - pool.metal + metal;
+        _totalInternalResources.crystal -= pool.crystal;
+        _totalInternalResources.deuterium -= pool.deuterium;
+        pool.metal = metal;
+        pool.crystal = 0;
+        pool.deuterium = 0;
+    }
+
     function binding(uint256 id) external view returns (bytes32) {
         return S.chainRecord(id);
     }
