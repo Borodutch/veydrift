@@ -3,7 +3,9 @@
  * Requires separately approved final creationCode/runtimeCodehash and exported pre-job genesis.
  */
 import assert from "node:assert/strict";
-import {readFileSync, writeFileSync, existsSync, renameSync} from "node:fs";
+import {readFileSync, writeFileSync, existsSync, renameSync, mkdtempSync, chmodSync, rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {inspectListeners,proveListener,childAlive,ownedIPC,checkJournal,checkResume,reconcileReceipts,expectedAcceptance,checkAcceptance} from "./ticket44-identity-safety";
 import {join} from "node:path";
 import {createHash} from "node:crypto";
 import type {Hex} from "viem";
@@ -36,7 +38,7 @@ export function validateKey(key:any,meta:any) {
 }
 
 async function main(mode:string) {
-  const {createPublicClient,http,encodeFunctionData,encodeAbiParameters,decodeAbiParameters,decodeEventLog,parseAbiParameters,keccak256,toHex}=await import("viem");
+  const {createPublicClient,custom,encodeFunctionData,encodeAbiParameters,decodeAbiParameters,decodeEventLog,parseAbiParameters,keccak256,toHex}=await import("viem");
 const rowABI = parseAbiParameters("(uint256 source,address owner,uint32 count,uint8 side,uint8 unit,uint16 weapons,uint16 shielding,uint16 armor) row");
 const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 catalog,address verifier,bytes32 verifierCodehash) frozen,uint8 phase,bytes32 snapshot,bytes32 randomnessContext,uint256 seed,uint256 count");
   assert(["prepare","serve","replay","settle"].includes(mode),"mode required");
@@ -53,23 +55,33 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
     assert(!existsSync(join(DIR,"journal.json")) && !existsSync(join(DIR,"node-state.json")),"new namespace required; no overwrite");
     writeFileSync(join(DIR,"genesis.json"),genesisText);
   } else assert.equal(sha(readFileSync(join(DIR,"genesis.json"))),genesisHash,"genesis changed");
-  // Never attach to an existing endpoint, even if it resembles our chain.
-  let occupied=false;try{await fetch(URL_LOCAL,{signal:AbortSignal.timeout(300)});occupied=true;}catch{}
-  assert(!occupied,"local port already occupied");
+  // Disk admission applies to EVERY resumed mode before spawning or any RPC.
+  const journal:any[]=mode==="prepare"?[]:load(join(DIR,"journal.json"));
+  const file=(name:string)=>readFileSync(join(DIR,name));
+  const checkpoint=mode==="prepare"?null:load(join(DIR,"checkpoint.json"));
+  if(mode!=="prepare")checkResume(journal,checkpoint,file("node-state.json"),file);
+  assert.deepEqual(await inspectListeners(18444),[],"local port occupied or ambiguous");
+  const ipcDirectory=mkdtempSync(join(tmpdir(),"vey44-ipc-"));chmodSync(ipcDirectory,0o700);
+  const ipcPath=join(ipcDirectory,"rpc.sock");
   const state=join(DIR,mode==="replay"?"replayed-node-state.json":"node-state.json");
   if(!["prepare","replay"].includes(mode))assert(existsSync(state),"saved chain required");
+  const dumpState=join(DIR,mode==="replay"?"replayed-node-state.json":"pending-node-state.json");
   const args=["anvil","--host","127.0.0.1","--port","18444","--chain-id","31344","--gas-limit","15000000",
-    "--base-fee","100","--preserve-historical-states","--dump-state",state,"--state-interval","30","--silent",
+    "--base-fee","100","--preserve-historical-states","--dump-state",dumpState,"--state-interval","30","--silent","--ipc",ipcPath,
     ...(["prepare","replay"].includes(mode)?["--init",join(DIR,"genesis.json")]:["--load-state",state])];
-  const child=Bun.spawn(args,{stdout:Bun.file(join(DIR,"anvil.log")),stderr:"inherit"});
-  const client=createPublicClient({transport:http(URL_LOCAL,{retryCount:0,timeout:10000})});
-  const rpc=async(method:string,params:any[]=[]) => client.request({method,params} as any) as Promise<any>;
-  const journal:any[]=mode==="prepare"?[]:load(join(DIR,"journal.json"));
+  let child:ReturnType<typeof Bun.spawn>;
+  let owned=false,mutationsAllowed=false,completed=false;
+  let genesisHead:any,finalHead:any;
+  const rpc=async(method:string,params:any[]=[]) => {assert(owned,"ownership not proved");return ownedIPC(ipcPath,child,method,params);};
+  const client=createPublicClient({transport:custom({request:({method,params}:any)=>rpc(method,params??[])},{retryCount:0})});
+  const currentHead=async()=>{const b=await rpc("eth_getBlockByNumber",["latest",false]);return {number:b.number,hash:b.hash};};
   let clock=Number(meta.timestamp);
   async function mutate(method:string,params:any[]) {
     // Persist intent before dispatch; uncertain tail is reconciled/replayed, never blindly resent.
-    const item:any={method,params};journal.push(item);save("journal.json",journal);
-    const result=await rpc(method,params);item.result=result;save("journal.json",journal);return result;
+    assert(mutationsAllowed,"resume not reconciled");checkJournal(journal,file);
+    const item:any={seq:journal.length,method,params};journal.push(item);save("journal.json",journal);
+    const result=await rpc(method,params);item.result=result;
+    item.head=await currentHead();save("journal.json",journal);return result;
   }
   async function read(address:Hex,abi:any,name:string,args:any[]=[],blockNumber?:bigint):Promise<any>{
     return client.readContract({address,abi,functionName:name,args,blockNumber} as any);
@@ -80,7 +92,11 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
     const nonce=await client.getTransactionCount({address:from});
     const hash=await mutate("eth_sendTransaction",[{from,to,nonce:toHex(nonce),data:encodeFunctionData({abi,functionName:name,args}),gas:toHex(GAS),gasPrice:"0x3b9aca00"}]);
     const receipt=await client.waitForTransactionReceipt({hash});assert.equal(receipt.status,"success",name);assert(receipt.gasUsed<=GAS);
-    save("receipt-"+strip(hash)+".json",receipt);return receipt;
+    const receiptFile="receipt-"+strip(hash)+".json";save(receiptFile,receipt);
+    const item=journal.at(-1);assert.equal(item.result,hash);
+    item.head=await currentHead();
+    assert.equal(item.head.hash,receipt.blockHash);assert.equal(BigInt(item.head.number),receipt.blockNumber);
+    item.receiptFile=receiptFile;item.receiptSHA256=sha(file(receiptFile));save("journal.json",journal);return receipt;
   }
   const progress=(id:bigint)=>read(game,gameABI,"stagedBattleProgress",[id]);
   async function until(id:bigint,phase:number) {
@@ -99,6 +115,23 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
       assert(logs.some(l=>l.transactionHash===b.sealTransaction),"seal receipt/log history lost; use replay");
     }
     return bundle;
+  }
+  const releaseId=keccak256(encodeAbiParameters(parseAbiParameters("(uint32 version,bytes32 rules,bytes32 catalog,address verifier,bytes32 verifierCodehash)"),
+    [{version:3,rules:meta.rules,catalog:meta.catalog,verifier:meta.verifier,verifierCodehash:meta.verifierCodehash}]));
+  async function acceptanceReceipt(id:bigint,inputs:bigint[],proof:Hex) {
+    const data=encodeFunctionData({abi:settleABI,functionName:"submitBattleProof",args:[id,proof,inputs]});
+    const entries=journal.filter(x=>x.method==="eth_sendTransaction"&&x.params[0].to.toLowerCase()===game.toLowerCase()&&x.params[0].data===data);
+    assert.equal(entries.length,1,"accepted state requires exactly one reconciled submission receipt");
+    const receipt=await client.getTransactionReceipt({hash:entries[0].result});
+    const events=receipt.logs.flatMap(l=>{if(l.address.toLowerCase()!==game.toLowerCase())return [];
+      try{const e:any=decodeEventLog({abi:settleABI,data:l.data,topics:l.topics});return e.eventName==="ProofBattleAccepted"?[e.args]:[];}catch{return [];}});
+    assert.equal(events.length,1,"one acceptance event from Game required");
+    assert(receipt.blockNumber>0n);
+    const before=await read(game,gameABI,"stagedBattleProgress",[id],receipt.blockNumber-1n);
+    const after=await read(game,gameABI,"stagedBattleProgress",[id],receipt.blockNumber);
+    const summary=await read(game,settleABI,"proofBattleAcceptedSummary",[id]);
+    checkAcceptance(events[0],summary,expectedAcceptance(id,inputs,releaseId,3),before[2],after[2]);
+    return {receipt,summary};
   }
   async function exportDocument(id:bigint,release:any,head:bigint) {
     const record=(kind:number,index:bigint=0n)=>read(game,gameABI,"proofBattleRecord",[id,kind,index],head) as Promise<Hex>;
@@ -138,10 +171,23 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
     return {id:String(id),anchor,sealTransaction,statusABI:status,chainRecord,inputSHA256:sha(bytes),rows:String(count)};
   }
   try {
-    let ready=false;for(let i=0;i<100;i++){try{assert.equal(await rpc("eth_chainId"),toHex(31344));ready=true;break;}catch{await Bun.sleep(100);}}assert(ready,"owned node not ready");
+    child=Bun.spawn(args,{stdout:Bun.file(join(DIR,"anvil.log")),stderr:"inherit"});
+    let ready=false;
+    for(let i=0;i<100;i++){
+      childAlive(child);const pids=await inspectListeners(18444);
+      if(pids.length){await proveListener(child,async()=>pids);ready=true;break;}
+      await Bun.sleep(100);
+    }
+    assert(ready,"owned child did not bind");owned=true;
+    // First request goes to private IPC AFTER positive kernel PID ownership, never HTTP.
+    assert.equal(await rpc("eth_chainId"),toHex(31344));genesisHead=await currentHead();
+    if(checkpoint && mode!=="replay")await reconcileReceipts(journal,checkpoint,file,rpc);
+    mutationsAllowed=true;
     if(mode==="replay") {
       for(const item of journal){assert(Object.hasOwn(item,"result"),"uncertain journal tail needs manual reconciliation");const result=await rpc(item.method,item.params);assert.deepEqual(result,item.result,"deterministic RPC replay mismatch");}
-      await verifyFrozen();console.log("REPLAY PASS; frozen anchors and raw status unchanged");return;
+      await reconcileReceipts(journal,checkpoint,file,rpc);
+      await verifyFrozen();console.log("REPLAY PASS; frozen anchors and raw status unchanged");
+      finalHead=await currentHead();completed=true;return;
     }
     if(mode==="prepare") {
       for(const [address,state] of Object.entries(alloc) as any){if(state.code!=="0x")assert.equal(await client.getCode({address}),state.code,"genesis code missing");}
@@ -172,26 +218,39 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
       console.log("Frozen two real local jobs; no proof acceptance claimed");
     } else {
       const frozen=await verifyFrozen();
-      if(mode==="serve") {console.log("Owned local Source endpoint "+URL_LOCAL+"; SIGINT to persist and stop");await new Promise<void>(resolve=>{process.once("SIGINT",resolve);process.once("SIGTERM",resolve);});}
+      if(mode==="serve") {console.log("Owned local Source endpoint "+URL_LOCAL+"; SIGINT to persist and stop");await Promise.race([new Promise<void>(resolve=>{process.once("SIGINT",resolve);process.once("SIGTERM",resolve);}),child.exited.then(()=>{throw new Error("owned Anvil exited during serve");})]);}
       else {
         // Wire format intentionally separate from runtime internals: parent supplies authenticated result exports.
+        // Validate ALL resumed jobs' prior acceptance before ANY new mutation, even impersonation.
+        for(const job of frozen.jobs) {
+          const result=load(join(DIR,"battle-"+job.id+".proof.json"));
+          const id=BigInt(job.id),inputs=result.public.map((x:string)=>BigInt(x));
+          assert.equal(result.chainRecord,job.chainRecord);assert.equal(result.manifestSHA256,strip(meta.manifestSHA256));
+          const expected=expectedAcceptance(id,inputs,releaseId,3);
+          assert.equal(strip(expected.binding),job.chainRecord);assert.equal((result.proof.length-2)/2,384);
+          assert.equal(BigInt(result.leaves.length),expected.memberCount);
+          const a=await read(game,settleABI,"proofSettlementProgress",[id]);
+          if(Number(a[0])!==0)await acceptanceReceipt(id,inputs,result.proof);
+          else {
+            const data=encodeFunctionData({abi:settleABI,functionName:"submitBattleProof",args:[id,result.proof,inputs]});
+            assert(!journal.some(x=>x.method==="eth_sendTransaction"&&x.params[0].to.toLowerCase()===game.toLowerCase()&&x.params[0].data===data),"submission receipt conflicts with unaccepted snapshot");
+          }
+        }
         for(const job of frozen.jobs) {
           const result=load(join(DIR,"battle-"+job.id+".proof.json"));
           assert.equal(result.chainRecord,job.chainRecord);assert.equal(result.manifestSHA256,strip(meta.manifestSHA256));
           const inputs=result.public.map((x:string)=>BigInt(x));assert.equal(inputs.length,22);assert.equal((result.proof.length-2)/2,384);
           const id=BigInt(job.id),before=await progress(id);
-          await rpc("anvil_impersonateAccount",[meta.owners[0]]);
+          await mutate("anvil_impersonateAccount",[meta.owners[0]]);
           let receipt:any=null;
           let application=await read(game,settleABI,"proofSettlementProgress",[id]);
           if(Number(application[0])===0) {
             assert.equal(Number(before[0]),17);
             receipt=await tx(meta.owners[0],game,settleABI,"submitBattleProof",[id,result.proof,inputs]);
-            const accepted=receipt.logs.filter((l:any)=>{try{return decodeEventLog({abi:settleABI,data:l.data,topics:l.topics}).eventName==="ProofBattleAccepted";}catch{return false;}});
-            assert.equal(accepted.length,1);assert.equal((await progress(id))[2],before[2]+1n);
           }
-          const summary=await read(game,settleABI,"proofBattleAcceptedSummary",[id]);assert.equal(strip(summary[0]),job.chainRecord);
-          const word=(offset:number)=>inputs.slice(offset,offset+4).reduce((v:bigint,x:bigint,i:number)=>v|(x<<BigInt(64*i)),0n);
-          assert.equal(summary[2],toHex(word(4),{size:32}));assert.equal(summary[3],word(8));
+          // Fresh AND resumed paths authenticate all event fields, historical +1 and full summary.
+          const verified=await acceptanceReceipt(id,inputs,result.proof);receipt=verified.receipt;
+          const summary=verified.summary;
           assert.equal(BigInt(result.leaves.length),summary[3]);
           application=await read(game,settleABI,"proofSettlementProgress",[id]);
           assert(application[1]<=BigInt(result.leaves.length));
@@ -210,10 +269,25 @@ const statusABI = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 cata
           assert.equal(BigInt(await read(game,gameABI,"shipCount",[mission[3],10])),expectedAttack,"returned destroyers");
           assert.equal(BigInt(await read(game,gameABI,"shipCount",[mission[4],0])),expectedResident,"resident cargo ships");
           assert.equal(BigInt(await read(game,gameABI,"activeFleetMissionCount",[mission[2]])),0n,"fleet slot released");
+          assert.deepEqual(await read(game,settleABI,"proofBattleAcceptedSummary",[id]),summary,"summary changed after economics/return");
           save("battle-"+id+".settled.json",{receipt,summary,progress:await progress(id),mission});
         }
       }
     }
-  } finally {child.kill("SIGTERM");await child.exited;}
+    finalHead=await currentHead();checkJournal(journal,file);
+    assert.deepEqual(finalHead,journal.at(-1)?.head??genesisHead,"unjournaled chain mutation");
+    completed=true;
+  } finally {
+    child?.kill("SIGTERM");const exit=child?await child.exited:null;owned=false;mutationsAllowed=false;
+    rmSync(ipcDirectory,{recursive:true,force:true});
+    if(completed){
+      assert.equal(exit,0,"clean node shutdown required for checkpoint");checkJournal(journal,file);
+      if(mode!=="replay")renameSync(dumpState,state);
+      save(mode==="replay"?"replayed-checkpoint.json":"checkpoint.json",{
+        schema:"ticket44.clean-checkpoint.v2",position:journal.length,journalSHA256:sha(json(journal)),
+        snapshotSHA256:sha(readFileSync(state)),genesisHead:checkpoint?.genesisHead??genesisHead,head:finalHead
+      });
+    }
+  }
 }
 if(import.meta.main)await main(process.argv[2]??"");

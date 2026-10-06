@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 import {VeydriftMoonSystemTestBase} from "./VeydriftMoonSystem.t.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftGameStorage as G} from "../src/VeydriftGameStorage.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VeydriftProofBattle as P} from "../src/libraries/VeydriftProofBattle.sol";
 import {IdentityReleaseProvisioner} from "./support/IdentityReleaseProvisioner.sol";
@@ -66,46 +67,9 @@ contract VeydriftIdentityGenesisTest is VeydriftMoonSystemTestBase {
         require(
             verifier.codehash == vm.parseJsonBytes32(key, ".runtimeCodehash"), "approved runtime"
         );
-        address implementation = address(game);
-        game = VeydriftGame(
-            payable(address(
-                    new ERC1967Proxy(
-                        implementation, abi.encodeCall(VeydriftGame.initialize, (admin))
-                    )
-                ))
-        );
-        metalToken.mint(address(game), RESERVE_FUNDING);
-        crystalToken.mint(address(game), RESERVE_FUNDING);
-        deuteriumToken.mint(address(game), RESERVE_FUNDING);
-        vm.startPrank(admin);
-        game.setResourceTokens(address(metalToken), address(crystalToken), address(deuteriumToken));
-        game.setRandomnessEngine(address(randomness));
-        randomness.setRequesterAuthorization(address(game), true);
-        randomness.setPrecommitRequired(true);
-        vm.stopPrank();
+        address implementation = _freshProxy();
         vm.deal(fulfiller, 10 ether);
-        address[] memory owners = new address[](4);
-        uint256[] memory planets = new uint256[](4);
-        for (uint160 i; i < 4; ++i) {
-            address owner = address(uint160(0x440100) + i);
-            owners[i] = owner;
-            vm.deal(owner, 10 ether);
-            vm.prank(owner);
-            uint256 id = game.startPlanet{value: 0.05 ether}();
-            planets[i] = id;
-            _setPlanetLocation(
-                id,
-                owner,
-                1,
-                uint16((100 + i / 2) & type(uint16).max),
-                uint8((8 + i % 2) & type(uint8).max)
-            );
-            _setTechnologyLevel(owner, Technology.IntergalacticResearchNetwork, 3000);
-            _setTechnologyLevel(owner, Technology.Computer, 10);
-            _fundPlanet(id, 1_000_000, 1_000_000, 1_000_000);
-            if (i % 2 == 0) _setShipCount(id, Ship.Destroyer, i == 0 ? 2 : 1);
-            else _setShipCount(id, Ship.SmallCargo, 1);
-        }
+        (address[] memory owners, uint256[] memory planets) = _seedPlanets();
         // Only development release provisioning. Restore real proxy code before export/jobs.
         bytes memory proxy = address(game).code;
         IdentityReleaseProvisioner provisioner = new IdentityReleaseProvisioner();
@@ -132,8 +96,98 @@ contract VeydriftIdentityGenesisTest is VeydriftMoonSystemTestBase {
         _touchLinkedLibraries();
         _touchChildren(address(this));
         vm.etch(implementation, implementation.code);
+        _assertSeedLiabilityConservation(planets);
         vm.dumpState(string.concat(BASE, "genesis-alloc.json"));
         vm.writeJson(meta, string.concat(BASE, "genesis-meta.json"));
+    }
+
+    function _freshProxy() private returns (address implementation) {
+        implementation = address(game);
+        game = VeydriftGame(
+            payable(address(
+                    new ERC1967Proxy(
+                        implementation, abi.encodeCall(VeydriftGame.initialize, (admin))
+                    )
+                ))
+        );
+        metalToken.mint(address(game), RESERVE_FUNDING);
+        crystalToken.mint(address(game), RESERVE_FUNDING);
+        deuteriumToken.mint(address(game), RESERVE_FUNDING);
+        vm.startPrank(admin);
+        game.setResourceTokens(address(metalToken), address(crystalToken), address(deuteriumToken));
+        game.setRandomnessEngine(address(randomness));
+        randomness.setRequesterAuthorization(address(game), true);
+        randomness.setPrecommitRequired(true);
+        vm.stopPrank();
+    }
+
+    function _seedPlanets() private returns (address[] memory owners, uint256[] memory planets) {
+        owners = new address[](4);
+        planets = new uint256[](4);
+        for (uint160 i; i < 4; ++i) {
+            address owner = address(uint160(0x440100) + i);
+            owners[i] = owner;
+            vm.deal(owner, 10 ether);
+            vm.prank(owner);
+            uint256 id = game.startPlanet{value: 0.05 ether}();
+            planets[i] = id;
+            _setPlanetLocation(
+                id,
+                owner,
+                1,
+                uint16((100 + i / 2) & type(uint16).max),
+                uint8((8 + i % 2) & type(uint8).max)
+            );
+            _setTechnologyLevel(owner, Technology.IntergalacticResearchNetwork, 3000);
+            _setTechnologyLevel(owner, Technology.Computer, 10);
+            _fundPlanet(id, 1_000_000, 1_000_000, 1_000_000);
+            if (i % 2 == 0) _setShipCount(id, Ship.Destroyer, i == 0 ? 2 : 1);
+            else _setShipCount(id, Ship.SmallCargo, 1);
+        }
+        // _fundPlanet is a single-planet helper: its final write resets global slots14/15.
+        // This genesis has exactly four planets and no missions or other resource liabilities.
+        G.Resources memory sum;
+        for (uint256 i; i < planets.length; ++i) {
+            G.Resources memory resources = game.planet(planets[i]).resources;
+            sum.metal += resources.metal;
+            sum.crystal += resources.crystal;
+            sum.deuterium += resources.deuterium;
+        }
+        vm.store(
+            address(game),
+            bytes32(uint256(14)),
+            bytes32(uint256(sum.metal) | (uint256(sum.crystal) << 128))
+        );
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(sum.deuterium)));
+        _assertSeedLiabilityConservation(planets);
+    }
+
+    function _assertSeedLiabilityConservation(uint256[] memory planets) private view {
+        G.Resources memory sum;
+        assertEq(planets.length, 4);
+        assertEq(game.nextFleetId(), 1);
+        for (uint256 i; i < planets.length; ++i) {
+            G.Resources memory r = game.planet(planets[i]).resources;
+            sum.metal += r.metal;
+            sum.crystal += r.crystal;
+            sum.deuterium += r.deuterium;
+        }
+        G.Resources memory total = game.totalInternalResources();
+        assertEq(sum.metal, 4_000_000);
+        assertEq(sum.crystal, 4_000_000);
+        assertEq(sum.deuterium, 4_000_000);
+        assertEq(total.metal, sum.metal, "metal liability conservation");
+        assertEq(total.crystal, sum.crystal, "crystal liability conservation");
+        assertEq(total.deuterium, sum.deuterium, "deuterium liability conservation");
+        assertGe(metalToken.balanceOf(address(game)), total.metal);
+        assertGe(crystalToken.balanceOf(address(game)), total.crystal);
+        assertGe(deuteriumToken.balanceOf(address(game)), total.deuterium);
+    }
+
+    function testFourPlanetSeedGlobalBacking() public {
+        _freshProxy();
+        (, uint256[] memory planets) = _seedPlanets();
+        _assertSeedLiabilityConservation(planets);
     }
 
     function _touchChildren(address creator) private {
