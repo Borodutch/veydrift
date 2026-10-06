@@ -5,7 +5,8 @@
  */
 export const proofBattleReadSignatures = [
   "function proofBattleRecord(uint256 id,uint8 kind,uint256 index) view returns (bytes)",
-  "function proofSettlementProgress(uint256 id) view returns (uint8 phase,uint256 nextIndex,uint256 memberCount,bytes32 expectedDigest)"
+  "function proofSettlementProgress(uint256 id) view returns (uint8 phase,uint256 nextIndex,uint256 memberCount,bytes32 expectedDigest)",
+  "function proofBattleAcceptedSummary(uint256 id) view returns (bytes32 binding,bytes32 release,bytes32 root,uint256 members,uint8 rounds,uint256[2] totals,uint8 outcome,uint32 version)"
 ] as const;
 
 /** These calls target the job's FROZEN engine, not the current Game engine. */

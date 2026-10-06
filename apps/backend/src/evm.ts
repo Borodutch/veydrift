@@ -1,3 +1,4 @@
+import { proofBattleAcceptedTopic } from "./proofAcceptanceEvent";
 import { readProofBattleStatus, type ProofBattleStatus } from "./proofBattleProgress";
 import { decodeStagedBattleEvidence, stagedMemberShips, stagedReportTopicList, stagedReportTopics, type StagedBattleEvidence } from "./stagedBattleReport";
 import type * as Api from "../../../packages/api-types/src/index";
@@ -6211,6 +6212,7 @@ const eventNamesByTopic = new Map<string, string>([
   [attackBattleResolvedTopic, "AttackBattleResolved"],
   [combatRoundResolvedTopic, "CombatRoundResolved"],
   [combatStageAdvancedTopic, "CombatStageAdvanced"],
+  [proofBattleAcceptedTopic, "ProofBattleAccepted"],
   [stagedReportTopics.snapshot, "CombatMemberSnapshot"],
   [stagedReportTopics.losses, "CombatMissionLosses"],
   [stagedReportTopics.repair, "CombatDefenseRepair"],

@@ -68,6 +68,24 @@ export type ProofBattleProgress = {
   memberCount?: string;
 };
 
+/** Canonical event archive, not terminal battle/report or release authorization. */
+export type ProofBattleAcceptance = {
+  battleId: string; binding: string; releaseId: string; root: string; memberCount: string;
+  rounds: number; finalTotals: [string, string]; outcome: number; version: number;
+  address: string; blockNumber: string; blockHash: string; transactionHash: string; logIndex: string;
+};
+
+/** Runtime FinalArtifact serialized fields; Proof is compressed gnark/base64, NOT EVM calldata.
+ * Leaves/manifest are untrusted until compared with the pinned accepted summary and root. */
+export type FinalBattleArtifact = {
+  Schema: "raw-linked-settlement22-v3";
+  Manifest: { VKHash: string; InputHash: string; ProofHash: string; ChainRecord: string; OutputRoot: string;
+    MemberCount: string; Rounds: string; FinalSide0: string; FinalSide1: string; Outcome: string };
+  Public: string[]; Proof: string;
+  Leaves: Array<{ Index: string; Cohort: string; Owner: string; Source: string; Side: string;
+    Unit: string; Count: string; Lost: string; Survivors: string; Next: string }>;
+};
+
 export type MissionArchiveEntry<Mission, Report> =
   | { kind: "mission"; mission: Mission; report?: Report | undefined }
   | { kind: "battleReport"; report: Report };

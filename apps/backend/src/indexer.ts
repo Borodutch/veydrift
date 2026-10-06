@@ -1,3 +1,4 @@
+import { decodeProofBattleAccepted, isProofBattleAcceptedLog, proofBattleAcceptedTopic } from "./proofAcceptanceEvent";
 import { parseProofBattleStatus } from "./proofBattleProgress";
 import { combatStageAdvancedTopic } from "./evm";
 import { deterministicFleetEffects } from "./currentFleet";
@@ -4979,7 +4980,20 @@ export class SettlementIndexer {
     ) as EventRow[]).map((row) => parseEvent<IndexedRpcLog>(row.event_json));
   }
 
+  /** Raw acceptance archive uses the existing atomic canonical event ledger. Removed logs disappear;
+   * replay/restart does not synthesize a battle report, rounds or terminal mission transition. */
+  proofBattleAcceptances(game: string, battleId: string, limit = 32) {
+    if (!/^0x[0-9a-f]{40}$/i.test(game) || !/^(0|[1-9][0-9]*)$/.test(battleId)
+      || BigInt(battleId) >= 1n << 256n || !Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new Error("invalid acceptance archive query");
+    const rows = this.db.query(
+      "SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.address')) = ? AND lower(json_extract(event_json, '$.topics[0]')) = ? AND lower(json_extract(event_json, '$.topics[1]')) = ? ORDER BY length(block_number) DESC, block_number DESC, length(log_index) DESC, log_index DESC LIMIT ?"
+    ).all(game.toLowerCase(), proofBattleAcceptedTopic, fleetMissionIdTopic(battleId), limit) as EventRow[];
+    return rows.map(row => decodeProofBattleAccepted(parseEvent<IndexedRpcLog>(row.event_json)));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
+    if (isProofBattleAcceptedLog(log)) decodeProofBattleAccepted(log);
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
@@ -5019,6 +5033,13 @@ export class SettlementIndexer {
           );
         }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isProofBattleAcceptedLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query("UPDATE indexed_event_logs SET removed = 0, event_json = ?, block_number = ?, received_at = ? WHERE event_id = ?")
+          .run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && isPlanetSettledLog(log)) {
         this.advanceIndexedRevision();
@@ -5223,6 +5244,9 @@ export class SettlementIndexer {
 
     this.recordPlayerActivityFeedFromLog(eventId, log);
 
+    if (isProofBattleAcceptedLog(log)) {
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { decodeAbiParameters, decodeFunctionData, encodeFunctionData, parseAbi, parseAbiParameters, toHex } from "viem";
+import { decodeAbiParameters, decodeFunctionData, decodeFunctionResult, encodeFunctionData, parseAbi, parseAbiParameters, toHex } from "viem";
 import { proofBattleReadSignatures, proofRandomnessReadSignatures, proofBattleRecordSchema,
   proofBattleRequestSchema, proofBattleRowSchema } from "../../../packages/chain-abi/src/proofBattle";
 import type { ProofBattleProgress } from "../../../packages/api-types/src/index";
@@ -11,11 +11,15 @@ const word = (n: bigint) => toHex(n, { size: 32 }).slice(2);
 test("shared reads retain exact contract tuple widths/order without exposing transaction selectors", () => {
   const abi = parseAbi([...proofBattleReadSignatures, ...proofRandomnessReadSignatures]);
   expect(abi.every(item => item.type === "function" && item.stateMutability === "view")).toBe(true);
-  expect(abi.map(item => item.name)).toEqual(["proofBattleRecord", "proofSettlementProgress", "request", "battlePurposeContext"]);
+  expect(abi.map(item => item.name)).toEqual(["proofBattleRecord", "proofSettlementProgress", "proofBattleAcceptedSummary", "request", "battlePurposeContext"]);
   for (const kind of [0, 1, 2, 3, 4, 5]) {
     const data = encodeFunctionData({ abi, functionName: "proofBattleRecord", args: [7n, kind, 8n] });
     expect(decodeFunctionData({ abi, data }).args).toEqual([7n, kind, 8n]);
   }
+  const accepted = ("0x" + [1n, 2n, 3n, 1n << 200n, 6n, 1n << 255n, 0n, 1n, 3n].map(word).join("")) as `0x${string}`;
+  expect(decodeFunctionResult({ abi, functionName: "proofBattleAcceptedSummary", data: accepted }))
+    .toEqual([toHex(1n, { size: 32 }), toHex(2n, { size: 32 }), toHex(3n, { size: 32 }), 1n << 200n, 6, [1n << 255n, 0n], 1, 3]);
+  expect(encodeFunctionData({ abi, functionName: "proofBattleAcceptedSummary", args: [7n] }).slice(0, 10)).toBe("0x23a03b3b");
   // Independent Solidity static-word fixtures, not encode/decode with the same schema.
   const raw = ("0x" + [3n, 1n, 2n, BigInt(address), 4n, 3n, 5n, 6n, (1n << 255n), 9n].map(word).join("")) as `0x${string}`;
   const decoded = decodeAbiParameters(parseAbiParameters(proofBattleRecordSchema), raw);
