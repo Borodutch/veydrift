@@ -125,6 +125,8 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         address module = msg.sig == 0x41dfa622
             || msg.sig == VeydriftProofSettlementModule.applyProofBattleLeaves.selector
             || msg.sig == VeydriftProofSettlementModule.proofSettlementProgress.selector
+            || msg.sig == VeydriftProofSettlementModule.submitBattleProof.selector
+            || msg.sig == VeydriftProofSettlementModule.proofBattleAcceptedSummary.selector
             ? _combatRaidModule
             : _riftModule;
         (bool ok, bytes memory result) = module.delegatecall(msg.data);

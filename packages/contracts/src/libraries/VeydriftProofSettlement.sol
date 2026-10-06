@@ -40,6 +40,8 @@ library VeydriftProofSettlement {
 
     struct Layout {
         mapping(uint256 => Application) jobs;
+        // Empty by default. No production writer or activation setter exists.
+        mapping(bytes32 => bool) approvedReleases;
     }
     error InvalidOutput();
     error InsufficientLiveInventory();
@@ -72,8 +74,30 @@ library VeydriftProofSettlement {
         return keccak256(abi.encode(words));
     }
 
-    /// @dev NO production caller. Only a future authenticated final verifier may call this.
-    /// Tests use an explicitly trusted harness, never a mock-verifier acceptance route.
+    function releaseId(Proof.Version memory version) internal pure returns (bytes32) {
+        return keccak256(abi.encode(version));
+    }
+
+    /// @dev Four canonical little-endian uint64 limbs, not field-reduced words.
+    function word(uint256[22] calldata inputs, uint256 offset)
+        internal
+        pure
+        returns (uint256 value)
+    {
+        for (uint256 i; i < 4; ++i) {
+            uint256 limb = inputs[offset + i];
+            if (limb > type(uint64).max) revert InvalidOutput();
+            value |= limb << (64 * i);
+        }
+    }
+
+    function outcome(uint256[2] memory totals) internal pure returns (uint8) {
+        if (totals[0] != 0 && totals[1] == 0) return 1;
+        if (totals[0] == 0 && totals[1] != 0) return 2;
+        return 0;
+    }
+
+    /// @dev Only authenticated module submission may call this in production.
     function accept(
         uint256 id,
         bytes32 root,

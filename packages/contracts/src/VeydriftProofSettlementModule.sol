@@ -13,8 +13,13 @@ interface IProofSettlementMoon {
     function applyMoonCombatDefenseChanges(uint256, uint256, bool) external;
 }
 
-/// @notice Permissionless bounded application ONLY after authenticated acceptance.
-/// No reachable production acceptance function exists in this checkpoint.
+interface IFinalBattleVerifier {
+    // Generated gnark ABI: validity is successful non-revert, NOT a bool return.
+    function verifyProof(bytes calldata proof, uint256[22] calldata inputs) external view;
+}
+
+/// @notice Permissionless authenticated submission and bounded application.
+/// Approved release registry and prospective launch configuration remain empty by default.
 contract VeydriftProofSettlementModule is VeydriftResourceReserves {
     constructor() VeydriftResourceReserves(address(0)) {}
     event ProofOutputAdvanced(uint256 indexed battleId, uint256 nextIndex, bool economicsReady);
@@ -26,6 +31,89 @@ contract VeydriftProofSettlementModule is VeydriftResourceReserves {
         uint8 unit,
         uint32 lost
     );
+
+    event ProofBattleAccepted(
+        uint256 indexed battleId,
+        bytes32 indexed binding,
+        bytes32 indexed releaseId,
+        bytes32 root,
+        uint256 memberCount,
+        uint8 rounds,
+        uint256 side0,
+        uint256 side1,
+        uint8 outcome,
+        uint32 version
+    );
+
+    /// @notice Routed through the existing fallback, never decoded by the Game facade.
+    function submitBattleProof(uint256 id, bytes calldata proof, uint256[22] calldata inputs)
+        external
+    {
+        _requireGameNotPaused();
+        Proof.Job storage j = Proof.layout().jobs[id];
+        Store.Battle storage b = Store.battle(id);
+        bytes32 release = S.releaseId(j.frozen);
+        if (
+            S.layout().jobs[id].phase != S.Phase.Unaccepted || b.phase != 17
+                || j.phase != Proof.Phase.AwaitingProof || j.frozen.version < 3
+                || !S.layout().approvedReleases[release] || j.frozen.verifier.code.length == 0
+                || j.frozen.verifier.codehash != j.frozen.verifierCodehash || proof.length != 384
+        ) revert S.InvalidOutput();
+        bytes32 binding = bytes32(S.word(inputs, 0));
+        bytes32 root = bytes32(S.word(inputs, 4));
+        uint256 members = S.word(inputs, 8);
+        uint256[2] memory totals = [S.word(inputs, 13), S.word(inputs, 17)];
+        if (
+            binding != S.chainRecord(id) || members != j.rows.length || inputs[12] > 6
+                || inputs[21] != S.outcome(totals)
+        ) revert S.InvalidOutput();
+        IFinalBattleVerifier(j.frozen.verifier).verifyProof(proof, inputs);
+        // The static verifier call cannot reenter a state-writing path.
+        S.accept(id, root, members, uint8(inputs[12] & type(uint8).max), totals);
+        ++b.workDone;
+        emit ProofBattleAccepted(
+            id,
+            binding,
+            release,
+            root,
+            members,
+            uint8(inputs[12] & type(uint8).max),
+            totals[0],
+            totals[1],
+            uint8(inputs[21] & type(uint8).max),
+            j.frozen.version
+        );
+    }
+
+    /// @notice Complete immutable accepted summary; zero binding/root before acceptance.
+    function proofBattleAcceptedSummary(uint256 id)
+        external
+        view
+        returns (
+            bytes32 binding,
+            bytes32 release,
+            bytes32 root,
+            uint256 members,
+            uint8 rounds,
+            uint256[2] memory totals,
+            uint8 outcome,
+            uint32 version
+        )
+    {
+        S.Application storage a = S.layout().jobs[id];
+        if (a.phase == S.Phase.Unaccepted) return (0, 0, 0, 0, 0, totals, 0, 0);
+        Proof.Version memory v = Proof.layout().jobs[id].frozen;
+        return (
+            a.binding,
+            S.releaseId(v),
+            a.root,
+            a.memberCount,
+            a.rounds,
+            a.finalTotals,
+            S.outcome(a.finalTotals),
+            v.version
+        );
+    }
 
     function proofSettlementProgress(uint256 id)
         external
