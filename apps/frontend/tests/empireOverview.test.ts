@@ -20,8 +20,11 @@ describe("empire overview", () => {
 
   test("builds queue lines only for active queues", () => {
     expect(queueLine("ship", null)).toBeUndefined();
-    const line = queueLine("defense", { active: true, kind: "defense", itemId: 0, quantity: 5, readyAt: "200", startedAt: "100", cost: { metal: "0", crystal: "0", deuterium: "0" } });
+    const line = queueLine("defense", { active: true, kind: "defense", itemId: 0, quantity: 5, readyAt: "200", startedAt: "100", cost: { metal: "0", crystal: "0", deuterium: "0" } }, undefined, 150_000);
     expect(line).toMatchObject({ kind: "defense", label: "Rocket Launcher ×5", startedAt: 100_000, readyAt: 200_000 });
+    const queue = { active: true, kind: "defense", itemId: 0, quantity: 5, readyAt: "200", startedAt: "100", cost: { metal: "0", crystal: "0", deuterium: "0" } };
+    expect(queueLine("defense", queue, undefined, 150_000)).toBeDefined();
+    expect(queueLine("defense", queue, undefined, 200_000)).toBeUndefined();
   });
 
   test("lists built infrastructure in catalog order, skipping unbuilt levels", () => {

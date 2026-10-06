@@ -5,7 +5,7 @@ import type { BackendDataStore } from "../backendDataStore";
 import { currentResources } from "../currentResources";
 import { planetFromSettlementPlanet } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
-import { moonImageForType } from "../gameAssets";
+import { moonBuildingAsset, moonImageForType } from "../gameAssets";
 import { buildingQueuePreview } from "../overviewData";
 import { buildingCatalog, buildingContractIds, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { useBackendDataQuery } from "../useBackendDataQuery";
@@ -17,7 +17,6 @@ import type {
   QueueStateResponse,
 } from "../walletFlow";
 import { formatCompactResource } from "./GalaxyView";
-import { moonBuildingAsset } from "./MoonPage";
 import { getSizedImageSrc } from "../utils/imageSizes";
 import { OptimizedImage } from "./OptimizedImage";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
@@ -82,9 +81,17 @@ function seconds(value: string | null | undefined): number | undefined {
   return value && Number.isFinite(parsed) && parsed > 0 ? parsed * 1_000 : undefined;
 }
 
-export function queueLine(kind: QueueKind, queue: QueueStateResponse | null | undefined, moonBuildings?: ChainMoonState["buildings"]): QueueLine | undefined {
+export function queueLine(
+  kind: QueueKind,
+  queue: QueueStateResponse | null | undefined,
+  moonBuildings?: ChainMoonState["buildings"],
+  now = Date.now(),
+): QueueLine | undefined {
   if (!queue?.active) return undefined;
   const timing = { startedAt: seconds(queue.startedAt), readyAt: seconds(queue.readyAt), extra: queue.backlog?.length || undefined };
+  // Completion settles lazily on-chain: past readyAt the work is done, so it is not an active queue.
+  // The backend's as-of-now projection is canonical when present.
+  if (!timing.extra && (queue.asOfNow?.complete === true || (timing.readyAt !== undefined && timing.readyAt <= now))) return undefined;
   if (kind === "building") {
     const moonBuilding = moonBuildings?.find((building) => building.id === queue.itemId);
     if (moonBuilding) {
@@ -129,11 +136,11 @@ type MoonDetails = {
   queues: { building: QueueStateResponse | null; ship: QueueStateResponse | null; defense: QueueStateResponse | null };
 };
 
-function moonQueueLines(moon: MoonDetails | undefined): QueueLine[] {
+function moonQueueLines(moon: MoonDetails | undefined, now: number): QueueLine[] {
   return [
-    queueLine("building", moon?.queues.building, moon?.buildings),
-    queueLine("ship", moon?.queues.ship),
-    queueLine("defense", moon?.queues.defense),
+    queueLine("building", moon?.queues.building, moon?.buildings, now),
+    queueLine("ship", moon?.queues.ship, undefined, now),
+    queueLine("defense", moon?.queues.defense, undefined, now),
   ].filter((line): line is QueueLine => Boolean(line));
 }
 
@@ -325,12 +332,12 @@ function BodyRow({
     ? { buildings: planet.moon.buildings as ChainMoonState["buildings"], queues: planet.moon.queues }
     : undefined;
   const queues = isMoon
-    ? moonQueueLines(rosterMoon)
+    ? moonQueueLines(rosterMoon, now)
     : [
-        queueLine("building", planet.queues.building),
-        queueLine("research", researchQueue),
-        queueLine("ship", planet.queues.ship),
-        queueLine("defense", planet.queues.defense),
+        queueLine("building", planet.queues.building, undefined, now),
+        queueLine("research", researchQueue, undefined, now),
+        queueLine("ship", planet.queues.ship, undefined, now),
+        queueLine("defense", planet.queues.defense, undefined, now),
       ].filter((line): line is QueueLine => Boolean(line));
   const missions = fleetVisibility ? summarizeFleets(bodyFleetVisibility(fleetVisibility, planet.planetId, kind), now, planetNames) : undefined;
   const hostile = missions?.lines.some((line) => line.relation === "hostile" && line.direction === "incoming") ?? false;
@@ -340,6 +347,8 @@ function BodyRow({
       {/* The selected body stays open; elsewhere the row toggles and the name selects. */}
       <div
         className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 rounded-md px-2 py-2 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
+        aria-current={selected ? "true" : undefined}
+        data-body-kind={kind}
         onClick={selected ? undefined : onToggle}
       >
         <span className={`relative shrink-0 overflow-hidden rounded-full bg-white/5 ${isMoon ? "h-6 w-6" : "h-8 w-8"} ${selected ? "ring-1 ring-cyan-300/60" : ""}`}>
@@ -450,7 +459,7 @@ function BodyDetails({
     ? { buildings: fetchedMoon.buildings, queues: { building: fetchedMoon.queue, ship: fetchedMoon.shipQueue ?? null, defense: fetchedMoon.defenseQueue ?? null } }
     : undefined);
 
-  const queues = isMoon ? (rosterMoon ? rowQueues : moonQueueLines(moon)) : rowQueues;
+  const queues = isMoon ? (rosterMoon ? rowQueues : moonQueueLines(moon, now)) : rowQueues;
   const units = isMoon
     ? [...unitTiles("ship", fetchedMoon?.ships ?? planet.moon?.ships), ...unitTiles("defense", fetchedMoon?.defenses ?? planet.moon?.defenses)]
     : [...unitTiles("ship", planet.tactical?.ships.units), ...unitTiles("defense", planet.tactical?.defenses.units)];

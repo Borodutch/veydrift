@@ -473,9 +473,9 @@ test("Overview and planet/moon detail hide art diagnostics while retaining named
   }
   await loadInspectorFixture("/", 1280, { shell: "settlement" });
   await clickExpression('document.querySelector(\'aside[aria-label="Select planet"] [data-planet-selector-item="102"] button[data-planet-selector-long-press]\')');
-  await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Beta'");
-  const colonyHeader = await evaluate("document.querySelector('main h2')?.parentElement?.previousElementSibling?.textContent");
-  assert.equal(colonyHeader?.trim(), "4:5:6");
+  await waitForExpression("document.querySelector('main section[aria-label=\"Empire\"] [aria-current=\"true\"] button')?.textContent === 'Owned Beta'");
+  const colonyHeader = await evaluate("document.querySelector('main section[aria-label=\"Empire\"] [aria-current=\"true\"] .font-mono')?.textContent");
+  assert.match(colonyHeader?.trim() ?? "", /^4:5:6\b/);
 });
 
 function missionConfirmExpression(disabled) {
@@ -568,7 +568,7 @@ async function clickSectionAndReadRender(expression) {
     target.click();
     return {
       activeHref: document.querySelector('nav.hidden a[aria-current="page"]')?.getAttribute('href') ?? null,
-      hasOverviewFleets: document.querySelector('main section[aria-label="Fleets"]') !== null,
+      hasEmpire: document.querySelector('main section[aria-label="Empire"]') !== null,
       path: location.pathname,
     };
   })()`);
@@ -949,7 +949,7 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
       .map((link) => link.textContent?.trim());
     return details?.open === true
       && menu?.getBoundingClientRect().height > 0
-      && ['Overview', 'Infrastructure', 'Galaxy', 'Raid Finder', 'Rankings', 'Alliance']
+      && ['Empire', 'Infrastructure', 'Galaxy', 'Raid Finder', 'Rankings', 'Alliance']
         .every((label) => labels.includes(label));
   })()`);
   await waitForExpression("document.querySelector('#mobile-navigation-menu section[aria-label=\"Select planet\"]') !== null");
@@ -980,13 +980,13 @@ test("desktop sidebar first clicks commit Infrastructure and Shipyard routes", a
   const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
-    hasOverviewFleets: false,
+    hasEmpire: false,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
     && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
     && document.querySelector('main [data-production-catalog]') !== null
-    && document.querySelector('main section[aria-label="Fleets"]') === null`);
+    && document.querySelector('main section[aria-label="Empire"]') === null`);
 });
 
 test("Galaxy sidebar trusted clicks commit Raid Finder and Shipyard routes", async () => {
@@ -1110,13 +1110,13 @@ test("desktop sidebar commits the reported Overview to Raid Finder and Shipyard 
   const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
-    hasOverviewFleets: false,
+    hasEmpire: false,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
     && document.querySelector('nav.hidden a[href="/shipyard"][aria-current="page"]') !== null
     && document.querySelector('main [data-production-catalog]') !== null
-    && document.querySelector('main section[aria-label="Fleets"]') === null`);
+    && document.querySelector('main section[aria-label="Empire"]') === null`);
 
   await clickExpression("document.querySelector('nav.hidden a[href=\"/mission-control\"]')");
   await waitForExpression("location.pathname === '/mission-control' && document.querySelector('nav.hidden a[href=\"/mission-control\"][aria-current=\"page\"]') !== null");
@@ -1134,7 +1134,7 @@ for (const width of [1280, 390]) {
 
   test(`${layout} Overview to Alliance click commits the route and Alliance UI`, async () => {
     await loadInspectorFixture("/", width, { audioContextFailure: "true" });
-    await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+    await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Empire\"]') !== null");
 
     if (width < 768) {
       await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
@@ -1150,7 +1150,7 @@ for (const width of [1280, 390]) {
       && document.querySelector('main [data-alliance-page]') !== null
       && document.querySelector('main')?.textContent?.includes('Alliance directory') === true
       && document.querySelector('main [aria-label="Create alliance"]') !== null
-      && document.querySelector('main section[aria-label="Fleets"]') === null
+      && document.querySelector('main section[aria-label="Empire"]') === null
       ${width < 768 ? "&& document.querySelector('details:has(#mobile-navigation-menu)')?.open === false" : ""}`);
 
     const result = await evaluate(`({
@@ -1208,7 +1208,7 @@ test("a stalled Supply inventory request does not block another planet or Shipya
   await waitForExpression(`window.supplyInventoryBlocked && document.querySelector('[role="dialog"] .skeleton-region') !== null`);
   await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
   await clickExpression(`document.querySelector('aside[aria-label="Select planet"] [data-planet-selector-item="102"] button[data-planet-selector-long-press]')`);
-  await waitForExpression(`document.querySelector('main h2')?.textContent?.includes('Owned Beta') === true`);
+  await waitForExpression(`document.querySelector('main section[aria-label="Empire"] [aria-current="true"] button')?.textContent?.includes('Owned Beta') === true`);
   await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
   await waitForExpression(`location.pathname === '/shipyard' && document.querySelector('main [data-production-catalog]') !== null`);
   assert.equal(await evaluate(`window.supplyInventoryBlocked`), true);
@@ -1988,7 +1988,7 @@ test("indexed Infrastructure construction survives stale details, navigation, pl
   })()`);
   await waitForExpression(`${panel} === null && ${sidebar} === null`);
   await clickExpression(`document.querySelector('nav.hidden a[href="/"]')`);
-  await waitForExpression(`document.querySelector('main')?.textContent?.includes('No active construction') === true`);
+  await waitForExpression(`document.querySelector('main section[aria-label="Empire"] [aria-current="true"]') !== null && document.querySelector('main section[aria-label="Empire"] [aria-current="true"] [title^="Building:"]') === null`);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction').length`), 0, "reload never resubmits");
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
@@ -2151,13 +2151,12 @@ for (const phase of ["complete", "settled"]) {
     await cdp.send("Page.reload", { ignoreCache: true });
     await waitForExpression("window.inspectorProof?.appReady === true");
     await assertDefense();
-    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Overview')");
-    const overviewNotice = "No active defense production.";
-    await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Defenses"]')?.textContent?.includes(${JSON.stringify(overviewNotice)}) === true`);
+    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Empire')");
+    await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Empire"] li') !== null`);
     const overview = await evaluate(`({
-      text: document.querySelector('main section[aria-label="Defenses"]')?.textContent,
-      activeQueues: document.querySelectorAll('main section[aria-label="Defenses"] [aria-label^="Queue:"]').length,
-      settlement: document.querySelector('main section[aria-label="Defenses"] [aria-label="Defense settlement"]')?.textContent ?? null,
+      text: document.querySelector('main section[aria-label="Empire"]')?.textContent,
+      activeQueues: document.querySelectorAll('main section[aria-label="Empire"] [title^="Defense:"]').length,
+      settlement: document.querySelector('main [aria-label="Defense settlement"]')?.textContent ?? null,
     })`);
     assert.equal(overview.activeQueues, 0);
     assert.equal(overview.settlement, null);
@@ -2210,9 +2209,9 @@ for (const body of ["planet", "moon"]) {
       batchPlanProbe: "true", moonOverview: "true", shell: "settlement",
     });
     if (moon) {
-      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]') !== null`);
-      await clickExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')`);
-      await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')?.classList.contains('border-cyan-300/50') === true`);
+      await waitForExpression(`document.querySelector('main section[aria-label="Empire"] button[title="Select Moon"]') !== null`);
+      await clickExpression(`document.querySelector('main section[aria-label="Empire"] button[title="Select Moon"]')`);
+      await waitForExpression(`document.querySelector('main section[aria-label="Empire"] [aria-current="true"][data-body-kind="moon"]') !== null`);
       await clickExpression('document.querySelector(\'summary[aria-label="Open navigation menu"]\')');
       await clickExpression('document.querySelector(\'#mobile-navigation-menu a[href="/moon"]\')');
       await waitForExpression(`location.pathname === '/moon' && document.querySelector('main [data-production-catalog]') !== null`);
@@ -2363,7 +2362,7 @@ for (const width of [390, 1280]) {
 
 test("slow route chunks use matching skeletons while navigation stays usable", async () => {
   await loadInspectorFixture("/", 1280);
-  await waitForExpression("document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+  await waitForExpression("document.querySelector('main section[aria-label=\"Empire\"]') !== null");
   await evaluate("window.routeShellProof = document.querySelector('nav.hidden')");
   await cdp.send("Network.enable");
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
@@ -2394,7 +2393,7 @@ test("slow route chunks use matching skeletons while navigation stays usable", a
 
 test("a failed route chunk stays inside the page and permits navigation elsewhere", async () => {
   await loadInspectorFixture("/", 1280);
-  await waitForExpression("document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+  await waitForExpression("document.querySelector('main section[aria-label=\"Empire\"]') !== null");
   await cdp.send("Network.enable");
   await cdp.send("Network.setCacheDisabled", { cacheDisabled: true });
   await cdp.send("Network.setBlockedURLs", { urls: ["*MissionControlPage.tsx*"] });
@@ -2437,29 +2436,18 @@ test("Mission Control reuses its list model on clock ticks but updates countdown
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
-test("Overview selects the moon and opens Transport and Deploy to its parent with a moon origin", async () => {
+test("Empire selects the moon and opens Transport and Deploy to its parent with a moon origin", async () => {
   for (const action of ["Transport", "Deploy"]) {
     await loadInspectorFixture("/", 1280, { moonOverview: "true" });
-    await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]') !== null`);
-    await evaluate(`window.moonOverviewProof = {
-      hero: document.querySelector('img[alt="Planet hero background"]'),
-      queues: ['Buildings', 'Defenses', 'Research', 'Shipyard'].map(label => document.querySelector('section[aria-label="' + label + '"]')),
-    }`);
-    await clickExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')`);
-    await waitForExpression(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]').classList.contains('border-cyan-300/50')`);
+    await waitForExpression(`document.querySelector('main section[aria-label="Empire"] button[title="Select Moon"]') !== null`);
+    await evaluate(`window.moonOverviewProof = { empire: document.querySelector('main section[aria-label="Empire"]') }`);
+    await clickExpression(`document.querySelector('main section[aria-label="Empire"] button[title="Select Moon"]')`);
+    await waitForExpression(`document.querySelector('main section[aria-label="Empire"] [aria-current="true"][data-body-kind="moon"]') !== null`);
     assert.equal(await evaluate("location.pathname"), "/");
-    assert.equal(await evaluate(`window.moonOverviewProof.hero !== null && window.moonOverviewProof.hero === document.querySelector('img[alt="Planet hero background"]')`), true);
-    assert.equal(await evaluate(`window.moonOverviewProof.queues.every(queue => queue !== null && queue.isConnected)`), true);
-    assert.equal(await evaluate(`document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]').textContent.includes('Selected')`), false);
-    if (action === "Transport") {
-      await clickExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="Open moon details"]')`);
-      await waitForExpression(`location.pathname === '/moon/1/2/3'`);
-      assert.equal(await evaluate("window.moonOverviewProof !== undefined"), true, "Moon details must use the internal router");
-      await evaluate("history.back()");
-      await waitForExpression(`location.pathname === '/' && document.querySelector('[aria-label="My planets"] [data-planet-moon-subsection]')?.classList.contains('border-cyan-300/50')`);
-    }
-    await waitForExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="${action}"]') !== null`);
-    await clickExpression(`document.querySelector('[aria-label="My planets"] button[aria-label="${action}"]')`);
+    assert.equal(await evaluate(`window.moonOverviewProof.empire === document.querySelector('main section[aria-label="Empire"]')`), true, "selecting a body keeps the Empire screen mounted");
+    // The selected moon's parent planet is pinned first, so its row carries the moon-origin actions.
+    await waitForExpression(`document.querySelector('main section[aria-label="Empire"] [data-body-kind="planet"] button[aria-label="${action}"]') !== null`);
+    await clickExpression(`document.querySelector('main section[aria-label="Empire"] [data-body-kind="planet"] button[aria-label="${action}"]')`);
     await waitForExpression(`Array.from(document.querySelectorAll('button')).some(button => button.textContent.trim() === 'Origin moon' && button.getAttribute('aria-pressed') === 'true')`);
     assert.equal(await evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent.trim() === 'Destination planet')?.getAttribute('aria-pressed')`), "true");
     assert.deepEqual(await evaluate("window.inspectorProof.walletRequests.filter(request => request.method === 'eth_sendTransaction')"), []);
@@ -2469,16 +2457,16 @@ test("Overview selects the moon and opens Transport and Deploy to its parent wit
 
 test("desktop Overview to Shipyard click atomically replaces the rendered page", async () => {
   await loadInspectorFixture("/", 1280);
-  await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Fleets\"]') !== null");
+  await waitForExpression("location.pathname === '/' && document.querySelector('main section[aria-label=\"Empire\"]') !== null");
 
   const shipyardRender = await clickSectionAndReadRender("document.querySelector('nav.hidden a[href=\"/shipyard\"]')");
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
-    hasOverviewFleets: false,
+    hasEmpire: false,
     path: "/shipyard",
   });
   await waitForExpression(`document.querySelector('main [data-production-catalog]') !== null
-    && document.querySelector('main section[aria-label="Fleets"]') === null`);
+    && document.querySelector('main section[aria-label="Empire"]') === null`);
 });
 
 test("public-only treasury keeps withdrawals available while private invite actions are disabled", async () => {
@@ -2776,14 +2764,14 @@ test("mobile sidebar first clicks commit routes and close the menu", async () =>
   const shipyardRender = await clickSectionAndReadRender("document.querySelector('#mobile-navigation-menu a[href=\"/shipyard\"]')");
   assert.deepEqual(shipyardRender, {
     activeHref: "/shipyard",
-    hasOverviewFleets: false,
+    hasEmpire: false,
     path: "/shipyard",
   });
   await waitForExpression(`location.pathname === '/shipyard'
     && document.querySelector('#mobile-navigation-menu a[href="/shipyard"][aria-current="page"]') !== null
     && document.querySelector('details:has(#mobile-navigation-menu)')?.open === false
     && document.querySelector('main [data-production-catalog]') !== null
-    && document.querySelector('main section[aria-label="Fleets"]') === null`);
+    && document.querySelector('main section[aria-label="Empire"]') === null`);
 
   await clickExpressionWithTrustedPointer("document.querySelector('summary[aria-label=\"Open navigation menu\"]')", "touch");
   await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu)')?.open === true");
