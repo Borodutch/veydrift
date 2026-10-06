@@ -2269,7 +2269,7 @@ export function replanBatchSupplyForConfirmation({
 
 /** The production wallet preflight: all reads use the captured destination, never the current page. */
 export async function prepareBatchSupplyConfirmation({
-  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, mission = "transport",
+  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, targetIsMoon = false, mission = "transport",
   isCurrent, onPreview, onShortfall,
 }: {
   queries: import("./backendDataStore").BackendDataStore["queries"];
@@ -2278,6 +2278,7 @@ export async function prepareBatchSupplyConfirmation({
   orders: BatchSupplyOrder[];
   shipTypesBySource: SupplyShipTypesBySource;
   levelSupply: LevelSupplyRequest | undefined;
+  targetIsMoon?: boolean;
   mission?: SupplyMission;
   levelPreview: LevelSupplyPreview | undefined;
   isCurrent: () => boolean;
@@ -2285,11 +2286,12 @@ export async function prepareBatchSupplyConfirmation({
   onShortfall: (missing: SupplyResources) => void;
 }): Promise<void> {
   if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
+  if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   // Keep the single indexed snapshot read inside the shared
   // transaction deadline; never submit a late or changed plan.
   const [snapshot, parent] = await Promise.all([
     queries.supplySources(account, target.planetId, { fresh: true }).read(),
-    levelSupply?.kind === "moon" ? queries.shipyard(account, target.planetId, { fresh: true }).read() : undefined,
+    targetIsMoon ? queries.shipyard(account, target.planetId, { fresh: true }).read() : undefined,
   ]);
   if (levelSupply) {
     const fresh = await readLevelSupplyPreview(queries, account, target.planetId, levelSupply);
@@ -2299,7 +2301,6 @@ export async function prepareBatchSupplyConfirmation({
       onShortfall(fresh.missing);
       throw new Error("Destination resources changed. The shortfall has been refreshed; review the updated plan and confirm again.");
     }
-    if (levelSupply.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   }
   const refreshedSources = batchSupplySourcesFromSnapshot(snapshot, target);
   if (parent?.resources) refreshedSources.unshift(batchSupplySourceForPlanet(target, parent));
@@ -2314,7 +2315,7 @@ export async function prepareBatchSupplyConfirmation({
     orders,
     sources: refreshedSources,
     target,
-    targetIsMoon: levelSupply?.kind === "moon",
+    targetIsMoon,
   });
   if (refreshedPlan.sourceLimitReached || refreshedPlan.blockedSources.length > 0 || !batchSupplyPlanMatchesOrders(orders, refreshedPlan.orders)) {
     throw new Error("Supply inventory changed while this plan was open. The sources were refreshed; review the updated Max amounts before confirming again.");
@@ -2324,14 +2325,14 @@ export async function prepareBatchSupplyConfirmation({
 /** Shared production launch branch; the wallet still runs preflight before invoking it. */
 export const launchBatchSupplyTransaction = (
   provider: Eip1193Provider, signerAccount: string, gameContract: string,
-  target: ManagedPlanetResponse, orders: BatchSupplyOrder[], levelSupply: LevelSupplyRequest | undefined,
+  target: ManagedPlanetResponse, orders: BatchSupplyOrder[], targetIsMoon = false,
   mission: SupplyMission = "transport",
 ) => {
   // The atomic batch selector only supports Transport. Deploy uses a single canonical
   // launch, never multiple sends that could leave a partially successful batch.
   if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
-  if (levelSupply?.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
-  return levelSupply?.kind === "moon"
+  if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
+  return targetIsMoon
     ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
       originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId,
       originIsMoon: false, targetIsMoon: true, missionType: mission === "deploy" ? 1 : 0,
@@ -2996,6 +2997,7 @@ export function PlayableMvpApp({
   const [levelSupply, setLevelSupply] = useState<LevelSupplyRequest | undefined>();
   const [levelPreview, setLevelPreview] = useState<LevelSupplyPreview | undefined>();
   const [levelSupplyLoading, setLevelSupplyLoading] = useState(false);
+  const [batchSupplyTargetIsMoon, setBatchSupplyTargetIsMoon] = useState(false);
   const [batchSupplyTarget, setBatchSupplyTarget] = useState<ManagedPlanetResponse | null>(null);
   const [batchSupplyInitialRequested, setBatchSupplyInitialRequested] = useState<SupplyResources>({
     metal: 0,
@@ -3006,16 +3008,16 @@ export function PlayableMvpApp({
     ? backendData.queries.supplySources(account, batchSupplyTarget.planetId) : undefined;
   const { snapshot: batchSupplySnapshot, isInitialLoading: batchSupplyLoading } = useBackendDataQuery(batchSupplyQuery);
   // Planet batch sources exclude the parent, but it can supply its own moon.
-  const batchSupplyParentQuery = backendData && account && batchSupplyTarget && levelSupply?.kind === "moon"
+  const batchSupplyParentQuery = backendData && account && batchSupplyTarget && batchSupplyTargetIsMoon
     ? backendData.queries.shipyard(account, batchSupplyTarget.planetId) : undefined;
   const { snapshot: batchSupplyParentSnapshot, isInitialLoading: batchSupplyParentLoading } = useBackendDataQuery(batchSupplyParentQuery);
   const batchSupplySources = useMemo(() => {
     if (!batchSupplySnapshot?.data || !batchSupplyTarget) return [];
     const sources = batchSupplySourcesFromSnapshot(batchSupplySnapshot.data, batchSupplyTarget);
     const parent = batchSupplyParentSnapshot?.data;
-    if (levelSupply?.kind === "moon" && parent?.resources && !batchSupplyParentSnapshot?.error) sources.unshift(batchSupplySourceForPlanet(batchSupplyTarget, parent));
+    if (batchSupplyTargetIsMoon && parent?.resources && !batchSupplyParentSnapshot?.error) sources.unshift(batchSupplySourceForPlanet(batchSupplyTarget, parent));
     return sources;
-  }, [batchSupplySnapshot?.data, batchSupplyTarget, batchSupplyParentSnapshot, levelSupply?.kind]);
+  }, [batchSupplySnapshot?.data, batchSupplyTarget, batchSupplyParentSnapshot, batchSupplyTargetIsMoon]);
   const batchSupplyFleetSlotsKnown = Boolean(batchSupplySnapshot?.data?.fleetSlots);
   const batchSupplyMaxSources = batchSupplySnapshot?.data?.fleetSlots
     ? Math.max(0, batchSupplySnapshot.data.fleetSlots.limit - batchSupplySnapshot.data.fleetSlots.active) : 0;
@@ -4306,7 +4308,7 @@ export function PlayableMvpApp({
   );
 
   const handleOpenBatchSupply = useCallback(
-    (target: ManagedPlanetResponse, initialRequested?: SupplyResources) => {
+    (target: ManagedPlanetResponse, initialRequested?: SupplyResources, targetIsMoon = false) => {
       if (!account || !backendData) {
         setGalaxyAction({
           status: "error",
@@ -4316,6 +4318,7 @@ export function PlayableMvpApp({
       }
       batchSupplySourceLoadIdRef.current += 1;
       setBatchSupplyTarget(target);
+      setBatchSupplyTargetIsMoon(targetIsMoon);
       setLevelSupply(undefined);
       setLevelPreview(undefined);
       setLevelSupplyLoading(false);
@@ -4324,6 +4327,7 @@ export function PlayableMvpApp({
       setBatchSupplySubmitting(false);
       // One canonical query owns inventory and errors; opening revalidates just this target.
       void backendData.queries.supplySources(account, target.planetId, { fresh: true }).read().catch(() => {});
+      if (targetIsMoon) void backendData.queries.shipyard(account, target.planetId, { fresh: true }).read().catch(() => {});
     },
     [account, backendData],
   );
@@ -4367,9 +4371,8 @@ export function PlayableMvpApp({
   const handleSupplyLevel = useCallback((request: LevelSupplyRequest) => {
     if (!selectedManagedPlanet || !account || !backendData) return;
     const target = selectedManagedPlanet;
-    handleOpenBatchSupply(target);
+    handleOpenBatchSupply(target, undefined, request.kind === "moon");
     setLevelSupply(request);
-    if (request.kind === "moon") void backendData.queries.shipyard(account, target.planetId, { fresh: true }).read().catch(() => {});
     void refreshLevelSupply(request, target);
   }, [account, backendData, handleOpenBatchSupply, refreshLevelSupply, selectedManagedPlanet]);
 
@@ -4380,7 +4383,7 @@ export function PlayableMvpApp({
         setBatchSupplyError("Wallet or target planet is unavailable.");
         return;
       }
-      if (levelSupply?.kind !== "moon" && orders.some((order) => order.originPlanetId === target.planetId)) {
+      if (!batchSupplyTargetIsMoon && orders.some((order) => order.originPlanetId === target.planetId)) {
         setBatchSupplyError("The target planet cannot also be a Supply origin.");
         return;
       }
@@ -4389,13 +4392,16 @@ export function PlayableMvpApp({
       void (async () => {
         setBatchSupplySubmitting(true);
         try {
-          const refreshSources = () => backendData.queries.supplySources(account, target.planetId, { fresh: true }).read();
+          const refreshSources = () => Promise.all([
+            backendData.queries.supplySources(account, target.planetId, { fresh: true }).read(),
+            batchSupplyTargetIsMoon ? backendData.queries.shipyard(account, target.planetId, { fresh: true }).read() : undefined,
+          ]);
           const outcome = await runGalaxyTransaction(
             `Supply ${orders.length} ${mission === "transport" ? "transport" : "deployment"}${orders.length === 1 ? "" : "s"}`,
-            (provider: Eip1193Provider) => launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, levelSupply, mission),
+            (provider: Eip1193Provider) => launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, batchSupplyTargetIsMoon, mission),
             {
               prepare: () => prepareBatchSupplyConfirmation({
-                queries: backendData.queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, mission,
+                queries: backendData.queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, targetIsMoon: batchSupplyTargetIsMoon, mission,
                 isCurrent: () => batchSupplySourceLoadIdRef.current === sourceLoadId,
                 onPreview: setLevelPreview, onShortfall: setBatchSupplyInitialRequested,
               }),
@@ -4416,7 +4422,7 @@ export function PlayableMvpApp({
         }
       })();
     },
-    [account, backendData, batchSupplyTarget, gameContract, provider, runGalaxyTransaction, signerAccount, levelSupply, levelPreview],
+    [account, backendData, batchSupplyTarget, batchSupplyTargetIsMoon, gameContract, provider, runGalaxyTransaction, signerAccount, levelSupply, levelPreview],
   );
 
   const runMoonTransaction = useCallback(
@@ -7366,6 +7372,7 @@ export function PlayableMvpApp({
         selectedPlanetId={activePlanetId}
         onMyPlanetAction={handleOverviewMyPlanetAction}
         onSupplyPlanet={handleOpenBatchSupply}
+        onSupplyMoon={(target) => handleOpenBatchSupply(target, undefined, true)}
       />
     );
   };
@@ -7432,10 +7439,10 @@ export function PlayableMvpApp({
         <BatchSupplyModal
           key={`${account}:${batchSupplyTarget.planetId}:${batchSupplySourceLoadIdRef.current}`}
           actionPending={batchSupplySubmitting}
-          error={batchSupplyError ?? batchSupplySnapshot?.error}
+          error={batchSupplyError ?? batchSupplySnapshot?.error ?? (batchSupplyTargetIsMoon ? batchSupplyParentSnapshot?.error : undefined)}
           fleetSlotsKnown={batchSupplyFleetSlotsKnown}
-          loading={batchSupplyLoading || levelSupplyLoading || (levelSupply?.kind === "moon" && batchSupplyParentLoading)}
-          maxSources={levelSupply?.kind === "moon" ? Math.min(1, batchSupplyMaxSources) : batchSupplyMaxSources}
+          loading={batchSupplyLoading || levelSupplyLoading || (batchSupplyTargetIsMoon && batchSupplyParentLoading)}
+          maxSources={batchSupplyTargetIsMoon ? Math.min(1, batchSupplyMaxSources) : batchSupplyMaxSources}
           upgrade={levelSupply}
           preview={levelPreview}
           onRefresh={levelSupply ? () => void refreshLevelSupply(levelSupply, batchSupplyTarget) : undefined}
@@ -7447,6 +7454,7 @@ export function PlayableMvpApp({
           onConfirm={handleConfirmBatchSupply}
           sources={batchSupplySources}
           target={batchSupplyTarget}
+          targetIsMoon={batchSupplyTargetIsMoon}
           transactionState={writeTransactionState.key?.startsWith("galaxy:Supply ") ? writeTransactionState : undefined}
         />
       ) : null}

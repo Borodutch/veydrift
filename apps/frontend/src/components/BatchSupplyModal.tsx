@@ -73,6 +73,7 @@ export function BatchSupplyModal({
   sources,
   maxSources,
   target,
+  targetIsMoon = false,
   transactionState,
 }: {
   actionPending?: boolean | undefined;
@@ -88,6 +89,7 @@ export function BatchSupplyModal({
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
+  targetIsMoon?: boolean;
   transactionState?: Pick<WriteTransactionState, "label" | "phase" | "txHash"> | undefined;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -152,14 +154,14 @@ export function BatchSupplyModal({
   const plan = useMemo(() => buildBatchSupplyPlan({
     mission,
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
-    targetIsMoon: upgrade?.kind === "moon",
+    targetIsMoon,
     requested: requestedNumbers,
     selectedPlanetIds: selected,
     sourceCargoOverrides,
     shipTypesBySource,
     sources,
     maxOrders: maxSources,
-  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, upgrade?.kind]);
+  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -170,7 +172,7 @@ export function BatchSupplyModal({
     : undefined;
   const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission);
   const canSubmit = (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
-  const targetLabel = `${target.name?.trim() || target.coordinates}${upgrade?.kind === "moon" ? " moon" : ""}`;
+  const targetLabel = `${target.name?.trim() || target.coordinates}${targetIsMoon ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
       earliest: Math.min(...plan.orders.map((order) => order.travelSeconds)),
@@ -183,7 +185,7 @@ export function BatchSupplyModal({
     const maximum = buildBatchSupplyPlan({
       mission,
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
-      targetIsMoon: upgrade?.kind === "moon",
+      targetIsMoon,
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
       selectedPlanetIds: selected,
       shipTypesBySource,
@@ -254,9 +256,9 @@ export function BatchSupplyModal({
           <p>Destination shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}</p>
           {resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
         </> : <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p>}
-        {upgrade.kind === "moon" ? <p>Moon Supply uses one source per mission. Select a source and review before launching.</p> : null}
         {onRefresh ? <button className="min-h-10 justify-self-start rounded border border-white/20 px-3" disabled={loading || actionPending} onClick={onRefresh} type="button">Refresh destination and shortfall</button> : null}
       </section> : null}
+      {targetIsMoon ? <p className="text-sm text-slate-300">Moon Supply uses one source per mission. Select a source and review before launching.</p> : null}
       <section className="grid grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] gap-2" aria-label="Resources to send">
         {(["metal", "crystal", "deuterium"] as const).map((resource) => (
           <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg surface-inset px-2 py-1.5" key={resource}>
@@ -319,7 +321,7 @@ export function BatchSupplyModal({
               || sourceCargo.crystal !== requestedSourceCargo.crystal
               || sourceCargo.deuterium !== requestedSourceCargo.deuterium
             );
-            const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position }, { targetIsMoon: upgrade?.kind === "moon" });
+            const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position }, { targetIsMoon });
             const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, eligibleShips, source.driveLevels);
             return (
               <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-b border-cyan-300/[0.08] px-1 py-3 ${checked ? "" : "opacity-70"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
@@ -406,7 +408,7 @@ export function BatchSupplyModal({
           </div>
           <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource, mission)} type="button">
             <Check aria-hidden="true" className="shrink-0" size={16} />
-            <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${upgrade?.kind === "moon" ? "to moon" : "in one call"}`}</span>
+            <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${targetIsMoon ? "to moon" : "in one call"}`}</span>
           </button>
         </footer>
       </div>

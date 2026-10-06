@@ -169,7 +169,14 @@ describe("overview planet sections", () => {
     expect(overviewSource).toContain("{enabledActions.map((action) =>");
     expect(overviewSource).toContain("aria-label={action.label}");
     expect(overviewSource).toContain("title={action.label}");
-    expect(overviewSource).toContain('aria-label="Supply this planet"');
+    expect(overviewSource).toContain('supplyLabel = "Supply this planet"');
+    expect(overviewSource).toContain('supplyLabel="Supply this moon"');
+    expect(overviewSource).toContain('aria-label={supplyLabel}');
+    expect(overviewSource).toContain("onSupply={onSupplyMoon ? () => onSupplyMoon(group.planet) : undefined}");
+    expect(appSource).toContain("onSupplyMoon={(target) => handleOpenBatchSupply(target, undefined, true)}");
+    expect(appSource).toContain("setBatchSupplyTargetIsMoon(targetIsMoon)");
+    expect(appSource).toContain("backendData && account && batchSupplyTarget && batchSupplyTargetIsMoon");
+    expect(appSource).toContain("targetIsMoon={batchSupplyTargetIsMoon}");
   });
 
   test("lets nested moon rows span the full watchable row width", () => {

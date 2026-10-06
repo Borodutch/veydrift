@@ -56,7 +56,7 @@ for (const kind of ["building", "research", "moon"] as const) {
     const orders = buildBatchSupplyPlan({ targetCoordinates: target, targetIsMoon: kind === "moon", requested: initial.missing, selectedPlanetIds: new Set(["1"]), sources: [batchSupplySourceForPlanet(origin, origin)] }).orders;
     h.setDestination({ ...base, queue });
     let refreshed: unknown;
-    await expect(prepareBatchSupplyConfirmation({ queries: h.queries, account: "wallet", target, orders, shipTypesBySource: {}, levelSupply: selected, levelPreview: initial, isCurrent: () => true, onPreview: () => {}, onShortfall: value => { refreshed = value; } })).rejects.toThrow("review the updated plan");
+    await expect(prepareBatchSupplyConfirmation({ queries: h.queries, account: "wallet", target, orders, shipTypesBySource: {}, targetIsMoon: kind === "moon", levelSupply: selected, levelPreview: initial, isCurrent: () => true, onPreview: () => {}, onShortfall: value => { refreshed = value; } })).rejects.toThrow("review the updated plan");
     expect(refreshed).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
   });
 }
@@ -74,7 +74,7 @@ describe("production Supply confirmation and launch handlers", () => {
     expect(wallet.sent).toHaveLength(0);
     expect(h.calls).toHaveLength(3);
     expect(h.calls.every((call: any) => call.id === "7" && call.options.fresh === true)).toBe(true);
-    await launchBatchSupplyTransaction(wallet.provider, account, contract, captured, orders, request);
+    await launchBatchSupplyTransaction(wallet.provider, account, contract, captured, orders, false);
     expect(wallet.sent).toHaveLength(1);
     const data = wallet.sent[0]!.data;
     expect(data.slice(0, 10)).toBe("0x9c26e0be");
@@ -106,7 +106,7 @@ describe("production Supply confirmation and launch handlers", () => {
     await expect(prepareBatchSupplyConfirmation({ ...args, levelPreview: lower })).rejects.toThrow("review the updated plan");
   });
 
-  test("parent-to-moon fuel, capacity, Max, confirmation and body calldata agree", async () => {
+  for (const withUpgrade of [false, true]) test(`parent-to-moon fuel, capacity, Max, confirmation and body calldata agree ${withUpgrade ? "with upgrade" : "without upgrade"}`, async () => {
     const src = batchSupplySourceForPlanet(parent, { ...parent, ships: [{ id: 4, count: 1 }] });
     const plan = (deuterium: number, metal = 25000) => buildBatchSupplyPlan({ targetCoordinates: target, targetIsMoon: true, requested: { metal }, selectedPlanetIds: new Set(["7"]), sources: [{ ...src, resources: { metal: 100000, crystal: 0, deuterium } }] });
     expect(plan(0).orders).toEqual([]);
@@ -116,13 +116,17 @@ describe("production Supply confirmation and launch handlers", () => {
     const replanned = replanBatchSupplyForConfirmation({ target, targetIsMoon: true, sources: [src], orders: preview.orders, maxOrders: 1, shipTypesBySource: {} });
     expect(batchSupplyPlanMatchesOrders(preview.orders, replanned.orders)).toBe(true);
     const h = harness(moon);
-    const selected = { ...request, kind: "moon" as const };
-    const levelPreview = await readLevelSupplyPreview(h.queries, "wallet", "7", selected);
-    const args = { queries: h.queries, account: "wallet", target, orders: preview.orders, shipTypesBySource: {}, levelSupply: selected, levelPreview, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} };
+    const selected = withUpgrade ? { ...request, kind: "moon" as const } : undefined;
+    const levelPreview = selected ? await readLevelSupplyPreview(h.queries, "wallet", "7", selected) : undefined;
+    const args = { queries: h.queries, account: "wallet", target, orders: preview.orders, shipTypesBySource: {}, targetIsMoon: true, levelSupply: selected, levelPreview, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} };
     await prepareBatchSupplyConfirmation(args);
+    if (!withUpgrade) expect(h.calls).toEqual([
+      { kind: "supplySources", wallet: "wallet", id: "7", options: { fresh: true } },
+      { kind: "shipyard", wallet: "wallet", id: "7", options: { fresh: true } },
+    ]); // The parent is absent from supplySources, and no upgrade/moon read is needed.
     const wallet = mockWallet();
     expect(wallet.sent).toHaveLength(0);
-    await launchBatchSupplyTransaction(wallet.provider, account, contract, target, preview.orders, selected);
+    await launchBatchSupplyTransaction(wallet.provider, account, contract, target, preview.orders, true);
     expect(wallet.sent).toHaveLength(1);
     const data = wallet.sent[0]!.data;
     expect(data.slice(0, 10)).toBe("0x0d0a9b08");
@@ -134,10 +138,17 @@ describe("production Supply confirmation and launch handlers", () => {
     // The same parent-to-moon preview and fresh resource checks also support Deploy.
     await prepareBatchSupplyConfirmation({ ...args, mission: "deploy" });
     const deploying = mockWallet();
-    await launchBatchSupplyTransaction(deploying.provider, account, contract, target, preview.orders, selected, "deploy");
+    await launchBatchSupplyTransaction(deploying.provider, account, contract, target, preview.orders, true, "deploy");
     const deployWords = decodeAbiParameters(parseAbiParameters("uint256[23]"), ("0x" + deploying.sent[0]!.data.slice(10)) as Hex)[0];
     expect(deployWords.slice(0, 3)).toEqual([7n, 7n, 1n]);
     expect(deployWords.slice(17)).toEqual([24999n, 0n, 0n, 100n, 0n, 1n]);
+    const multiple = [preview.orders[0]!, { ...preview.orders[0]!, originPlanetId: "1" }];
+    const readsBefore = h.calls.length;
+    await expect(prepareBatchSupplyConfirmation({ ...args, orders: multiple })).rejects.toThrow("Moon Supply requires exactly one source");
+    expect(h.calls).toHaveLength(readsBefore);
+    const blockedWallet = mockWallet();
+    expect(() => launchBatchSupplyTransaction(blockedWallet.provider, account, contract, target, multiple, true)).toThrow("Moon Supply requires exactly one source");
+    expect(blockedWallet.sent).toHaveLength(0);
     h.setParentFuel("0");
     await expect(prepareBatchSupplyConfirmation({ ...args, mission: "deploy" })).rejects.toThrow("inventory changed");
     await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("inventory changed");

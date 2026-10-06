@@ -135,6 +135,7 @@ interface OverviewPageProps {
   selectedPlanetId?: string | undefined;
   onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
   onSupplyPlanet?: ((planet: ManagedPlanetResponse) => void) | undefined;
+  onSupplyMoon?: ((planet: ManagedPlanetResponse) => void) | undefined;
 }
 
 export function OverviewPage({
@@ -182,6 +183,7 @@ export function OverviewPage({
   selectedPlanetId,
   onMyPlanetAction,
   onSupplyPlanet,
+  onSupplyMoon,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
@@ -436,7 +438,13 @@ export function OverviewPage({
           onOpenBodyPage={onOpenBodyPage}
           planetNames={fleetPlanetNames}
           renderActions={(group, kind) => kind === "moon" ? (
-            <MyPlanetActionButtons actions={group.moonActions ?? []} compact onAction={(action) => onMyPlanetAction?.(action, group.planet)} />
+            <MyPlanetActionButtons
+              actions={group.moonActions ?? []}
+              compact
+              onAction={(action) => onMyPlanetAction?.(action, group.planet)}
+              onSupply={onSupplyMoon ? () => onSupplyMoon(group.planet) : undefined}
+              supplyLabel="Supply this moon"
+            />
           ) : (
             <MyPlanetActionButtons
               actions={group.actions}
@@ -491,11 +499,13 @@ function MyPlanetActionButtons({
   compact = false,
   onAction,
   onSupply,
+  supplyLabel = "Supply this planet",
 }: {
   actions: GalaxyAction[];
   compact?: boolean;
   onAction: (action: GalaxyAction) => void;
   onSupply?: (() => void) | undefined;
+  supplyLabel?: string;
 }) {
   const buttonClassName = compact
     ? "inline-flex h-7 w-7 items-center justify-center rounded text-slate-400 transition hover:bg-white/[0.06] hover:text-signal sm:h-6 sm:w-6"
@@ -523,10 +533,10 @@ function MyPlanetActionButtons({
       })}
       {onSupply ? (
         <button
-          aria-label="Supply this planet"
+          aria-label={supplyLabel}
           className={buttonClassName}
           onClick={onSupply}
-          title="Supply this planet"
+          title={supplyLabel}
           type="button"
         >
           <PackagePlus aria-hidden="true" size={iconSize} strokeWidth={1.9} />
