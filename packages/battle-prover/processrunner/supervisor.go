@@ -153,12 +153,12 @@ func (s *Supervisor) Run(ctx context.Context, r Request, checkpoints chan<- Chec
 		}
 		resume = p.Data
 	}
-	engine, err := pinned(c.EnginePath, c.Manifest.EngineSHA256)
+	engine, err := pinned(ctx, c.EnginePath, c.Manifest.EngineSHA256)
 	if err != nil {
 		return zero, err
 	}
 	defer engine.Close()
-	launcher, err := pinned(c.LauncherPath, c.Manifest.LauncherSHA256)
+	launcher, err := pinned(ctx, c.LauncherPath, c.Manifest.LauncherSHA256)
 	if err != nil {
 		return zero, err
 	}
@@ -329,12 +329,18 @@ func parse(r io.Reader, req wireRequest, c Config, save func(Checkpoint) error) 
 
 // Pinning copies verified executable bytes to Linux sealed memfd files; a
 // rename OR in-place overwrite of the source cannot change an active invocation.
-func pinned(path, want string) (*os.File, error) {
-	f, err := os.Open(path)
+func pinned(ctx context.Context, path, want string) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := openExecutable(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -342,11 +348,12 @@ func pinned(path, want string) (*os.File, error) {
 	if !info.Mode().IsRegular() || info.Mode()&0111 == 0 || info.Size() == 0 || info.Size() > 512<<20 {
 		return nil, errors.New("invalid executable")
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 512<<20+1))
+	h := sha256.New()
+	b, err := io.ReadAll(io.LimitReader(pinReader{ctx, io.TeeReader(f, h)}, 512<<20+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > 512<<20 || hash(b) != want {
+	if len(b) > 512<<20 || hex.EncodeToString(h.Sum(nil)) != want {
 		return nil, errors.New("executable hash mismatch")
 	}
 	binary, e := elf.NewFile(bytes.NewReader(b))
@@ -355,9 +362,33 @@ func pinned(path, want string) (*os.File, error) {
 	}
 	defer binary.Close()
 	for _, p := range binary.Progs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if p.Type == elf.PT_INTERP {
 			return nil, errors.New("dynamic executable dependencies are not pinned; static ELF required")
 		}
 	}
-	return sealed(b)
+	return sealed(ctx, b)
+}
+
+// Bound individual read/hash work and observe cancellation between chunks.
+// A local regular-file kernel read itself is not interruptible by Go context.
+type pinReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r pinReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > 64<<10 {
+		p = p[:64<<10]
+	}
+	n, err := r.r.Read(p)
+	if cancelled := r.ctx.Err(); cancelled != nil {
+		return n, cancelled
+	}
+	return n, err
 }

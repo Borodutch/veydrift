@@ -113,3 +113,17 @@ Linux resource enforcement or process-group guarantees. Linux tests additionally
 prove actual hard limits, denied fork/group/limit/affinity escape, oversized mmap
 ENOMEM, CPU SIGKILL before wall timeout, descendant group cancellation, and
 sealed executable immutability. The fixture engine is explicitly **not a prover**.
+
+## FIFO pinning correction (review79f48d04)
+
+Executable paths are opened with O_NONBLOCK/O_NOCTTY, then the **opened descriptor**
+is checked for an executable regular file before reading. A configured/replaced
+FIFO is rejected without waiting for a peer. No pathname pre-stat or second
+pathname open substitutes for descriptor validation. Context is checked before
+open, around descriptor validation, between <=64 KiB read/hash and memfd-copy
+chunks, and before returning a sealed executable. Regular files must be on a
+healthy local filesystem: Go context cannot interrupt an already-stalled kernel
+open/stat/read (O_NONBLOCK does not make regular-file disk IO asynchronous).
+
+Original EVIDENCE.md and source-sha256.txt remain historical receipts. See
+CORRECTION-FIFO.md and correction-fifo-* receipts for the reviewed correction.

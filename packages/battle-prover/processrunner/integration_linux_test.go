@@ -148,7 +148,7 @@ func TestLinuxSealedExecutable(t *testing.T) {
 	if e = os.WriteFile(path, original, 0700); e != nil {
 		t.Fatal(e)
 	}
-	f, e := pinned(path, c.Manifest.EngineSHA256)
+	f, e := pinned(context.Background(), path, c.Manifest.EngineSHA256)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -163,7 +163,7 @@ func TestLinuxSealedExecutable(t *testing.T) {
 	if _, e = f.ReadAt(head, 0); e != nil || string(head) != "\x7fELF" {
 		t.Fatal(e, head)
 	}
-	if _, e = pinned(path, c.Manifest.EngineSHA256); e == nil {
+	if _, e = pinned(context.Background(), path, c.Manifest.EngineSHA256); e == nil {
 		t.Fatal("stale pin accepted")
 	}
 }

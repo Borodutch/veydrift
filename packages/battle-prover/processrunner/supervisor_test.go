@@ -53,10 +53,10 @@ func TestPinsAndUnsupported(t *testing.T) {
 	}
 	f.Close()
 	os.Chmod(f.Name(), 0700)
-	if _, e = pinned(f.Name(), hash([]byte("different"))); e == nil {
+	if _, e = pinned(context.Background(), f.Name(), hash([]byte("different"))); e == nil {
 		t.Fatal("mutated executable accepted")
 	}
-	if _, e = pinned(f.Name(), hash([]byte("#!/bin/sh\nexit 0"))); e == nil {
+	if _, e = pinned(context.Background(), f.Name(), hash([]byte("#!/bin/sh\nexit 0"))); e == nil {
 		t.Fatal("shell accepted")
 	}
 }

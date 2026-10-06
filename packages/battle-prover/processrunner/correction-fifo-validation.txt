@@ -1,0 +1,77 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/processrunner	2.939s
+?   	github.com/Borodutch/veydrift/packages/battle-prover/processrunner/cmd/limitexec	[no test files]
+=== RUN   TestLinuxActualHardLimits
+    integration_linux_test.go:103: Linux enforced: CPUs=1; address space=2GiB; hard CPU=2s; fork/group/limit/affinity escape denied; oversized mmap ENOMEM
+--- PASS: TestLinuxActualHardLimits (0.02s)
+=== RUN   TestLinuxCPUAndWallKill
+    integration_linux_test.go:120: hard CPU limit delivered SIGKILL before wall deadline
+--- PASS: TestLinuxCPUAndWallKill (1.23s)
+=== RUN   TestLinuxCrashOutputAndCheckpoint
+--- PASS: TestLinuxCrashOutputAndCheckpoint (0.06s)
+=== RUN   TestLinuxSealedExecutable
+--- PASS: TestLinuxSealedExecutable (0.02s)
+=== RUN   TestLinuxGroupCancellation
+--- PASS: TestLinuxGroupCancellation (0.01s)
+=== RUN   TestPinFIFODeadlineAndCancellation
+=== RUN   TestPinFIFODeadlineAndCancellation/configured/deadline
+=== RUN   TestPinFIFODeadlineAndCancellation/configured/deadline/cancel
+=== RUN   TestPinFIFODeadlineAndCancellation/replaced/deadline
+=== RUN   TestPinFIFODeadlineAndCancellation/replaced/deadline/cancel
+--- PASS: TestPinFIFODeadlineAndCancellation (0.00s)
+    --- PASS: TestPinFIFODeadlineAndCancellation/configured/deadline (0.00s)
+    --- PASS: TestPinFIFODeadlineAndCancellation/configured/deadline/cancel (0.00s)
+    --- PASS: TestPinFIFODeadlineAndCancellation/replaced/deadline (0.00s)
+    --- PASS: TestPinFIFODeadlineAndCancellation/replaced/deadline/cancel (0.00s)
+=== RUN   TestPinningContextObservation
+--- PASS: TestPinningContextObservation (0.00s)
+=== RUN   TestOpenedExecutableDoesNotFollowReplacement
+--- PASS: TestOpenedExecutableDoesNotFollowReplacement (0.00s)
+=== RUN   TestPinsAndUnsupported
+--- PASS: TestPinsAndUnsupported (0.00s)
+=== RUN   TestStrictProtocolAndStaleArtifacts
+=== RUN   TestStrictProtocolAndStaleArtifacts/missing-result
+=== RUN   TestStrictProtocolAndStaleArtifacts/stale-attempt
+=== RUN   TestStrictProtocolAndStaleArtifacts/oversized-checkpoint
+=== RUN   TestStrictProtocolAndStaleArtifacts/empty
+=== RUN   TestStrictProtocolAndStaleArtifacts/stale-identity
+=== RUN   TestStrictProtocolAndStaleArtifacts/two-results
+=== RUN   TestStrictProtocolAndStaleArtifacts/oversized-result
+=== RUN   TestStrictProtocolAndStaleArtifacts/oversized-line
+=== RUN   TestStrictProtocolAndStaleArtifacts/extra-field
+--- PASS: TestStrictProtocolAndStaleArtifacts (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/missing-result (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/stale-attempt (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/oversized-checkpoint (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/empty (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/stale-identity (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/two-results (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/oversized-result (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/oversized-line (0.00s)
+    --- PASS: TestStrictProtocolAndStaleArtifacts/extra-field (0.00s)
+=== RUN   TestRejectResumeBeforeExecution
+--- PASS: TestRejectResumeBeforeExecution (0.00s)
+=== RUN   TestChild
+--- PASS: TestChild (0.00s)
+=== RUN   TestChildLifecycle
+=== RUN   TestChildLifecycle/crash
+=== RUN   TestChildLifecycle/proof-then-crash
+=== RUN   TestChildLifecycle/sleep
+=== RUN   TestChildLifecycle/stdout
+=== RUN   TestChildLifecycle/stderr
+=== RUN   TestChildLifecycle/stale
+=== RUN   TestChildLifecycle/checkpoint
+=== RUN   TestChildLifecycle/ok
+--- PASS: TestChildLifecycle (0.14s)
+    --- PASS: TestChildLifecycle/crash (0.00s)
+    --- PASS: TestChildLifecycle/proof-then-crash (0.00s)
+    --- PASS: TestChildLifecycle/sleep (0.11s)
+    --- PASS: TestChildLifecycle/stdout (0.00s)
+    --- PASS: TestChildLifecycle/stderr (0.00s)
+    --- PASS: TestChildLifecycle/stale (0.00s)
+    --- PASS: TestChildLifecycle/checkpoint (0.00s)
+    --- PASS: TestChildLifecycle/ok (0.00s)
+=== RUN   TestCancellation
+--- PASS: TestCancellation (0.11s)
+=== RUN   TestUnacknowledgedCheckpointHonorsDeadline
+--- PASS: TestUnacknowledgedCheckpointHonorsDeadline (0.22s)
+PASS

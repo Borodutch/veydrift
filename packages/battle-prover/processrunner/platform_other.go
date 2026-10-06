@@ -8,8 +8,13 @@ import (
 	"os/exec"
 )
 
-func supported() error                { return ErrUnsupported }
-func sealed([]byte) (*os.File, error) { return nil, ErrUnsupported }
+func supported() error { return ErrUnsupported }
+func sealed(ctx context.Context, _ []byte) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, ErrUnsupported
+}
 
 // Non-Linux lifecycle tests exercise only individual child cancellation;
 // New rejects non-Linux production execution without exception.
