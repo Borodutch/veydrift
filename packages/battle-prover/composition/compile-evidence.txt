@@ -1,0 +1,9 @@
+=== RUN   TestCompilePhases
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    proof_test.go:179: COMPILE phase0 constraints=2160524 public=8 time=6.154923292s
+    proof_test.go:179: COMPILE phase1 constraints=1170122 public=16 time=3.197419125s
+    proof_test.go:179: COMPILE phase2 constraints=359813 public=10 time=838.689583ms
+    proof_test.go:179: COMPILE phase3 constraints=60160 public=14 time=189.129208ms
+--- PASS: TestCompilePhases (16.11s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	16.664s

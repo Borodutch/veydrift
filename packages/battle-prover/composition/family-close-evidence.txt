@@ -1,0 +1,18 @@
+=== RUN   TestFamilyCloseAuthentication
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    family_proof_test.go:37: COMPILE normalized-attribution4 constraints=368732 public=3 time=681.059ms
+    family_proof_test.go:40: MEMORY SETUP START normalized-attribution4
+    family_proof_test.go:45: MEMORY SETUP DONE normalized-attribution4 elapsed=1m4.018610708s
+    family_proof_test.go:66: GENUINE FAMILY PROOF complete-attr-cohort0 bytes=196 proof_sha256=cae67c7ce1fd8f1abcf4f42721532caf020e8416efa79654823d59ac022a4c66 vk_sha256=21d8170e80a690ea65bac56aa8c5ec54aabc53a46514081828949da0958e2cc2 elapsed=3.75493975s
+    family_proof_test.go:66: GENUINE FAMILY PROOF complete-attr-cohort1 bytes=196 proof_sha256=351d9ea8da6b9e82846e5127477a91121a6a137f0237f943e84b45daf67ed283 vk_sha256=21d8170e80a690ea65bac56aa8c5ec54aabc53a46514081828949da0958e2cc2 elapsed=4.030615583s
+    family_close_test.go:61: COMPILE complete-close-catalog constraints=1829849 public=3 time=3.582077666s
+    family_close_test.go:86: REJECTED normalized Close context genuine complete attribution
+    family_close_test.go:86: REJECTED normalized Close result genuine complete attribution
+    family_close_test.go:86: REJECTED normalized Close omitted genuine complete attribution
+    family_close_test.go:86: REJECTED normalized Close replay-cohort genuine complete attribution
+    family_close_test.go:86: REJECTED normalized Close premature genuine complete attribution
+    family_close_test.go:86: REJECTED normalized Close wrong-selector genuine complete attribution
+    family_close_test.go:88: BOTH NONZERO-BATTLE CLOSES AUTHENTICATED same compiled circuit; genuine inner proofs, outer solver only
+--- PASS: TestFamilyCloseAuthentication (78.58s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	79.841s

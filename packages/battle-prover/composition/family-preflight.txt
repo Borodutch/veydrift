@@ -1,0 +1,61 @@
+=== RUN   TestFamilyFixedShapes
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    family_test.go:64: COMPILE phase0-kind0 constraints=87200 public=3 time=216.377834ms
+    family_test.go:68: FAMILY phase0-kind0 commitments=1
+    family_test.go:79: REUSED identical CCS phase0-kind0 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase0-kind1 constraints=461897 public=3 time=1.16995675s
+    family_test.go:68: FAMILY phase0-kind1 commitments=1
+    family_test.go:79: REUSED identical CCS phase0-kind1 witnesses=5 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase0-kind2 constraints=1062077 public=3 time=2.721868959s
+    family_test.go:68: FAMILY phase0-kind2 commitments=1
+    family_test.go:79: REUSED identical CCS phase0-kind2 witnesses=3 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase0-kind3 constraints=496929 public=3 time=1.227608916s
+    family_test.go:68: FAMILY phase0-kind3 commitments=1
+    family_test.go:79: REUSED identical CCS phase0-kind3 witnesses=3 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase0-kind4 constraints=98672 public=3 time=227.414667ms
+    family_test.go:68: FAMILY phase0-kind4 commitments=1
+    family_test.go:79: REUSED identical CCS phase0-kind4 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind0 constraints=123760 public=3 time=289.88625ms
+    family_test.go:68: FAMILY phase1-kind0 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind0 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind1 constraints=943466 public=3 time=2.359289s
+    family_test.go:68: FAMILY phase1-kind1 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind1 witnesses=3 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind2 constraints=130561 public=3 time=309.934333ms
+    family_test.go:68: FAMILY phase1-kind2 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind2 witnesses=3 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind3 constraints=518149 public=3 time=1.34625575s
+    family_test.go:68: FAMILY phase1-kind3 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind3 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind4 constraints=334555 public=3 time=829.093375ms
+    family_test.go:68: FAMILY phase1-kind4 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind4 witnesses=6 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind5 constraints=356599 public=3 time=822.161417ms
+    family_test.go:68: FAMILY phase1-kind5 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind5 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind6 constraints=346575 public=3 time=850.405667ms
+    family_test.go:68: FAMILY phase1-kind6 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind6 witnesses=3 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind7 constraints=782864 public=3 time=1.943920084s
+    family_test.go:68: FAMILY phase1-kind7 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind7 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind9 constraints=962022 public=3 time=2.243488667s
+    family_test.go:68: FAMILY phase1-kind9 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind9 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:64: COMPILE phase1-kind10 constraints=532024 public=3 time=1.339647667s
+    family_test.go:68: FAMILY phase1-kind10 commitments=1
+    family_test.go:79: REUSED identical CCS phase1-kind10 witnesses=2 rosterSizes=1,2 (where phase present)
+    family_test.go:106: SCHEDULE leaves=1 levels=0 no-padding
+    family_test.go:106: SCHEDULE leaves=2 levels=1 no-padding
+    family_test.go:106: SCHEDULE leaves=3 levels=2 no-padding
+    family_test.go:106: SCHEDULE leaves=5 levels=3 no-padding
+    family_test.go:106: SCHEDULE leaves=24 levels=5 no-padding
+    family_test.go:106: SCHEDULE leaves=257 levels=9 no-padding
+--- PASS: TestFamilyFixedShapes (45.39s)
+=== RUN   TestFamilyUint256
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    family_test.go:125: COMPILE uint256-count constraints=8806 public=3 time=13.426416ms
+--- PASS: TestFamilyUint256 (0.13s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	46.540s

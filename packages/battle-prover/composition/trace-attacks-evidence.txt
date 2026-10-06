@@ -1,0 +1,27 @@
+=== RUN   TestMaliciousTraces
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    attacks_test.go:13: COMPILE attacks-phase0 constraints=2160524 public=8 time=5.582683959s
+    attacks_test.go:53: REJECTED genesis phase0 compiled real protocol constraints
+    attacks_test.go:53: REJECTED premature phase0 compiled real protocol constraints
+    attacks_test.go:53: REJECTED result phase0 compiled real protocol constraints
+    attacks_test.go:53: REJECTED replay phase0 compiled real protocol constraints
+    attacks_test.go:53: REJECTED omission phase0 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase1 constraints=1170122 public=16 time=2.898583292s
+    attacks_test.go:53: REJECTED genesis phase1 compiled real protocol constraints
+    attacks_test.go:53: REJECTED premature phase1 compiled real protocol constraints
+    attacks_test.go:53: REJECTED result phase1 compiled real protocol constraints
+    attacks_test.go:53: REJECTED replay phase1 compiled real protocol constraints
+    attacks_test.go:53: REJECTED omission phase1 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase2 constraints=359813 public=10 time=662.979542ms
+    attacks_test.go:53: REJECTED genesis phase2 compiled real protocol constraints
+    attacks_test.go:53: REJECTED premature phase2 compiled real protocol constraints
+    attacks_test.go:53: REJECTED result phase2 compiled real protocol constraints
+    attacks_test.go:53: REJECTED replay phase2 compiled real protocol constraints
+    attacks_test.go:53: REJECTED omission phase2 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase4 constraints=60160 public=14 time=115.634583ms
+    attacks_test.go:53: REJECTED genesis phase4 compiled real protocol constraints
+    attacks_test.go:53: REJECTED premature phase4 compiled real protocol constraints
+    attacks_test.go:53: REJECTED result phase4 compiled real protocol constraints
+--- PASS: TestMaliciousTraces (9.45s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	10.157s

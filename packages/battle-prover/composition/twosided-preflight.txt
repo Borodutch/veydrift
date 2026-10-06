@@ -1,0 +1,28 @@
+=== RUN   TestTwoSidedPreflight
+    twosided_test.go:107: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    twosided_test.go:125: COMPILE phase0-kind0 constraints=78212 public=8 time=223.08075ms
+    twosided_test.go:125: COMPILE phase0-kind1 constraints=452961 public=8 time=1.212538417s
+    twosided_test.go:125: COMPILE phase0-kind2 constraints=1053142 public=8 time=2.743800583s
+    twosided_test.go:125: COMPILE phase0-kind3 constraints=487994 public=8 time=1.22571225s
+    twosided_test.go:125: COMPILE phase0-kind4 constraints=89684 public=8 time=224.673916ms
+    twosided_test.go:125: COMPILE phase1-kind0 constraints=114833 public=16 time=302.225291ms
+    twosided_test.go:125: COMPILE phase1-kind1 constraints=934539 public=16 time=2.410939875s
+    twosided_test.go:125: COMPILE phase1-kind2 constraints=121634 public=16 time=317.564917ms
+    twosided_test.go:125: COMPILE phase1-kind3 constraints=509221 public=16 time=1.362707459s
+    twosided_test.go:125: COMPILE phase1-kind4 constraints=325628 public=16 time=852.245125ms
+    twosided_test.go:125: COMPILE phase1-kind5 constraints=347671 public=16 time=735.534125ms
+    twosided_test.go:125: COMPILE phase1-kind6 constraints=337648 public=16 time=853.877708ms
+    twosided_test.go:125: COMPILE phase1-kind7 constraints=773951 public=16 time=1.954226083s
+    twosided_test.go:125: COMPILE phase1-kind9 constraints=953095 public=16 time=2.30123175s
+    twosided_test.go:125: COMPILE phase1-kind10 constraints=523096 public=16 time=1.340471417s
+    twosided_test.go:130: COMPILE attribution0 constraints=359813 public=10 time=692.269459ms
+    twosided_test.go:130: COMPILE attribution1 constraints=359813 public=10 time=689.269375ms
+    twosided_test.go:134: COMPILE nonzero-report constraints=587519 public=14 time=1.440759833s
+    twosided_test.go:149: COMPILE bridge0 constraints=107739 public=20 time=215.139875ms
+    twosided_test.go:149: COMPILE bridge1 constraints=130522 public=20 time=245.997875ms
+    twosided_test.go:149: COMPILE bridge2 constraints=320329 public=20 time=752.041666ms
+    twosided_test.go:149: COMPILE bridge4 constraints=84212 public=20 time=187.657417ms
+    twosided_test.go:153: PREFLIGHT ONLY: no recursive proof generated; Close obligations require genuine attribution receipts
+--- PASS: TestTwoSidedPreflight (34.07s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	35.473s

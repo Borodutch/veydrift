@@ -1,0 +1,58 @@
+=== RUN   TestMaliciousTraces
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    attacks_test.go:13: COMPILE attacks-phase0 constraints=2160524 public=8 time=5.638186167s
+    attacks_test.go:49: REJECTED genesis phase0 compiled real protocol constraints
+    attacks_test.go:49: REJECTED premature phase0 compiled real protocol constraints
+    attacks_test.go:49: REJECTED result phase0 compiled real protocol constraints
+    attacks_test.go:49: REJECTED replay phase0 compiled real protocol constraints
+    attacks_test.go:49: REJECTED omission phase0 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase1 constraints=1170122 public=16 time=2.8861375s
+    attacks_test.go:49: REJECTED genesis phase1 compiled real protocol constraints
+    attacks_test.go:49: REJECTED premature phase1 compiled real protocol constraints
+    attacks_test.go:49: REJECTED result phase1 compiled real protocol constraints
+    attacks_test.go:49: REJECTED replay phase1 compiled real protocol constraints
+    attacks_test.go:49: REJECTED omission phase1 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase2 constraints=359813 public=10 time=664.779291ms
+    attacks_test.go:49: REJECTED genesis phase2 compiled real protocol constraints
+    attacks_test.go:49: REJECTED premature phase2 compiled real protocol constraints
+    attacks_test.go:49: REJECTED result phase2 compiled real protocol constraints
+    attacks_test.go:49: REJECTED replay phase2 compiled real protocol constraints
+    attacks_test.go:49: REJECTED omission phase2 compiled real protocol constraints
+    attacks_test.go:13: COMPILE attacks-phase4 constraints=60160 public=14 time=121.525334ms
+    attacks_test.go:49: REJECTED genesis phase4 compiled real protocol constraints
+    attacks_test.go:47: accepted premature phase4
+--- FAIL: TestMaliciousTraces (9.54s)
+=== RUN   TestTwoSidedPreflight
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    twosided_test.go:126: COMPILE phase0-kind0 constraints=78212 public=8 time=219.272625ms
+    twosided_test.go:126: COMPILE phase0-kind1 constraints=452961 public=8 time=1.156830708s
+    twosided_test.go:126: COMPILE phase0-kind2 constraints=1053142 public=8 time=2.76368325s
+    twosided_test.go:126: COMPILE phase0-kind3 constraints=487994 public=8 time=1.296911959s
+    twosided_test.go:126: COMPILE phase0-kind4 constraints=89684 public=8 time=234.469125ms
+    twosided_test.go:126: COMPILE phase1-kind0 constraints=114833 public=16 time=307.095458ms
+    twosided_test.go:126: COMPILE phase1-kind1 constraints=934539 public=16 time=2.445566334s
+    twosided_test.go:126: COMPILE phase1-kind2 constraints=121634 public=16 time=310.20575ms
+    twosided_test.go:126: COMPILE phase1-kind3 constraints=509221 public=16 time=1.328920208s
+    twosided_test.go:126: COMPILE phase1-kind4 constraints=325628 public=16 time=848.352958ms
+    twosided_test.go:126: COMPILE phase1-kind5 constraints=347671 public=16 time=701.608791ms
+    twosided_test.go:126: COMPILE phase1-kind6 constraints=337648 public=16 time=865.541375ms
+    twosided_test.go:126: COMPILE phase1-kind7 constraints=773951 public=16 time=2.080148542s
+    twosided_test.go:126: COMPILE phase1-kind9 constraints=953095 public=16 time=2.311182875s
+    twosided_test.go:126: COMPILE phase1-kind10 constraints=523096 public=16 time=1.366388917s
+    twosided_test.go:141: COMPILE attribution0 constraints=359813 public=10 time=695.817708ms
+    twosided_test.go:141: COMPILE attribution1 constraints=359813 public=10 time=711.316166ms
+    twosided_test.go:145: COMPILE nonzero-report constraints=587519 public=14 time=1.436983958s
+    twosided_test.go:160: COMPILE bridge0 constraints=107739 public=20 time=219.821416ms
+    twosided_test.go:160: COMPILE bridge1 constraints=130522 public=20 time=272.52625ms
+    twosided_test.go:160: COMPILE bridge2 constraints=320329 public=20 time=1.044570041s
+    twosided_test.go:160: COMPILE bridge4 constraints=84212 public=20 time=176.639416ms
+    twosided_test.go:170: PREFLIGHT ONLY: no recursive proof generated; Close obligations require genuine attribution receipts
+--- PASS: TestTwoSidedPreflight (48.24s)
+=== RUN   TestTwoSidedAllLinks
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    twosided_test.go:223: COMPILE all-nonzero-links constraints=1254 public=0 time=16.605459ms
+    twosided_test.go:225: all adjacency/genesis/terminal/Close/report links solved; not cryptographic authentication
+--- PASS: TestTwoSidedAllLinks (0.24s)
+FAIL
+FAIL	github.com/Borodutch/veydrift/packages/battle-prover/composition	59.087s
+FAIL

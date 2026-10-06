@@ -1,0 +1,36 @@
+=== RUN   TestFamilyNonzeroProof
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    family_proof_test.go:37: COMPILE family-kind0 constraints=782864 public=3 time=2.863559125s
+    family_proof_test.go:40: MEMORY SETUP START family-kind0
+    family_proof_test.go:45: MEMORY SETUP DONE family-kind0 elapsed=2m39.524139542s
+    family_proof_test.go:66: GENUINE FAMILY PROOF kind0-shot0 bytes=196 proof_sha256=9f00cd46abae70d5309fcf0d4e5ab3d18d82097c6ed02ba24801ff0b3ce8e7db vk_sha256=3bfabf82a138e273dc3c25b71a6eeb8f76802c83a44b1b271fe83edb3598bf04 elapsed=9.919567791s
+    family_proof_test.go:66: GENUINE FAMILY PROOF kind0-shot1 bytes=196 proof_sha256=0fe2fb777209c677d9c3c42ff982dbf519bb7ec6f82f1670a06f5647d7bb3a22 vk_sha256=3bfabf82a138e273dc3c25b71a6eeb8f76802c83a44b1b271fe83edb3598bf04 elapsed=10.105406042s
+    family_proof_test.go:37: COMPILE family-kind1 constraints=962022 public=3 time=2.323587791s
+    family_proof_test.go:40: MEMORY SETUP START family-kind1
+    family_proof_test.go:45: MEMORY SETUP DONE family-kind1 elapsed=3m6.653024334s
+    family_proof_test.go:66: GENUINE FAMILY PROOF kind1-shot0 bytes=196 proof_sha256=ea8f820a79b6d6de54195f3ecefda4e7f303c30557582338600d22250d0e5d3e vk_sha256=e9ee1fe1ecadbad5ca4359fbe5e0799ea58b4a2c6a8ebda490932a2b5671256f elapsed=10.373876209s
+    family_proof_test.go:66: GENUINE FAMILY PROOF kind1-shot1 bytes=196 proof_sha256=5c36346ed222e0e3ea992ef8257401c778bfc503d0c00f1cefcc98d702073e8e vk_sha256=e9ee1fe1ecadbad5ca4359fbe5e0799ea58b4a2c6a8ebda490932a2b5671256f elapsed=10.490543209s
+    family_proof_test.go:125: COMPILE catalog-pair-preflight constraints=4360473 public=3 time=8.2536875s
+    family_proof_test.go:125: 4M ceiling: catalog-pair-preflight
+--- FAIL: TestFamilyNonzeroProof (403.45s)
+FAIL
+FAIL	github.com/Borodutch/veydrift/packages/battle-prover/composition	404.169s
+FAIL
+      407.12 real       745.97 user         4.12 sys
+          5264179200  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              376838  page reclaims
+                 852  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               29035  signals received
+                4600  voluntary context switches
+              471154  involuntary context switches
+          3610500701  instructions retired
+          1491185451  cycles elapsed
+            28050080  peak memory footprint

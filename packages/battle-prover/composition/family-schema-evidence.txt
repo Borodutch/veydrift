@@ -1,0 +1,57 @@
+=== RUN   TestAllLeafCatalogSchemas
+    family_schema_test.go:23: COMPILE catalog-schema-0-0 constraints=87200 public=3 time=228.2455ms
+    family_schema_test.go:33: SCHEMA phase=0 kind=0 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-0-1 constraints=461897 public=3 time=1.13849125s
+    family_schema_test.go:33: SCHEMA phase=0 kind=1 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-0-2 constraints=1062077 public=3 time=2.67394925s
+    family_schema_test.go:33: SCHEMA phase=0 kind=2 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-0-3 constraints=496929 public=3 time=1.255221958s
+    family_schema_test.go:33: SCHEMA phase=0 kind=3 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-0-4 constraints=98672 public=3 time=221.170416ms
+    family_schema_test.go:33: SCHEMA phase=0 kind=4 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-0 constraints=123760 public=3 time=285.054458ms
+    family_schema_test.go:33: SCHEMA phase=1 kind=0 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-1 constraints=943466 public=3 time=2.390205875s
+    family_schema_test.go:33: SCHEMA phase=1 kind=1 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-2 constraints=130561 public=3 time=305.891833ms
+    family_schema_test.go:33: SCHEMA phase=1 kind=2 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-3 constraints=518149 public=3 time=1.299893709s
+    family_schema_test.go:33: SCHEMA phase=1 kind=3 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-4 constraints=334555 public=3 time=833.201041ms
+    family_schema_test.go:33: SCHEMA phase=1 kind=4 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-5 constraints=356599 public=3 time=715.958083ms
+    family_schema_test.go:33: SCHEMA phase=1 kind=5 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-6 constraints=346575 public=3 time=839.428417ms
+    family_schema_test.go:33: SCHEMA phase=1 kind=6 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-7 constraints=782864 public=3 time=1.932940667s
+    family_schema_test.go:33: SCHEMA phase=1 kind=7 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-8 constraints=760636 public=3 time=1.734369208s
+    family_schema_test.go:33: SCHEMA phase=1 kind=8 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-9 constraints=962022 public=3 time=2.214777375s
+    family_schema_test.go:33: SCHEMA phase=1 kind=9 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-1-10 constraints=532024 public=3 time=1.319249125s
+    family_schema_test.go:33: SCHEMA phase=1 kind=10 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-2-0 constraints=88571 public=3 time=167.904708ms
+    family_schema_test.go:33: SCHEMA phase=2 kind=0 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-2-1 constraints=72230 public=3 time=127.086417ms
+    family_schema_test.go:33: SCHEMA phase=2 kind=1 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-2-2 constraints=89070 public=3 time=161.767ms
+    family_schema_test.go:33: SCHEMA phase=2 kind=2 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-2-3 constraints=146843 public=3 time=278.049333ms
+    family_schema_test.go:33: SCHEMA phase=2 kind=3 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-3-0 constraints=116662 public=3 time=215.055792ms
+    family_schema_test.go:33: SCHEMA phase=3 kind=0 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-3-1 constraints=139445 public=3 time=252.61525ms
+    family_schema_test.go:33: SCHEMA phase=3 kind=1 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-3-2 constraints=329252 public=3 time=771.224875ms
+    family_schema_test.go:33: SCHEMA phase=3 kind=2 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-3-4 constraints=93197 public=3 time=192.020708ms
+    family_schema_test.go:33: SCHEMA phase=3 kind=4 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-4-0 constraints=302823 public=3 time=727.961042ms
+    family_schema_test.go:33: SCHEMA phase=4 kind=0 commitments=1 metadata=[[]]
+    family_schema_test.go:23: COMPILE catalog-schema-4-1 constraints=69219 public=3 time=136.563625ms
+    family_schema_test.go:33: SCHEMA phase=4 kind=1 commitments=1 metadata=[[]]
+    family_schema_test.go:38: all26 ordinary leaf shapes compatible by phase; CompleteClose/recursive catalogs tested separately, not inferred
+--- PASS: TestAllLeafCatalogSchemas (22.56s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	23.782s
