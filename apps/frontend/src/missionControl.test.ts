@@ -1,3 +1,5 @@
+import { FleetsSummary } from "./components/OverviewPage";
+import { proofBattlePresentation } from "./components/missionControlModel";
 import { renderMissionBattleForecastPanel } from "./components/MissionBattleForecastPanel";
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren } from "preact";
@@ -14,6 +16,73 @@ import { fetchBattleReports, fetchFleetMissionArchive, fetchGlobalMissionArchive
 
 const missionRouteSource = await Bun.file(new URL("./components/missionRoute.tsx", import.meta.url)).text();
 const missionControlSource = await Bun.file(new URL("./components/MissionControlPage.tsx", import.meta.url)).text();
+
+describe("proof battle status surfaces", () => {
+  const now = Date.parse("2026-06-05T12:00:00.000Z");
+  const states = [
+    ["preparing", "Preparing battle", 2], ["randomness-wait", "Battle pending", 16],
+    ["proving", "Calculating battle", 17], ["applying", "Updating battle results", 17],
+    ["economics", "Settling battle", 11], ["unavailable", "Battle status unavailable", 12],
+  ] as const;
+  for (const [state, label, stagedPhase] of states) {
+    test(state + " renders consistently without fabricated outcomes or readiness", () => {
+      const value: FleetMissionSummary = { ...mission("42"),
+        proofBattleProgress: { state, stagedPhase, nextIndex: "2", memberCount: "9" },
+        combatResolutionProgress: { roundsCompleted: 6, totalRounds: 6 },
+        resolutionBlocker: "randomness_pending", needsResolution: true, resolutionEligible: true,
+      };
+      const props = missionControlProps(now, { outgoing: [value] });
+      const list = collectText(MissionControlPage(props)).join(" ");
+      const overview = collectText(FleetsSummary({ fleetVisibility: props.fleetVisibility!, now, onOpenMissionControl() {} })).join(" ");
+      const detail = collectText(MissionDetailPage(missionDetailProps(now, { mission: value, battleReport: null }))).join(" ");
+      for (const text of [list, overview, detail]) {
+        expect(text).toContain(label);
+        expect(text).not.toMatch(/6\/6|100%|rounds fought|Attacker win|Battle complete|Proof|nextIndex|stagedPhase/);
+      }
+      expect(detail).toContain(proofBattlePresentation(value)!.detail);
+      expect(detail).not.toContain("Probable outcome");
+      expect(detail).not.toContain("Generating battle report");
+      expect(detail).not.toContain("Battle in progress. The report will appear");
+      expect(missionReport(value, now, new Map()).outcome).toBe(label);
+      if (state === "applying") expect(detail).toContain("Unit results applied: 2 of 9");
+      else expect(detail).not.toContain("Unit results applied");
+    });
+  }
+  test("application counts retain precision and never imply terminal completion", () => {
+    const progress = { state: "applying" as const, stagedPhase: 17, nextIndex: "9007199254740993", memberCount: "9007199254740993" };
+    const value = { ...mission("42"), proofBattleProgress: progress };
+    const text = collectText(MissionDetailPage(missionDetailProps(now, { mission: value, battleReport: null }))).join(" ");
+    expect(text).toContain("Unit results applied: 9007199254740993 of 9007199254740993");
+    expect(text).toContain("Final settlement is still pending");
+    const lateDetail = collectText(MissionDetailPage(missionDetailProps(now + 999999999, { mission: value, battleReport: null }))).join(" ");
+    const lateList = collectText(MissionControlPage(missionControlProps(now + 999999999, { outgoing: [value] }))).join(" ");
+    for (const rendered of [lateDetail, lateList]) {
+      expect(rendered).toContain("Pending battle settlement");
+      expect(rendered).not.toContain("Returned");
+      expect(rendered).not.toContain("Completed, no fleet returned");
+    }
+    expect(missionStatusPill(value, now + 999999999).label).toBe("Updating battle results");
+    for (const fields of [{}, { nextIndex: "0", memberCount: "0" }, { nextIndex: "4", memberCount: "3" },
+      { nextIndex: "-1", memberCount: "3" }, { nextIndex: "1.5", memberCount: "3" }, { nextIndex: "01", memberCount: "3" }]) {
+      expect(proofBattlePresentation({ ...value, proofBattleProgress: { state: "applying", stagedPhase: 17, ...fields } })?.counts).toBeUndefined();
+    }
+    expect(proofBattlePresentation({ ...value, proofBattleProgress: { ...progress, nextIndex: "0", memberCount: "3" } })?.counts)
+      .toBe("Unit results applied: 0 of 3");
+  });
+  test("legacy omission and authoritative return/terminal statuses retain existing behavior", () => {
+    expect(proofBattlePresentation(mission("42"))).toBeUndefined();
+    expect(missionStatusPill(mission("42"), now).label).toBe("En route");
+    for (const status of ["Returning", "Recalled", "Returned", "Resolved"]) {
+      const value = { ...mission("42", "Attack", status), proofBattleProgress: { state: "economics" as const, stagedPhase: 12 } };
+      expect(proofBattlePresentation(value)).toBeUndefined();
+      expect(missionStatusPill(value, now).label).toBe(status);
+    }
+    const value = { ...mission("42", "Attack", "Resolved"), proofBattleProgress: { state: "economics" as const, stagedPhase: 12 } };
+    const text = collectText(MissionDetailPage(missionDetailProps(now, { mission: value, battleReport: battleReport("42") }))).join(" ");
+    expect(text).toContain("Battle Report");
+    expect(text).not.toContain("Settling battle");
+  });
+});
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {

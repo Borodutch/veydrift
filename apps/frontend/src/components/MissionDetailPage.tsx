@@ -1,6 +1,7 @@
 import { formatResourceAmount as formatResource } from "../numberFormat";
 import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
+import { proofBattlePresentation } from "./missionControlModel";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { MissionBattleForecastPanel } from "./MissionBattleForecastPanel";
 import { MissionDetailSkeleton } from "./LoadingSkeletons";
@@ -395,7 +396,9 @@ function MissionRoute({
   const target = missionEndpoint(mission, "target", EMPTY_PLANET_LOOKUP);
   const noFleetReturned = isNoFleetReturned(mission);
   const defeatedAttackTiming = defeatedAttackOriginTiming(mission, reportOutcome);
-  const originTiming = defeatedAttackTiming ?? (noFleetReturned
+  const originTiming = proofBattlePresentation(mission)
+    ? { label: "Return", value: "Pending battle settlement" }
+    : defeatedAttackTiming ?? (noFleetReturned
     ? { label: "Return", value: "Completed, no fleet returned" }
     : missionLegTiming(mission.returnAt, now, "Return", "Returned"));
   const targetTiming = missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived");
@@ -466,6 +469,13 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    const proof = proofBattlePresentation(mission);
+    if (proof) return (
+      <Notice tone="warning">
+        <p>{proof.detail}</p>
+        {proof.counts ? <p className="mt-1">{proof.counts}</p> : null}
+      </Notice>
+    );
     if (mission.combatResolutionProgress) {
       return (
         <Notice tone="warning">

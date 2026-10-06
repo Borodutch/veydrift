@@ -76,7 +76,7 @@ import {
   formatGalaxyHeatLabel,
 } from "./GalaxyView";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
-import { combatProgressLabel, isMissionQueued, missionTypeLabel } from "./missionControlModel";
+import { combatProgressLabel, isMissionQueued, missionTypeLabel, proofBattlePresentation } from "./missionControlModel";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -1448,6 +1448,8 @@ function isOffensiveFleetMission(missionType: string): boolean {
 function overviewMissionStatus(
   mission: FleetMissionVisibilityResponse["outgoing"][number],
 ): string {
+  const proof = proofBattlePresentation(mission);
+  if (proof) return proof.label;
   if (mission.resolutionBlocker === "randomness_pending") return "Battle pending";
   if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress);
   if (mission.needsResolution === true) return "Updating mission";

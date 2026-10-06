@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useMemo } from "preact/hooks";
-import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, combatProgressLabel, isMissionQueued, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
+import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, proofBattlePresentation, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, combatProgressLabel, isMissionQueued, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
 export { DEFAULT_MISSION_CONTROL_VIEW, EMPTY_MISSION_CONTROL_FILTERS, combatProgressLabel, isMissionQueued, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, readPersistedMissionControlView, resolveMissionControlView, type MissionControlDirectionFilter, type MissionControlFilters, type MissionControlView } from "./missionControlModel";
 
 import { planetArtTypeForCoordinates } from "../data/mockUniverse";
@@ -1465,6 +1465,10 @@ function missionDetailTimings(mission: FleetMissionSummary, now: number): Endpoi
   if (mission.missionType === "DefenseHold") {
     timings.push({ label: "Holds until", value: compactMissionTime(defenseHoldRecallUntil(mission), now) });
   }
+  if (proofBattlePresentation(mission)) {
+    timings.push({ label: "Return", value: "Pending battle settlement" });
+    return timings;
+  }
   timings.push({
     label: isFutureMoment(mission.returnAt, now) ? "Returns" : "Returned",
     value: compactMissionTime(mission.returnAt, now),
@@ -1599,6 +1603,8 @@ export function returnPhaseLosses(
 // manufacture a mission transition from its own clock. `needsResolution` and `asOfNow` are computed
 // by the indexed backend; live chain events refetch those fields after the index transaction commits.
 export function missionStatusPill(mission: FleetMissionSummary, _now: number): MissionStatusPill {
+  const proof = proofBattlePresentation(mission);
+  if (proof) return { label: proof.label, tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   if (mission.resolutionBlocker === "randomness_pending") {
     return { label: "Battle pending", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
@@ -3133,6 +3139,8 @@ function missionStatusLabel(status: string): string {
 // fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, _now: number): string {
+  const proof = proofBattlePresentation(mission);
+  if (proof) return proof.label.toLowerCase();
   if (mission.resolutionBlocker === "randomness_pending") return "battle pending";
   if (mission.combatResolutionProgress) return combatProgressLabel(mission.combatResolutionProgress).toLowerCase();
   if (isMissionReadyToResolve(mission)) return "updating mission";
@@ -3355,7 +3363,7 @@ export function missionReport(
       : "External commander unavailable",
     losses: mission.status === "Resolved" ? "Combat losses are unavailable for this mission." : "Pending battle resolution.",
     origin,
-    outcome: isMissionReadyToResolve(mission) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
+    outcome: proofBattlePresentation(mission)?.label ?? (isMissionReadyToResolve(mission) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now)),
     routeSummary: `${origin} -> ${target}`,
     target,
     title: `${missionTypeLabel(mission.missionType)} #${mission.missionId}`,

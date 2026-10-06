@@ -31,6 +31,13 @@ function uncertain(value: MissionDetailResponse, time = now) {
 }
 
 describe("en-route whole-battle forecast", () => {
+  test("proof states suppress even fresh speculative forecasts", () => {
+    for (const state of ["preparing", "randomness-wait", "proving", "applying", "economics", "unavailable"] as const) {
+      const value = detail();
+      value.mission.proofBattleProgress = { state, stagedPhase: 17 };
+      expect(prepareMissionBattleForecast(value, now)).toBeNull();
+    }
+  });
   test("solo input matches launch composition and tech without an invented joining fleet", () => {
     const value = detail();
     const forecast = input(value);

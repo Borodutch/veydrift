@@ -6,7 +6,7 @@ import { AttackOutcomePanel, preparePublicTargetBattleForecast, resolveVerifiedP
 
 export function prepareMissionBattleForecast(detail: MissionDetailResponse, now: number): PreparedPublicTargetBattleForecast | null {
   const mission = detail.mission;
-  if (detail.battleReport || mission.status !== "Outbound" || mission.recallProvenance === "FleetMissionRecalled"
+  if (mission.proofBattleProgress || detail.battleReport || mission.status !== "Outbound" || mission.recallProvenance === "FleetMissionRecalled"
     || !["Attack", "AcsAttack"].includes(mission.missionType)) return null;
   // Explicit null means the authoritative leader is no longer an active battle.
   if (detail.battleForecast === null) return null;
