@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftProofSettlement as Settlement} from "./libraries/VeydriftProofSettlement.sol";
 import {VeydriftProofBattle as Proof} from "./libraries/VeydriftProofBattle.sol";
 import {VeydriftProofPreparationModule} from "./VeydriftProofPreparationModule.sol";
 import {VeydriftCombatProtectionModule} from "./VeydriftCombatProtectionModule.sol";
@@ -46,6 +47,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         // Newly prepared battles always enter staged v2; an existing staged battle
         // keeps its stored version (zero for v1) through every remaining round.
         address module = Proof.active(missionId)
+            && Settlement.layout().jobs[missionId].phase != Settlement.Phase.Economics
             ? _proofModule
             : Store.battle(missionId).phase == 0 && _battleResolutionProgress[missionId].rounds != 0
                 ? _legacyModule

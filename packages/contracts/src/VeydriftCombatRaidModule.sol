@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftProofSettlementModule} from "./VeydriftProofSettlementModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftRaidStorage} from "./libraries/VeydriftRaidStorage.sol";
@@ -11,7 +12,17 @@ import {Ship} from "./libraries/VeydriftTypes.sol";
 contract VeydriftCombatRaidModule is VeydriftResourceReserves {
     error MissingRaidProtectionSnapshot(uint256 missionId);
 
+    address private immutable _proofSettlement = address(new VeydriftProofSettlementModule());
     constructor() VeydriftResourceReserves(address(0)) {}
+
+    fallback() external {
+        (bool ok, bytes memory data) = _proofSettlement.delegatecall(msg.data);
+        assembly ("memory-safe") {
+            switch ok
+            case 0 { revert(add(data, 32), mload(data)) }
+            default { return(add(data, 32), mload(data)) }
+        }
+    }
 
     function settleAttackGroupRaid(uint256 attackMissionId) external {
         // The combat module calls this through `address(this).call(...)` only after resolving an

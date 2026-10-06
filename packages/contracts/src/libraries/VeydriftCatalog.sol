@@ -113,8 +113,14 @@ library VeydriftCatalog {
             // forge-lint: disable-next-line(unsafe-typecast)
             uint32 destroyed = uint32(destroyedDefenses >> (uint256(i) * 32));
             if (destroyed != 0) {
-                uint32 repaired =
-                    destroyed == 1 ? ((seed + i) % 10 < 7 ? 1 : 0) : (destroyed * 7) / 10;
+                uint256 choice;
+                // Seed selection intentionally wraps modulo 2^256; count multiplication does not.
+                unchecked {
+                    choice = seed + i;
+                }
+                uint32 repaired = destroyed == 1
+                    ? (choice % 10 < 7 ? 1 : 0)
+                    : uint32((uint256(destroyed) * 7) / 10);
                 repairedDefenses |= uint256(repaired) << (uint256(i) * 32);
             }
             unchecked {

@@ -60,7 +60,9 @@ reveal;17 is authoritative AwaitingProof. Chunk loop exits while pending rather 
 No pending/body guard is relaxed. submitBattleProof always reverts ProofPipelineUnavailable.
 Verifier/codehash/rules/catalog freeze at launch, but are metadata until real verification exists.
 
-Required settlement design: first valid proof freezes a complete ordered member-output commitment;
-monotonic cursor authenticates/applies each member exactly once using casualty deltas, never old
-survivor overwrites; bounded finalization conserves cargo/loot/repairs/debris/reserves/moons/returns
-and indexes before unlock. No such settlement or activation is shipped in this checkpoint.
+The disabled settlement checkpoint now implements immutable output-root application, authenticated
+suffix consumption, casualty deltas and reuse of bounded phase11/12 economics before unlock.
+See battle-proof-settlement.md for its API, tests and the explicitly assessed Moon-resource header
+omission. There is still no production proof-acceptance function or activation setter; a trusted
+test harness is not a verifier. Final recursive composition and approved verifier integration
+remain separate release gates.
