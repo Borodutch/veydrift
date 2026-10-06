@@ -1,0 +1,76 @@
+{
+  "Store": "/var/lib/veydrift-prover",
+  "IntervalSeconds": 30,
+  "Queue": {
+    "MaxJobs": 128,
+    "MaxInputBytes": 8388608,
+    "MaxArtifactBytes": 25165824,
+    "MaxBlobBytes": 1073741824,
+    "Workers": 1,
+    "CPUs": 2,
+    "MemoryBytes": 2147483648,
+    "JobCPUs": 2,
+    "JobMemoryBytes": 2147483648,
+    "Lease": 60000000000,
+    "StuckAfter": 3600000000000,
+    "LagAfter": 300000000000
+  },
+  "Source": {
+    "URL": "https://APPROVED_RPC_REQUIRED",
+    "ChainID": "8453",
+    "Game": "APPROVED_GAME_REQUIRED",
+    "DeploymentBlock": 0,
+    "Release": {
+      "Version": 3,
+      "Rules": "APPROVED_RULES_REQUIRED",
+      "Catalog": "APPROVED_PROTOCOL_CATALOG_REQUIRED",
+      "Verifier": "APPROVED_VERIFIER_ADDRESS_REQUIRED",
+      "VerifierCodehash": "APPROVED_VERIFIER_CODEHASH_REQUIRED",
+      "Engine": "APPROVED_RANDOMNESS_ENGINE_ADDRESS_REQUIRED",
+      "VerifierManifest": "APPROVED_KEY_MANIFEST_SHA256_REQUIRED"
+    },
+    "BlockPage": 1000,
+    "FleetPage": 100,
+    "MaxPages": 100,
+    "MaxFleetReads": 10000,
+    "MaxLogs": 10000,
+    "MaxRows": 10000,
+    "MaxInputBytes": 8388608,
+    "MaxResponseBytes": 8388608
+  },
+  "Catalog": {
+    "Root": "/opt/veydrift-approved-keys",
+    "ManifestPath": "manifest.json",
+    "TrustedManifestSHA256": "APPROVED_KEY_MANIFEST_SHA256_REQUIRED",
+    "MaxManifestBytes": 16777216,
+    "MaxArtifactBytes": 2147483648
+  },
+  "Process": {
+    "EnginePath": "/opt/veydrift/bin/APPROVED_REAL_ENGINE_REQUIRED",
+    "LauncherPath": "/opt/veydrift/bin/limitexec",
+    "Manifest": {
+      "Protocol": "veydrift-prover-process-v1",
+      "EngineSHA256": "APPROVED_ENGINE_SHA256_REQUIRED",
+      "LauncherSHA256": "APPROVED_LAUNCHER_SHA256_REQUIRED",
+      "RulesSHA256": "APPROVED_RULES_REQUIRED",
+      "VerifierSHA256": "APPROVED_KEY_MANIFEST_SHA256_REQUIRED"
+    },
+    "ManifestSHA256": "APPROVED_PROCESS_MANIFEST_SHA256_REQUIRED",
+    "CPUs": 2,
+    "AddressSpaceBytes": 2147483648,
+    "CPUSeconds": 7200,
+    "WallLimit": 3600000000000,
+    "MaxInputBytes": 8388608,
+    "MaxCheckpointBytes": 16777216,
+    "MaxProofBytes": 16777216,
+    "MaxOutputBytes": 67108864,
+    "MaxStderrBytes": 1048576
+  },
+  "Artifacts": {
+    "MaxVKBytes": 16777216,
+    "MaxInputBytes": 8388608,
+    "MaxArtifactBytes": 16777216,
+    "MaxProofBytes": 1048576,
+    "MaxLeaves": 100000
+  }
+}
