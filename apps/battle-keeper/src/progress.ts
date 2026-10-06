@@ -28,11 +28,11 @@ export type ProgressGuard = { missionId: string; leg: "arrival" | "return"; befo
 
 /** Keep every implementation's high-water mark. Switching back to an observed implementation
  * never grants a fresh paid attempt at its old checkpoint. New versions get one probe only. */
-export function guardAllows(guard: ProgressGuard | undefined, current: MissionProgress): boolean {
+export function guardAllows(guard: ProgressGuard | undefined, current: MissionProgress, leg: "arrival" | "return" = guard?.leg ?? "arrival"): boolean {
   // Storage/getter success is not code provenance. Only a deployment-reviewed runtime can
   // bootstrap zero counters; its paid checkpoint then enforces ordinary monotonic progress.
   if (current.arrivalCapability === false || (current.arrivalOrderCursor !== undefined && current.arrivalGeneration === undefined)) return false;
-  if (proofAction(current.phase, current.proof, current.proofCapability === true) !== "resolve") return false;
+  if (proofAction(current.phase, current.proof, current.proofCapability === true, leg) !== "resolve") return false;
   if (!guard) return true;
   if (BigInt(current.blockNumber) < BigInt(guard.before.blockNumber)) return false;
   const previous = [guard.before, ...(guard.history ?? [])].filter(p => p.version === current.version);

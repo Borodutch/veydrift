@@ -83,6 +83,34 @@ test("readiness only unlocks once; durable restart, reorg, duplicate worker and 
   } finally { journal.close(); }
 });
 
+test("retained terminal proof record permits canonical return only, preserving runtime and paid retry guards", async () => {
+  const terminal: MissionProgress = { ...initial, phase: 13, workDone: "20", proof: { ...proof, phase: 3,
+    settlement: { phase: 2, nextIndex: "2", memberCount: "2", expectedDigest: hash } } };
+  expect(guardAllows(undefined, terminal, "arrival")).toBe(false);
+  expect(guardAllows(undefined, terminal, "return")).toBe(true);
+  expect(guardAllows(undefined, { ...terminal, proofCapability: false }, "return")).toBe(false);
+  expect(guardAllows(undefined, { ...terminal, proof: { ...terminal.proof!, verifierMatches: false } }, "return")).toBe(false);
+  const paid = consumeProgress(undefined, terminal, "1", "return");
+  expect(guardAllows(paid, terminal)).toBe(false);
+  expect(guardAllows(paid, { ...terminal, blockNumber: "101" })).toBe(false);
+  expect(guardAllows(paid, { ...terminal, workDone: "21" })).toBe(true);
+  let sent = 0;
+  const journal = new KeeperJournal(":memory:", "proof-return-test");
+  const resolver = { keeperAddress: () => game, missionProgress: async () => terminal,
+    missionStatus: async (missionId: string) => ({ missionId, status: 2, missionType: 3, arrivalAt: 1, returnAt: 2, randomnessRequestId: "7" }),
+    resolveMission: async (_id: string, leg: string, beforeSign?: () => Promise<unknown>) => {
+      expect(leg).toBe("return"); await beforeSign?.(); sent++; return hash;
+    } };
+  try {
+    const make = () => new BattleKeeper(resolver, { journal, now: () => 1000, logger: { info() {}, warn() {}, error() {} } });
+    const keeper = make();
+    keeper.recordLaunched({ missionId: "1", missionType: 3, arrivalAt: 1, returnAt: 2 });
+    keeper.reconcileMissionStatus(await resolver.missionStatus("1"));
+    await keeper.tick(); expect(sent).toBe(1);
+    await make().tick(); expect(sent).toBe(1); // same retained proof cannot buy another no-op after restart
+  } finally { journal.close(); }
+});
+
 test("proof application waits never ordinary resolve; nonmonotonic 17->11 resumes economics, not terminal", () => {
   const applying = { ...initial, phase: 17, proof: { ...proof, phase: 3,
     settlement: { phase: 1, nextIndex: "1", memberCount: "2", expectedDigest: hash } } };

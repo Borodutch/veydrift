@@ -487,6 +487,8 @@ export type FleetMissionSummary = {
   needsResolution?: boolean;
   // Fail-closed eligibility from a read-only simulation of the exact current contract leg.
   resolutionEligible?: boolean;
+  /** Optional canonical proof lifecycle; not a round estimate or proof submission readiness. */
+  proofBattleProgress?: Api.ProofBattleProgress;
   combatResolutionProgress?: {
     roundsCompleted: number;
     totalRounds: number;

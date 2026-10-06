@@ -507,7 +507,7 @@ export class BattleKeeper {
       const checkProgress = async (): Promise<MissionProgress | void> => {
         if (!this.resolver.missionProgress) return;
         before = await this.resolver.missionProgress(missionId);
-        if (!guardAllows(this.progressGuards.get(progressKey), before)) {
+        if (!guardAllows(this.progressGuards.get(progressKey), before, leg)) {
           throw new Error(before.arrivalCapability === false || (before.arrivalOrderCursor !== undefined && before.arrivalGeneration === undefined)
             ? "arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade"
             : before.phase === 16 || before.phase === 17 || before.proofCapability === false

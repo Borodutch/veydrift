@@ -54,6 +54,20 @@ export type PlayerQueues<Wallet extends string = string> = {
   research: QueueState | null;
 };
 
+/** Observed proof lifecycle, not prover availability, acceptance evidence or percent complete.
+ * Absent for legacy/unobserved missions. Economics is NOT terminal settlement.
+ * Optional block identity is present for canonical getter observations, absent for event-only
+ * or unavailable observations. Application cursors are decimal strings, never JS numbers.
+ */
+export type ProofBattleProgress = {
+  state: "preparing" | "randomness-wait" | "proving" | "applying" | "economics" | "unavailable";
+  stagedPhase: number;
+  blockNumber?: string;
+  blockHash?: string;
+  nextIndex?: string;
+  memberCount?: string;
+};
+
 export type MissionArchiveEntry<Mission, Report> =
   | { kind: "mission"; mission: Mission; report?: Report | undefined }
   | { kind: "battleReport"; report: Report };

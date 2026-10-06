@@ -1,25 +1,29 @@
 import { decodeAbiParameters, decodeFunctionResult, encodeFunctionData, parseAbi, parseAbiParameters, type Hex } from "viem";
 
-// Local read ABI only; shared public API/final acceptance ABI require coordinated release review.
-const abi = parseAbi([
-  "function proofBattleRecord(uint256 id,uint8 kind,uint256 index) view returns (bytes)",
-  "function proofSettlementProgress(uint256 id) view returns (uint8 phase,uint256 nextIndex,uint256 memberCount,bytes32 expectedDigest)"
-]);
-const recordParameters = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 catalog,address verifier,bytes32 verifierCodehash),uint8,bytes32,bytes32,uint256,uint256");
-export type ProofBattleStatus = {
-  state: "preparing" | "randomness-wait" | "proving" | "applying" | "economics" | "unavailable";
-  stagedPhase: number;
-  blockNumber?: string;
-  blockHash?: string;
-  nextIndex?: string;
-  memberCount?: string;
-};
+import { proofBattleReadSignatures, proofBattleRecordSchema } from "../../../packages/chain-abi/src/proofBattle";
+import type { ProofBattleProgress } from "../../../packages/api-types/src/index";
+
+const abi = parseAbi(proofBattleReadSignatures);
+const recordParameters = parseAbiParameters(proofBattleRecordSchema);
+export type ProofBattleStatus = ProofBattleProgress;
 export function parseProofBattleStatus(value: unknown): ProofBattleStatus | undefined {
   if (!value || typeof value !== "object") return undefined;
   const row = value as Record<string, unknown>;
-  if (!["preparing", "randomness-wait", "proving", "applying", "economics", "unavailable"].includes(String(row.state))
-    || !Number.isInteger(row.stagedPhase)) return undefined;
-  return value as ProofBattleStatus;
+  if (typeof row.state !== "string" || !["preparing", "randomness-wait", "proving", "applying", "economics", "unavailable"].includes(row.state)
+    || !Number.isInteger(row.stagedPhase) || Number(row.stagedPhase) < 0 || Number(row.stagedPhase) > 255) return undefined;
+  const decimal = (v: unknown): v is string => typeof v === "string" && /^(0|[1-9][0-9]*)$/.test(v);
+  if ((row.blockNumber !== undefined && !decimal(row.blockNumber))
+    || (row.blockHash !== undefined && (typeof row.blockHash !== "string" || !/^0x[0-9a-f]{64}$/i.test(row.blockHash)))
+    || (row.nextIndex !== undefined && !decimal(row.nextIndex))
+    || (row.memberCount !== undefined && !decimal(row.memberCount))) return undefined;
+  if ((row.blockNumber === undefined) !== (row.blockHash === undefined)
+    || (row.nextIndex === undefined) !== (row.memberCount === undefined)) return undefined;
+  if (row.nextIndex !== undefined && (BigInt(row.nextIndex as string) > BigInt(row.memberCount as string)
+    || (row.state !== "applying" && row.state !== "economics"))) return undefined;
+  // Return only the public wire fields, never arbitrary persisted prover advice or pseudo-percentages.
+  return { state: row.state as ProofBattleStatus["state"], stagedPhase: row.stagedPhase as number,
+    ...(row.blockNumber === undefined ? {} : { blockNumber: row.blockNumber as string, blockHash: row.blockHash as string }),
+    ...(row.nextIndex === undefined ? {} : { nextIndex: row.nextIndex as string, memberCount: row.memberCount as string }) };
 }
 export async function readProofBattleStatus(
   transport: { request<T>(method: string, params: unknown[]): Promise<T> }, game: Hex, id: bigint
@@ -37,16 +41,22 @@ export async function readProofBattleStatus(
       functionName: "proofBattleRecord", args: [id, 0, 0n] }) }, tag]) });
   const [version, phase] = decodeAbiParameters(recordParameters, record);
   if (version.version === 0 || phase === 4 || stagedPhase === 13) return undefined;
-  const [application, nextIndex, memberCount] = decodeFunctionResult({ abi, functionName: "proofSettlementProgress",
-    data: await transport.request<Hex>("eth_call", [{ to: game, data: encodeFunctionData({ abi,
-      functionName: "proofSettlementProgress", args: [id] }) }, tag]) });
-  let state: ProofBattleStatus["state"] = "unavailable";
-  if (phase === 1 && application === 0) state = "preparing";
-  if (phase === 2 && stagedPhase === 16 && application === 0) state = "randomness-wait";
-  if (phase === 3 && stagedPhase === 17 && application === 0) state = "proving";
-  if (phase === 3 && stagedPhase === 17 && application === 1 && nextIndex <= memberCount) state = "applying";
-  if (phase === 3 && (stagedPhase === 11 || stagedPhase === 12) && application === 2
-    && nextIndex === memberCount) state = "economics";
-  return { state, stagedPhase, blockHash: block.hash, blockNumber: BigInt(block.number).toString(),
-    ...(state === "applying" || state === "economics" ? { nextIndex: nextIndex.toString(), memberCount: memberCount.toString() } : {}) };
+  // A positively identified proof job must never fall back to legacy round estimates if
+  // its application getter is unavailable (preparation/economics share legacy stage numbers).
+  try {
+    const [application, nextIndex, memberCount] = decodeFunctionResult({ abi, functionName: "proofSettlementProgress",
+      data: await transport.request<Hex>("eth_call", [{ to: game, data: encodeFunctionData({ abi,
+        functionName: "proofSettlementProgress", args: [id] }) }, tag]) });
+    let state: ProofBattleStatus["state"] = "unavailable";
+    if (phase === 1 && application === 0) state = "preparing";
+    if (phase === 2 && stagedPhase === 16 && application === 0) state = "randomness-wait";
+    if (phase === 3 && stagedPhase === 17 && application === 0) state = "proving";
+    if (phase === 3 && stagedPhase === 17 && application === 1 && nextIndex <= memberCount) state = "applying";
+    if (phase === 3 && (stagedPhase === 11 || stagedPhase === 12) && application === 2
+      && nextIndex === memberCount) state = "economics";
+    return { state, stagedPhase, blockHash: block.hash, blockNumber: BigInt(block.number).toString(),
+      ...(state === "applying" || state === "economics" ? { nextIndex: nextIndex.toString(), memberCount: memberCount.toString() } : {}) };
+  } catch {
+    return { state: "unavailable", stagedPhase };
+  }
 }

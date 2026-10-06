@@ -1,15 +1,12 @@
 import { decodeAbiParameters, decodeFunctionResult, encodeFunctionData, keccak256, parseAbi, parseAbiParameters, type Hex } from "viem";
 import type { JsonRpcTransport } from "./transport";
 
-// Read-only existing module selectors. Deliberately no final-verifier submission ABI.
-export const proofReadAbi = parseAbi([
-  "function proofBattleRecord(uint256 id,uint8 kind,uint256 index) view returns (bytes)",
-  "function proofSettlementProgress(uint256 id) view returns (uint8 phase,uint256 nextIndex,uint256 memberCount,bytes32 expectedDigest)",
-  "function request(uint256 id) view returns ((address requester,bytes32 purposeHash,bytes32 randomnessCommitment,uint64 createdAt,uint64 fulfilledAt,uint256 randomWord))",
-  "function battlePurposeContext(uint256 id) view returns (bytes32)"
-]);
-export const proofRecordParameters = parseAbiParameters("(uint32 version,bytes32 rules,bytes32 catalog,address verifier,bytes32 verifierCodehash),uint8,bytes32,bytes32,uint256,uint256");
-export const proofRequestParameters = parseAbiParameters("address,uint256,bytes32");
+import { proofBattleReadSignatures, proofRandomnessReadSignatures, proofBattleRecordSchema,
+  proofBattleRequestSchema } from "../../../packages/chain-abi/src/proofBattle";
+
+export const proofReadAbi = parseAbi([...proofBattleReadSignatures, ...proofRandomnessReadSignatures]);
+export const proofRecordParameters = parseAbiParameters(proofBattleRecordSchema);
+export const proofRequestParameters = parseAbiParameters(proofBattleRequestSchema);
 export type ProofProgress = {
   identity: string; version: number; phase: number; snapshot: Hex;
   engine: Hex; requestId: string; purpose: Hex; fulfilledAt: string;
@@ -64,7 +61,7 @@ export async function readProofProgress(transport: JsonRpcTransport, address: He
 /** Production release is not qualified yet. Read recognition is NOT runtime authorization. */
 export const reviewedProofProgressVersions: readonly string[] = [];
 export type ProofAction = "resolve" | "randomness-wait" | "proving" | "applying" | "unavailable";
-export function proofAction(phase: number, proof: ProofProgress | undefined, capable: boolean): ProofAction {
+export function proofAction(phase: number, proof: ProofProgress | undefined, capable: boolean, leg: "arrival" | "return" = "arrival"): ProofAction {
   if (!proof) return phase === 16 || phase === 17 ? "unavailable" : "resolve";
   if (!capable || !proof.verifierMatches) return "unavailable";
   if (phase === 16 && proof.phase === 2 && proof.settlement.phase === 0)
@@ -73,7 +70,9 @@ export function proofAction(phase: number, proof: ProofProgress | undefined, cap
     if (proof.settlement.phase === 0) return "proving";
     if (proof.settlement.phase === 1) return "applying";
   }
-  if ((phase === 11 || phase === 12) && proof.phase === 3 && proof.settlement.phase === 2
+  // Arrival completion retains the frozen proof job. A canonical RETURN leg at13 must
+  // keep using ordinary chronology/fee/nonce guards, not get stuck awaiting another proof.
+  if ((phase === 11 || phase === 12 || (phase === 13 && leg === "return")) && proof.phase === 3 && proof.settlement.phase === 2
     && proof.settlement.nextIndex === proof.settlement.memberCount) return "resolve";
   if (proof.phase === 1 && phase !== 16 && phase !== 17) return "resolve";
   return "unavailable";
