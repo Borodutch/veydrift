@@ -1,7 +1,7 @@
-import { Info, X } from "lucide-preact";
+import { Info } from "lucide-preact";
 import type { ComponentChildren } from "preact";
-import { createPortal } from "preact/compat";
-import { escapeCloseRef } from "./modalDismiss";
+import { Modal } from "./Modal";
+import { ModalHeader } from "./ModalHeader";
 
 export type LevelInfoColumn = {
   cellClassName?: string | undefined;
@@ -28,7 +28,7 @@ export function LevelInfoButton({
   return (
     <button
       aria-label={`Open ${itemLabel} level table`}
-      className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal sm:h-7 sm:w-7"
+      className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal sm:h-7 sm:w-7"
       onClick={onClick}
       title="Level table"
       type="button"
@@ -53,91 +53,66 @@ export function LevelInfoModal({
 }) {
   const titleId = "level-info-title";
 
-  const layer = (
-    <div
-      aria-labelledby={titleId}
-      aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-center bg-black/70 p-2 sm:p-3"
-      data-level-info-layer="viewport"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      ref={escapeCloseRef(onClose)}
-      role="dialog"
+  // Modal portals to document.body, so sticky detail panels never cover this layer.
+  return (
+    <Modal
+      labelledBy={titleId}
+      layerAttributes={{ "data-level-info-layer": "viewport" }}
+      onClose={onClose}
+      panelClassName="grid max-w-4xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-h-[min(44rem,calc(100dvh-3rem))]"
     >
-      <div className="modal-panel-enter grid max-h-[calc(100dvh-1rem)] w-full max-w-4xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40 sm:max-h-[min(44rem,calc(100dvh-1.5rem))]">
-        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:px-4">
-          <div className="min-w-0">
-            <h3 id={titleId} className="break-words text-base font-semibold text-white">
-              {itemLabel} levels
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Current Level {currentLevel}
-            </p>
-          </div>
-          <button
-            aria-label="Close level table"
-            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white sm:h-8 sm:w-8"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} strokeWidth={2.2} />
-          </button>
-        </div>
+      <div className="border-b border-cyan-300/10 px-4 py-3">
+        <ModalHeader closeLabel="Close level table" onClose={onClose} subtitle={`Current Level ${currentLevel}`} title={`${itemLabel} levels`} titleId={titleId} />
+      </div>
 
-        <div className="min-h-0 overflow-auto overscroll-contain">
-          <table className="level-info-table min-w-full border-separate border-spacing-0 text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
-              <tr>
-                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
-                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
+      <div className="min-h-0 overflow-auto overscroll-contain">
+        <table className="level-info-table min-w-full border-separate border-spacing-0 text-left text-sm">
+          <thead className="sticky top-0 z-10 bg-[#0d1829] text-xs uppercase tracking-normal text-cyan-300/70">
+            <tr>
+              <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
+              <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
+              {columns.map((column) => (
+                <LevelInfoHeader className={column.headerClassName} key={column.key}>
+                  {column.label}
+                </LevelInfoHeader>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                className={`border-t border-white/10 ${
+                  row.status === "current"
+                    ? "bg-emerald-300/10"
+                    : row.status === "next"
+                      ? "bg-signal/10"
+                      : "odd:bg-white/[0.015]"
+                }`}
+                key={row.key}
+              >
+                <LevelInfoCell className="whitespace-nowrap" dataLabel="Level">
+                  <span className="font-semibold text-white">Level {row.level}</span>
+                  {row.level > currentLevel && row.onSupply ? <button
+                    aria-label={`Supply ${itemLabel} Level ${row.level}`}
+                    className="mt-2 block min-h-10 rounded border border-sky-300/40 bg-sky-300/10 px-3 text-xs font-semibold text-sky-200 hover:bg-sky-300/20"
+                    onClick={row.onSupply} type="button">Supply</button> : null}
+                </LevelInfoCell>
+                <LevelInfoCell className="min-w-24" dataLabel="Status">
+                  {row.status === "current" ? <LevelPill tone="current">Current</LevelPill> : null}
+                  {row.status === "next" ? <LevelPill tone="next">Next</LevelPill> : null}
+                </LevelInfoCell>
                 {columns.map((column) => (
-                  <LevelInfoHeader className={column.headerClassName} key={column.key}>
-                    {column.label}
-                  </LevelInfoHeader>
+                  <LevelInfoCell className={column.cellClassName} dataLabel={column.label} key={column.key}>
+                    {row.cells[column.key] ?? "N/A"}
+                  </LevelInfoCell>
                 ))}
               </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  className={`border-t border-white/10 ${
-                    row.status === "current"
-                      ? "bg-emerald-300/10"
-                      : row.status === "next"
-                        ? "bg-signal/10"
-                        : "odd:bg-white/[0.015]"
-                  }`}
-                  key={row.key}
-                >
-                  <LevelInfoCell className="whitespace-nowrap" dataLabel="Level">
-                    <span className="font-semibold text-white">Level {row.level}</span>
-                    {row.level > currentLevel && row.onSupply ? <button
-                      aria-label={`Supply ${itemLabel} Level ${row.level}`}
-                      className="mt-2 block min-h-10 rounded border border-sky-300/40 bg-sky-300/10 px-3 text-xs font-semibold text-sky-200 hover:bg-sky-300/20"
-                      onClick={row.onSupply} type="button">Supply</button> : null}
-                  </LevelInfoCell>
-                  <LevelInfoCell className="min-w-24" dataLabel="Status">
-                    {row.status === "current" ? <LevelPill tone="current">Current</LevelPill> : null}
-                    {row.status === "next" ? <LevelPill tone="next">Next</LevelPill> : null}
-                  </LevelInfoCell>
-                  {columns.map((column) => (
-                    <LevelInfoCell className={column.cellClassName} dataLabel={column.label} key={column.key}>
-                      {row.cells[column.key] ?? "N/A"}
-                    </LevelInfoCell>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            ))}
+          </tbody>
+        </table>
       </div>
-    </div>
+    </Modal>
   );
-
-  // Detail panels become sticky stacking contexts on desktop. Portaling this layer
-  // keeps ship and defense detail cards below it regardless of their DOM order.
-  return typeof document === "undefined" ? layer : createPortal(layer, document.body);
 }
 
 function LevelInfoHeader({

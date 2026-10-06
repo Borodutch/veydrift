@@ -132,7 +132,7 @@ export function PlanetDetailSkeleton({
 } = {}): JSX.Element {
   return (
     <SkeletonRegion className="grid gap-3" label={label}>
-      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e]">
+      <section className="overflow-hidden rounded-xl surface">
         <div className="grid sm:grid-cols-[minmax(13rem,15rem)_minmax(0,1fr)] sm:items-stretch lg:grid-cols-[minmax(15rem,18.75rem)_minmax(0,1fr)]">
           <div className="flex items-center justify-center p-3 sm:p-4 lg:p-5">
             <Skeleton className="aspect-square w-full max-w-44 rounded-full sm:max-w-[13rem] lg:max-w-[17rem]" />
@@ -152,14 +152,14 @@ export function PlanetDetailSkeleton({
 
       <div className="grid gap-3 xl:grid-cols-2">
         {skeletonList(4, (panelIndex) => (
-          <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]" key={panelIndex}>
+          <section className="overflow-hidden rounded-lg surface" key={panelIndex}>
             <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
               <Skeleton className="h-7 w-7 rounded-md" />
               <Skeleton className="h-3.5 w-28" />
             </div>
             <div className="grid gap-2 p-3 sm:grid-cols-2">
               {skeletonList(4, (index) => (
-                <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+                <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded surface-inset p-1.5" key={index}>
                   <Skeleton className="h-10 w-10 rounded" />
                   <div className="min-w-0">
                     <Skeleton className="h-3 w-3/4" />
@@ -172,14 +172,14 @@ export function PlanetDetailSkeleton({
         ))}
       </div>
 
-      <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+      <section className="overflow-hidden rounded-lg surface">
         <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
           <Skeleton className="h-7 w-7 rounded-md" />
           <Skeleton className="h-3.5 w-36" />
         </div>
         <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
           {skeletonList(4, (index) => (
-            <div className="rounded-lg border border-white/10 bg-black/15 p-3" key={index}>
+            <div className="rounded-lg surface-inset p-3" key={index}>
               <Skeleton className="h-2.5 w-16" />
               <div className="mt-3 grid grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3">
                 <Skeleton className="h-11 w-11 rounded" />
@@ -200,7 +200,7 @@ export function MoonDetailSkeleton(): JSX.Element {
 /** A catalog tile placeholder: square thumbnail above two short text lines. */
 function CatalogTileSkeleton(): JSX.Element {
   return (
-    <div className="min-w-0 rounded-md border border-white/10 bg-[#101624] p-2">
+    <div className="min-w-0 rounded-md surface p-2">
       <Skeleton className="aspect-square w-full rounded" />
       <Skeleton className="mt-2 h-3.5 w-3/4" />
       <div className="mt-1 flex items-center justify-between gap-2">
@@ -252,7 +252,7 @@ export function CatalogSkeleton({ label, tiles = 9 }: { label: string; tiles?: n
 
 function ProductionTileSkeleton(): JSX.Element {
   return (
-    <div className="grid min-h-16 grid-cols-[44px_minmax(0,1fr)] items-center gap-2 rounded border border-white/10 bg-[#101624] p-2">
+    <div className="grid min-h-16 grid-cols-[44px_minmax(0,1fr)] items-center gap-2 rounded surface p-2">
       <Skeleton className="h-11 w-11 rounded" />
       <div className="min-w-0">
         <Skeleton className="h-3.5 w-3/4" />
@@ -342,7 +342,7 @@ export function MoonSkeleton(): JSX.Element {
       <section className={CARD}>
         <div className="grid gap-3 sm:grid-cols-3">
           {skeletonList(3, (index) => (
-            <div className="flex items-center gap-3 rounded border border-white/10 bg-black/15 p-3" key={index}>
+            <div className="flex items-center gap-3 rounded surface-inset p-3" key={index}>
               <Skeleton className="h-9 w-9 shrink-0 rounded" />
               <div className="min-w-0 flex-1">
                 <Skeleton className="h-2.5 w-14" />
@@ -356,7 +356,7 @@ export function MoonSkeleton(): JSX.Element {
         <Skeleton className="h-4 w-40" />
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {skeletonList(3, (index) => (
-            <div className="rounded border border-white/10 bg-black/15 p-3" key={index}>
+            <div className="rounded surface-inset p-3" key={index}>
               <Skeleton className="h-3.5 w-24" />
               <Skeleton className="mt-2 h-3 w-32" />
               <Skeleton className="mt-3 h-8 w-full rounded" />
@@ -415,7 +415,7 @@ export function GalaxyRowsSkeleton({ rows = 8 }: { rows?: number | undefined }):
   return (
     <SkeletonRegion className="grid gap-1.5" label="Mapping galaxy">
       {skeletonList(rows, (index) => (
-        <div className="flex items-center gap-3 rounded border border-white/10 bg-[#101624] px-3 py-2.5" key={index}>
+        <div className="flex items-center gap-3 rounded surface px-3 py-2.5" key={index}>
           <Skeleton className="h-9 w-9 shrink-0 rounded-full" />
           <div className="min-w-0 flex-1">
             <Skeleton className="h-3.5 w-1/3" />
@@ -434,7 +434,7 @@ export function RiftSkeleton(): JSX.Element {
     <SkeletonRegion className="grid gap-4" label="Loading Rift state">
       <div className="grid gap-3 md:grid-cols-3">
         {skeletonList(3, (index) => (
-          <article className="rounded-lg border border-white/10 bg-[#101624] p-4" key={index}>
+          <article className="rounded-lg surface p-4" key={index}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <Skeleton className="h-4 w-24" />
@@ -463,7 +463,7 @@ export function RiftSkeleton(): JSX.Element {
 export function AllianceSkeleton(): JSX.Element {
   return (
     <SkeletonRegion label="Loading alliance data">
-      <section className="min-w-0 rounded border border-white/10 bg-white/[0.03] p-4">
+      <section className="min-w-0 rounded surface-inset p-4">
         <div className="flex items-center justify-between gap-3">
           <Skeleton className="h-4 w-32" />
           <div className="flex items-center gap-2">
@@ -474,7 +474,7 @@ export function AllianceSkeleton(): JSX.Element {
         <div className="mt-3 grid gap-2">
           {skeletonList(6, (index) => (
             <div
-              className="grid gap-3 rounded border border-white/10 bg-black/20 p-3 md:grid-cols-[2.25rem_minmax(0,1fr)_auto] md:items-center"
+              className="grid gap-3 rounded surface-inset p-3 md:grid-cols-[2.25rem_minmax(0,1fr)_auto] md:items-center"
               key={index}
             >
               <Skeleton className="mx-auto hidden h-3 w-5 md:block" />
@@ -518,7 +518,7 @@ export function InspectPanelSkeleton({ label }: { label: string }): JSX.Element 
         </div>
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
           {skeletonList(4, (index) => (
-            <div className="rounded border border-white/10 bg-black/15 p-3" key={index}>
+            <div className="rounded surface-inset p-3" key={index}>
               <Skeleton className="h-2.5 w-16" />
               <Skeleton className="mt-2 h-4 w-24" />
             </div>
@@ -534,7 +534,7 @@ export function RaidTargetsSkeleton(): JSX.Element {
   return (
     <SkeletonRegion className="grid gap-2" label="Scanning for raid targets">
       {skeletonList(4, (index) => (
-        <div className="flex items-center justify-between gap-3 rounded border border-white/10 bg-[#101624] p-3" key={index}>
+        <div className="flex items-center justify-between gap-3 rounded surface p-3" key={index}>
           <div className="min-w-0 flex-1">
             <Skeleton className="h-3.5 w-40" />
             <Skeleton className="mt-1.5 h-3 w-24" />

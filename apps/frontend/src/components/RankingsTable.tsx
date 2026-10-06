@@ -114,7 +114,7 @@ export function RankingsPagination({
         ) : null}
         <button
           aria-label="Previous rankings page"
-          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={loading || !pagination.hasPreviousPage}
           onClick={onPrevious}
           title="Previous page"
@@ -124,7 +124,7 @@ export function RankingsPagination({
         </button>
         <button
           aria-label="Next rankings page"
-          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={loading || !pagination.hasNextPage}
           onClick={onNext}
           title="Next page"
@@ -184,7 +184,7 @@ export function RankingsTable({
 }) {
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-      <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[72px_minmax(0,1fr)_120px] sm:px-3">
+      <div className="grid min-w-0 grid-cols-[40px_minmax(0,1fr)] border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70 sm:grid-cols-[72px_minmax(0,1fr)_120px] sm:px-3">
         {rankingsColumnLabels.map((label) => (
           <span className={`${label === "Score" ? "hidden text-right sm:block" : ""}`} key={label}>
             {label}
@@ -385,7 +385,7 @@ export function RankingRow({
             aria-controls={bodiesId}
             aria-expanded={expanded}
             aria-label={`${expanded ? "Hide" : "Show"} planets and moons for ${commanderLabel}`}
-            className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded border border-white/10 bg-white/5 px-1.5 text-[10px] font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-cyan-100"
+            className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded surface-inset px-1.5 text-[10px] font-semibold text-slate-300 transition hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-cyan-100"
             onClick={() => onToggleBodies(normalizedWallet)}
             title={`${expanded ? "Hide" : "Show"} ${bodyCount} ${bodyCount === 1 ? "body" : "bodies"}`}
             type="button"
@@ -435,7 +435,7 @@ export function RankingRow({
                     title={`Open ${homePlanetHoverLabel(planet)}`}
                     type="button"
                   >
-                    <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 sm:row-span-1 sm:h-6 sm:w-6">
+                    <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded surface-inset sm:row-span-1 sm:h-6 sm:w-6">
                       <OptimizedImage
                         alt=""
                         className="h-full w-full object-cover"

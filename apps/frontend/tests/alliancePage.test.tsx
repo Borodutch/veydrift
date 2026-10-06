@@ -111,7 +111,7 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain("Browse alliances");
     expect(alliancePageSource).toContain('aria-label="Create alliance"');
     expect(alliancePageSource).toContain("<CreateAllianceDialog");
-    expect(alliancePageSource).toContain('aria-labelledby="create-alliance-title"');
+    expect(alliancePageSource).toContain('labelledBy="create-alliance-title"');
     expect(alliancePageSource).toContain('label="Description"');
     expect(alliancePageSource).toContain("pendingInvites.map((invite)");
     expect(alliancePageSource).toContain("onAcceptInvite(invite.allianceId)");
@@ -469,7 +469,7 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).toContain("Declare War");
     expect(alliancePageSource).not.toContain('<span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>');
     expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
-    expect(alliancePageSource).toContain('role="dialog"');
+    expect(alliancePageSource).toContain("<Modal");
     expect(alliancePageSource).toContain("Confirm War Declaration");
     expect(warMinimumDurationCopy).toBe("Once declared, a war cannot be ended for 48 hours.");
   });

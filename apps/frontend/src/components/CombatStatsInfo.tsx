@@ -41,7 +41,7 @@ export function CombatStatsInfoButton({
         </div>
         <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
           {stats.rows.map((row) => (
-            <div className="rounded border border-white/10 bg-black/25 px-2 py-1.5" key={row.label}>
+            <div className="rounded surface-inset px-2 py-1.5" key={row.label}>
               <dt className="text-[10px] uppercase tracking-wide text-slate-500">{row.label}</dt>
               <dd className="mt-0.5 truncate font-semibold text-slate-100">{formatCombatStatValue(row.value)}</dd>
               {row.hint && <p className="mt-1 text-[11px] leading-4 text-slate-400">{row.hint}</p>}

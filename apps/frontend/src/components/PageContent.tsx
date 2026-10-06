@@ -6,7 +6,7 @@ import { useErrorBoundary } from "preact/hooks";
 export function PageContent({ children, fallback }: { children: ComponentChildren; fallback: ComponentChildren }) {
   const [error] = useErrorBoundary();
   if (error) return (
-    <section role="alert" className="rounded-md border border-white/10 bg-[#101624] p-4">
+    <section role="alert" className="rounded-md surface p-4">
       <p>This page could not be loaded.</p>
       <button className="btn-secondary mt-3" onClick={() => window.location.reload()} type="button">Reload to try again</button>
     </section>

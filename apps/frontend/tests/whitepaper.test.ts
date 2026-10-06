@@ -8,7 +8,7 @@ import { build, createServer, preview } from "vite";
 import { prepareAnimationVariants } from "../scripts/animation-variants.mjs";
 import { freePort } from "./freePort.mjs";
 import { frontendResponse } from "../scripts/serve.mjs";
-import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
+import { SiteHeader } from "../src/components/SiteHeader";
 import { TopBar } from "../src/components/TopBar";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -98,7 +98,7 @@ describe("hidden whitepaper", () => {
   });
 
   test("removes settlement and both desktop/mobile top bar links while retaining support", () => {
-    for (const node of [SettlementSupportLinks(), renderTopBar()]) {
+    for (const node of [SiteHeader({ current: "home", overlay: true }), renderTopBar()]) {
       const links = elementNodes(node).filter((item) => item.type === "a");
       expect(links.length).toBeGreaterThan(0);
       expect(JSON.stringify(links.map((link) => link.props))).not.toMatch(/whitepaper/i);

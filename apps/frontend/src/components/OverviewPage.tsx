@@ -49,6 +49,9 @@ import {
 } from "../walletFlow";
 import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
 import { EmpireOverview } from "./EmpireOverview";
+import type { Page } from "./NavBar";
+import { Modal } from "./Modal";
+import { ModalHeader } from "./ModalHeader";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import {
   formatCompactResource,
@@ -103,6 +106,7 @@ interface OverviewPageProps {
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   // Tapping one of the player's own planet or moon names makes it the selected body.
   onSwitchPlanet?: ((planetId: string, bodyKind: "planet" | "moon") => void) | undefined;
+  onOpenBodyPage?: ((planetId: string, bodyKind: "planet" | "moon", page: Page, itemKey?: string) => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onRenamePlanet?: ((name: string) => void) | undefined;
   onChainError?: string | undefined;
@@ -149,6 +153,7 @@ export function OverviewPage({
   onSelectPlanet,
   onSelectPlayer,
   onSwitchPlanet,
+  onOpenBodyPage,
   onToggleWatchPlanet,
   onRenamePlanet,
   onChainError,
@@ -268,19 +273,6 @@ export function OverviewPage({
     onRenamePlanet?.(name);
   };
 
-  useEffect(() => {
-    if (!renamePanelOpen && !effectsPanelOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (!renameBusy) setRenamePanelOpen(false);
-      setEffectsPanelOpen(false);
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [effectsPanelOpen, renameBusy, renamePanelOpen]);
-
   const selectedBodyActions = (
     <>
       <button
@@ -337,8 +329,8 @@ export function OverviewPage({
       {/* When the wallet is disconnected we show a clear connect-wallet card instead of a
           fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
-        <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] p-4 sm:p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Home planet</p>
+        <div className="overflow-hidden rounded-lg surface p-4 sm:p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Home planet</p>
           <h2 className="mt-1 text-base font-semibold text-white">Connect your wallet</h2>
           <p className="mt-2 max-w-prose text-sm leading-6 text-slate-300">
             Connect your wallet to view your home planet and resources.
@@ -347,83 +339,66 @@ export function OverviewPage({
       ) : null}
 
       {canShowRename && renamePanelOpen ? (
-        <div
-          className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
-          onClick={(event) => {
-            if (event.target === event.currentTarget && !renameBusy) setRenamePanelOpen(false);
-          }}
+        <Modal
+          as="form"
+          dismissible={!renameBusy}
+          id="overview-planet-name-editor"
+          labelledBy="overview-planet-name-editor-title"
+          onClose={() => setRenamePanelOpen(false)}
+          onSubmit={handleRenameSubmit}
+          panelClassName="grid max-w-sm gap-4 p-4"
         >
-          <form
-            aria-labelledby="overview-planet-name-editor-title"
-            aria-modal="true"
-            className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
-            id="overview-planet-name-editor"
-            onSubmit={handleRenameSubmit}
-            role="dialog"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-semibold uppercase text-slate-500">Planet</p>
-                <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id="overview-planet-name-editor-title">
-                  Edit name
-                </h2>
-              </div>
-              <button
-                aria-label="Cancel planet name edit"
-                className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={renameBusy}
-                onClick={() => setRenamePanelOpen(false)}
-                title="Cancel"
-                type="button"
-              >
-                <X aria-hidden="true" size={14} strokeWidth={2} />
-              </button>
-            </div>
-            <label className="grid gap-1 text-xs font-medium text-slate-200">
-              New planet name
-              <input
-                className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={renameBusy}
-                maxLength={64}
-                onInput={(event) => {
-                  setRenameDraft(event.currentTarget.value);
-                  setRenameValidation(undefined);
-                }}
-                placeholder="Enter planet name"
-                value={renameDraft}
-              />
-            </label>
-            <p className="text-[11px] leading-4 text-slate-300">
-              Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and ETH gas on Base may be required; Ethereum Mainnet is not used.
+          <ModalHeader
+            closeDisabled={renameBusy}
+            closeLabel="Cancel planet name edit"
+            onClose={() => setRenamePanelOpen(false)}
+            title="Edit name"
+            titleId="overview-planet-name-editor-title"
+          />
+          <label className="grid gap-1 text-xs font-medium text-slate-200">
+            New planet name
+            <input
+              className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={renameBusy}
+              maxLength={64}
+              onInput={(event) => {
+                setRenameDraft(event.currentTarget.value);
+                setRenameValidation(undefined);
+              }}
+              placeholder="Enter planet name"
+              value={renameDraft}
+            />
+          </label>
+          <p className="text-[11px] leading-4 text-slate-300">
+            Renaming this planet is an onchain transaction. Your wallet will ask for confirmation, and ETH gas on Base may be required; Ethereum Mainnet is not used.
+          </p>
+          {(renameValidation || renameStatusLabel) && (
+            <p className={`break-words text-[11px] leading-4 ${renameValidation ? "text-amber-200" : renameStatusTone}`}>
+              {renameValidation ?? renameStatusLabel}
             </p>
-            {(renameValidation || renameStatusLabel) && (
-              <p className={`break-words text-[11px] leading-4 ${renameValidation ? "text-amber-200" : renameStatusTone}`}>
-                {renameValidation ?? renameStatusLabel}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                aria-label="Cancel planet name edit"
-                className="inline-grid h-8 w-8 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={renameBusy}
-                onClick={() => setRenamePanelOpen(false)}
-                title="Cancel"
-                type="button"
-              >
-                <X aria-hidden="true" size={14} strokeWidth={2} />
-              </button>
-              <button
-                aria-label="Rename planet onchain"
-                className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-                disabled={!canRenamePlanet || renameBusy}
-                title={renameBusy ? "Confirming" : "Rename onchain"}
-                type="submit"
-              >
-                <Check aria-hidden="true" size={14} strokeWidth={2} />
-              </button>
-            </div>
-          </form>
-        </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              aria-label="Cancel planet name edit"
+              className="inline-grid h-8 w-8 place-items-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={renameBusy}
+              onClick={() => setRenamePanelOpen(false)}
+              title="Cancel"
+              type="button"
+            >
+              <X aria-hidden="true" size={14} strokeWidth={2} />
+            </button>
+            <button
+              aria-label="Rename planet onchain"
+              className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={!canRenamePlanet || renameBusy}
+              title={renameBusy ? "Confirming" : "Rename onchain"}
+              type="submit"
+            >
+              <Check aria-hidden="true" size={14} strokeWidth={2} />
+            </button>
+          </div>
+        </Modal>
       ) : null}
 
       {effectsPanelOpen ? (
@@ -458,6 +433,7 @@ export function OverviewPage({
           myPlanets={myPlanets}
           now={now}
           onSwitchPlanet={onSwitchPlanet}
+          onOpenBodyPage={onOpenBodyPage}
           planetNames={fleetPlanetNames}
           renderActions={(group, kind) => kind === "moon" ? (
             <MyPlanetActionButtons actions={group.moonActions ?? []} compact onAction={(action) => onMyPlanetAction?.(action, group.planet)} />
@@ -1032,25 +1008,25 @@ export function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
   return (
     <li
       aria-label={line.text}
-      className={`grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-4 ${
+      className={`grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-2 text-[11px] leading-4 ${
         line.tone === "hostile"
-          ? "border-red-400/35 bg-red-500/[0.11] text-red-50"
+          ? "text-red-200"
           : line.tone === "harvest"
-            ? "border-amber-300/25 bg-amber-300/[0.08] text-amber-50"
+            ? "text-amber-100"
             : line.relation === "friendly"
-              ? "border-cyan-300/20 bg-cyan-300/[0.05] text-cyan-50"
-              : "border-white/10 bg-black/20 text-slate-200"
+              ? "text-cyan-100"
+              : "text-slate-100"
       }`}
       data-attack-priority={line.isAttack ? "true" : undefined}
       data-direction={line.direction}
       title={line.text}
     >
-      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded border ${overviewMissionTypeTone(line)}`}>
+      <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border ${overviewMissionTypeTone(line)}`}>
         <OverviewMissionTypeIcon missionType={line.missionType} />
       </span>
       <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-semibold text-current">{missionTypeLabel(line.missionType)}</span>
+          <span className="truncate font-medium text-current">{missionTypeLabel(line.missionType)}</span>
           {line.isAttack ? <span className="shrink-0 rounded bg-red-400/15 px-1 py-px text-[9px] font-bold uppercase tracking-[0.08em] text-red-200">Priority</span> : null}
         </span>
         <span className="flex min-w-0 items-center gap-1 text-[10px] text-slate-400">
@@ -1061,7 +1037,7 @@ export function FleetSummaryRow({ line }: { line: FleetSummaryLine }) {
       </span>
       <span className="ml-auto flex min-w-0 flex-col items-end text-right tabular-nums">
         <span className={`max-w-[5.75rem] truncate text-[10px] font-medium ${line.isAttack ? "text-red-200" : "text-slate-300"}`} title={line.state}>{line.state}</span>
-        <span className="whitespace-nowrap text-[10px] text-slate-500"><span className="hidden sm:inline">{line.timingLabel} </span>{line.timingValue}</span>
+        <span className="whitespace-nowrap text-[10px] text-slate-400"><span className="hidden sm:inline">{line.timingLabel} </span>{line.timingValue}</span>
       </span>
     </li>
   );
@@ -1104,67 +1080,34 @@ function PlanetEffectsPanel({
   onClose: () => void;
   stats: ReturnType<typeof displayPlanetStats>;
 }) {
+  const metrics: Array<{ label: string; value: string; nowrap?: boolean }> = [
+    { label: "Fields", value: stats.fields },
+    { label: "Temperature", value: stats.temperature },
+    { label: "Diameter", value: stats.diameter },
+    { label: "Terraformer", value: effects.terraformer },
+    { label: "Deuterium multiplier", value: effects.deuteriumMultiplier },
+    { label: "Solar Satellite", nowrap: true, value: effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} E each` },
+  ];
   return (
-    <div
-      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        aria-labelledby={`${id}-title`}
-        aria-modal="true"
-        className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-lg gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 text-xs leading-5 text-slate-200 shadow-2xl shadow-black/45"
-        id={id}
-        role="dialog"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase text-slate-500">Planet</p>
-            <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id={`${id}-title`}>
-              Stats and effects
-            </h2>
-          </div>
-          <button
-            aria-label="Close planet effects"
-            className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10"
-            onClick={onClose}
-            title="Close"
-            type="button"
-          >
-            <X aria-hidden="true" size={14} strokeWidth={2} />
-          </button>
-        </div>
-
-        <p className="text-slate-300">
-          Fields are the planet development budget: each building level consumes one field, and Terraformer expands the limit.
-        </p>
-        <p className="text-slate-400">
-          Temperature changes deuterium production and Solar Satellite energy output, so colder and hotter planets favor different builds.
-        </p>
-
-        <dl className="grid gap-2 sm:grid-cols-3">
-          <EffectMetric label="Fields" value={stats.fields} />
-          <EffectMetric label="Temperature" value={stats.temperature} />
-          <EffectMetric label="Diameter" value={stats.diameter} />
-          <EffectMetric label="Terraformer" value={effects.terraformer} />
-          <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
-          <EffectMetric
-            label="Solar Satellite"
-            nowrap
-            value={effects.solarSatelliteEnergy === undefined ? "Unavailable" : `${effects.solarSatelliteEnergy.toLocaleString()} E each`}
-          />
-        </dl>
-      </section>
-    </div>
+    <Modal id={id} labelledBy={`${id}-title`} onClose={onClose} panelClassName="grid max-w-sm gap-3 p-4 text-xs leading-5 text-slate-200">
+      <ModalHeader closeLabel="Close planet effects" onClose={onClose} title="Stats and effects" titleId={`${id}-title`} />
+      <dl className="grid divide-y divide-cyan-300/[0.08] rounded-lg surface-inset px-3">
+        {metrics.filter((metric) => metric.value !== "Unavailable").map((metric) => (
+          <EffectMetric key={metric.label} label={metric.label} nowrap={metric.nowrap} value={metric.value} />
+        ))}
+      </dl>
+      <p className="text-[11px] leading-4 text-slate-400">
+        Each building level uses one field and Terraformer adds more. Temperature shifts deuterium output and Solar Satellite energy.
+      </p>
+    </Modal>
   );
 }
 
-function EffectMetric({ label, value, nowrap = false }: { label: string; value: string; nowrap?: boolean }) {
+function EffectMetric({ label, value, nowrap = false }: { label: string; value: string; nowrap?: boolean | undefined }) {
   return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-2.5 py-2">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
-      <dd className={`mt-0.5 text-xs font-semibold text-slate-100 ${nowrap ? "truncate whitespace-nowrap" : "break-words"}`} title={nowrap ? value : undefined}>
+    <div className="flex min-w-0 items-center justify-between gap-3 py-2">
+      <dt className="shrink-0 text-slate-400">{label}</dt>
+      <dd className={`min-w-0 text-right font-semibold text-slate-100 ${nowrap ? "truncate whitespace-nowrap" : "break-words"}`} title={nowrap ? value : undefined}>
         {value === "Loading" ? <SkeletonRegion label={`Loading ${label.toLowerCase()}`}><Skeleton className="h-4 w-20" /></SkeletonRegion> : value}
       </dd>
     </div>

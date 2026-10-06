@@ -2,7 +2,9 @@ import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
 import { useUiClock } from "../useUiClock";
 import type { LucideIcon } from "lucide-preact";
-import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
+import { Check, Clock, Copy, Crown, ExternalLink, LogOut, Mail, Pencil, Plus, Scale, Shield, ShieldOff, Swords, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
+import { Modal } from "./Modal";
+import { ModalHeader } from "./ModalHeader";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { backendDataStoreFor } from "../backendDataStore";
@@ -17,7 +19,6 @@ import { generatePaidAllianceInviteSecret, paidAllianceInviteLink, shortAddress 
 import { type InviteEntry, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./alliancePageModel";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { AllianceSkeleton, InspectPanelSkeleton } from "./LoadingSkeletons";
-import { escapeCloseRef } from "./modalDismiss";
 export { allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState, hasAllianceMembership } from "./alliancePageModel";
 
 export const allianceRosterPageSize = 10;
@@ -669,7 +670,7 @@ function MyAllianceSection({
                   {paidInviteLinks.map((link, index) => {
                     const copyStatus = paidInviteCopyState?.link === link ? paidInviteCopyState.status : null;
                     return (
-                      <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 bg-black/20 px-3 py-2" key={link}>
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded surface-inset px-3 py-2" key={link}>
                         <div className="flex min-w-0 items-center gap-2">
                           <Mail className="shrink-0 text-cyan-200" size={15} />
                           <div className="min-w-0">
@@ -872,7 +873,7 @@ function DirectorySection({
         action={(visibleAlliances.length || createAlliance) ? (
           <div className="flex items-center gap-2">
             {visibleAlliances.length ? (
-              <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-xs font-semibold text-slate-400">
+              <span className="rounded surface-inset px-2 py-1 text-xs font-semibold text-slate-400">
                 {visibleAlliances.length} {visibleAlliances.length === 1 ? "alliance" : "alliances"}
               </span>
             ) : null}
@@ -916,7 +917,7 @@ function DirectorySection({
                     onClick={() => onOpenAlliance ? onOpenAlliance(alliance.allianceId) : onSelectAlliance(alliance.allianceId)}
                     type="button"
                   >
-                    <span className="rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
+                    <span className="rounded surface-inset px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
                       {alliance.tag}
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance.name}</span>
@@ -1039,59 +1040,38 @@ function CreateAllianceDialog({
   onSubmit: () => void;
 }) {
   return (
-    <div
-      aria-labelledby="create-alliance-title"
-      aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-      ref={escapeCloseRef(onCancel)}
-      role="dialog"
-    >
-      <div className="modal-panel-enter w-full max-w-xl rounded border border-white/15 bg-slate-950 p-4 shadow-2xl">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold text-white" id="create-alliance-title">Create Alliance</h3>
-          <button
-            aria-label="Close create alliance dialog"
-            className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 text-slate-300 hover:bg-white/10"
-            onClick={onCancel}
-            type="button"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
-          <TextField label="Tag" value={tag} onInput={onSetTag} placeholder="VDFT" />
-          <TextField label="Name" value={name} onInput={onSetName} placeholder="Veydrift Union" />
-        </div>
-        <div className="mt-3">
-          <TextArea
-            label="Description"
-            value={description}
-            onInput={onSetDescription}
-            placeholder="Public charter, coordination notes, or Discord link"
-          />
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10"
-            onClick={onCancel}
-            type="button"
-          >
-            Cancel
-          </button>
-          <button
-            className="rounded bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || !tag.trim() || !name.trim()}
-            onClick={onSubmit}
-            type="button"
-          >
-            Create Alliance
-          </button>
-        </div>
+    <Modal labelledBy="create-alliance-title" onClose={onCancel} panelClassName="max-w-xl p-4">
+      <ModalHeader closeLabel="Close create alliance dialog" onClose={onCancel} title="Create Alliance" titleId="create-alliance-title" />
+      <div className="mt-4 grid gap-3 sm:grid-cols-[9rem_minmax(0,1fr)]">
+        <TextField label="Tag" value={tag} onInput={onSetTag} placeholder="VDFT" />
+        <TextField label="Name" value={name} onInput={onSetName} placeholder="Veydrift Union" />
       </div>
-    </div>
+      <div className="mt-3">
+        <TextArea
+          label="Description"
+          value={description}
+          onInput={onSetDescription}
+          placeholder="Public charter, coordination notes, or Discord link"
+        />
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <button
+          className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-white/10"
+          onClick={onCancel}
+          type="button"
+        >
+          Cancel
+        </button>
+        <button
+          className="rounded bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={disabled || !tag.trim() || !name.trim()}
+          onClick={onSubmit}
+          type="button"
+        >
+          Create Alliance
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1112,44 +1092,34 @@ function WarDeclarationDialog({
 }) {
   const snapshotTooLarge = (declarerMemberCount ?? 0) > 64 || alliance.memberCount > 64;
   return (
-    <div
-      aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-      ref={escapeCloseRef(onCancel)}
-      role="dialog"
-    >
-      <div className="modal-panel-enter w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
-        <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
-        <ul className="mt-3 grid gap-2">
-          <WarDeclarationRule icon={Users}>
-            War scores and rosters are locked on-chain at declaration. Only original members qualify; an original member regains that privilege when rejoining their original alliance.
+    <Modal labelledBy="declare-war-title" onClose={onCancel} panelClassName="max-w-md border-rose-300/30 p-4">
+      <ModalHeader closeLabel="Close declare war dialog" icon={Swords} onClose={onCancel} title={`Declare war on ${alliance.tag}`} titleId="declare-war-title" />
+      <ul className="mt-3 grid gap-2">
+        <WarDeclarationRule icon={Users}>
+          War scores and rosters are locked on-chain at declaration. Only original members qualify; an original member regains that privilege when rejoining their original alliance.
+        </WarDeclarationRule>
+        <WarDeclarationRule icon={Clock} tone="rose">
+          {warMinimumDurationCopy}
+        </WarDeclarationRule>
+        <WarDeclarationProtectionWarning allianceName={alliance.tag} declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
+        <WarDeclarationRule icon={ShieldOff} tone="amber">
+          If your alliance declares from a stronger position by more than 1.5×, only {alliance.tag}&apos;s original members can bypass score and bashing protection. Otherwise both original rosters can.
+        </WarDeclarationRule>
+        {snapshotTooLarge ? (
+          <WarDeclarationRule icon={X} tone="rose">
+            War unavailable: each alliance can have at most 64 members at declaration.
           </WarDeclarationRule>
-          <WarDeclarationRule icon={Clock} tone="rose">
-            {warMinimumDurationCopy}
-          </WarDeclarationRule>
-          <WarDeclarationProtectionWarning allianceName={alliance.tag} declarerScore={declarerScore} declareeScore={alliance.totalMemberScore ?? null} />
-          <WarDeclarationRule icon={ShieldOff} tone="amber">
-            If your alliance declares from a stronger position by more than 1.5×, only {alliance.tag}&apos;s original members can bypass score and bashing protection. Otherwise both original rosters can.
-          </WarDeclarationRule>
-          {snapshotTooLarge ? (
-            <WarDeclarationRule icon={X} tone="rose">
-              War unavailable: each alliance can have at most 64 members at declaration.
-            </WarDeclarationRule>
-          ) : null}
-        </ul>
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" disabled={disabled} onClick={onCancel} type="button">
-            Cancel
-          </button>
-          <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled || snapshotTooLarge} onClick={onConfirm} type="button">
-            Confirm War Declaration
-          </button>
-        </div>
+        ) : null}
+      </ul>
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" disabled={disabled} onClick={onCancel} type="button">
+          Cancel
+        </button>
+        <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled || snapshotTooLarge} onClick={onConfirm} type="button">
+          Confirm War Declaration
+        </button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1284,9 +1254,9 @@ function WarSection({
   const nowMs = useUiClock(activeWars.length > 0);
 
   return (
-    <div className="rounded border border-white/10 bg-black/20 p-3">
+    <div className="rounded surface-inset p-3">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Wars</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Wars</h3>
         <span className="text-xs text-slate-500">{activeWars.length}</span>
       </div>
 
@@ -1413,7 +1383,7 @@ export function AllianceSummary({
       </div>
       <AllianceBonusBalance balance={alliance.bonusBalance} />
       <button
-        className="rounded border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
+        className="rounded surface-inset px-3 py-2 text-left text-sm text-slate-200 hover:bg-white/10"
         onClick={() => onOpenPlayer(alliance.owner)}
         type="button"
       >
@@ -1480,7 +1450,7 @@ function JoinRequests({
             const approval = allianceJoinRequestApprovalState(allianceState, request);
             const dismissal = allianceJoinRequestDismissalState(allianceState, request);
             return (
-              <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+              <div className="rounded surface-inset p-3" key={request.requester}>
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                   <div className="min-w-0">
                     <PlayerRowInfo
@@ -1780,9 +1750,9 @@ function RosterList({
   }
 
   return (
-    <div className="rounded border border-white/10 bg-black/20 p-3">
+    <div className="rounded surface-inset p-3">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{title}</h3>
         <span className="text-xs text-slate-500">{sortedRows.length}</span>
       </div>
       {sortedRows.length ? (
@@ -2356,9 +2326,9 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
             </div>
             {profile.planets?.planets.length ? (
               <div className="grid gap-2">
-                <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Planets</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Planets</h4>
                 {profile.planets.planets.slice(0, 5).map((planet) => (
-                  <div className="rounded border border-white/10 bg-black/20 px-3 py-2" key={planet.planetId}>
+                  <div className="rounded surface-inset px-3 py-2" key={planet.planetId}>
                     <p className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</p>
                     <p className="mt-1 text-xs text-slate-500">
                       [{planet.galaxy}:{planet.system}:{planet.position}] / {planet.fieldsUsed}/{planet.fieldsCapacity} fields
@@ -2367,7 +2337,7 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
                 ))}
               </div>
             ) : (
-              <p className="rounded border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-400">
+              <p className="rounded surface-inset px-3 py-2 text-sm text-slate-400">
                 No planets are available for this wallet yet.
               </p>
             )}
@@ -2380,7 +2350,7 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
 
 function Panel({ action, children, title }: { action?: ComponentChildren; children: ComponentChildren; title: string }) {
   return (
-    <section className="min-w-0 break-words rounded border border-white/10 bg-white/[0.03] p-4">
+    <section className="min-w-0 break-words rounded surface-inset p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-white">{title}</h2>
         {action}
@@ -2392,7 +2362,7 @@ function Panel({ action, children, title }: { action?: ComponentChildren; childr
 
 function SectionIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
-    <span className="inline-flex h-8 w-8 items-center justify-center rounded border border-white/10 bg-black/20 text-slate-300">
+    <span className="inline-flex h-8 w-8 items-center justify-center rounded surface-inset text-slate-300">
       <Icon size={15} />
     </span>
   );
@@ -2541,7 +2511,7 @@ function AllianceTreasuryResourceField({
         </button>
       </span>
       <input
-        className="h-10 w-full rounded border border-white/10 bg-black/30 px-2 text-right font-mono text-sm text-white outline-none focus:border-cyan-300/60"
+        className="h-10 w-full rounded surface-inset px-2 text-right font-mono text-sm text-white outline-none focus:border-cyan-300/60"
         inputMode="numeric"
         onInput={(event) => onChange(event.currentTarget.value.replace(/\D/g, ""))}
         placeholder="0"
@@ -2553,8 +2523,8 @@ function AllianceTreasuryResourceField({
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-white/10 bg-black/20 px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+    <div className="rounded surface-inset px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold capitalize text-white">{value}</p>
     </div>
   );
@@ -2568,9 +2538,9 @@ function TextField({ label, onInput, placeholder, value }: {
 }) {
   return (
     <label className="block">
-      <span className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <span className="text-xs uppercase tracking-[0.14em] text-cyan-300/70">{label}</span>
       <input
-        className="mt-1 w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
+        className="mt-1 w-full rounded surface-inset px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
         onInput={(event) => onInput(event.currentTarget.value)}
         placeholder={placeholder}
         value={value}
@@ -2587,9 +2557,9 @@ function TextArea({ label, onInput, placeholder, value }: {
 }) {
   return (
     <label className="block">
-      <span className="text-xs uppercase tracking-[0.14em] text-slate-500">{label}</span>
+      <span className="text-xs uppercase tracking-[0.14em] text-cyan-300/70">{label}</span>
       <textarea
-        className="mt-1 min-h-24 w-full resize-y rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
+        className="mt-1 min-h-24 w-full resize-y rounded surface-inset px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
         onInput={(event) => onInput(event.currentTarget.value)}
         placeholder={placeholder}
         value={value}

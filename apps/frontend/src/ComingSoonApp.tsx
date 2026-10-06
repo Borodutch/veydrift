@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   Activity,
   ArrowRight,
-  Bot,
   Check,
   Coins,
   Copy,
@@ -159,7 +158,7 @@ export function ComingSoonApp({
   useEffect(() => backendData.connectChainEvents("public"), [backendData]);
 
   return (
-    <main className="landing-page min-h-dvh overflow-hidden bg-void text-white">
+    <main className="landing-page min-h-dvh overflow-hidden text-white">
       <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
       <LandingTrailer />
       <ScreenshotsSection />
@@ -268,7 +267,7 @@ function useLandingScrollParallax() {
 
 function LandingTrailer() {
   return (
-    <section aria-label="Veydrift trailer" className="relative bg-void px-3 py-10 sm:px-6 sm:py-16 lg:px-10">
+    <section aria-label="Veydrift trailer" className="relative px-3 py-8 sm:px-6 sm:py-10 lg:px-10">
       <TrailerPlayer />
     </section>
   );
@@ -283,11 +282,8 @@ function HeroSection({
   heroSupport?: ComponentChildren;
   heroViewSignal?: CdView | undefined;
 }) {
-  const launch = landingLaunchCtaForLocation();
-
   return (
     <RetroCdBoxHero ariaLabel="Veydrift landing" id="claim" stage="section" support={heroSupport} viewSignal={heroViewSignal}>
-      <p className="landing-cd-eyebrow">{launch.eyebrow}</p>
       {hero}
     </RetroCdBoxHero>
   );
@@ -295,7 +291,7 @@ function HeroSection({
 
 function ScreenshotsSection() {
   return (
-    <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+    <section className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <img
         alt=""
         className="landing-layer landing-layer-ship right-[-2rem] top-14 hidden w-52 opacity-40 md:block"
@@ -304,13 +300,13 @@ function ScreenshotsSection() {
       <div className="relative z-10 mx-auto max-w-7xl">
         <div className="grid gap-5 lg:grid-cols-[0.78fr_1.22fr] lg:items-end">
           <div className="landing-reveal">
-            <h2 className="text-3xl font-semibold leading-tight text-white sm:text-5xl">
+            <h2 className="text-2xl font-semibold leading-tight text-white sm:text-4xl">
               Command planets, build fleets, scan galaxies and conquer with your alliance.
             </h2>
           </div>
         </div>
 
-        <div className="landing-reveal-group mt-12 grid gap-6 lg:grid-cols-3">
+        <div className="landing-reveal-group mt-8 grid gap-4 lg:grid-cols-3">
           {screenshots.map((shot, index) => (
             <article
               className={`landing-screenshot-frame landing-reveal ${index === 1 ? "lg:mt-10" : index === 2 ? "lg:mt-20" : ""}`}
@@ -332,7 +328,7 @@ function ScreenshotsSection() {
 
 function HowItWorksSection() {
   return (
-    <section id="how-it-works" className="relative overflow-hidden bg-[#08100e] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+    <section id="how-it-works" className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <img
         alt=""
         className="landing-layer landing-layer-research right-[-3rem] top-12 hidden w-72 opacity-35 md:block"
@@ -340,12 +336,11 @@ function HowItWorksSection() {
       />
       <div className="mx-auto max-w-7xl">
         <div className="landing-reveal max-w-3xl">
-          <p className="text-sm font-semibold text-signal">How the game works</p>
-          <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
+          <h2 className="text-2xl font-semibold leading-tight text-white sm:text-4xl">
             Classic space empire pressure, rebuilt for commanders who want ownership.
           </h2>
         </div>
-        <div className="landing-reveal-group mt-12 grid gap-6 md:grid-cols-3">
+        <div className="landing-reveal-group mt-8 grid gap-4 md:grid-cols-3">
           {howItWorks.map((item) => {
             const Icon = item.icon;
             return (
@@ -373,27 +368,23 @@ function AgentSection() {
   };
 
   return (
-    <section className="landing-agent-section relative overflow-hidden px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
+    <section className="landing-agent-section relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <div className="landing-agent-glow landing-agent-glow-cyan" />
       <div className="landing-agent-glow landing-agent-glow-amber" />
       <div className="relative z-10 mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
         <div className="landing-reveal">
-          <div className="inline-flex items-center gap-2 rounded-full bg-signal/[0.08] px-3 py-1.5 text-sm font-semibold text-signal">
-            <Bot className="h-4 w-4" />
-            Agent-ready universe
-          </div>
-          <h2 className="mt-5 max-w-3xl text-4xl font-semibold leading-[1.06] text-white sm:text-6xl">
+          <h2 className="max-w-3xl text-3xl font-semibold leading-[1.1] text-white sm:text-4xl">
             Let an AI commander grow your empire.
           </h2>
-          <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
+          <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
             Point an agent at the public Veydrift manual. It can plan production, manage timers,
             build fleets and turn persistent attention into Metal, Crystal and Deuterium.
           </p>
 
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            <AgentStep index="01" title="Read" body="Learn the game from live public docs." />
-            <AgentStep index="02" title="Produce" body="Grow an empire while you do something else." />
-            <AgentStep index="03" title="Enter the Rift" body="Move surplus resources into the wider economy." />
+            <AgentStep index="01" title="Read the manual" body="Your agent learns the rules from the live public docs." />
+            <AgentStep index="02" title="Grow production" body="It keeps your empire growing while you do something else." />
+            <AgentStep index="03" title="Enter the Rift" body="It moves surplus resources into the wider economy for you." />
           </div>
         </div>
 
@@ -407,8 +398,7 @@ function AgentSection() {
           </div>
 
           <div className="p-5 sm:p-7">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-signal/80">Suggested prompt</p>
-            <blockquote className="mt-4 text-lg leading-8 text-slate-100">
+            <blockquote className="text-base leading-7 text-slate-100">
               “{landingAgentPrompt}”
             </blockquote>
 
@@ -423,7 +413,7 @@ function AgentSection() {
                 {copied ? "Prompt copied" : "Copy agent prompt"}
               </button>
               <a
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-white/[0.06] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.1]"
+                className="surface-inset inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold text-slate-100 transition hover:text-cyan-100"
                 href="/docs"
               >
                 Read the docs
@@ -453,10 +443,10 @@ function AgentStep({ index, title, body }: { index: string; title: string; body:
 
 function RiftSection() {
   return (
-    <section className="relative overflow-hidden bg-[#0b0a08] px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
+    <section className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <div className="mx-auto grid max-w-7xl gap-14 lg:grid-cols-[1.02fr_0.98fr] lg:items-center lg:gap-16">
         <div
-          className="landing-reveal relative min-h-[30rem] overflow-hidden rounded-lg border border-ember/[0.08] bg-[#130f0a]"
+          className="landing-reveal relative min-h-[22rem] overflow-hidden rounded-xl border border-amber-300/15 bg-[#0d1829]"
           data-tilt
         >
           <img
@@ -464,11 +454,10 @@ function RiftSection() {
             className="absolute inset-0 h-full w-full object-cover opacity-88"
             src={assets.rift}
           />
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(19,15,10,0.94)_0%,rgba(19,15,10,0.46)_56%,rgba(19,15,10,0.18)_100%)]" />
-          <div className="relative z-10 flex h-full min-h-[30rem] flex-col justify-end p-6 sm:p-9">
-            <p className="text-sm font-semibold text-ember">Resource bridge</p>
-            <h2 className="mt-3 max-w-xl text-3xl font-semibold leading-tight text-white sm:text-5xl">
-              Extract resources out of the universe. Import them back when strategy demands it.
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(13,24,41,0.94)_0%,rgba(13,24,41,0.5)_56%,rgba(13,24,41,0.18)_100%)]" />
+          <div className="relative z-10 flex h-full min-h-[22rem] flex-col justify-end p-6 sm:p-9">
+            <h2 className="max-w-xl text-2xl font-semibold leading-tight text-white sm:text-4xl">
+              Extract resources out of the universe and bring them back whenever your strategy demands it.
             </h2>
           </div>
         </div>
@@ -479,9 +468,9 @@ function RiftSection() {
             to become the bridge between in-game production and open markets.
           </p>
           <div className="landing-reveal-group mt-10 grid gap-5">
-            <RiftPoint title="Extract" body="Move surplus production into tradeable resource tokens." />
-            <RiftPoint title="Trade" body="Price resources in the open instead of locking value inside a closed game server." />
-            <RiftPoint title="Import" body="Bring resources back onchain to rebuild fleets, rush strategy or recover after a battle." />
+            <RiftPoint title="Extract your surplus" body="Move spare production out of your planets as tradeable resource tokens." />
+            <RiftPoint title="Trade in the open" body="Resources are priced on open markets instead of being locked inside a closed game server." />
+            <RiftPoint title="Import when it matters" body="Bring resources back onchain to rebuild your fleets, speed up a plan or recover after a battle." />
           </div>
         </div>
       </div>
@@ -492,10 +481,10 @@ function RiftSection() {
 function RiftPoint({ title, body }: { title: string; body: string }) {
   return (
     <div
-      className="landing-reveal rounded-lg border border-ember/[0.07] bg-ember/[0.052] p-5"
+      className="landing-reveal rounded-xl border border-amber-300/15 bg-amber-300/[0.04] p-5"
       data-tilt
     >
-      <h3 className="text-sm font-semibold text-ember">{title}</h3>
+      <h3 className="text-sm font-semibold text-amber-200">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-slate-300">{body}</p>
     </div>
   );
@@ -505,7 +494,7 @@ function FeedSection() {
   const feed = useLandingFeed();
 
   return (
-    <section className="relative overflow-hidden bg-[#05070d] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+    <section className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <img
         alt=""
         className="landing-layer landing-layer-ship left-[-1rem] top-12 w-44 rotate-[12deg] opacity-45 md:w-64"
@@ -513,28 +502,27 @@ function FeedSection() {
       />
       <div className="relative z-10 mx-auto max-w-4xl">
         <div className="landing-reveal mx-auto max-w-2xl text-center">
-          <p className="text-sm font-semibold text-signal">Universe intelligence</p>
-          <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
+          <h2 className="text-2xl font-semibold leading-tight text-white sm:text-4xl">
             The universe is always alive with movement, pressure and opportunity.
           </h2>
         </div>
 
         <div
-          className="landing-reveal mt-12 rounded-lg border border-white/[0.045] bg-[#0d1320] p-3 shadow-[0_20px_90px_rgba(0,0,0,0.38)]"
+          className="landing-panel landing-reveal mt-8"
           data-tilt
         >
-          <div className="flex items-center justify-between border-b border-white/[0.04] px-3 py-3">
+          <div className="flex items-center justify-between border-b border-cyan-300/10 px-4 py-3">
             <div className="flex items-center gap-2">
               <Radio className="h-4 w-4 text-signal" />
               <h3 className="text-sm font-semibold text-white">Live beta feed</h3>
             </div>
             <LandingStatusPill status={feed.status} />
           </div>
-          <div className="grid gap-2 p-3">
+          <div className="grid px-3 pb-1">
             {feed.items.length > 0
               ? feed.items.map((item) => <LandingFeedRow item={item} key={item.value} />)
               : feed.status === "loading" ? (
-                <SkeletonRegion className="grid gap-3" label="Loading universe activity">
+                <SkeletonRegion className="grid gap-3 py-3" label="Loading universe activity">
                   {skeletonList(3, (index) => <Skeleton key={index} className="h-14 w-full" />)}
                 </SkeletonRegion>
               ) : (
@@ -557,7 +545,7 @@ function AlphaSection() {
   const launch = landingLaunchCtaForLocation();
 
   return (
-    <section className="relative overflow-hidden bg-[#0a0d13] px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
+    <section className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <img
         alt=""
         className="landing-layer landing-layer-planet left-[62%] top-8 w-72 opacity-38 md:w-96"
@@ -565,13 +553,12 @@ function AlphaSection() {
       />
       <div className="relative z-10 mx-auto max-w-7xl">
         <div
-          className="landing-reveal relative overflow-hidden rounded-lg border border-signal/[0.08] bg-[linear-gradient(135deg,rgba(128,241,255,0.13),rgba(246,179,92,0.08)_42%,rgba(9,14,24,0.94))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] sm:p-9 lg:p-12"
+          className="landing-panel landing-reveal relative bg-[linear-gradient(135deg,rgba(34,211,238,0.12),rgba(13,24,41,0.96)_55%)] p-6 sm:p-9 lg:p-12"
           data-tilt
         >
         <div className="max-w-4xl">
-          <p className="text-sm font-semibold text-ember">Enter the open beta</p>
-          <h2 className="mt-3 text-4xl font-semibold leading-tight text-white sm:text-6xl">
-            Claim your first planet.
+          <h2 className="text-3xl font-semibold leading-tight text-white sm:text-4xl">
+            Claim your first planet and start building today.
           </h2>
         </div>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
@@ -583,7 +570,7 @@ function AlphaSection() {
             <ArrowRight className="h-4 w-4" />
           </a>
           <a
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
+            className="surface-inset inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-semibold text-slate-100 transition hover:text-cyan-100"
             href={TELEGRAM_SUPPORT_URL}
             rel="noopener noreferrer"
             target="_blank"
@@ -626,7 +613,7 @@ function AlliancesSection() {
   const alliances = useTopAlliances();
 
   return (
-    <section className="relative overflow-hidden bg-[#080b12] px-5 py-20 sm:px-8 sm:py-24 lg:px-10 lg:py-28">
+    <section className="relative overflow-hidden px-5 py-12 sm:px-8 sm:py-16 lg:px-10">
       <img
         alt=""
         className="landing-layer landing-layer-ship-slow right-[4%] top-16 hidden w-44 opacity-32 md:block"
@@ -634,8 +621,7 @@ function AlliancesSection() {
       />
       <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
         <div className="landing-reveal">
-          <p className="text-sm font-semibold text-ember">Alliances</p>
-          <h2 className="mt-3 text-3xl font-semibold leading-tight text-white sm:text-5xl">
+          <h2 className="text-2xl font-semibold leading-tight text-white sm:text-4xl">
             Conquer faster with a war room behind you.
           </h2>
           <p className="mt-5 max-w-2xl text-base leading-7 text-slate-300">
@@ -644,16 +630,16 @@ function AlliancesSection() {
           </p>
         </div>
         <div className="landing-alliance-board landing-reveal" data-tilt>
-          <div className="flex items-center justify-between border-b border-white/[0.04] px-4 py-3">
+          <div className="flex items-center justify-between border-b border-cyan-300/10 px-4 py-3">
             <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-ember" />
+              <Users className="h-4 w-4 text-amber-300" />
               <h3 className="text-sm font-semibold text-white">Top alliances</h3>
             </div>
             {alliances.status === "loading"
               ? <SkeletonRegion label="Loading alliance scores"><Skeleton className="h-4 w-12" /></SkeletonRegion>
               : <span className="text-xs font-semibold text-slate-500">{landingAllianceBoardLabel(alliances.status)}</span>}
           </div>
-          <div className="grid gap-2 p-3">
+          <div className="grid px-3 pb-1">
             {alliances.items.length > 0
               ? alliances.items.map((alliance, index) => (
                 <div className="landing-alliance-row" key={`${alliance.tag}-${index}`} style={{ "--row-index": index } as Record<string, number>}>

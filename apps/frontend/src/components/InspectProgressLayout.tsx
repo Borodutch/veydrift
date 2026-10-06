@@ -109,7 +109,7 @@ export function InspectCatalogTile({
       onClick={onClick}
       type="button"
     >
-      <span className="block aspect-square overflow-hidden rounded border border-white/10 bg-black/20">
+      <span className="block aspect-square overflow-hidden rounded surface-inset">
         <OptimizedImage
           alt=""
           className="h-full w-full object-cover transition group-hover:scale-[1.03]"
@@ -167,7 +167,7 @@ export function InspectDetailImage({
   return (
     <div
       aria-busy={!isLoaded}
-      className={`relative aspect-square overflow-hidden rounded-md border border-white/10 bg-black/20 ${
+      className={`relative aspect-square overflow-hidden rounded-md surface-inset ${
         isDimmed ? "opacity-70 grayscale" : ""
       }`}
     >
@@ -198,7 +198,7 @@ export function InspectDetailImage({
 
 export function InspectDetailShell({ children }: { children: ComponentChildren }) {
   return (
-    <aside className="min-w-0 rounded-lg border border-white/10 bg-[#0f1624] p-3 xl:sticky xl:top-4">
+    <aside className="min-w-0 rounded-lg surface p-3 xl:sticky xl:top-4">
       {children}
     </aside>
   );
@@ -246,7 +246,7 @@ export function InspectInfoRow({
   value?: string | undefined;
 }) {
   return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+    <div className="min-w-0 rounded surface-inset px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
       <dd className="mt-1 break-words text-sm font-semibold text-slate-200">{children ?? value}</dd>
     </div>

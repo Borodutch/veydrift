@@ -88,7 +88,7 @@ export function MissionDetailPage({
     <section className="grid gap-4">
       <PageHeader
         beforeTitle={(
-          <button className="mb-3 inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
+          <button className="mb-3 inline-flex h-9 items-center justify-center gap-2 rounded surface-inset px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
             <ArrowLeft aria-hidden="true" size={15} />
             Mission Control
           </button>
@@ -114,7 +114,7 @@ export function MissionDetailPage({
           <span className="inline-flex flex-wrap items-center gap-2">
             {missionId ? `Mission #${missionId}` : "Mission"}
             {mission ? (
-              <span className="rounded border border-white/10 bg-black/20 px-2.5 py-1 text-xs font-medium text-slate-200">
+              <span className="rounded surface-inset px-2.5 py-1 text-xs font-medium text-slate-200">
                 {missionTypeLabel(mission.missionType)}
               </span>
             ) : null}
@@ -270,7 +270,7 @@ function MissionActions({
   }
 
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-lg surface p-4">
       <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => action.kind === "counterplay" ? (
@@ -401,7 +401,7 @@ function MissionRoute({
   const targetTiming = missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived");
 
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-lg surface p-4">
       <h3 className="mb-3 text-sm font-semibold text-white">Route</h3>
       <MissionRouteCell
         direction={missionRouteLeg(mission.status)}
@@ -436,10 +436,10 @@ function RouteLegTiming({
 }) {
   return (
     <div className={`text-xs text-slate-400 ${align === "right" ? "sm:text-right" : ""}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{caption}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{caption}</p>
       <p>
         {timing.label ? (
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{timing.label} </span>
         ) : null}
         <span className="break-words text-slate-300">{timing.value}</span>
       </p>
@@ -569,9 +569,9 @@ function MissionBattleReport({
   );
 
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-lg surface p-4">
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
+        <span className="grid h-8 w-8 place-items-center rounded surface-inset text-cyan-200">
           <Swords aria-hidden="true" size={17} />
         </span>
         <h3 className="text-sm font-semibold text-white">Battle Report</h3>
@@ -641,13 +641,13 @@ function MissionBattleReport({
                       <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
                         Mission #{defender.missionId} · {defender.defenderDisplayName ?? shortAddress(defender.defender)} · {defender.lifecycleOutcome ?? "Historical"}
                       </span>
-                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Original fleet</span>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">Original fleet</span>
                       <UnitIcons units={shipUnits(defender.ships)} />
-                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Destroyed</span>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">Destroyed</span>
                       {defender.destroyedShips === undefined || defender.destroyedShips === null
                         ? <span className="text-slate-500">Exact composition unavailable</span>
                         : <UnitIcons units={shipUnits(defender.destroyedShips)} />}
-                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Survived</span>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">Survived</span>
                       {defender.survivingShips === undefined || defender.survivingShips === null
                         ? <span className="text-slate-500">Exact composition unavailable</span>
                         : <UnitIcons units={shipUnits(defender.survivingShips)} />}
@@ -682,12 +682,12 @@ function MissionBattleReport({
       {/* Only render the round-by-round block when the indexed log actually exposes snapshots. */}
       {report.roundReports.length > 0 ? (
         <div className="mt-4">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round-by-round combat</p>
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round-by-round combat</p>
           <div className="grid gap-2">
             {report.roundReports.map((round) => (
-              <article className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
+              <article className="grid gap-2 rounded-md surface-inset p-3 md:grid-cols-[5rem_1fr_1fr]" key={round.round}>
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round</p>
                   <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
                 </div>
                 {/* The on-chain CombatRoundResolved event reports the units left standing at the end of
@@ -746,10 +746,10 @@ function AttackGroupPanel({
   totalLoot: { metal: string; crystal: string; deuterium: string };
 }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-lg surface p-4">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-white">Attack group</h3>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">
           {participants.length} {participants.length === 1 ? "participant" : "participants"}
         </span>
       </div>
@@ -761,7 +761,7 @@ function AttackGroupPanel({
         {participants.map((participant) => (
           <article
             key={participant.missionId}
-            className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 sm:grid-cols-[1fr_auto] sm:items-start"
+            className="grid gap-2 rounded-md surface-inset p-3 sm:grid-cols-[1fr_auto] sm:items-start"
           >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -770,7 +770,7 @@ function AttackGroupPanel({
                   className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
                     participant.isMainAttacker
                       ? "border border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
-                      : "border border-white/10 bg-white/5 text-slate-400"
+                      : "surface-inset text-slate-400"
                   }`}
                 >
                   {participant.isMainAttacker ? "Main attacker" : "Joined"}
@@ -783,14 +783,14 @@ function AttackGroupPanel({
               {participant.survivingShips ? <div className="mt-2 text-xs text-slate-400">Survived<UnitIcons units={shipUnits(participant.survivingShips)} /></div> : null}
             </div>
             <div className="sm:text-right">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Loot share</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Loot share</p>
               <p className="mt-0.5 break-words text-sm text-slate-300">{formatResources(participant.loot)}</p>
             </div>
           </article>
         ))}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Total group loot</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Total group loot</span>
         <span className="break-words text-sm font-semibold text-white">{formatResources(totalLoot)}</span>
       </div>
     </section>
@@ -823,7 +823,7 @@ function sumLoot(participants: BattleReportParticipant[]): { metal: string; crys
 
 function Panel({ children, title }: { children: preact.ComponentChildren; title: string }) {
   return (
-    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-lg surface p-4">
       <h3 className="mb-2 text-sm font-semibold text-white">{title}</h3>
       <table className="w-full border-collapse">
         <tbody>{children}</tbody>
@@ -836,7 +836,7 @@ function Panel({ children, title }: { children: preact.ComponentChildren; title:
 function Row({ label, value }: { label: string; value: preact.ComponentChildren }) {
   return (
     <tr className="border-t border-white/5 align-middle first:border-t-0">
-      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-middle text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</th>
+      <th scope="row" className="w-px whitespace-nowrap py-1.5 pr-4 text-left align-middle text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{label}</th>
       <td className="py-1.5 text-left align-middle break-words text-sm text-slate-300">{value}</td>
     </tr>
   );
@@ -845,7 +845,7 @@ function Row({ label, value }: { label: string; value: preact.ComponentChildren 
 function Datum({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{label}</dt>
       <dd className="mt-0.5 break-words text-sm text-slate-300">{value}</dd>
     </div>
   );
@@ -1064,7 +1064,7 @@ function UnitIcons({ units }: { units: UnitItem[] }) {
       {units.map((unit) => {
         const label = `${unit.label} ×${unit.count.toLocaleString()}`;
         return (
-          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={unit.key} title={label}>
+          <span className="inline-flex items-center gap-1 rounded surface-inset px-1 py-0.5" key={unit.key} title={label}>
             {unit.asset ? (
               <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
             ) : (

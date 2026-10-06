@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ModalHeader } from "../src/components/ModalHeader";
 import type { ComponentChildren, VNode } from "preact";
 import { buildingEnergyDetail, buildingLevelInfoRows, buildingUpgradeStatus } from "../src/buildingDetails";
 import {
@@ -1057,7 +1058,7 @@ function textParts(node: ComponentChildren): string[] {
   }
 
   const vnode = node as VNode;
-  if (vnode.type === QueueProgressPanel) {
+  if (vnode.type === QueueProgressPanel || vnode.type === ModalHeader) {
     const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
     return textParts(Component(vnode.props ?? {}));
   }
@@ -1075,7 +1076,7 @@ function elementNodes(node: ComponentChildren): VNode[] {
   }
 
   const vnode = node as VNode;
-  if (typeof vnode.type === "function" && ["LevelInfoCell", "LevelPill"].includes(vnode.type.name)) {
+  if (typeof vnode.type === "function" && ["LevelInfoCell", "LevelPill", "ModalHeader"].includes(vnode.type.name)) {
     const Component = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
     return [vnode, ...elementNodes(Component(vnode.props ?? {}))];
   }

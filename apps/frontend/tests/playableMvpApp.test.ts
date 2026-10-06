@@ -942,7 +942,7 @@ describe("Playable MVP app display helpers", () => {
     expect(buttonSource).not.toContain("planetImageForManagedPlanet(selectedPlanet)");
     expect(buttonSource).toContain("showMoonIndicator");
     expect(buttonSource).toContain("PlanetMoonIndicator");
-    expect(buttonSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
+    expect(buttonSource).toContain('"!-right-1 !-top-1 !h-4 !w-4"');
   });
 
   test("uses one route owner to invalidate transient mission screens for tab and history navigation", () => {

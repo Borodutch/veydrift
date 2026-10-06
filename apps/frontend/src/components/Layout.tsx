@@ -43,7 +43,7 @@ export function Layout({ children, gameMode }: Props) {
             >
               Galaxy
             </a>
-            <div className="ml-2 flex items-center gap-2 rounded border border-white/10 bg-white/5 px-3 py-1.5">
+            <div className="ml-2 flex items-center gap-2 rounded surface-inset px-3 py-1.5">
               <span className="text-xs text-slate-500">Wallet</span>
               <span className="font-mono text-xs text-slate-400">—</span>
             </div>

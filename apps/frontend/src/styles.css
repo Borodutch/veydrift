@@ -1,6 +1,64 @@
+/* Inter is the design font; bundle it so every platform renders the same metrics (system
+   fallbacks shift glyphs vertically in tight rows such as the top bar). Latin subset, variable weight. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-latin-var.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  /* Shared game surfaces: navy panels with a faint cyan edge instead of neutral gray. */
+  .surface {
+    border: 1px solid rgb(103 232 249 / 0.14);
+    background-color: #0d1829;
+    box-shadow: inset 0 1px 0 rgb(103 232 249 / 0.06);
+  }
+
+  .surface-inset {
+    border: 1px solid rgb(103 232 249 / 0.12);
+    background-color: rgb(34 211 238 / 0.05);
+  }
+
+  /* Shared dialogs: one backdrop and panel look for every popup. */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    padding: 0.75rem;
+    background-color: rgb(2 6 14 / 0.72);
+    backdrop-filter: blur(6px);
+  }
+
+  .modal-panel {
+    width: 100%;
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid rgb(103 232 249 / 0.16);
+    border-radius: 0.75rem;
+    background-color: #0d1829;
+    box-shadow: 0 24px 64px rgb(0 0 0 / 0.55), inset 0 1px 0 rgb(103 232 249 / 0.06);
+  }
+
+  @media (min-width: 640px) {
+    .modal-backdrop {
+      padding: 1.5rem;
+    }
+
+    .modal-panel {
+      max-height: calc(100dvh - 3rem);
+    }
+  }
+}
 
 
 @keyframes veydrift-copy-value-fade-up {
@@ -173,6 +231,26 @@ body {
 
 .landing-page {
   --landing-scroll: 0;
+  background:
+    radial-gradient(60rem 40rem at 85% -10%, rgb(34 211 238 / 0.07), transparent 60%),
+    radial-gradient(50rem 36rem at 0% 45%, rgb(99 102 241 / 0.05), transparent 60%),
+    #060b16;
+}
+
+/* Landing section labels share the game's uppercase cyan section-heading style. */
+.landing-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: rgb(103 232 249 / 0.8);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.landing-eyebrow[data-tone="amber"] {
+  color: rgb(252 211 77 / 0.8);
 }
 
 .landing-layer {
@@ -217,12 +295,23 @@ body {
   filter: drop-shadow(0 26px 52px rgba(0, 0, 0, 0.44));
 }
 
-.landing-screenshot-frame {
+/* Landing cards use the game's panel surface: navy with a faint cyan edge. */
+.landing-screenshot-frame,
+.landing-feature,
+.landing-agent-console,
+.landing-alliance-board,
+.landing-panel {
+  border: 1px solid rgb(103 232 249 / 0.14);
+  border-radius: 12px;
+  background-color: #0d1829;
+  box-shadow: inset 0 1px 0 rgb(103 232 249 / 0.06), 0 24px 80px rgb(0 0 0 / 0.4);
+}
+
+.landing-screenshot-frame,
+.landing-agent-console,
+.landing-alliance-board,
+.landing-panel {
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.045);
-  border-radius: 8px;
-  background: rgba(13, 19, 32, 0.84);
-  box-shadow: 0 28px 96px rgba(0, 0, 0, 0.34);
 }
 
 .landing-screenshot-frame img {
@@ -234,9 +323,9 @@ body {
 }
 
 .landing-screenshot-frame div {
-  min-height: 8.25rem;
-  padding: 1rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.035);
+  min-height: 7.5rem;
+  padding: 1rem 1.1rem;
+  border-top: 1px solid rgb(103 232 249 / 0.1);
 }
 
 .landing-screenshot-frame h3,
@@ -257,23 +346,15 @@ body {
 }
 
 .landing-feature {
-  min-height: 14rem;
-  padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.045);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.028)),
-    rgba(13, 19, 32, 0.74);
+  padding: 1.25rem;
 }
 
 .landing-feature h3 {
-  margin-top: 1.25rem;
+  margin-top: 1rem;
 }
 
 .landing-agent-section {
-  background:
-    radial-gradient(circle at 18% 18%, rgba(128, 241, 255, 0.065), transparent 26rem),
-    linear-gradient(135deg, #071019 0%, #080b12 52%, #100d08 100%);
+  background: radial-gradient(circle at 18% 18%, rgb(34 211 238 / 0.06), transparent 26rem);
 }
 
 .landing-agent-glow {
@@ -281,7 +362,7 @@ body {
   border-radius: 9999px;
   pointer-events: none;
   filter: blur(80px);
-  opacity: 0.18;
+  opacity: 0.16;
 }
 
 .landing-agent-glow-cyan {
@@ -289,7 +370,7 @@ body {
   height: 20rem;
   top: -10rem;
   right: 8%;
-  background: rgb(128 241 255);
+  background: rgb(34 211 238);
 }
 
 .landing-agent-glow-amber {
@@ -297,20 +378,20 @@ body {
   height: 18rem;
   bottom: -11rem;
   left: 42%;
-  background: rgb(246 179 92);
-  opacity: 0.1;
+  background: rgb(99 102 241);
+  opacity: 0.12;
 }
 
 .landing-agent-step {
-  min-height: 8.75rem;
   padding: 1rem;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgb(103 232 249 / 0.12);
+  border-radius: 10px;
+  background: rgb(34 211 238 / 0.05);
 }
 
 .landing-agent-step > span {
   display: block;
-  color: rgb(128 241 255 / 0.58);
+  color: rgb(103 232 249 / 0.7);
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.16em;
@@ -318,7 +399,7 @@ body {
 
 .landing-agent-step strong {
   display: block;
-  margin-top: 0.9rem;
+  margin-top: 0.6rem;
   color: white;
   font-size: 0.9rem;
 }
@@ -326,18 +407,8 @@ body {
 .landing-agent-step p {
   margin: 0.35rem 0 0;
   color: rgb(148 163 184);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   line-height: 1.5;
-}
-
-.landing-agent-console {
-  overflow: hidden;
-  border: 1px solid rgba(128, 241, 255, 0.09);
-  border-radius: 10px;
-  background:
-    linear-gradient(145deg, rgba(128, 241, 255, 0.06), transparent 42%),
-    rgba(8, 14, 23, 0.92);
-  box-shadow: 0 32px 110px rgba(0, 0, 0, 0.44), 0 0 70px rgba(128, 241, 255, 0.035);
 }
 
 .landing-agent-console-bar {
@@ -346,7 +417,7 @@ body {
   justify-content: space-between;
   gap: 1rem;
   padding: 0.8rem 1rem;
-  background: rgba(255, 255, 255, 0.025);
+  border-bottom: 1px solid rgb(103 232 249 / 0.1);
   color: rgb(203 213 225);
   font-size: 0.72rem;
   font-weight: 700;
@@ -360,21 +431,24 @@ body {
   box-shadow: 0 0 14px rgba(110, 231, 183, 0.52);
 }
 
+/* Feed and alliance boards are compact divided lists, like the Empire rows. */
 .landing-feed-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 0.75rem;
-  min-height: 4.5rem;
-  padding: 0.9rem;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
+  padding: 0.85rem 0.25rem;
+  border-bottom: 1px solid rgb(103 232 249 / 0.08);
+}
+
+.landing-feed-row:last-child,
+.landing-alliance-row:last-child {
+  border-bottom: 0;
 }
 
 .landing-feed-row svg {
   margin-top: 0.1rem;
-  color: rgb(128 241 255);
+  color: rgb(103 232 249);
 }
 
 .landing-feed-row p {
@@ -398,44 +472,32 @@ body {
 }
 
 .landing-feed-row[data-tone="amber"] svg {
-  color: rgb(246 179 92);
+  color: rgb(252 211 77);
 }
 
 .landing-feed-row[data-tone="emerald"] svg {
   color: rgb(110 231 183);
 }
 
-.landing-alliance-board {
-  overflow: hidden;
-  border: 1px solid rgba(246, 179, 92, 0.065);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(246, 179, 92, 0.05), rgba(128, 241, 255, 0.026)),
-    rgba(13, 19, 32, 0.82);
-  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.36);
-}
-
 .landing-alliance-row {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: 1.75rem minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.75rem;
-  min-height: 4.25rem;
-  padding: 0.8rem;
-  border: 1px solid rgba(255, 255, 255, 0.038);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
+  padding: 0.75rem 0.25rem;
+  border-bottom: 1px solid rgb(103 232 249 / 0.08);
 }
 
 .landing-alliance-rank {
   display: grid;
   place-items: center;
-  width: 2rem;
+  width: 1.75rem;
   aspect-ratio: 1;
-  border-radius: 8px;
-  background: rgba(246, 179, 92, 0.105);
-  color: rgb(254 215 170);
-  font-size: 0.82rem;
+  border: 1px solid rgb(252 211 77 / 0.25);
+  border-radius: 9999px;
+  background: rgb(252 211 77 / 0.08);
+  color: rgb(254 243 199);
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -462,18 +524,15 @@ body {
 }
 
 .landing-alliance-row strong {
-  color: rgb(254 215 170);
+  color: rgb(254 243 199);
   font-size: 0.86rem;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .landing-alliance-empty {
-  min-height: 4.25rem;
-  padding: 0.9rem;
-  border: 1px solid rgba(255, 255, 255, 0.038);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
+  padding: 0.9rem 0.25rem;
 }
 
 .landing-alliance-empty p {
@@ -1825,8 +1884,31 @@ h4 {
 }
 
 .landing-page > .retro-cd-stage {
+  position: relative;
+  isolation: isolate;
   height: 92svh;
   min-height: 720px;
+  padding-top: calc(3.5rem + clamp(12px, 2vw, 28px));
+}
+
+.landing-page > .retro-cd-stage .retro-cd-stage-inner {
+  position: static;
+}
+
+/* On the landing page the hero backdrop and floaters belong to the hero, not the viewport. */
+.landing-page > .retro-cd-stage .retro-cd-backdrop,
+.landing-page > .retro-cd-stage .retro-cd-starfield,
+.landing-page > .retro-cd-stage .retro-cd-nebula,
+.landing-page > .retro-cd-stage .retro-cd-scanlines,
+.landing-page > .retro-cd-stage .retro-cd-floaters,
+.landing-page > .retro-cd-stage .retro-cd-shooting-star {
+  position: absolute;
+}
+
+/* Decorative parallax art stays behind section content. */
+.landing-page > section:not(.retro-cd-stage) > :not(.landing-layer):not(.landing-agent-glow) {
+  position: relative;
+  z-index: 2;
 }
 
 .retro-cd-stage-inner {
@@ -2053,20 +2135,21 @@ h4 {
 
 .retro-cd-copy-panel .referral-code-field input {
   min-height: 46px;
-  border-color: rgba(216, 180, 254, 0.22);
+  border-color: rgb(103 232 249 / 0.16);
   border-radius: 12px;
-  background: rgba(10, 12, 19, 0.68);
+  background: rgb(13 24 41 / 0.8);
 }
 
 .retro-cd-copy-panel .referral-code-field input:focus {
-  border-color: rgba(246, 179, 92, 0.64);
-  box-shadow: 0 0 0 3px rgba(246, 179, 92, 0.08);
+  border-color: rgb(103 232 249 / 0.6);
+  box-shadow: 0 0 0 3px rgb(103 232 249 / 0.1);
 }
 
 .retro-cd-copy-panel .settlement-primary {
-  border-color: rgba(255, 245, 230, 0.5);
-  background: linear-gradient(135deg, #fff8ed, #f6c47f 62%, #d8b4fe);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26), 0 0 24px rgba(246, 179, 92, 0.14), inset 0 1px rgba(255, 255, 255, 0.7);
+  border-color: rgb(165 243 252 / 0.6);
+  background: #80f1ff;
+  color: #031014;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.26), 0 0 28px rgb(128 241 255 / 0.22), inset 0 1px rgba(255, 255, 255, 0.55);
 }
 
 .retro-cd-showcase {
@@ -3242,13 +3325,14 @@ h4 {
 .landing-cd-eyebrow {
   width: fit-content;
   margin: 0;
-  border: 1px solid rgba(246, 179, 92, 0.24);
+  border: 1px solid rgb(103 232 249 / 0.24);
   border-radius: 999px;
-  background: rgba(246, 179, 92, 0.08);
-  color: #f8d8aa;
-  font-size: 0.76rem;
-  font-weight: 760;
-  letter-spacing: 0.025em;
+  background: rgb(34 211 238 / 0.08);
+  color: #a5f3fc;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   padding: 7px 11px;
 }
 

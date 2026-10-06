@@ -6,7 +6,7 @@ import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore"
 import { ComingSoonApp } from "./ComingSoonApp";
 import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsTable";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
-import { TelegramIcon } from "./components/TelegramIcon";
+import { SiteHeader } from "./components/SiteHeader";
 import {
   detectFarcasterMiniApp,
   farcasterMiniAppPlatformType,
@@ -26,7 +26,6 @@ import { connectWalletConnect, walletConnectEnabled } from "./reownWallet";
 import { apiBaseUrlForRuntimeConfig, gameContractAddress, paidAllianceInviteCapabilitiesForRuntime, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { playSfx } from "./sfx";
-import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import { confirmTransactionRetry, type WriteTransactionState } from "./transactionActionGate";
 import { transactionWalletProvider } from "./walletFlow";
 import { useBackendDataQuery } from "./useBackendDataQuery";
@@ -2179,14 +2178,7 @@ export function referralValidationMessage(resolution: ReferralResolution): strin
 }
 
 export function SettlementSupportLinks() {
-  return (
-    <div className="settlement-support-actions">
-      <a aria-label="Telegram support" className="settlement-support-link" href={TELEGRAM_SUPPORT_URL} rel="noopener noreferrer" target="_blank" title="Telegram support">
-        <TelegramIcon className="settlement-support-icon" />
-        <span>Telegram</span>
-      </a>
-    </div>
-  );
+  return <SiteHeader current="home" overlay />;
 }
 
 function referralCodeFromCurrentUrl(): string {
