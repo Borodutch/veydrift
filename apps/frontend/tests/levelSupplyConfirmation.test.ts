@@ -131,7 +131,15 @@ describe("production Supply confirmation and launch handlers", () => {
     expect(words[7]).toBe(1n); // one Large Cargo
     expect(words.slice(17)).toEqual([24999n, 0n, 0n, 100n, 0n, 1n]); // planet -> moon
     expect(h.calls.every((call: any) => call.id === "7" && call.options.fresh === true)).toBe(true);
+    // The same parent-to-moon preview and fresh resource checks also support Deploy.
+    await prepareBatchSupplyConfirmation({ ...args, mission: "deploy" });
+    const deploying = mockWallet();
+    await launchBatchSupplyTransaction(deploying.provider, account, contract, target, preview.orders, selected, "deploy");
+    const deployWords = decodeAbiParameters(parseAbiParameters("uint256[23]"), ("0x" + deploying.sent[0]!.data.slice(10)) as Hex)[0];
+    expect(deployWords.slice(0, 3)).toEqual([7n, 7n, 1n]);
+    expect(deployWords.slice(17)).toEqual([24999n, 0n, 0n, 100n, 0n, 1n]);
     h.setParentFuel("0");
+    await expect(prepareBatchSupplyConfirmation({ ...args, mission: "deploy" })).rejects.toThrow("inventory changed");
     await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("inventory changed");
   });
 });

@@ -97,7 +97,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       }
       await settle();
     }
-    const selected = () => evaluate('[...document.querySelectorAll("[role=group] button")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
+    const selected = () => evaluate('[...document.querySelectorAll("[role=group] button[aria-describedby]")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
     async function expectTypes(expected, reason) { assert.deepEqual(await selected(), expected, reason); }
     async function input(label, value) {
       const expression = 'document.querySelector(' + JSON.stringify('input[aria-label="' + label + '"]') + ')';
@@ -119,7 +119,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         const overflowing = [...panel.querySelectorAll("*")].filter(node => node.clientWidth > 0 && node.scrollWidth > node.clientWidth).map(node => ({
           tag: node.tagName, text: node.textContent.trim().slice(0, 100), className: node.className, width: node.clientWidth, scrollWidth: node.scrollWidth,
         }));
-        return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("[role=group] button")].map(node => node.getAttribute("aria-label").split(" at ")[0])};
+        return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("[role=group] button[aria-describedby]")].map(node => node.getAttribute("aria-label").split(" at ")[0])};
       })()`);
       assert.deepEqual(result.labels, label.includes('recycler-only') ? ['Recycler'] : types, label + ': available type controls rendered');
       assert.ok(result.pageWidth <= result.viewport, label + ': page horizontal overflow');
@@ -132,6 +132,42 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         const screenshot = await send('Page.captureScreenshot', { format: 'png' });
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
+    }
+    // Mission selection is draft-local, survives refresh/rejection, and reaches onConfirm.
+    for (const width of [1280, 390, 320]) {
+      await load(width);
+      const transport = "document.querySelector('[aria-label=\"Mission type\"] button:first-child')";
+      const deploy = "document.querySelector('[aria-label=\"Mission type\"] button:last-child')";
+      assert.equal((await submit()).mission, 'transport');
+      assert.equal(await evaluate(transport + '.getAttribute("aria-pressed")'), 'true');
+      await click(deploy);
+      assert.equal(await evaluate(deploy + '.getAttribute("aria-pressed")'), 'true');
+      assert.ok(await evaluate('document.body.textContent.includes("No return trip")'));
+      assert.ok(await evaluate(launch + '.textContent.includes("deployment")'));
+      const deployment = await submit();
+      assert.equal(deployment.mission, 'deploy');
+      await evaluate('supplyFixture.refresh()'); await settle();
+      assert.equal((await submit()).mission, 'deploy');
+      await evaluate('supplyFixture.pending("action")'); await settle();
+      assert.equal(await evaluate(transport + '.disabled'), true);
+      assert.equal(await evaluate(deploy + '.disabled'), true);
+      await evaluate('supplyFixture.reject()'); await settle();
+      assert.equal((await submit()).mission, 'deploy');
+      await click(transport);
+      const returning = await submit();
+      assert.equal(returning.mission, 'transport');
+      assert.deepEqual(returning.orders, deployment.orders, 'both missions pay the same dispatch fuel');
+      await click(deploy);
+      await evaluate('supplyFixture.reset("draft")'); await settle();
+      assert.equal((await submit()).mission, 'transport', 'new draft defaults to Transport');
+      await load(width, 'twoSources=1');
+      await click("document.querySelector('input[aria-label=\"metal to send\"]').closest('label').querySelector('button')");
+      assert.equal((await submit()).orders.length, 2);
+      await click(deploy);
+      assert.equal(await evaluate(launch + '.disabled'), true, 'multi-source Deploy cannot partially submit');
+      assert.ok(await evaluate('document.body.textContent.includes("Deselect other sources before launching")'));
+      await click(transport);
+      assert.equal(await evaluate(launch + '.disabled'), false, 'Transport still batches');
     }
     // Screenshot-equivalent fleet: five available, two actually sent, one selector row only.
     for (const width of [1280, 390, 320]) {
@@ -203,7 +239,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     // No inventory is not an excluded fleet: do not direct players to nonexistent controls.
     for (const width of [1280, 390, 320]) {
       await load(width, 'emptyFleet=1', 568);
-      assert.equal(await evaluate('document.querySelectorAll("[role=group] button").length'), 0);
+      assert.equal(await evaluate('document.querySelectorAll("[role=group] button[aria-describedby]").length'), 0);
       assert.equal(await evaluate(source + '.disabled'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
       assert.ok(await evaluate('document.body.textContent.includes("No cargo ships")'));
@@ -295,7 +331,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
 
       for (const kind of ['action', 'transaction']) {
         await evaluate('supplyFixture.pending(' + JSON.stringify(kind) + ')'); await settle();
-        assert.equal(await evaluate('[...document.querySelectorAll("[role=group] button")].every(input => input.matches(":disabled"))'), true);
+        assert.equal(await evaluate('[...document.querySelectorAll("[role=group] button[aria-describedby]")].every(input => input.matches(":disabled"))'), true);
         assert.equal(await evaluate(launch + '.disabled'), true);
         await click(checkbox(2));
         await expectTypes([false, false, true, false], kind + ' pending prevents changes');
@@ -303,7 +339,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.reject()'); await settle();
       assert.ok(await evaluate('document.querySelector("[role=dialog]").textContent.includes("Wallet request rejected")'));
       await expectTypes([false, false, true, false], 'wallet rejection retains intent');
-      assert.equal(await evaluate('document.querySelector("[role=group] button").matches(":disabled")'), false);
+      assert.equal(await evaluate('document.querySelector("[role=group] button[aria-describedby]").matches(":disabled")'), false);
       submission = await submit();
       assert.deepEqual(submission.shipTypesBySource["188"], ['recycler'], 'retry carries retained choices');
       await record(width + '-rejected');
