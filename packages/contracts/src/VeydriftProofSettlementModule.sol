@@ -131,7 +131,7 @@ contract VeydriftProofSettlementModule is VeydriftResourceReserves {
             Defense defense = Defense(unit - 16);
             if (attack.targetIsMoon) {
                 uint256 packed = IProofSettlementMoon(_moonSystem).moonDefensePacked(body);
-                uint32 current = uint32(packed >> (uint256(unit - 16) * 32));
+                uint256 current = (packed >> (uint256(unit - 16) * 32)) & type(uint32).max;
                 if (current < lost) revert S.InsufficientLiveInventory();
                 IProofSettlementMoon(_moonSystem)
                     .applyMoonCombatDefenseChanges(

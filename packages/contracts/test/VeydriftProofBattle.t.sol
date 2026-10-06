@@ -431,7 +431,7 @@ contract VeydriftProofBattleTest is VeydriftMoonSystemTestBase {
         for (uint256 i; i < 32; ++i) {
             links[i] = 100 + i;
         }
-        for (uint256 i; i < 6; ++i) {
+        for (uint160 i; i < 6; ++i) {
             uint256 member = 200 + i;
             links[32 + i] = member;
             G.FleetMissionType typ =
@@ -440,7 +440,7 @@ contract VeydriftProofBattleTest is VeydriftMoonSystemTestBase {
                 member,
                 G.FleetMissionStatus.Outbound,
                 typ,
-                address(uint160(500 + i)),
+                address(500 + i),
                 origin,
                 target,
                 uint64(block.timestamp),

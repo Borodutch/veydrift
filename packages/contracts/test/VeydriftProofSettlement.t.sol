@@ -111,8 +111,8 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
         }
         _fulfillAttackBattleRandomness(id, 1234);
         game.resolveFleetMission{gas: 15_000_000}(id);
-        (uint8 phase,,) = game.stagedBattleProgress(id);
-        assertEq(phase, 17);
+        (uint8 pendingPhase,,) = game.stagedBattleProgress(id);
+        assertEq(pendingPhase, 17);
     }
 
     function _leaves(uint256 id, uint32 attackerLost, uint32 defenderLost)
@@ -523,9 +523,9 @@ contract VeydriftProofSettlementTest is VeydriftMoonSystemTestBase {
         uint256 packed = uint256(type(uint32).max) | (uint256(1) << 32) | (uint256(1) << 64);
         uint256 actual = VeydriftCatalog.repairedDefenseCounts(packed, type(uint256).max);
         // Independent integer quotient: (2^32-1)*70/100 = 3006477106.
-        assertEq(uint32(actual), 3_006_477_106);
-        assertEq(uint32(actual >> 32), 1); // max+1 wraps to0
-        assertEq(uint32(actual >> 64), 1); // max+2 wraps to1
+        assertEq(actual & type(uint32).max, 3_006_477_106);
+        assertEq((actual >> 32) & type(uint32).max, 1); // max+1 wraps to0
+        assertEq((actual >> 64) & type(uint32).max, 1); // max+2 wraps to1
         assertEq(uint32(VeydriftCatalog.repairedDefenseCounts(uint256(1) << 32, 6) >> 32), 0);
     }
 }
