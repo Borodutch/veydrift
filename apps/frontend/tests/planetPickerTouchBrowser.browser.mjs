@@ -460,6 +460,9 @@ test("Overview and planet/moon detail hide art diagnostics while retaining named
   ]) {
     await loadInspectorFixture(route, 1280, options);
     await waitForExpression(`document.querySelector('main')?.textContent?.includes(${JSON.stringify(expected)}) === true`);
+    // Planet names also appear in the planet strip, so wait for the page itself to render its coordinates.
+    const coordinates = route === "/planet/4/5/6" ? "4:5:6" : route === "/" || route === "/planet/1/2/3" ? "1:2:3" : null;
+    if (coordinates) await waitForExpression(`document.querySelector('main')?.textContent?.includes(${JSON.stringify(coordinates)}) === true`);
     const copy = await evaluate(`({
       text: document.querySelector('main')?.textContent ?? '',
       aria: [...document.querySelectorAll('main [aria-label], main [title]')]
@@ -867,7 +870,8 @@ for (const width of [390, 1440]) {
     await waitForExpression("document.querySelector('main h2')?.textContent === 'Owned Alpha'");
     assert.match((await inspectorSnapshot()).text, /Home world/);
 
-    const selector = width < 768 ? '#mobile-navigation-menu' : 'aside[aria-label="Select planet"]';
+    // On mobile the planet picker is the always-visible strip beside the menu toggle.
+    const selector = width < 768 ? 'details:has(#mobile-navigation-menu) ~ div' : 'aside[aria-label="Select planet"]';
     const nav = width < 768 ? '#mobile-navigation-menu nav' : 'nav.hidden';
     async function openMenu() {
       if (width >= 768) return;
@@ -884,7 +888,7 @@ for (const width of [390, 1440]) {
       ["103", "Owned Delta", "/planet/1/2/4"],
       ["101", "Owned Alpha", "/planet/1/2/3"],
     ]) {
-      await openMenu();
+      // The mobile planet strip is always visible, so no menu needs opening before picking a planet.
       await clickExpression(`document.querySelector('${selector} [data-planet-selector-item="${id}"] button[data-planet-selector-long-press]')`);
       await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
       assert.equal(/Home world/.test((await inspectorSnapshot()).text), id === "101");
@@ -952,8 +956,9 @@ test("mobile hamburger selector independently invokes the owned-planet transitio
       && ['Empire', 'Infrastructure', 'Galaxy', 'Raid Finder', 'Rankings', 'Alliance']
         .every((label) => labels.includes(label));
   })()`);
-  await waitForExpression("document.querySelector('#mobile-navigation-menu section[aria-label=\"Select planet\"]') !== null");
-  await clickExpression("document.querySelector('#mobile-navigation-menu [data-planet-selector-item=\"102\"] button[data-planet-selector-long-press]')");
+  // The planet picker lives in the always-visible mobile strip next to the menu toggle.
+  await waitForExpression("document.querySelector('details:has(#mobile-navigation-menu) ~ div section[aria-label=\"Select planet\"]') !== null");
+  await clickExpression("document.querySelector('details:has(#mobile-navigation-menu) ~ div [data-planet-selector-item=\"102\"] button[data-planet-selector-long-press]')");
   await waitForExpression("location.pathname === '/planet/4/5/6' && document.querySelector('main h2')?.textContent === 'Owned Beta'");
 
   // Media and resource reads are independent of the planet heading.
@@ -1261,7 +1266,9 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
   const titleAlignment = await evaluate(`(() => {
-    const parts = [...document.querySelectorAll('[role="dialog"] h2 > span')].map(node => node.getBoundingClientRect());
+    // The shared modal header places the icon beside the heading.
+    const heading = document.querySelector('[role="dialog"] h2');
+    const parts = [heading.parentElement.previousElementSibling, heading].map(node => node.getBoundingClientRect());
     return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
   })()`);
   assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
@@ -2413,7 +2420,16 @@ test("a failed route chunk stays inside the page and permits navigation elsewher
 test("multi-query subscriptions catch mount-time writes and keep stable snapshots across unrelated renders", async () => {
   await loadInspectorFixture("/", 1280, { snapshotProbe: "true", waitForPlanetSelectors: "false" });
   await waitForExpression("document.querySelector('[data-snapshot-probe] output')?.textContent === 'a'");
-  const changes = await evaluate("document.querySelector('[data-snapshot-probe]').dataset.changes");
+  // The settled snapshot can still emit once after the data first renders; baseline only once it is stable.
+  const changes = await evaluate(`new Promise((resolve) => {
+    const probe = document.querySelector('[data-snapshot-probe]');
+    let last = probe.dataset.changes;
+    const check = () => setTimeout(() => {
+      if (probe.dataset.changes === last) resolve(last);
+      else { last = probe.dataset.changes; check(); }
+    }, 200);
+    check();
+  })`);
   await clickExpression("document.querySelector('[data-snapshot-probe] button')");
   await waitForExpression("document.querySelector('[data-snapshot-probe]').dataset.tick === '1'");
   assert.equal(await evaluate("document.querySelector('[data-snapshot-probe]').dataset.changes"), changes);
@@ -3063,7 +3079,8 @@ test("VEY-888 sending the last movable ship keeps Attack unavailable after index
 async function openDelegationDialog(width = 1280, mode = "main") {
   await loadInspectorFixture("/", width, { delegation: mode, waitForPlanetSelectors: mode === "self" ? "false" : "true" });
   if (mode === "self") await waitForExpression(`document.body.textContent.includes("0x9999") || window.inspectorProof.requests.some(r => r.includes("/wallet/0x9999999999999999999999999999999999999999/"))`);
-  await clickExpression(`[...document.querySelectorAll('[aria-label="Expand Commander profile"]')].find(el => el.getBoundingClientRect().width)`);
+  // The commander details live in the sidebar account popover (desktop) or menu card (mobile).
+  await clickExpression(`[...document.querySelectorAll('summary[aria-label="Commander account"], [aria-controls="mobile-commander-details"]')].find(el => el.getBoundingClientRect().width)`);
   await clickExpression(`[...document.querySelectorAll('[aria-label="Edit player profile"]')].find(el => el.getBoundingClientRect().width)`);
   await waitForExpression(`document.querySelector('[role="dialog"]')`);
   await evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);

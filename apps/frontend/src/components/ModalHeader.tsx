@@ -28,7 +28,7 @@ export function ModalHeader({
       </div>
       <button
         aria-label={closeLabel}
-        className="-mr-1.5 -mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8"
+        className="-mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8"
         disabled={closeDisabled}
         onClick={onClose}
         title="Close"

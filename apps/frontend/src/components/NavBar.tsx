@@ -81,7 +81,8 @@ export function commanderIdentityLabel(
   return playerDisplayLabel(playerProfile, account);
 }
 
-const sidebarIconClassName = "grid h-5 w-5 shrink-0 place-items-center";
+// Icons carry their own color so hover on the row never changes them; the current page uses cyan.
+const sidebarIconClassName = "grid h-5 w-5 shrink-0 place-items-center text-slate-400";
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
   { key: "overview", label: "Empire", mobileLabel: "Empire", icon: Radar },
@@ -338,7 +339,8 @@ export function NavBar({
         title="Edit profile"
         titleId="commander-name-editor-title"
       />
-      <form aria-label="Profile details" className="grid gap-3" onSubmit={handlePlayerSubmit}>
+      <form aria-labelledby="profile-details-title" className="grid gap-3" onSubmit={handlePlayerSubmit}>
+          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70" id="profile-details-title">Profile details</h3>
         <label className="grid gap-1 text-xs font-medium text-slate-200">
           Display name
           <input
@@ -476,7 +478,7 @@ export function NavBar({
             aria-expanded={!sidebarCollapsed}
             aria-controls="desktop-navigation-links"
             title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            className={`flex w-full shrink-0 items-center rounded py-1.5 text-xs text-slate-500 transition hover:bg-white/[0.04] hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 ${sidebarCollapsed ? "justify-center" : "gap-2.5 px-2.5"}`}
+            className={`flex min-h-11 w-full shrink-0 items-center rounded text-xs text-slate-400 transition hover:bg-white/[0.04] hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 ${sidebarCollapsed ? "justify-center" : "gap-2.5 px-2.5"}`}
             onClick={() => {
               const collapsed = !sidebarCollapsed;
               setSidebarCollapsed(collapsed);
@@ -505,7 +507,7 @@ export function NavBar({
             <summary
               aria-label="Commander account"
               title="Commander account"
-              className={`flex cursor-pointer list-none items-center rounded py-1.5 text-[13px] text-slate-300 transition hover:bg-white/[0.04] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden ${sidebarCollapsed ? "justify-center px-1.5" : "gap-2.5 px-2.5"}`}
+              className={`flex min-h-10 cursor-pointer list-none items-center rounded text-[13px] text-slate-300 transition hover:bg-white/[0.04] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden ${sidebarCollapsed ? "min-w-10 justify-center" : "gap-2.5 px-2.5"}`}
             >
               <span className={sidebarIconClassName}><UserRound aria-hidden="true" size={15} strokeWidth={1.9} /></span>
               {sidebarCollapsed ? null : (
@@ -515,7 +517,7 @@ export function NavBar({
                 </>
               )}
             </summary>
-            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-3" : "bottom-full left-0 mb-2"}`}>
+            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
               {accountSummary("")}
             </div>
           </details>
@@ -544,7 +546,7 @@ export function NavBar({
               aria-controls="mobile-navigation-menu"
               aria-expanded={mobileMenuOpen}
               aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-              className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded text-slate-200 transition hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+              className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded text-slate-200 transition hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
               role="button"
             >
               {mobileMenuOpen ? <X aria-hidden="true" size={18} strokeWidth={2} /> : <Menu aria-hidden="true" size={18} strokeWidth={2} />}
@@ -990,7 +992,7 @@ export function NavItem({
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
-      <span className={sidebarIconClassName}>
+      <span className={active ? sidebarIconClassName.replace("text-slate-400", "text-cyan-200") : sidebarIconClassName}>
         <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
       <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>{label}</span>
@@ -1098,8 +1100,9 @@ export function MobileTab({
       <Icon aria-hidden="true" className={`shrink-0 ${active ? "" : "text-cyan-300"}`} size={14} strokeWidth={1.9} />
       {shortLabel ? (
         <>
-          <span className="line-clamp-2 min-w-0 leading-[1.15] min-[375px]:hidden">{shortLabel}</span>
-          <span className="line-clamp-2 hidden min-w-0 leading-[1.15] min-[375px]:block">{label}</span>
+          {/* Narrow screens draw the short label via CSS so the link text and accessible name stay the full label. */}
+          <span aria-hidden="true" className="min-w-0 leading-[1.15] before:content-[attr(data-short-label)] min-[375px]:hidden" data-short-label={shortLabel} />
+          <span className="line-clamp-2 min-w-0 leading-[1.15] max-[374px]:sr-only">{label}</span>
         </>
       ) : <span className="line-clamp-2 min-w-0 leading-[1.15]">{label}</span>}
     </a>
