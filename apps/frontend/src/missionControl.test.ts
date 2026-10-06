@@ -1,4 +1,4 @@
-import { FleetsSummary } from "./components/OverviewPage";
+import { FleetSummaryRow, summarizeFleets } from "./components/OverviewPage";
 import { proofBattlePresentation } from "./components/missionControlModel";
 import { renderMissionBattleForecastPanel } from "./components/MissionBattleForecastPanel";
 import { describe, expect, test } from "bun:test";
@@ -33,7 +33,7 @@ describe("proof battle status surfaces", () => {
       };
       const props = missionControlProps(now, { outgoing: [value] });
       const list = collectText(MissionControlPage(props)).join(" ");
-      const overview = collectText(FleetsSummary({ fleetVisibility: props.fleetVisibility!, now, onOpenMissionControl() {} })).join(" ");
+      const overview = collectText(summarizeFleets(props.fleetVisibility!, now).lines.map(line => FleetSummaryRow({ line }))).join(" ");
       const detail = collectText(MissionDetailPage(missionDetailProps(now, { mission: value, battleReport: null }))).join(" ");
       for (const text of [list, overview, detail]) {
         expect(text).toContain(label);

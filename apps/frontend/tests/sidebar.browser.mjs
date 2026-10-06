@@ -178,23 +178,23 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(research)+').getAttribute("aria-current")'),'page');
     assert.equal(await evaluate('document.querySelectorAll('+JSON.stringify(desktop+' a[aria-label]')+').length'),13);
     // Hover shows the same tooltip outside the scroll container.
-    const point=await evaluate('(() => {const r=document.querySelector('+JSON.stringify(desktop+' a[aria-label="Overview"]')+').getBoundingClientRect();return {x:r.x+10,y:r.y+10};})()');
+    const point=await evaluate('(() => {const r=document.querySelector('+JSON.stringify(desktop+' a[aria-label="Empire"]')+').getBoundingClientRect();return {x:r.x+10,y:r.y+10};})()');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
-    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Overview');
+    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     const tooltipPoint=await evaluate('(() => {const r=document.querySelector("[role=tooltip]").getBoundingClientRect();return {x:r.x+8,y:r.y+8};})()');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...tooltipPoint});
     await new Promise(resolve=>setTimeout(resolve,200));
-    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Overview');
+    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await press('Escape');
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'hover tooltip remains dismissible');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
-    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Overview');
+    assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:500,y:20});
     await new Promise(resolve=>setTimeout(resolve,200));
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'leaving the hover target dismisses its label');
     // Real Tab navigation must retain labels when focus auto-scrolls the rail.
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
-    const overview=desktop+' a[aria-label="Overview"]';
+    const overview=desktop+' a[aria-label="Empire"]';
     const earn=desktop+' a[aria-label="Earn $10"]';
     const settle = async () => { await frame(); await frame(); await new Promise(resolve=>setTimeout(resolve,60)); };
     async function assertFocusedTooltip(label) {
@@ -206,7 +206,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       return geometry.scroll;
     }
     await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
-    await assertFocusedTooltip('Overview');
+    await assertFocusedTooltip('Empire');
     let scroll=0;
     for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Earn $10']) {
       await press('Tab');
@@ -226,10 +226,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await evaluate('document.querySelector("#desktop-navigation-links").scrollTop-=1'); await settle();
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'scroll must not undo Escape dismissal');
     await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
-    await assertFocusedTooltip('Overview');
+    await assertFocusedTooltip('Empire');
     // A desktop resize repositions the label; mobile must never retain its portal.
     await send('Emulation.setDeviceMetricsOverride',{width:1024,height:600,deviceScaleFactor:1,mobile:false});
-    await assertFocusedTooltip('Overview');
+    await assertFocusedTooltip('Empire');
     await send('Emulation.setDeviceMetricsOverride',{width:390,height:800,deviceScaleFactor:1,mobile:true}); await settle();
     assert.equal(await evaluate('getComputedStyle(document.querySelector('+JSON.stringify(desktop)+')).display'),'none');
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
@@ -266,7 +266,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       assert.equal(await evaluate('document.querySelector("#mobile-navigation-menu").getBoundingClientRect().width>0'),true);
       assert.equal(await evaluate('document.querySelectorAll("#mobile-navigation-menu nav a").length'),13);
       const mobilePage=width === 390 ? "overview" : "galaxy";
-      const mobileLink = await evaluate('[...document.querySelectorAll("#mobile-navigation-menu nav a")].find(a=>a.textContent==='+JSON.stringify(mobilePage === "galaxy" ? "Galaxy" : "Overview")+').getAttribute("href")');
+      const mobileLink = await evaluate('[...document.querySelectorAll("#mobile-navigation-menu nav a")].find(a=>a.textContent==='+JSON.stringify(mobilePage === "galaxy" ? "Galaxy" : "Empire")+').getAttribute("href")');
       await click('nav[aria-label="Mobile app sections"] a[href="'+mobileLink+'"]');
       assert.equal(await evaluate('document.querySelector("main h1").textContent'), mobilePage);
       await frame();

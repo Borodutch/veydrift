@@ -136,34 +136,25 @@ describe("watched planets UI", () => {
 });
 
 describe("overview planet sections", () => {
-  test("orders production blocks before My planets and Watched planets", () => {
-    const queueIndex = overviewSource.indexOf("{/* Contract production queues */}");
-    const myPlanetsIndex = overviewSource.indexOf("<MyPlanetsPanel");
+  test("orders the Empire panel before Watched planets", () => {
+    const empireIndex = overviewSource.indexOf("<EmpireOverview");
     const watchedPlanetsIndex = overviewSource.indexOf("<WatchedPlanetsPanel");
 
-    expect(queueIndex).toBeGreaterThan(-1);
-    expect(myPlanetsIndex).toBeGreaterThan(queueIndex);
-    expect(watchedPlanetsIndex).toBeGreaterThan(myPlanetsIndex);
+    expect(empireIndex).toBeGreaterThan(-1);
+    expect(watchedPlanetsIndex).toBeGreaterThan(empireIndex);
   });
 
-
   test("keeps four-action planet headers inline at normal mobile widths and wraps only when genuinely narrow", () => {
-    expect(overviewSource).toContain("mobileActionsInline");
     expect(watchableRowSource).toContain("grid-cols-[minmax(0,1fr)_auto] max-[359px]:grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_auto]");
     expect(watchableRowSource).toContain(
       "col-start-2 row-start-1 self-center justify-end max-[359px]:col-span-full max-[359px]:col-start-1 max-[359px]:row-start-auto sm:col-span-1 sm:col-start-2 sm:row-start-1",
     );
-    expect(overviewSource.match(/h-11 w-11/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
-    expect(overviewSource).toContain("flex flex-wrap justify-end gap-1.5");
   });
 
   test("keeps a one-action planet and its moon actions in compact inline rows", () => {
     expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
     expect(watchableRowSource).toContain("col-span-full min-w-0");
-    expect(overviewSource).toContain("moonActionSlot={moonActions?.length || onSelectMoon");
-    expect(overviewSource).toContain('aria-label="Open moon details"');
     expect(watchableRowSource).not.toContain('detail={currentMoon ? "Selected"');
-    expect(overviewSource).toContain("<OverviewMoonActionButtons");
   });
 
   test("protects long planet names and HOME badges from inline action overlap", () => {

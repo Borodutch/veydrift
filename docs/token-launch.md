@@ -89,12 +89,13 @@ max-wallet, pause, or owner surface. The complete allocation is:
 | Total | 1,000,000,000 | 100% |
 
 The only protocol-seeded market topology is one canonical VEYDRIFT/WETH v4 pool plus hookless,
-full-range vMETAL/VEYDRIFT, vCRYSTAL/VEYDRIFT, and vDEUT/VEYDRIFT v4 pools. The resource inputs remain
-`333_333_000`, `222_222_000`, and `133_333_000` raw 6-decimal units. No Aerodrome pool, duplicate
+full-range vMETAL/VEYDRIFT, vCRYSTAL/VEYDRIFT, and vDEUT/VEYDRIFT v4 pools. The resource inputs are
+`86_666_667_000`, `57_777_778_000`, and `34_666_667_000` raw 6-decimal units: 50M VEYDRIFT each at the
+$0.0026 CCA floor against $1.50 / $2.25 / $3.75 reference prices. No Aerodrome pool, duplicate
 venue, resource/WETH pair, resource/stable pair, or new hook is in the approved bundle.
 
 The approved whitepaper artifact is `apps/frontend/public/whitepaper.pdf`, SHA-256
-`b220d34a8bf6edc769b77793345d0a802ef3633e041ded0443be03fe7bf81180`.
+`b075a57bc106cdad276e65ab5a76f8fb5e9b5cd256ef93746498e50806b06253`.
 
 ## Pinned official Base deployments
 

@@ -4,8 +4,6 @@ import { useEffect } from "preact/hooks";
 import { BackendDataStore } from "../src/backendDataStore";
 import { ProductionCatalog, type ProductionCatalogItem } from "../src/components/ProductionCatalog";
 import { DefensePage } from "../src/components/DefensePage";
-import { OverviewPage } from "../src/components/OverviewPage";
-import { createInitialPlayableState } from "../src/playableMvp";
 import type { ChainDefenseState, QueueStateResponse } from "../src/walletFlow";
 import { MoonPage } from "../src/components/MoonPage";
 import { defenseCatalog, shipyardCatalog } from "../src/playableMvp";
@@ -302,7 +300,7 @@ test.each(["reject", "revert"] as const)("mounted %s releases controls and prese
 });
 
 
-test("mounted Defenses and Overview consume completed units as current without settlement duty", () => {
+test("mounted Defenses consume completed units as current without settlement duty", () => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: document });
   const now = 1700001000000;
   const noop = () => {};
@@ -319,16 +317,11 @@ test("mounted Defenses and Overview consume completed units as current without s
     defenses: [{ id: 0, count: 101, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
     launchableDefenses: [{ id: 0, count: 101 }], queue: null, unsettledQueue: queue,
   };
-  const initial = createInitialPlayableState(now);
-  const mount = (page: "defenses" | "overview", state: ChainDefenseState) => {
-    if (page === "defenses") render(<DefensePage defenseState={state} actionState={{ status: "idle" }}
+  const mount = (page: "defenses", state: ChainDefenseState) => {
+    render(<DefensePage defenseState={state} actionState={{ status: "idle" }}
       canTransact={false} loading={false} error={undefined} onBuild={noop} onRefresh={noop} now={now} />, root as unknown as Element);
-    else render(<OverviewPage state={initial} settledState={initial} rates={initial.resources} caps={initial.resources}
-      queueProgress={0} researchProgress={0} shipProgress={0} now={now} isWalletConnected onChainStatus="ready" onNavigate={noop}
-      onChainQueues={{ wallet: base.wallet, homePlanetId: "189", building: null, ship: null, research: null,
-        defense: state.queue, unsettledDefense: state.unsettledQueue }} />, root as unknown as Element);
   };
-  for (const page of ["defenses", "overview"] as const) {
+  for (const page of ["defenses"] as const) {
     // Before the remaining units mature, keep the existing building presentation.
     const building = { ...queue, asOfNow: { complete: false, secondsRemaining: 230, completedQuantity: 77, remainingQuantity: 23 } };
     mount(page, { ...base, defenses: [{ ...base.defenses[0]!, count: 78 }], queue: building, unsettledQueue: building });
@@ -342,7 +335,6 @@ test("mounted Defenses and Overview consume completed units as current without s
     mount(page, base);
     expect(root.query("Defense settlement")).toBeUndefined();
     expect(root.textContent).not.toContain("Already paid for and finished building");
-    if (page === "overview") expect(root.textContent).toContain("No active defense production.");
     if (page === "defenses") {
       expect(root.textContent).toContain("Deployed: 101");
       expect(root.textContent).not.toContain("Awaiting settlement:");

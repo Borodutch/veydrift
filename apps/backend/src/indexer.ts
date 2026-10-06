@@ -2614,20 +2614,11 @@ export class SettlementIndexer {
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
     const planets = this.settledPlanetsForOwner(wallet).map((planet) => {
-      const moonState = this.moonState(planet.owner, planet.planetId);
-      const moonSummary = moonState.moon
-        ? {
-            bodyKind: "moon" as const,
-            exists: true,
-            parentPlanetId: planet.planetId,
-            planetId: planet.planetId,
-            coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-            resources: moonState.resources,
-            ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
-            ships: moonState.ships,
-            defenses: moonState.defenses
-          }
-        : null;
+      const moonSummary = managedMoonSummary(
+        planet.planetId,
+        `${planet.galaxy}:${planet.system}:${planet.position}`,
+        this.moonState(planet.owner, planet.planetId)
+      );
       return indexedManagedPlanet(
         { ...planet, fields: this.planetFieldsAsOfNow(planet.planetId) },
         settlement.homePlanetId,
@@ -15986,6 +15977,7 @@ export function indexedManagedPlanet(
     isHomePlanet: planet.planetId === homePlanetId,
     fieldsUsed: usedFieldsFromBuildingRows(buildings),
     fieldsCapacity: planet.fields,
+    buildingLevels: buildings.flatMap((building) => building.level > 0 ? [{ id: building.id, level: building.level }] : []),
     keyLevels: {
       metalMine: level(0),
       crystalMine: level(1),
@@ -15998,6 +15990,23 @@ export function indexedManagedPlanet(
     },
     queues,
     moon
+  };
+}
+
+export function managedMoonSummary(planetId: string, coordinates: string, moonState: MoonState): ManagedPlanet["moon"] {
+  if (!moonState.moon) return null;
+  return {
+    bodyKind: "moon",
+    exists: true,
+    parentPlanetId: planetId,
+    planetId,
+    coordinates,
+    resources: moonState.resources,
+    ...(moonState.resourcesAsOfNow !== undefined ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+    ships: moonState.ships,
+    defenses: moonState.defenses,
+    buildings: moonState.buildings.map(({ id, key, label, level }) => ({ id, key, label, level })),
+    queues: { building: moonState.queue, ship: moonState.shipQueue ?? null, defense: moonState.defenseQueue }
   };
 }
 

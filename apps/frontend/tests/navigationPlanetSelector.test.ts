@@ -28,7 +28,6 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("keeps internal art metadata out of player copy without changing climate or art selection", () => {
     expect(overviewSource).not.toContain("Art: ${formatPlanetType(homePlanet.type)}");
-    expect(overviewSource).toContain("overviewHeroImage(homePlanet,");
     expect(planetDetailSource).not.toContain('label="Art family"');
     expect(planetDetailSource).not.toContain('label: "Art family"');
     expect(planetDetailSource).toContain('label: "Climate"');
@@ -392,9 +391,6 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps the planet rename action as a compact pencil icon", () => {
-    expect(overviewSource).toContain('className="relative inline-grid h-10 w-10 translate-y-px place-items-center self-center');
-    expect(overviewSource).toContain('className="m-0 min-w-0 break-words text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl"');
-    expect(overviewSource).toContain("after:-inset-1.5");
     expect(overviewSource).toContain('<Pencil aria-hidden="true" size={11} strokeWidth={2} />');
     expect(overviewSource).toContain('title="Rename planet"');
     expect(overviewSource).not.toContain("Rename planet\n                  </button>");

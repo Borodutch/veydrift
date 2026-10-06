@@ -1,0 +1,633 @@
+% Source for apps/frontend/public/whitepaper.pdf. Build: tectonic -X compile docs/whitepaper.tex,
+% then copy the PDF over apps/frontend/public/whitepaper.pdf and update its SHA-256 pins.
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.9in]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+
+\hypersetup{
+  hidelinks,
+  pdftitle={Veydrift: A Persistent Onchain Space Economy},
+  pdfauthor={Veydrift},
+  pdfsubject={Veydrift white paper},
+  pdfkeywords={Veydrift, tokenomics, Base, game economy, Rift, continuous clearing auction, Uniswap v4}
+}
+
+\setlist{leftmargin=*,topsep=0.3em,itemsep=0.15em,parsep=0pt,partopsep=0pt}
+\renewcommand{\arraystretch}{1.17}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.62em}
+\setlength{\emergencystretch}{1em}
+\setlength{\tabcolsep}{5pt}
+\pagestyle{plain}
+
+\newcommand{\token}[1]{\texttt{\$#1}}
+\newcommand{\bps}{\text{bps}}
+\newcommand{\address}[1]{{\scriptsize\texttt{#1}}}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Veydrift: A Persistent Onchain Space Economy\par}
+  \vspace{1.1em}
+  {\large Veydrift\par}
+  \texttt{veydrift.com}\par
+  \vspace{0.5em}
+  {\small Version 1.2 --- October 2026\par}
+\end{center}
+
+\vspace{1em}
+\begin{abstract}
+Veydrift is a persistent onchain strategy game in which players settle planets, construct infrastructure, research technologies, manufacture fleets, form alliances, trade, and raid. Three productive resources---metal, crystal, and deuterium---exist both as in-game units and as fully reserve-backed tokens on Base. The Rift connects these domains: market resources enter the game immediately, while resources leaving the game remain locked on a planet for four weeks, visible and vulnerable to raids. A fixed-supply \token{VEYDRIFT} token routes liquidity between WETH and the three resources. Initial \token{VEYDRIFT} price discovery uses an onchain continuous clearing auction before liquidity migrates into a Uniswap v4 pool. This paper defines the game formulas, reserve model, token supplies, liquidity structure, Rift mechanics, and economic controls that allow production, conflict, trade, and long-term resource sinks to reinforce one another.
+\end{abstract}
+
+\section{Introduction}
+
+Veydrift is a persistent onchain strategy game in which players settle planets, build infrastructure, research technologies, manufacture fleets, form alliances, trade, raid, and compete for scarce economic advantage. Its economy is built around three productive resources---metal, crystal, and deuterium---whose generation is deterministic, whose use is extensive, and whose external representation is fully reserve-backed.
+
+The central economic design is deliberately simple:
+
+\begin{itemize}
+  \item \textbf{Resources are useful before they are tradable.} Mines create resources; buildings, research, ships, defenses, energy systems, logistics, and recovery consume them.
+  \item \textbf{The Rift connects the game to markets.} External resource tokens can enter the game instantly. Leaving the game requires a four-week, planet-bound lock that is visible, unusable, immovable, and raidable.
+  \item \textbf{\token{VEYDRIFT} is the routing and coordination asset.} It is a fixed-supply Base mainnet token paired with WETH. Resource tokens pair only with \token{VEYDRIFT}, concentrating liquidity and making the game's economy legible.
+  \item \textbf{Launch price discovery is continuous and onchain.} A continuous clearing auction distributes a predeclared tranche over time, reducing first-block timing advantage before proceeds and reserved tokens migrate into the canonical Uniswap v4 pool.
+  \item \textbf{The system remains solvent by construction.} Every internal resource liability is backed by the corresponding ERC-20 reserve held by the game contract.
+  \item \textbf{Extraction is a strategic event, not a passive yield claim.} A player advertising an exit creates a four-week target, an incentive to defend, and an opportunity for rivals. Security, intelligence, transport, and conflict become economic services.
+\end{itemize}
+
+Each resource token has 6 decimals and a fixed genesis supply of 10 billion whole tokens. Almost all supply begins in the game reserve. One whole token represents one million in-game resource units, so the reserve is backing capacity rather than circulating float.
+
+\token{VEYDRIFT} has a fixed maximum supply of 1 billion tokens on Base mainnet. Most of the supply not reserved for development, contributors, Pact participants, and strategic uses enters circulation through an auction and protocol-owned liquidity. The launch bootstrap assigns 250 million \token{VEYDRIFT} to a continuous clearing auction and reserves 250 million for the post-auction \token{VEYDRIFT}/WETH pool. Before the auction, a 5\% Pact round sells 50 million \token{VEYDRIFT} at \$0.002 per token. The auction floor is \$0.0026 per \token{VEYDRIFT}, 30\% above the Pact price; it is a minimum accepted price, not the expected clearing price or a peg. The three resource pools are balanced at the floor against reference prices of \$1.50, \$2.25, and \$3.75 per \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}, encoding the initial $1:1.5:2.5$ scarcity ratio:
+
+\begin{align*}
+1\ \token{vMETAL} &\approx 577\ \token{VEYDRIFT}, &
+1\ \token{vCRYSTAL} &\approx 865\ \token{VEYDRIFT},\\
+1\ \token{vDEUT} &\approx 1{,}442\ \token{VEYDRIFT}. &&
+\end{align*}
+
+Every dollar-denominated amount in this paper is an illustrative estimate derived from the auction floor, discovered clearing price, assumed asset prices, or pool contributions identified alongside it. These figures are neither pegs nor promises of market value, proceeds, yield, or liquidity. Actual WETH, \token{VEYDRIFT}, \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT} prices remain market-discovered and may differ materially.
+
+\section{The game economy}
+
+\subsection{A civilization loop, not a faucet}
+
+Every Veydrift account begins with a constrained productive base. A planet creates resources, but meaningful output requires investment in mines and energy. Those resources then fund technologies, ships, defenses, additional planets, logistics, and the infrastructure necessary to support further production. The loop is recursive:
+
+\begin{center}
+\textbf{produce $\rightarrow$ allocate $\rightarrow$ build $\rightarrow$ project power $\rightarrow$ acquire or lose resources $\rightarrow$ reinvest.}
+\end{center}
+
+The word ``resource'' is therefore literal. Metal, crystal, and deuterium are intermediate goods with different productive roles, not interchangeable points. A healthy economy is one in which their marginal utility persists across player maturity.
+
+\subsection{Three resources}
+
+\begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}X X@{}}
+\toprule
+\textbf{Resource} & \textbf{Economic role} & \textbf{Designed scarcity} \\
+\midrule
+Metal & Bulk construction, hulls, mines, storage, defensive mass, and industrial expansion. & Highest base production; largest absolute sinks. \\
+Crystal & Advanced structures, electronics, research, and higher-technology systems. & Two-thirds of metal's base hourly output; higher reference price. \\
+Deuterium & Energy-intensive systems, propulsion, fleet movement, and strategic logistics. & Lowest base production, planet-temperature sensitivity, and ongoing fuel demand. \\
+\bottomrule
+\end{tabularx}
+
+The launch price ratio in Section~\ref{sec:liquidity} follows the underlying full-power production ratio rather than an arbitrary marketing number. At a neutral planet temperature, base production approaches $30:20:12.8$, suggesting an inverse scarcity ratio near $1:1.5:2.34$. The chosen relative ratio of $1:1.5:2.5$ adds a modest premium for deuterium's logistical utility. Because one external resource token represents one million in-game units, the launch reference prices are \$1.50, \$2.25, and \$3.75 per resource token, converted into \token{VEYDRIFT} at the auction floor.
+
+\subsection{Starting state}
+
+A standard first planet begins with 500 metal, 500 crystal, and 0 deuterium. A valid referral doubles the starting metal and crystal to 1,000 each. These amounts enter the internal ledger only when the external reserves can back them.
+
+This small genesis grant establishes a critical principle: early progress comes from play and productive decisions, while market imports remain optional acceleration rather than a mandatory admission fee.
+
+\section{Production, energy, costs, and time}
+
+\subsection{Mine production}
+
+Let $L_M$, $L_C$, and $L_D$ be the levels of the metal, crystal, and deuterium mines. Let $\mu_P$ be a planet production multiplier, $\mu_T$ the deuterium temperature multiplier, $\mu_R$ the crawler multiplier, and $\mu_E$ the energy availability multiplier. Current full-power hourly production before reserve constraints is:
+
+\begin{align}
+M_h &= \left\lfloor 30 L_M (1.1)^{L_M} \mu_P \mu_R \mu_E \right\rfloor,\\
+C_h &= \left\lfloor 20 L_C (1.1)^{L_C} \mu_P \mu_R \mu_E \right\rfloor,\\
+D_h &= \left\lfloor 10 L_D (1.1)^{L_D} \mu_T \mu_R \mu_E \right\rfloor - D_{\mathrm{fusion}}.
+\end{align}
+
+For metal and crystal, the standard planet multiplier is $\mu_P=1$. For deuterium, the basis-point rule is
+
+\[
+\mu_T = \frac{\max(0,12800-20T)}{10000},
+\]
+
+where $T$ is planet temperature. At $T=0$, $\mu_T=1.28$.
+
+\subsection{Crawlers and energy}
+
+Each effective crawler adds 0.02\% production. The effective crawler count is capped by both infrastructure and a hard aggregate bonus:
+
+\begin{align}
+N_{\mathrm{effective}} &= \min\left(N_{\mathrm{crawler}},\,8(L_M+L_C+L_D)\right),\\
+\mu_R &= \min\left(1+0.0002N_{\mathrm{effective}},\,1.5\right).
+\end{align}
+
+The aggregate 50\% ceiling is a safety bound rather than a reachable assumption at current mine limits. With three equal level-$L$ mines, the mine-level cap permits a crawler bonus of $0.48L$ percent: 14.4\% at level 30 and 24\% at level 50. Economic projections use these attainable caps rather than the aggregate ceiling.
+
+Energy is a real constraint, not flavor text. If demand exceeds production, all mines scale proportionally:
+
+\[
+\mu_E=\min\left(1,\frac{E_{\mathrm{produced}}}{E_{\mathrm{required}}}\right),
+\qquad
+E_{\mathrm{required}}=10L_M+10L_C+20L_D
+\]
+
+after applying the building-specific scaling rules. Fusion generation also consumes deuterium, creating a recurring sink at higher industrial intensity.
+
+\subsection{Exponential costs}
+
+For a building with base resource vector $\mathbf{b}$, growth factor $g$, and current level $L$, the next upgrade cost is
+
+\[
+\mathbf{C}_{\mathrm{building}}(L)=\left\lfloor \mathbf{b}\,g^L\right\rfloor.
+\]
+
+Growth factors include 1.5 for the metal mine, 1.6 for the crystal mine, 1.5 for the deuterium mine and solar plant, 1.8 for the fusion reactor, and 2.0 for many advanced structures. Exponential costs are the main long-run sink: production grows at roughly $1.1^L$ while key upgrade costs grow at $1.5^L$ or faster. Mature production therefore does not imply unconstrained net extraction.
+
+\subsection{Time as a scarce input}
+
+Resource costs are only one dimension. Base duration formulas are:
+
+\begin{align}
+t_{\mathrm{building}} &\approx \frac{(M+C)3600}{2500(R+1)2^N s},\\
+t_{\mathrm{research}} &\approx \frac{(M+C)3600}{1000(L_{\mathrm{lab}}+1)s},\\
+t_{\mathrm{units}} &\approx \left\lceil\frac{(M+C)q3600}{2500(S+1)2^N s}\right\rceil,
+\end{align}
+
+where $R$ is robotics level, $N$ nanite level, $S$ shipyard level, $q$ quantity, and $s$ the configured speed. Time prevents a liquid market from collapsing all progression into a single instant purchase.
+
+\section{Raids, battle resolution, and debris}
+
+\subsection{Raids transfer player-held resources}
+
+A raid is an attack mission against another player's planet. The attacker commits ships, cargo capacity, travel time, and deuterium fuel. The defender contributes stationed ships, planetary defenses, and any allied fleets whose defense or intercept mission is present when the attack arrives. Both sides can lose constructed assets. Only an attacker victory permits plunder; a defender victory or draw returns the surviving attackers without loot.
+
+Ordinary planetary resources are subject to a 50\% plunder ceiling. For resource $r$ with planet balance $S_{p,r}$, the ordinary-planet loot ceiling is
+
+\[
+P_{p,r}=\left\lfloor 0.5S_{p,r}\right\rfloor.
+\]
+
+Actual loot is further bounded by the surviving attacking fleet's unused cargo capacity. Players may choose a desired metal/crystal/deuterium cargo ratio; unused capacity rolls to the other resources when a requested share is unavailable. Loot is credited to the attacking fleet and becomes spendable by the attacker after the surviving fleet returns.
+
+\subsection{Combat statistics and rounds}
+
+Each ship and defense type has base weapon, shield, and hull values $A_0$, $S_0$, and $H_0$. If its owner has Weapons, Shielding, and Armor technology levels $w$, $s$, and $a$, the effective values are
+
+\begin{align}
+A &= A_0(1+0.1w),\\
+S &= S_0(1+0.1s),\\
+H &= H_0(1+0.1a).
+\end{align}
+
+A battle lasts at most six rounds. Every round begins from a snapshot of the surviving units on both sides, so attacker and defender fire for that round is simultaneous. Shots are distributed across individual surviving units in proportion to unit counts, with deterministic onchain randomness resolving remainders and destruction trials. Catalog rapid-fire relationships can generate additional shots.
+
+For $q$ same-strength shots assigned to a target, let $X=qA$ be incoming damage. A shot whose attack is no more than 1\% of the target shield cannot penetrate it. Otherwise shields absorb damage first and the hull damage is
+
+\[
+d=\max(0,X-S).
+\]
+
+If $d\ge H$, the target is destroyed. If $0.3H<d<H$, its destruction probability is $d/H$; damage of 30\% of hull or less does not create an explosion chance. The random stream is committed onchain, making a resolved battle reproducible from public inputs and the finalized random value.
+
+Let $N_A$ and $N_D$ be the surviving attacker and defender unit counts after combat. The outcome is
+
+\[
+\operatorname{outcome}=
+\begin{cases}
+\text{attacker victory}, & N_A>0\ \text{and}\ N_D=0,\\
+\text{defender victory}, & N_A=0\ \text{and}\ N_D>0,\\
+\text{draw}, & \text{otherwise}.
+\end{cases}
+\]
+
+The final case includes mutual destruction and battles in which both sides still have units after six rounds. After combat, 70\% of destroyed planetary defenses are repaired. Destroyed ships are permanent losses.
+
+\subsection{Debris fields}
+
+Destroyed ships from both sides create a debris field at the attacked planet. Let $L^A_M,L^A_C$ and $L^D_M,L^D_C$ be the metal and crystal construction value of attacker and defender ship losses. The added debris is
+
+\begin{align}
+D_M &= \left\lfloor0.30(L^A_M+L^D_M)\right\rfloor,\\
+D_C &= \left\lfloor0.30(L^A_C+L^D_C)\right\rfloor,\\
+D_D &= 0.
+\end{align}
+
+Defense losses create no debris. Debris persists at the coordinate, accumulates across battles, and can be collected by a harvest fleet up to its remaining cargo capacity. When both resources are present, harvesting takes from both sides of the field before using remaining capacity on the larger balance. Every 100,000 combined metal and crystal debris creates a 1\% moon-formation chance, capped at 20\% for a single battle.
+
+\section{Resource-token architecture}
+
+\subsection{Supply and denomination}
+
+\begin{tabularx}{\textwidth}{@{}l l r r@{}}
+\toprule
+\textbf{Asset} & \textbf{Symbol} & \textbf{Decimals} & \textbf{Fixed supply} \\
+\midrule
+Veydrift Metal & \token{vMETAL} & 6 & 10,000,000,000 \\
+Veydrift Crystal & \token{vCRYSTAL} & 6 & 10,000,000,000 \\
+Veydrift Deuterium & \token{vDEUT} & 6 & 10,000,000,000 \\
+\bottomrule
+\end{tabularx}
+
+The deployed token symbols are \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}. One whole external resource token equals 1,000,000 in-game resource units. The token quantity and the user-interface resource quantity must never be conflated:
+
+\begin{align*}
+1\ \token{vMETAL} &= 10^6\ \text{metal units}, &
+1\ \token{vCRYSTAL} &= 10^6\ \text{crystal units},\\
+1\ \token{vDEUT} &= 10^6\ \text{deuterium units}. &&
+\end{align*}
+
+\subsection{Reserve invariant}
+
+For resource $r$, define $B_r$ as the resource-token balance held by the game contract and $I_r$ as total internal resource liabilities. Solvency requires
+
+\[
+B_r \ge I_r.
+\]
+
+The protocol blocks new internal issuance when the corresponding external reserve is insufficient. Market deposits increase both $B_r$ and $I_r$ by the same amount; finalized withdrawals decrease both by the same amount. This is a transparent, auditable reserve system rather than an algorithmic peg.
+
+\subsection{Contract control and supply policy}
+
+Each resource token has a hard supply cap of 10 billion. Resource-market liquidity is released from provable excess reserve rather than created through additional minting. Supply policy follows three rules:
+
+\begin{enumerate}
+  \item The initial AMM float is released from the existing 10-billion-token reserve only when the remaining reserve fully covers internal liabilities.
+  \item No additional resource tokens are minted for launch liquidity.
+  \item Reserve, internal liability, locked exit, and circulating float are reported separately for each resource.
+\end{enumerate}
+
+\section{The \token{VEYDRIFT} token}
+
+\subsection{Purpose}
+
+\token{VEYDRIFT} coordinates the economy without replacing the game. Its base functions are deliberately narrow:
+
+\begin{itemize}
+  \item the sole routing asset for resource liquidity;
+  \item the WETH-facing liquidity and price-discovery asset;
+  \item the common quote and settlement asset between the three resource markets.
+\end{itemize}
+
+The same token can later support optional uses such as market fees, alliance services, cosmetics, tournaments, ecosystem grants, buybacks, or burns. None of those extensions is required by the base economic model. \token{VEYDRIFT} does not sell hidden combat advantages or bypass build times; resources remain the explicit market for economic acceleration.
+
+\subsection{Genesis parameters}
+
+\begin{tabularx}{\textwidth}{@{}p{0.28\textwidth}X@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value or assumption} \\
+\midrule
+Name / symbol & Veydrift / \token{VEYDRIFT} \\
+Network & Base mainnet \\
+Decimals & 18 \\
+Maximum supply & 1,000,000,000 \token{VEYDRIFT} \\
+Inflation & None after genesis \\
+Pact price & \$0.002 per \token{VEYDRIFT} (\$2,000,000 FDV) \\
+CCA floor price & \$0.0026 per \token{VEYDRIFT}, 30\% above the Pact price (minimum, not a target) \\
+Floor FDV & \$2,600,000 at the floor price \\
+CCA minimum raise & About \$150,000 of WETH; below it the auction does not graduate and bids are refunded \\
+\bottomrule
+\end{tabularx}
+
+The full supply is created at genesis, and the economic model assumes no further issuance. The CCA floor is used to model minimum launch values; it is not a peg, target, or promise that the token will trade at that value. The floor is fixed in WETH at a reference ETH price shortly before the auction, so its dollar value moves with ETH.
+
+\subsection{Allocation}
+
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.25\textwidth} r r X@{}}
+\toprule
+\textbf{Allocation} & \textbf{Share} & \textbf{Tokens} & \textbf{Release structure} \\
+\midrule
+CCA public distribution & 25\% & 250,000,000 & Distributed through the Base CCA over a 48-hour window. \\
+Uniswap v4 main liquidity & 25\% & 250,000,000 & Reserved for automatic migration into the canonical \token{VEYDRIFT}/WETH pool. \\
+Initial resource liquidity & 15\% & 150,000,000 & Circulating at launch; 50,000,000 tokens pair with each resource. \\
+Development reserve & 15\% & 150,000,000 & Five-year linear release for development, infrastructure, security, and operations. \\
+Core contributors & 5\% & 50,000,000 & Four-year vesting with a one-year cliff. Unsold Pact tokens remain here. \\
+Pact & 5\% & 50,000,000 & Sold before the auction at \$0.002 per token. 12.5\% releases six months after the auction ends; the rest releases linearly over the following 3.5 years. \\
+Ecosystem / strategic & 10\% & 100,000,000 & Six-year release for integrations, partnerships, and market expansion. Unsold auction tokens are added here. \\
+\midrule
+\textbf{Total} & \textbf{100\%} & \textbf{1,000,000,000} & \\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+\paragraph{Initial circulation.} The auction, post-auction main pool, and three resource pools together place 650,000,000 \token{VEYDRIFT}, or 65\% of maximum supply, into launch circulation. At the \$0.0026 floor, the corresponding floor-value arithmetic is \$1,690,000; the auction may discover a higher price. This is scenario arithmetic, not a promised valuation. The remaining 350,000,000 tokens are reserved for development, contributors, Pact participants, and ecosystem or strategic uses and do not count as circulating until their releases become transferable.
+
+\paragraph{Release discipline.} Auction and launch-liquidity allocations are fixed before bidding and are not supported by later inflation. Development, contributor, Pact, and strategic allocations follow their release schedules without accelerating because of short-term market conditions. Unsold auction tokens join the ecosystem allocation's six-year release, and migration residuals remain restricted to the published launch-liquidity mandate; neither becomes discretionary contributor inventory.
+
+\section{Liquidity bootstrap and price discovery}\label{sec:liquidity}
+
+\subsection{Pool topology}
+
+The liquidity graph is intentionally sparse:
+
+\begin{center}
+WETH $\longleftrightarrow$ \token{VEYDRIFT} $\longleftrightarrow$
+\{\token{vMETAL},\token{vCRYSTAL},\token{vDEUT}\}.
+\end{center}
+
+There are no protocol-seeded resource/WETH or resource/stablecoin pools. This concentrates price discovery, increases the utility of \token{VEYDRIFT}, and avoids fragmenting thin resource liquidity. The trade-off is that resource pricing inherits \token{VEYDRIFT} volatility and most resource-to-WETH trades use two hops. A production router must quote both hops, enforce user-defined slippage, and use time-weighted prices only for protocol accounting.
+
+\subsection{Continuous clearing auction}
+
+The launch begins with Uniswap's Continuous Clearing Auction (CCA) on Base rather than an immediately tradable fixed-price AMM. The auction tranche is 250,000,000 \token{VEYDRIFT}, the quote currency is WETH, and the duration is 48 hours expressed as immutable start and end block numbers. The floor is set 30\% above the Pact price and the minimum raise is about \$150,000 of WETH; if the auction raises less, it does not graduate and bidders are refunded. Exact blocks, the WETH-denominated floor, minimum raise, migration block, claim block, fee settings, recipients, and contract addresses are published before bidding begins.
+
+Each bid declares a WETH budget and maximum accepted \token{VEYDRIFT} price. The protocol spreads the bid across the auction's remaining blocks. Within each block, successful bidders pay one clearing price; higher maximum-price bids fill first and marginal bids fill pro rata. Supply is released gradually, so demand cannot be concentrated into a single first or final transaction. Early participation receives exposure to more clearing blocks, but transaction ordering alone does not grant the entire launch allocation.
+
+The CCA reduces first-block and last-minute timing games; it does not eliminate automation, Sybil participation, market risk, or price volatility. There is no owner-controlled ERC-20 transfer tax, blacklist, maximum-wallet rule, or hidden trading switch. Auction parameters are immutable after creation. The production launch uses the current audited CCA deployment supported by the Uniswap Liquidity Launchpad on Base and publishes the exact deployed version.
+
+After the end block, the auction is finalized. If its predeclared graduation condition is met, the liquidity strategy initializes the canonical Uniswap v4 \token{VEYDRIFT}/WETH pool at the discovered price. Auction proceeds and the 250,000,000-token liquidity reserve supply the pool, subject to the published position plan and currency cap. Unsold auction tokens go to the ecosystem allocation; any other residual token or WETH follows the predeclared strategy into disclosed liquidity positions or the launch Safe after the sweep delay. Participants claim purchased tokens only from the auction contract after the published claim block.
+
+\subsection{Initial liquidity}
+
+At the \$0.0026 floor, a fully sold 250,000,000-token auction tranche raises an estimated \$650,000 of WETH-equivalent value before fees. The 250,000,000-token migration reserve has the same \$650,000 floor value, implying approximately \$1,300,000 of main-pool depth if the tranche clears at the floor and the position plan uses the balanced amounts. If the auction raises only its \$150,000 minimum at the floor, about 57.7 million tokens sell and the main pool starts near \$300,000 of depth. A higher clearing price increases the WETH raised and changes every dollar estimate. The contracts use token quantities and WETH amounts, not a dollar oracle.
+
+\begin{table}[h]
+\centering
+\scriptsize
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+\textbf{Component} & \textbf{External side} & \textbf{\token{VEYDRIFT} side} & \textbf{Pricing method} & \textbf{Floor-value estimate} \\
+\midrule
+CCA distribution & WETH bids & 250,000,000 & Per-block clearing & \$650,000 distributed value \\
+\token{VEYDRIFT}/WETH LP & Auction WETH & 250,000,000 & Discovered CCA price & \$1,300,000 pool depth \\
+\token{vMETAL}/\token{VEYDRIFT} & 86,666.667 & 50,000,000 & \$1.50 reference & \$260,000 est. \\
+\token{vCRYSTAL}/\token{VEYDRIFT} & 57,777.778 & 50,000,000 & \$2.25 reference & \$260,000 est. \\
+\token{vDEUT}/\token{VEYDRIFT} & 34,666.667 & 50,000,000 & \$3.75 reference & \$260,000 est. \\
+\midrule
+\textbf{Launch circulation} & & \textbf{650,000,000 \token{VEYDRIFT}} & & \textbf{\$2,080,000 DEX depth est.} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The resource pools are initialized only after the main pool establishes the \token{VEYDRIFT}/WETH price. Each pool pairs 50,000,000 \token{VEYDRIFT} with a fixed resource amount balanced at the floor, so resources open at their reference prices if the auction clears at the floor and proportionally higher if it clears above it. The intended $1:1.5:2.5$ relative scarcity holds either way. Resource tranches are released from excess game reserves only when post-transfer backing remains greater than internal liabilities plus an operational safety margin. Market depth can expand with actual demand.
+
+\section{Production valuation and mature-production stress model}
+
+\subsection{Level-25 valuation anchor}
+
+The resource-price scenario is anchored to a developed planet with level-25 metal, crystal, and deuterium mines. At full energy, neutral temperature, no fusion consumption, and the maximum crawler count effective at those mine levels, that planet produces 218,424 metal, 145,608 crystal, and 93,144 deuterium per day. Because one external token represents one million in-game units, the valuation model uses the launch reference prices:
+
+\begin{align*}
+P_M &= \$1.50\ \text{per}\ \token{vMETAL}\ \text{(launch reference)},\\
+P_C &= \$2.25\ \text{per}\ \token{vCRYSTAL}\ \text{(launch reference)},\\
+P_D &= \$3.75\ \text{per}\ \token{vDEUT}\ \text{(launch reference)}.
+\end{align*}
+
+Under those price assumptions, the estimated gross reference value is
+
+\[
+0.218424P_M+0.145608P_C+0.093144P_D\approx\$1.00\ \text{per day (estimate)}.
+\]
+
+This estimate is not a yield promise. It depends entirely on the assumed token prices as well as energy availability, planet temperature, crawler ownership, construction spending, fuel, raids, the four-week Rift exposure, liquidity, and AMM price impact. Actual realizable value may be lower, higher, or unavailable.
+
+\subsection{Reference production by mine level}
+
+For mature-production stress testing, the model assumes equal mine levels, full energy, the maximum crawler count attainable at that mine level, planet temperature $T=0$, no fusion consumption, no raids, no downtime, and no reinvestment. The dollar estimates continue to assume \$1.50 per \token{vMETAL}, \$2.25 per \token{vCRYSTAL}, and \$3.75 per \token{vDEUT}; none is a promised market price.
+
+\begin{table}[H]
+\centering
+\scriptsize
+\begin{tabular}{@{}r r r r r r r r@{}}
+\toprule
+\textbf{Mine level} & \textbf{M / h} & \textbf{C / h} & \textbf{D / h} & \textbf{M / day} & \textbf{C / day} & \textbf{D / day} & \textbf{Est. value / day} \\
+\midrule
+25 & 9,101 & 6,067 & 3,881 & 218,424 & 145,608 & 93,144 & \$1.00 est. \\
+30 & 17,965 & 11,976 & 7,663 & 431,160 & 287,424 & 183,912 & \$1.98 est. \\
+35 & 34,464 & 22,975 & 14,702 & 827,136 & 551,400 & 352,848 & \$3.81 est. \\
+40 & 64,738 & 43,158 & 27,619 & 1,553,712 & 1,035,792 & 662,856 & \$7.14 est. \\
+45 & 119,656 & 79,770 & 51,052 & 2,871,744 & 1,914,480 & 1,225,248 & \$13.21 est. \\
+50 & 218,346 & 145,563 & 93,159 & 5,240,304 & 3,493,512 & 2,235,816 & \$24.10 est. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Because each external token represents one million game units, a level-30 planet produces approximately 0.431 \token{vMETAL}, 0.287 \token{vCRYSTAL}, and 0.184 \token{vDEUT} per day at the attainable crawler cap. At the assumed token prices, its estimated combined gross resource value is \$1.98 per day. A level-50 planet produces approximately 5.24 \token{vMETAL}, 3.49 \token{vCRYSTAL}, and 2.24 \token{vDEUT}, with an estimated combined gross value of \$24.10 per day under the same assumptions. Neither estimate promises a realizable market value; both precede construction and research spending, crawler acquisition costs, fuel consumption, attacks, the four-week exit lock, liquidity, and market impact.
+
+\subsection{Mature multi-planet extreme}
+
+The planet-cap formula is one base planet plus Astrophysics level. For scenario analysis, 51 level-50 planets represent an extreme account:
+
+\begin{align}
+M_{30d} &\approx 8{,}018\ \token{vMETAL},\\
+C_{30d} &\approx 5{,}345\ \token{vCRYSTAL},\\
+D_{30d} &\approx 3{,}421\ \token{vDEUT}.
+\end{align}
+
+A single level-30 planet's daily output equals approximately 0.129\%, 0.129\%, and 0.138\% of the opening metal, crystal, and deuterium pool reserves. Thirty days of uninterrupted output is approximately 3.9\%, 3.9\%, and 4.1\% of those reserves. The opening pools can therefore support early production and price discovery, but they are not intended to absorb a mature population at their initial size.
+
+At the assumed resource-token prices, the 51-planet level-50 scenario has an estimated gross value of about \$1,229 per day, not a promised return. Its 30-day output exceeds the opening reserve of every resource pool. This adversarial bound makes the scaling requirement explicit. The Rift does not impose a quantity limit or daily completion quota: every surviving amount can exit after its lock. Large sales instead move the AMM price directly. The four-week public lock and full raid exposure create advance notice and risk, while progression sinks and deeper market-supplied liquidity determine how much mature production can be sold near the assumed reference prices.
+
+\subsection{The sink side dominates late upgrades}
+
+At the protocol formulas, selected level-50 next-upgrade costs are enormous:
+
+\begin{table}[H]
+\centering
+\scriptsize
+\begin{tabularx}{\textwidth}{@{}p{0.18\textwidth} p{0.17\textwidth} p{0.19\textwidth} X@{}}
+\toprule
+\textbf{Upgrade from level 50} & \textbf{Metal cost} & \textbf{Crystal cost} & \textbf{Observation} \\
+\midrule
+Metal mine & 38,257,290,012 & 9,564,322,503 & More than 6,000 days of one level-50 planet's metal output before other inputs. \\
+Crystal mine & 771,330,261,244 & 385,665,130,622 & Cost growth substantially exceeds production growth. \\
+Deuterium mine & 143,464,837,548 & 47,821,612,516 & Sustains major metal/crystal demand even for deuterium specialists. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The game therefore has a natural sink ladder. The design goal is not to force every player to pursue theoretical maximum levels; it is to keep attractive productive, military, logistical, and social uses available at every maturity band.
+
+\section{The Rift: market entry and strategic exit}
+
+\subsection{Requirements and expected progression}
+
+The Rift is unlocked separately on each planet by constructing one Rift Stabilizer. Its direct requirements are Robotics Factory level 4, Research Lab level 2, Energy Technology level 5, Hyperspace Technology level 1, and the one-time Stabilizer cost of 8,000 metal, 8,000 crystal, and 4,000 deuterium.
+
+Hyperspace Technology adds important nested requirements: Research Lab level 7 and Shielding Technology level 5, while Shielding itself requires Energy Technology level 3 and Research Lab level 6. The effective unlock path is therefore
+
+\begin{center}
+Robotics 4 $+$ Research Lab 7 $+$ Energy 5 $+$ Shielding 5 $+$ Hyperspace 1 $+$ Rift Stabilizer.
+\end{center}
+
+A deterministic no-import benchmark using the live costs, storage limits, energy model, and separate construction and research queues reaches a first Rift in approximately 14 days. The benchmark keeps queues active, develops roughly 12/11/9 mines with sufficient solar power, and spends only on required production and unlock infrastructure. A player who also builds fleets, defenses, or unrelated research should expect roughly two to three weeks. Raids, idle queues, energy shortages, and resource losses extend the schedule; market imports can fund the costs but do not remove construction and research time.
+
+\subsection{Instant market-to-game entry}
+
+A market deposit transfers resource tokens to the game contract and immediately credits the selected planet. Imported resources already exist externally and increase reserve and internal liability together.
+
+If a user deposits $q$ units of resource $r$:
+
+\[
+B_r' = B_r+q,\qquad I_r'=I_r+q.
+\]
+
+The reserve invariant is unchanged.
+
+\subsection{Four-week planet lock}
+
+Resources leave the game through a 28-day, planet-scoped Rift lock. Let $S_{p,r}$ be spendable resource $r$ on planet $p$ and $Q_{p,r}$ its exit-locked amount. A request of $q$ performs
+
+\[
+S_{p,r}'=S_{p,r}-q,\qquad Q_{p,r}'=Q_{p,r}+q.
+\]
+
+There is no protocol quantity cap and no daily export-throughput limit. The total internal liability does not change when the lock begins. For 28 days, $Q_{p,r}$:
+
+\begin{itemize}
+  \item cannot be spent, moved, traded internally, relocked, or used as collateral;
+  \item cannot be withdrawn early or cancelled to evade an incoming attack;
+  \item remains visibly associated with the planet and its unlock time;
+  \item is included in raidable resources under explicit, auditable rules;
+  \item creates a clear target signal for rivals and a defense problem for the owner.
+\end{itemize}
+
+When another player raids locked resources, the attacker's internal balance rises and the original withdrawal claim falls one-for-one; aggregate internal liability remains unchanged. At maturity, every surviving locked unit can be ejected:
+
+\[
+Q_{p,r}'=Q_{p,r}-q_{\mathrm{surviving}},\quad
+B_r'=B_r-q_{\mathrm{surviving}},\quad
+I_r'=I_r-q_{\mathrm{surviving}}.
+\]
+
+The lock is evaluated by contract timestamps and state, not a trusted server. The user interface displays a countdown, the original request, current surviving claim, raid losses, and final ejection amount.
+
+\subsection{Raid semantics}
+
+Rift balances deliberately use different protection rules from ordinary planet balances. Ordinary planet resources are subject to the 50\% plunder ceiling and may be shielded by newbie protection or anti-bashing rules. Rift-locked resources have no newbie protection, no anti-bashing protection, and a 100\% plunder ceiling. The public lock is therefore a fully contestable balance, not a protected withdrawal queue.
+
+After an attacker wins, surviving cargo capacity is filled in two stages. First it takes ordinary planet resources, up to the 50\% ceiling. Only after the available ordinary-planet tranche is exhausted does remaining cargo take Rift resources, up to 100\% of the locked balance:
+
+\begin{align}
+0\le L^{P}_{p,r} &\le \left\lfloor0.5S_{p,r}\right\rfloor,\\
+0\le L^{Q}_{p,r} &\le Q_{p,r},\\
+\sum_r\left(L^{P}_{p,r}+L^{Q}_{p,r}\right) &\le K,
+\end{align}
+
+where $K$ is the surviving fleet's unused cargo capacity. The ordering is strict: planet loot first, Rift loot second. A successful raid reduces the owner's corresponding Rift claim and moves the looted resources into the attacker's returning fleet. Losing the battle yields neither tranche.
+
+\section{Why the economy can prosper}
+
+\subsection{A circular demand system}
+
+The economy prospers when every participant has a reason to transact with another participant:
+
+\begin{enumerate}
+  \item Builders import or acquire resources to accelerate productive infrastructure.
+  \item Infrastructure creates resources but also opens exponentially larger sinks.
+  \item Fleet operators demand deuterium for movement and all resources for replacement capacity.
+  \item Exporters create visible four-week targets.
+  \item Raiders demand intelligence, timing, cargo, fleet strength, and fuel.
+  \item Exporters demand defenses, alliance protection, counterintelligence, and deterrence.
+  \item Market activity generates exchange fees for liquidity providers and supports deeper price discovery.
+  \item Alliances can specialize in protection, trade, logistics, retaliation, and collective infrastructure.
+\end{enumerate}
+
+The Rift is thus not merely a bridge. It converts a financial action into map-level content. An attempted exit can create more gameplay than an entry because the exit announces value, location, duration, and opportunity.
+
+\subsection{No guaranteed yield}
+
+Production is not a guaranteed return; it is an input to a competitive game economy. Its external value depends on player demand, sink utility, conflict, liquidity, and market conditions. An economy that treats mine output as passive yield attracts extractors faster than players and eventually consumes its own demand.
+
+The system instead provides deterministic game rules, transparent reserves, credible supply controls, open markets, and a world in which economic decisions create strategic consequences.
+
+\section{Risk analysis and controls}
+
+\begin{longtable}{@{}p{0.22\textwidth}p{0.32\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Risk} & \textbf{Failure mode} & \textbf{Control} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Risk} & \textbf{Failure mode} & \textbf{Control} \\
+\midrule
+\endhead
+Resource supply integrity & Unexpected issuance dilutes float or reserve credibility. & Fixed 10B cap, release float from existing reserve, onchain alerts, and a public reserve dashboard. \\
+\addlinespace
+Aggregate export wave & Many mature accounts sell simultaneously into shallow pools. & Four-week public locks reveal pending supply, all locked resources remain fully raidable, and AMM price impact makes large immediate sales progressively less attractive. There is no export quota. \\
+\addlinespace
+Two-hop volatility & Resource prices inherit \token{VEYDRIFT}/WETH volatility and compound slippage. & Deepest pool is \token{VEYDRIFT}/WETH; router quotes both hops; user-set slippage; TWAP for protocol accounting; no thin direct pools seeded by protocol. \\
+\addlinespace
+Auction configuration & A bad floor, duration, supply schedule, recipient, or migration plan produces weak distribution or failed migration. & Immutable parameters disclosed before bidding, independent review, Base-fork rehearsal, minimum-raise graduation condition, delayed sweep, and exact post-auction balance assertions. \\
+\addlinespace
+Pact sell pressure & Early buyers sell into thin post-auction liquidity. & Pact tokens are locked until six months after the auction ends; 12.5\% releases then and the rest releases linearly over 3.5 years. The auction floor sits 30\% above the Pact price. \\
+\addlinespace
+Launch automation / sniping & Automated bidders seek ordering or information advantages. & Continuous per-block clearing, bids spread across remaining blocks, one clearing price per block, no first-block AMM, and transparent onchain parameters. CCA reduces timing games but does not promise bot-free distribution. \\
+\addlinespace
+Impermanent loss & LP providers lose relative value during strong directional moves. & Honest disclosure, protocol-owned liquidity, measured liquidity expansion, and no guaranteed APY. \\
+\addlinespace
+Sybil / automation & Automated accounts attempt to industrialize farming or extraction. & A strong economy and gameplay mechanics make automation bear the same costs and risks as other players; bot planets remain visible, raidable farming targets rather than privileged faucets. \\
+\addlinespace
+Raid concentration & Dominant alliances suppress smaller exporters. & Fleet replacement costs, fuel, public combat rules, intelligence uncertainty, counter-raids, alliance defense, and unrestricted targeting of valuable Rift balances create economic counterpressure. \\
+\addlinespace
+Contract upgrade risk & Contract changes alter reserve, lock, or raid rules unexpectedly. & Every upgrade and its resulting bytecode are public and onchain, allowing users to inspect the exact change and its execution history. \\
+\bottomrule
+\end{longtable}
+
+\section{Metrics that determine whether the design works}
+
+The protocol publishes the following metrics by resource:
+
+\begin{itemize}
+  \item reserve coverage $B_r/I_r$ and absolute safety margin;
+  \item internal spendable resources, exit-locked resources, and external circulating float;
+  \item 30-day production, consumption, imports, export requests, raid losses, and completed exports;
+  \item resource velocity and the share of production reinvested in sinks;
+  \item AMM depth, volume, fee revenue, LP concentration, and price impact for 30 days of modeled mature production;
+  \item CCA bidder count, wallet concentration, fill distribution, clearing-price path, WETH raised, and migration residuals;
+  \item distribution of mine levels, planets, fleet power, and export activity;
+  \item the fraction of locked exits attacked and the value successfully defended;
+  \item \token{VEYDRIFT} circulating supply, scheduled unlocks, treasury inventory, and protocol-owned liquidity.
+\end{itemize}
+
+Parameter tuning responds to data, while core property rights---fixed resource supply, reserve backing, lock duration, and protection from arbitrary seizure---remain unchanged.
+
+\section{Launch structure}
+
+\token{VEYDRIFT} launches on Base mainnet with a fixed 1-billion-token supply created once. Source code, allocations, vesting contracts, auction parameters, strategy contracts, and treasury addresses are public.
+
+Before the auction, the Pact sells 50,000,000 \token{VEYDRIFT} (5\% of supply, taken from the contributor allocation) at \$0.002 per token, raising up to \$100,000. Pact proceeds fund game improvements and marketing to grow the player base before the auction. Pact tokens are locked until six months after the auction ends, when 12.5\% releases; the remainder releases linearly over the following 3.5 years.
+
+At the announced launch block, a 48-hour CCA opens for 250,000,000 \token{VEYDRIFT}. After the auction ends and graduates, its proceeds and the separate 250,000,000-token liquidity reserve migrate into the canonical Uniswap v4 \token{VEYDRIFT}/WETH pool at the discovered price. The three resource/\token{VEYDRIFT} pools are then initialized at their fixed floor-balanced ratios. Resource float is released from excess reserve without new minting. Protocol LP positions, lock terms, pool parameters, auction receipts, migration residuals, and treasury movements remain publicly auditable.
+
+The production runbook treats auction creation, token funding, finalization, migration, resource-pool initialization, LP custody, and approval revocation as one rehearsed sequence with explicit abort conditions. No duplicate protocol-seeded \token{VEYDRIFT}/WETH pool launches on another DEX. A later secondary venue requires separate depth, disclosure, and treasury approval rather than silently fragmenting the canonical market.
+
+Rift exports have no quantity ceiling or daily completion limit. Contract changes and the bytecode they install are public and onchain. Fixed token supplies, reserve backing, active lock state, and user balances remain directly auditable.
+
+\section{Conclusion}
+
+Veydrift can support an open economy because the economic layer reinforces the game rather than floating above it. Resources are generated by infrastructure, consumed by ambition, moved by logistics, contested by fleets, and backed by verifiable reserves. \token{VEYDRIFT} can concentrate liquidity and coordination without pretending that a token is the game itself.
+
+The four-week Rift exit is the defining mechanism. Imports are immediate because they add backing. Exports are slow because removing value creates strategic notice, risk, and content. A player who wants to move resources out of the universe must first defend them inside it.
+
+The result is a system in which markets can deepen play: builders bring demand, producers create supply, sinks preserve utility, raiders challenge extraction, alliances sell security, LPs enable exchange, and transparent contracts protect the rules. Prosperity is not guaranteed by emissions. It is earned through useful assets, credible constraints, and persistent competition.
+
+\section{Protocol addresses}
+
+\begin{tabularx}{\textwidth}{@{}p{0.24\textwidth}X@{}}
+\toprule
+Game contract & \address{0xf397910F005151b09644228573a4353818D3755d} \\
+Metal token & \address{0x91A4f8A9D05F21E010dc1eE0B17Ab644D433cB41} \\
+Crystal token & \address{0xC6881a2C4C50E28AdCaC4D5577cD8e211E806B76} \\
+Deuterium token & \address{0x5A6027DE1C7E52B4b1AD0c13c3eC3Ad5FCb481e2} \\
+\bottomrule
+\end{tabularx}
+
+\end{document}

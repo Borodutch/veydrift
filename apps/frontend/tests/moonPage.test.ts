@@ -7,6 +7,7 @@ import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
 
 const moonPageSource = await Bun.file(new URL("../src/components/MoonPage.tsx", import.meta.url)).text();
+const gameAssetsSource = await Bun.file(new URL("../src/gameAssets.ts", import.meta.url)).text();
 const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
 const levelInfoModalSource = await Bun.file(new URL("../src/components/LevelInfoModal.tsx", import.meta.url)).text();
 const structureCatalogSource = await Bun.file(new URL("../src/components/StructureCatalog.tsx", import.meta.url)).text();
@@ -426,8 +427,9 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("Defenses");
     expect(moonPageSource).not.toContain("Moon Shipyard and Defenses");
     expect(moonPageSource).toContain('sizes="(min-width: 1024px) 288px, 100vw"');
-    expect(moonPageSource).toContain("lunar-base.webp");
-    expect(moonPageSource).toContain("jump-gate.webp");
+    expect(moonPageSource).toContain('import { moonBuildingAsset } from "../gameAssets"');
+    expect(gameAssetsSource).toContain("lunar-base.webp");
+    expect(gameAssetsSource).toContain("jump-gate.webp");
   });
 
   test("previews moon fields and building requirements from indexed moon state", () => {

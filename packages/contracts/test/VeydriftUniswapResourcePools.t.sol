@@ -288,9 +288,9 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         ResourcePoolsMockPositionManager(POSITION_MANAGER).mintUnrelated(address(lock));
         vm.startPrank(authority);
         veydrift.approve(address(launcher), 150_000_000 ether);
-        metal.approve(address(launcher), 333_333_000);
-        crystal.approve(address(launcher), 222_222_000);
-        deuterium.approve(address(launcher), 133_333_000);
+        metal.approve(address(launcher), 86_666_667_000);
+        crystal.approve(address(launcher), 57_777_778_000);
+        deuterium.approve(address(launcher), 34_666_667_000);
         (bytes32[3] memory poolIds, uint256[3] memory tokenIds) =
             launcher.launchResourcePools(configs, block.timestamp + 1);
         vm.stopPrank();
@@ -308,9 +308,9 @@ contract VeydriftUniswapResourcePoolsTest is Test {
             assertEq(launcher.amount1Used(i), configs[i].amount1Max);
         }
         assertEq(veydrift.balanceOf(POOL_MANAGER), 150_000_000 ether);
-        assertEq(metal.balanceOf(POOL_MANAGER), 333_333_000);
-        assertEq(crystal.balanceOf(POOL_MANAGER), 222_222_000);
-        assertEq(deuterium.balanceOf(POOL_MANAGER), 133_333_000);
+        assertEq(metal.balanceOf(POOL_MANAGER), 86_666_667_000);
+        assertEq(crystal.balanceOf(POOL_MANAGER), 57_777_778_000);
+        assertEq(deuterium.balanceOf(POOL_MANAGER), 34_666_667_000);
         assertEq(veydrift.allowance(authority, address(launcher)), 0);
         assertEq(veydrift.allowance(address(launcher), PERMIT2), 0);
         assertEq(metal.allowance(address(launcher), PERMIT2), 0);
@@ -337,9 +337,9 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         assertTrue(crystal.transfer(POSITION_MANAGER, donatedCrystal));
         assertTrue(deuterium.transfer(POSITION_MANAGER, donatedDeuterium));
         veydrift.approve(address(launcher), 150_000_000 ether);
-        metal.approve(address(launcher), 333_333_000);
-        crystal.approve(address(launcher), 222_222_000);
-        deuterium.approve(address(launcher), 133_333_000);
+        metal.approve(address(launcher), 86_666_667_000);
+        crystal.approve(address(launcher), 57_777_778_000);
+        deuterium.approve(address(launcher), 34_666_667_000);
         launcher.launchResourcePools(configs, block.timestamp + 1);
         vm.stopPrank();
 
@@ -348,9 +348,9 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         assertEq(crystal.balanceOf(POSITION_MANAGER), donatedCrystal);
         assertEq(deuterium.balanceOf(POSITION_MANAGER), donatedDeuterium);
         assertEq(veydrift.balanceOf(POOL_MANAGER), 150_000_000 ether);
-        assertEq(metal.balanceOf(POOL_MANAGER), 333_333_000);
-        assertEq(crystal.balanceOf(POOL_MANAGER), 222_222_000);
-        assertEq(deuterium.balanceOf(POOL_MANAGER), 133_333_000);
+        assertEq(metal.balanceOf(POOL_MANAGER), 86_666_667_000);
+        assertEq(crystal.balanceOf(POOL_MANAGER), 57_777_778_000);
+        assertEq(deuterium.balanceOf(POOL_MANAGER), 34_666_667_000);
     }
 
     function testRejectsWrongResourceTopology() public {
@@ -402,7 +402,7 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         returns (VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory configs)
     {
         address[3] memory resources = [address(metal), address(crystal), address(deuterium)];
-        uint256[3] memory amounts = [uint256(333_333_000), 222_222_000, 133_333_000];
+        uint256[3] memory amounts = [uint256(86_666_667_000), 57_777_778_000, 34_666_667_000];
         for (uint256 i = 0; i < 3; i++) {
             (uint256 amount0, uint256 amount1) = address(veydrift) < resources[i]
                 ? (uint256(50_000_000 ether), amounts[i])

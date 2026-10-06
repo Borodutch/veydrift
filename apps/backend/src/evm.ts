@@ -83,6 +83,8 @@ export type ManagedPlanet = PlanetState & {
     researchLab: number;
     terraformer: number;
   };
+  // Every built level, so roster consumers (the Empire screen) need no per-planet infrastructure read.
+  buildingLevels?: Array<{ id: number; level: number }>;
   queues: {
     building: QueueState | null;
     defense: QueueState | null;
@@ -99,6 +101,8 @@ export type ManagedPlanet = PlanetState & {
     resourcesAsOfNow?: Resources;
     ships: ShipyardState["ships"];
     defenses: DefenseState["defenses"];
+    buildings?: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label" | "level">>;
+    queues?: { building: QueueState | null; ship: QueueState | null; defense: QueueState | null };
   } | null;
   tactical?: {
     raidableResources: Resources;

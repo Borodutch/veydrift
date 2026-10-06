@@ -4640,6 +4640,7 @@ describe("SettlementIndexer", () => {
       level: 2
     });
     expect(indexer.walletPlanets(player).planets[0]?.keyLevels.shipyard).toBe(2);
+    expect(indexer.walletPlanets(player).planets[0]?.buildingLevels).toContainEqual({ id: 5, level: 2 });
   });
 
   test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
