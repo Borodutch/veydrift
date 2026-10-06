@@ -883,6 +883,13 @@ for (const width of [390, 1440]) {
         && document.querySelector('summary[aria-controls="mobile-navigation-menu"]')?.getAttribute('aria-expanded') === 'true'
         && document.querySelector('#mobile-navigation-menu')?.getBoundingClientRect().height > 0`);
     }
+    async function waitForMenuClosed() {
+      if (width >= 768) return;
+      // Navigation defers closure until after the trailing click. Wait before
+      // interacting with the destination or sampling the next menu opening.
+      await waitForExpression(`document.querySelector('details:has(#mobile-navigation-menu)')?.open === false
+        && document.querySelector('summary[aria-controls="mobile-navigation-menu"]')?.getAttribute('aria-expanded') === 'false'`);
+    }
     for (const [id, name, route] of [
       ["102", "Owned Beta", "/planet/4/5/6"],
       ["103", "Owned Delta", "/planet/1/2/4"],
@@ -897,6 +904,7 @@ for (const width of [390, 1440]) {
 
       await openMenu();
       await clickExpression(`document.querySelector('${nav} a[href="/galaxy"]')`);
+      await waitForMenuClosed();
       await waitForExpression(`document.querySelector('main button[aria-label="Open ${name}"]') !== null`);
       const rows = await evaluate(`Array.from(document.querySelectorAll('main button[aria-label^="Open Owned"]')).map(button => {
         const row = button.closest('div.group');
@@ -913,6 +921,7 @@ for (const width of [390, 1440]) {
       await waitForExpression(`location.pathname === '${route}' && document.querySelector('main h2')?.textContent === '${name}'`);
       await openMenu();
       await clickExpression(`document.querySelector('${nav} a[href="/rankings"]')`);
+      await waitForMenuClosed();
       await waitForExpression("document.querySelector('main button[aria-label=\"Show planets and moons for Fixture Commander\"]') !== null");
       await clickExpressionWithTrustedPointer(`document.querySelector('main button[aria-label="Show planets and moons for Fixture Commander"]')`, width < 768 ? "touch" : "mouse");
       await waitForExpression("document.querySelectorAll('main [data-ranking-planet-row]').length === 3");
