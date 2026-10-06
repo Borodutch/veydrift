@@ -341,6 +341,8 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   isHomePlanet: boolean;
   fieldsUsed: number;
   fieldsCapacity: number;
+  // Every built level; absent on older backends, which need a per-planet infrastructure read.
+  buildingLevels?: Array<{ id: number; level: number }>;
   keyLevels: {
     metalMine: number;
     crystalMine: number;
@@ -368,6 +370,8 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     resourceSnapshot?: ResourceSnapshotMetadata | null;
     ships?: ChainShipyardState["ships"];
     defenses?: ChainDefenseState["defenses"];
+    buildings?: Array<{ id: number; key: "lunarBase" | "roboticsFactory" | "jumpGate" | "shipyard"; label: string; level: number }>;
+    queues?: { building: QueueStateResponse | null; ship: QueueStateResponse | null; defense: QueueStateResponse | null };
   } | null;
   tactical?:
     | {
@@ -383,10 +387,12 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
         ships: {
           count: number;
           power: string;
+          units?: Array<{ id: number; count: number }>;
         };
         defenses: {
           count: number;
           power: string;
+          units?: Array<{ id: number; count: number }>;
         };
         combatPower: string;
       }

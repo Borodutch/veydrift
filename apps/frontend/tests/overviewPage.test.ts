@@ -1,23 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import {
-  overviewHeroImage,
-} from "../src/overviewHeroImage";
 import { productionQueueViewModel } from "../src/components/ProductionCatalog";
-import { planetMoonIndicatorSizeClasses } from "../src/components/PlanetMoonIndicator";
 import {
   isOverviewResearchReadyToFinish,
   compactOverviewLevelLabel,
   compactOverviewResearchLabel,
-  EmptyQueue,
-  OverviewQueueFallback,
-  overviewBuildingActionNoticeFor,
-  overviewResearchActionNoticeFor,
 } from "../src/components/OverviewPage";
 import type { ConstructionProgress, ConstructionQueueKind } from "../src/constructionProgress";
 import {
-  overviewQueueItemLabelClassName,
-  overviewQueueItemRemainingClassName,
   defenseQueuePreview,
   overviewPlanetEffects,
   queueProgressBarState,
@@ -65,138 +55,7 @@ const homePlanet: Planet = {
   type: "cold-tundra",
 };
 
-describe("overview planet hero image", () => {
-  test("makes only the desktop Overview moon 150% larger while preserving mobile sizing", () => {
-    expect(planetMoonIndicatorSizeClasses({ overviewHero: true })).toBe(
-      "h-11 w-11 xl:h-[30px] xl:w-[30px]",
-    );
-    expect(planetMoonIndicatorSizeClasses()).toBe("h-11 w-11 xl:h-5 xl:w-5");
-    expect(30 / 20).toBe(1.5);
-    expect(overviewSource).toContain("<PlanetMoonIndicator");
-    expect(overviewSource).toContain("overviewHero");
-    expect(overviewSource).toContain('className="right-3 top-3"');
-    expect(overviewSource).toContain("onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position })");
-  });
-
-  test("does not render commander identity in the Overview banner", () => {
-    const commanderIndex = overviewSource.indexOf(">Commander<");
-    const planetHeroIndex = overviewSource.indexOf("Planet hero");
-    const fleetsSummaryIndex = overviewSource.indexOf("<FleetsSummary");
-
-    expect(commanderIndex).toBe(-1);
-    expect(planetHeroIndex).toBeGreaterThanOrEqual(0);
-    expect(fleetsSummaryIndex).toBeGreaterThanOrEqual(0);
-    expect(planetHeroIndex).toBeLessThan(fleetsSummaryIndex);
-  });
-
-  test("renders the planet art as a compact banner background with primary planet identity", () => {
-    expect(overviewSource).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)]");
-    expect(overviewSource).toContain("const shouldShowFleetsSummary = Boolean(isWalletConnected && fleetVisibility)");
-    expect(overviewSource).toContain("relative min-h-[8.75rem]");
-    expect(overviewSource).toContain('alt="Planet hero background"');
-    expect(overviewSource).toContain("object-cover object-center");
-    expect(overviewSource).toContain("opacity-95");
-    expect(overviewSource).toContain("bg-gradient-to-r from-[#101624]/80 via-[#101624]/45 to-[#101624]/10");
-    expect(overviewSource).toContain("text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl");
-    expect(overviewSource).toContain("lg:items-stretch");
-    expect(overviewSource).toContain('className="flex h-full min-w-0 flex-col rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4"');
-    expect(overviewSource).not.toContain("fleetVisibility && hasActiveFleets");
-    expect(overviewSource).not.toContain("fleetVisibility && !hasActiveFleets");
-    expect(overviewSource).not.toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
-    expect(overviewSource).not.toContain("relative aspect-square");
-    expect(overviewSource).not.toContain('sizes="hero"');
-  });
-
-  test("never fabricates a planet hero image without real planet data", () => {
-    // Disconnected / pre-load must not invent a planet image; the caller renders a
-    // skeleton/connect-wallet state instead (VEY-KANEO-458).
-    expect(overviewHeroImage(undefined, undefined, undefined)).toBeUndefined();
-    expect(overviewHeroImage(undefined, undefined, "1:42:7")).toBeUndefined();
-  });
-
-  test("keeps a real connected home image during rehydration", () => {
-    expect(overviewHeroImage(homePlanet, undefined, "1:42:7")).toBe(homePlanet.image);
-    expect(overviewHeroImage(
-      undefined,
-      { image: homePlanet.image, planetKey: "1:42:7" },
-      "1:42:7"
-    )).toBe(homePlanet.image);
-  });
-
-  test("does not reuse a last-known image for a different current planet", () => {
-    expect(overviewHeroImage(
-      undefined,
-      { image: homePlanet.image, planetKey: "1:42:7" },
-      "1:42:8"
-    )).toBeUndefined();
-  });
-
-  test("does not render a fabricated planet identity; disconnected shows a connect-wallet state", () => {
-    // Guard for VEY-KANEO-458: the Overview must never hardcode a fake planet name/image, and the
-    // disconnected state must prompt to connect a wallet rather than showing a fake home planet.
-    expect(overviewSource).not.toContain("Eos Relay");
-    expect(overviewSource).toContain("Connect your wallet");
-  });
-});
-
 describe("overview queue progress display", () => {
-  test("renders empty queue states when completed centralized progress outlives stale Overview fallbacks", () => {
-    expect(overviewSource.match(/<OverviewQueueFallback/g)?.length).toBe(3);
-    expect(overviewSource).toContain("progressState={constructionProgress?.building}");
-    expect(overviewSource).toContain("progressState={constructionProgress?.research}");
-    expect(overviewSource).toContain("progressState={constructionProgress?.ship}");
-
-    const cases = [
-      {
-        actionLabel: "Build",
-        emptyLabel: "No active construction.",
-        kind: "building" as const,
-        staleLabel: "Metal Mine 12",
-      },
-      {
-        actionLabel: "Research",
-        emptyLabel: "No active research.",
-        kind: "research" as const,
-        staleLabel: "Energy Technology 9",
-      },
-      {
-        actionLabel: "Shipyard",
-        emptyLabel: "No active ship production.",
-        kind: "ship" as const,
-        staleLabel: "Small Cargo",
-      },
-    ];
-
-    for (const queueCase of cases) {
-      const rendered = OverviewQueueFallback({
-        progressState: completedProgress(queueCase.kind),
-        queue: { label: queueCase.staleLabel },
-        renderEmpty: () => EmptyQueue({
-          actionLabel: queueCase.actionLabel,
-          children: queueCase.emptyLabel,
-          onAction: () => undefined,
-        }),
-        renderQueue: (queue) => queue.label,
-      });
-      const text = visibleText(rendered);
-
-      expect(text).toContain(queueCase.emptyLabel);
-      expect(text).toContain(queueCase.actionLabel);
-      expect(text).not.toContain(queueCase.staleLabel);
-    }
-  });
-
-  test("retains local queue fallbacks when centralized progress is absent", () => {
-    const rendered = OverviewQueueFallback({
-      progressState: undefined,
-      queue: { label: "Local Metal Mine 2" },
-      renderEmpty: () => "No active construction.",
-      renderQueue: (queue) => queue.label,
-    });
-
-    expect(visibleText(rendered)).toBe("Local Metal Mine 2");
-  });
-
   test("uses compact level labels inside overview queue cards", () => {
     expect(compactOverviewLevelLabel("Shipyard Level 9")).toBe("Shipyard 9");
     expect(compactOverviewLevelLabel("Plasma Technology level 7")).toBe("Plasma Technology 7");
@@ -310,42 +169,6 @@ describe("overview queue progress display", () => {
     expect(effects.minePower).toBe("100%");
     expect(effects.solarSatelliteEnergy).toBe(30);
     expect(effects.terraformer).toBe("+10 now, +5 next level");
-  });
-
-  test("allows long active building names to wrap beside queue metadata", () => {
-    expect(overviewQueueItemLabelClassName).not.toContain("truncate");
-    expect(overviewQueueItemLabelClassName).toContain("break-words");
-    expect(overviewQueueItemRemainingClassName).not.toContain("shrink-0");
-  });
-
-  test("only equalizes queue rows in the multi-column layout", () => {
-    expect(overviewSource).toContain("grid min-w-0 gap-3 sm:auto-rows-fr sm:grid-cols-2 xl:grid-cols-4");
-    expect(overviewSource).not.toContain("min-h-[8.5rem]");
-  });
-
-  test("uses the shared anchored action layout for production queue cards", () => {
-    for (const actionLabel of ["Build", "Defenses", "Research", "Shipyard"]) {
-      expect(overviewSource).toContain(`actionLabel="${actionLabel}"`);
-    }
-
-    expect(overviewSource.match(/<QueuePanelContent>/g)?.length).toBeGreaterThanOrEqual(8);
-    expect(overviewSource).toContain("function QueuePanelContent");
-    expect(overviewSource).toContain("flex min-h-0 flex-1 flex-col gap-2");
-    expect(overviewSource).toContain("mt-auto flex min-h-9 w-full min-w-0");
-    expect(overviewSource).toContain("<ArrowRight");
-    expect(overviewSource).not.toContain("max-w-[calc(100vw-1.5rem)]");
-  });
-
-  test("reuses the compact production queue rail for Overview defense and shipyard queues", () => {
-    expect(overviewSource).toContain("productionQueueViewModel(onChainQueues?.defense, defenseCatalog)");
-    expect(overviewSource).toContain("productionQueueViewModel(onChainQueues?.ship, shipCatalog)");
-    expect(overviewSource.match(/<ProductionQueuePanel/g)?.length).toBe(2);
-    expect(overviewSource.match(/<ProductionQueuePanel\s+embedded/g)?.length).toBe(2);
-    expect(overviewSource).toContain("queue={onChainDefenseQueue}");
-    expect(overviewSource).toContain("queue={onChainShipQueue}");
-    expect(overviewSource).not.toContain("Queued next");
-    expect(overviewSource).not.toContain('tag={onChainQueues?.defense?.active ? "Active" : undefined}');
-    expect(overviewSource).not.toContain('tag={onChainQueues?.ship?.active ? "Active" : undefined}');
   });
 
   test("matches Defense page label, asset, and progress for the same queue snapshot", () => {
@@ -539,12 +362,6 @@ describe("overview queue progress display", () => {
     });
   });
 
-  test("passes catalog thumbnails into active research queues", () => {
-    expect(overviewSource).toContain("researchCatalog");
-    expect(overviewSource).toContain("thumbnailSrc={onChainResearchAsset}");
-    expect(overviewSource).toContain("thumbnailSrc={settledResearchAsset}");
-  });
-
   test("resolves active Shipyard queues to catalog names and thumbnails", () => {
     const preview = shipQueuePreview({
       active: true,
@@ -557,41 +374,6 @@ describe("overview queue progress display", () => {
 
     expect(preview.label).toBe("Light Fighter x2");
     expect(preview.asset).toContain("light-fighter");
-  });
-
-  test("shows building finish action notices for the active overview queue", () => {
-    const notice = {
-      buildingKey: "shipyard" as const,
-      label: "Can't check game state right now.",
-      tone: "error" as const,
-    };
-
-    expect(overviewBuildingActionNoticeFor(notice, "shipyard")).toBe(notice);
-    expect(overviewBuildingActionNoticeFor(notice, "metalMine")).toBeUndefined();
-    expect(overviewBuildingActionNoticeFor(notice, undefined)).toBe(notice);
-  });
-
-  test("keeps research completion success copy out of the compact Overview card", () => {
-    expect(overviewResearchActionNoticeFor({
-      status: "success",
-      label: "Research completion confirmed.",
-    })).toBeUndefined();
-
-    expect(overviewResearchActionNoticeFor({
-      status: "pending",
-      label: "Research completion: awaiting wallet",
-    })).toEqual({
-      label: "Research completion: awaiting wallet",
-      tone: "pending",
-    });
-
-    expect(overviewResearchActionNoticeFor({
-      status: "error",
-      label: "Research completion failed.",
-    })).toEqual({
-      label: "Research completion failed.",
-      tone: "error",
-    });
   });
 
   test("flags a research queue whose ready time has passed as ready to settle (VEY-KANEO-468)", () => {

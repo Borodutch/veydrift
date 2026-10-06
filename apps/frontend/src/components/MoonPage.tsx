@@ -1,3 +1,4 @@
+import { moonBuildingAsset } from "../gameAssets";
 import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
@@ -1045,13 +1046,8 @@ function toResources(resources: ChainMoonState["resources"] | ChainMoonState["de
   };
 }
 
-export function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {
-  const fallback = "/assets/game/style-pass/generated/buildings/terraformer-mid.webp";
-  if (key === "lunarBase") return "/assets/game/style-pass/generated/buildings/lunar-base.webp";
-  if (key === "roboticsFactory") return "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp";
-  if (key === "shipyard") return "/assets/game/style-pass/generated/buildings/moon-shipyard.webp";
-  return "/assets/game/style-pass/generated/buildings/jump-gate.webp";
-}
+// Lives in gameAssets so lightweight screens (Empire) can use it without loading this page.
+export { moonBuildingAsset };
 
 type MoonJumpGateDestination = NonNullable<ChainMoonState["jumpGateDestinations"]>[number];
 

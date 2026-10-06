@@ -145,3 +145,10 @@ export const defenseAssetByKey = Object.fromEntries(
 export const researchAssetByKey = Object.fromEntries(
   researchAssetManifest.map((asset) => [asset.key, asset.src]),
 ) as Record<ResearchKey, string>;
+
+export function moonBuildingAsset(key: "lunarBase" | "roboticsFactory" | "jumpGate" | "shipyard"): string {
+  if (key === "lunarBase") return "/assets/game/style-pass/generated/buildings/lunar-base.webp";
+  if (key === "roboticsFactory") return "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp";
+  if (key === "shipyard") return "/assets/game/style-pass/generated/buildings/moon-shipyard.webp";
+  return "/assets/game/style-pass/generated/buildings/jump-gate.webp";
+}

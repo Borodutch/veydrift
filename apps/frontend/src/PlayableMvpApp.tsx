@@ -97,7 +97,6 @@ import { planetSelectorResearchProgressFor } from "./planetSelectorProgress";
 import {
   buildingContractIds,
   canAfford,
-  progress,
   researchCatalog,
   researchRequirementsFor,
   type BuildingKey,
@@ -3209,16 +3208,6 @@ export function PlayableMvpApp({
   const activeDefenseProductionQueue = defenseState ? activeProductionQueue(defenseState.queue, undefined, "defense") : activeProductionQueue(undefined, onChainQueues?.defense, "defense");
   const displayFleetVisibility = fleetVisibility;
   const displayAllActiveMissions = useMemo(() => allActiveMissions ?? [], [allActiveMissions]);
-  const overviewFleetVisibility = useMemo(
-    () =>
-      planetScopedFleetVisibility(
-        displayFleetVisibility,
-        activePlanetId,
-        walletPlanets?.map((planet) => planet.planetId),
-        activeBodyKind,
-      ),
-    [activeBodyKind, activePlanetId, displayFleetVisibility, walletPlanets],
-  );
   const homeWorldCoords = homeWorldCoordinates(onChainSettlementState, walletPlanets);
   const activePlanetCoords = selectedManagedPlanet
     ? {
@@ -6648,10 +6637,6 @@ export function PlayableMvpApp({
     const buildingQueue = isWalletConnected
       ? buildingQueueItemForDisplay(progressFor(activePlanetId, "planet", "building")?.queue ?? null, now)
       : settledState.queue?.kind === "building" ? settledState.queue : undefined;
-    const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
-    const queueProgress = progress(buildingQueue, now);
-    const researchProgress = progress(settledState.researchQueue, now);
-    const shipProgress = progress(shipQueue, now);
     const infrastructureState = !isWalletConnected ? settledState
       : { ...settledState, queue: buildingQueue, ...(liveOnChainResources ? { resources: liveOnChainResources } : {}) };
     const infrastructureActionNotice = infrastructureDisplayActionNoticeFor({
@@ -7302,35 +7287,22 @@ export function PlayableMvpApp({
 
     return (
       <OverviewPage
+        account={account}
+        backendData={backendData}
+        researchQueue={walletPlanetsSnapshot?.data?.queues?.research}
         selectedBodyKind={activeBodyKind}
-        caps={caps}
-        constructionProgress={{
-          building: progressFor(activePlanetId, "planet", "building"),
-          defense: progressFor(activePlanetId, "planet", "defense"),
-          research: walletResearchProgress,
-          ship: progressFor(activePlanetId, "planet", "ship"),
-        }}
         isWalletConnected={isWalletConnected}
         now={now}
         onChainError={onChainError}
-        fleetVisibility={overviewFleetVisibility}
+        fleetVisibility={displayFleetVisibility}
         onChainQueues={overviewOnChainQueues}
         onChainSettlement={onChainSettlement}
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
-        buildingActionNotice={infrastructureActionNotice}
-        buildingActionPendingLabel={infrastructureActionPendingLabel}
-        onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         homePlanet={homePlanetIdentity}
-        buildingQueue={buildingQueue}
         planet={planet}
-        queueProgress={queueProgress}
         rates={rates}
-        researchAction={researchAction}
-        researchProgress={researchProgress}
         settledState={settledState}
-        shipProgress={shipProgress}
-        state={state}
         canRenamePlanet={Boolean(canSubmitGameTransaction && activePlanetId)}
         planetRenameAction={planetRenameAction}
         canAbandonPlanet={selectedManagedPlanet ? shouldShowAbandonPlanetButton(selectedManagedPlanet, canSubmitGameTransaction, planetManagementAction) : false}
@@ -7355,7 +7327,6 @@ export function PlayableMvpApp({
         onWatchedMoonAction={handleOverviewWatchedMoonAction}
         watchBusyPlanetId={watchBusyPlanetId}
         myPlanets={overviewMyPlanetActionGroups}
-        currentCommanderLabel={playerProfile?.displayName ?? "You"}
         selectedPlanetId={activePlanetId}
         onMyPlanetAction={handleOverviewMyPlanetAction}
         onSupplyPlanet={handleOpenBatchSupply}
