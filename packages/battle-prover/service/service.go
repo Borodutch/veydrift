@@ -133,7 +133,7 @@ func (s *Service) reconcile(ctx context.Context) error {
 			return e
 		}
 		if !ok || j.Anchor.Number > head.Number {
-			if e = s.Store.invalidate(j.Identity.Key(), "finalized anchor reorganized"); e != nil {
+			if e = s.Store.invalidate(j, "finalized anchor reorganized"); e != nil {
 				return e
 			}
 		}
@@ -172,6 +172,11 @@ func (s *Service) reconcile(ctx context.Context) error {
 			if j.State != Invalid {
 				return nil
 			}
+			generation, e := token()
+			if e != nil {
+				return e
+			}
+			j.Generation = generation
 			j.Anchor = snap.Anchor
 			j.State = Queued
 			j.Token = ""
@@ -206,7 +211,7 @@ func (s *Service) snapshot(ctx context.Context, j Job) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if !canonical || j.Anchor.Number > head.Number {
-		if err = s.Store.invalidate(j.Identity.Key(), "finalized anchor reorganized"); err != nil {
+		if err = s.Store.invalidate(j, "finalized anchor reorganized"); err != nil {
 			return Snapshot{}, err
 		}
 		return Snapshot{}, errors.New("finalized anchor reorganized")
@@ -224,7 +229,12 @@ func (s *Service) snapshot(ctx context.Context, j Job) (Snapshot, error) {
 // RunOne processes one claimed job. A heartbeat renews ownership, not progress;
 // only a persisted checkpoint advances Updated. Every failure remains failure.
 func (s *Service) RunOne(ctx context.Context, k string) error {
-	l, err := s.Store.Claim(k)
+	jobExecution, err := s.Store.holdJobExecution(k)
+	if err != nil {
+		return err
+	}
+	defer releaseExecution(jobExecution)
+	l, err := s.Store.claim(k)
 	if err != nil {
 		return err
 	}
@@ -337,7 +347,7 @@ func (s *Service) Proof(ctx context.Context, k string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if current.State != Complete || current.Proof != j.Proof || current.Anchor != j.Anchor {
+	if current.State != Complete || current.Proof != j.Proof || current.Anchor != j.Anchor || current.Generation != j.Generation {
 		return nil, ErrStale
 	}
 	return b, nil

@@ -40,6 +40,10 @@ full bounded pending scan at restart, so a lost event cursor cannot lose jobs.
 Failure is terminal until explicit Retry. A changed identity is a new job, not
 silent reseeding. A reorg invalidates old proofs/checkpoints and fences workers;
 identical input reanchored on the canonical chain is requeued without reuse.
+Each admission/reanchor persists a fresh random generation. Delayed authority
+responses can invalidate only the observed generation and anchor, including
+prune/recreate or same-anchor ABA. Pre-generation experimental job records are
+rejected rather than silently upgraded; archive those stores offline and rescan.
 
 ServeHTTP offers read-only GET /health and /ready. Liveness, source lag, queue
 age, no-progress (stuck) and expired lease counts are separate. Heartbeat does
@@ -60,7 +64,10 @@ persisted expiry reject stale writes. Slot is reserved before writing the job:
 a crash in between delays capacity until expiry, never overcommits it. Actual
 RunOne execution additionally holds a per-slot OS lock for its entire lifetime:
 even after lease expiry a paused or cancellation-ignoring runner cannot overlap
-another execution in that slot; process death releases the lock. A broken runner
+another execution in that slot; process death releases the lock. A per-identity
+execution lock also spans claim through RunOne return, so expiry, reanchor or
+prune/recreate cannot move the same live job into a spare slot. Unrelated jobs
+can still claim spare slots. Neither execution lock file is ever unlinked. A broken runner
 must be terminated by its host, not bypassed with a second slot reservation.
 No global lock is held during proving, RPC calls, verification or progress waits.
 Short admission and blob-accounting transactions are serialized.

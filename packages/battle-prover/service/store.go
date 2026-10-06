@@ -128,6 +128,8 @@ const (
 )
 
 type Job struct {
+	// Generation changes on admission and reanchor, including identical-anchor ABA.
+	Generation string
 	Identity   Identity
 	Anchor     Anchor
 	State      State
@@ -251,7 +253,7 @@ func (s *Store) get(k string) (Job, error) {
 		return j, errors.New("invalid job key")
 	}
 	err := readJSON(s.jobPath(k), &j)
-	if err == nil && (j.Identity.Validate() != nil || j.Identity.Key() != k) {
+	if err == nil && (j.Identity.Validate() != nil || j.Identity.Key() != k || !digestRE.MatchString(j.Generation)) {
 		err = errors.New("corrupt job identity")
 	}
 	return j, err
@@ -356,8 +358,12 @@ func (s *Store) admit(snap Snapshot) (string, error) {
 			if _, err = s.blob(snap.Input); err != nil {
 				return err
 			}
+			generation, err := token()
+			if err != nil {
+				return err
+			}
 			now := time.Now()
-			return s.put(Job{Identity: snap.Identity, Anchor: snap.Anchor, State: Queued, Slot: -1, Created: now, Updated: now})
+			return s.put(Job{Generation: generation, Identity: snap.Identity, Anchor: snap.Anchor, State: Queued, Slot: -1, Created: now, Updated: now})
 		})
 	})
 	return k, err
@@ -383,7 +389,19 @@ func (s *Store) slotPath(n int) string { return filepath.Join(s.root, "slots", f
 // Lease expiry never permits overlapping CPU/RAM use by a paused old runner.
 // Process death releases it automatically, unlike PID files.
 func (s *Store) holdExecution(n int) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(s.root, "locks", fmt.Sprintf("execution-%d.lock", n)), os.O_CREATE|os.O_RDWR, 0600)
+	return s.holdExecutionLock(fmt.Sprintf("execution-%d", n))
+}
+
+// The identity-level lock survives reanchor/prune/recreate and prevents a live
+// runner moving to another slot after expiry. Never unlink this lock file.
+func (s *Store) holdJobExecution(k string) (*os.File, error) {
+	if !digestRE.MatchString(k) {
+		return nil, errors.New("invalid job key")
+	}
+	return s.holdExecutionLock("job-execution-" + k)
+}
+func (s *Store) holdExecutionLock(name string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(s.root, "locks", name+".lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +416,16 @@ func (s *Store) holdExecution(n int) (*os.File, error) {
 }
 func releaseExecution(f *os.File) { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }
 func (s *Store) Claim(k string) (Lease, error) {
+	execution, err := s.holdJobExecution(k)
+	if err != nil {
+		return Lease{}, err
+	}
+	defer releaseExecution(execution)
+	return s.claim(k)
+}
+
+// Caller holds job execution exclusion before taking job/slot transition locks.
+func (s *Store) claim(k string) (Lease, error) {
 	var l Lease
 	err := s.lock(k, func() error {
 		j, err := s.get(k)
@@ -539,11 +567,15 @@ func (s *Store) Retry(k string) error {
 
 // Invalidation fences even a live worker. Content-addressed bytes are never
 // silently rebound to a different input/rules/verifier identity.
-func (s *Store) invalidate(k, reason string) error {
+func (s *Store) invalidate(observed Job, reason string) error {
+	k := observed.Identity.Key()
 	return s.lock(k, func() error {
 		j, err := s.get(k)
 		if err != nil {
 			return err
+		}
+		if j.Generation != observed.Generation || j.Anchor != observed.Anchor {
+			return ErrStale
 		}
 		j.State = Invalid
 		j.Token = ""
