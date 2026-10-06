@@ -14,6 +14,7 @@ import {
   defaultSupplyShipTypes,
   hasUsableSupplyCargoFleet,
   type SupplyShipKey,
+  type SupplyMission,
   type SupplyShipTypesBySource,
   emptySupplyResources,
   normalizeSupplyResources,
@@ -34,7 +35,8 @@ const supplyCargoShips: Array<{ key: SupplyShipKey; label: string }> = [
 
 export const MAX_TRANSPORT_BATCH_MISSIONS = 15;
 
-export function batchSupplyMissionLimitError(missionCount: number): string | undefined {
+export function batchSupplyMissionLimitError(missionCount: number, mission: SupplyMission = "transport"): string | undefined {
+  if (mission === "deploy" && missionCount > 1) return "Deploy Supply launches one source at a time. Deselect other sources before launching.";
   return missionCount > MAX_TRANSPORT_BATCH_MISSIONS
     ? `A Supply batch can launch at most ${MAX_TRANSPORT_BATCH_MISSIONS} missions. Reduce the plan before launching.`
     : undefined;
@@ -81,7 +83,7 @@ export function BatchSupplyModal({
   initialRequested?: Partial<SupplyResources> | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
-  onConfirm: (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource) => void;
+  onConfirm: (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission) => void;
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
@@ -117,6 +119,7 @@ export function BatchSupplyModal({
       if (previous?.isConnected) previous.focus();
     };
   }, []);
+  const [mission, setMission] = useState<SupplyMission>("transport");
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [shipTypesBySource, setShipTypesBySource] = useState<SupplyShipTypesBySource>({});
@@ -146,6 +149,7 @@ export function BatchSupplyModal({
     deuterium: inputAmount(requested.deuterium),
   }), [requested]);
   const plan = useMemo(() => buildBatchSupplyPlan({
+    mission,
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
     targetIsMoon: upgrade?.kind === "moon",
     requested: requestedNumbers,
@@ -154,7 +158,7 @@ export function BatchSupplyModal({
     shipTypesBySource,
     sources,
     maxOrders: maxSources,
-  }), [requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, upgrade?.kind]);
+  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, upgrade?.kind]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -163,7 +167,7 @@ export function BatchSupplyModal({
   const canonicalTransactionError = transactionState?.phase === "error" || transactionOutcome === "unknown" || transactionOutcome === "reverted"
     ? transactionState?.label
     : undefined;
-  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length);
+  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission);
   const canSubmit = (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
   const targetLabel = `${target.name?.trim() || target.coordinates}${upgrade?.kind === "moon" ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
@@ -176,6 +180,7 @@ export function BatchSupplyModal({
 
   const setMax = (resource: keyof SupplyResources) => {
     const maximum = buildBatchSupplyPlan({
+      mission,
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
       targetIsMoon: upgrade?.kind === "moon",
       requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
@@ -234,6 +239,20 @@ export function BatchSupplyModal({
           </button>
         </header>
 
+        <section className="grid gap-2" aria-label="Supply mission">
+          <div className="inline-flex justify-self-start rounded-lg border border-white/15 bg-black/20 p-0.5" role="group" aria-label="Mission type">
+            {(["transport", "deploy"] as const).map((kind) => (
+              <button key={kind} type="button" aria-pressed={mission === kind}
+                disabled={loading || actionPending || transactionPending}
+                onClick={() => setMission(kind)}
+                className={"min-h-8 rounded-md px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50 " + (mission === kind ? "bg-cyan-300/20 text-cyan-100" : "text-slate-400 hover:text-white")}>
+                {kind === "transport" ? "Transport" : "Deploy"}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-300">{plan.shipsReturn ? "Delivers resources, then ships return to their source planets." : "Delivers resources and leaves the planned ships at the destination. No return trip. Deploy launches one source at a time."}</p>
+        </section>
+
         {upgrade ? <section aria-label="Upgrade requirement" className="grid gap-2 text-sm text-slate-300">
           <strong className="text-white">{upgrade.label} · Level {upgrade.level} · {upgrade.kind === "moon" ? "Moon" : "Planet"} {target.coordinates}</strong>
           <p>Cost for this level only, not the sum of prerequisite levels. Supply does not start or unlock the upgrade. Energy cannot be shipped.</p>
@@ -243,7 +262,7 @@ export function BatchSupplyModal({
             <p>Destination shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}</p>
             {resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
           </> : <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p>}
-          {upgrade.kind === "moon" ? <p>Moon Supply uses one source per transport. Select a source and review before launching.</p> : null}
+          {upgrade.kind === "moon" ? <p>Moon Supply uses one source per mission. Select a source and review before launching.</p> : null}
           {onRefresh ? <button className="min-h-10 justify-self-start rounded border border-white/20 px-3" disabled={loading || actionPending} onClick={onRefresh} type="button">Refresh destination and shortfall</button> : null}
         </section> : null}
         <section className="grid grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] gap-2" aria-label="Resources to send">
@@ -389,13 +408,13 @@ export function BatchSupplyModal({
 
           <footer className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 border-t border-white/10 pt-3">
             <div className="text-sm text-slate-300">
-              <strong className="text-white">{plan.orders.length} transport{plan.orders.length === 1 ? "" : "s"}</strong>
+              <strong className="text-white">{plan.orders.length} {mission === "transport" ? "transport" : "deployment"}{plan.orders.length === 1 ? "" : "s"}</strong>
               <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
               {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
             </div>
-            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource)} type="button">
+            <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource, mission)} type="button">
               <Check aria-hidden="true" className="shrink-0" size={16} />
-              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} transport${plan.orders.length === 1 ? "" : "s"} ${upgrade?.kind === "moon" ? "to moon" : "in one call"}`}</span>
+              <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${upgrade?.kind === "moon" ? "to moon" : "in one call"}`}</span>
             </button>
           </footer>
         </div>

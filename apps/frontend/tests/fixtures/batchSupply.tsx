@@ -2,7 +2,7 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
-import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource } from "../../src/batchSupplyPlanner";
+import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource, SupplyMission } from "../../src/batchSupplyPlanner";
 import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
@@ -30,7 +30,7 @@ declare global {
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
-      submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource }>;
+      submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource; mission: SupplyMission }>;
     };
   }
 }
@@ -62,7 +62,7 @@ function Fixture() {
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
     target={destination} sources={sources} initialRequested={initialRequested} maxSources={15}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
-    onConfirm={(orders, shipTypesBySource) => submissions.push(structuredClone({ orders, shipTypesBySource }))} />;
+    onConfirm={(orders, shipTypesBySource, mission) => submissions.push(structuredClone({ orders, shipTypesBySource, mission }))} />;
 }
 document.body.style.background = "#05070d";
 render(<Fixture />, document.getElementById("app")!);
