@@ -1,0 +1,12 @@
+[profile.default]
+src = "public"
+test = "test"
+out = "out"
+cache_path = "cache"
+libs = []
+solc_version = "0.8.28"
+optimizer = true
+optimizer_runs = 200
+evm_version = "cancun"
+gas_limit = 16777216
+fs_permissions = [{ access = "read", path = "./public" }]
