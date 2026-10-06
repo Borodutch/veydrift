@@ -7,23 +7,7 @@ import {VeydriftProofBattle as P} from "../src/libraries/VeydriftProofBattle.sol
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
-// Fixture-only layout introspection; never deployed in production or used as a verifier.
-contract ProofFixtureSlots is G {
-    constructor() G(address(1)) {}
-
-    function slots()
-        external
-        pure
-        returns (uint256 linked, uint256 held, uint256 until, uint256 missions)
-    {
-        assembly ("memory-safe") {
-            linked := _fleetCounterplayMissions.slot
-            held := _stationedDefenseMissions.slot
-            until := _defenseHoldUntil.slot
-            missions := _fleetMissions.slot
-        }
-    }
-}
+import {ProofFixtureSlots} from "./support/ProofFixtureSlots.sol";
 
 contract VeydriftProofBattleTest is VeydriftMoonSystemTestBase {
     function _status(uint256 id)
@@ -261,6 +245,37 @@ contract VeydriftProofBattleTest is VeydriftMoonSystemTestBase {
         assertEq(version.version, 0);
         (G.FleetMissionStatus status,,,) = _fleetMission(transport);
         assertEq(uint8(status), uint8(G.FleetMissionStatus.Outbound));
+    }
+
+    function testMultiCallEnrollmentKeepsOwnerResearchFrozen() public {
+        (uint256 origin, uint256 target, address defender) = _fixture();
+        _setShipCount(target, Ship.Cruiser, 4);
+        _setTechnologyLevel(defender, Technology.Weapons, 12);
+        _setTechnologyLevel(defender, Technology.Shielding, 8);
+        _setTechnologyLevel(defender, Technology.Armor, 4);
+        _enableFixture();
+        _commit(779);
+        uint256 id = _launch(origin, target);
+        (, uint64 impact,,) = _fleetMission(id);
+        vm.warp(impact);
+        uint256 rows;
+        for (uint256 i; i < 64 && rows == 0; ++i) {
+            game.resolveFleetMission{gas: 1_500_000}(id);
+            (,,,,, rows) = _status(id);
+        }
+        assertEq(rows, 1, "interrupt after first resident lane");
+        assertEq(_row(id, 0).weapons, 12);
+        // Simulate a changed current triple; continuation must use the already-frozen owner triple.
+        // Real player mutations remain subject to existing pending-battle guards.
+        _setTechnologyLevel(defender, Technology.Weapons, 99);
+        _setTechnologyLevel(defender, Technology.Shielding, 99);
+        _setTechnologyLevel(defender, Technology.Armor, 99);
+        _prepare(id);
+        P.Row memory cruiser = _row(id, 1);
+        assertEq(cruiser.unit, uint8(Ship.Cruiser));
+        assertEq(cruiser.weapons, 12);
+        assertEq(cruiser.shielding, 8);
+        assertEq(cruiser.armor, 4);
     }
 
     function testMoonResidentAndIncarnationNotPlanetInventory() public {

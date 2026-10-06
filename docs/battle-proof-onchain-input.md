@@ -42,11 +42,13 @@ All hashes use Solidity abi.encode, never packed. D=keccak256("veydrift.qualifie
 - seed=randomWord unchanged (32-byte BE), matching qualification candidate seed-policy1.
 
 Stored records and public events permit full reconstruction. This digest is NOT preparation's
-MiMC Raw/Tech/Catalog roots or ContextHash. A constrained raw encoding/Keccak->MiMC bridge must
-authenticate every row/identity/catalog/request before proof submission can be enabled. Current
-qualification Request.Snapshot=preparation.ContextHash is NOT equal to this raw snapshot;
-its fixed purpose is NOT the existing per-mission _attackBattlePurposeHash. Those bridge/purpose
-incompatibilities remain explicit integration gates, not trusted server assertions.
+MiMC Raw/Tech/Catalog roots or ContextHash. The sibling rawbridge and LinkedQual circuit work
+now supplies constrained raw-journal/preparation and request/seed links; qualification uses the
+exact per-mission _attackBattlePurposeHash rather than a fixed replacement purpose. These circuit
+relations do not themselves enable chain acceptance: authenticated recursive composition of the
+complete raw/preparation/combat/result trace, the approved final verifier and its trusted chain
+record crosscheck remain release gates. submitBattleProof remains fail-closed. See rawbridge/
+STATUS.md and the parent release ledger for the current proof evidence and limitations.
 
 Real existing chronology/protection/production cutoff and bounded roster qualification are used;
 frozen impact-time per-owner research, resident/leader/qualified shared/held rows are journaled.
