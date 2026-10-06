@@ -1,0 +1,32 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE attribution-B4 constraints=3367682 public=3 time=6.672394209s
+    family_proof_test.go:40: MEMORY SETUP START attribution-B4
+    family_proof_test.go:45: MEMORY SETUP DONE attribution-B4 elapsed=12m21.327624625s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/attribution/stage-04/g00-B-000 id={Phase:2 Level:4 Kind:0 Arity:2} proof_sha256=56e75f598f89f2b85ff2a2bb9e66774cde76120eeb9da51638c37a909adae47e vk_sha256=76426ffa69627620d176079c1f851102dd505ebc28e1d6d926e5418c1017760e ccs_sha256=2475f1e9e38181ac0d93628ce4166c5891c90eaf3226291bb5be481f2a2675d0 time=39.289859042s
+    family_proof_test.go:37: COMPILE attribution-D4 constraints=2216185 public=3 time=4.149332875s
+    family_proof_test.go:40: MEMORY SETUP START attribution-D4
+    family_proof_test.go:45: MEMORY SETUP DONE attribution-D4 elapsed=8m42.834651333s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/attribution/stage-04/g00-D-000 id={Phase:2 Level:4 Kind:0 Arity:1} proof_sha256=cef3d96098dd79acf1de34b0d78f313778442f7fb41496d83ac0fb905a337f5f vk_sha256=95cfdaf828032e30081b7da4cd3a93241f41a43c0a8cb9a166cafe77a1105f9c ccs_sha256=60d5d877356673ca8c39e975d21a4180dc0395eb8b9f396aeb35f1d0c6e98ad1 time=30.153253791s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/attribution/stage-04/g01-D-000 id={Phase:2 Level:4 Kind:0 Arity:1} proof_sha256=b241c58ce5f472b0ccaa65e5ed4798d8b155788da9cb299e57d3a613bd356d1b vk_sha256=95cfdaf828032e30081b7da4cd3a93241f41a43c0a8cb9a166cafe77a1105f9c ccs_sha256=60d5d877356673ca8c39e975d21a4180dc0395eb8b9f396aeb35f1d0c6e98ad1 time=30.020649875s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=attribution stage=4 testHeight=4 groups=[10 4] elapsed=22m57.008020542s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1377.01s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1377.583s
+     1378.19 real      2524.27 user         6.94 sys
+          7643267072  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              495630  page reclaims
+                2596  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               90373  signals received
+               38447  voluntary context switches
+              251642  involuntary context switches
+          3738126594  instructions retired
+          1284798552  cycles elapsed
+            27706016  peak memory footprint

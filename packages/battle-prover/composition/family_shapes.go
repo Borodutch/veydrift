@@ -4,7 +4,9 @@ import (
 	"fmt"
 	attr "github.com/Borodutch/veydrift/packages/battle-prover/attribution"
 	mb "github.com/Borodutch/veydrift/packages/battle-prover/memorybattle"
+	out "github.com/Borodutch/veydrift/packages/battle-prover/outputbridge"
 	prep "github.com/Borodutch/veydrift/packages/battle-prover/preparation"
+	raw "github.com/Borodutch/veydrift/packages/battle-prover/rawbridge"
 	rb "github.com/Borodutch/veydrift/packages/battle-prover/resultbridge"
 )
 
@@ -29,6 +31,10 @@ func LeafShape(phase, kind int) (*FamilyLeaf, error) {
 			return nil, fmt.Errorf("Close requires CompleteClose and approved attribution catalog")
 		}
 		c.Bridge = []bridgeStep{privatebridgeStep(rb.Shape(kind))}
+	case RawJournal:
+		c.Raw = []rawStep{privateRaw(raw.Shape(kind))}
+	case SettlementOutput:
+		c.Output = []outputStep{privateOutput(out.Shape(kind))}
 	case Report:
 		c.Reports = []reportStep{privatereportStep(rb.ReportShape(kind))}
 	}

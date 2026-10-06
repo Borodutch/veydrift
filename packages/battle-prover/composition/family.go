@@ -36,7 +36,7 @@ func digest(api frontend.API, phase, role int, vs ...frontend.Variable) frontend
 	return h.Sum()
 }
 func (r FamilyRange) bind(api frontend.API, phase int, pub FamilyPublic) {
-	if phase < Preparation || phase > Report {
+	if phase < Preparation || phase > SettlementOutput {
 		panic("unknown phase")
 	}
 	for i := Width(phase); i < 10; i++ {
@@ -78,22 +78,24 @@ type FamilyLeaf struct {
 	Attribution []attrStep
 	Bridge      []bridgeStep
 	Reports     []reportStep
+	Raw         []rawStep
+	Output      []outputStep
 	Phase       int `gnark:"-"`
 }
 
 func (c *FamilyLeaf) Define(api frontend.API) error {
-	n := len(c.Preparation) + len(c.Combat) + len(c.Attribution) + len(c.Bridge) + len(c.Reports)
+	n := len(c.Preparation) + len(c.Combat) + len(c.Attribution) + len(c.Bridge) + len(c.Reports) + len(c.Raw) + len(c.Output)
 	if n != 1 {
 		return fmt.Errorf("family leaf must contain one instruction")
 	}
 	c.Range.bind(api, c.Phase, c.FamilyPublic)
 	p.New(api).AssertEqual(c.Range.Count, p.Const(1))
-	inner := Chunk{PublicRange: PublicRange{First: c.Range.First[:Width(c.Phase)], Last: c.Range.Last[:Width(c.Phase)]}, Preparation: c.Preparation, Combat: c.Combat, Attribution: c.Attribution, Bridge: c.Bridge, Reports: c.Reports, Phase: c.Phase}
+	inner := Chunk{PublicRange: PublicRange{First: c.Range.First[:Width(c.Phase)], Last: c.Range.Last[:Width(c.Phase)]}, Preparation: c.Preparation, Combat: c.Combat, Attribution: c.Attribution, Bridge: c.Bridge, Reports: c.Reports, Raw: c.Raw, Output: c.Output, Phase: c.Phase}
 	return inner.Define(api)
 }
 func NewFamilyLeaf(c *Chunk) *FamilyLeaf {
 	r := Normalize(c.Phase, Range{c.First, c.Last}, p.Const(1))
-	return &FamilyLeaf{FamilyPublic: r.Public(c.Phase), Range: r, Preparation: c.Preparation, Combat: c.Combat, Attribution: c.Attribution, Bridge: c.Bridge, Reports: c.Reports, Phase: c.Phase}
+	return &FamilyLeaf{FamilyPublic: r.Public(c.Phase), Range: r, Preparation: c.Preparation, Combat: c.Combat, Attribution: c.Attribution, Bridge: c.Bridge, Reports: c.Reports, Raw: c.Raw, Output: c.Output, Phase: c.Phase}
 }
 
 // CatalogAuth permits only an index into a COMPILE-TIME catalog. The standard

@@ -1,0 +1,103 @@
+2026-10-06T04:43:46Z VERIFY existing raw-leaf
+2026-10-06T04:43:51Z VERIFY existing raw-0
+2026-10-06T04:43:53Z START raw-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T05:09:26Z PASS raw-1
+2026-10-06T05:09:26Z START raw-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T05:32:53Z PASS raw-2
+2026-10-06T05:32:53Z START raw-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T05:55:07Z PASS raw-3
+2026-10-06T05:55:07Z VERIFY existing adapter-qualification
+2026-10-06T05:55:10Z START adapter-raw-qualified max60m cpu2 soft6GiB constraints4M
+2026-10-06T06:09:07Z PASS adapter-raw-qualified
+2026-10-06T06:09:07Z BATCH COMPLETE raw
+2026-10-06T06:12:34Z START attribution-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T06:14:16Z PASS attribution-leaf
+2026-10-06T06:14:16Z START attribution-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T06:30:48Z PASS attribution-0
+2026-10-06T06:30:48Z START attribution-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T07:00:22Z PASS attribution-1
+2026-10-06T07:00:22Z START attribution-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T07:26:06Z PASS attribution-2
+2026-10-06T07:26:06Z START attribution-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T07:49:31Z PASS attribution-3
+2026-10-06T07:49:31Z START attribution-4 max60m cpu2 soft6GiB constraints4M
+2026-10-06T08:12:29Z PASS attribution-4
+2026-10-06T08:12:29Z BATCH COMPLETE attribution
+2026-10-06T08:14:25Z START prep-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T08:23:45Z PASS prep-leaf
+2026-10-06T08:23:45Z START prep-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T08:41:09Z PASS prep-0
+2026-10-06T08:41:09Z START prep-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T09:12:05Z PASS prep-1
+2026-10-06T09:12:05Z START prep-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T09:38:28Z PASS prep-2
+2026-10-06T09:38:28Z START prep-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T10:02:30Z PASS prep-3
+2026-10-06T10:02:30Z START prep-4 max60m cpu2 soft6GiB constraints4M
+2026-10-06T10:25:30Z PASS prep-4
+2026-10-06T10:25:30Z START prep-5 max60m cpu2 soft6GiB constraints4M
+2026-10-06T10:47:58Z PASS prep-5
+2026-10-06T10:47:58Z BATCH COMPLETE prep
+2026-10-06T10:49:32Z START combat-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T11:11:45Z PASS combat-leaf
+2026-10-06T11:11:45Z START combat-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T11:38:39Z PASS combat-0
+2026-10-06T11:38:39Z START combat-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T12:20:32Z PASS combat-1
+2026-10-06T12:20:32Z START combat-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T12:52:18Z PASS combat-2
+2026-10-06T12:52:18Z START combat-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T13:18:45Z PASS combat-3
+2026-10-06T13:18:45Z START combat-4 max60m cpu2 soft6GiB constraints4M
+2026-10-06T13:42:51Z PASS combat-4
+2026-10-06T13:42:51Z START combat-5 max60m cpu2 soft6GiB constraints4M
+2026-10-06T14:05:55Z PASS combat-5
+2026-10-06T14:05:55Z START combat-6 max60m cpu2 soft6GiB constraints4M
+2026-10-06T14:28:24Z PASS combat-6
+2026-10-06T14:28:24Z BATCH COMPLETE combat
+2026-10-06T14:30:14Z START bridge-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T14:40:20Z PASS bridge-leaf
+2026-10-06T14:40:20Z START bridge-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T14:55:17Z PASS bridge-0
+2026-10-06T14:55:17Z START bridge-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T15:23:34Z PASS bridge-1
+2026-10-06T15:23:34Z START bridge-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T15:48:43Z PASS bridge-2
+2026-10-06T15:48:43Z START bridge-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T16:12:34Z PASS bridge-3
+2026-10-06T16:12:34Z START bridge-4 max60m cpu2 soft6GiB constraints4M
+2026-10-06T16:35:57Z PASS bridge-4
+2026-10-06T16:35:57Z BATCH COMPLETE bridge
+2026-10-06T16:37:23Z START report-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T16:38:58Z PASS report-leaf
+2026-10-06T16:38:58Z START report-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T16:50:05Z PASS report-0
+2026-10-06T16:50:05Z START report-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T17:14:48Z PASS report-1
+2026-10-06T17:14:48Z START report-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T17:38:10Z PASS report-2
+2026-10-06T17:38:10Z BATCH COMPLETE report
+2026-10-06T17:41:10Z START output-leaf max60m cpu2 soft6GiB constraints4M
+2026-10-06T17:47:26Z PASS output-leaf
+2026-10-06T17:47:26Z START output-0 max60m cpu2 soft6GiB constraints4M
+2026-10-06T18:01:08Z PASS output-0
+2026-10-06T18:01:08Z START output-1 max60m cpu2 soft6GiB constraints4M
+2026-10-06T18:28:15Z PASS output-1
+2026-10-06T18:28:15Z START output-2 max60m cpu2 soft6GiB constraints4M
+2026-10-06T18:56:51Z PASS output-2
+2026-10-06T18:56:51Z START output-3 max60m cpu2 soft6GiB constraints4M
+2026-10-06T19:25:43Z PASS output-3
+2026-10-06T19:25:43Z START output-4 max60m cpu2 soft6GiB constraints4M
+2026-10-06T19:54:08Z PASS output-4
+2026-10-06T19:54:08Z BATCH COMPLETE output
+2026-10-06T19:55:26Z START adapter-prepared-combat max60m cpu2 soft6GiB constraints4M
+2026-10-06T20:11:15Z PASS adapter-prepared-combat
+2026-10-06T20:11:15Z START adapter-bridge-report max60m cpu2 soft6GiB constraints4M
+2026-10-06T20:25:24Z PASS adapter-bridge-report
+2026-10-06T20:25:24Z START adapter-pipeline max60m cpu2 soft6GiB constraints4M
+2026-10-06T20:39:39Z PASS adapter-pipeline
+2026-10-06T20:39:39Z START adapter-output-pipeline max60m cpu2 soft6GiB constraints4M
+2026-10-06T20:54:14Z PASS adapter-output-pipeline
+2026-10-06T20:54:14Z START adapter-final max60m cpu2 soft6GiB constraints4M
+2026-10-06T21:10:07Z PASS adapter-final
+2026-10-06T21:10:26Z BATCH COMPLETE final

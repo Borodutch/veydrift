@@ -6,7 +6,9 @@ import (
 	"fmt"
 	attr "github.com/Borodutch/veydrift/packages/battle-prover/attribution"
 	mb "github.com/Borodutch/veydrift/packages/battle-prover/memorybattle"
+	out "github.com/Borodutch/veydrift/packages/battle-prover/outputbridge"
 	prep "github.com/Borodutch/veydrift/packages/battle-prover/preparation"
+	raw "github.com/Borodutch/veydrift/packages/battle-prover/rawbridge"
 	rb "github.com/Borodutch/veydrift/packages/battle-prover/resultbridge"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/std/algebra/emulated/sw_bn254"
@@ -29,9 +31,11 @@ const (
 	Attribution
 	Bridge
 	Report
+	RawJournal
+	SettlementOutput
 )
 
-func Width(phase int) int { return []int{4, 8, 5, 10, 7}[phase] }
+func Width(phase int) int { return []int{4, 8, 5, 10, 7, 5, 5}[phase] }
 func eq(api frontend.API, a, b []frontend.Variable) {
 	for i := range a {
 		api.AssertIsEqual(a[i], b[i])
@@ -47,6 +51,10 @@ func link(api frontend.API, phase int, a, b []frontend.Variable) {
 		attr.AssertLinked(api, attr.Statement(a), attr.Statement(b))
 	case Bridge:
 		rb.AssertLinked(api, rb.Statement(a), rb.Statement(b))
+	case RawJournal:
+		raw.AssertLinked(api, raw.Statement(a), raw.Statement(b))
+	case SettlementOutput:
+		out.AssertLinked(api, out.Statement(a), out.Statement(b))
 	case Report:
 		rb.AssertReportLinked(api, rb.ReportStatement(a), rb.ReportStatement(b))
 	}
@@ -64,6 +72,10 @@ func complete(api frontend.API, phase int, a, b []frontend.Variable) {
 		attr.AssertComplete(api, attr.Statement(a), attr.Statement(b))
 	case Bridge:
 		rb.AssertComplete(api, rb.Statement(a), rb.Statement(b))
+	case RawJournal:
+		raw.AssertComplete(api, raw.Statement(a), raw.Statement(b))
+	case SettlementOutput:
+		out.AssertComplete(api, out.Statement(a), out.Statement(b))
 	case Report:
 		rb.AssertReportComplete(api, rb.ReportStatement(a), rb.ReportStatement(b))
 	default:
@@ -81,6 +93,8 @@ type Chunk struct {
 	Attribution []attrStep
 	Bridge      []bridgeStep
 	Reports     []reportStep
+	Raw         []rawStep
+	Output      []outputStep
 	Phase       int  `gnark:"-"`
 	Complete    bool `gnark:"-"`
 }
@@ -133,6 +147,22 @@ func (c *Chunk) Define(api frontend.API) error {
 	case Report:
 		for i := range c.Reports {
 			x := &c.Reports[i]
+			s := x.Statement()
+			if e := add(s[:], x.Define(api)); e != nil {
+				return e
+			}
+		}
+	case RawJournal:
+		for i := range c.Raw {
+			x := &c.Raw[i]
+			s := x.Statement()
+			if e := add(s[:], x.Define(api)); e != nil {
+				return e
+			}
+		}
+	case SettlementOutput:
+		for i := range c.Output {
+			x := &c.Output[i]
 			s := x.Statement()
 			if e := add(s[:], x.Define(api)); e != nil {
 				return e

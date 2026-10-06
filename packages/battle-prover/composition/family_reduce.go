@@ -22,7 +22,7 @@ type FamilyEnvelope struct {
 // proofs; invalid callback results fail the next standard recursive verifier.
 // All height256 family keys must already be approved before production use.
 func ReduceFamily(phase, height int, catalog *KeyCatalog, next func() (FamilyEnvelope, bool, error), prove func(FamilyID, frontend.Circuit) (CatalogAuth, error)) (FamilyEnvelope, error) {
-	if phase < 0 || phase > Report || height < 0 || height > 256 || catalog == nil {
+	if phase < 0 || phase > SettlementOutput || height < 0 || height > 256 || catalog == nil {
 		return FamilyEnvelope{}, fmt.Errorf("invalid reducer configuration")
 	}
 	emit := func(id FamilyID, children []FamilyEnvelope, selectors []int) (FamilyEnvelope, error) {

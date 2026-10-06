@@ -1,0 +1,9 @@
+=== RUN   TestRawAuthenticatedAdjacency
+    raw_auth_attacks_test.go:22: COMPILE actual-raw-pair-attacks constraints=3367681 public=3 time=10.428749042s
+    raw_auth_attacks_test.go:29: REJECTED omitted-resident-row with TWO genuine approved proofs and correctly rebound public endpoints
+    raw_auth_attacks_test.go:29: REJECTED reordered-source-row with TWO genuine approved proofs and correctly rebound public endpoints
+    raw_auth_attacks_test.go:29: REJECTED replay with TWO genuine approved proofs and correctly rebound public endpoints
+    raw_auth_attacks_test.go:29: REJECTED suffix-after-seal with TWO genuine approved proofs and correctly rebound public endpoints
+--- PASS: TestRawAuthenticatedAdjacency (13.06s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	14.785s

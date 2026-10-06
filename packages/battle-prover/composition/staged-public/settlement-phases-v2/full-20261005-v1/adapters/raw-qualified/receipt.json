@@ -1,0 +1,16 @@
+{
+  "Role": "raw-qualified",
+  "Values": [
+    "10715661437952260369277897233489465807807232033806209810550924975765743903476"
+  ],
+  "Hashes": {
+    "proof": "413221c809be88d8eb6dd169b388f5cf6a427dbc71c56397ad23808424de401b",
+    "public": "309711ee119bf49757905992940658865d8ca7e0cb125bc670cea9663f9b5a73",
+    "vk": "950ba03953b11d039d0b9d4acf74d5646c5f1c54f3341469c423b7ebbb0fe05c"
+  },
+  "CCSHash": "b9b65b283b9f8eda8c6d4be78fe1ec8130b5b22398941aa44decb3b94515a42c",
+  "Dependencies": [
+    "raw/stage-03/manifest.json",
+    "adapters/qualification/manifest.json"
+  ]
+}

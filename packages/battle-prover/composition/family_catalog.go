@@ -8,11 +8,11 @@ import "fmt"
 type FamilyID struct{ Phase, Level, Kind, Arity int }
 
 func (id FamilyID) Valid() bool {
-	if id.Phase < 0 || id.Phase > Report || id.Level < 0 || id.Level > ProtocolRootHeight {
+	if id.Phase < 0 || id.Phase > SettlementOutput || id.Level < 0 || id.Level > ProtocolRootHeight {
 		return false
 	}
 	if id.Level == 0 && id.Arity == 0 {
-		return id.Kind >= 0 && id.Kind < []int{5, 11, 4, 5, 2}[id.Phase]
+		return id.Kind >= 0 && id.Kind < []int{5, 11, 4, 5, 2, 4, 5}[id.Phase]
 	}
 	return id.Kind == 0 && (id.Arity == 1 || (id.Arity == 2 && id.Level >= 1))
 }
@@ -50,7 +50,7 @@ func Dependencies(id FamilyID) ([]FamilyID, error) {
 	phase, h := id.Phase, id.Level
 	if h == 0 {
 		ids := []FamilyID{}
-		for k := 0; k < []int{5, 11, 4, 5, 2}[phase]; k++ {
+		for k := 0; k < []int{5, 11, 4, 5, 2, 4, 5}[phase]; k++ {
 			ids = append(ids, FamilyID{Phase: phase, Kind: k})
 		}
 		return ids, nil

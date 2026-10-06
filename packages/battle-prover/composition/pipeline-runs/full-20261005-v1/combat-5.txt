@@ -1,0 +1,32 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE combat-B5 constraints=3367666 public=3 time=6.642020667s
+    family_proof_test.go:40: MEMORY SETUP START combat-B5
+    family_proof_test.go:45: MEMORY SETUP DONE combat-B5 elapsed=12m23.574864167s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-05/g00-B-000 id={Phase:1 Level:5 Kind:0 Arity:2} proof_sha256=9d6b6813b6c430d7e9faff9e5d8f76fa0365666f32041c44b8459e1148d01921 vk_sha256=64a7540b0d579d075800a91051ed2c585126a7d615d6559d46615901243708a9 ccs_sha256=ac1f986fceffc1bb4ca1b695df7c3627c09581b0c51e701368acf11891eb354a time=38.873743375s
+    family_proof_test.go:37: COMPILE combat-D5 constraints=2216173 public=3 time=4.04663375s
+    family_proof_test.go:40: MEMORY SETUP START combat-D5
+    family_proof_test.go:45: MEMORY SETUP DONE combat-D5 elapsed=8m46.082616666s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-05/g00-D-000 id={Phase:1 Level:5 Kind:0 Arity:1} proof_sha256=501b036adfa323146708c214fcb4203867d42aee4e4f5cfb2674b750e2457463 vk_sha256=1095c330658fd6b78a783931dc2d97ee2a380be5f3a926f753d949ee5b11ed60 ccs_sha256=b1ecc972498b503683a395c1a38ad7558e1b358a74c9bcd0fd97280003d12376 time=29.929317916s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-05/g00-D-001 id={Phase:1 Level:5 Kind:0 Arity:1} proof_sha256=2377c8a5df876f9f594c5eca8ce4c6d2cc6f611d2f6feb8afbe0e4c5632e2a22 vk_sha256=1095c330658fd6b78a783931dc2d97ee2a380be5f3a926f753d949ee5b11ed60 ccs_sha256=b1ecc972498b503683a395c1a38ad7558e1b358a74c9bcd0fd97280003d12376 time=29.942754958s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=combat stage=5 testHeight=6 groups=[36] elapsed=23m1.796806125s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1381.80s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1382.254s
+     1383.73 real      2531.90 user         7.70 sys
+          8219213824  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              516686  page reclaims
+               16333  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               90576  signals received
+               42510  voluntary context switches
+              295749  involuntary context switches
+          4778329804  instructions retired
+          2035572207  cycles elapsed
+            23773880  peak memory footprint

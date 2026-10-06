@@ -1,0 +1,16 @@
+=== RUN   TestImportReviewedPublicStages
+    legacy_raw_pin_test.go:113: COMPILE audited-raw-shape0 constraints=1061037 public=3 time=1.936116333s
+    legacy_raw_pin_test.go:131: MATCHED audited raw kind=0 CCS=4df627debf85b23341f634d98134826e10013f901af122af000f02a4cb3de24a
+    legacy_raw_pin_test.go:113: COMPILE audited-raw-shape1 constraints=1513861 public=3 time=2.980191125s
+    legacy_raw_pin_test.go:131: MATCHED audited raw kind=1 CCS=277cfca8c337ed8a97bf12d6d35833d20cf627fb7582c7b96b63d9ae4e396f6d
+    legacy_raw_pin_test.go:113: COMPILE audited-raw-shape2 constraints=1214810 public=3 time=2.756115916s
+    legacy_raw_pin_test.go:131: MATCHED audited raw kind=2 CCS=20ada04ef9cf550ee26ba53e7a7d5aa2b1f0f9515551de102b3cd4cf497b9940
+    legacy_raw_pin_test.go:113: COMPILE audited-raw-shape3 constraints=307052 public=3 time=776.495334ms
+    legacy_raw_pin_test.go:131: MATCHED audited raw kind=3 CCS=b08af080767a08abac8bd16af2d00f6fc541222d829f94fa4e7474854c484bb7
+    legacy_raw_pin_test.go:145: COMPILE audited-raw-D0 constraints=2228418 public=3 time=5.891711292s
+    legacy_raw_pin_test.go:153: MATCHED audited raw D0 CCS=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460
+    pipeline_import_test.go:90: COMPILE audited-linked-qualification constraints=1184815 public=7 time=2.459446166s
+    pipeline_import_test.go:115: AUDITED PUBLIC MIGRATION VERIFIED run=import-smoke-20261005 rawLeaf7 rawD0=7 LinkedCircuit=1 all6CCS-identities matched; no setups or proving keys
+--- PASS: TestImportReviewedPublicStages (21.73s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	24.023s

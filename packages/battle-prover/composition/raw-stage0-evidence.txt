@@ -1,0 +1,52 @@
+=== RUN   TestRawJournalStage
+    family_proof_test.go:37: COMPILE raw-leaf0 constraints=1061037 public=3 time=2.050192458s
+    family_proof_test.go:40: MEMORY SETUP START raw-leaf0
+    family_proof_test.go:45: MEMORY SETUP DONE raw-leaf0 elapsed=4m29.147366292s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-00 id={Phase:5 Level:0 Kind:0 Arity:0} proof_sha256=3514c362b350662e10f16d330487c4ae3f331f10b58df058e13332804cdbb9ed vk_sha256=a339a3beb07816221702bd80002f2e489b8ad1e52518c283a725f67700ba312c ccs_sha256=4df627debf85b23341f634d98134826e10013f901af122af000f02a4cb3de24a time=14.418528375s
+    family_proof_test.go:37: COMPILE raw-leaf1 constraints=1513861 public=3 time=2.774841958s
+    family_proof_test.go:40: MEMORY SETUP START raw-leaf1
+    family_proof_test.go:45: MEMORY SETUP DONE raw-leaf1 elapsed=5m37.326456416s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-02 id={Phase:5 Level:0 Kind:1 Arity:0} proof_sha256=390861b4dd6f34c7362fcedcae336a651a5396befcab374942de2b5e95383252 vk_sha256=c0d0cec9354c47afbc355ff76887b7c9266503d0be2d11238009503105c7ac90 ccs_sha256=277cfca8c337ed8a97bf12d6d35833d20cf627fb7582c7b96b63d9ae4e396f6d time=18.954878541s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-04 id={Phase:5 Level:0 Kind:1 Arity:0} proof_sha256=feb19eb3a17caf8d5902966add733dac4f5f5bc1b23e01c5d7dc666ee9b6a2aa vk_sha256=c0d0cec9354c47afbc355ff76887b7c9266503d0be2d11238009503105c7ac90 ccs_sha256=277cfca8c337ed8a97bf12d6d35833d20cf627fb7582c7b96b63d9ae4e396f6d time=18.954122083s
+    family_proof_test.go:37: COMPILE raw-leaf2 constraints=1214810 public=3 time=2.663542208s
+    family_proof_test.go:40: MEMORY SETUP START raw-leaf2
+    family_proof_test.go:45: MEMORY SETUP DONE raw-leaf2 elapsed=4m25.804713458s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-01 id={Phase:5 Level:0 Kind:2 Arity:0} proof_sha256=4f6ce5ae25efa480b0cfb96fe02db8ca5ab9fa022f82547281430d2dbc976d68 vk_sha256=97666d95c764dc8b0f0182bcab7f5a5db87942c199439309962cdb1e65b17f62 ccs_sha256=20ada04ef9cf550ee26ba53e7a7d5aa2b1f0f9515551de102b3cd4cf497b9940 time=17.599510583s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-03 id={Phase:5 Level:0 Kind:2 Arity:0} proof_sha256=cf8ce3a017a4a08cc43da514a5acdffcabe619ee573333c016fedfe7019f2a22 vk_sha256=97666d95c764dc8b0f0182bcab7f5a5db87942c199439309962cdb1e65b17f62 ccs_sha256=20ada04ef9cf550ee26ba53e7a7d5aa2b1f0f9515551de102b3cd4cf497b9940 time=17.441734209s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-05 id={Phase:5 Level:0 Kind:2 Arity:0} proof_sha256=c7f049371f25d1b44eb162a81af0687ecacac5bc485e2ba01eca406878983797 vk_sha256=97666d95c764dc8b0f0182bcab7f5a5db87942c199439309962cdb1e65b17f62 ccs_sha256=20ada04ef9cf550ee26ba53e7a7d5aa2b1f0f9515551de102b3cd4cf497b9940 time=17.411926583s
+    family_proof_test.go:37: COMPILE raw-leaf3 constraints=307052 public=3 time=602.42975ms
+    family_proof_test.go:40: MEMORY SETUP START raw-leaf3
+    family_proof_test.go:45: MEMORY SETUP DONE raw-leaf3 elapsed=1m16.546162959s
+    staged_test.go:205: PUBLIC CHECKPOINT staged-public/raw-v1/leaf-06 id={Phase:5 Level:0 Kind:3 Arity:0} proof_sha256=436fca06d8cfc98eaa2180bd02494ebb45126b029701debc307eee756fa48956 vk_sha256=6b5ddb685788d9d3f926cb7754d45306620b8b2156138eb736ae9cebfd913a90 ccs_sha256=b08af080767a08abac8bd16af2d00f6fc541222d829f94fa4e7474854c484bb7 time=3.561036416s
+    family_proof_test.go:37: COMPILE raw-D0 constraints=2228418 public=3 time=4.307043s
+    family_proof_test.go:40: MEMORY SETUP START raw-D0
+    family_proof_test.go:45: MEMORY SETUP DONE raw-D0 elapsed=9m16.557761041s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-00 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=f80714ce8fc30e0ccc32c8b17ec10d39711d14f4d22165b2de93b4838b4497e3 vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=30.233436583s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-01 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=7214969f0c54d5ba6faef08ab091b87faa0cbf1a6e7df0e73520e00a6ed57969 vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=29.804648625s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-02 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=af53e817bd93c328b214a1d2c6408a97a8db5e5abf3ffdd5389604bb030db541 vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=29.512363334s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-03 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=196d4a3aa8b86fa1fbbd9b82f395e14904f6617188b24f553421548ef54737aa vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=29.633495833s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-04 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=796566f3f16ed5faa3ceb4cc53df95d9c75204956259445f85d501acc747285b vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=30.318178333s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-05 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=e99bf655ced981a818a1cef79b9437a94e86b4a1ef8ce2f6f04c5e8b81b8cfa4 vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=31.422438333s
+    staged_test.go:214: PUBLIC CHECKPOINT staged-public/raw-v1/D0-06 id={Phase:5 Level:0 Kind:0 Arity:1} proof_sha256=3f0e36e92553a38f91eddbce1876ce0feb9473d2afab64a04c46a9c0fb437194 vk_sha256=8ae8a61c560b680b6725aca1aecdf3c2c5d182deeb6f4bcd37c6323d009521ae ccs_sha256=27c0d8c49628acaf932c560f9a45c21c8199e716aa25eec0658dc10a7ebbd460 time=30.375856583s
+    staged_test.go:243: RAW STAGE COMPLETE stage=0 actualEdges=7 time=30m42.991810625s; development public artifacts only; final prefix completeness checked by RawQualified
+--- PASS: TestRawJournalStage (1842.99s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1846.247s
+     1848.68 real      3414.72 user         9.65 sys
+          6712754176  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              465607  page reclaims
+                 889  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+              122134  signals received
+               41426  voluntary context switches
+              801642  involuntary context switches
+          4020702653  instructions retired
+          1488565489  cycles elapsed
+            27820752  peak memory footprint

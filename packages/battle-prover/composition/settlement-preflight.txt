@@ -1,0 +1,32 @@
+=== RUN   TestSettlementBindings
+    settlement_test.go:35: COMPILE settlement22-bindings constraints=80984 public=22 time=304.580292ms
+    settlement_test.go:75: REJECTED binding raw-genesis (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding raw-premature (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding raw-result (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding old-SHA-layout (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding context (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding combat-input (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding output-premature (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding output-root (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding report (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding allocation (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding settlement-root (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding settlement-chain (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding limb-alias (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding member-omission (supplemental solver, not proof)
+    settlement_test.go:77: REAL FIXTURE raw=7 prep=17 combat=36 bridge=11 attributionGroups=2 report=3 output=9 completeSettlement=[18395499706900017847 7967734143446093506 2524575188123157529 10865060596497800667 6229458217532788799 13365098583402300192 13333511352624175928 2449549484128514639 3 0 0 0 1 2 0 0 0 0 0 0 0 1]
+--- PASS: TestSettlementBindings (1.83s)
+=== RUN   TestRawOutputFixedFamilies
+    settlement_test.go:89: COMPILE journal-phase5-kind0 constraints=1061037 public=3 time=2.257474792s
+    settlement_test.go:89: COMPILE journal-phase5-kind1 constraints=1513861 public=3 time=3.380668042s
+    settlement_test.go:89: COMPILE journal-phase5-kind2 constraints=1214810 public=3 time=3.328350417s
+    settlement_test.go:89: COMPILE journal-phase5-kind3 constraints=307052 public=3 time=848.349625ms
+    settlement_test.go:89: COMPILE journal-phase6-kind0 constraints=129314 public=3 time=407.018208ms
+    settlement_test.go:89: COMPILE journal-phase6-kind1 constraints=157004 public=3 time=501.192375ms
+    settlement_test.go:89: COMPILE journal-phase6-kind2 constraints=658165 public=3 time=1.486794875s
+    settlement_test.go:89: COMPILE journal-phase6-kind3 constraints=160911 public=3 time=475.259083ms
+    settlement_test.go:89: COMPILE journal-phase6-kind4 constraints=371863 public=3 time=1.069277167s
+    settlement_test.go:116: COMPILE actual-linked-qualification constraints=1184815 public=7 time=2.262418417s
+--- PASS: TestRawOutputFixedFamilies (31.18s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	36.517s

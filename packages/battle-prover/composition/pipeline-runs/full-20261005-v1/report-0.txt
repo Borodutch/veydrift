@@ -1,0 +1,29 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE report-D0 constraints=2216177 public=3 time=4.360886917s
+    family_proof_test.go:40: MEMORY SETUP START report-D0
+    family_proof_test.go:45: MEMORY SETUP DONE report-D0 elapsed=9m18.789849166s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/report/stage-00/g00-D-000 id={Phase:4 Level:0 Kind:0 Arity:1} proof_sha256=be3c3fd7ee31439d9dc1cdde5db83dbc3715894a493ae07dd4965309aa381230 vk_sha256=7a070ebf91aec65ac55d771b2c693aea7b8ccfb16b1a8e36d435d09f4c22bb59 ccs_sha256=3c012e660f38c2dcbf637e4e59c0c6b3aa842be302f68e2c3e6f81cbad971252 time=33.805316459s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/report/stage-00/g00-D-001 id={Phase:4 Level:0 Kind:0 Arity:1} proof_sha256=e5e8819c9bf0d5b6da3bd82bd2642d9bc678fbe7fe3fc1ae073eb6391a18fb17 vk_sha256=7a070ebf91aec65ac55d771b2c693aea7b8ccfb16b1a8e36d435d09f4c22bb59 ccs_sha256=3c012e660f38c2dcbf637e4e59c0c6b3aa842be302f68e2c3e6f81cbad971252 time=32.040465542s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/report/stage-00/g00-D-002 id={Phase:4 Level:0 Kind:0 Arity:1} proof_sha256=619522996668f0df1851d4263503df2fd0127ad07d1b2bd7f6fd8dbe760139de vk_sha256=7a070ebf91aec65ac55d771b2c693aea7b8ccfb16b1a8e36d435d09f4c22bb59 ccs_sha256=3c012e660f38c2dcbf637e4e59c0c6b3aa842be302f68e2c3e6f81cbad971252 time=34.576662208s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=report stage=0 testHeight=2 groups=[3] elapsed=11m6.091075917s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (666.09s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	667.159s
+      667.77 real      1222.07 user         7.03 sys
+          6168133632  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              667921  page reclaims
+                1150  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               45810  signals received
+               21797  voluntary context switches
+              512236  involuntary context switches
+          3860623721  instructions retired
+          1478782922  cycles elapsed
+            26182352  peak memory footprint

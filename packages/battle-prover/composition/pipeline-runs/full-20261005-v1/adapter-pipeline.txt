@@ -1,0 +1,27 @@
+=== RUN   TestSettlementAdapterStage
+    family_proof_test.go:37: COMPILE pipeline constraints=3454146 public=8 time=8.364324208s
+    family_proof_test.go:40: MEMORY SETUP START pipeline
+    family_proof_test.go:45: MEMORY SETUP DONE pipeline elapsed=13m14.613043125s
+    pipeline_adapter_test.go:206: PUBLIC STAGE VERIFIED role=pipeline public=8 proof_sha256=330d405f1af1de34965eaa9414ad9e074677f4e8c6d2fbe79aa29b6549b21385 vk_sha256=2249dfd58ddd0e3603b339a3ec7a85f34e5e1686233e930eab594f0e969fdc44
+    pipeline_adapter_test.go:216: AUTHENTICATED ADAPTER STAGE VERIFIED role=pipeline public=8 sources=168 dependencies=2
+--- PASS: TestSettlementAdapterStage (851.94s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	852.817s
+      854.52 real      1497.53 user        15.20 sys
+          6323437568  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             1521577  page reclaims
+               16338  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               56552  signals received
+              156972  voluntary context switches
+             1262667  involuntary context switches
+          4266085474  instructions retired
+          2000828000  cycles elapsed
+            23675600  peak memory footprint

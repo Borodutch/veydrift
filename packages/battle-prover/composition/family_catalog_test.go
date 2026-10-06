@@ -45,7 +45,7 @@ func TestCatalogRoles(t *testing.T) {
 	if len(ks) != 2 {
 		t.Fatal("node catalog")
 	}
-	for _, id := range []FamilyID{{Phase: 5}, {Phase: Combat, Kind: 11}, {Phase: Combat, Level: 257, Arity: 2}, {Phase: Combat, Level: 1, Kind: 1, Arity: 2}, {Phase: Combat, Arity: 2}} {
+	for _, id := range []FamilyID{{Phase: 7}, {Phase: Combat, Kind: 11}, {Phase: Combat, Level: 257, Arity: 2}, {Phase: Combat, Level: 1, Kind: 1, Arity: 2}, {Phase: Combat, Arity: 2}} {
 		if id.Valid() {
 			t.Fatalf("invalid role %+v", id)
 		}

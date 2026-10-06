@@ -1,0 +1,8 @@
+=== RUN   TestRawIndependentApprovalAttacks
+    legacy_raw_pin_test.go:102: REJECTED independent approval coherent-proof-key-substitution
+    legacy_raw_pin_test.go:102: REJECTED independent approval CCS-version
+    legacy_raw_pin_test.go:102: REJECTED independent approval role
+    legacy_raw_pin_test.go:102: REJECTED independent approval public
+--- PASS: TestRawIndependentApprovalAttacks (0.02s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1.454s

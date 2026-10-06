@@ -1,0 +1,5 @@
+=== RUN   TestPinnedRaw0Reload
+    legacy_raw_pin_test.go:62: 14 genuine raw proofs independently pinned/reloaded; old setup not promoted
+--- PASS: TestPinnedRaw0Reload (1.31s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	3.564s

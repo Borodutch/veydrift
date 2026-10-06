@@ -1,0 +1,13 @@
+=== RUN   TestCatalogRoles
+--- PASS: TestCatalogRoles (0.00s)
+=== RUN   TestProtocolWorkPlan
+    family_plan_test.go:24: uint256 work bits=1 level256 root=1
+    family_plan_test.go:24: uint256 work bits=2 level256 root=1
+    family_plan_test.go:24: uint256 work bits=5 level256 root=1
+    family_plan_test.go:24: uint256 work bits=201 level256 root=1
+    family_plan_test.go:24: uint256 work bits=256 level256 root=1
+--- PASS: TestProtocolWorkPlan (0.00s)
+=== RUN   TestPipelineSplitPlan
+--- PASS: TestPipelineSplitPlan (0.00s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1.837s

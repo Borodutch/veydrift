@@ -1,0 +1,9 @@
+# Settlement integration reviews
+
+Reviewer90101c10: no P1 relation defect assuming approved constant keys; P2 self-declared resumed provenance. Resolved for continuation via separate O_EXCL trusted-local approval ledgers pinning manifest bytes, all module source hashes, dependency manifests, VK/CCS and receipt hashes. Historical raw-v1 resumed path disabled. Explicit source-owned pins for14 raw proofs and1 actual LinkedCircuit proof; audited migration recompiles all6 CCS and requires byte-identical hashes, reloads/verifies public proofs and checks source fixture statements. Coherent foreign proof/key, wrong-role/CCS/public substitutions rejected by independent pin checks. No claim these local development approvals are production ceremony.
+
+Reviewer03c266f7: otherwise bounded-clean strict pipeline/import/adapters, but P2 final-proof checkpoint could be stranded if post-proof attack compilation timed out. Resolved by persisting/verifying final proof+manifest+independent approval first; separate TestFinalSettlementAttacks writes attacks.json only after all22 public mutations and genuine bundle attacks pass. TestCompletedPipelineFinal requires both proof and matching attack marker. No proof regeneration needed to retry a separately inspected attack gate.
+
+New ABI is qualification.LinkedStatement7 (context,input,rawResult,chain4), NOT legacy SHA QualifiedFinal. SettlementFinal verifies2 bundle proofs before AssertAuthenticated and emits22 outputbridge fields. Final uses Solidity-target legacyKeccak hash-to-field and canonical MarshalSolidity; all recursive children use recursive options. No onchain activation or live acceptance claimed.
+
+Proof-stage source freeze is active for full-20261005-v1. Full DAG still requires measured successful completion; reviews and partial raw/qualification proofs are not final settlement receipts.

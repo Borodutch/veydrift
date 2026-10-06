@@ -1,3 +1,5 @@
+> **2026-10-06 update:** Complete two-sided finite-fixture raw-linked 22-public settlement proof, attack gate and final re-verification PASS. See [FULL-SETTLEMENT-EVIDENCE.md](FULL-SETTLEMENT-EVIDENCE.md) for current evidence and remaining production/D256 scope. Earlier incomplete-execution statements below are historical.
+
 # Authenticated composition experiment
 
 Uses gnark v0.16.3 BN254 Groth16 recursion (complete arithmetic and subgroup checks); keys are compiled constants, never witness-selected. Private wrappers call unchanged sibling Define methods. No custom cryptography.
