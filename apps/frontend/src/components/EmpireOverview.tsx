@@ -57,7 +57,7 @@ export function bodyKey(planetId: string, kind: BodyKind): string {
   return kind === "moon" ? `${planetId}:moon` : planetId;
 }
 
-/** Missions touching one body: arrivals at it, departures from it, and fleets returning to it. */
+/** Missions touching one body: arrivals at it (including the wallet's own fleets sent from its other bodies), departures from it, and fleets returning to it. */
 export function bodyFleetVisibility(
   visibility: FleetMissionVisibilityResponse,
   planetId: string,
@@ -70,7 +70,7 @@ export function bodyFleetVisibility(
     mission.originPlanetId === planetId && Boolean(mission.originIsMoon) === isMoon;
   return {
     ...visibility,
-    incoming: visibility.incoming.filter(isTarget),
+    incoming: [...visibility.incoming, ...visibility.outgoing].filter(isTarget),
     outgoing: visibility.outgoing.filter(isOrigin),
     returning: visibility.returning.filter(isOrigin),
   };
@@ -346,7 +346,8 @@ function BodyRow({
     <div className={isMoon ? "border-t border-white/[0.04] pl-6" : undefined}>
       {/* The selected body stays open; elsewhere the row toggles and the name selects. */}
       <div
-        className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 rounded-md px-2 py-2 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
+        className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 rounded-md px-2 py-2 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${hostile ? "ring-1 ring-inset ring-red-500/60" : ""} ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
+        data-under-attack={hostile ? "true" : undefined}
         aria-current={selected ? "true" : undefined}
         data-body-kind={kind}
         onClick={selected ? undefined : onToggle}
