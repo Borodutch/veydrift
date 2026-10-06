@@ -1,0 +1,13 @@
+=== RUN   TestActualRawJournalSolvers
+    upstream_test.go:15: *rawbridge.Step constraints=1052086 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=1504917 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=1205867 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=298101 public=6
+--- PASS: TestActualRawJournalSolvers (16.86s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/outputbridge	18.026s
+=== RUN   TestActualReportSolvers
+    upstream_test.go:27: *resultbridge.ReportStep constraints=293880 public=8
+--- PASS: TestActualReportSolvers (3.25s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/outputbridge	3.788s
