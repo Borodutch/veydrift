@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftProofBattle as Proof} from "./libraries/VeydriftProofBattle.sol";
+import {VeydriftProofPreparationModule} from "./VeydriftProofPreparationModule.sol";
+import {VeydriftCombatProtectionModule} from "./VeydriftCombatProtectionModule.sol";
 
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
@@ -17,6 +20,7 @@ contract VeydriftCombatRapidfire {
 }
 
 contract VeydriftCombatModule is VeydriftResourceReserves {
+    address private immutable _proofModule;
     address private immutable _stagedModule;
     address private immutable _legacyModule;
 
@@ -31,16 +35,21 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
         _stagedModule = stagedModule;
         _legacyModule = legacyModule;
+        // Isolated here rather than in StagedCombat: preserve both EIP-170 and EIP-3860.
+        _proofModule = address(
+            new VeydriftProofPreparationModule(address(new VeydriftCombatProtectionModule()))
+        );
     }
 
     function resolveFleetMissionCombatRound(uint256 missionId) external returns (bool) {
         // Pre-staged battles with committed rounds must finish their historical model.
         // Newly prepared battles always enter staged v2; an existing staged battle
         // keeps its stored version (zero for v1) through every remaining round.
-        address module = Store.battle(missionId).phase == 0
-            && _battleResolutionProgress[missionId].rounds != 0
-            ? _legacyModule
-            : _stagedModule;
+        address module = Proof.active(missionId)
+            ? _proofModule
+            : Store.battle(missionId).phase == 0 && _battleResolutionProgress[missionId].rounds != 0
+                ? _legacyModule
+                : _stagedModule;
         (bool ok, bytes memory data) = module.delegatecall(msg.data);
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
         return abi.decode(data, (bool));

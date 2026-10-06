@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
+import {VeydriftProofBattle as Proof} from "./libraries/VeydriftProofBattle.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
@@ -277,7 +277,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         missionId = nextFleetId++;
         uint256 randomnessRequestId;
         if (isAttack) {
-            VeydriftBattleResearch.markLaunchedAttack(missionId);
             randomnessRequestId = _requestAttackBattleRandomness(missionId);
         }
         activeFleetMissionCount[player] += 1;
@@ -600,10 +599,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
-        address randomnessEngine = _randomnessEngine;
-        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
-        return IVeydriftDefenseHoldRandomnessEngine(randomnessEngine)
-            .requestRandomness(_attackBattlePurposeHash(missionId));
+        return Proof.request(missionId, _randomnessEngine, _attackBattlePurposeHash(missionId));
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)

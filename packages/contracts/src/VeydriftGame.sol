@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftProofBattle as Proof} from "./libraries/VeydriftProofBattle.sol";
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
@@ -61,6 +62,20 @@ contract VeydriftGame is VeydriftResourceReserves {
             _allianceSystem == address(0)
                 || IVeydriftGamePaidInvitePointer(_allianceSystem).paidInviteSystem() != msg.sender
         ) revert Unauthorized(msg.sender);
+    }
+
+    /// @notice Bounded public witness read: 0=status, 1=header, 2=row[index], 3=source[index], 4=prospective version.
+    function proofBattleRecord(uint256 id, uint8 kind, uint256 index)
+        external
+        view
+        returns (bytes memory)
+    {
+        return Proof.record(id, kind, index);
+    }
+
+    /// @notice Fail closed until the real raw-input bridge, final verifier and settlement exist.
+    function submitBattleProof(uint256, bytes calldata, bytes32) external pure {
+        revert Proof.ProofPipelineUnavailable();
     }
 
     /// @notice Math used by newly prepared battles; existing battles retain their frozen version.
