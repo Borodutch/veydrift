@@ -42,7 +42,7 @@ export function BattleReportsPage({
       <PageHeader
         actions={(
           <>
-          <button className="inline-flex h-9 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
+          <button className="inline-flex h-9 items-center justify-center gap-2 rounded surface-inset px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10" onClick={onBack} type="button">
             <ArrowLeft aria-hidden="true" size={15} />
             Mission Control
           </button>
@@ -66,17 +66,17 @@ export function BattleReportsPage({
           </div>
         )
       ) : reports.length === 0 ? (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
+        <div className="rounded-lg surface p-4 text-sm text-slate-400">
           No resolved attack reports are available yet.
         </div>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {reports.map((report) => (
-            <article className="min-w-0 rounded-lg border border-white/10 bg-[#101624] p-4" key={report.missionId}>
+            <article className="min-w-0 rounded-lg surface p-4" key={report.missionId}>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="grid h-8 w-8 place-items-center rounded border border-white/10 bg-black/20 text-cyan-200">
+                    <span className="grid h-8 w-8 place-items-center rounded surface-inset text-cyan-200">
                       <Swords aria-hidden="true" size={17} />
                     </span>
                     <h3 className="truncate text-sm font-semibold text-white">
@@ -113,7 +113,7 @@ export function BattleReportsPage({
 function Datum({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</dt>
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{label}</dt>
       <dd className="mt-0.5 break-words text-sm text-slate-300">{value}</dd>
     </div>
   );

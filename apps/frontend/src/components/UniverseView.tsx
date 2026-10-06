@@ -28,7 +28,7 @@ export function UniverseView({ onSelectGalaxy, onSelectSystem, onBack }: Props) 
           <button
             key={g}
             onClick={() => onSelectGalaxy(g)}
-            className="group flex flex-col items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-4 transition-all hover:border-signal/30 hover:bg-white/8"
+            className="group flex flex-col items-center gap-2 rounded-lg surface-inset p-4 transition-all hover:border-signal/30 hover:bg-white/8"
           >
             <div className="relative h-16 w-16 overflow-hidden rounded-full border border-white/15">
               <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgba(128,241,255,0.3),transparent_60%)]" />
@@ -44,7 +44,7 @@ export function UniverseView({ onSelectGalaxy, onSelectSystem, onBack }: Props) 
       </div>
 
       {/* Quick navigation */}
-      <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+      <div className="rounded-lg surface-inset p-4">
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
           Quick Jump
         </h3>
@@ -54,7 +54,7 @@ export function UniverseView({ onSelectGalaxy, onSelectSystem, onBack }: Props) 
               <button
                 key={`${g}-${s}`}
                 onClick={() => onSelectSystem(g, s)}
-                className="rounded border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-signal/30 hover:bg-white/8 hover:text-signal"
+                className="rounded surface-inset px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-signal/30 hover:bg-white/8 hover:text-signal"
               >
                 [{g}:{s}:1]
               </button>

@@ -128,14 +128,14 @@ export function EntityMediaPanel({
         </div>
       ) : null}
       {record && !playback.enabled ? (
-        <p className="mt-3 rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-400">
+        <p className="mt-3 rounded surface-inset px-3 py-2 text-sm text-slate-400">
           Media is off for this page visit.
         </p>
       ) : null}
 
       {editorOpen ? (
         <form
-          className="mt-3 grid gap-2 rounded border border-white/10 bg-black/20 p-3"
+          className="mt-3 grid gap-2 rounded surface-inset p-3"
           onSubmit={(event) => {
             event.preventDefault();
             void save(mediaUrl);

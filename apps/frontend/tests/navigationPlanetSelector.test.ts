@@ -125,12 +125,12 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("contains mobile planet picker horizontal overflow inside its own scroller", () => {
-    expect(playableSource).toContain('aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
-    expect(playableSource).toContain('className="flex w-max min-w-full gap-2 pb-1"');
+    expect(playableSource).toContain('aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none]"');
+    expect(playableSource).toContain('className="flex w-max min-w-full gap-1.5 p-1"');
     // overflow-x-clip, not overflow-hidden: hidden would turn these shells
     // into the sticky scrollport and detach the top bar / mobile nav from
     // the viewport while still clipping horizontal overflow.
-    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100"');
+    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#060b16] text-slate-100"');
     expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
     expect(playableSource).toContain("overflow-visible p-3");
     expect(playableSource).toContain("md:min-h-0 md:overflow-y-auto md:overscroll-contain");
@@ -167,12 +167,11 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("constrains mobile nav menu and tiles to the viewport width", () => {
-    expect(navSource).toContain('className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"');
-    expect(navSource).toContain('className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"');
-    expect(navSource).toContain('className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"');
-    expect(navSource).toContain('className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]"');
-    expect(navSource).toContain("max-w-full flex-col items-center justify-center");
-    expect(navSource).toContain("overflow-hidden rounded border px-1");
+    expect(navSource).toContain('className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full border-b border-cyan-300/10 bg-[#091120]/95 backdrop-blur md:hidden"');
+    expect(navSource).toContain("absolute inset-x-0 top-full grid max-h-[calc(100dvh-var(--topbar-h,2.75rem)-3rem)] min-w-0 max-w-full");
+    expect(navSource).toContain('className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1 min-[375px]:gap-1.5 sm:gap-2"');
+    expect(navSource).toContain("flex h-10 min-w-0 max-w-full items-center gap-1 overflow-hidden rounded-lg");
+    expect(navSource).toContain('shortLabel={page.key === "infrastructure" ? "Infra" : undefined}');
     expect(navSource).not.toContain('className="grid grid-cols-3 gap-1.5 sm:grid-cols-4"');
   });
 
@@ -184,8 +183,8 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("shows full planet names in the picker without permanent truncation", () => {
-    expect(playableSource).toContain('aria-label="Select planet" className="hidden w-32 shrink-0');
-    expect(playableSource).toContain("relative grid w-24 min-w-0 shrink-0 gap-1");
+    expect(playableSource).toContain('aria-label="Select planet" className="hidden w-44 shrink-0');
+    expect(playableSource).toContain('relative grid ${layout === "mobile" ? "w-auto" : "w-full"} min-w-0 shrink-0 gap-1');
     expect(playableSource).toContain("title={label}");
     expect(playableSource).toContain("line-clamp-2 block max-w-full");
     expect(playableSource).toContain("[overflow-wrap:anywhere]");
@@ -196,7 +195,7 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("renders planet selector thumbnails as circles", () => {
-    expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
+    expect(playableSource).toContain('overflow-hidden rounded-full bg-black/30 ${layout === "mobile" ? "h-7 w-7" : "h-9 w-9"}');
   });
 
   test("anchors incoming attack warnings to the planet thumbnail", () => {
@@ -216,12 +215,20 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}");
   });
 
+  test("keeps a planet drag alive when live reordering moves the dragged button", () => {
+    // Moving the button in the DOM drops pointer capture; ending the drag there limited a drag to one slot.
+    expect(playableSource).toContain("onPlanetLostPointerCapture={handleLostPointerCapture}");
+    expect(playableSource).toContain("if (event.buttons !== 0 && event.currentTarget.isConnected) {");
+    expect(playableSource).toContain("event.currentTarget.setPointerCapture(event.pointerId);");
+    expect(playableSource).not.toContain("onPlanetLostPointerCapture={finishPointerDrag}");
+  });
+
   test("shows per-planet queue progress bars in the selector", () => {
     expect(playableSource).toContain("researchProgress={planetSelectorResearchProgressFor(planet.planetId, researchPlanetId, researchProgress)}");
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
     expect(playableSource).toContain("data-planet-selector-progress={bar.kind}");
     expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, progressState, researchProgress).filter((bar) => bar.active);");
-    expect(playableSource).toContain('className="grid w-full gap-1"');
+    expect(playableSource).toContain('className={`grid w-full ${compact ? "gap-px" : "gap-1"}`}');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "building")');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "defense")');
     expect(playableSource).toContain('constructionProgressKey(planet.planetId, "planet", "ship")');
@@ -250,8 +257,8 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("const selectorItems = planets.map((planet) => (");
     expect(playableSource).toContain("showMoonIndicator={planet.moon?.exists === true}");
     expect(playableSource).toContain("<PlanetMoonIndicator");
-    expect(playableSource).toContain('className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5"');
-    expect(playableSource).toContain("relative grid w-24 min-w-0 shrink-0 gap-1");
+    expect(playableSource).toContain('"!-right-1 !-top-1 !h-4 !w-4"');
+    expect(playableSource).toContain('relative grid ${layout === "mobile" ? "w-auto" : "w-full"} min-w-0 shrink-0 gap-1');
     expect(playableSource).not.toContain("PlanetSelectorMoonButton");
     expect(playableSource).not.toContain('data-planet-selector-moon="true"');
     expect(playableSource).not.toContain('onSelect(planet.planetId, "moon")');
@@ -328,17 +335,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("h-[calc(100dvh-var(--topbar-h,2.75rem))]");
     expect(navSource).toContain("md:sticky md:top-[var(--topbar-h,2.75rem)]");
     expect(navSource).toContain("flex w-full items-center");
-    expect(navSource).toContain("min-h-0 flex-1 space-y-1 overflow-y-auto");
+    expect(navSource).toContain("min-h-0 flex-1 space-y-0.5 overflow-y-auto");
     expect(navSource).toContain('aria-label="Sidebar account summary"');
-    expect(navSource).toContain("sticky bottom-3 shrink-0");
+    expect(navSource).toContain("shrink-0 border-t border-cyan-300/10");
     expect(navSource).toContain("Commander");
     expect(navSource).toContain("playerDisplayLabel(playerProfile, account)");
     expect(navSource).toContain('aria-label="Edit player profile"');
     expect(navSource).toContain('aria-haspopup="dialog"');
     expect(navSource).toContain('id="commander-name-editor"');
-    expect(navSource).toContain('role="dialog"');
+    expect(navSource).toContain("<Modal");
     expect(navSource).toContain("playerDescriptionMaxLength");
-    expect(navSource).toContain("fixed inset-0 z-50");
     expect(navSource).not.toContain('className="mt-2 grid gap-2 rounded border border-white/10 bg-black/30 p-2"');
     expect(playableSource).toContain("playerProfile={playerProfile}");
     expect(playableSource).toContain("onUpdatePlayerProfile={handleUpdatePlayerProfile}");
@@ -361,7 +367,6 @@ describe("navigation and planet selector UI source contracts", () => {
   test("makes Commander card value fields copy full values with local fade-up feedback", () => {
     expect(navSource).toContain("CopyableCommanderValue");
     expect(navSource).toContain('copyKey="commander"');
-    expect(navSource).toContain('copyKey="commander-fallback"');
     expect(navSource).toContain('copyKey="home"');
     expect(navSource).toContain('copyKey="wallet"');
     expect(navSource).toContain("data-copy-value={copyValue}");

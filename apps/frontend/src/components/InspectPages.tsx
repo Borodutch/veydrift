@@ -122,7 +122,7 @@ export function PlayerInspectPage({
             signer={signerAccount}
           />
 
-          <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
+          <div className="flex flex-wrap gap-2 rounded surface-inset px-3 py-2">
             <CompactStat label="Rank" value={state.highscore?.rank ? `#${state.highscore.rank}` : "Unranked"} />
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
             {homePlanetLabel ? <CompactStat label="Home planet" value={homePlanetLabel} /> : null}
@@ -155,7 +155,7 @@ export function PlayerInspectPage({
 
           <Panel title="Score">
             {scoreItems.length ? (
-              <dl className="divide-y divide-white/10 rounded border border-white/10 bg-black/15">
+              <dl className="divide-y divide-white/10 rounded surface-inset">
                 {scoreItems.map((item) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm" key={item.label}>
                     <dt className="font-medium text-slate-400">{item.label}</dt>
@@ -218,7 +218,7 @@ function PlayerPlanetRow({
 
   return (
     <div
-      className="grid gap-3 rounded border border-white/10 bg-black/20 p-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06] sm:grid-cols-[64px_minmax(0,1fr)]"
+      className="grid gap-3 rounded surface-inset p-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06] sm:grid-cols-[64px_minmax(0,1fr)]"
       key={planet.planetId}
     >
       <button
@@ -227,7 +227,7 @@ function PlayerPlanetRow({
         title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
         type="button"
       >
-        <span className="relative h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
+        <span className="relative h-16 w-16 overflow-hidden rounded surface-inset">
           <OptimizedImage
             alt=""
             className="h-full w-full object-cover"
@@ -416,7 +416,7 @@ export function AllianceInspectPage({
                     const approval = allianceJoinRequestApprovalState(allianceState, request);
                     const dismissal = allianceJoinRequestDismissalState(allianceState, request);
                     return (
-                      <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
+                      <div className="rounded surface-inset p-3" key={request.requester}>
                         <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
                           {request.requesterDisplayName?.trim() || shortAddress(request.requester)}
                         </button>
@@ -475,7 +475,7 @@ function InspectShell({ action, children, onBack, title, titlePrefix }: {
 
 function Panel({ children, title }: { children: ComponentChildren; title: string }) {
   return (
-    <section className="rounded border border-white/10 bg-white/[0.03] p-4">
+    <section className="rounded surface-inset p-4">
       <h2 className="text-sm font-semibold text-white">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
@@ -611,7 +611,7 @@ function RosterGroup({
 
   return (
     <div className="mb-3 last:mb-0">
-      <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+      <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300/70">
         <span>Members</span>
         <span>{members.length}</span>
       </div>
@@ -703,7 +703,7 @@ function memberRowTone(member: RosterMember, isViewer: boolean): string {
 
 function CompactStat({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex min-w-0 items-baseline gap-1.5 rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-xs">
+    <span className="inline-flex min-w-0 items-baseline gap-1.5 rounded surface-inset px-2 py-1 text-xs">
       <span className="shrink-0 font-semibold uppercase text-slate-500">{label}</span>
       <span className="min-w-0 truncate font-mono text-slate-100">{value}</span>
     </span>

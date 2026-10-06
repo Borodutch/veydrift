@@ -121,7 +121,7 @@ describe("settlement screen mode", () => {
 
     expect(settlementSource).toContain("Connect wallet");
     expect(settlementSource).toContain("Paste invite code");
-    expect(heroSource).toContain("Build. Raid. Drift.");
+    expect(heroSource).toContain("Build an empire, raid your rivals and drift through the Rift.");
     expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
     expect(heroSource).toContain("/assets/landing/qa-screens/shipyard-desktop.jpg");
     expect(heroSource).toContain("/assets/landing/qa-screens/missions-desktop.jpg");

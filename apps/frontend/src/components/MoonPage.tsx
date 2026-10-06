@@ -193,7 +193,7 @@ function ChickenBurnPanel({
   };
 
   return (
-    <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-md surface p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-amber-200/20 bg-amber-200/10 text-amber-200">
@@ -228,7 +228,7 @@ function ChickenBurnPanel({
         <label className="grid gap-1 text-xs text-slate-300">
           <span>Chicken ID</span>
           <input
-            className="h-11 min-w-0 rounded border border-white/10 bg-black/20 px-3 text-sm text-slate-100 outline-none transition focus:border-amber-200/40 sm:h-9"
+            className="h-11 min-w-0 rounded surface-inset px-3 text-sm text-slate-100 outline-none transition focus:border-amber-200/40 sm:h-9"
             inputMode="numeric"
             name="chickenTokenId"
             placeholder="91528"
@@ -291,7 +291,7 @@ function NoMoonGuidance({
   const previewBuildings = moonStructurePreviewBuildings(moonState);
 
   return (
-    <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+    <section className="rounded-md surface p-4">
       <div className="grid gap-4">
         <div className="min-w-0">
           <div className="mb-3 grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
@@ -406,7 +406,7 @@ function MoonSystemsPanel({
     <div className="grid gap-4">
       <MoonResourceBar rows={moonResourceRows(moonState)} />
 
-      <section className="overflow-hidden rounded-md border border-white/10 bg-[#101624]">
+      <section className="overflow-hidden rounded-md surface">
         <div className="grid lg:grid-cols-[18rem_minmax(0,1fr)]">
           <div className="relative aspect-[16/9] overflow-hidden bg-black/25 lg:aspect-auto lg:h-60">
             <MoonImage
@@ -481,12 +481,12 @@ function MoonSystemsPanel({
       />
 
       {jumpGateAvailable ? (
-      <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+      <section className="rounded-md surface p-4">
         <div>
           <h3 className="text-base font-semibold text-white">Jump Gate</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
             <select
-              className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9"
+              className="h-11 rounded surface-inset px-2 text-sm text-slate-100 sm:h-9"
               onChange={(event) => setJumpDestination(event.currentTarget.value)}
               value={jumpDestination}
             >
@@ -497,8 +497,8 @@ function MoonSystemsPanel({
                 </option>
               ))}
             </select>
-            <input className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
-            <input className="h-11 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
+            <input className="h-11 rounded surface-inset px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
+            <input className="h-11 rounded surface-inset px-2 text-sm text-slate-100 sm:h-9" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
             <button
               className="h-11 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50 sm:h-9"
               disabled={!canTransact || pending || !onJumpGate || !jumpDestinationReady || !jumpCargoValid}
@@ -527,7 +527,7 @@ function MoonSummaryPill({
   value: string;
 }) {
   return (
-    <div className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap rounded border border-white/10 bg-black/15 px-3 py-2 text-sm">
+    <div className="inline-flex min-w-0 items-center gap-2 whitespace-nowrap rounded surface-inset px-3 py-2 text-sm">
       {Icon ? <Icon aria-hidden="true" className="shrink-0 text-cyan-200" size={15} strokeWidth={1.8} /> : null}
       <span className="text-slate-400">{label}</span>
       <span className="font-semibold tabular-nums text-slate-100">{value}</span>
@@ -542,7 +542,7 @@ function MoonResourceBar({ rows }: { rows: Array<{ label: string; value: string 
     Deuterium: "text-emerald-300",
   };
   return (
-    <dl className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-white/10 bg-[#0b111d] px-3 py-2">
+    <dl className="flex min-h-10 flex-wrap items-center gap-x-5 gap-y-2 rounded-md surface px-3 py-2">
       {rows.map((row) => (
         <div className="inline-flex items-baseline gap-2 whitespace-nowrap text-sm" key={row.label}>
           <dt className={`font-semibold ${tones[row.label] ?? "text-slate-300"}`}>{row.label}</dt>
@@ -782,7 +782,7 @@ function MoonStructureComparisonMetric({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+    <div className="min-w-0 rounded surface-inset px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
       <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 text-sm font-semibold">
         <span className="min-w-0 break-words text-slate-200">{value}</span>
@@ -1087,7 +1087,7 @@ function formatMoonAmount(value: string | number): string {
 
 function GuidanceStep({ label, value }: { label: string; value: string | undefined }) {
   return (
-    <div className="rounded border border-white/10 bg-black/15 p-3">
+    <div className="rounded surface-inset p-3">
       <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{label}</div>
       {value ? <div className="mt-1 leading-5 text-slate-300">{value}</div> : null}
     </div>

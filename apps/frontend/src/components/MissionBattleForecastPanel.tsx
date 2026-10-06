@@ -48,7 +48,7 @@ export function renderMissionBattleForecastPanel({ detail, now }: { detail: Miss
   if (!prepared) return null;
   const forecast = resolveVerifiedPublicTargetBattleForecast(prepared, verified);
   const preview = detail.battleForecast;
-  return <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3" aria-label="Probable outcome">
+  return <section className="grid gap-2 rounded-md surface-inset p-3" aria-label="Probable outcome">
     <h2 className="text-sm font-semibold text-slate-200">Probable outcome</h2>
     {preview ? <p className="text-xs text-slate-400">Shared battle #{preview.leaderMissionId} · {preview.participants.length} attacking fleets · {preview.stationedDefenders.length} supporting defenders</p> : null}
     <p className="text-xs text-slate-400">Current public intel, refreshed automatically. Participants, technology and target forces may change before impact. Simulations are estimates, not guaranteed casualties or loot.</p>

@@ -30,7 +30,7 @@ export function RefreshButton({
   return (
     <button
       aria-busy={loading}
-      className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-md surface-inset px-3 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
       disabled={disabled || state.disabled}
       onClick={onRefresh}
       title={title}

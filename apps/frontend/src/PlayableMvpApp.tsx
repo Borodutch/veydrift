@@ -11,7 +11,7 @@ import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
-import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource, type SupplyMission } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
   isStartedBuildingQueueSynced,
@@ -97,7 +97,10 @@ import { planetSelectorResearchProgressFor } from "./planetSelectorProgress";
 import {
   buildingContractIds,
   canAfford,
+  buildingCatalog,
+  defenseCatalog,
   researchCatalog,
+  shipCatalog,
   researchRequirementsFor,
   type BuildingKey,
   type DefenseKey,
@@ -2221,6 +2224,7 @@ export function batchSupplySourceForPlanet(
  * safe to call from a wallet preflight.
  */
 export function replanBatchSupplyForConfirmation({
+  mission = "transport",
   shipTypesBySource,
   maxOrders,
   orders,
@@ -2229,6 +2233,7 @@ export function replanBatchSupplyForConfirmation({
   targetIsMoon = false,
 }: {
   targetIsMoon?: boolean;
+  mission?: SupplyMission;
   maxOrders: number;
   orders: readonly BatchSupplyOrder[];
   sources: readonly BatchSupplySource[];
@@ -2246,6 +2251,7 @@ export function replanBatchSupplyForConfirmation({
     { metal: 0, crystal: 0, deuterium: 0 },
   );
   return buildBatchSupplyPlan({
+    mission,
     targetIsMoon,
     targetCoordinates: {
       galaxy: target.galaxy,
@@ -2263,7 +2269,7 @@ export function replanBatchSupplyForConfirmation({
 
 /** The production wallet preflight: all reads use the captured destination, never the current page. */
 export async function prepareBatchSupplyConfirmation({
-  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview,
+  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, mission = "transport",
   isCurrent, onPreview, onShortfall,
 }: {
   queries: import("./backendDataStore").BackendDataStore["queries"];
@@ -2272,11 +2278,13 @@ export async function prepareBatchSupplyConfirmation({
   orders: BatchSupplyOrder[];
   shipTypesBySource: SupplyShipTypesBySource;
   levelSupply: LevelSupplyRequest | undefined;
+  mission?: SupplyMission;
   levelPreview: LevelSupplyPreview | undefined;
   isCurrent: () => boolean;
   onPreview: (preview: LevelSupplyPreview) => void;
   onShortfall: (missing: SupplyResources) => void;
 }): Promise<void> {
+  if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
   // Keep the single indexed snapshot read inside the shared
   // transaction deadline; never submit a late or changed plan.
   const [snapshot, parent] = await Promise.all([
@@ -2291,7 +2299,7 @@ export async function prepareBatchSupplyConfirmation({
       onShortfall(fresh.missing);
       throw new Error("Destination resources changed. The shortfall has been refreshed; review the updated plan and confirm again.");
     }
-    if (levelSupply.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per transport.");
+    if (levelSupply.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   }
   const refreshedSources = batchSupplySourcesFromSnapshot(snapshot, target);
   if (parent?.resources) refreshedSources.unshift(batchSupplySourceForPlanet(target, parent));
@@ -2300,6 +2308,7 @@ export async function prepareBatchSupplyConfirmation({
     if (!refreshedSources.some(source => source.planetId === order.originPlanetId)) throw new Error(`Supply source ${order.originLabel} is no longer available.`);
   }
   const refreshedPlan = replanBatchSupplyForConfirmation({
+    mission,
     shipTypesBySource,
     maxOrders: snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0,
     orders,
@@ -2316,15 +2325,25 @@ export async function prepareBatchSupplyConfirmation({
 export const launchBatchSupplyTransaction = (
   provider: Eip1193Provider, signerAccount: string, gameContract: string,
   target: ManagedPlanetResponse, orders: BatchSupplyOrder[], levelSupply: LevelSupplyRequest | undefined,
+  mission: SupplyMission = "transport",
 ) => {
-  if (levelSupply?.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per transport.");
+  // The atomic batch selector only supports Transport. Deploy uses a single canonical
+  // launch, never multiple sends that could leave a partially successful batch.
+  if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
+  if (levelSupply?.kind === "moon" && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   return levelSupply?.kind === "moon"
     ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
       originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId,
-      originIsMoon: false, targetIsMoon: true, missionType: 0,
+      originIsMoon: false, targetIsMoon: true, missionType: mission === "deploy" ? 1 : 0,
       ships: orders[0]!.ships,
       cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
     })
+    : mission === "deploy"
+      ? sendLaunchFleetMissionTransaction(provider, signerAccount, gameContract, {
+        originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId, missionType: 1,
+        ships: orders[0]!.ships,
+        cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
+      })
     : sendLaunchTransportBatchTransaction(provider, signerAccount, gameContract, {
       targetPlanetId: target.planetId,
       orders: orders.map((order) => ({
@@ -4355,7 +4374,7 @@ export function PlayableMvpApp({
   }, [account, backendData, handleOpenBatchSupply, refreshLevelSupply, selectedManagedPlanet]);
 
   const handleConfirmBatchSupply = useCallback(
-    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource) => {
+    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission) => {
       const target = batchSupplyTarget;
       if (!provider || !signerAccount || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
@@ -4372,11 +4391,11 @@ export function PlayableMvpApp({
         try {
           const refreshSources = () => backendData.queries.supplySources(account, target.planetId, { fresh: true }).read();
           const outcome = await runGalaxyTransaction(
-            `Supply ${orders.length} transport${orders.length === 1 ? "" : "s"}`,
-            (provider: Eip1193Provider) => launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, levelSupply),
+            `Supply ${orders.length} ${mission === "transport" ? "transport" : "deployment"}${orders.length === 1 ? "" : "s"}`,
+            (provider: Eip1193Provider) => launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, levelSupply, mission),
             {
               prepare: () => prepareBatchSupplyConfirmation({
-                queries: backendData.queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview,
+                queries: backendData.queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, mission,
                 isCurrent: () => batchSupplySourceLoadIdRef.current === sourceLoadId,
                 onPreview: setLevelPreview, onShortfall: setBatchSupplyInitialRequested,
               }),
@@ -6275,6 +6294,22 @@ export function PlayableMvpApp({
     [navigateToInspectRoute],
   );
 
+  // Empire detail sections jump straight to the matching screen for that planet or moon.
+  const handleOpenBodyPage = useCallback(
+    (planetId: string, bodyKind: OrbitBodyKind, target: Page, itemKey?: string) => {
+      // Preselect the tapped item so the screen opens on it.
+      if (bodyKind === "planet" && itemKey) {
+        if (target === "infrastructure" && buildingCatalog.some((item) => item.key === itemKey)) setSelectedBuildingKey(itemKey as BuildingKey);
+        if (target === "research" && researchCatalog.some((item) => item.key === itemKey)) setSelectedResearchKey(itemKey as ResearchKey);
+        if (target === "shipyard" && shipCatalog.some((item) => item.key === itemKey)) setSelectedShipKey(itemKey as ShipKey);
+        if (target === "defenses" && defenseCatalog.some((item) => item.key === itemKey)) setSelectedDefenseKey(itemKey as DefenseKey);
+      }
+      handleSelectManagedPlanet(planetId, bodyKind);
+      handleNavigate(bodyKind === "moon" ? "moon" : target);
+    },
+    [handleNavigate, handleSelectManagedPlanet],
+  );
+
   const handleOpenMissionReport = useCallback(
     (missionId: string) => {
       navigateToInspectRoute({ kind: "mission", missionId });
@@ -7311,6 +7346,7 @@ export function PlayableMvpApp({
         onSelectMoon={handleSelectMoon}
         onSelectPlanet={handleSelectPlanet}
         onSwitchPlanet={handleSelectManagedPlanet}
+        onOpenBodyPage={handleOpenBodyPage}
         onSelectPlayer={handleSelectPlayer}
         onToggleWatchPlanet={handleToggleWatchPlanet}
         planetManagementAction={planetManagementAction}
@@ -7336,7 +7372,7 @@ export function PlayableMvpApp({
 
   return (
     <div
-      className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#05070f] text-slate-100"
+      className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#060b16] text-slate-100"
       onClickCapture={handleClientDetailLinkClick}
     >
       {topBar}
@@ -7578,6 +7614,23 @@ function PlanetSelector({
     [clearLongPressTimer, releaseCapturedPointer],
   );
 
+  // Live reordering moves the dragged button in the DOM, which drops pointer capture mid-drag.
+  // While the pointer is still pressed, take the capture back instead of ending the drag.
+  const handleLostPointerCapture = useCallback(
+    (event: JSX.TargetedPointerEvent<HTMLButtonElement>) => {
+      if (event.buttons !== 0 && event.currentTarget.isConnected) {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          return;
+        } catch {
+          // The pointer is gone; finish normally.
+        }
+      }
+      finishPointerDrag(event);
+    },
+    [finishPointerDrag],
+  );
+
   const handleReorderKeyDown = useCallback(
     (planetId: string, event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => {
       if (event.key === "Escape") {
@@ -7632,7 +7685,7 @@ function PlanetSelector({
       onBeforePlanetSelect={handlePlanetSelectClick}
       onPlanetContextMenu={handlePlanetContextMenu}
       onPlanetKeyDown={handleReorderKeyDown}
-      onPlanetLostPointerCapture={finishPointerDrag}
+      onPlanetLostPointerCapture={handleLostPointerCapture}
       onPlanetPointerCancel={finishPointerDrag}
       onPlanetPointerDown={handlePointerDown}
       onPlanetPointerMove={handlePointerMove}
@@ -7649,21 +7702,21 @@ function PlanetSelector({
 
   if (layout === "mobile") {
     return (
-      <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+      <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain [scrollbar-width:none]">
         <span aria-live="polite" className="sr-only">
           {reorderAnnouncement}
         </span>
-        <div className="flex w-max min-w-full gap-2 pb-1">{selectorItems}</div>
+        <div className="flex w-max min-w-full gap-1.5 p-1">{selectorItems}</div>
       </section>
     );
   }
 
   return (
-    <aside aria-label="Select planet" className="hidden w-32 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
+    <aside aria-label="Select planet" className="hidden w-44 shrink-0 border-l border-cyan-300/10 bg-[#091120]/92 p-1.5 backdrop-blur-xl lg:flex lg:flex-col">
       <span aria-live="polite" className="sr-only">
         {reorderAnnouncement}
       </span>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">{selectorItems}</div>
+      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1">{selectorItems}</div>
     </aside>
   );
 }
@@ -7713,7 +7766,7 @@ function PlanetSelectorItem({
   const reorderInstructionsId = `planet-picker-reorder-${layout}-${planet.planetId}`;
   return (
     <div
-      className={`relative grid w-24 min-w-0 shrink-0 gap-1 rounded transition ${dragging ? "z-20 scale-[1.03] ring-2 ring-cyan-200/80 shadow-lg shadow-cyan-950/60" : ""}`}
+      className={`relative grid ${layout === "mobile" ? "w-auto" : "w-full"} min-w-0 shrink-0 gap-1 rounded transition ${dragging ? "z-20 ring-2 ring-cyan-300/80" : ""}`}
       data-planet-selector-item={planet.planetId}
       data-planet-selector-incoming-attack={hasIncomingPlanetAttack && hasIncomingMoonAttack ? "planet-and-moon" : hasIncomingPlanetAttack ? "planet" : hasIncomingMoonAttack ? "moon" : undefined}
       data-planet-selector-reordering={dragging ? "true" : undefined}
@@ -7723,17 +7776,10 @@ function PlanetSelectorItem({
           ? "Reorder mode active. Move the pointer and release to finish, or press Escape to cancel."
           : "Press and hold to reorder. With the keyboard, use arrow keys, Home, or End to move this planet."}
       </span>
-      {dragging ? (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-1 top-1 z-10 rounded bg-cyan-950/95 px-1 py-0.5 text-center text-[0.58rem] font-semibold uppercase tracking-wide text-cyan-100 shadow"
-        >
-          Reordering
-        </span>
-      ) : null}
       <PlanetSelectorButton
         ariaDescribedBy={reorderInstructionsId}
         bodyKind="planet"
+        layout={layout}
         hasIncomingAttack={hasIncomingPlanetAttack}
         onBeforeSelect={onBeforePlanetSelect}
         onContextMenu={(event) => onPlanetContextMenu(planet.planetId, event)}
@@ -7760,6 +7806,7 @@ function PlanetSelectorItem({
 function PlanetSelectorButton({
   ariaDescribedBy,
   bodyKind,
+  layout,
   hasIncomingAttack,
   onBeforeSelect,
   onContextMenu,
@@ -7781,6 +7828,8 @@ function PlanetSelectorButton({
 }: {
   ariaDescribedBy?: string;
   bodyKind: OrbitBodyKind;
+  /** Mobile strip: a short pill. Desktop rail: a compact row with full name and coordinates. */
+  layout: "mobile" | "sidebar";
   hasIncomingAttack: boolean;
   onBeforeSelect?: (planetId: string, event: JSX.TargetedMouseEvent<HTMLButtonElement>) => boolean;
   onContextMenu?: (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => void;
@@ -7820,7 +7869,7 @@ function PlanetSelectorButton({
       aria-current={selected ? "true" : undefined}
       aria-describedby={ariaDescribedBy}
       aria-label={label}
-      className={`veydrift-planet-selector-button group relative grid w-full min-w-0 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
+      className={`veydrift-planet-selector-button group relative flex min-w-0 shrink-0 items-center rounded border text-left transition focus:outline-none ${layout === "mobile" ? "h-9 max-w-[9rem] gap-1.5 py-1 pl-1 pr-2" : "w-full gap-2 p-1.5"} ${
         reordering ? "cursor-grabbing" : "cursor-pointer"
       } ${selectionStateClass} ${borderStateClass}`}
       data-planet-selector-long-press={bodyKind === "planet" ? planet.planetId : undefined}
@@ -7841,11 +7890,11 @@ function PlanetSelectorButton({
       title={label}
       type="button"
     >
-      <span className="relative h-14 w-14">
-        <span className="block h-14 w-14 overflow-hidden rounded-full bg-black/30">
+      <span className={`relative shrink-0 ${layout === "mobile" ? "h-7 w-7" : "h-9 w-9"}`}>
+        <span className={`block overflow-hidden rounded-full bg-black/30 ${layout === "mobile" ? "h-7 w-7" : "h-9 w-9"}`}>
           <img alt="" className="h-full w-full object-cover" loading="lazy" src={getSizedImageSrc(planetImageForManagedPlanet(planet), 64)} />
         </span>
-        {showMoonIndicator ? <PlanetMoonIndicator className="!-right-1 !-top-1 !h-5 !w-5 xl:!h-5 xl:!w-5" compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
+        {showMoonIndicator ? <PlanetMoonIndicator className={layout === "mobile" ? "!-right-1 !-top-1 !h-3.5 !w-3.5" : "!-right-1 !-top-1 !h-4 !w-4"} compact planetType={planetArtTypeForCoordinates(planet)} /> : null}
         {hasIncomingAttack ? (
           <span
             aria-hidden="true"
@@ -7858,18 +7907,28 @@ function PlanetSelectorButton({
           </span>
         ) : null}
       </span>
-      <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">{planetDisplayName(planet)}</span>
-      <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">{planet.coordinates}</span>
-      <PlanetSelectorProgressBars
-        planet={planet}
-        progressState={progressState}
-        researchProgress={planetSelectorResearchProgressFor(planet.planetId, researchPlanetId, researchProgress)}
-      />
+      <span className="grid min-w-0 flex-1 gap-0.5">
+        {layout === "mobile" ? (
+          <span className={`block truncate text-[11px] font-medium leading-3.5 ${selected ? "text-cyan-100" : "text-slate-200"}`}>{planetDisplayName(planet)}</span>
+        ) : (
+          <>
+            <span className={`line-clamp-2 block max-w-full text-xs font-medium leading-4 [overflow-wrap:anywhere] ${selected ? "text-cyan-100" : "text-slate-200"}`}>{planetDisplayName(planet)}</span>
+            <span className="block max-w-full truncate font-mono text-[10px] leading-3 text-slate-400">{planet.coordinates}</span>
+          </>
+        )}
+        <PlanetSelectorProgressBars
+          compact
+          planet={planet}
+          progressState={progressState}
+          researchProgress={planetSelectorResearchProgressFor(planet.planetId, researchPlanetId, researchProgress)}
+        />
+      </span>
     </button>
   );
 }
 
-function PlanetSelectorProgressBars({ planet, progressState, researchProgress }: {
+function PlanetSelectorProgressBars({ compact = false, planet, progressState, researchProgress }: {
+  compact?: boolean;
   planet: ManagedPlanetResponse;
   progressState: ConstructionProgressState;
   researchProgress?: ConstructionProgress | undefined;
@@ -7879,10 +7938,10 @@ function PlanetSelectorProgressBars({ planet, progressState, researchProgress }:
 
   const summary = bars.map((bar) => bar.title).join(". ");
   return (
-    <span aria-label={`Planet progress. ${summary}`} className="grid w-full gap-1" data-planet-selector-progress-bars={planet.planetId}>
+    <span aria-label={`Planet progress. ${summary}`} className={`grid w-full ${compact ? "gap-px" : "gap-1"}`} data-planet-selector-progress-bars={planet.planetId}>
       {bars.map((bar) => (
         <span className="contents" data-planet-selector-progress={bar.kind} data-planet-selector-progress-active="true" key={bar.kind} title={bar.title}>
-          <AnimatedProgressBar className="h-1.5 border border-white/5 bg-white/10 opacity-100" fillClassName={bar.color} indeterminate={bar.indeterminate} label={bar.title} value={bar.progress} />
+          <AnimatedProgressBar className={compact ? "h-[3px] bg-white/10 opacity-100" : "h-1.5 border border-white/5 bg-white/10 opacity-100"} fillClassName={bar.color} indeterminate={bar.indeterminate} label={bar.title} value={bar.progress} />
         </span>
       ))}
     </span>
@@ -8015,7 +8074,7 @@ function HydratingPlanetState({ page, error, onRetry, status, txHash }: { page: 
 
   return (
     <div className="grid min-h-[52vh] place-items-center">
-      <div className="max-w-md rounded-lg border border-white/10 bg-[#101624] p-5 text-center shadow-2xl shadow-black/20">
+      <div className="max-w-md rounded-lg surface p-5 text-center shadow-2xl shadow-black/20">
         <div className="mx-auto mb-4 h-10 w-10 rounded-full border border-cyan-200/20 bg-cyan-200/10" />
         <h1 className="text-base font-semibold text-white">Planet sync delayed</h1>
         <p className="mt-2 text-sm leading-6 text-slate-400">

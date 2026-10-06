@@ -24,6 +24,8 @@ export type BatchSupplySource = {
   unavailableReason?: string;
 };
 
+export type SupplyMission = "transport" | "deploy";
+
 export type BatchSupplyOrder = {
   originPlanetId: string;
   originLabel: string;
@@ -34,6 +36,9 @@ export type BatchSupplyOrder = {
 };
 
 export type BatchSupplyPlan = {
+  mission: SupplyMission;
+  /** Normal completion: Transport returns empty; Deploy stations ships at the target. */
+  shipsReturn: boolean;
   orders: BatchSupplyOrder[];
   requested: SupplyResources;
   delivered: SupplyResources;
@@ -100,6 +105,7 @@ export function supplyResourceShortfall(
 }
 
 export function buildBatchSupplyPlan({
+  mission = "transport",
   targetCoordinates,
   targetIsMoon = false,
   requested,
@@ -109,6 +115,7 @@ export function buildBatchSupplyPlan({
   sources,
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: {
+  mission?: SupplyMission;
   targetCoordinates: Coordinates;
   targetIsMoon?: boolean;
   requested: Partial<SupplyResources>;
@@ -169,7 +176,7 @@ export function buildBatchSupplyPlan({
       requestedFromSource,
       maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels, targetIsMoon),
     );
-    const loadout = transportLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon });
+    const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon });
     if (!loadout) {
       blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
       continue;
@@ -192,6 +199,8 @@ export function buildBatchSupplyPlan({
   }
 
   return {
+    mission,
+    shipsReturn: mission === "transport",
     orders,
     requested: normalizedRequested,
     delivered,
@@ -231,7 +240,7 @@ function capCargoToCapacity(cargo: SupplyResources, capacity: number): SupplyRes
   return limited;
 }
 
-function transportLoadoutForCargo({
+function supplyLoadoutForCargo({
   cargo: initialCargo,
   source,
   targetCoordinates,
@@ -251,6 +260,8 @@ function transportLoadoutForCargo({
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const ships = minimumCargoFleet(source.ships, resourceTotal(cargo), distance, source.driveLevels);
     if (!ships) return null;
+    // The contract charges the same dispatch fuel for Transport and Deploy.
+    // Deploy has no normal return leg, but does not halve fuel or refund it at arrival.
     const fuelCost = fleetMissionFuelCost(ships, distance, source.driveLevels);
     const availableDeuterium = safeAmount(source.resources.deuterium);
     const maxCargoDeuterium = Math.max(0, availableDeuterium - fuelCost);

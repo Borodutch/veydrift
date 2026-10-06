@@ -130,10 +130,10 @@ export function RetroCdBoxHero({
                 <div className="retro-cd-tray">
                   <aside className="retro-cd-cover retro-cd-back" aria-label="Veydrift screenshots">
                     <div className="retro-cd-back-copy">
-                      <strong>Build. Raid. Drift.</strong>
+                      <strong>Build an empire, raid your rivals and drift through the Rift.</strong>
                       <p>
-                        One persistent universe living fully onchain. Every mine, fleet and alliance
-                        is yours to command — and everyone else's to fear.
+                        One persistent universe lives fully onchain, where every mine, fleet and alliance
+                        is yours to command and everyone else's to fear.
                       </p>
                     </div>
                     <div className="retro-cd-screens">

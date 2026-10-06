@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
+import { SiteHeader } from "../src/components/SiteHeader";
 import { TopBar } from "../src/components/TopBar";
 import { TELEGRAM_SUPPORT_URL } from "../src/supportLinks";
 
@@ -14,7 +14,7 @@ describe("Telegram support links", () => {
   });
 
   test("settlement app chrome includes the Telegram support invite", () => {
-    const link = linksIn(SettlementSupportLinks()).find((item) => item.props?.["aria-label"] === "Telegram support");
+    const link = linksIn(SiteHeader({ current: "home", overlay: true })).find((item) => item.props?.["aria-label"] === "Telegram support");
 
     expect(link?.props?.href).toBe(TELEGRAM_SUPPORT_URL);
     expect(link?.props?.target).toBe("_blank");

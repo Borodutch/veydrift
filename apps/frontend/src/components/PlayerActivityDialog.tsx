@@ -14,7 +14,6 @@ import {
   Orbit,
   ShieldAlert,
   Sparkles,
-  X,
   type LucideIcon,
 } from "lucide-preact";
 
@@ -28,6 +27,8 @@ import { backendDataStoreFor } from "../backendDataStore";
 import { playerActivityAwaySince } from "../playerActivityPresence";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { useBackendDataQuery } from "../useBackendDataQuery";
+import { Modal } from "./Modal";
+import { ModalHeader } from "./ModalHeader";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 
 const HISTORY_PAGE_SIZE = 25;
@@ -148,14 +149,6 @@ export function PlayerActivityDialog({
   const [selectedCategory, dispatchCategoryFilter] = useReducer(activityCategoryFilterReducer, null);
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  useEffect(() => {
     dispatchCategoryFilter({ type: "reset" });
   }, [mode, response]);
 
@@ -176,107 +169,86 @@ export function PlayerActivityDialog({
     : "Your Veydrift actions and transactions";
 
   return (
-    <div
-      aria-labelledby="player-activity-dialog-title"
-      aria-modal="true"
-      className="modal-backdrop-enter fixed inset-0 z-[100] grid place-items-end bg-black/70 p-2 backdrop-blur-sm sm:place-items-center sm:p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-      role="dialog"
+    <Modal
+      as="section"
+      labelledBy="player-activity-dialog-title"
+      onClose={onClose}
+      panelClassName="grid max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-h-[min(48rem,calc(100dvh-3rem))]"
     >
-      <section className="modal-panel-enter grid max-h-[calc(100dvh-1rem)] w-full max-w-4xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-white/10 bg-[#08101d] shadow-2xl shadow-black/50 sm:max-h-[min(48rem,calc(100dvh-2rem))]">
-        <header className="flex items-start justify-between gap-3 border-b border-white/10 px-3 py-3 sm:px-4">
-          <div className="flex min-w-0 items-start gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-cyan-300/25 bg-cyan-300/10 text-cyan-200">
-              {mode === "away" ? <Sparkles aria-hidden="true" size={17} /> : <History aria-hidden="true" size={17} />}
-            </span>
-            <div className="flex min-w-0 flex-col gap-0.5 pt-0.5">
-              <h2 className="text-sm font-semibold leading-4 text-white sm:text-base" id="player-activity-dialog-title">{title}</h2>
-              <p className="text-[11px] leading-3 text-slate-400 sm:text-xs">{subtitle}</p>
+      <header className="border-b border-cyan-300/10 px-4 py-3">
+        <ModalHeader closeLabel="Close activity" icon={mode === "away" ? Sparkles : History} onClose={onClose} subtitle={subtitle} title={title} titleId="player-activity-dialog-title" />
+      </header>
+
+      <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4">
+        {mode === "away" && counts.length > 0 ? (
+          <ActivityCategoryFilters
+            counts={counts}
+            onSelect={(category) => {
+              if (category === null) dispatchCategoryFilter({ type: "reset" });
+              else dispatchCategoryFilter({ category, type: "toggle" });
+            }}
+            selectedCategory={selectedCategory}
+          />
+        ) : null}
+
+        {loading ? (
+          <PlayerActivitySkeleton rowCount={Math.max(3, response?.items.length ?? 0)} />
+        ) : error ? (
+          <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
+        ) : visibleItems.length ? (
+          <div className="grid">
+            {visibleItems.map((item) => (
+              <ActivityRow explorerUrl={explorerUrl} item={item} key={item.id} />
+            ))}
+            {mode === "away" && selectedCategory && selectedCategoryCount > visibleItems.length ? (
+              <p className="px-1 pt-1 text-xs text-slate-400">
+                Showing {visibleItems.length} of {selectedCategoryCount} {activityCategoryLabel(selectedCategory)} events. Open Commander activity for the complete history.
+              </p>
+            ) : mode === "away" && !selectedCategory && response && response.pagination.totalEntries > response.items.length ? (
+              <p className="px-1 pt-1 text-xs text-slate-400">
+                And {response.pagination.totalEntries - response.items.length} more. Open Commander activity for the complete history.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="grid min-h-48 place-items-center text-center">
+            <div>
+              <Clock3 className="mx-auto text-slate-600" size={24} />
+              <p className="mt-2 text-sm font-medium text-slate-300">
+                {mode === "away" && selectedCategory ? `No loaded ${activityCategoryLabel(selectedCategory)} activity` : "No activity yet"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {mode === "away" && selectedCategory ? "Choose All to restore the complete loaded list." : "Your actions will appear here."}
+              </p>
             </div>
           </div>
-          <button
-            aria-label="Close activity"
-            className="inline-grid h-9 w-9 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:bg-white/10 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} />
-          </button>
-        </header>
+        )}
+      </div>
 
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-4">
-          {mode === "away" && counts.length > 0 ? (
-            <ActivityCategoryFilters
-              counts={counts}
-              onSelect={(category) => {
-                if (category === null) dispatchCategoryFilter({ type: "reset" });
-                else dispatchCategoryFilter({ category, type: "toggle" });
-              }}
-              selectedCategory={selectedCategory}
-            />
-          ) : null}
-
-          {loading ? (
-            <PlayerActivitySkeleton rowCount={Math.max(3, response?.items.length ?? 0)} />
-          ) : error ? (
-            <div className="rounded border border-amber-300/25 bg-amber-300/10 p-3 text-sm text-amber-100">{error}</div>
-          ) : visibleItems.length ? (
-            <div className="grid gap-2">
-              {visibleItems.map((item) => (
-                <ActivityRow explorerUrl={explorerUrl} item={item} key={item.id} />
-              ))}
-              {mode === "away" && selectedCategory && selectedCategoryCount > visibleItems.length ? (
-                <p className="px-1 pt-1 text-xs text-slate-400">
-                  Showing {visibleItems.length} of {selectedCategoryCount} {activityCategoryLabel(selectedCategory)} events. Open Commander activity for the complete history.
-                </p>
-              ) : mode === "away" && !selectedCategory && response && response.pagination.totalEntries > response.items.length ? (
-                <p className="px-1 pt-1 text-xs text-slate-400">
-                  And {response.pagination.totalEntries - response.items.length} more. Open Commander activity for the complete history.
-                </p>
-              ) : null}
+      {mode === "history" && response ? (
+        <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-cyan-300/10 px-4 py-2">
+            <p className="text-[11px] text-slate-500">
+              {response.pagination.totalEntries.toLocaleString()} actions · Page {response.pagination.page} of {response.pagination.totalPages}
+            </p>
+            <div className="flex gap-1.5">
+              <PageButton
+                disabled={!response.pagination.hasPreviousPage || loading}
+                label="Previous activity page"
+                onClick={() => onPageChange?.(response.pagination.page - 1)}
+              >
+                <ChevronLeft aria-hidden="true" size={15} />
+              </PageButton>
+              <PageButton
+                disabled={!response.pagination.hasNextPage || loading}
+                label="Next activity page"
+                onClick={() => onPageChange?.(response.pagination.page + 1)}
+              >
+                <ChevronRight aria-hidden="true" size={15} />
+              </PageButton>
             </div>
-          ) : (
-            <div className="grid min-h-48 place-items-center text-center">
-              <div>
-                <Clock3 className="mx-auto text-slate-600" size={24} />
-                <p className="mt-2 text-sm font-medium text-slate-300">
-                  {mode === "away" && selectedCategory ? `No loaded ${activityCategoryLabel(selectedCategory)} activity` : "No activity yet"}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {mode === "away" && selectedCategory ? "Choose All to restore the complete loaded list." : "Your actions will appear here."}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {mode === "history" && response ? (
-          <footer className="flex min-h-12 items-center justify-between gap-3 border-t border-white/10 px-3 py-2 sm:px-4">
-              <p className="text-[11px] text-slate-500">
-                {response.pagination.totalEntries.toLocaleString()} actions · Page {response.pagination.page} of {response.pagination.totalPages}
-              </p>
-              <div className="flex gap-1.5">
-                <PageButton
-                  disabled={!response.pagination.hasPreviousPage || loading}
-                  label="Previous activity page"
-                  onClick={() => onPageChange?.(response.pagination.page - 1)}
-                >
-                  <ChevronLeft aria-hidden="true" size={15} />
-                </PageButton>
-                <PageButton
-                  disabled={!response.pagination.hasNextPage || loading}
-                  label="Next activity page"
-                  onClick={() => onPageChange?.(response.pagination.page + 1)}
-                >
-                  <ChevronRight aria-hidden="true" size={15} />
-                </PageButton>
-              </div>
-          </footer>
-        ) : null}
-      </section>
-    </div>
+        </footer>
+      ) : null}
+    </Modal>
   );
 }
 
@@ -322,9 +294,9 @@ export function ActivityCategoryFilters({
 
 export function PlayerActivitySkeleton({ rowCount = 3 }: { rowCount?: number } = {}) {
   return (
-    <SkeletonRegion className="grid min-h-48 gap-2" label="Loading activity">
+    <SkeletonRegion className="grid min-h-48" label="Loading activity">
       {skeletonList(rowCount, (index) => (
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:px-3" key={index}>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2.5 border-b border-cyan-300/[0.08] px-1 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:px-3" key={index}>
           <Skeleton className="h-8 w-8 rounded" />
           <div className="min-w-0">
             <Skeleton className={`h-3.5 ${index === 1 ? "w-2/5" : "w-3/5"}`} />
@@ -341,7 +313,7 @@ export function ActivityRow({ explorerUrl, item }: { explorerUrl: string; item: 
   const Icon = activityCategoryIcon(item.category);
   const detail = activityDetail(item);
   return (
-    <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded border border-white/10 bg-white/[0.025] p-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-3">
+    <article className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 border-b border-cyan-300/[0.08] px-1 py-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center sm:px-3">
       <span className={`grid h-8 w-8 place-items-center rounded border ${activityIconTone(item)}`}>
         <Icon aria-hidden="true" size={15} />
       </span>
@@ -385,7 +357,7 @@ function PageButton({ children, disabled, label, onClick }: { children: Componen
   return (
     <button
       aria-label={label}
-      className="inline-grid h-8 w-9 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
+      className="inline-grid h-8 w-9 place-items-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
       disabled={disabled}
       onClick={onClick}
       type="button"

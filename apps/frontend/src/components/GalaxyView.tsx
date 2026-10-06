@@ -318,7 +318,7 @@ export function GalaxyView({
           <h2 className="text-lg font-semibold text-white">Galaxy</h2>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-[#101624] p-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
+        <div className="flex flex-wrap items-center gap-1.5 rounded-lg surface p-1.5 shadow-[0_0_0_1px_rgba(255,255,255,0.02)_inset]">
           <button
             onClick={handlePrevSystem}
             className="h-11 rounded border border-white/15 bg-white/8 px-3 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white sm:h-9"
@@ -349,7 +349,7 @@ export function GalaxyView({
         </div>
       </div>
 
-      <div className="grid gap-1.5 rounded-lg border border-white/10 bg-[#101624] p-2">
+      <div className="grid gap-1.5 rounded-lg surface p-2">
         {actionState.status !== "idle" ? (
           <InlineStateNotice
             blocking={actionState.status === "error"}
@@ -482,7 +482,7 @@ function CoordinateInput({
         }}
         pattern="[0-9]*"
         value={draft}
-        className="h-10 w-12 rounded border border-white/10 bg-[#101624] px-2 text-center font-mono text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-7"
+        className="h-10 w-12 rounded surface px-2 text-center font-mono text-sm font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-7"
       />
     </label>
   );

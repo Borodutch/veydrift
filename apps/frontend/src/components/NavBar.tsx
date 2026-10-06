@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createPortal, flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, ChevronDown, ChevronUp, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
+import { ArrowLeftRight, ChevronDown, ChevronsUpDown, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -15,6 +15,8 @@ import {
   type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
+import { Modal } from "./Modal";
+import { ModalHeader } from "./ModalHeader";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../sidebarPreference";
 
 export type Page =
@@ -68,14 +70,6 @@ export const commanderJoinCta = {
   label: "Join Veydrift",
 } as const;
 
-export const commanderSummaryInitiallyExpanded = false;
-
-const commanderCollapsedIdentityGeometry = {
-  lineHeightPx: 16,
-  opticalOffsetYPx: 2,
-  rowHeightPx: 28,
-} as const;
-
 export function shouldShowCommanderJoinCta(account?: string | undefined, onConnectWallet?: (() => void) | undefined): boolean {
   return !account && Boolean(onConnectWallet);
 }
@@ -87,7 +81,8 @@ export function commanderIdentityLabel(
   return playerDisplayLabel(playerProfile, account);
 }
 
-const sidebarIconClassName = "grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-black/20 text-slate-300 opacity-90";
+// Icons carry their own color so hover on the row never changes them; the current page uses cyan.
+const sidebarIconClassName = "grid h-5 w-5 shrink-0 place-items-center text-slate-400";
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
   { key: "overview", label: "Empire", mobileLabel: "Empire", icon: Radar },
@@ -104,6 +99,13 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
   { key: "alliance-invites", label: "Earn $10", mobileLabel: "Earn $10", icon: Mail },
 ];
+
+// Mobile menu order: planet screens, then fleet, then the wider universe.
+const mobilePageOrder = ([
+  "overview", "infrastructure", "defenses", "research", "shipyard", "moon",
+  "mission-control", "galaxy", "raid-target-finder",
+  "rift", "alliance", "rankings", "alliance-invites",
+] as const).map((key) => pages.find((page) => page.key === key)!);
 
 export function NavBar({
   active,
@@ -131,7 +133,7 @@ export function NavBar({
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [delegateDraft, setDelegateDraft] = useState(delegation?.delegate ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
-  const [commanderSummaryExpanded, setCommanderSummaryExpanded] = useState(commanderSummaryInitiallyExpanded);
+  const [mobileCommanderOpen, setMobileCommanderOpen] = useState(false);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
   const [copiedField, setCopiedField] = useState<{ key: string; nonce: number } | undefined>(undefined);
   const mobileNavigationDetails = useRef<HTMLDetailsElement | null>(null);
@@ -227,17 +229,6 @@ export function NavBar({
     }
   }, [playerProfileAction.status]);
 
-  useEffect(() => {
-    if (!playerPanelOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !playerProfileBusy && !delegationBusy) setPlayerPanelOpen(false);
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [delegationBusy, playerPanelOpen, playerProfileBusy]);
-
   const handlePlayerSubmit = (event: Event) => {
     event.preventDefault();
     if (!canEditPlayerProfile || playerProfileBusy || delegationBusy) return;
@@ -277,14 +268,11 @@ export function NavBar({
     });
   };
 
-  const accountSummary = (className: string, detailsId: string) => {
+  const accountSummary = (className: string, layout: "list" | "card" | "body" = "list") => {
     if (shouldShowCommanderJoinCta(account, onConnectWallet)) {
       return (
         <aside className={className} aria-label="Sidebar account summary">
-          <p className="text-[10px] font-semibold uppercase text-slate-500">
-            Commander
-          </p>
-          <p className="mt-1 text-xs font-semibold leading-4 text-white">
+          <p className="text-sm font-semibold text-white">
             {commanderJoinCta.label}
           </p>
           <button
@@ -307,8 +295,7 @@ export function NavBar({
         className={className}
         coordinates={coordinates}
         copiedField={copiedField}
-        detailsId={detailsId}
-        expanded={commanderSummaryExpanded}
+        layout={layout}
         onCopy={handleCopyCommanderValue}
         onEdit={onUpdatePlayerProfile
           ? () => {
@@ -327,11 +314,9 @@ export function NavBar({
             onOpenActivity();
           }
           : undefined}
-        onToggle={() => setCommanderSummaryExpanded((expanded) => !expanded)}
         playerCopyValue={playerCopyValue}
         playerLabel={playerLabel}
         playerPanelOpen={playerPanelOpen}
-        playerProfile={playerProfile}
         playerProfileBusy={playerProfileBusy}
         playerStatusLabel={playerStatusLabel}
         playerStatusTone={playerStatusTone}
@@ -340,181 +325,140 @@ export function NavBar({
   };
 
   const playerEditorDialog = onUpdatePlayerProfile && playerPanelOpen ? (
-    <div
-      className="modal-backdrop-enter fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !playerProfileBusy && !delegationBusy) setPlayerPanelOpen(false);
-      }}
+    <Modal
+      dismissible={!playerProfileBusy && !delegationBusy}
+      id="commander-name-editor"
+      labelledBy="commander-name-editor-title"
+      onClose={() => setPlayerPanelOpen(false)}
+      panelClassName="grid max-w-sm gap-4 p-4"
     >
-      <div
-        aria-labelledby="commander-name-editor-title"
-        aria-modal="true"
-        className="modal-panel-enter grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
-        id="commander-name-editor"
-        role="dialog"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase text-slate-500">
-              Commander
-            </p>
-            <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id="commander-name-editor-title">
-              Edit profile
-            </h2>
-          </div>
-          <button
-            aria-label="Cancel player display name edit"
-            className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-            disabled={playerProfileBusy || delegationBusy}
-            onClick={() => setPlayerPanelOpen(false)}
-            title="Cancel"
-            type="button"
-          >
-            <X aria-hidden="true" size={14} strokeWidth={2} />
-          </button>
-        </div>
-        <form aria-labelledby="profile-details-title" className="grid gap-3 rounded border border-white/10 p-3" onSubmit={handlePlayerSubmit}>
-          <h3 className="text-xs font-semibold text-slate-200" id="profile-details-title">Profile details</h3>
-          <label className="grid gap-1 text-xs font-medium text-slate-200">
-            Display name
-            <input
-              className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              maxLength={32}
-              onInput={(event) => {
-                setPlayerDraft(event.currentTarget.value);
-                setPlayerValidation(undefined);
-              }}
-              placeholder="Enter display name"
-              value={playerDraft}
-            />
-          </label>
-          <label className="grid gap-1 text-xs font-medium text-slate-200">
-            Description
-            <textarea
-              className="min-h-28 resize-y rounded border border-white/10 bg-[#050b14]/95 px-3 py-2 text-sm leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              maxLength={playerDescriptionMaxLength}
-              onInput={(event) => {
-                setPlayerDescriptionDraft(event.currentTarget.value);
-                setPlayerValidation(undefined);
-              }}
-              placeholder="Public commander bio; plain URLs become links on your profile"
-              value={playerDescriptionDraft}
-            />
-          </label>
-          <p className={`text-right text-[10px] leading-3 ${descriptionCountTone}`}>
-            {descriptionRemaining} / {playerDescriptionMaxLength}
+      <ModalHeader
+        closeDisabled={playerProfileBusy || delegationBusy}
+        closeLabel="Cancel player display name edit"
+        onClose={() => setPlayerPanelOpen(false)}
+        title="Edit profile"
+        titleId="commander-name-editor-title"
+      />
+      <form aria-labelledby="profile-details-title" className="grid gap-3" onSubmit={handlePlayerSubmit}>
+          <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70" id="profile-details-title">Profile details</h3>
+        <label className="grid gap-1 text-xs font-medium text-slate-200">
+          Display name
+          <input
+            className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            maxLength={32}
+            onInput={(event) => {
+              setPlayerDraft(event.currentTarget.value);
+              setPlayerValidation(undefined);
+            }}
+            placeholder="Enter display name"
+            value={playerDraft}
+          />
+        </label>
+        <label className="grid gap-1 text-xs font-medium text-slate-200">
+          Description
+          <textarea
+            className="min-h-28 resize-y rounded border border-white/10 bg-[#050b14]/95 px-3 py-2 text-sm leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            maxLength={playerDescriptionMaxLength}
+            onInput={(event) => {
+              setPlayerDescriptionDraft(event.currentTarget.value);
+              setPlayerValidation(undefined);
+            }}
+            placeholder="Public commander bio; plain URLs become links on your profile"
+            value={playerDescriptionDraft}
+          />
+        </label>
+        <p className={`text-right text-[10px] leading-3 ${descriptionCountTone}`}>
+          {descriptionRemaining} / {playerDescriptionMaxLength}
+        </p>
+        {(playerValidation || playerStatusLabel) && (
+          <p role="status" className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
+            {playerValidation ?? playerStatusLabel}
           </p>
-          {(playerValidation || playerStatusLabel) && (
-            <p role="status" className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
-              {playerValidation ?? playerStatusLabel}
+        )}
+        <button
+          aria-label="Save player profile"
+          className="h-9 justify-self-end rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canEditPlayerProfile || playerProfileBusy || delegationBusy}
+          type="submit"
+        >
+          {playerProfileBusy ? "Signing…" : "Save profile"}
+        </button>
+      </form>
+      <section className="grid gap-2 border-t border-cyan-300/10 pt-4" aria-label="Wallet delegation">
+        <div>
+          <h3 className="text-xs font-semibold text-cyan-200/80">Wallet delegate</h3>
+          {delegation?.actingAsDelegate && signerAccount && account ? (
+            <p className="mt-1 text-[11px] leading-4 text-slate-300">
+              Connected as {shortAddress(signerAccount)} and acting for {shortAddress(account)}.
+            </p>
+          ) : (
+            <p className="mt-1 text-[11px] leading-4 text-slate-300">
+              {delegation?.delegate
+                ? `${shortAddress(delegation.delegate)} can perform gameplay actions for this wallet.`
+                : "No delegate is currently set."}
             </p>
           )}
-          <button
-            aria-label="Save player profile"
-            className="h-9 justify-self-end rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!canEditPlayerProfile || playerProfileBusy || delegationBusy}
-            type="submit"
-          >
-            {playerProfileBusy ? "Signing…" : "Save profile"}
-          </button>
-        </form>
-        <section className="grid gap-2 rounded border border-cyan-300/15 bg-cyan-300/5 p-3" aria-label="Wallet delegation">
-          <div>
-            <h3 className="text-xs font-semibold text-cyan-200/80">Wallet delegate</h3>
-            {delegation?.actingAsDelegate && signerAccount && account ? (
-              <p className="mt-1 text-[11px] leading-4 text-slate-300">
-                Connected as {shortAddress(signerAccount)} and acting for {shortAddress(account)}.
-              </p>
-            ) : (
-              <p className="mt-1 text-[11px] leading-4 text-slate-300">
-                {delegation?.delegate
-                  ? `${shortAddress(delegation.delegate)} can perform gameplay actions for this wallet.`
-                  : "No delegate is currently set."}
-              </p>
-            )}
-          </div>
-          <p className="text-[11px] leading-4 text-slate-300">
-            Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can set or replace a delegate.
-          </p>
-          <p className="text-[11px] leading-4 text-slate-300">
-            Setting, replacing, or revoking a delegate is an on-chain transaction with network gas fees.
-          </p>
-          {canSetDelegate ? (
-            <label className="grid gap-1 text-xs font-medium text-slate-200">
-              Delegate address
-              <input
-                className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 font-mono text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={delegationBusy || playerProfileBusy}
-                onInput={(event) => setDelegateDraft(event.currentTarget.value)}
-                placeholder="0x…"
-                value={delegateDraft}
-              />
-            </label>
-          ) : null}
-          <div className="flex flex-wrap justify-end gap-2">
-            {delegation?.delegate && onRevokeDelegate ? (
-              <button
-                className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={delegationBusy || playerProfileBusy}
-                onClick={onRevokeDelegate}
-                type="button"
-              >
-                {delegation?.actingAsDelegate ? "Revoke my access" : "Revoke delegate"}
-              </button>
-            ) : null}
-            {canSetDelegate ? (
-              <button
-                className="h-8 rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={delegationBusy || playerProfileBusy || !delegateDraft.trim()}
-                onClick={() => onSetDelegate?.(delegateDraft)}
-                type="button"
-              >
-                {delegation?.delegate ? "Replace delegate" : "Set delegate"}
-              </button>
-            ) : null}
-          </div>
-          {delegationStatusLabel ? (
-            <p role="status" className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
-          ) : null}
-          {onRefreshDelegation && delegationAction.status === "error" ? (
-            <button type="button" className="justify-self-end text-xs text-cyan-200 underline" onClick={onRefreshDelegation}>
-              Refresh delegate status
+        </div>
+        <p className="text-[11px] leading-4 text-slate-300">
+          Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can set or replace a delegate.
+        </p>
+        <p className="text-[11px] leading-4 text-slate-300">
+          Setting, replacing, or revoking a delegate is an on-chain transaction with network gas fees.
+        </p>
+        {canSetDelegate ? (
+          <label className="grid gap-1 text-xs font-medium text-slate-200">
+            Delegate address
+            <input
+              className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 font-mono text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={delegationBusy || playerProfileBusy}
+              onInput={(event) => setDelegateDraft(event.currentTarget.value)}
+              placeholder="0x…"
+              value={delegateDraft}
+            />
+          </label>
+        ) : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          {delegation?.delegate && onRevokeDelegate ? (
+            <button
+              className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={delegationBusy || playerProfileBusy}
+              onClick={onRevokeDelegate}
+              type="button"
+            >
+              {delegation?.actingAsDelegate ? "Revoke my access" : "Revoke delegate"}
             </button>
           ) : null}
-        </section>
-      </div>
-    </div>
+          {canSetDelegate ? (
+            <button
+              className="h-8 rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={delegationBusy || playerProfileBusy || !delegateDraft.trim()}
+              onClick={() => onSetDelegate?.(delegateDraft)}
+              type="button"
+            >
+              {delegation?.delegate ? "Replace delegate" : "Set delegate"}
+            </button>
+          ) : null}
+        </div>
+        {delegationStatusLabel ? (
+          <p role="status" className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
+        ) : null}
+        {onRefreshDelegation && delegationAction.status === "error" ? (
+          <button type="button" className="justify-self-end text-xs text-cyan-200 underline" onClick={onRefreshDelegation}>
+            Refresh delegate status
+          </button>
+        ) : null}
+      </section>
+    </Modal>
   ) : null;
 
   return (
     <>
       {/* Desktop sidebar */}
-      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-white/10 bg-[#0a0f1a] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
-        <div className={`flex min-h-0 flex-1 flex-col gap-3 bg-[linear-gradient(180deg,rgba(20,29,45,0.82),rgba(8,12,23,0.98))] shadow-[inset_-1px_0_rgba(255,255,255,0.04)] ${sidebarCollapsed ? "p-2" : "p-3"}`}>
-          <div className={`flex items-center border-b border-white/10 pb-3 ${sidebarCollapsed ? "justify-center" : "justify-between"}`}>
-            {!sidebarCollapsed && <p className="pl-2 text-sm font-semibold text-white">Veydrift</p>}
-            <button
-              type="button"
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-expanded={!sidebarCollapsed}
-              aria-controls="desktop-navigation-links"
-              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
-              onClick={() => {
-                const collapsed = !sidebarCollapsed;
-                setSidebarCollapsed(collapsed);
-                writeSidebarCollapsed(collapsed);
-              }}
-            >
-              <span className={sidebarIconClassName}>
-                {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={15} strokeWidth={1.9} /> : <PanelLeftClose aria-hidden="true" size={15} strokeWidth={1.9} />}
-              </span>
-            </button>
-          </div>
-
-          <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-1 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
+      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
+        <div className={`flex min-h-0 flex-1 flex-col gap-2 ${sidebarCollapsed ? "p-2" : "p-2.5"}`}>
+          <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-0.5 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
             {pages.map((page) => (
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
@@ -528,31 +472,55 @@ export function NavBar({
             ))}
           </div>
 
-          {sidebarCollapsed ? (
-            <details
-              ref={compactAccount}
-              className="relative mx-auto shrink-0"
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && compactAccount.current?.open) {
-                  compactAccount.current.open = false;
-                  compactAccount.current.querySelector("summary")?.focus();
-                }
-              }}
-              onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
-              }}
+          <button
+            type="button"
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="desktop-navigation-links"
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={`flex min-h-11 w-full shrink-0 items-center rounded text-xs text-slate-400 transition hover:bg-white/[0.04] hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 ${sidebarCollapsed ? "justify-center" : "gap-2.5 px-2.5"}`}
+            onClick={() => {
+              const collapsed = !sidebarCollapsed;
+              setSidebarCollapsed(collapsed);
+              writeSidebarCollapsed(collapsed);
+            }}
+          >
+            <span className={sidebarIconClassName}>
+              {sidebarCollapsed ? <PanelLeftOpen aria-hidden="true" size={15} strokeWidth={1.9} /> : <PanelLeftClose aria-hidden="true" size={15} strokeWidth={1.9} />}
+            </span>
+            {sidebarCollapsed ? null : <span>Collapse</span>}
+          </button>
+
+          <details
+            ref={compactAccount}
+            className={`relative shrink-0 border-t border-cyan-300/10 pt-2 ${sidebarCollapsed ? "mx-auto" : ""}`}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && compactAccount.current?.open) {
+                compactAccount.current.open = false;
+                compactAccount.current.querySelector("summary")?.focus();
+              }
+            }}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+            }}
+          >
+            <summary
+              aria-label="Commander account"
+              title="Commander account"
+              className={`flex min-h-10 cursor-pointer list-none items-center rounded text-[13px] text-slate-300 transition hover:bg-white/[0.04] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden ${sidebarCollapsed ? "min-w-10 justify-center" : "gap-2.5 px-2.5"}`}
             >
-              <summary aria-label="Commander account" title="Commander account" className="grid h-10 w-10 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden">
-                <UserRound aria-hidden="true" size={18} />
-              </summary>
-              <div className="absolute bottom-0 left-full z-30 ml-4 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] w-64 overflow-y-auto rounded-md border border-white/10 bg-[#07101d] p-3 shadow-2xl shadow-black/50">
-                {accountSummary("", "compact-commander-account-details")}
-              </div>
-            </details>
-          ) : accountSummary(
-            "sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur",
-            "desktop-commander-account-details",
-          )}
+              <span className={sidebarIconClassName}><UserRound aria-hidden="true" size={15} strokeWidth={1.9} /></span>
+              {sidebarCollapsed ? null : (
+                <>
+                  <span className="min-w-0 flex-1 truncate font-medium">{account ? playerLabel : commanderJoinCta.label}</span>
+                  <ChevronsUpDown aria-hidden="true" className="shrink-0 text-slate-500" size={13} />
+                </>
+              )}
+            </summary>
+            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
+              {accountSummary("")}
+            </div>
+          </details>
         </div>
       </nav>
 
@@ -566,65 +534,80 @@ export function NavBar({
           type="button"
         />
       )}
-      <details
-        className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"
-        onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}
-        ref={mobileNavigationDetails}
-      >
-        <summary
-          aria-controls="mobile-navigation-menu"
-          aria-expanded={mobileMenuOpen}
-          aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
-          className="group flex h-12 min-w-0 cursor-pointer list-none items-center justify-between gap-3 px-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
-          role="button"
-        >
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-white">Veydrift</p>
-            <p className="font-mono text-[11px] leading-none text-slate-500">
-              {coordinates ?? "--:--:--"}
-            </p>
-          </div>
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.06] text-slate-100 transition group-hover:bg-white/10">
-            {mobileMenuOpen ? <X aria-hidden="true" size={18} strokeWidth={2} /> : <Menu aria-hidden="true" size={18} strokeWidth={2} />}
-          </span>
-        </summary>
-
-        <div
-          className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
-          id="mobile-navigation-menu"
-        >
-          {accountSummary(
-            "rounded border border-white/10 bg-white/[0.03] p-2",
-            "mobile-commander-account-details",
-          )}
+      {/* One slim sticky bar: menu toggle plus the always-visible planet strip. */}
+      <div className="sticky top-[var(--topbar-h,2.75rem)] z-20 w-full max-w-full border-b border-cyan-300/10 bg-[#091120]/95 backdrop-blur md:hidden">
+        <div className="flex h-12 min-w-0 items-center gap-1.5 pl-1.5 pr-2">
+          <details
+            className="shrink-0"
+            onToggle={(event) => setMobileMenuOpen(event.currentTarget.open)}
+            ref={mobileNavigationDetails}
+          >
+            <summary
+              aria-controls="mobile-navigation-menu"
+              aria-expanded={mobileMenuOpen}
+              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded text-slate-200 transition hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
+              role="button"
+            >
+              {mobileMenuOpen ? <X aria-hidden="true" size={18} strokeWidth={2} /> : <Menu aria-hidden="true" size={18} strokeWidth={2} />}
+            </summary>
+            <div
+              className="absolute inset-x-0 top-full grid max-h-[calc(100dvh-var(--topbar-h,2.75rem)-3rem)] min-w-0 max-w-full gap-2 overflow-y-auto rounded-b-2xl border-b border-cyan-300/15 bg-[linear-gradient(180deg,#0c1828_0%,#08111f_100%)] px-2 pb-3 pt-2 min-[375px]:gap-2.5 min-[375px]:px-3.5 sm:px-5 sm:pb-4 shadow-[0_24px_60px_rgba(0,0,0,0.55)]"
+              id="mobile-navigation-menu"
+            >
+              <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1 min-[375px]:gap-1.5 sm:gap-2">
+                {mobilePageOrder.map((page) => (
+                  <MobileTab
+                    active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
+                    href={buildInspectPath({ kind: "page", page: page.key })}
+                    key={page.key}
+                    icon={page.icon}
+                    label={page.label}
+                    onClick={() => handleMobileNavigate(page.key)}
+                    shortLabel={page.key === "infrastructure" ? "Infra" : undefined}
+                  />
+                ))}
+              </nav>
+              {account ? (
+                <div className="rounded-xl border border-cyan-300/15 bg-[linear-gradient(135deg,rgba(34,211,238,0.09),rgba(13,24,41,0.9)_60%)]">
+                  <button
+                    aria-controls="mobile-commander-details"
+                    aria-expanded={mobileCommanderOpen}
+                    className="flex h-10 w-full items-center gap-2.5 px-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60"
+                    onClick={() => setMobileCommanderOpen((open) => !open)}
+                    type="button"
+                  >
+                    <UserRound aria-hidden="true" className="h-4 w-4 shrink-0 text-cyan-300" />
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-white">{playerLabel}</span>
+                    {coordinates ? <span className="shrink-0 font-mono text-[11px] text-slate-400">{coordinates}</span> : null}
+                    <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-slate-400 transition ${mobileCommanderOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {mobileCommanderOpen ? (
+                    <div className="border-t border-cyan-300/10 px-3 pb-3 pt-2.5" id="mobile-commander-details">
+                      {accountSummary("", "body")}
+                    </div>
+                  ) : null}
+                </div>
+              ) : <div className="px-1">{accountSummary("rounded-xl surface-inset p-3.5", "card")}</div>}
+            </div>
+          </details>
           {planetPicker ? (
             <div
-              className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"
-              // Close the menu once a planet is picked, matching nav-item behavior.
+              className="min-w-0 flex-1"
+              // Picking a planet also closes an open menu, matching nav-item behavior.
               onClick={(event) => {
                 if ((event.target as HTMLElement).closest("button")) closeMobileMenu();
               }}
             >
-              <p className="mb-1.5 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                Planets
-              </p>
               {planetPicker}
             </div>
-          ) : null}
-          <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]">
-            {pages.map((page) => (
-              <MobileTab
-                active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
-                href={buildInspectPath({ kind: "page", page: page.key })}
-                key={page.key}
-                icon={page.icon}
-                label={page.label}
-                onClick={() => handleMobileNavigate(page.key)}
-              />
-            ))}
-          </nav>
+          ) : (
+            <p className="min-w-0 truncate text-sm font-semibold text-white">
+              Veydrift <span className="font-mono text-[11px] font-normal text-slate-500">{coordinates ?? "--:--:--"}</span>
+            </p>
+          )}
         </div>
-      </details>
+      </div>
       {playerEditorDialog}
     </>
   );
@@ -635,16 +618,13 @@ export function CommanderAccountSummary({
   className,
   coordinates,
   copiedField,
-  detailsId,
-  expanded,
+  layout = "list",
   onCopy,
   onEdit,
   onOpenActivity,
-  onToggle,
   playerCopyValue,
   playerLabel,
   playerPanelOpen,
-  playerProfile,
   playerProfileBusy,
   playerStatusLabel,
   playerStatusTone,
@@ -653,113 +633,61 @@ export function CommanderAccountSummary({
   className: string;
   coordinates?: string | undefined;
   copiedField: { key: string; nonce: number } | undefined;
-  detailsId: string;
-  expanded: boolean;
+  /** "card": roomier profile with home and wallet chips. "body": the same without the name row (the mobile
+   * menu's collapsible header shows the name), with Edit beside Activity. */
+  layout?: "list" | "card" | "body";
   onCopy: (key: string, value: string) => void;
   onEdit?: (() => void) | undefined;
   onOpenActivity?: (() => void) | undefined;
-  onToggle: () => void;
   playerCopyValue?: string | undefined;
   playerLabel: string;
   playerPanelOpen: boolean;
-  playerProfile?: PlayerProfile | undefined;
   playerProfileBusy: boolean;
   playerStatusLabel?: string | undefined;
   playerStatusTone: string;
 }) {
-  const headerStyle = {
-    minHeight: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
-  };
-  const identityStyle = {
-    height: expanded ? undefined : `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
-    lineHeight: `${commanderCollapsedIdentityGeometry.lineHeightPx}px`,
-  };
-  const identityContentStyle = expanded
-    ? undefined
-    : { transform: `translateY(${commanderCollapsedIdentityGeometry.opticalOffsetYPx}px)` };
-  const disclosureStyle = {
-    height: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
-    width: `${commanderCollapsedIdentityGeometry.rowHeightPx}px`,
-  };
-
+  const chips = layout !== "list";
+  const editButton = onEdit ? (
+    <button
+      aria-controls="commander-name-editor"
+      aria-expanded={playerPanelOpen}
+      aria-haspopup="dialog"
+      aria-label="Edit player profile"
+      className={layout === "body"
+        ? "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg surface-inset px-3 text-xs font-medium text-slate-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-600"
+        : "inline-grid h-7 w-7 shrink-0 place-items-center rounded text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100 disabled:cursor-not-allowed disabled:text-slate-600"}
+      disabled={playerProfileBusy}
+      onClick={onEdit}
+      title="Edit player profile"
+      type="button"
+    >
+      <Pencil aria-hidden="true" size={13} strokeWidth={2} />
+      {layout === "body" ? "Edit" : null}
+    </button>
+  ) : null;
   return (
     <aside className={className} aria-label="Sidebar account summary">
-      <div
-        className={`flex min-w-0 justify-between gap-2 ${expanded ? "items-start" : "items-center"}`}
-        style={headerStyle}
-      >
-        <div className="min-w-0 flex-1">
-          {expanded ? (
-            <p className="text-[10px] font-semibold uppercase text-slate-500">
-              Commander
-            </p>
-          ) : null}
-          <CopyableCommanderValue
-            className={`${expanded ? "mt-1 break-words" : "items-center truncate"} w-full justify-start text-left text-xs font-semibold text-slate-100`}
-            contentStyle={identityContentStyle}
-            copyKey="commander"
-            copyValue={playerCopyValue}
-            copiedField={copiedField}
-            label="commander"
-            onCopy={onCopy}
-            style={identityStyle}
-            value={playerLabel}
-          />
-          {expanded && playerProfile?.displayName ? (
+      {layout === "body" ? null : <div className="flex min-w-0 items-center gap-2">
+        <CopyableCommanderValue
+          className={`min-w-0 flex-1 justify-start truncate text-left font-semibold text-white ${layout === "card" ? "text-base" : "text-sm"}`}
+          copyKey="commander"
+          copyValue={playerCopyValue}
+          copiedField={copiedField}
+          label="commander"
+          onCopy={onCopy}
+          value={playerLabel}
+        />
+        {editButton}
+      </div>}
+      {playerStatusLabel && !playerPanelOpen ? (
+        <p className={`mt-1 break-words text-[11px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
+      ) : null}
+      <dl className={chips ? `${layout === "body" ? "" : "mt-3 "}grid grid-cols-2 gap-2 text-xs` : "mt-2.5 grid gap-1.5 text-xs"}>
+        <div className={chips ? "grid min-w-0 gap-0.5 rounded-lg border border-cyan-300/[0.12] bg-[#081120]/70 px-2.5 py-2" : "flex items-center justify-between gap-3"}>
+          <dt className={chips ? "text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400" : "text-slate-400"}>Home</dt>
+          <dd className="min-w-0">
             <CopyableCommanderValue
-              className="mt-0.5 w-full justify-start truncate text-left text-[10px] text-slate-500"
-              copyKey="commander-fallback"
-              copyValue={account ?? playerProfile.fallbackName}
-              copiedField={copiedField}
-              label="commander wallet"
-              onCopy={onCopy}
-              value={playerProfile.fallbackName}
-            />
-          ) : null}
-          {expanded && playerStatusLabel && !playerPanelOpen ? (
-            <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {expanded && onEdit ? (
-            <button
-              aria-controls="commander-name-editor"
-              aria-expanded={playerPanelOpen}
-              aria-haspopup="dialog"
-              aria-label="Edit player profile"
-              className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              onClick={onEdit}
-              title="Edit player profile"
-              type="button"
-            >
-              <Pencil aria-hidden="true" size={12} strokeWidth={2} />
-            </button>
-          ) : null}
-          <button
-            aria-controls={detailsId}
-            aria-expanded={expanded}
-            aria-label={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
-            className="inline-grid shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
-            onClick={onToggle}
-            style={disclosureStyle}
-            title={expanded ? "Collapse Commander profile" : "Expand Commander profile"}
-            type="button"
-          >
-            {expanded
-              ? <ChevronDown aria-hidden="true" size={13} strokeWidth={2} />
-              : <ChevronUp aria-hidden="true" size={13} strokeWidth={2} />}
-          </button>
-        </div>
-      </div>
-      {expanded ? (
-        <div id={detailsId}>
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
-            <span className="text-[10px] font-semibold uppercase text-slate-500">
-              Home
-            </span>
-            <CopyableCommanderValue
-              className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-100"
+              className={`truncate font-mono text-slate-100 ${chips ? "justify-start" : "justify-end"}`}
               copyKey="home"
               copyValue={coordinates}
               copiedField={copiedField}
@@ -767,13 +695,13 @@ export function CommanderAccountSummary({
               onCopy={onCopy}
               value={coordinates ?? "--:--:--"}
             />
-          </div>
-          <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
-            <span className="text-[10px] font-semibold uppercase text-slate-500">
-              Wallet
-            </span>
+          </dd>
+        </div>
+        <div className={chips ? "grid min-w-0 gap-0.5 rounded-lg border border-cyan-300/[0.12] bg-[#081120]/70 px-2.5 py-2" : "flex items-center justify-between gap-3"}>
+          <dt className={chips ? "text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400" : "text-slate-400"}>Wallet</dt>
+          <dd className="min-w-0">
             <CopyableCommanderValue
-              className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-300"
+              className={`truncate font-mono text-slate-100 ${chips ? "justify-start" : "justify-end"}`}
               copyKey="wallet"
               copyValue={account}
               copiedField={copiedField}
@@ -781,18 +709,23 @@ export function CommanderAccountSummary({
               onCopy={onCopy}
               value={account ? shortAddress(account) : "Disconnected"}
             />
-          </div>
+          </dd>
+        </div>
+      </dl>
+      {onOpenActivity || layout === "body" ? (
+        <div className="mt-3 flex gap-2">
           {onOpenActivity ? (
             <button
               aria-haspopup="dialog"
-              className="mt-1.5 flex h-8 w-full items-center justify-between gap-2 border-t border-white/10 pt-1.5 text-left text-[10px] font-semibold uppercase text-slate-500 transition hover:text-cyan-200 focus:outline-none focus-visible:text-cyan-200"
+              className={`flex w-full items-center gap-2 rounded-lg surface-inset px-2.5 text-xs font-medium text-slate-200 transition hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 ${chips ? "h-10 justify-center" : "h-8"}`}
               onClick={onOpenActivity}
               type="button"
             >
+              <History aria-hidden="true" className="text-cyan-300/80" size={13} strokeWidth={2} />
               Activity
-              <History aria-hidden="true" className="text-slate-300" size={13} strokeWidth={2} />
             </button>
           ) : null}
+          {layout === "body" ? editButton : null}
         </div>
       ) : null}
     </aside>
@@ -1045,10 +978,10 @@ export function NavItem({
   return (
     <a
       aria-label={label}
-      className={`relative flex w-full items-center rounded py-2 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 ${collapsed ? "justify-center" : "gap-2.5 px-2.5"} ${
+      className={`relative flex w-full items-center rounded py-1.5 text-left text-[13px] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/60 ${collapsed ? "justify-center" : "gap-2.5 px-2.5"} ${
         active
-          ? "bg-white/10 font-medium text-white"
-          : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+          ? "bg-cyan-400/[0.08] font-medium text-cyan-100 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-cyan-300"
+          : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
@@ -1059,7 +992,7 @@ export function NavItem({
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
-      <span className={sidebarIconClassName}>
+      <span className={active ? sidebarIconClassName.replace("text-slate-400", "text-cyan-200") : sidebarIconClassName}>
         <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
       </span>
       <span className={collapsed ? "sr-only" : "min-w-0 truncate"}>{label}</span>
@@ -1083,8 +1016,10 @@ function RailTooltip({ label }: { label: string }) {
     if (!link) return;
     let hovered = false;
     let dismissed = false;
+    // A mouse click also focuses the link; only keyboard focus should keep the label open.
+    const keyboardFocused = () => document.activeElement === link && link.matches(":focus-visible");
     const update = () => {
-      if (dismissed || (!hovered && document.activeElement !== link)) { setPosition(null); return; }
+      if (dismissed || (!hovered && !keyboardFocused())) { setPosition(null); return; }
       const rect = link.getBoundingClientRect();
       const viewport = link.parentElement?.getBoundingClientRect();
       if (!rect.width || !rect.height || !viewport
@@ -1096,7 +1031,7 @@ function RailTooltip({ label }: { label: string }) {
       setPosition({ left: (link.closest("nav")?.getBoundingClientRect().right ?? rect.right) + 8, top: rect.top + rect.height / 2 });
     };
     const enter = () => { cancelHide(); hovered = true; dismissed = false; update(); };
-    const leave = () => { hovered = false; if (document.activeElement !== link) scheduleHide(); };
+    const leave = () => { hovered = false; if (!keyboardFocused()) scheduleHide(); };
     const focus = () => { cancelHide(); dismissed = false; update(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { dismissed = true; setPosition(null); } };
     link.addEventListener("mouseenter", enter);
@@ -1107,7 +1042,7 @@ function RailTooltip({ label }: { label: string }) {
     // Focus can auto-scroll the rail: reposition visible focused links, but
     // dismiss hover-only labels and labels clipped away or hidden on mobile.
     const reposition = () => {
-      if (document.activeElement === link) update();
+      if (keyboardFocused()) update();
       else setPosition(null);
     };
     window.addEventListener("scroll", reposition, true);
@@ -1136,19 +1071,22 @@ export function MobileTab({
   icon: Icon,
   label,
   onClick,
+  shortLabel,
 }: {
   active: boolean;
   href: string;
   icon: LucideIcon;
   label: string;
   onClick: () => void;
+  /** Shown instead of the label on very narrow screens. */
+  shortLabel?: string | undefined;
 }) {
   return (
     <a
-      className={`flex h-12 min-w-0 max-w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-1 text-[11px] font-medium transition ${
+      className={`flex h-10 min-w-0 max-w-full items-center gap-1 overflow-hidden rounded-lg px-[5px] text-[11px] font-medium transition min-[375px]:gap-2 min-[375px]:px-2.5 sm:px-3 sm:text-xs ${
         active
-          ? "border-cyan-300/45 bg-cyan-300/10 text-cyan-200"
-          : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.075] hover:text-slate-200"
+          ? "bg-cyan-300 text-[#031014] shadow-[0_0_18px_rgba(103,232,249,0.3)]"
+          : "border border-cyan-300/[0.12] bg-cyan-400/[0.05] text-slate-200 hover:border-cyan-300/35 hover:bg-cyan-400/10 hover:text-white"
       }`}
       href={href}
       onClick={(event) => handleSectionLinkClick(event, onClick)}
@@ -1159,8 +1097,14 @@ export function MobileTab({
       onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
       aria-current={active ? "page" : undefined}
     >
-      <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
-      <span className="max-w-full truncate leading-none">{label}</span>
+      <Icon aria-hidden="true" className={`shrink-0 ${active ? "" : "text-cyan-300"}`} size={14} strokeWidth={1.9} />
+      {shortLabel ? (
+        <>
+          {/* Narrow screens draw the short label via CSS so the link text and accessible name stay the full label. */}
+          <span aria-hidden="true" className="min-w-0 leading-[1.15] before:content-[attr(data-short-label)] min-[375px]:hidden" data-short-label={shortLabel} />
+          <span className="line-clamp-2 min-w-0 leading-[1.15] max-[374px]:sr-only">{label}</span>
+        </>
+      ) : <span className="line-clamp-2 min-w-0 leading-[1.15]">{label}</span>}
     </a>
   );
 }

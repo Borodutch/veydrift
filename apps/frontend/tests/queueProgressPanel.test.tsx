@@ -75,7 +75,7 @@ describe("QueueProgressPanel", () => {
     expect(panel.props.className).not.toContain("border");
     expect(panel.props.className).not.toContain("bg-cyan");
     expect(title?.props.className).toBe("sr-only");
-    expect(descendants(panel, OptimizedImage)[0]?.props.className).toContain("border-white/10");
+    expect(descendants(panel, OptimizedImage)[0]?.props.className).toContain("surface-inset");
   });
 
   test("shows the full queued duration on an embedded queue, not only the active item ETA", () => {

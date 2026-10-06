@@ -1,4 +1,4 @@
-// Run from apps/frontend: node --test tests/batchSupply.browser.mjs
+// Run from apps/frontend: node --test tests/levelSupply.browser.mjs
 // Optional LEVEL_SUPPLY_ARTIFACTS writes screenshots and layout evidence. Local disposable Chrome only.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -81,7 +81,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         const expected = kind === 'research' ? ['','204080','101200'] : kind === 'binary' ? ['5600','7280','2800'] : ['100000','30000','50000'];
         assert.deepEqual(await evaluate('["metal","crystal","deuterium"].map(r=>Array.from(document.querySelectorAll("input")).find(el=>el.getAttribute("aria-label")===r+" to send").value)'), expected);
         assert.equal(await evaluate('window.levelFixture.launches()'), 0);
-        const text = await evaluate('document.querySelector("section[aria-label]").textContent');
+        const text = await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent`);
         assert.ok(text.includes(label) && text.includes('Level ' + level) && text.includes('1:1:2'));
         assert.ok(text.includes(kind === 'moon' ? 'Moon' : 'Planet'));
         assert.ok(text.includes('this level only'));
@@ -108,7 +108,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
           await evaluate('document.querySelector(' + JSON.stringify(later) + ').click()');
           await settle();
           assert.equal(await evaluate('Array.from(document.querySelectorAll("input")).find(el=>el.getAttribute("aria-label")==="metal to send").value'), '102400');
-          assert.ok(await evaluate('document.querySelector("section[aria-label]").textContent.includes("204,800")'));
+          assert.ok(await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent.includes("204,800")`));
         }
         console.log('PASS level-to-Supply handoff', kind, width);
       }

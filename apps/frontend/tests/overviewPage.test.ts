@@ -85,14 +85,14 @@ describe("overview queue progress display", () => {
     expect(overviewSource).not.toContain(">Planet stats<");
     expect(overviewSource).not.toContain("<StatPip");
     expect(overviewSource).not.toContain('label="Status"');
-    expect(overviewSource).toContain("Fields are the planet development budget");
-    expect(overviewSource).toContain("Temperature changes deuterium production and Solar Satellite energy output");
-    expect(overviewSource).toContain('label="Fields"');
-    expect(overviewSource).toContain('label="Temperature"');
-    expect(overviewSource).toContain('label="Diameter"');
-    expect(overviewSource).toContain('label="Terraformer"');
-    expect(overviewSource).toContain('label="Deuterium multiplier"');
-    expect(overviewSource).toContain('label="Solar Satellite"');
+    expect(overviewSource).toContain("Each building level uses one field");
+    expect(overviewSource).toContain("Temperature shifts deuterium output and Solar Satellite energy.");
+    expect(overviewSource).toContain('label: "Fields"');
+    expect(overviewSource).toContain('label: "Temperature"');
+    expect(overviewSource).toContain('label: "Diameter"');
+    expect(overviewSource).toContain('label: "Terraformer"');
+    expect(overviewSource).toContain('label: "Deuterium multiplier"');
+    expect(overviewSource).toContain('label: "Solar Satellite"');
     expect(overviewSource).not.toContain('label="Fields used"');
     expect(overviewSource).not.toContain('label="Fields available"');
     expect(overviewSource).not.toContain('label="Field pressure"');
@@ -100,27 +100,24 @@ describe("overview queue progress display", () => {
     expect(overviewSource).not.toContain('label="Deuterium capacity"');
     expect(overviewSource).not.toContain('label="Mine power"');
     expect(overviewSource).not.toContain("Temperature changes implemented production math");
-    expect(overviewSource).toContain('aria-label="Close planet effects"');
+    expect(overviewSource).toContain('closeLabel="Close planet effects"');
   });
 
   test("opens planet info and rename in viewport modals like the commander editor", () => {
     expect(overviewSource).toContain('id="overview-planet-name-editor"');
-    expect(overviewSource).toContain('aria-labelledby="overview-planet-name-editor-title"');
-    expect(overviewSource).toContain('aria-modal="true"');
-    expect(overviewSource.match(/role="dialog"/g)?.length).toBe(2);
-    expect(overviewSource.match(/modal-backdrop-enter fixed inset-0 z-50/g)?.length).toBe(2);
-    expect(overviewSource.match(/modal-panel-enter grid max-h-\[calc\(100dvh-1\.5rem\)\]/g)?.length).toBe(2);
-    expect(overviewSource).toContain("event.target === event.currentTarget");
-    expect(overviewSource).toContain('event.key !== "Escape"');
+    expect(overviewSource).toContain('labelledBy="overview-planet-name-editor-title"');
+    // Both popups use the shared Modal shell (portal, backdrop close, Escape, scroll lock).
+    expect(overviewSource.match(/<Modal\b/g)?.length).toBe(2);
+    expect(overviewSource).toContain("dismissible={!renameBusy}");
     expect(overviewSource).not.toContain('className="grid gap-2 rounded border border-white/10 bg-black/25 p-3"');
   });
 
   test("renders the Solar Satellite effect energy in the compact non-wrapping form", () => {
     // The verbose "NN energy each" value wrapped on the Overview planet effects panel.
     // Use the established "NN E" energy unit and keep the value on one line.
-    expect(overviewSource).toContain("} E each`}");
+    expect(overviewSource).toContain("} E each`");
     expect(overviewSource).not.toContain("energy each`}");
-    expect(overviewSource).toMatch(/label="Solar Satellite"\s+nowrap/);
+    expect(overviewSource).toMatch(/label: "Solar Satellite", nowrap: true/);
   });
 
   test("derives selected planet effect values from canonical production helpers", () => {

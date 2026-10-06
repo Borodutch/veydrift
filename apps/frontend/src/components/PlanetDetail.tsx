@@ -223,7 +223,7 @@ export function PlanetDetail({
         <div>
           <button
             onClick={onBack}
-            className="mb-3 inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
+            className="mb-3 inline-flex items-center gap-2 rounded-md surface-inset px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
             type="button"
           >
             <MapPin aria-hidden="true" className="text-cyan-200/75" size={14} />
@@ -264,7 +264,7 @@ export function PlanetDetail({
             <PlanetActionStatus actionState={actionState} />
           </div>
         ) : null}
-        <button onClick={onBack} className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100" type="button">
+        <button onClick={onBack} className="inline-flex items-center gap-2 rounded-md surface-inset px-2.5 py-1.5 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100" type="button">
           <MapPin aria-hidden="true" className="text-cyan-200/75" size={14} />
           [{coords.galaxy}:{coords.system}:{coords.position}]
         </button>
@@ -298,7 +298,7 @@ export function PlanetDetail({
 
   return (
     <div className="celestial-detail planet-detail-page flex min-w-0 flex-col gap-3" data-celestial-detail="planet">
-      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e] shadow-lg shadow-black/15">
+      <section className="overflow-hidden rounded-xl surface shadow-lg shadow-black/15">
         <div className="celestial-detail-layout" data-celestial-layout>
           <div className="celestial-detail-artwork relative flex items-center justify-center p-3 sm:p-4 lg:p-5" data-celestial-artwork>
             <div className="relative aspect-square w-full max-w-44 sm:max-w-[13rem] lg:max-w-[17rem]">
@@ -396,7 +396,7 @@ export function PlanetDetail({
 
       {planet.hasMoon ? (
         <button
-          className="group flex items-center gap-3 rounded-lg border border-white/10 bg-[#101624] p-2 text-left transition hover:border-cyan-200/35 disabled:cursor-default"
+          className="group flex items-center gap-3 rounded-lg surface p-2 text-left transition hover:border-cyan-200/35 disabled:cursor-default"
           disabled={!onSelectMoon}
           onClick={() => onSelectMoon?.({ galaxy: planet.galaxy, system: planet.system, position: planet.position })}
           title={`Open ${planet.moonName ?? "Moon"} at ${planetCoords}`}
@@ -414,7 +414,7 @@ export function PlanetDetail({
       ) : null}
 
       {planetStatusRows.length > 0 ? (
-        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+        <section className="overflow-hidden rounded-lg surface">
           <SectionHeading icon={<Orbit aria-hidden="true" size={16} />} title="Planet status" />
           <div className="grid gap-px bg-white/10 sm:grid-cols-2">
             {planetStatusRows.map((row) => <TelemetryCard key={row.label} row={row} />)}
@@ -423,7 +423,7 @@ export function PlanetDetail({
       ) : null}
 
       {!settled ? (
-        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+        <section className="overflow-hidden rounded-lg surface">
           <SectionHeading icon={<Globe2 aria-hidden="true" size={17} />} title="Unsettled planet" />
           <p className="p-4 text-sm leading-6 text-slate-400">
             No commander has settled this planet yet.
@@ -615,7 +615,7 @@ function SectionHeading({ icon, title }: { icon: ComponentChildren; title: strin
 function TelemetryCard({ row }: { row: PlanetRecordRow }) {
   return (
     <div className="min-w-0 bg-[#0d1421] px-3 py-2.5">
-      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600">{row.label}</div>
+      <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-300/70">{row.label}</div>
       <div className={`mt-1 truncate text-sm font-medium ${recordToneClass(row.tone)}`} title={row.value}>{row.value}</div>
     </div>
   );
@@ -844,7 +844,7 @@ function PlanetEconomyPills({
   return (
     <dl className="flex flex-wrap gap-2">
       {rows.map((row) => (
-        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20 px-2.5 text-xs leading-none" key={row.label}>
+        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md surface-inset px-2.5 text-xs leading-none" key={row.label}>
           <dt className="sr-only">{row.label}</dt>
           <dd className="whitespace-nowrap text-center leading-none text-slate-400 tabular-nums">
             {row.label}
@@ -1009,12 +1009,12 @@ export function PlanetFleetActivityPanel({
   const overflow = rows.length - visibleRows.length;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+    <section className="overflow-hidden rounded-lg surface">
       <SectionHeading icon={<Rocket aria-hidden="true" size={17} />} title="Mission activity" />
       {loading ? (
         <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label="Loading mission activity">
           {skeletonList(2, (index) => (
-            <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+            <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded surface-inset p-1.5" key={index}>
               <Skeleton className="h-10 w-10 rounded" />
               <div className="min-w-0">
                 <Skeleton className="h-3 w-2/3" />
@@ -1030,11 +1030,11 @@ export function PlanetFleetActivityPanel({
             const timing = planetFleetActivityTiming(row, now);
             return (
               <a
-                className="group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5 transition hover:border-cyan-200/25 hover:bg-cyan-200/[0.035]"
+                className="group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded surface-inset p-1.5 transition hover:border-cyan-200/25 hover:bg-cyan-200/[0.035]"
                 href={buildInspectPath({ kind: "mission", missionId: row.missionId })}
                 key={`${row.missionId}-${row.direction}`}
               >
-                <span className="h-10 w-10 overflow-hidden rounded border border-white/10 bg-[#080d18]">
+                <span className="h-10 w-10 overflow-hidden rounded surface">
                   {row.asset ? <OptimizedImage alt="" className="h-full w-full object-cover transition-transform group-hover:scale-105" loading="lazy" sizes="icon" src={row.asset} /> : <Rocket aria-hidden="true" className="m-2.5 text-cyan-200/40" size={18} />}
                 </span>
                 <span className="min-w-0">
@@ -1074,15 +1074,15 @@ export function PublicAssetStatePanel({
   title: string;
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+    <section className="overflow-hidden rounded-lg surface">
       <SectionHeading icon={icon} title={title} />
       {loading ? (
         <AssetRowsSkeleton label={`Loading ${title.toLowerCase()}`} />
       ) : rows.length > 0 ? (
         <div className="grid gap-2 p-3 sm:grid-cols-2">
           {rows.map((row) => (
-            <article className="group grid min-h-14 min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded border border-white/[0.08] bg-black/20 p-1.5 transition-colors hover:border-cyan-200/20 hover:bg-cyan-200/[0.035]" key={row.label}>
-              <div className="relative h-10 w-10 overflow-hidden rounded border border-white/10 bg-[#080d18]">
+            <article className="group grid min-h-14 min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded surface-inset p-1.5 transition-colors hover:border-cyan-200/20 hover:bg-cyan-200/[0.035]" key={row.label}>
+              <div className="relative h-10 w-10 overflow-hidden rounded surface">
                 {row.asset ? (
                   <OptimizedImage
                     alt=""
@@ -1124,7 +1124,7 @@ function PublicStatePanel({
   title: string;
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+    <section className="overflow-hidden rounded-lg surface">
       <SectionHeading icon={icon} title={title} />
       {loading ? (
         <RecordRowsSkeleton label={`Loading ${title.toLowerCase()}`} />
@@ -1141,7 +1141,7 @@ function AssetRowsSkeleton({ label }: { label: string }) {
   return (
     <SkeletonRegion className="grid gap-2 p-3 sm:grid-cols-2" label={label}>
       {skeletonList(4, (index) => (
-        <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded border border-white/[0.08] bg-black/20 p-1.5" key={index}>
+        <div className="grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-2 rounded surface-inset p-1.5" key={index}>
           <Skeleton className="h-10 w-10 rounded" />
           <div className="min-w-0">
             <Skeleton className="h-3 w-4/5" />
@@ -1320,12 +1320,12 @@ export function PublicQueuesPanel({
   queues: PublicQueueView[];
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+    <section className="overflow-hidden rounded-lg surface">
       <SectionHeading icon={<Orbit aria-hidden="true" size={17} />} title="Active queues" />
       {loading ? (
         <SkeletonRegion className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4" label="Loading active queues">
           {skeletonList(4, (index) => (
-            <div className="rounded-lg border border-white/10 bg-black/15 p-3" key={index}>
+            <div className="rounded-lg surface-inset p-3" key={index}>
               <Skeleton className="h-2.5 w-16" />
               <div className="mt-3 grid grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3">
                 <Skeleton className="h-11 w-11 rounded" />
@@ -1341,8 +1341,8 @@ export function PublicQueuesPanel({
       ) : queues.length > 0 ? (
         <div className="grid gap-3 p-3 sm:grid-cols-2 xl:grid-cols-4">
           {queues.map((queue) => (
-            <article className="min-w-0 rounded-lg border border-white/10 bg-black/15 p-3" key={queue.key}>
-              <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{queue.title}</h3>
+            <article className="min-w-0 rounded-lg surface-inset p-3" key={queue.key}>
+              <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{queue.title}</h3>
               <QueueProgressPanel
                 asset={queue.asset}
                 completedQuantity={queue.completedQuantity}

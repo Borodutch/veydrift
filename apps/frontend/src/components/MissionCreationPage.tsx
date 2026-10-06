@@ -834,7 +834,7 @@ export function MissionCreationPage({
     >
       <section
         aria-label="Mission route"
-        className="rounded-lg border border-white/10 bg-[#101624] px-3 py-2.5 shadow-sm shadow-black/10"
+        className="rounded-lg surface px-3 py-2.5 shadow-sm shadow-black/10"
       >
         <MissionRouteCell
           arrowLabel={`Planned route from ${routeEndpoints.origin.name} to ${routeEndpoints.target.name}`}
@@ -1413,7 +1413,7 @@ function MissionFormSection({
   title: string;
 }) {
   return (
-    <section className="grid min-w-0 max-w-full gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
+    <section className="grid min-w-0 max-w-full gap-2 rounded-lg surface p-3 shadow-sm shadow-black/10">
       <header className="flex min-w-0 items-center justify-between gap-3">
         <h3 className="shrink-0 text-xs font-semibold uppercase text-slate-400">{title}</h3>
         {typeof summary === "string"
@@ -2237,7 +2237,7 @@ export function ShipQuantityRow({
   const quantityDigits = Math.max(1, String(value).length);
 
   return (
-    <label className="grid gap-2 rounded border border-white/10 bg-black/15 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+    <label className="grid gap-2 rounded surface-inset px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <span className="flex min-w-0 items-center gap-2">
         <img alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
         <span className="min-w-0">
@@ -2248,7 +2248,7 @@ export function ShipQuantityRow({
       <span className="flex shrink-0 items-center justify-end gap-1">
         <button
           aria-label={`Decrease ${ship.label}`}
-          className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
+          className="h-11 w-11 shrink-0 rounded surface-inset text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
           disabled={value <= 0}
           onClick={() => onChange(value - 1)}
           type="button"
@@ -2269,7 +2269,7 @@ export function ShipQuantityRow({
         <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">/ {owned.toLocaleString()}</span>
         <button
           aria-label={`Increase ${ship.label}`}
-          className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
+          className="h-11 w-11 shrink-0 rounded surface-inset text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
           disabled={value >= owned}
           onClick={() => onChange(value + 1)}
           type="button"
@@ -2283,7 +2283,7 @@ export function ShipQuantityRow({
 
 export function TargetIntelCard({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
   return (
-    <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
+    <div className="grid gap-3 rounded-md surface-inset p-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
       <TargetIdentityContent coords={coords} target={target} />
     </div>
   );
@@ -2354,7 +2354,7 @@ export function AttackIntelPanel({
   targetFleetUnits: UnitItem[];
 }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
+    <section className="overflow-hidden rounded-lg surface shadow-sm shadow-black/10">
       <div className="grid divide-y divide-white/10">
         <AttackOutcomeContent
           battleForecast={battleForecast}
@@ -2400,7 +2400,7 @@ export function NonAttackMissionIntelPanel({
     : null;
   if (!harvestDebris && !destinationIntelVisible) return null;
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
+    <section className="overflow-hidden rounded-lg surface shadow-sm shadow-black/10">
       <div className={`grid divide-y divide-white/10 lg:divide-x lg:divide-y-0 ${
         harvestDebris && destinationIntelVisible ? "lg:grid-cols-3" : destinationIntelVisible ? "lg:grid-cols-2" : ""
       }`}>
@@ -2432,7 +2432,7 @@ function HarvestIntelTable({
   return (
     <div className="grid content-start gap-2 p-3">
       <span className="text-[11px] font-semibold uppercase text-slate-500">Debris</span>
-      <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+      <div className="grid gap-1 rounded surface-inset p-2">
         <CompactFactRow label="Field" value={formatHarvestDebris(resources)} />
         <CompactFactRow label="Coverage" value={harvestCoverageLabel(resources, cargoCapacity)} />
       </div>
@@ -2475,7 +2475,7 @@ export function AttackOutcomePanel({
   maxLootForecast?: MissionResourceSnapshot;
 }) {
   return (
-    <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+    <section className="grid gap-2 rounded-md surface-inset p-3">
       <AttackOutcomeContent
         battleForecast={battleForecast}
       />
@@ -2515,7 +2515,7 @@ function AttackOutcomeContent({
             <span>DEF <span className="font-semibold tabular-nums text-slate-200">{battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</span></span>
           </div>
         </div>
-        <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+        <div className="grid gap-1 rounded surface-inset p-2">
           <CompactFactRow label="Estimated losses" value={formatLossRangeLong(battleForecast.attackerLosses)} />
           {battleForecast.randomness ? (
             <>
@@ -2799,7 +2799,7 @@ function SimulatedBattleReportDetails({
 
             {report ? (
               <>
-                <div className="grid gap-1 rounded border border-white/10 bg-black/20 p-3 text-xs">
+                <div className="grid gap-1 rounded surface-inset p-3 text-xs">
                   <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
                   <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
                   <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
@@ -2821,11 +2821,11 @@ function SimulatedBattleReportDetails({
                 <section className="grid gap-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Combat rounds</h3>
                   {report.rounds.length === 0 ? (
-                    <p className="rounded border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+                    <p className="rounded surface-inset p-3 text-xs text-slate-400">
                       Combat ended before round 1 because one side had no battlefield units.
                     </p>
                   ) : report.rounds.map((round) => (
-                    <article className="grid gap-2 rounded border border-white/10 bg-white/[0.03] p-3" key={round.round}>
+                    <article className="grid gap-2 rounded surface-inset p-3" key={round.round}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h4 className="text-sm font-semibold text-white">Round {round.round}</h4>
                         <span className="text-xs tabular-nums text-slate-400">
@@ -2877,7 +2877,7 @@ function BattleParticipantCard({
 }) {
   const defenses = "startingDefenses" in participant ? participant.startingDefenses : [];
   return (
-    <article className="rounded border border-white/10 bg-white/[0.03] p-2 text-xs">
+    <article className="rounded surface-inset p-2 text-xs">
       <p className="font-medium text-slate-200">{participant.label}</p>
       {participant.owner !== "Connected commander" ? (
         <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
@@ -2900,16 +2900,16 @@ function BattleParticipantCard({
 function BattleReportSkeleton() {
   return (
     <div aria-busy="true" aria-label="Generating simulated battle report" className="grid animate-pulse gap-4">
-      <div className="grid gap-2 rounded border border-white/10 bg-black/20 p-3">
+      <div className="grid gap-2 rounded surface-inset p-3">
         <span className="h-3 w-24 rounded bg-white/10" />
         <span className="h-3 w-full rounded bg-white/[0.07]" />
         <span className="h-3 w-2/3 rounded bg-white/[0.07]" />
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        <span className="h-24 rounded border border-white/10 bg-white/[0.04]" />
-        <span className="h-24 rounded border border-white/10 bg-white/[0.04]" />
+        <span className="h-24 rounded surface-inset" />
+        <span className="h-24 rounded surface-inset" />
       </div>
-      <span className="h-36 rounded border border-white/10 bg-white/[0.04]" />
+      <span className="h-36 rounded surface-inset" />
     </div>
   );
 }
@@ -2927,7 +2927,7 @@ function RoundSideReport({
     participant.lostShips.map((row) => ({ ...row, label: `${participant.label}: ${row.label}` })),
   );
   return (
-    <div className="rounded border border-white/10 bg-black/15 p-2 text-xs">
+    <div className="rounded surface-inset p-2 text-xs">
       <p className="font-medium text-slate-300">{title}</p>
       <p className="mt-1 text-slate-500">Losses</p>
       <p className="text-slate-300">
@@ -2969,7 +2969,7 @@ function ResourceIntelTable({
   return (
     <div className="grid content-start gap-2 p-3">
       <span className="text-[11px] font-semibold uppercase text-slate-500">Resources</span>
-      <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+      <div className="grid gap-1 rounded surface-inset p-2">
         <ResourceTableRow label="Now" resources={resourceIntel.current} />
         <ResourceTableRow label="Arrival" resources={resourceIntel.projectedArrival} />
         <ResourceTableRow label="Loot at arrival" resources={resourceIntel.projectedArrivalLootable} />
@@ -3038,7 +3038,7 @@ function CombatTechSummary({
   defenderLevels: CombatTechLevels;
 }) {
   return (
-    <div className="grid gap-1 rounded border border-white/10 bg-black/15 px-2 py-1.5 text-[11px] text-slate-400 sm:grid-cols-2">
+    <div className="grid gap-1 rounded surface-inset px-2 py-1.5 text-[11px] text-slate-400 sm:grid-cols-2">
       <CombatTechLine label="Attacker tech" levels={attackerLevels} />
       <CombatTechLine
         label={defenderKnown ? "Defender tech" : "Defender tech unknown"}
@@ -3081,7 +3081,7 @@ export function DestinationIntelPanel({
   targetFleetUnits: UnitItem[];
 }) {
   return (
-    <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+    <section className="grid gap-2 rounded-md surface-inset p-3">
       <DestinationIntelContent
         resourceIntel={resourceIntel}
         stationedDefenderUnits={stationedDefenderUnits}
@@ -3106,7 +3106,7 @@ function DestinationIntelContent({
   return (
     <div className="grid gap-2">
       <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Target readout</p>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Target readout</p>
         <h3 className="mt-1 text-sm font-semibold text-white">Destination intel</h3>
       </div>
       <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -3211,7 +3211,7 @@ function LootProjectionCard({
     { key: "deuterium", label: "Deuterium", suffix: "D" },
   ] as const;
   return (
-    <section className="grid min-w-0 max-w-full gap-2 rounded border border-white/10 bg-black/15 p-2">
+    <section className="grid min-w-0 max-w-full gap-2 rounded surface-inset p-2">
       <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
       <div className="grid min-w-0 gap-1 sm:grid-cols-3">
         {predictedResources.map(({ key, label, suffix }) => (
@@ -3271,7 +3271,7 @@ export function LootRatioControls({
         </label>
       </div>
       {greedyLootEnabled ? (
-        <p className="rounded border border-white/10 bg-black/15 px-3 py-2 text-xs text-slate-400">
+        <p className="rounded surface-inset px-3 py-2 text-xs text-slate-400">
           Greedy fills cargo from available loot automatically: metal first, then crystal, then deuterium.
         </p>
       ) : (
@@ -3302,7 +3302,7 @@ export function LootRatioControls({
               Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
             </span>
             <button
-              className="min-h-11 rounded border border-white/10 bg-white/[0.03] px-3 py-2 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white sm:min-h-0 sm:px-2 sm:py-1"
+              className="min-h-11 rounded surface-inset px-3 py-2 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white sm:min-h-0 sm:px-2 sm:py-1"
               onClick={onResetEven}
               type="button"
             >
@@ -3348,7 +3348,7 @@ function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[
     <div className="flex flex-wrap gap-1.5">
       {units.map((unit) => (
         <span
-          className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1.5 py-1"
+          className="inline-flex items-center gap-1 rounded surface-inset px-1.5 py-1"
           key={unit.key}
           title={`${unit.label} x${unit.count.toLocaleString()}`}
         >
@@ -3364,7 +3364,7 @@ function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[
 function ResourceSummary({ resources, title }: { resources: MissionResourceSnapshot | null; title: string }) {
   return (
     <section className="rounded border border-white/10 bg-[#070913]/60 p-2">
-      <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
+      <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{title}</h4>
       <p className="mt-1 text-sm font-medium text-slate-200">{formatCompactResources(resources)}</p>
     </section>
   );
