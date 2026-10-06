@@ -36,6 +36,12 @@ type Runner interface {
 	Verify(context.Context, Snapshot, []byte) error
 }
 
+// ContextRunner propagates a runner's narrower deadline into synchronous saves.
+// Existing Runner implementations retain parent and lease cancellation.
+type ContextRunner interface {
+	ProveContext(context.Context, Snapshot, []byte, func(context.Context, []byte) error) ([]byte, error)
+}
+
 type Service struct {
 	Store       *Store
 	Source      Source
@@ -133,7 +139,7 @@ func (s *Service) reconcile(ctx context.Context) error {
 			return e
 		}
 		if !ok || j.Anchor.Number > head.Number {
-			if e = s.Store.invalidate(j, "finalized anchor reorganized"); e != nil {
+			if e = s.Store.invalidateContext(ctx, j, "finalized anchor reorganized"); e != nil {
 				return e
 			}
 		}
@@ -211,7 +217,7 @@ func (s *Service) snapshot(ctx context.Context, j Job) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	if !canonical || j.Anchor.Number > head.Number {
-		if err = s.Store.invalidate(j, "finalized anchor reorganized"); err != nil {
+		if err = s.Store.invalidateContext(ctx, j, "finalized anchor reorganized"); err != nil {
 			return Snapshot{}, err
 		}
 		return Snapshot{}, errors.New("finalized anchor reorganized")
@@ -229,12 +235,15 @@ func (s *Service) snapshot(ctx context.Context, j Job) (Snapshot, error) {
 // RunOne processes one claimed job. A heartbeat renews ownership, not progress;
 // only a persisted checkpoint advances Updated. Every failure remains failure.
 func (s *Service) RunOne(ctx context.Context, k string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	jobExecution, err := s.Store.holdJobExecution(k)
 	if err != nil {
 		return err
 	}
 	defer releaseExecution(jobExecution)
-	l, err := s.Store.claim(k)
+	l, err := s.Store.claimContext(ctx, k)
 	if err != nil {
 		return err
 	}
@@ -243,7 +252,7 @@ func (s *Service) RunOne(ctx context.Context, k string) error {
 		return err
 	}
 	defer releaseExecution(execution)
-	if err = s.Store.Renew(l); err != nil {
+	if err = s.Store.RenewContext(ctx, l); err != nil {
 		return err
 	}
 	work, cancel := context.WithCancel(ctx)
@@ -262,7 +271,7 @@ func (s *Service) RunOne(ctx context.Context, k string) error {
 			case <-work.Done():
 				return
 			case <-ticker.C:
-				if e := s.Store.Renew(l); e != nil {
+				if e := s.Store.RenewContext(work, l); e != nil {
 					leaseErr <- e
 					cancel()
 					return
@@ -271,7 +280,15 @@ func (s *Service) RunOne(ctx context.Context, k string) error {
 		}
 	}()
 	defer func() { close(stop); cancel(); <-done }()
-	fail := func(e error) error { _ = s.Store.finish(l, Failed, "", e.Error()); return e }
+	fail := func(e error) error {
+		// A canceled context cannot clean up; an unbounded finish retains execution
+		// locks. Try synchronously with a short independent bound, then let the durable
+		// reservation expire if contended. No writer survives RunOne.
+		cleanup, stopCleanup := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer stopCleanup()
+		_ = s.Store.finishContext(cleanup, l, Failed, "", e.Error())
+		return e
+	}
 	j, err := s.Store.Get(k)
 	if err != nil {
 		return fail(err)
@@ -287,7 +304,20 @@ func (s *Service) RunOne(ctx context.Context, k string) error {
 			return fail(err)
 		}
 	}
-	proof, err := s.Runner.Prove(work, snap, checkpoint, func(b []byte) error { return s.Store.Checkpoint(l, b) })
+	var proof []byte
+	if runner, ok := s.Runner.(ContextRunner); ok {
+		proof, err = runner.ProveContext(work, snap, checkpoint, func(checkpointCtx context.Context, b []byte) error {
+			saveCtx, stopSave := context.WithCancel(checkpointCtx)
+			stopWork := context.AfterFunc(work, stopSave)
+			defer func() { stopWork(); stopSave() }()
+			if err := work.Err(); err != nil {
+				return err
+			}
+			return s.Store.CheckpointContext(saveCtx, l, b)
+		})
+	} else {
+		proof, err = s.Runner.Prove(work, snap, checkpoint, func(b []byte) error { return s.Store.CheckpointContext(work, l, b) })
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -315,11 +345,15 @@ func (s *Service) RunOne(ctx context.Context, k string) error {
 	}
 	// Write only after fencing check; finish performs another fencing check.
 	var hash string
-	err = s.Store.withLease(l, func(_ *Job, _ *slot) error { var e error; hash, e = s.Store.blob(proof); return e })
+	err = s.Store.withLeaseContext(work, l, func(ctx context.Context, _ *Job, _ *slot) error {
+		var e error
+		hash, e = s.Store.blobContext(ctx, proof)
+		return e
+	})
 	if err != nil {
 		return fail(err)
 	}
-	return s.Store.finish(l, Complete, hash, "")
+	return s.Store.finishContext(work, l, Complete, hash, "")
 }
 
 // Proof returns only a still-canonical, cryptographically reverified complete

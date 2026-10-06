@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -187,6 +188,14 @@ func Open(root string, cfg Config) (*Store, error) {
 	return s, err
 }
 func (s *Store) lock(name string, fn func() error) error {
+	return s.lockContext(context.Background(), name, fn)
+}
+
+// lockContext never blocks in flock and never leaves a detached waiter behind.
+func (s *Store) lockContext(ctx context.Context, name string, fn func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if name == "" || filepath.Base(name) != name || name == "." || name == ".." {
 		return errors.New("invalid lock name")
 	}
@@ -195,10 +204,29 @@ func (s *Store) lock(name string, fn func() error) error {
 		return err
 	}
 	defer f.Close()
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return err
+	for {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EINTR) {
+			return err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
 	}
 	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 	return fn()
 }
 func readJSON(path string, out any) error {
@@ -209,11 +237,17 @@ func readJSON(path string, out any) error {
 	return json.Unmarshal(b, out)
 }
 func atomicJSON(path string, v any) error {
+	return atomicJSONContext(context.Background(), path, v)
+}
+func atomicJSONContext(ctx context.Context, path string, v any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return atomicBytes(path, b)
+	return atomicBytesContext(ctx, path, b)
 }
 func syncDir(path string) error {
 	f, err := os.Open(path)
@@ -224,14 +258,38 @@ func syncDir(path string) error {
 	return f.Sync()
 }
 func atomicBytes(path string, b []byte) error {
+	return atomicBytesContext(context.Background(), path, b)
+}
+
+// Cancellation is checked between disk operations and immediately before rename.
+// Regular-file syscalls cannot be interrupted portably. Once renamed, directory
+// fsync completes synchronously: cancellation cannot turn a commit into a rollback.
+func atomicBytesContext(ctx context.Context, path string, b []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if _, err = f.Write(b); err != nil {
-		f.Close()
+	defer f.Close()
+	for len(b) > 0 {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
+		n := min(len(b), 64<<10)
+		written, e := f.Write(b[:n])
+		if e != nil {
+			return e
+		}
+		if written != n {
+			return io.ErrShortWrite
+		}
+		b = b[n:]
+	}
+	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if err = f.Sync(); err != nil {
@@ -239,6 +297,9 @@ func atomicBytes(path string, b []byte) error {
 		return err
 	}
 	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
 		return err
 	}
 	if err = os.Rename(tmp, path); err != nil {
@@ -259,13 +320,22 @@ func (s *Store) get(k string) (Job, error) {
 	return j, err
 }
 func (s *Store) Get(k string) (Job, error) { return s.get(k) }
-func (s *Store) put(j Job) error           { return atomicJSON(s.jobPath(j.Identity.Key()), j) }
+func (s *Store) put(j Job) error           { return s.putContext(context.Background(), j) }
+func (s *Store) putContext(ctx context.Context, j Job) error {
+	return atomicJSONContext(ctx, s.jobPath(j.Identity.Key()), j)
+}
 
 // Artifact accounting serializes only blob I/O, never proof computation.
 // Hard retained-byte cap also bounds orphan accumulation after crashes.
 func (s *Store) blob(b []byte) (string, error) {
+	return s.blobContext(context.Background(), b)
+}
+func (s *Store) blobContext(ctx context.Context, b []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	h := Hash(b)
-	err := s.lock("blob-budget", func() error {
+	err := s.lockContext(ctx, "blob-budget", func() error {
 		p := filepath.Join(s.root, "blobs", h)
 		old, e := os.ReadFile(p)
 		if e == nil {
@@ -283,6 +353,9 @@ func (s *Store) blob(b []byte) (string, error) {
 		}
 		var total int64
 		for _, f := range es {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			i, e := f.Info()
 			if e != nil {
 				return e
@@ -292,7 +365,7 @@ func (s *Store) blob(b []byte) (string, error) {
 		if total+int64(len(b)) > s.cfg.MaxBlobBytes {
 			return ErrBackpressure
 		}
-		return atomicBytes(p, b)
+		return atomicBytesContext(ctx, p, b)
 	})
 	return h, err
 }
@@ -426,8 +499,11 @@ func (s *Store) Claim(k string) (Lease, error) {
 
 // Caller holds job execution exclusion before taking job/slot transition locks.
 func (s *Store) claim(k string) (Lease, error) {
+	return s.claimContext(context.Background(), k)
+}
+func (s *Store) claimContext(ctx context.Context, k string) (Lease, error) {
 	var l Lease
-	err := s.lock(k, func() error {
+	err := s.lockContext(ctx, k, func() error {
 		j, err := s.get(k)
 		if err != nil {
 			return err
@@ -437,7 +513,7 @@ func (s *Store) claim(k string) (Lease, error) {
 			return ErrBusy
 		}
 		for n := 0; n < s.slots(); n++ {
-			err = s.lock(fmt.Sprintf("slot-%d", n), func() error {
+			err = s.lockContext(ctx, fmt.Sprintf("slot-%d", n), func() error {
 				execution, e := s.holdExecution(n)
 				if e != nil {
 					return e
@@ -458,7 +534,7 @@ func (s *Store) claim(k string) (Lease, error) {
 				}
 				expires := now.Add(s.cfg.Lease)
 				// Slot first: crash between writes leaks capacity only until lease expiry.
-				if err = atomicJSON(s.slotPath(n), slot{k, t, expires}); err != nil {
+				if err = atomicJSONContext(ctx, s.slotPath(n), slot{k, t, expires}); err != nil {
 					return err
 				}
 				j.State = Running
@@ -468,7 +544,7 @@ func (s *Store) claim(k string) (Lease, error) {
 				j.Updated = now
 				j.Attempts++
 				j.Failure = ""
-				if err = s.put(j); err != nil {
+				if err = s.putContext(ctx, j); err != nil {
 					return err
 				}
 				l = Lease{k, t, n}
@@ -486,11 +562,14 @@ func (s *Store) claim(k string) (Lease, error) {
 	return l, err
 }
 func (s *Store) withLease(l Lease, fn func(*Job, *slot) error) error {
+	return s.withLeaseContext(context.Background(), l, func(_ context.Context, j *Job, sl *slot) error { return fn(j, sl) })
+}
+func (s *Store) withLeaseContext(ctx context.Context, l Lease, fn func(context.Context, *Job, *slot) error) error {
 	if !digestRE.MatchString(l.Key) || l.Slot < 0 || l.Slot >= s.slots() {
 		return ErrStale
 	}
-	return s.lock(l.Key, func() error {
-		return s.lock(fmt.Sprintf("slot-%d", l.Slot), func() error {
+	return s.lockContext(ctx, l.Key, func() error {
+		return s.lockContext(ctx, fmt.Sprintf("slot-%d", l.Slot), func() error {
 			j, err := s.get(l.Key)
 			if err != nil {
 				return err
@@ -503,49 +582,73 @@ func (s *Store) withLease(l Lease, fn func(*Job, *slot) error) error {
 			if j.State != Running || j.Token != l.Token || j.Slot != l.Slot || sl.Token != l.Token || sl.Key != l.Key || !now.Before(j.Expires) || !now.Before(sl.Expires) {
 				return ErrStale
 			}
-			return fn(&j, &sl)
+			// Holding the locks prevents replacement, but time can still expire while
+			// waiting for the blob budget or writing a temporary file.
+			expires := j.Expires
+			if sl.Expires.Before(expires) {
+				expires = sl.Expires
+			}
+			leaseCtx, cancel := context.WithDeadline(ctx, expires)
+			defer cancel()
+			err = fn(leaseCtx, &j, &sl)
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				return ErrStale
+			}
+			return err
 		})
 	})
 }
 func (s *Store) Renew(l Lease) error {
-	return s.withLease(l, func(j *Job, sl *slot) error {
+	return s.RenewContext(context.Background(), l)
+}
+func (s *Store) RenewContext(ctx context.Context, l Lease) error {
+	return s.withLeaseContext(ctx, l, func(ctx context.Context, j *Job, sl *slot) error {
 		j.Expires = time.Now().Add(s.cfg.Lease)
 		sl.Expires = j.Expires
-		if err := atomicJSON(s.slotPath(l.Slot), sl); err != nil {
+		if err := atomicJSONContext(ctx, s.slotPath(l.Slot), sl); err != nil {
 			return err
 		}
-		return s.put(*j)
+		return s.putContext(ctx, *j)
 	})
 }
 
 // Checkpoints are opaque runner state, NOT proofs. A resumed runner must validate
 // their binding and cryptographic contents before use. No partial proof is READY.
 func (s *Store) Checkpoint(l Lease, b []byte) error {
+	return s.CheckpointContext(context.Background(), l, b)
+}
+
+// CheckpointContext synchronously persists under job, slot and blob-budget locks.
+// A canceled waiter cannot publish later; fencing is retained through commit.
+func (s *Store) CheckpointContext(ctx context.Context, l Lease, b []byte) error {
 	if len(b) == 0 || len(b) > s.cfg.MaxArtifactBytes {
 		return errors.New("invalid checkpoint size")
 	}
-	return s.withLease(l, func(j *Job, _ *slot) error {
-		h, err := s.blob(b)
+	return s.withLeaseContext(ctx, l, func(ctx context.Context, j *Job, _ *slot) error {
+		h, err := s.blobContext(ctx, b)
 		if err != nil {
 			return err
 		}
 		j.Checkpoint = h
 		j.Updated = time.Now()
-		return s.put(*j)
+		return s.putContext(ctx, *j)
 	})
 }
 func (s *Store) finish(l Lease, state State, proof string, reason string) error {
-	return s.withLease(l, func(j *Job, sl *slot) error {
+	return s.finishContext(context.Background(), l, state, proof, reason)
+}
+func (s *Store) finishContext(ctx context.Context, l Lease, state State, proof string, reason string) error {
+	return s.withLeaseContext(ctx, l, func(ctx context.Context, j *Job, sl *slot) error {
 		j.State = state
 		j.Proof = proof
 		j.Failure = reason
 		j.Token = ""
 		j.Expires = time.Time{}
 		j.Updated = time.Now()
-		if err := s.put(*j); err != nil {
+		if err := s.putContext(ctx, *j); err != nil {
 			return err
 		}
-		return atomicJSON(s.slotPath(l.Slot), slot{})
+		return atomicJSONContext(ctx, s.slotPath(l.Slot), slot{})
 	})
 }
 
@@ -568,8 +671,11 @@ func (s *Store) Retry(k string) error {
 // Invalidation fences even a live worker. Content-addressed bytes are never
 // silently rebound to a different input/rules/verifier identity.
 func (s *Store) invalidate(observed Job, reason string) error {
+	return s.invalidateContext(context.Background(), observed, reason)
+}
+func (s *Store) invalidateContext(ctx context.Context, observed Job, reason string) error {
 	k := observed.Identity.Key()
-	return s.lock(k, func() error {
+	return s.lockContext(ctx, k, func() error {
 		j, err := s.get(k)
 		if err != nil {
 			return err
@@ -583,7 +689,7 @@ func (s *Store) invalidate(observed Job, reason string) error {
 		j.Checkpoint = ""
 		j.Failure = reason
 		j.Updated = time.Now()
-		return s.put(j)
+		return s.putContext(ctx, j)
 	})
 }
 

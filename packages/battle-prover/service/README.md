@@ -72,6 +72,25 @@ must be terminated by its host, not bypassed with a second slot reservation.
 No global lock is held during proving, RPC calls, verification or progress waits.
 Short admission and blob-accounting transactions are serialized.
 
+Worker persistence uses cancellation-aware nonblocking flock retries. Checkpoint,
+renew, claim, invalidation and completion paths keep the same fencing and atomic
+rename/fsync rules. ContextRunner is an optional extension of Runner with
+ProveContext(ctx, snapshot, resume, func(context.Context, []byte) error); runners
+with an independent child deadline must pass that cancellation into every save.
+Legacy Prove callbacks receive service/parent cancellation only. CheckpointContext
+and RenewContext are also available directly; existing methods remain compatible.
+All persistence stays synchronous: no callback can mutate after its return.
+
+RunOne failure cleanup waits at most 100ms for transition locks. If contention
+prevents cleanup, execution locks are released and the durable reservation is
+recoverable after lease expiry, not immediately. Heartbeat shutdown is joined.
+Disk reads, writes, open, rename and fsync are ordinary blocking OS syscalls, not
+magically interruptible by context: checks occur between operations, each 64KiB
+write chunk, and immediately before rename. A rename already committed is not
+rolled back on cancellation, and directory fsync completes before returning.
+Cancellation between blob and job commits can leave a bounded orphan blob;
+cancellation between job and slot commits can reserve the slot until expiry.
+
 Worker capacity is min(Workers, CPUs/JobCPUs, MemoryBytes/JobMemoryBytes), shared
 across processes, not per instance. These are admission/reservation limits, NOT
 an in-process Go heap or CPU hard limit. A production runner must use a killable
