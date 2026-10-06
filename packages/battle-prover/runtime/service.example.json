@@ -4,7 +4,7 @@
   "Queue": {
     "MaxJobs": 128,
     "MaxInputBytes": 8388608,
-    "MaxArtifactBytes": 25165824,
+    "MaxArtifactBytes": 33554432,
     "MaxBlobBytes": 1073741824,
     "Workers": 1,
     "CPUs": 2,
@@ -62,8 +62,8 @@
     "WallLimit": 3600000000000,
     "MaxInputBytes": 8388608,
     "MaxCheckpointBytes": 16777216,
-    "MaxProofBytes": 16777216,
-    "MaxOutputBytes": 67108864,
+    "MaxProofBytes": 33554432,
+    "MaxOutputBytes": 100663296,
     "MaxStderrBytes": 1048576
   },
   "Artifacts": {

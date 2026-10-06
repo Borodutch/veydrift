@@ -80,7 +80,7 @@ func run(ctx context.Context, c config, once bool) error {
 		return err
 	}
 	defer catalog.Close()
-	runner, err := prover.NewApprovedProcessRunner(ctx, c.Process, catalog, c.Artifacts)
+	runner, err := prover.NewApprovedStageRunner(ctx, c.Process, catalog, c.Artifacts)
 	if err != nil {
 		return err
 	}

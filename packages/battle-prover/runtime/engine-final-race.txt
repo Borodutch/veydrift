@@ -1,0 +1,3 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/runtime	3.121s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/service	1.741s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/processrunner	1.514s [no tests to run]

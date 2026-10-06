@@ -1,3 +1,5 @@
+> Current implementation and terminal evidence: [ENGINE-HANDOFF.md](ENGINE-HANDOFF.md). Earlier increment-only gaps below are historical where superseded. Fresh approved-PK proving/onchain acceptance is still unqualified.
+
 # Runtime increment handoff — 2026-10-06
 
 ## Implemented (new runtime/ only)

@@ -1,0 +1,34 @@
+{
+  "Catalog": {
+    "Root": "/opt/veydrift-approved-keys",
+    "ManifestPath": "manifest.json",
+    "TrustedManifestSHA256": "APPROVED_KEY_MANIFEST_SHA256_REQUIRED",
+    "MaxManifestBytes": 16777216,
+    "MaxArtifactBytes": 2147483648
+  },
+  "Release": {
+    "Version": 3,
+    "Rules": "APPROVED_RULES_REQUIRED",
+    "Catalog": "APPROVED_PROTOCOL_CATALOG_REQUIRED",
+    "Verifier": "APPROVED_VERIFIER_ADDRESS_REQUIRED",
+    "VerifierCodehash": "APPROVED_VERIFIER_CODEHASH_REQUIRED",
+    "Engine": "APPROVED_RANDOMNESS_ENGINE_ADDRESS_REQUIRED",
+    "VerifierManifest": "APPROVED_KEY_MANIFEST_SHA256_REQUIRED"
+  },
+  "Witness": {
+    "MaxInputBytes": 8388608,
+    "MaxJournalEntries": 20000,
+    "MaxRows": 10000,
+    "MaxChunkSteps": 100
+  },
+  "Artifacts": {
+    "MaxVKBytes": 16777216,
+    "MaxInputBytes": 8388608,
+    "MaxArtifactBytes": 16777216,
+    "MaxProofBytes": 1048576,
+    "MaxLeaves": 100000
+  },
+  "MaxRequestBytes": 67108864,
+  "MaxCheckpointBytes": 16777216,
+  "MaxResultBytes": 33554432
+}

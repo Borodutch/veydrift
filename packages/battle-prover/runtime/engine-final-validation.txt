@@ -1,0 +1,6 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/runtime	59.649s
+?   	github.com/Borodutch/veydrift/packages/battle-prover/runtime/cmd/prover-engine	[no test files]
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/runtime/cmd/prover-service	1.074s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/service	12.207s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/processrunner	0.881s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1.966s

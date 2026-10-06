@@ -32,6 +32,7 @@ type ProcessRunner struct {
 }
 
 var _ service.Runner = (*ProcessRunner)(nil)
+var _ service.ContextRunner = (*ProcessRunner)(nil)
 
 // NewProcessRunner uses only the real pinned Linux supervisor. There is no
 // command-string, fixture, development setup, or unbounded in-process fallback.
@@ -63,7 +64,7 @@ func (r *ProcessRunner) snapshot(ctx context.Context, s service.Snapshot) error 
 	if err := r.Ready(ctx, s.Identity); err != nil {
 		return err
 	}
-	if len(s.Input) == 0 || len(s.Input) > r.cfg.MaxInputBytes || service.Hash(s.Input) != s.Identity.InputHash {
+	if !catalogHashValid(s.Anchor.Hash) || len(s.Input) == 0 || len(s.Input) > r.cfg.MaxInputBytes || service.Hash(s.Input) != s.Identity.InputHash {
 		return errors.New("snapshot input identity or size mismatch")
 	}
 	return nil
@@ -89,7 +90,18 @@ type processCheckpoint struct {
 	Data     []byte
 }
 
+// Prove retains the legacy interface; service.RunOne selects ProveContext.
+// A legacy callback cannot observe a child deadline while blocked.
 func (r *ProcessRunner) Prove(ctx context.Context, snap service.Snapshot, resume []byte, save func([]byte) error) ([]byte, error) {
+	if save == nil {
+		return nil, errors.New("durable fenced checkpoint callback required")
+	}
+	return r.ProveContext(ctx, snap, resume, func(_ context.Context, b []byte) error { return save(b) })
+}
+
+// ProveContext passes the independent child/wall deadline to synchronous fenced
+// persistence, and joins the supervisor before returning. No detached saver.
+func (r *ProcessRunner) ProveContext(ctx context.Context, snap service.Snapshot, resume []byte, save func(context.Context, []byte) error) ([]byte, error) {
 	if err := r.snapshot(ctx, snap); err != nil {
 		return nil, err
 	}
@@ -114,7 +126,10 @@ func (r *ProcessRunner) Prove(ctx context.Context, snap service.Snapshot, resume
 		}
 		req.Checkpoint = &processrunner.Checkpoint{Identity: req.Identity, ManifestSHA256: c.Manifest, Data: c.Data}
 	}
-	work, cancel := context.WithCancel(ctx)
+	if r.cfg.WallLimit <= 0 {
+		return nil, errors.New("positive child wall limit required")
+	}
+	work, cancel := context.WithTimeout(ctx, r.cfg.WallLimit)
 	defer cancel()
 	events := make(chan processrunner.CheckpointEvent)
 	type outcome struct {
@@ -122,7 +137,13 @@ func (r *ProcessRunner) Prove(ctx context.Context, snap service.Snapshot, resume
 		err    error
 	}
 	done := make(chan outcome, 1)
-	go func() { result, err := r.run(work, req, events); done <- outcome{result, err} }()
+	go func() {
+		result, err := r.run(work, req, events)
+		if err != nil {
+			cancel()
+		} // Unblock synchronous persistence on an early child failure too.
+		done <- outcome{result, err}
+	}()
 	var persistenceError error
 	for {
 		select {
@@ -143,7 +164,7 @@ func (r *ProcessRunner) Prove(ctx context.Context, snap service.Snapshot, resume
 				err = work.Err()
 			}
 			if err == nil {
-				err = save(data)
+				err = save(work, data)
 			}
 			// The supervisor supplies a buffered acknowledgment channel; it does not
 			// advance until this durable/fenced callback has succeeded.
@@ -161,6 +182,9 @@ func (r *ProcessRunner) Prove(ctx context.Context, snap service.Snapshot, resume
 			}
 			if out.err != nil {
 				return nil, out.err
+			}
+			if err := work.Err(); err != nil {
+				return nil, err
 			}
 			if out.result.Identity != req.Identity || out.result.ManifestSHA256 != r.cfg.ManifestSHA256 {
 				return nil, errors.New("process result identity mismatch")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Borodutch/veydrift/packages/battle-prover/processrunner"
 	"github.com/Borodutch/veydrift/packages/battle-prover/service"
@@ -30,7 +31,7 @@ func bridgeFixture() (*ProcessRunner, service.Snapshot, *bridgeChecker) {
 	h := strings.Repeat("a", 64)
 	s := service.Snapshot{Identity: service.Identity{ChainID: "8453", Game: "0x" + strings.Repeat("1", 40), BattleID: "999999999999999999999", InputHash: service.Hash([]byte("canonical")), Rules: h, Verifier: h}, Anchor: service.Anchor{Number: 20, Hash: h}, Input: []byte("canonical")}
 	c := &bridgeChecker{}
-	r := &ProcessRunner{cfg: processrunner.Config{Manifest: processrunner.Manifest{RulesSHA256: h, VerifierSHA256: h}, ManifestSHA256: strings.Repeat("b", 64), MaxInputBytes: 1024, MaxCheckpointBytes: 4096, MaxProofBytes: 1024}, gate: bridgeGate{}, checker: c}
+	r := &ProcessRunner{cfg: processrunner.Config{WallLimit: time.Minute, Manifest: processrunner.Manifest{RulesSHA256: h, VerifierSHA256: h}, ManifestSHA256: strings.Repeat("b", 64), MaxInputBytes: 1024, MaxCheckpointBytes: 4096, MaxProofBytes: 1024}, gate: bridgeGate{}, checker: c}
 	return r, s, c
 }
 func TestProcessBridgeResumeAndFencing(t *testing.T) {

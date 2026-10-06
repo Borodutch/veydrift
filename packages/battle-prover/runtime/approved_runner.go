@@ -17,6 +17,9 @@ func NewApprovedProcessRunner(ctx context.Context, cfg processrunner.Config, cat
 	if cfg.Manifest.VerifierSHA256 != catalog.SHA256() || cfg.Manifest.RulesSHA256 != catalog.manifest.RulesSHA256 {
 		return nil, errors.New("process and key catalog approvals disagree")
 	}
+	if err := catalog.CheckArtifactPresence(ctx); err != nil {
+		return nil, err
+	}
 	entry, ok := catalog.entries[AdapterKeyID("final")]
 	if !ok {
 		return nil, errors.New("approved final circuit absent")
@@ -29,5 +32,5 @@ func NewApprovedProcessRunner(ctx context.Context, cfg processrunner.Config, cat
 	if err != nil {
 		return nil, err
 	}
-	return NewProcessRunner(cfg, catalog, checker)
+	return NewProcessRunner(cfg, catalogAdmissionGate{catalog}, checker)
 }
