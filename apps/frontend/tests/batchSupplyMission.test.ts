@@ -45,13 +45,15 @@ describe("Supply mission selection", () => {
   for (const targetIsMoon of [false, true]) {
     test("Deploy confirmation and canonical calldata agree for " + (targetIsMoon ? "moon" : "planet"), async () => {
       const plan = buildBatchSupplyPlan({ ...args, mission: "deploy", targetIsMoon });
-      const levelSupply = targetIsMoon ? { kind: "moon" as const, key: "roboticsFactory", label: "Robotics Factory", level: 1 } : undefined;
       const snapshot = { sources: [{ ...target, ...source.coordinates, planetId: "1", resources: { metal: "100000", crystal: "0", deuterium: "1000" }, ships: [{ id: 4, count: 1 }] }], fleetSlots: { limit: 10, active: 0 } };
-      const queries = { supplySources: () => ({ read: async () => snapshot }) } as unknown as BackendDataStore["queries"];
-      // Planet production preflight carries the mission and reuses canonical dispatch fuel.
-      if (!targetIsMoon) await prepareBatchSupplyConfirmation({ queries, account, target, orders: plan.orders, shipTypesBySource: {}, mission: "deploy", levelSupply, levelPreview: undefined, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} });
+      const queries = {
+        supplySources: () => ({ read: async () => snapshot }),
+        shipyard: () => ({ read: async () => ({ resources: { metal: "0", crystal: "0", deuterium: "0" }, ships: [] }) }),
+      } as unknown as BackendDataStore["queries"];
+      // Generic Supply needs no upgrade preview, for either destination body.
+      await prepareBatchSupplyConfirmation({ queries, account, target, targetIsMoon, orders: plan.orders, shipTypesBySource: {}, mission: "deploy", levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} });
       const mock = wallet();
-      await launchBatchSupplyTransaction(mock.provider, account, contract, target, plan.orders, levelSupply, "deploy");
+      await launchBatchSupplyTransaction(mock.provider, account, contract, target, plan.orders, targetIsMoon, "deploy");
       expect(mock.sent).toHaveLength(1);
       const data = mock.sent[0]!.data;
       const words = decodeAbiParameters(parseAbiParameters(targetIsMoon ? "uint256[23]" : "uint256[22]"), ("0x" + data.slice(10)) as Hex)[0];

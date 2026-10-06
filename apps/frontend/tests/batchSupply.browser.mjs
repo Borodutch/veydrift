@@ -169,6 +169,28 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click(transport);
       assert.equal(await evaluate(launch + '.disabled'), false, 'Transport still batches');
     }
+    // Standalone moon Supply has no upgrade/shortfall props and may use its parent planet.
+    for (const width of [1280, 390]) {
+      await load(width, 'moon=1&twoSources=1');
+      assert.ok(await evaluate('document.body.textContent.includes("Home moon")'));
+      assert.ok(await evaluate('document.body.textContent.includes("Moon Supply uses one source")'));
+      assert.equal(await evaluate('document.body.textContent.includes("Destination shortfall")'), false);
+      assert.ok(await evaluate(launch + '.textContent.includes("to moon")'));
+      assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input:checked').length`), 1);
+      assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[1].disabled`), true);
+      const initial = await submit();
+      assert.equal(initial.orders[0].originPlanetId, '189');
+      assert.ok(initial.orders[0].fuelCost > 0, 'same-coordinate moon leg consumes fuel');
+      assert.ok(initial.orders[0].travelSeconds > 0, 'same-coordinate moon leg has a travel time');
+      await click("document.querySelector('input[aria-label=\"metal to send\"]').closest('label').querySelector('button')");
+      const maximum = await submit();
+      assert.equal(maximum.orders.length, 1);
+      assert.equal(maximum.orders[0].cargo.metal + maximum.orders[0].fuelCost, 72500, 'Max reserves parent-to-moon fuel from the selected cargo fleet');
+      await click("document.querySelector('[aria-label=\"Mission type\"] button:last-child')");
+      const deployed = await submit();
+      assert.equal(deployed.mission, 'deploy');
+      assert.deepEqual(deployed.orders, maximum.orders);
+    }
     // Screenshot-equivalent fleet: five available, two actually sent, one selector row only.
     for (const width of [1280, 390, 320]) {
       await load(width, 'plannedFleetExample=1', 568);

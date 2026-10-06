@@ -7,13 +7,14 @@ import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 
+const moon = new URLSearchParams(location.search).has("moon");
 const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
 const twoSources = new URLSearchParams(location.search).has("twoSources");
 const plannedFleetExample = new URLSearchParams(location.search).has("plannedFleetExample");
 const initialRequested = { metal: plannedFleetExample ? 34_900 : 1000, crystal: 0, deuterium: 0 };
 const source: BatchSupplySource = {
-  planetId: "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: 13 },
+  planetId: moon ? "189" : "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: moon ? 14 : 13 },
   resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
   ships: emptyFleet ? {} : recyclerOnly ? { recycler: 5 } : plannedFleetExample ? { largeCargo: 5, recycler: 3 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
   unavailableReason: emptyFleet ? "No usable cargo ships are available on this planet." : undefined,
@@ -60,7 +61,7 @@ function Fixture() {
     },
   };
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
-    target={destination} sources={sources} initialRequested={initialRequested} maxSources={15}
+    target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={moon} maxSources={moon ? 1 : 15}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
     onConfirm={(orders, shipTypesBySource, mission) => submissions.push(structuredClone({ orders, shipTypesBySource, mission }))} />;
 }
