@@ -135,7 +135,10 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: packages/battle-prover/go.mod
-          cache-dependency-path: packages/battle-prover/go.sum
+          # setup-go caches both full module and build directories; go.sum only keys
+          # the archive. A 1.37 GB post-job upload exhausted the job after checks passed.
+          # Keep the checks unchanged; self-hosted runners retain their local Go caches.
+          cache: false
 
       - name: Check battle proof prerequisites
         if: matrix.group == 'rest'
