@@ -617,7 +617,7 @@ function ComparisonMetric({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+    <div className="min-w-0 rounded surface-inset px-3 py-2">
       <dt className="text-[0.68rem] uppercase tracking-normal text-slate-500">{label}</dt>
       <dd className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2 text-sm font-semibold">
         <span className="min-w-0">

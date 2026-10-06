@@ -272,7 +272,7 @@ export function RankingsCurrentPlayerIndicator({
   if (shouldShowRankingsInitialLoader({ hasLoadedData, loading, viewTransitioning })) {
     return (
       <SkeletonRegion
-        className="flex min-h-14 w-full min-w-0 items-center gap-3 rounded-md border border-white/10 bg-white/[0.04] px-4 py-2.5"
+        className="flex min-h-14 w-full min-w-0 items-center gap-3 rounded-md surface-inset px-4 py-2.5"
         label="Loading your rank"
       >
         <Skeleton className="h-4 w-4 shrink-0 rounded-full" />

@@ -96,7 +96,8 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
             stroke:node.getAttribute('stroke-width') };
         };
         return { rail:box(nav), target:box(toggle), visual:box(toggle.firstElementChild), icon:box(toggle.querySelector('svg')),
-          links:[...nav.querySelectorAll('#desktop-navigation-links a')].map(a => ({visual:box(a.firstElementChild), icon:box(a.querySelector('svg'))})),
+          // The current page is highlighted in cyan by design; compare the toggle with the idle items.
+          links:[...nav.querySelectorAll('#desktop-navigation-links a:not([aria-current])')].map(a => ({visual:box(a.firstElementChild), icon:box(a.querySelector('svg'))})),
           account:nav.querySelector('summary') ? box(nav.querySelector('summary')) : null };
       })()`);
       assert.ok(geometry.target.width >= 44 && geometry.target.height >= 44, 'toggle retains a usable hit area');
@@ -113,8 +114,8 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
           assert.equal(geometry.account.center, link.visual.center, 'account and nav centerline');
         }
       }
-      assert.equal(geometry.visual.width, 28);
-      assert.equal(geometry.visual.height, 28);
+      assert.equal(geometry.visual.width, 20);
+      assert.equal(geometry.visual.height, 20);
       assert.equal(geometry.icon.width, 15);
       if (collapsed) {
         assert.ok(Math.abs(geometry.visual.center - geometry.rail.center) <= 0.5, 'centered inside bordered rail');
@@ -241,7 +242,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.activeElement===document.querySelector('+JSON.stringify(account)+')'),true);
     await press(' ');
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(account)+').parentElement.open'),true);
-    await click(desktop+' button[aria-label="Expand Commander profile"]');
+    // The commander popover shows its details directly; there is no inner expand step.
     for (const [width,height] of [[768,480],[1024,600],[1280,800]]) {
       await send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false}); await frame();
       const geometry=await evaluate('(() => {const r=document.querySelector('+JSON.stringify(account)+').nextElementSibling.getBoundingClientRect();return {x:r.x,right:r.right,top:r.top,bottom:r.bottom,width:innerWidth,height:innerHeight};})()');

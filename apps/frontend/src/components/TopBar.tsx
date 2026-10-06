@@ -1,9 +1,10 @@
 import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
+import type * as preact from "preact";
 import { Component } from "preact";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { energyExplanationTitle } from "../topBarEnergyInfo";
 import { shortAddress } from "../walletFlow";
-import { CircleHelp, Info } from "lucide-preact";
+import { CircleHelp, Info, MoreHorizontal } from "lucide-preact";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 import { detailsCloseOutsideRef } from "./modalDismiss";
@@ -13,6 +14,27 @@ import { Skeleton, SkeletonRegion } from "./Skeleton";
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const compactFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 const BPS = 10_000;
+
+const popoverClassName = "fixed left-2 right-2 top-10 z-50 whitespace-normal rounded-lg surface p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/60 sm:absolute sm:left-0 sm:right-auto sm:top-full sm:mt-2";
+const storageBarColors: Record<string, string> = { "text-amber-300": "bg-amber-300", "text-cyan-300": "bg-cyan-300", "text-emerald-300": "bg-emerald-300" };
+
+function PopoverSection({ children, title }: { children: preact.ComponentChildren; title: string }) {
+  return (
+    <section className="mt-2.5 border-t border-cyan-300/10 pt-2.5 first:mt-0 first:border-t-0 first:pt-0">
+      <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">{title}</h3>
+      <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 text-[11px] leading-4">{children}</dl>
+    </section>
+  );
+}
+
+function PopoverRow({ label, value, valueClassName = "text-slate-100" }: { label: preact.ComponentChildren; value: preact.ComponentChildren; valueClassName?: string }) {
+  return (
+    <>
+      <dt className="text-slate-400">{label}</dt>
+      <dd className={`text-right font-semibold tabular-nums ${valueClassName}`}>{value}</dd>
+    </>
+  );
+}
 
 // The shell layout sizes itself around the measured TopBar height via
 // --topbar-h. Module-level singleton observer; the TopBar is only ever
@@ -66,19 +88,19 @@ export function TopBar({ resources, resourceScope, rates, caps, crawlerProductio
 
   return (
     <div className="sticky top-0 z-30" data-resource-status={resourceStatus} ref={topBarHeightSyncRef}>
-      <div className="border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
-        <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
+      <div className="border-b border-cyan-300/10 bg-[#091120]/95 backdrop-blur">
+        <div className="mx-auto flex min-h-8 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-1.5 py-0.5 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
           <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
             {/* Mobile: resources own a full-width row so values never truncate;
               icons + wallet live on the row below. sm:contents flattens both
               rows back into the single desktop flex line. */}
-            <div className="flex min-w-0 items-stretch gap-1 sm:contents">
+            <div className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_auto_auto] items-center gap-x-1 sm:contents">
               {!isWalletConnected ? (
-                <span className="text-xs text-slate-400">Connect wallet for resources</span>
+                <span className="col-span-4 text-xs text-slate-400">Connect wallet for resources</span>
               ) : resourceStatus === "loading" && !resources ? (
-                <SkeletonRegion className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none sm:gap-2.5" label="Loading resources">
+                <SkeletonRegion className="col-span-4 flex min-w-0 items-center gap-1 sm:flex-none sm:gap-2.5" label="Loading resources">
                   {[["Metal", "M", "text-amber-300"], ["Crystal", "C", "text-cyan-300"], ["Deuterium", "D", "text-emerald-300"], ["Energy", "E", "text-lime-300"]].map(([label, abbr, color]) => (
-                    <div key={abbr} className="flex h-10 min-w-0 flex-1 items-center justify-center gap-1 rounded border border-white/10 bg-white/[0.03] px-1 sm:h-6 sm:flex-none sm:gap-1.5 sm:border-0 sm:bg-transparent sm:px-0">
+                    <div key={abbr} className="flex h-7 min-w-0 flex-1 items-center justify-center gap-1 rounded px-1 sm:h-6 sm:flex-none sm:gap-1.5 sm:border-0 sm:bg-transparent sm:px-0">
                       <span className={`text-[11px] font-semibold sm:text-xs ${color}`}><span className="sm:hidden">{abbr}</span><span className="hidden sm:inline">{label}</span></span>
                       <Skeleton className="h-3 w-10 sm:w-14" />
                       <Skeleton className="hidden h-2 w-8 sm:block" />
@@ -86,7 +108,7 @@ export function TopBar({ resources, resourceScope, rates, caps, crawlerProductio
                   ))}
                 </SkeletonRegion>
               ) : !resources ? (
-                <span className="text-xs text-amber-200">Resources unavailable</span>
+                <span className="col-span-4 text-xs text-amber-200">Resources unavailable</span>
               ) : (
                 <>
                   <ResourcePip
@@ -140,30 +162,37 @@ export function TopBar({ resources, resourceScope, rates, caps, crawlerProductio
                   )}
                 </>
               )}
-            </div>
-            <div className="flex min-w-0 items-center gap-1 sm:contents">
-              <a
-                aria-label="Telegram support"
-                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-signal/35 bg-signal/10 text-signal transition hover:bg-signal/20 sm:hidden"
-                href={TELEGRAM_SUPPORT_URL}
-                rel="noopener noreferrer"
-                target="_blank"
-                title="Telegram support"
-              >
-                <TelegramIcon className="h-3.5 w-3.5" />
-              </a>
-              <a
-                aria-label="Veydrift documentation"
-                className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-cyan-300/35 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 sm:hidden"
-                href="/docs"
-                title="Veydrift documentation"
-              >
-                <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
-              </a>
-              <SoundToggle className="grid h-10 min-w-0 flex-1 place-items-center rounded border border-white/15 bg-white/[0.06] text-slate-200 transition hover:bg-white/10 sm:hidden" />
-              {isWalletConnected && account && (
-                <span className="inline-flex h-10 max-w-[7.5rem] shrink-0 items-center truncate px-1 font-mono text-[11px] leading-none text-slate-400 sm:hidden">{shortAddress(account)}</span>
-              )}
+              {/* Mobile tucks support, docs and sound into one popover so the resource row stays balanced. */}
+              <details className="group relative sm:hidden" data-close-outside ref={detailsCloseOutsideRef}>
+                <summary
+                  aria-label="More: support, docs and sound"
+                  className="grid h-7 w-7 cursor-pointer list-none place-items-center rounded-full text-slate-400 transition hover:bg-white/[0.06] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 group-open:text-cyan-200 [&::-webkit-details-marker]:hidden"
+                  title="More"
+                >
+                  <MoreHorizontal aria-hidden="true" size={16} />
+                </summary>
+                <div className="surface absolute right-0 top-full z-50 mt-2 flex items-center gap-0.5 rounded-lg p-1 shadow-2xl shadow-black/60">
+                  <a
+                    aria-label="Telegram support"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-signal transition hover:bg-white/[0.06] sm:hidden"
+                    href={TELEGRAM_SUPPORT_URL}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                    title="Telegram support"
+                  >
+                    <TelegramIcon className="h-4 w-4" />
+                  </a>
+                  <a
+                    aria-label="Veydrift documentation"
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-slate-300 transition hover:bg-white/[0.06] hover:text-white sm:hidden"
+                    href="/docs"
+                    title="Veydrift documentation"
+                  >
+                    <CircleHelp className="h-4 w-4" size={16} strokeWidth={2} />
+                  </a>
+                  <SoundToggle className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-slate-300 transition hover:bg-white/[0.06] hover:text-white sm:hidden" />
+                </div>
+              </details>
             </div>
             {queue && <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">{queue.label}</span>}
             {researchQueue && <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-cyan-300/10 px-2 text-xs leading-none text-cyan-200">{researchQueue.label}</span>}
@@ -202,13 +231,13 @@ function ResourcePip({ abbr, label, value, rate, cap, color, scope }: { abbr: st
   const pct = cap && cap > 0 ? Math.min(100, Math.round((value / cap) * 100)) : 0;
   return (
     <details
-      className="group relative flex h-10 min-w-0 flex-1 items-center justify-center rounded border border-white/10 bg-white/[0.03] whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent"
+      className="group relative block min-w-0 rounded whitespace-nowrap sm:rounded-none"
       data-close-outside
       data-resource={abbr}
       ref={detailsCloseOutsideRef}
     >
       <summary
-        className="flex h-full w-full cursor-pointer list-none items-center justify-center px-1 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 sm:justify-start sm:px-0 [&::-webkit-details-marker]:hidden"
+        className="flex h-7 w-full cursor-pointer list-none items-center justify-center rounded px-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 sm:h-6 sm:justify-start sm:px-0 [&::-webkit-details-marker]:hidden"
         title={resourceTitle(label, value, rate, cap)}
       >
         <span className="inline-flex min-w-0 items-center gap-0.5 sm:gap-1.5">
@@ -223,27 +252,28 @@ function ResourcePip({ abbr, label, value, rate, cap, color, scope }: { abbr: st
           {pct >= 90 && <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>}
         </span>
       </summary>
-      <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-56">
-        <div className={`font-semibold ${color}`}>{label}</div>
-        <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
-          <dt className="text-slate-500">Stored</dt>
-          <dd className="text-right font-semibold text-slate-100">{format(value)}</dd>
-          {rate !== undefined && (
-            <>
-              <dt className="text-slate-500">Production</dt>
-              <dd className="text-right font-semibold text-slate-100">+{format(rate)}/h</dd>
-            </>
-          )}
-          {cap !== undefined && (
-            <>
-              <dt className="text-slate-500">Capacity</dt>
-              <dd className="text-right font-semibold text-slate-100">
-                {format(cap)}
-                {pct > 0 ? ` (${pct}%)` : ""}
-              </dd>
-            </>
-          )}
-        </dl>
+      <div className={`${popoverClassName} sm:w-60`}>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className={`text-sm font-semibold ${color}`}>{label}</span>
+          <span className="text-sm font-semibold tabular-nums text-white">{format(value)}</span>
+        </div>
+        {cap !== undefined && cap > 0 ? (
+          <div className="mt-2">
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className={`h-full rounded-full ${pct >= 90 ? "bg-amber-400" : storageBarColors[color] ?? "bg-cyan-300"}`} style={{ width: `${pct}%` }} />
+            </div>
+            <div className="mt-1 flex justify-between gap-3 text-[11px] leading-4 text-slate-400">
+              <span>{pct}% of storage</span>
+              <span className="tabular-nums">{format(cap)}</span>
+            </div>
+          </div>
+        ) : null}
+        {rate !== undefined && (
+          <div className="mt-2 flex justify-between gap-3 border-t border-cyan-300/10 pt-2 text-[11px] leading-4">
+            <span className="text-slate-400">Production</span>
+            <span className="font-semibold tabular-nums text-slate-100">+{format(rate)}/h</span>
+          </div>
+        )}
       </div>
     </details>
   );
@@ -313,7 +343,7 @@ function EnergyPip({
 
   return (
     <div
-      className="flex h-10 min-w-0 flex-[1.5] items-center justify-center rounded border border-white/10 bg-white/[0.03] px-1 whitespace-nowrap sm:h-6 sm:flex-none sm:justify-start sm:rounded-none sm:border-0 sm:bg-transparent sm:px-0"
+      className="flex h-7 min-w-0 items-center justify-center whitespace-nowrap px-0.5 sm:h-6 sm:justify-start sm:px-0"
       title={
         showShortageFactor ? `${format(produced)} produced / ${format(required)} required; production reduced to ${productionPercent}%` : `${format(produced)} produced / ${format(required)} required`
       }
@@ -341,50 +371,37 @@ function EnergyPip({
         <details className="group relative ml-0.5 inline-flex shrink-0 sm:ml-1" data-close-outside ref={detailsCloseOutsideRef}>
           <summary
             aria-label={popupExplanation}
-            className="inline-grid h-8 w-8 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 sm:h-5 sm:w-5 [&::-webkit-details-marker]:hidden"
+            className="inline-grid h-7 w-7 cursor-pointer list-none place-items-center rounded-full text-slate-400 transition hover:bg-white/[0.06] hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 group-open:text-cyan-200 sm:h-5 sm:w-5 [&::-webkit-details-marker]:hidden"
             title="Resources explanation"
           >
             <Info aria-hidden="true" size={12} strokeWidth={2.25} />
           </summary>
-          <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72">
-            <div className="font-semibold text-cyan-100">Resources</div>
-            <div className="mt-1 font-mono text-[11px] leading-4 text-cyan-200">{context}</div>
-            <p className="mt-1">Mines produce resources. Energy powers mines, and crawlers can boost mine output.</p>
-            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
-              <dt className="text-slate-500">Metal production</dt>
-              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.metal)}</dd>
-              <dt className="text-slate-500">Crystal production</dt>
-              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.crystal)}</dd>
-              <dt className="text-slate-500">Deuterium production</dt>
-              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.deuterium)}</dd>
-            </dl>
-            <div className="mt-2 border-t border-white/10 pt-2 font-semibold text-cyan-100">Energy</div>
-            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
-              <dt className="text-slate-500">Produced</dt>
-              <dd className="text-right font-semibold text-slate-100">{format(produced)}</dd>
-              <dt className="text-slate-500">Consumed</dt>
-              <dd className="text-right font-semibold text-slate-100">{format(required)}</dd>
-              <dt className="text-slate-500">Balance</dt>
-              <dd className={`text-right font-semibold ${current < 0 ? "text-red-200" : "text-lime-200"}`}>{format(current)}</dd>
-            </dl>
+          <div className={`${popoverClassName} sm:w-72`}>
+            <PopoverSection title="Production">
+              <PopoverRow label={<span className="text-amber-300">Metal</span>} value={formatRate(rates.metal)} />
+              <PopoverRow label={<span className="text-cyan-300">Crystal</span>} value={formatRate(rates.crystal)} />
+              <PopoverRow label={<span className="text-emerald-300">Deuterium</span>} value={formatRate(rates.deuterium)} />
+            </PopoverSection>
+            <PopoverSection title="Energy">
+              <PopoverRow label="Produced" value={format(produced)} />
+              <PopoverRow label="Consumed" value={format(required)} />
+              <PopoverRow label="Balance" value={format(current)} valueClassName={current < 0 ? "text-red-200" : "text-lime-200"} />
+            </PopoverSection>
             {sources && (
-              <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
-                <dt className="text-slate-500">Production in total</dt>
-                <dd className="text-right font-semibold text-slate-100">{format(produced)}</dd>
-                <dt className="text-slate-500">Solar Plant</dt>
-                <dd className="text-right font-semibold text-slate-100">{format(sources.solarPlant)}</dd>
-                <dt className="text-slate-500">Fusion Generator</dt>
-                <dd className="text-right font-semibold text-slate-100">
-                  {format(sources.fusionReactor)} from {format(sources.fusionReactorDeuteriumConsumed)} DEUT/h
-                </dd>
-                <dt className="text-slate-500">Solar Satellites</dt>
-                <dd className="text-right font-semibold text-slate-100">
-                  {format(sources.solarSatellites)} from {format(sources.solarSatelliteCount)} satellites ({format(sources.solarSatelliteEnergy)} E/Sat)
-                </dd>
-              </dl>
+              <PopoverSection title="Energy sources">
+                <PopoverRow label="Solar Plant" value={format(sources.solarPlant)} />
+                <PopoverRow
+                  label="Fusion Reactor"
+                  value={<>{format(sources.fusionReactor)}<span className="ml-1 font-normal text-slate-400">· {format(sources.fusionReactorDeuteriumConsumed)} D/h</span></>}
+                />
+                <PopoverRow
+                  label="Solar Satellites"
+                  value={<>{format(sources.solarSatellites)}<span className="ml-1 font-normal text-slate-400">· {format(sources.solarSatelliteCount)} × {format(sources.solarSatelliteEnergy)}</span></>}
+                />
+              </PopoverSection>
             )}
             <CrawlerProductionDetails crawlerProduction={crawlerProduction} />
-            <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
+            <p className={`mt-2.5 border-t border-cyan-300/10 pt-2.5 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
               {showShortageFactor ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.` : "Mine output is fully powered."}
             </p>
           </div>
@@ -398,16 +415,16 @@ function CrawlerProductionDetails({ crawlerProduction }: { crawlerProduction?: C
   if (!crawlerProduction) {
     return (
       <SkeletonRegion label="Loading crawler production">
-        <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
-          <dt className="text-slate-500">Crawler boost</dt>
+        <dl className="mt-2.5 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-cyan-300/10 pt-2.5 text-[11px] leading-4">
+          <dt className="text-slate-400">Crawler boost</dt>
           <dd><Skeleton className="h-4 w-16" /></dd>
-          <dt className="text-slate-500">Crawlers</dt>
+          <dt className="text-slate-400">Crawlers</dt>
           <dd><Skeleton className="h-4 w-16" /></dd>
-          <dt className="text-slate-500">Metal impact</dt>
+          <dt className="text-slate-400">Metal impact</dt>
           <dd><Skeleton className="h-4 w-16" /></dd>
-          <dt className="text-slate-500">Crystal impact</dt>
+          <dt className="text-slate-400">Crystal impact</dt>
           <dd><Skeleton className="h-4 w-16" /></dd>
-          <dt className="text-slate-500">Deuterium impact</dt>
+          <dt className="text-slate-400">Deuterium impact</dt>
           <dd><Skeleton className="h-4 w-16" /></dd>
         </dl>
       </SkeletonRegion>
@@ -416,20 +433,20 @@ function CrawlerProductionDetails({ crawlerProduction }: { crawlerProduction?: C
 
   return (
     <>
-      <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
-        <dt className="text-slate-500">Crawler boost</dt>
+      <dl className="mt-2.5 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-cyan-300/10 pt-2.5 text-[11px] leading-4">
+        <dt className="text-slate-400">Crawler boost</dt>
         <dd className="text-right font-semibold text-slate-100">{formatCrawlerBoost(crawlerProduction.boostBps)}</dd>
-        <dt className="text-slate-500">Crawlers</dt>
+        <dt className="text-slate-400">Crawlers</dt>
         <dd className="text-right font-semibold text-slate-100">
           {format(crawlerProduction.effective)} / {format(crawlerProduction.total)} effective
         </dd>
-        <dt className="text-slate-500">Effective cap</dt>
+        <dt className="text-slate-400">Effective cap</dt>
         <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>{format(crawlerProduction.maxEffective)}</dd>
-        <dt className="text-slate-500">Metal impact</dt>
+        <dt className="text-slate-400">Metal impact</dt>
         <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.metal)}</dd>
-        <dt className="text-slate-500">Crystal impact</dt>
+        <dt className="text-slate-400">Crystal impact</dt>
         <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.crystal)}</dd>
-        <dt className="text-slate-500">Deuterium impact</dt>
+        <dt className="text-slate-400">Deuterium impact</dt>
         <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.deuterium)}</dd>
       </dl>
       <p className={`mt-2 text-[11px] leading-4 ${crawlerProduction.capped ? "text-amber-200" : "text-slate-400"}`}>

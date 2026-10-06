@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronsDownUp, ChevronsUpDown, FlaskConical, Hammer, House, Rocket, Shield, Swords } from "lucide-preact";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FlaskConical, Hammer, House, Rocket, Shield, Swords } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { BackendDataStore } from "../backendDataStore";
@@ -18,6 +18,7 @@ import type {
 } from "../walletFlow";
 import { formatCompactResource } from "./GalaxyView";
 import { getSizedImageSrc } from "../utils/imageSizes";
+import type { Page } from "./NavBar";
 import { OptimizedImage } from "./OptimizedImage";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
 import {
@@ -31,8 +32,8 @@ import {
 
 type BodyKind = "planet" | "moon";
 type QueueKind = "building" | "research" | "ship" | "defense";
-type QueueLine = { kind: QueueKind; label: string; asset?: string | undefined; startedAt?: number | undefined; readyAt?: number | undefined; extra?: number | undefined };
-type Tile = { key: string; label: string; asset?: string | undefined; value: string };
+type QueueLine = { kind: QueueKind; label: string; itemKey?: string | undefined; asset?: string | undefined; startedAt?: number | undefined; readyAt?: number | undefined; extra?: number | undefined };
+type Tile = { key: string; itemKey: string; label: string; asset?: string | undefined; value: string; page: Page };
 
 const EXPANDED_STORAGE_PREFIX = "veydrift.overview.expanded.v1:";
 
@@ -98,16 +99,17 @@ export function queueLine(
       return { kind, label: `${moonBuilding.label} ${queue.targetLevel ?? ""}`.trim(), asset: moonBuildingAsset(moonBuilding.key), ...timing };
     }
     const preview = buildingQueuePreview(queue);
-    return { kind, label: compactOverviewLevelLabel(preview.label), asset: preview.asset, ...timing };
+    const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
+    return { kind, label: compactOverviewLevelLabel(preview.label), itemKey: building?.key, asset: preview.asset, ...timing };
   }
   if (kind === "research") {
     const research = researchCatalog.find((item) => item.id === queue.itemId);
-    return { kind, label: `${compactOverviewResearchLabel(research?.label ?? "Research")} ${queue.targetLevel ?? ""}`.trim(), asset: research?.asset, ...timing };
+    return { kind, label: `${compactOverviewResearchLabel(research?.label ?? "Research")} ${queue.targetLevel ?? ""}`.trim(), itemKey: research?.key, asset: research?.asset, ...timing };
   }
   const catalog = kind === "ship" ? shipCatalog : defenseCatalog;
   const unit = catalog.find((item) => item.id === queue.itemId);
   const quantity = queue.asOfNow?.remainingQuantity ?? queue.quantity;
-  return { kind, label: `${unit?.label ?? (kind === "ship" ? "Ships" : "Defenses")}${quantity ? ` ×${quantity.toLocaleString()}` : ""}`, asset: unit?.asset, ...timing };
+  return { kind, label: `${unit?.label ?? (kind === "ship" ? "Ships" : "Defenses")}${quantity ? ` ×${quantity.toLocaleString()}` : ""}`, itemKey: unit?.key, asset: unit?.asset, ...timing };
 }
 
 function unitTiles(
@@ -119,7 +121,7 @@ function unitTiles(
     const count = Number(unit.count);
     if (!(count > 0)) return [];
     const item = catalog.find((entry) => entry.id === unit.id);
-    return [{ key: `${kind}-${unit.id}`, label: item?.label ?? `#${unit.id}`, asset: item?.asset, value: `×${count.toLocaleString()}` }];
+    return [{ key: `${kind}-${unit.id}`, itemKey: item?.key ?? "", label: item?.label ?? `#${unit.id}`, asset: item?.asset, value: `×${count.toLocaleString()}`, page: kind === "ship" ? "shipyard" : "defenses" }];
   });
 }
 
@@ -127,7 +129,7 @@ export function planetBuildingTiles(levels: ReadonlyArray<{ id: number; level: n
   const byId = new Map(levels.map((building) => [building.id, building.level]));
   return buildingCatalog.flatMap((building) => {
     const level = byId.get(buildingContractIds[building.key]) ?? 0;
-    return level > 0 ? [{ key: building.key, label: building.label, asset: building.asset, value: String(level) }] : [];
+    return level > 0 ? [{ key: building.key, itemKey: building.key, label: building.label, asset: building.asset, value: String(level), page: "infrastructure" }] : [];
   });
 }
 
@@ -150,6 +152,7 @@ export function EmpireOverview({
   fleetVisibility,
   myPlanets,
   now,
+  onOpenBodyPage,
   onSwitchPlanet,
   planetNames,
   renderActions,
@@ -163,6 +166,7 @@ export function EmpireOverview({
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
   myPlanets: readonly OverviewMyPlanetActionGroup[];
   now: number;
+  onOpenBodyPage?: ((planetId: string, bodyKind: BodyKind, page: Page, itemKey?: string) => void) | undefined;
   onSwitchPlanet: ((planetId: string, bodyKind: BodyKind) => void) | undefined;
   planetNames: ReadonlyMap<string, string>;
   renderActions?: ((group: OverviewMyPlanetActionGroup, kind: BodyKind) => ComponentChildren) | undefined;
@@ -217,7 +221,7 @@ export function EmpireOverview({
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/[0.08] px-2 pb-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold text-white">Empire</h1>
-          <p className="text-[11px] text-slate-500">
+          <p className="text-[11px] text-slate-400">
             {myPlanets.length} {myPlanets.length === 1 ? "planet" : "planets"}{moonCount > 0 ? ` · ${moonCount} ${moonCount === 1 ? "moon" : "moons"}` : ""}
           </p>
         </div>
@@ -236,7 +240,7 @@ export function EmpireOverview({
           {anyExpanded ? <ChevronsDownUp aria-hidden="true" size={14} /> : <ChevronsUpDown aria-hidden="true" size={14} />}
         </button>
       </header>
-      <ul className="divide-y divide-white/[0.06] border-b border-white/[0.06]">
+      <ul className="mt-3 space-y-2">
         {[...myPlanets].sort((a, b) => Number(b.planet.planetId === selectedPlanetId) - Number(a.planet.planetId === selectedPlanetId)).map((group) => {
           const { planet } = group;
           const planetSelected = planet.planetId === selectedPlanetId && selectedBodyKind === "planet";
@@ -245,7 +249,7 @@ export function EmpireOverview({
           const research = researchQueue?.planetId === planet.planetId ? researchQueue : undefined;
           const moon = planet.moon?.exists ? planet.moon : null;
           return (
-            <li key={planet.planetId}>
+            <li className="overflow-hidden surface rounded-lg" key={planet.planetId}>
               <BodyRow
                 account={account}
                 backendData={backendData}
@@ -255,6 +259,7 @@ export function EmpireOverview({
                 image={rowPlanet.image}
                 kind="planet"
                 now={now}
+                onOpenPage={onOpenBodyPage ? (page, itemKey) => onOpenBodyPage(planet.planetId, "planet", page, itemKey) : undefined}
                 onSwitch={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "planet") : undefined}
                 onToggle={() => toggle(bodyKey(planet.planetId, "planet"))}
                 planetNames={planetNames}
@@ -273,6 +278,7 @@ export function EmpireOverview({
                   image={moonImageForType(rowPlanet.type)}
                   kind="moon"
                   now={now}
+                  onOpenPage={onOpenBodyPage ? (page, itemKey) => onOpenBodyPage(planet.planetId, "moon", page, itemKey) : undefined}
                   onSwitch={onSwitchPlanet ? () => onSwitchPlanet(planet.planetId, "moon") : undefined}
                   onToggle={() => toggle(bodyKey(planet.planetId, "moon"))}
                   planetNames={planetNames}
@@ -298,6 +304,7 @@ function BodyRow({
   image,
   kind,
   now,
+  onOpenPage,
   onSwitch,
   onToggle,
   planetNames,
@@ -314,6 +321,7 @@ function BodyRow({
   image: string;
   kind: BodyKind;
   now: number;
+  onOpenPage: ((page: Page, itemKey?: string) => void) | undefined;
   onSwitch: (() => void) | undefined;
   onToggle: () => void;
   planetNames: ReadonlyMap<string, string>;
@@ -343,10 +351,10 @@ function BodyRow({
   const hostile = missions?.lines.some((line) => line.relation === "hostile" && line.direction === "incoming") ?? false;
 
   return (
-    <div className={isMoon ? "border-t border-white/[0.04] pl-6" : undefined}>
+    <div className={isMoon ? "border-t border-white/[0.08] bg-black/20 pl-6" : undefined}>
       {/* The selected body stays open; elsewhere the row toggles and the name selects. */}
       <div
-        className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 rounded-md px-2 py-2 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${hostile ? "ring-1 ring-inset ring-red-500/60" : ""} ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
+        className={`grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-2.5 gap-y-1 px-2.5 py-2.5 text-left transition sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] ${hostile ? "ring-1 ring-inset ring-red-500/60" : ""} ${selected ? "bg-cyan-300/[0.05]" : "cursor-pointer hover:bg-white/[0.03]"}`}
         data-under-attack={hostile ? "true" : undefined}
         aria-current={selected ? "true" : undefined}
         data-body-kind={kind}
@@ -370,13 +378,13 @@ function BodyRow({
             >
               {name}
             </button>
-            {!isMoon && planet.isHomePlanet ? <House aria-label="Home planet" className="shrink-0 text-slate-500" size={11} /> : null}
+            {!isMoon && planet.isHomePlanet ? <House aria-label="Home planet" className="shrink-0 text-slate-400" size={11} /> : null}
             <span className="flex shrink-0 items-center gap-1 empty:hidden" onClick={(event) => event.stopPropagation()}>
               {selectedActions}
               {renderActions?.(group, kind)}
             </span>
           </span>
-          <span className="block truncate font-mono text-[10px] text-slate-500">
+          <span className="block truncate font-mono text-[10px] text-slate-400">
             {planet.coordinates}{!isMoon ? ` · ${planet.fieldsUsed}/${planet.fieldsCapacity}` : ""}
           </span>
         </span>
@@ -399,7 +407,7 @@ function BodyRow({
           <button
             aria-expanded={expanded}
             aria-label={`${expanded ? "Collapse" : "Expand"} ${name}`}
-            className="-m-1 p-1 text-slate-500 hover:text-slate-200 sm:col-start-auto"
+            className="-m-1 p-1 text-slate-400 hover:text-slate-200 sm:col-start-auto"
             onClick={(event) => {
               event.stopPropagation();
               onToggle();
@@ -418,6 +426,7 @@ function BodyRow({
           kind={kind}
           missions={missions}
           now={now}
+          onOpenPage={onOpenPage}
           queues={queues}
           rosterMoon={rosterMoon}
         />
@@ -433,6 +442,7 @@ function BodyDetails({
   kind,
   missions,
   now,
+  onOpenPage,
   queues: rowQueues,
   rosterMoon,
 }: {
@@ -442,6 +452,7 @@ function BodyDetails({
   kind: BodyKind;
   missions: ReturnType<typeof summarizeFleets> | undefined;
   now: number;
+  onOpenPage: ((page: Page, itemKey?: string) => void) | undefined;
   queues: QueueLine[];
   rosterMoon: MoonDetails | undefined;
 }) {
@@ -468,9 +479,11 @@ function BodyDetails({
   const buildings: Tile[] | undefined = isMoon
     ? moon?.buildings.filter((building) => building.level > 0).map((building) => ({
         key: building.key,
+        itemKey: building.key,
         label: building.label,
         asset: moonBuildingAsset(building.key),
         value: String(building.level),
+        page: "moon" as const,
       }))
     : levels && planetBuildingTiles(levels);
   const loading = buildings === undefined && (isMoon ? moonSnapshot?.freshness !== "failed" : infrastructure?.freshness !== "failed");
@@ -479,61 +492,79 @@ function BodyDetails({
 
   return (
     <div className="grid gap-3 px-2 pb-4 pt-1 sm:pl-[3.25rem]">
-      {empty ? <p className="text-[11px] text-slate-500">Nothing to show here yet.</p> : null}
+      {empty ? <p className="text-[11px] text-slate-400">Nothing to show here yet.</p> : null}
       {queues.length > 0 || hasMissions ? (
         <div className={`grid gap-3 ${queues.length > 0 && hasMissions ? "lg:grid-cols-2" : ""}`}>
           {queues.length > 0 ? (
             <DetailSection title="Queues">
-              <ul className="grid gap-1.5">{queues.map((line) => <QueueRow key={line.kind} line={line} now={now} />)}</ul>
+              <ul className="grid gap-1.5">{queues.map((line) => <QueueRow key={line.kind} line={line} now={now} onOpen={onOpenPage ? () => onOpenPage(QUEUE_PAGE[line.kind], line.itemKey) : undefined} />)}</ul>
             </DetailSection>
           ) : null}
           {hasMissions ? (
             <DetailSection title="Missions">
-              <ul className="grid gap-1">{missions?.lines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}</ul>
+              <ul className="grid gap-1.5">{missions?.lines.map((line) => <FleetSummaryRow key={line.key} line={line} />)}</ul>
             </DetailSection>
           ) : null}
         </div>
       ) : null}
-      {units.length > 0 ? <DetailSection title="Fleet & defenses"><TileGrid tiles={units} /></DetailSection> : null}
+      {units.length > 0 ? <DetailSection onOpen={onOpenPage ? () => onOpenPage("shipyard") : undefined} title="Fleet & defenses"><TileGrid onOpen={onOpenPage} tiles={units} /></DetailSection> : null}
       {loading ? (
         <DetailSection title="Infrastructure">
           <SkeletonRegion className="flex flex-wrap gap-1" label="Loading infrastructure">
             {skeletonList(6, (index) => <Skeleton className="h-8 w-32 rounded" key={index} />)}
           </SkeletonRegion>
         </DetailSection>
-      ) : buildings?.length ? <DetailSection title="Infrastructure"><TileGrid labelled tiles={buildings} /></DetailSection> : null}
+      ) : buildings?.length ? <DetailSection onOpen={onOpenPage ? () => onOpenPage("infrastructure") : undefined} title="Infrastructure"><TileGrid labelled onOpen={onOpenPage} tiles={buildings} /></DetailSection> : null}
     </div>
   );
 }
 
-function DetailSection({ title, children }: { title: string; children: ComponentChildren }) {
+function DetailSection({ title, children, onOpen }: { title: string; children: ComponentChildren; onOpen?: (() => void) | undefined }) {
   return (
     <section className="min-w-0">
-      <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">{title}</h3>
+      <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">
+        {onOpen ? (
+          <button className="group inline-flex items-center gap-0.5 uppercase tracking-[0.14em] transition hover:text-cyan-100" onClick={onOpen} type="button">
+            {title}
+            <ChevronRight aria-hidden="true" className="opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100" size={11} />
+          </button>
+        ) : title}
+      </h3>
       {children}
     </section>
   );
 }
 
-function TileGrid({ tiles, labelled = false }: { tiles: Tile[]; labelled?: boolean }) {
+function TileGrid({ tiles, labelled = false, onOpen }: { tiles: Tile[]; labelled?: boolean; onOpen?: ((page: Page, itemKey?: string) => void) | undefined }) {
   return (
     <ul className="flex flex-wrap gap-1">
-      {tiles.map((tile) => (
-        <li
-          className="flex max-w-full items-center gap-1.5 rounded border border-white/[0.06] bg-white/[0.03] p-0.5 pr-2"
-          key={tile.key}
-          title={`${tile.label} ${labelled ? `level ${tile.value}` : tile.value}`}
-        >
-          <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
-            {tile.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={tile.asset} /> : null}
-          </span>
-          {labelled ? <span className="min-w-0 truncate text-[11px] text-slate-300">{tile.label}</span> : null}
-          <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-100">{tile.value}</span>
-        </li>
-      ))}
+      {tiles.map((tile) => {
+        const content = (
+          <>
+            <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
+              {tile.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={tile.asset} /> : null}
+            </span>
+            {labelled ? <span className="min-w-0 truncate text-[11px] text-slate-300">{tile.label}</span> : null}
+            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-slate-100">{tile.value}</span>
+          </>
+        );
+        const title = `${tile.label} ${labelled ? `level ${tile.value}` : tile.value}`;
+        const tileClass = "flex max-w-full items-center gap-1.5 rounded border border-cyan-300/[0.12] bg-cyan-400/[0.05] p-0.5 pr-2";
+        return (
+          <li className="max-w-full" key={tile.key}>
+            {onOpen ? (
+              <button className={`${tileClass} transition hover:border-cyan-300/40 hover:bg-cyan-400/10`} onClick={() => onOpen(tile.page, tile.itemKey || undefined)} title={title} type="button">{content}</button>
+            ) : (
+              <span className={tileClass} title={title}>{content}</span>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
+
+const QUEUE_PAGE: Record<QueueKind, Page> = { building: "infrastructure", research: "research", ship: "shipyard", defense: "defenses" };
 
 const QUEUE_META: Record<QueueKind, { icon: typeof Hammer; bar: string; text: string; name: string }> = {
   building: { icon: Hammer, bar: "bg-amber-300", text: "text-amber-200", name: "Building" },
@@ -560,34 +591,54 @@ function QueueBadge({ line, now }: { line: QueueLine; now: number }) {
   );
 }
 
-function QueueRow({ line, now }: { line: QueueLine; now: number }) {
+function QueueRow({ line, now, onOpen }: { line: QueueLine; now: number; onOpen?: (() => void) | undefined }) {
   const meta = QUEUE_META[line.kind];
   const progress = line.startedAt !== undefined && line.readyAt !== undefined && line.readyAt > line.startedAt
     ? Math.min(1, Math.max(0, (now - line.startedAt) / (line.readyAt - line.startedAt)))
     : undefined;
   return (
-    <li className="flex min-w-0 items-center gap-2">
-      <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
-        {line.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={line.asset} /> : null}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-baseline gap-2 text-[11px]">
-          <span className="truncate font-medium text-slate-100">{line.label}</span>
-          {line.extra ? <span className="shrink-0 text-slate-500">+{line.extra} queued</span> : null}
-          <span className="ml-auto shrink-0 tabular-nums text-slate-400">{remainingLabel(line, now)}</span>
-        </span>
-        <span className="mt-1 block h-1 overflow-hidden rounded-full bg-white/[0.08]">
-          <span className={`block h-full rounded-full ${meta.bar} ${progress === undefined ? "w-1/3 animate-pulse" : ""}`} style={progress === undefined ? undefined : { width: `${progress * 100}%` }} />
-        </span>
-      </span>
+    <li className="min-w-0">
+      {onOpen ? (
+        <button className="-mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left transition hover:bg-white/[0.04]" onClick={onOpen} title={`Open ${QUEUE_META[line.kind].name}`} type="button">
+          <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
+            {line.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={line.asset} /> : null}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-baseline gap-2 text-[11px]">
+              <span className="truncate font-medium text-slate-100">{line.label}</span>
+              {line.extra ? <span className="shrink-0 text-slate-400">+{line.extra} queued</span> : null}
+              <span className="ml-auto shrink-0 tabular-nums text-slate-400">{remainingLabel(line, now)}</span>
+            </span>
+            <span className="mt-1 block h-1 overflow-hidden rounded-full bg-white/[0.08]">
+              <span className={`block h-full rounded-full ${meta.bar} ${progress === undefined ? "w-1/3 animate-pulse" : ""}`} style={progress === undefined ? undefined : { width: `${progress * 100}%` }} />
+            </span>
+          </span>
+        </button>
+      ) : (
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="h-7 w-7 shrink-0 overflow-hidden rounded-sm bg-black/30">
+            {line.asset ? <OptimizedImage alt="" className="h-full w-full object-cover" loading="lazy" sizes="icon" src={line.asset} /> : null}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-baseline gap-2 text-[11px]">
+              <span className="truncate font-medium text-slate-100">{line.label}</span>
+              {line.extra ? <span className="shrink-0 text-slate-400">+{line.extra} queued</span> : null}
+              <span className="ml-auto shrink-0 tabular-nums text-slate-400">{remainingLabel(line, now)}</span>
+            </span>
+            <span className="mt-1 block h-1 overflow-hidden rounded-full bg-white/[0.08]">
+              <span className={`block h-full rounded-full ${meta.bar} ${progress === undefined ? "w-1/3 animate-pulse" : ""}`} style={progress === undefined ? undefined : { width: `${progress * 100}%` }} />
+            </span>
+          </span>
+        </div>
+      )}
     </li>
   );
 }
 
 const RESOURCE_META = [
-  { key: "metal", abbr: "M", color: "text-amber-300" },
-  { key: "crystal", abbr: "C", color: "text-cyan-300" },
-  { key: "deuterium", abbr: "D", color: "text-emerald-300" },
+  { key: "metal", abbr: "M", color: "text-amber-300", value: "text-amber-100", rate: "text-amber-300/60" },
+  { key: "crystal", abbr: "C", color: "text-cyan-300", value: "text-cyan-100", rate: "text-cyan-300/60" },
+  { key: "deuterium", abbr: "D", color: "text-emerald-300", value: "text-emerald-100", rate: "text-emerald-300/60" },
 ] as const;
 
 function ResourceCells({
@@ -603,18 +654,18 @@ function ResourceCells({
 }) {
   return (
     <span className={`grid grid-cols-3 gap-3 tabular-nums sm:w-[13.5rem] ${className}`}>
-      {RESOURCE_META.map(({ key, abbr, color }) => {
+      {RESOURCE_META.map(({ key, abbr, color, value: valueColor, rate: rateColor }) => {
         const value = resources ? Number(resources[key]) : undefined;
         const cap = caps ? Number(caps[key]) : undefined;
         const full = value !== undefined && cap !== undefined && cap > 0 && value >= cap;
         const rate = rates ? Number(rates[key]) : 0;
         return (
           <span className="min-w-0 text-right" key={key} title={full ? "Storage full" : undefined}>
-            <span className={`block truncate text-xs font-semibold ${full ? "text-red-300" : "text-slate-100"}`}>
+            <span className={`block truncate text-xs font-semibold ${full ? "text-red-300" : valueColor}`}>
               <span className={`mr-1 text-[10px] font-bold ${color}`}>{abbr}</span>
               {value === undefined ? "—" : formatCompactResource(value)}
             </span>
-            {rate > 0 ? <span className="block truncate text-[10px] text-slate-500">+{formatCompactResource(rate)}/h</span> : null}
+            {rate > 0 ? <span className={`block truncate text-[10px] ${rateColor}`}>+{formatCompactResource(rate)}/h</span> : null}
           </span>
         );
       })}

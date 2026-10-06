@@ -176,7 +176,7 @@ export function QueueProgressPanel({
           {asset ? (
             <OptimizedImage
               alt=""
-              className="h-11 w-11 shrink-0 rounded border border-white/10 bg-white/5 object-cover"
+              className="h-11 w-11 shrink-0 rounded surface-inset object-cover"
               sizes="icon"
               src={asset}
             />

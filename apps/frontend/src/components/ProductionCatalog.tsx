@@ -257,7 +257,7 @@ export function ProductionCatalog<Key extends string>({
 
   if (items.length === 0) {
     return (
-      <div className="rounded border border-white/10 bg-[#101624] px-4 py-3 text-sm text-slate-400">
+      <div className="rounded surface px-4 py-3 text-sm text-slate-400">
         {emptyLabel}
       </div>
     );
@@ -472,7 +472,7 @@ function CatalogButton<Key extends string>({
       }}
       type="button"
     >
-      <div className="h-11 w-11 overflow-hidden rounded border border-white/10 bg-black/20">
+      <div className="h-11 w-11 overflow-hidden rounded surface-inset">
         <OptimizedImage
           alt=""
           className="h-full w-full object-cover"
@@ -518,7 +518,7 @@ function SelectedProductionPanel<Key extends string>({
 }) {
   if (!item) {
     return (
-      <aside className="rounded border border-white/10 bg-[#101624] p-4 text-sm text-slate-400" id={id}>
+      <aside className="rounded surface p-4 text-sm text-slate-400" id={id}>
         {emptyLabel}
       </aside>
     );
@@ -530,7 +530,7 @@ function SelectedProductionPanel<Key extends string>({
 
   return (
     <aside
-      className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded border border-white/10 bg-[#101624] p-4 xl:sticky xl:top-4 xl:order-2"
+      className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded surface p-4 xl:sticky xl:top-4 xl:order-2"
       data-selected-production-panel
       id={id}
     >
@@ -538,7 +538,7 @@ function SelectedProductionPanel<Key extends string>({
         className="grid grid-cols-[84px_minmax(0,1fr)] gap-3 xl:grid-cols-1 xl:gap-4"
         data-selected-production-layout="featured"
       >
-        <div className="aspect-square overflow-hidden rounded border border-white/10 bg-black/20 p-1 xl:aspect-[4/3] xl:w-full xl:p-0">
+        <div className="aspect-square overflow-hidden rounded surface-inset p-1 xl:aspect-[4/3] xl:w-full xl:p-0">
           <OptimizedImage
             alt=""
             className="h-full w-full object-contain xl:object-cover"
@@ -575,7 +575,7 @@ function SelectedProductionPanel<Key extends string>({
           <div className="grid grid-cols-[2.75rem_auto_2.75rem] items-center gap-1 sm:grid-cols-[2rem_auto_2rem]">
             <button
               aria-label={`Decrease ${item.label} quantity`}
-              className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+              className="h-11 rounded surface-inset text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
               disabled={quantityInvalid || item.quantity <= 1}
               onClick={() => onQuantity(item.key, Math.max(1, item.quantity - 1))}
               type="button"
@@ -603,7 +603,7 @@ function SelectedProductionPanel<Key extends string>({
             />
             <button
               aria-label={`Increase ${item.label} quantity`}
-              className="h-11 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+              className="h-11 rounded surface-inset text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
               onClick={() => onQuantity(item.key, (parseProductionQuantity(quantityInput) ?? 1) + 1)}
               type="button"
             >
@@ -644,7 +644,7 @@ function SelectedProductionPanel<Key extends string>({
           <button
             aria-label={`${item.label} maximum affordable quantity`}
             title={`${item.label} maximum affordable quantity`}
-            className="inline-flex h-11 w-11 items-center justify-center rounded border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
+            className="inline-flex h-11 w-11 items-center justify-center rounded surface-inset text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
             disabled={(planMax ?? item.maxQuantity) === undefined || (planMax ?? item.maxQuantity)! < 1 || (!quantityInvalid && item.quantity === (planMax ?? item.maxQuantity))}
             onClick={() => {
               const maximum = planMax ?? item.maxQuantity;
@@ -657,7 +657,7 @@ function SelectedProductionPanel<Key extends string>({
           <button
             aria-label={`${item.label} reset quantity`}
             title={`${item.label} reset quantity`}
-            className="inline-flex h-11 w-11 items-center justify-center rounded border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
+            className="inline-flex h-11 w-11 items-center justify-center rounded surface-inset text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9 sm:w-9"
             disabled={!quantityInvalid && item.quantity === 1}
             onClick={() => onQuantity(item.key, 1)}
             type="button"

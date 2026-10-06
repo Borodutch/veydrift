@@ -147,7 +147,7 @@ export function PublicMoonDetail({
           {source === "error" ? "Moon data could not be loaded." : `No moon in orbit at ${coordinateText}.`}
         </p>
         <a
-          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
+          className="inline-flex min-h-11 items-center gap-2 rounded-md surface-inset px-3 py-2 font-mono text-xs text-slate-300 transition-colors hover:border-cyan-200/30 hover:text-cyan-100"
           href={parentPath}
           onClick={onSelectPlanet ? (event) => {
             event.preventDefault();
@@ -168,7 +168,7 @@ export function PublicMoonDetail({
 
   return (
     <div className="celestial-detail moon-detail-page flex min-w-0 flex-col gap-3" data-celestial-detail="moon">
-      <section className="overflow-hidden rounded-xl border border-white/10 bg-[#0b111e] shadow-lg shadow-black/15">
+      <section className="overflow-hidden rounded-xl surface shadow-lg shadow-black/15">
         <div className="celestial-detail-layout moon-detail-layout" data-celestial-layout>
           <div className="celestial-detail-artwork relative flex items-center justify-center p-3 sm:p-4 lg:p-5" data-celestial-artwork>
             <div className="relative aspect-square w-full max-w-40 sm:max-w-[11rem] lg:max-w-[13rem]">
@@ -276,7 +276,7 @@ function MoonResourcePills({
   return (
     <dl className="flex flex-wrap gap-2">
       {rows.map((row) => (
-        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md border border-white/10 bg-black/20 px-2.5 text-xs leading-none" key={row.label}>
+        <div className="inline-flex h-9 w-fit shrink-0 items-center justify-center rounded-md surface-inset px-2.5 text-xs leading-none" key={row.label}>
           <dt className="sr-only">{row.label}</dt>
           <dd className="whitespace-nowrap text-center leading-none text-slate-400 tabular-nums">
             {row.label} <span className="font-semibold text-slate-100">{row.value}</span>

@@ -721,7 +721,7 @@ describe("Moon page helpers", () => {
         status: "current",
       }],
     }) as VNode;
-    const closeButton = componentNodes(modal).find((node) => node.type === "button" && node.props?.["aria-label"] === "Close level table");
+    const closeButton = componentNodes(modal).find((node) => node.props?.closeLabel === "Close level table");
 
     expect(moonStructureLevelInfoColumns("lunarBase").map((column) => column.label)).toEqual([
       "Upgrade cost",
@@ -729,10 +729,9 @@ describe("Moon page helpers", () => {
       "Effect",
     ]);
     expect(visibleText(modal)).not.toContain("Requirements");
-    expect(modal.props?.["data-level-info-layer"]).toBe("viewport");
-    expect(String(modal.props?.className)).toContain("z-[100]");
+    expect(modal.props?.layerAttributes?.["data-level-info-layer"]).toBe("viewport");
     expect(closeButton).toBeDefined();
-    expect(levelInfoModalSource).toContain("createPortal(layer, document.body)");
+    expect(levelInfoModalSource).toContain("<Modal");
     expect(levelInfoModalSource).toContain("100dvh");
     expect(levelInfoModalSource).toContain("overflow-auto overscroll-contain");
   });

@@ -445,7 +445,7 @@ export function RaidFinderPagination({
       <div className="flex items-center gap-1.5">
         <button
           aria-label="Previous Raid Finder page"
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           disabled={pagination.page <= 1}
           onClick={onPrevious}
           title="Previous page"
@@ -455,7 +455,7 @@ export function RaidFinderPagination({
         </button>
         <button
           aria-label="Next Raid Finder page"
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           disabled={pagination.page >= pagination.totalPages}
           onClick={onNext}
           title="Next page"
@@ -549,7 +549,7 @@ export function RaidTargetFilterControls({
   ].filter(Boolean);
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-white/10 bg-white/[0.02] p-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-md surface-inset p-2">
       <FilterToggle
         active={filters.hideProtected}
         label="Hide protected"
@@ -637,7 +637,7 @@ function NumberFilter({
     <label className="flex h-9 items-center gap-1.5 rounded border border-white/15 bg-[#070913] px-2 sm:h-8">
       <span className="text-[11px] font-medium uppercase text-slate-500">{label}</span>
       <input
-        className="h-8 w-20 rounded border border-white/10 bg-[#101624] px-2 text-xs font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-6"
+        className="h-8 w-20 rounded surface px-2 text-xs font-semibold text-white outline-none [color-scheme:dark] focus:border-signal/50 sm:h-6"
         inputMode="numeric"
         onInput={(event) => {
           const raw = (event.currentTarget as HTMLInputElement).value.replace(/[^0-9]/g, "");
@@ -674,11 +674,11 @@ function MobileSortControls<K extends string>({
 
   return (
     <div className="flex items-center gap-2 border-b border-white/10 px-2 py-2 sm:hidden">
-      <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500" htmlFor={id}>
+      <label className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70" htmlFor={id}>
         Sort
       </label>
       <select
-        className="h-10 min-w-0 flex-1 rounded border border-white/10 bg-[#0d1422] px-2 text-xs font-semibold text-slate-200"
+        className="h-10 min-w-0 flex-1 rounded surface px-2 text-xs font-semibold text-slate-200"
         id={id}
         onChange={(event) => selectSort(event.currentTarget)}
         onInput={(event) => selectSort(event.currentTarget)}
@@ -690,7 +690,7 @@ function MobileSortControls<K extends string>({
       </select>
       <button
         aria-label={`Sort ${sort.direction === "asc" ? "descending" : "ascending"}`}
-        className="grid h-10 w-10 shrink-0 place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-200 transition hover:bg-white/10"
+        className="grid h-10 w-10 shrink-0 place-items-center rounded surface-inset text-slate-200 transition hover:bg-white/10"
         onClick={() => onSort(sort.key)}
         type="button"
       >
@@ -713,13 +713,13 @@ function RaidTargetTableHeader({
 }) {
   return (
     <>
-      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_40px] sm:px-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_40px] sm:px-3">
         <span>Target</span>
         {sortColumns.map((column) => (
           <button
             aria-label={`Sort by ${column.label}`}
             className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
-              sort.key === column.key ? "text-cyan-100" : "text-slate-500"
+              sort.key === column.key ? "text-cyan-100" : "text-cyan-300/70"
             }`}
             key={column.key}
             onClick={() => onSort(column.key)}
@@ -754,13 +754,13 @@ function DebrisTargetTableHeader({
 }) {
   return (
     <>
-      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_40px] sm:px-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_40px] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_40px] sm:px-3">
         <span>Debris field</span>
         {debrisSortColumns.map((column) => (
           <button
             aria-label={`Sort by ${column.label}`}
             className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
-              sort.key === column.key ? "text-cyan-100" : "text-slate-500"
+              sort.key === column.key ? "text-cyan-100" : "text-cyan-300/70"
             }`}
             key={column.key}
             onClick={() => onSort(column.key)}
@@ -804,7 +804,7 @@ export function DebrisTargetRow({
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_40px] items-center gap-2 border-b border-white/5 px-2 py-1.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_40px] sm:px-3">
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
+        <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded surface-inset">
           <OptimizedImage
             alt=""
             className="h-full w-full object-cover"
@@ -910,7 +910,7 @@ export function RaidTargetRow({
       className={`grid grid-cols-[minmax(0,1fr)_40px] items-center gap-2 border-b px-2 py-1.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_40px] sm:px-3 ${rowTone}`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
+        <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded surface-inset">
           <OptimizedImage
             alt=""
             className="h-full w-full object-cover"

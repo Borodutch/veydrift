@@ -28,7 +28,7 @@ describe("TopBar", () => {
     expect((loadingTopBar as VNode).props?.["data-resource-status"]).toBe("loading");
   });
 
-  test("gives mobile resources a full-width row separate from the icon row", () => {
+  test("keeps mobile resources and support icons on one compact row", () => {
     const topBar = renderTopBar();
     const nodes = elementNodes(topBar);
     // Both mobile rows flatten into the single desktop flex line via sm:contents.
@@ -42,13 +42,13 @@ describe("TopBar", () => {
     );
     const supportLink = linkWithLabel(topBar, "Telegram support");
 
-    expect(mobileRows).toHaveLength(2);
+    expect(mobileRows).toHaveLength(1);
     expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
-    // Pips share the resources row evenly; no icon columns squeeze them anymore.
+    // Pips share the row evenly; the fixed-size icons sit at its end.
     for (const pip of resourcePips) {
       expect(pip.props.className).toContain("flex-1");
     }
-    expect(supportLink?.props?.className).toContain("flex-1");
+    expect(supportLink?.props?.className).toContain("shrink-0");
     expect(supportLink?.props?.className).toContain("sm:hidden");
   });
 
@@ -114,18 +114,16 @@ describe("TopBar", () => {
     expect(energyInfo?.props?.["aria-label"]).toContain("Fusion Generator: 20 from 11 DEUT/h");
     expect(energyInfo?.props?.["aria-label"]).toContain("Solar Satellites: 40 from 2 satellites (20 E/Sat)");
     expect(energyInfo?.props?.["aria-label"]).toContain("Mine output is reduced to 80%");
-    expect(panelText).toContain("Mines produce resources");
-    expect(panelText).toContain("Selected player planet");
-    expect(panelText).toContain("Metal production +77/h");
-    expect(panelText).toContain("Crystal production +29/h");
-    expect(panelText).toContain("Deuterium production +14/h");
+    expect(panelText).not.toContain("Selected player planet");
+    expect(panelText).toContain("Metal +77/h");
+    expect(panelText).toContain("Crystal +29/h");
+    expect(panelText).toContain("Deuterium +14/h");
     expect(panelText).toContain("Produced 100");
     expect(panelText).toContain("Consumed 125");
     expect(panelText).toContain("Balance -25");
-    expect(panelText).toContain("Production in total 100");
     expect(panelText).toContain("Solar Plant 40");
-    expect(panelText).toContain("Fusion Generator 20 from 11 DEUT/h");
-    expect(panelText.replace(/\(\s+/g, "(")).toContain("Solar Satellites 40 from 2 satellites (20 E/Sat)");
+    expect(panelText).toContain("Fusion Reactor 20 · 11 D/h");
+    expect(panelText).toContain("Solar Satellites 40 · 2 × 20");
     expect(panelText).not.toContain("By Solar Plant");
     expect(panelText).not.toContain("By Fusion Generator");
     expect(panelText).not.toContain("By Solar Satellites");
@@ -151,10 +149,10 @@ describe("TopBar", () => {
     });
     const panelText = visibleText(energyDetailsNode(topBar));
 
-    expect(panelText).toContain("Metal production +120/h");
-    expect(panelText).toContain("Crystal production +58/h");
-    expect(panelText).toContain("Deuterium production +24/h");
-    expect(panelText.replace(/\(\s+/g, "(")).toContain("Solar Satellites 108 from 3 satellites (36 E/Sat)");
+    expect(panelText).toContain("Metal +120/h");
+    expect(panelText).toContain("Crystal +58/h");
+    expect(panelText).toContain("Deuterium +24/h");
+    expect(panelText).toContain("Solar Satellites 108 · 3 × 36");
     expect(panelText).toContain("Insufficient energy reduces mine output to 49%");
   });
 
@@ -182,7 +180,7 @@ describe("TopBar", () => {
     expect(elementNodes(energyDetailsNode(topBar)).some((node) => node.props?.["aria-busy"] === "true")).toBe(true);
   });
 
-  test("labels energy popup values without selected player planet coordinates", () => {
+  test("keeps the planet context out of the energy popup and coordinates out of its label", () => {
     const topBar = renderTopBar();
     const energyInfo = elementNodes(topBar).find(
       (item) => item.type === "summary"
@@ -193,7 +191,7 @@ describe("TopBar", () => {
 
     expect(energyInfo?.props?.["aria-label"]).toContain("Context: Selected player planet.");
     expect(energyInfo?.props?.["aria-label"]).not.toContain("8:490:11");
-    expect(visibleText(energyDetails)).toContain("Selected player planet");
+    expect(visibleText(energyDetails)).not.toContain("Selected player planet");
     expect(visibleText(energyDetails)).not.toContain("8:490:11");
   });
 

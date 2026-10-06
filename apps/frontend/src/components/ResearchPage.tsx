@@ -520,7 +520,7 @@ export function ResearchActionReasonNotice({
   reason: string;
 }) {
   return (
-    <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+    <div className="mt-4 rounded surface-inset px-3 py-2">
       <p className={`text-sm font-semibold ${disabled ? "text-slate-400" : "text-emerald-200"}`}>
         {reason}
       </p>
@@ -596,7 +596,7 @@ export function ResearchLevelInfoButton({
   return (
     <button
       aria-label="Research level details"
-      className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-200 sm:h-7 sm:w-7"
+      className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-300 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-200 sm:h-7 sm:w-7"
       onClick={onClick}
       title={`${researchLabel} level details`}
       type="button"
@@ -712,7 +712,7 @@ export function ResearchEffectsSection({
   unlockRows: string[];
 }) {
   return (
-    <section className="mt-4 rounded border border-white/10 bg-white/[0.03] p-3">
+    <section className="mt-4 rounded surface-inset p-3">
       <h4 className="text-xs font-semibold uppercase tracking-normal text-slate-400">Effects</h4>
       {effectRows.length > 0 ? (
         <>
@@ -762,7 +762,7 @@ function ResearchUnlockList({
       {title ? <p className="text-xs font-semibold text-slate-400">{title}</p> : null}
       <ul className="mt-1 grid gap-1 text-xs text-slate-300">
         {sortResearchUnlockRows(unlockRows).slice(0, 8).map((row) => (
-          <li className="rounded border border-white/10 bg-white/[0.03] px-2 py-1" key={row}>{row}</li>
+          <li className="rounded surface-inset px-2 py-1" key={row}>{row}</li>
         ))}
       </ul>
     </div>

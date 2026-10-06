@@ -19,7 +19,7 @@ export function TrailerPlayer() {
   };
 
   return (
-    <div className="relative mx-auto max-w-6xl overflow-hidden rounded-lg border border-signal/[0.12] bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
+    <div className="relative mx-auto max-w-6xl overflow-hidden rounded-xl border border-cyan-300/15 bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
       <video
         className="block aspect-video w-full bg-black"
         controls={started}
@@ -41,7 +41,7 @@ export function TrailerPlayer() {
           onClick={play}
           type="button"
         >
-          <span className="inline-flex min-h-12 items-center gap-3 rounded-full border border-signal/30 bg-signal px-6 py-3 text-sm font-bold text-[#031014] shadow-[0_0_40px_rgba(128,241,255,0.35)] transition group-hover:bg-cyan-100">
+          <span className="inline-flex min-h-12 items-center gap-3 rounded-lg border border-signal/30 bg-signal px-6 py-3 text-sm font-bold text-[#031014] shadow-[0_0_40px_rgba(128,241,255,0.35)] transition group-hover:bg-cyan-100">
             <Play aria-hidden="true" className="h-5 w-5 fill-current" />
             Watch the trailer
             <span className="font-semibold opacity-70">2:00</span>

@@ -441,7 +441,7 @@ function MissileStrikeSection({
       {error ? <p className="text-xs text-rose-200">{error}</p> : null}
       {loading && rows.length === 0 ? <MissionControlSkeleton label="Loading missile strikes" /> : null}
       {rows.length > 0 ? (
-        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md border border-white/[0.08] bg-black/20">
+        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md surface-inset">
           {rows.map((strike) => {
             const target = defenseCatalog.find((defense) => defense.id === strike.primaryTargetDefenseId)?.label ?? "selected defense";
             const origin = strike.originPlanet?.name ?? `Planet #${strike.originPlanetId}`;
@@ -565,7 +565,7 @@ export function StationedDefenseSection({
           requires a second colony or an alliance member's planet to send the fleet to.
         </p>
       ) : (
-        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md border border-white/[0.08] bg-black/20">
+        <div className="divide-y divide-white/[0.06] overflow-hidden rounded-md surface-inset">
           {myStationed.map((mission) => (
             <StationedDefenseCard
               key={mission.missionId}
@@ -707,7 +707,7 @@ function StationedDefenderRow({
           {stationedDefenderName(defender)}
         </span>
         <span className="text-[11px] tabular-nums text-slate-400">
-          <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">Holds</span>{" "}
+          <span className="font-semibold uppercase tracking-[0.1em] text-cyan-300/70">Holds</span>{" "}
           {missionEndpointTiming(defender.holdUntil, now)}
         </span>
       </div>
@@ -929,13 +929,13 @@ function ActiveMissionSection({
     walletPlanetIds,
   };
   return (
-    <section className="min-w-0 rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
+    <section className="min-w-0 rounded-lg surface" data-active-tab={activeTab}>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-t-lg border-b border-white/10 bg-black/20 px-3 py-2">
         <div aria-label="Active missions" className="flex flex-wrap gap-1.5" role="tablist">
           {visibleTabs.map((tab) => (
             <button
               aria-selected={tab.key === activeTab}
-              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
+              className="rounded surface-inset px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
               data-active-tab-button={tab.key}
               key={tab.key}
               onClick={() => onTabChange?.(tab.key)}
@@ -992,7 +992,7 @@ function MissionRowsDisclosureControl({ hidden }: { hidden: boolean }) {
   return (
     <button
       aria-label="Expand all visible mission cards"
-      className="inline-flex size-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
+      className="inline-flex size-8 items-center justify-center rounded-md surface-inset text-slate-300 transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/50"
       data-mission-disclosure-toggle
       hidden={hidden}
       onClick={(event) => {
@@ -1111,13 +1111,13 @@ function MissionFilterPopover({
           the header, sentence-case muted field labels, compact 32px controls. */}
       <div
         aria-label="Mission filters"
-        className="absolute right-0 z-30 mt-2 w-[min(19rem,calc(100vw-1.5rem))] rounded-lg border border-white/10 bg-[#0d1422] p-3 shadow-2xl shadow-black/50"
+        className="absolute right-0 z-30 mt-2 w-[min(19rem,calc(100vw-1.5rem))] rounded-lg surface p-3 shadow-2xl shadow-black/50"
         id="mission-control-filter-popover"
         role="dialog"
         title="Filters combine across ongoing and past missions"
       >
         <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">Filter missions</h2>
+          <h2 className="text-[10px] font-medium uppercase tracking-[0.08em] text-cyan-300/70">Filter missions</h2>
           <button
             className="shrink-0 rounded text-[11px] font-medium text-cyan-200 transition hover:text-cyan-100 disabled:cursor-not-allowed disabled:text-slate-600"
             disabled={!active}
@@ -1138,7 +1138,7 @@ function MissionFilterPopover({
             Mission #
             <input
               aria-label="Search missions by number"
-              className="h-8 min-w-0 rounded border border-white/10 bg-black/25 px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded surface-inset px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               inputMode="numeric"
               onInput={(event) => update({ missionNumber: event.currentTarget.value })}
               placeholder="1473"
@@ -1151,7 +1151,7 @@ function MissionFilterPopover({
             Planet ID
             <input
               aria-label="Filter by origin or destination planet ID"
-              className="h-8 min-w-0 rounded border border-white/10 bg-black/25 px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+              className="h-8 min-w-0 rounded surface-inset px-2 font-mono text-xs text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
               inputMode="numeric"
               onInput={(event) => update({ planetId: event.currentTarget.value })}
               placeholder="7"
@@ -1167,7 +1167,7 @@ function MissionFilterPopover({
             <span className="relative">
               <select
                 aria-label="Filter by mission type"
-                className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+                className="h-8 w-full min-w-0 appearance-none rounded surface px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
                 onChange={(event) => applyMissionFilterSelectInput(filters, "missionType", event.currentTarget.value, onChange)}
                 onInput={(event) => applyMissionFilterSelectInput(filters, "missionType", event.currentTarget.value, onChange)}
                 value={filters.missionType}
@@ -1186,7 +1186,7 @@ function MissionFilterPopover({
             <span className="relative">
               <select
                 aria-label="Filter by mission direction or state"
-                className="h-8 w-full min-w-0 appearance-none rounded border border-white/10 bg-[#080d18] px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
+                className="h-8 w-full min-w-0 appearance-none rounded surface px-2 pr-7 text-xs text-white outline-none transition focus:border-cyan-300/45 focus:ring-1 focus:ring-cyan-300/25"
                 onChange={(event) => applyMissionFilterSelectInput(filters, "direction", event.currentTarget.value, onChange)}
                 onInput={(event) => applyMissionFilterSelectInput(filters, "direction", event.currentTarget.value, onChange)}
                 value={filters.direction}
@@ -1685,7 +1685,7 @@ const MISSION_ROW_GRID = "lg:grid lg:grid-cols-[6.5rem_minmax(0,1fr)_minmax(0,7r
 // DESTINATION / ARRIVED label chatter. Hidden below lg where rows are stacked and self-labelling.
 function MissionListHeader() {
   return (
-    <div className={`hidden border-b border-white/[0.06] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500 sm:px-3 ${MISSION_ROW_GRID}`}>
+    <div className={`hidden border-b border-white/[0.06] px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cyan-300/70 sm:px-3 ${MISSION_ROW_GRID}`}>
       <span>Mission</span>
       <span>Route</span>
       <span className="text-right">Payload</span>
@@ -1831,7 +1831,7 @@ function MissionCard({
 function MissionDetailGroup({ children, title }: { children: preact.ComponentChildren; title: string }) {
   return (
     <div className="min-w-0">
-      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-slate-500">{title}</p>
+      <p className="mb-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-cyan-300/70">{title}</p>
       <div className="grid gap-1 text-[11px] leading-4">{children}</div>
     </div>
   );
@@ -1969,7 +1969,7 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
         const name = shipLabel(key);
         const label = `${name} x${formatResource(count)}`;
         return (
-          <span className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1 py-0.5" key={key} title={label}>
+          <span className="inline-flex items-center gap-1 rounded surface-inset px-1 py-0.5" key={key} title={label}>
             {asset ? <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} /> : null}
             <span className="text-[10px] text-slate-300">{name}</span>
             <span className="text-[11px] font-medium tabular-nums text-slate-200">{`x${formatResource(count)}`}</span>
@@ -2052,7 +2052,7 @@ export function MissionReportDetail({
           This share link does not match a mission visible to the connected wallet right now.
         </p>
         <button
-          className="mt-3 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+          className="mt-3 rounded surface-inset px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
           onClick={onBack}
           type="button"
         >
@@ -2070,7 +2070,7 @@ export function MissionReportDetail({
           Missile strikes appear in Mission Control, but do not create shareable battle reports.
         </p>
         <button
-          className="mt-3 rounded border border-white/10 bg-white/5 px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+          className="mt-3 rounded surface-inset px-2 py-1 text-xs font-medium text-slate-200 transition hover:bg-white/10"
           onClick={onBack}
           type="button"
         >
@@ -2093,7 +2093,7 @@ export function MissionReportDetail({
         </div>
         <div className="flex flex-wrap gap-2">
           <button
-            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            className="inline-flex h-8 items-center justify-center gap-2 rounded surface-inset px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
             onClick={onBack}
             type="button"
           >
@@ -2101,7 +2101,7 @@ export function MissionReportDetail({
             Reports
           </button>
           <button
-            className="inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
+            className="inline-flex h-8 items-center justify-center gap-2 rounded surface-inset px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10"
             onClick={() => copyText(reportUrl ?? missionReportText(mission, now, planetLookup))}
             type="button"
           >
@@ -2329,7 +2329,7 @@ function PastMissionSection({
   const sharedRowProps = { lootByMissionId, lossesByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={pastTab}>
+    <section className="min-w-0 overflow-hidden rounded-lg surface" data-past-tab={pastTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-300">Past missions</h3>
         <div aria-label="Past missions scope" className="flex flex-wrap gap-1.5" role="tablist">
@@ -2350,7 +2350,7 @@ function PastMissionSection({
             return (
               <button
                 aria-selected={tab.key === pastTab}
-                className="rounded border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
+                className="rounded surface-inset px-3 py-2 text-xs font-medium text-slate-300 transition hover:bg-white/10 aria-selected:border-cyan-300/35 aria-selected:bg-cyan-300/10 aria-selected:text-cyan-100 sm:py-1"
                 data-past-tab-button={tab.key}
                 key={tab.key}
                 onClick={() => onTabChange?.(tab.key)}
@@ -2746,7 +2746,7 @@ function ClientPaginationControl({
       <div className="flex items-center gap-2">
         <button
           aria-label={prevLabel}
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-prev
           disabled={loading || !pagination.hasPreviousPage}
           onClick={() => onPageChange?.(pagination.page - 1)}
@@ -2757,7 +2757,7 @@ function ClientPaginationControl({
         </button>
         <button
           aria-label={nextLabel}
-          className="inline-flex h-10 w-10 items-center justify-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
+          className="inline-flex h-10 w-10 items-center justify-center rounded surface-inset text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8"
           data-past-page-next
           disabled={loading || !pagination.hasNextPage}
           onClick={() => onPageChange?.(pagination.page + 1)}
@@ -2773,7 +2773,7 @@ function ClientPaginationControl({
 
 function ReportPanel({ children, title }: { children: preact.ComponentChildren; title: string }) {
   return (
-    <div className="rounded-md border border-white/10 bg-black/20 p-3">
+    <div className="rounded-md surface-inset p-3">
       <h4 className="text-sm font-semibold text-white">{title}</h4>
       <dl className="mt-3 grid gap-2 text-xs">{children}</dl>
     </div>

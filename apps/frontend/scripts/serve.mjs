@@ -87,6 +87,7 @@ const contentTypes = {
   ".svg": "image/svg+xml",
   ".vtt": "text/vtt; charset=utf-8",
   ".webp": "image/webp",
+  ".woff2": "font/woff2",
 };
 
 function contentType(pathname) {
