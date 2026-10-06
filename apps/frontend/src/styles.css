@@ -1886,13 +1886,15 @@ h4 {
 .landing-page > .retro-cd-stage {
   position: relative;
   isolation: isolate;
-  height: 92svh;
-  min-height: 720px;
+  /* A minimum, not a fixed height: short windows grow to fit the hero under the site header. */
+  min-height: max(720px, 92svh);
   padding-top: calc(3.5rem + clamp(12px, 2vw, 28px));
 }
 
 .landing-page > .retro-cd-stage .retro-cd-stage-inner {
   position: static;
+  /* The stage sets the minimum; inheriting it here would add the header padding on top. */
+  min-height: 0;
 }
 
 /* On the landing page the hero backdrop and floaters belong to the hero, not the viewport. */
