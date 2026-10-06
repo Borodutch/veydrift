@@ -1,0 +1,71 @@
+=== RUN   TestBypassRejectsStaleEventDiscovery
+--- PASS: TestBypassRejectsStaleEventDiscovery (0.10s)
+=== RUN   TestFoundryGameFixtureInteroperability
+    foundry_fixture_test.go:207: Foundry fixture original snapshot=0x41fb5d3497588155413b6fd1de0b11f6cc151cb7bc6353a4083c277e89f2aba8 context=0x4e5269d9cfb7ef9df5c41eac40e49e40591ddbb4b1143dcb77f5f77f30cedc31; all getter bytes envelopes and source/row event ABI checked; rebound HTTP fixture passed
+--- PASS: TestFoundryGameFixtureInteroperability (0.55s)
+=== RUN   TestLinkedPublicRecordParity
+--- PASS: TestLinkedPublicRecordParity (0.03s)
+=== RUN   TestStrictABIAndQuantities
+--- PASS: TestStrictABIAndQuantities (0.00s)
+=== RUN   TestCompleteReadOnlySource
+--- PASS: TestCompleteReadOnlySource (0.07s)
+=== RUN   TestMaliciousAndIncompleteRPC
+=== RUN   TestMaliciousAndIncompleteRPC/noncanonical_row_width
+=== RUN   TestMaliciousAndIncompleteRPC/unrecorded_moon
+=== RUN   TestMaliciousAndIncompleteRPC/wrong_requester
+=== RUN   TestMaliciousAndIncompleteRPC/unsupported_header
+=== RUN   TestMaliciousAndIncompleteRPC/reorg_during_read
+=== RUN   TestMaliciousAndIncompleteRPC/row_budget
+=== RUN   TestMaliciousAndIncompleteRPC/snapshot_budget
+=== RUN   TestMaliciousAndIncompleteRPC/wrong_response_id
+=== RUN   TestMaliciousAndIncompleteRPC/null_page
+=== RUN   TestMaliciousAndIncompleteRPC/wrong_verifier_code
+=== RUN   TestMaliciousAndIncompleteRPC/wrong_log_blockhash
+=== RUN   TestMaliciousAndIncompleteRPC/superseded_seal
+=== RUN   TestMaliciousAndIncompleteRPC/conflicting_owner_research
+=== RUN   TestMaliciousAndIncompleteRPC/missing_mission_lane
+=== RUN   TestMaliciousAndIncompleteRPC/legacy_engine_policy
+=== RUN   TestMaliciousAndIncompleteRPC/log_pagination_budget
+=== RUN   TestMaliciousAndIncompleteRPC/missing_all_events
+=== RUN   TestMaliciousAndIncompleteRPC/partial_row_journal
+=== RUN   TestMaliciousAndIncompleteRPC/altered_source_getter
+=== RUN   TestMaliciousAndIncompleteRPC/altered_body_getter
+=== RUN   TestMaliciousAndIncompleteRPC/altered_engine_seed
+=== RUN   TestMaliciousAndIncompleteRPC/conflicting_duplicate
+=== RUN   TestMaliciousAndIncompleteRPC/fleet_budget
+=== RUN   TestMaliciousAndIncompleteRPC/response_budget
+=== RUN   TestMaliciousAndIncompleteRPC/altered_snapshot
+--- PASS: TestMaliciousAndIncompleteRPC (0.39s)
+    --- PASS: TestMaliciousAndIncompleteRPC/noncanonical_row_width (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/unrecorded_moon (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/wrong_requester (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/unsupported_header (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/reorg_during_read (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/row_budget (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/snapshot_budget (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/wrong_response_id (0.00s)
+    --- PASS: TestMaliciousAndIncompleteRPC/null_page (0.00s)
+    --- PASS: TestMaliciousAndIncompleteRPC/wrong_verifier_code (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/wrong_log_blockhash (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/superseded_seal (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/conflicting_owner_research (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/missing_mission_lane (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/legacy_engine_policy (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/log_pagination_budget (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/missing_all_events (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/partial_row_journal (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/altered_source_getter (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/altered_body_getter (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/altered_engine_seed (0.02s)
+    --- PASS: TestMaliciousAndIncompleteRPC/conflicting_duplicate (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/fleet_budget (0.01s)
+    --- PASS: TestMaliciousAndIncompleteRPC/response_budget (0.00s)
+    --- PASS: TestMaliciousAndIncompleteRPC/altered_snapshot (0.02s)
+=== RUN   TestGetterNotEventPendingAuthority
+--- PASS: TestGetterNotEventPendingAuthority (0.03s)
+=== RUN   TestFullUint256AndAlteredIdentity
+--- PASS: TestFullUint256AndAlteredIdentity (0.05s)
+=== RUN   TestHistoricalCanonicalReorg
+--- PASS: TestHistoricalCanonicalReorg (0.01s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/chainsource	2.741s

@@ -30,3 +30,11 @@ Wire this source into service.New only with a REAL Runner. Decode Document with 
 	GOMAXPROCS=2 GOMEMLIMIT=2GiB go vet ./chainsource
 
 Fixtures exercise HTTP JSONRPC only, with a frozen inactive-release-style public lifecycle. Tests cover paginated complete scan, getter authority over event claims, partial final-page failure, missing/duplicate/conflicting events, original/superseded anchors, reorgs, altered body/source/snapshot/hash, mixed-owner research, engine identity/policy/word, exact width checks, full256 chain/battle/body/request/seed and resource budgets. No production RPC is contacted.
+
+### Independent-review follow-up
+
+`TestBypassRejectsStaleEventDiscovery` verifies phase4 is excluded by Pending and rejected by Observe/Snapshot even when stale phase3 event hints remain. Conversely, a phase3 getter claim plus a bypass event fails journal validation.
+
+`TestFoundryGameFixtureInteroperability` reads the unchanged `docs/battle-proof-qualified-input-fixture.json` from the real Game/modules/oracle Foundry lifecycle fixture. Offline Foundry `cast abi-encode` independently checks all getter kinds0–5 bytes envelopes, header/source/row event encodings and journal tuple ordering, reproducing the ORIGINAL pinned snapshot and randomness context. This is replay of an existing concrete Solidity fixture, not a fresh deployed EVM or live RPC test. It requires cast (otherwise explicitly skipped). The checked-in fixture labels are test-only and are asserted rejected by production New. A separate explicitly rebound HTTP fixture uses the supported linked rules/catalog and local code/seed/request metadata; it preserves the original16-word body header and both raw research rows, and recomputes commitments rather than claiming the rebound hash is the original Solidity hash. No production allowlist or core source changes were needed.
+
+Race-test output is captured in `review-followup-evidence.txt`; verification commands use GOMAXPROCS=2 and GOMEMLIMIT=2GiB. No sibling contract/fixture files were modified.
