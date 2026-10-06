@@ -1,0 +1,60 @@
+=== RUN   TestLinkedPublicLayoutAndSolidityHash
+    linked_abi_test.go:71: independent chain record=0x9d6e196d8e8cd18ba86b31b5687443f04f419caabf8b528b78b97adb6bfe8ef0
+--- PASS: TestLinkedPublicLayoutAndSolidityHash (0.85s)
+=== RUN   TestLinkedBoundary
+--- PASS: TestLinkedBoundary (0.00s)
+=== RUN   TestLinkedQualificationSolver
+    linked_test.go:67: linked qualification constraints=1184815 public=8
+=== RUN   TestLinkedQualificationSolver/wrong-engine
+=== RUN   TestLinkedQualificationSolver/wrong-request
+=== RUN   TestLinkedQualificationSolver/wrong-research-root
+=== RUN   TestLinkedQualificationSolver/snapshot-field-alias
+=== RUN   TestLinkedQualificationSolver/unsealed-raw
+=== RUN   TestLinkedQualificationSolver/wrong-word
+=== RUN   TestLinkedQualificationSolver/wrong-version
+=== RUN   TestLinkedQualificationSolver/wrong-chain-record
+=== RUN   TestLinkedQualificationSolver/wrong-rng-context
+=== RUN   TestLinkedQualificationSolver/wrong-precommit
+=== RUN   TestLinkedQualificationSolver/wrong-catalog
+=== RUN   TestLinkedQualificationSolver/wrong-body
+=== RUN   TestLinkedQualificationSolver/digest-limb-overflow
+=== RUN   TestLinkedQualificationSolver/wrong-chain-snapshot
+=== RUN   TestLinkedQualificationSolver/wrong-preparation-snapshot
+=== RUN   TestLinkedQualificationSolver/zero-word
+=== RUN   TestLinkedQualificationSolver/wrong-purpose
+=== RUN   TestLinkedQualificationSolver/wrong-codehash
+=== RUN   TestLinkedQualificationSolver/wrong-rules
+=== RUN   TestLinkedQualificationSolver/wrong-game
+=== RUN   TestLinkedQualificationSolver/wrong-incarnation
+=== RUN   TestLinkedQualificationSolver/force-snapshot-equality
+=== RUN   TestLinkedQualificationSolver/wrong-raw-result
+=== RUN   TestLinkedQualificationSolver/wrong-raw-binding
+=== RUN   TestLinkedQualificationSolver/seed-high-byte
+--- PASS: TestLinkedQualificationSolver (5.26s)
+    --- PASS: TestLinkedQualificationSolver/wrong-engine (0.03s)
+    --- PASS: TestLinkedQualificationSolver/wrong-request (0.04s)
+    --- PASS: TestLinkedQualificationSolver/wrong-research-root (0.44s)
+    --- PASS: TestLinkedQualificationSolver/snapshot-field-alias (0.04s)
+    --- PASS: TestLinkedQualificationSolver/unsealed-raw (0.01s)
+    --- PASS: TestLinkedQualificationSolver/wrong-word (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-version (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-chain-record (0.09s)
+    --- PASS: TestLinkedQualificationSolver/wrong-rng-context (0.05s)
+    --- PASS: TestLinkedQualificationSolver/wrong-precommit (0.03s)
+    --- PASS: TestLinkedQualificationSolver/wrong-catalog (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-body (0.44s)
+    --- PASS: TestLinkedQualificationSolver/digest-limb-overflow (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-chain-snapshot (0.04s)
+    --- PASS: TestLinkedQualificationSolver/wrong-preparation-snapshot (0.00s)
+    --- PASS: TestLinkedQualificationSolver/zero-word (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-purpose (0.03s)
+    --- PASS: TestLinkedQualificationSolver/wrong-codehash (0.09s)
+    --- PASS: TestLinkedQualificationSolver/wrong-rules (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-game (0.04s)
+    --- PASS: TestLinkedQualificationSolver/wrong-incarnation (0.44s)
+    --- PASS: TestLinkedQualificationSolver/force-snapshot-equality (0.04s)
+    --- PASS: TestLinkedQualificationSolver/wrong-raw-result (0.00s)
+    --- PASS: TestLinkedQualificationSolver/wrong-raw-binding (0.36s)
+    --- PASS: TestLinkedQualificationSolver/seed-high-byte (0.00s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/qualification	6.678s

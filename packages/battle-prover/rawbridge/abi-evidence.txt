@@ -1,0 +1,5 @@
+=== RUN   TestSolidityABIInterop
+    abi_test.go:84: independent cast ABI all record kinds; snapshot=0x6c98a8401eb9d6ebc929f618eecbe67fd2f376180e9dd95106f1350c4813c42a
+--- PASS: TestSolidityABIInterop (0.38s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/rawbridge	1.130s

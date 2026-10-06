@@ -1,0 +1,11 @@
+=== RUN   TestJournalSolver
+=== RUN   TestJournalSolver/0
+    rawbridge_test.go:63: kind=0 constraints=1052086
+=== RUN   TestJournalSolver/0/identity
+=== RUN   TestJournalSolver/0/journal
+--- PASS: TestJournalSolver (3.17s)
+    --- PASS: TestJournalSolver/0 (3.03s)
+        --- PASS: TestJournalSolver/0/identity (0.10s)
+        --- PASS: TestJournalSolver/0/journal (0.11s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/rawbridge	3.881s
