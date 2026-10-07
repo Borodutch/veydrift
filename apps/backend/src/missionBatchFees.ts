@@ -133,11 +133,14 @@ export async function initialResolverFees(client: PublicClient) {
  * A quote-time ceiling, not a promise about variable inclusion-time Base charges. */
 export async function quoteResolverGas(client: PublicClient, input: {
   chainId: number; dataBytes: number; gas: bigint; previousHash?: Hex;
+  expectedBlock?: { number: bigint; hash: Hex };
 }) {
   if (![8453, 84532].includes(input.chainId)) throw new Error("resolver fee cap requires Base");
   // Execution maximum and all Base reserves share this one validated fee block.
   // Never pair stale execution fees with a later fresh oracle snapshot.
   const snapshot = await initialResolverFees(client);
+  if (input.expectedBlock && (snapshot.provenance.blockNumber !== input.expectedBlock.number
+    || snapshot.provenance.blockHash !== input.expectedBlock.hash)) throw new ResolverFeeCapError("resolver fee anchor changed");
   const fees = input.previousHash
     ? await resolverReplacementFees(client, input.previousHash, snapshot.fees) : snapshot.fees;
   const assertFresh = snapshot.assertFresh;

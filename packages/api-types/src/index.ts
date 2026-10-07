@@ -86,6 +86,16 @@ export type FinalBattleArtifact = {
     Unit: string; Count: string; Lost: string; Survivors: string; Next: string }>;
 };
 
+/** Verified native EVM export wire; ProofHash still identifies COMPRESSED transport bytes.
+ * File provenance and authoritative job/release metadata must be checked separately. */
+export type EVMFinalBattleArtifact = {
+  schema: FinalBattleArtifact["Schema"];
+  proof: string;
+  public: string[];
+  manifest: FinalBattleArtifact["Manifest"];
+  leaves: FinalBattleArtifact["Leaves"];
+};
+
 export type MissionArchiveEntry<Mission, Report> =
   | { kind: "mission"; mission: Mission; report?: Report | undefined }
   | { kind: "battleReport"; report: Report };

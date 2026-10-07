@@ -1,4 +1,14 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { mkdtemp, realpath, writeFile, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openProofFileProvider } from "./proofFileProvider";
+import { proofArtifactBasename } from "./proofArtifactFile";
+import { validateProofPlan } from "../../backend/src/proofExecution";
+import { createHash } from "node:crypto";
+import { parseEVMArtifact } from "./proofEvmArtifact";
+import { readProofOperation, type ProofArtifactAuthority } from "./proofOperation";
 import { decodeFunctionData, encodeAbiParameters, encodeFunctionResult, keccak256, parseAbiParameters, stringToHex, toHex, type Hex } from "viem";
 import { acceptanceReadAbi, readCanonicalAcceptance } from "./proofAcceptance";
 import { decodeFinalArtifact, parseFinalArtifactFile, encodeFinal22Submission, proofDeliveryAbi, readAndPlanProofDelivery } from "./proofDelivery";
@@ -31,7 +41,7 @@ function fixture(count = 33) {
     Proof: "Zml4dHVyZQ==", // unverified compressed advice; NEVER EVM calldata or proof-validation evidence
     Leaves: leaves.map((v, i) => ({ Index: String(i), Cohort: "1", Owner: BigInt(game).toString(), Source: v.source.toString(), Side: "0", Unit: "0", Count: "1", Lost: "0", Survivors: "1", Next: BigInt(v.next).toString() })) };
   const state = { blockHash: hash(1000n), cursor: 0n, phase: 1, staged: 17, root, binding, releaseId, verifierCode,
-    approved: 0n, reorgDuringRead: false, corruptCursor: false, count: BigInt(count), unaccepted: false };
+    approved: 0n, reorgDuringRead: false, corruptCursor: false, count: BigInt(count), unaccepted: false, wrongMember: false, paused: false, ordering: true };
   const calls: Array<{ method: string; params: unknown[] }> = [];
   const transport: JsonRpcTransport = { async request<T>(method: string, params: unknown[]): Promise<T> {
     calls.push({ method, params });
@@ -40,15 +50,23 @@ function fixture(count = 33) {
     const tag = params.at(-1);
     expect(tag).toEqual({ blockHash: state.blockHash, requireCanonical: true });
     if (state.reorgDuringRead) throw new Error("block no longer canonical");
+    if (method === "eth_getStorageAt" && params[1] === hash(52n)) return hash(state.paused ? 1n : 0n) as T;
     if (method === "eth_getStorageAt") return hash(params[1] === "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc" ? 0n : state.approved) as T;
     if (method === "eth_getCode") return (String(params[0]).toLowerCase() === verifier.toLowerCase() ? state.verifierCode : "0x6002") as T;
     if (method !== "eth_call") throw new Error("unexpected mutation/RPC " + method);
     const decoded = decodeFunctionData({ abi: acceptanceReadAbi, data: (params[0] as { data: Hex }).data });
+    if (decoded.functionName === "fleetMissionEligibility") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName, result: [false, 0n, state.ordering] }) as T;
     if (decoded.functionName === "proofBattleRecord") {
+      if (decoded.args[1] === 2) {
+        const i = decoded.args[2];
+        const row = encodeAbiParameters(parseAbiParameters("(uint256 source,address owner,uint32 count,uint8 side,uint8 unit,uint16 weapons,uint16 shielding,uint16 armor)"),
+          [{ source: i, owner: game, count: state.wrongMember ? 2 : 1, side: 0, unit: 0, weapons: 0, shielding: 0, armor: 0 }]);
+        return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: "proofBattleRecord", result: row }) as T;
+      }
       const words = decoded.args[1] === 0 ? [...versionWords, 3n, 11n, 12n, 13n, BigInt(count)] : [BigInt(engine), 9n, 10n];
       return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: "proofBattleRecord", result: ("0x" + words.map(n => hash(n).slice(2)).join("")) as Hex }) as T;
     }
-    if (decoded.functionName === "stagedBattleProgress") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName, result: [state.staged, 0, 100n] }) as T;
+    if (decoded.functionName === "stagedBattleProgress") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName, result: [state.unaccepted ? 16 : state.staged, 0, 100n] }) as T;
     if (decoded.functionName === "proofBattleAcceptedSummary") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName,
       result: state.unaccepted ? [hash(0n), hash(0n), hash(0n), 0n, 0, [0n,0n], 0, 0] : [state.binding, state.releaseId, state.root, state.count, 1, [BigInt(count),0n], outcome, 3] }) as T;
     const digest = state.corruptCursor ? hash(9n) : state.cursor === 0n ? root : leaves[Number(state.cursor) - 1]!.next;
@@ -126,4 +144,172 @@ test("end cursor validates entire suffix and economics is not terminal; empty ta
   f.state.corruptCursor = true; await expect(f.plan()).rejects.toThrow("cursor");
   const empty = fixture(0); const plan = await empty.plan();
   expect(plan.leaves).toEqual([]); expect(plan.state).toBe("application-exhausted"); expect(plan.previewCall).toBeDefined();
+});
+
+const exportLimits = { maxArtifactBytes: 100_000, maxLeaves: 100 };
+function exportedFixture(count = 33) {
+  const f = fixture(count);
+  // Historical genuine proof bytes only for shape/ABI preservation. These publics/leaves are MOCK
+  // authority and do NOT match the historical proof; no cryptographic/chain acceptance is claimed.
+  const historical = JSON.parse(readFileSync(new URL("../../../packages/battle-prover/composition/staged-public/settlement-phases-v2/full-20261005-v1/adapters/final/receipt.evm.json", import.meta.url), "utf8"));
+  const exported = { schema: f.artifact.Schema, proof: historical.proof as string, public: f.artifact.Public,
+    manifest: f.artifact.Manifest, leaves: f.artifact.Leaves };
+  const serialized = () => JSON.stringify(exported);
+  const authority: ProofArtifactAuthority = { chainId: 8453n, game, battleId: 42n, binding: f.binding, releaseId: f.state.releaseId,
+    vkHash: f.artifact.Manifest.VKHash, inputHash: f.artifact.Manifest.InputHash, compressedProofHash: f.artifact.Manifest.ProofHash,
+    exportSha256: createHash("sha256").update(serialized()).digest("hex") };
+  const acquire = async () => ({ serialized: serialized(), authority });
+  const plan = () => readProofOperation(f.transport, game, 42n, 8453n, acquire, exportLimits);
+  return { ...f, exported, serialized, authority, acquire, operationPlan: plan };
+}
+test("frozen lowercase ExportEVM decoder preserves complete genuine historical proof bytes and compressed hash semantics", () => {
+  const f = exportedFixture();
+  const decoded = parseEVMArtifact(f.serialized(), exportLimits);
+  expect(decoded.proof).toHaveLength(770);
+  expect(String(decoded.proof)).toBe(f.exported.proof);
+  expect(decoded.manifest.ProofHash).not.toBe(createHash("sha256").update(Buffer.from(decoded.proof.slice(2), "hex")).digest("hex"));
+  const call = decodeFunctionData({ abi: proofDeliveryAbi, data: encodeFinal22Submission(42n, decoded.proof, decoded.public) });
+  expect(call.functionName).toBe("submitBattleProof");
+  expect(String(call.args?.[1])).toBe(f.exported.proof);
+  expect(Array.from(call.args?.[2] ?? [])).toEqual(f.exported.public.map(BigInt));
+  expect(Object.isFrozen(decoded.output.leaves[0])).toBe(true);
+  expect(() => parseEVMArtifact(JSON.stringify(f.artifact), exportLimits)).toThrow();
+});
+test("strict export rejects truncation aliases duplicate keys malformed proof scalar width and budgets", () => {
+  const f = exportedFixture(); const text = f.serialized();
+  for (const bad of [text.slice(0, -1), text + "\n", text.replace('"schema":', '"schema":"bad","schema":'),
+    text.replace('"schema":', '"Schema":'), text.replace('"leaves":', '"extra":1,"leaves":'),
+    text.replace(f.exported.proof, f.exported.proof.slice(0,-2)), text.replace(f.exported.proof, f.exported.proof.toUpperCase()),
+    text.replace('"Count":"1"', '"Count":"01"'), text.replace('"Count":"1"', '"Count":"4294967296"')])
+    expect(() => parseEVMArtifact(bad, exportLimits)).toThrow();
+  for (let i = 0; i < 22; i++) {
+    const changed = structuredClone(f.exported); changed.public[i] = "18446744073709551616";
+    expect(() => parseEVMArtifact(JSON.stringify(changed), exportLimits)).toThrow();
+  }
+  expect(() => parseEVMArtifact(text, { ...exportLimits, maxLeaves: 32 })).toThrow();
+  expect(() => parseEVMArtifact(text, { ...exportLimits, maxArtifactBytes: 32 })).toThrow();
+  expect(() => parseEVMArtifact(text, { ...exportLimits, maxArtifactBytes: 17 * 1024 * 1024 })).toThrow();
+});
+test("approved export plans submit then competitor acceptance resumes canonical 32+1 leaves across restart", async () => {
+  const f = exportedFixture(); f.state.unaccepted = true;
+  const submit = await f.operationPlan();
+  expect(decodeFunctionData({ abi: proofDeliveryAbi, data: submit!.data }).functionName).toBe("submitBattleProof");
+  expect(submit!.deliveryEnabled).toBe(false);
+  const identity = submit!.operationId;
+  f.state.blockHash = hash(2000n);
+  expect((await f.operationPlan())!.operationId).toBe(identity);
+  f.state.unaccepted = false;
+  const first = await f.operationPlan();
+  expect(first!.operationId).not.toBe(identity);
+  expect((decodeFunctionData({ abi: proofDeliveryAbi, data: first!.data }).args[1] as readonly unknown[]).length).toBe(32);
+  expect(JSON.parse(first!.membership).kind).toBe("proof-v1");
+  f.state.cursor = 32n;
+  const second = await f.operationPlan();
+  expect(JSON.parse(second!.membership).cursor).toBe("32");
+  expect((decodeFunctionData({ abi: proofDeliveryAbi, data: second!.data }).args[1] as readonly unknown[]).length).toBe(1);
+  expect(second!.operationId).not.toBe(first!.operationId);
+  expect((await readProofOperation(f.transport, game, 42n, 8453n, f.acquire, exportLimits))!.operationId).toBe(second!.operationId);
+  f.state.cursor = 33n; f.state.phase = 2; f.state.staged = 11;
+  expect(await f.operationPlan()).toBeUndefined();
+  expect(f.calls.every(c => !/send|sign|getTransactionCount/i.test(c.method))).toBe(true);
+  expect(reviewedProofProgressVersions).toEqual([]);
+});
+test("missing external metadata, wrong release/job, changed export, frozen member and reorg never authorize planning", async () => {
+  for (const key of ["binding", "releaseId", "vkHash", "inputHash", "compressedProofHash", "exportSha256"] as const) {
+    const f = exportedFixture();
+    const authority = { ...f.authority, [key]: key === "binding" || key === "releaseId" ? hash(999n) : "d".repeat(64) };
+    await expect(readProofOperation(f.transport, game, 42n, 8453n, async () => ({ serialized: f.serialized(), authority }), exportLimits)).rejects.toThrow();
+  }
+  const f = exportedFixture();
+  await expect(readProofOperation(f.transport, game, 42n, 8453n, async () => ({ serialized: f.serialized(), authority: undefined }), exportLimits)).rejects.toThrow("metadata unavailable");
+  f.exported.proof = "0x" + "00".repeat(384);
+  await expect(f.operationPlan()).rejects.toThrow("metadata mismatch");
+  const g = exportedFixture(); g.state.wrongMember = true;
+  await expect(g.operationPlan()).rejects.toThrow("member mismatch");
+  g.state.wrongMember = false; g.state.root = hash(999n);
+  await expect(g.operationPlan()).rejects.toThrow();
+  const h = exportedFixture(); h.state.reorgDuringRead = true;
+  await expect(h.operationPlan()).rejects.toThrow("canonical");
+  const j = exportedFixture();
+  await expect(readProofOperation(j.transport, game, 42n, 8453n, async () => {
+    j.state.blockHash = hash(999n); return j.acquire();
+  }, exportLimits)).rejects.toThrow();
+});
+
+test("trusted file digest cannot substitute for full suffix, canonical cursor or frozen ownership authentication", async () => {
+  for (const mutate of [
+    (f: ReturnType<typeof exportedFixture>) => { f.exported.leaves[32]!.Next = "0"; },
+    (f: ReturnType<typeof exportedFixture>) => { f.exported.leaves[0]!.Lost = "1"; },
+    (f: ReturnType<typeof exportedFixture>) => { f.exported.leaves[1]!.Source = "0"; },
+    (f: ReturnType<typeof exportedFixture>) => { f.exported.leaves.reverse(); },
+  ]) {
+    const f = exportedFixture(); mutate(f);
+    const authority = { ...f.authority, exportSha256: createHash("sha256").update(f.serialized()).digest("hex") };
+    await expect(readProofOperation(f.transport, game, 42n, 8453n, async () => ({ serialized: f.serialized(), authority }), exportLimits)).rejects.toThrow();
+  }
+  const f = exportedFixture(); f.state.corruptCursor = true;
+  await expect(f.operationPlan()).rejects.toThrow("cursor");
+  f.state.corruptCursor = false; f.state.cursor = 34n;
+  await expect(f.operationPlan()).rejects.toThrow();
+  const g = exportedFixture();
+  await expect(readProofOperation(g.transport, game, 42n, 8453n, g.acquire, { ...exportLimits, batchSize: 33 })).rejects.toThrow("batch");
+  await expect(readProofOperation(g.transport, game, 42n, 8453n, g.acquire, { ...exportLimits, maxLeaves: 32 })).rejects.toThrow("budget");
+});
+test("empty approved output still plans empty apply to authenticate tail; restart reorg resumes actual cursor", async () => {
+  const empty = exportedFixture(0);
+  const p = await empty.operationPlan();
+  const decoded = decodeFunctionData({ abi: proofDeliveryAbi, data: p!.data });
+  expect(decoded.functionName).toBe("applyProofBattleLeaves"); expect(decoded.args?.[1]).toEqual([]);
+  const f = exportedFixture(); f.state.cursor = 32n;
+  const old = await f.operationPlan();
+  f.state.cursor = 0n; f.state.blockHash = hash(5000n);
+  const reorg = await f.operationPlan();
+  expect(JSON.parse(reorg!.membership).cursor).toBe("0");
+  expect(reorg!.operationId).not.toBe(old!.operationId);
+});
+
+test("approved immutable file provider composes strict decoder canonical planning and backend wire across restart", async () => {
+  const f = exportedFixture(); f.state.unaccepted = true;
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "proof-provider-")));
+  const filename = proofArtifactBasename({ chainId: "8453", battleId: "42", game, binding: f.binding, releaseId: f.state.releaseId });
+  const options = { source: { directory, trust: "fixed-readonly-consumer-directory-and-immutable-ancestors" as const }, limits: exportLimits,
+    transport: f.transport, game, battleId: 42n, chainId: 8453n, authority: async () => f.authority };
+  let provider = await openProofFileProvider(options);
+  try {
+    // Publisher is NOT implemented here; fixture models final-name publication only.
+    await writeFile(join(directory, "unfinished.tmp"), f.serialized().slice(0,-1));
+    await expect(provider.plan()).rejects.toThrow();
+    await writeFile(join(directory, "unfinished.tmp"), f.serialized());
+    await rename(join(directory, "unfinished.tmp"), join(directory, filename));
+    const submit = await provider.plan();
+    expect(validateProofPlan(submit!, 8453, game).operationId).toBe(submit!.operationId);
+    expect(JSON.parse(submit!.membership).action).toBe("submit");
+    await provider.close();
+    await expect(provider.plan()).rejects.toThrow("closed");
+    provider = await openProofFileProvider(options); f.state.unaccepted = false; f.state.cursor = 32n;
+    const application = await provider.plan();
+    expect(validateProofPlan(application!, 8453, game).operationId).toBe(application!.operationId);
+    expect(JSON.parse(application!.membership).cursor).toBe("32");
+    f.state.paused = true; await expect(provider.plan()).rejects.toThrow("paused");
+    f.state.paused = false; f.state.ordering = false; await expect(provider.plan()).rejects.toThrow("ordering");
+  } finally { await provider.close(); await rm(directory, { recursive: true, force: true }); }
+});
+test("file provider never self-approves absent metadata or accepts stable partial/corrupt final export", async () => {
+  const f = exportedFixture();
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "proof-provider-reject-")));
+  const path = join(directory, proofArtifactBasename({ chainId: "8453", battleId: "42", game, binding: f.binding, releaseId: f.state.releaseId }));
+  let available = false;
+  const provider = await openProofFileProvider({ source: { directory, trust: "fixed-readonly-consumer-directory-and-immutable-ancestors" },
+    limits: exportLimits, transport: f.transport, game, battleId: 42n, chainId: 8453n, authority: async () => available ? f.authority : undefined });
+  try {
+    await writeFile(path, f.serialized());
+    await expect(provider.plan()).rejects.toThrow("metadata unavailable");
+    available = true;
+    await writeFile(path, f.serialized().slice(0,-1));
+    await expect(provider.plan()).rejects.toThrow();
+    await writeFile(path, Buffer.from([0xff,0xfe]));
+    await expect(provider.plan()).rejects.toThrow();
+    await writeFile(path, f.serialized().replace(f.exported.proof, "0x" + "ab".repeat(384)));
+    await expect(provider.plan()).rejects.toThrow("metadata mismatch");
+  } finally { await provider.close(); await rm(directory, { recursive: true, force: true }); }
 });
