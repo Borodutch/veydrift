@@ -104,17 +104,99 @@ export function supplyResourceShortfall(
   return resourceTotal(missing) > 0 ? missing : undefined;
 }
 
-export function buildBatchSupplyPlan({
-  mission = "transport",
-  targetCoordinates,
-  targetIsMoon = false,
-  requested,
-  selectedPlanetIds,
-  sourceCargoOverrides = {},
-  shipTypesBySource = {},
-  sources,
-  maxOrders = Number.MAX_SAFE_INTEGER,
-}: {
+/**
+ * Max is a total, not an extra shipment. Search the actual preview planner without
+ * changing its allocation order or the player's manual shipments. Feasibility is
+ * not monotone: increasing cargo can move another resource to a different source.
+ *
+ * Each evaluation also gives an interval of requests with the same fleet choices
+ * and affine cargo allocation. Skip that entire interval, rather than binary
+ * searching feasibility (or scanning every resource unit). This finds the largest
+ * total the existing greedy planner can deliver, not a different fleet optimizer.
+ */
+export function maximumBatchSupplyResource(
+  options: BatchSupplyOptions,
+  resource: keyof SupplyResources,
+): number {
+  const requested = normalizeSupplyResources(options.requested);
+  const baseline = buildBatchSupplyPlan(options);
+  const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
+  // A different Max must never hide an existing shortfall or displace its cargo.
+  // The clicked field itself may be oversized and is intentionally replaced.
+  const missionLimit = options.mission === "deploy" || options.targetIsMoon ? 1 : 15;
+  if (baseline.sourceLimitReached || otherResources.some(key => baseline.missing[key] > 0)) return requested[resource];
+
+  let upper = Math.min(Number.MAX_SAFE_INTEGER, options.sources.reduce((total, source) =>
+    total + (options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason
+      ? safeAmount(source.resources[resource]) : 0), 0));
+  // ponytail: work scales with planner branch/fleet-count boundaries, not stock
+  // units. If huge fleets make this slow, move this exact search off the UI thread.
+  while (upper >= 0) {
+    const range = new SupplyMaxRange(upper);
+    const plan = planBatchSupply({ ...options, requested: { ...requested, [resource]: upper } }, { resource, range });
+    // Within this traced interval every delivered amount is affine in the
+    // requested total. Intersect those inequalities and keep its largest value.
+    let lower = range.lower;
+    let maximum = upper;
+    if (plan.orders.length <= missionLimit) {
+      for (const key of ["metal", "crystal", "deuterium"] as const) {
+        const delivered = range.delivered[key];
+        const deficit = (key === resource ? upper : requested[key]) - delivered.value;
+        const slope = (key === resource ? 1 : 0) - delivered.slope;
+        if (slope > 0) maximum = Math.min(maximum, upper + Math.floor(-deficit / slope));
+        else if (slope < 0) lower = Math.max(lower, upper + Math.ceil(-deficit / slope));
+        else if (deficit > 0) maximum = -1;
+      }
+      if (maximum >= lower) return maximum;
+    }
+    upper = range.lower - 1;
+  }
+  return requested[resource];
+}
+
+type SupplyAmount = { value: number; slope: number };
+
+/**
+ * An amount at x is value + slope * (x - upper). Every branch narrows [lower,
+ * upper] so its outcome and chosen fleet stay constant as x decreases. Branches
+ * involving cargo must retain these bounds when changing the planner.
+ */
+class SupplyMaxRange {
+  lower = 0;
+  delivered = { metal: { value: 0, slope: 0 }, crystal: { value: 0, slope: 0 }, deuterium: { value: 0, slope: 0 } };
+  constructor(readonly upper: number) {}
+
+  // Only positive slopes can cross a lower bound when x decreases.
+  atLeast(amount: SupplyAmount, minimum: number) {
+    if (amount.slope > 0) this.lower = Math.max(this.lower, this.upper + Math.ceil((minimum - amount.value) / amount.slope));
+  }
+
+  atMost(amount: SupplyAmount, maximum: number) {
+    if (amount.slope < 0) this.lower = Math.max(this.lower, this.upper + Math.ceil((maximum - amount.value) / amount.slope));
+  }
+
+  min(left: SupplyAmount, right: SupplyAmount): SupplyAmount {
+    const difference = { value: left.value - right.value, slope: left.slope - right.slope };
+    if (left.value <= right.value) {
+      this.atMost(difference, 0);
+      return left;
+    }
+    this.atLeast(difference, 1);
+    return right;
+  }
+
+  positive(amount: SupplyAmount): boolean {
+    if (amount.value > 0) { this.atLeast(amount, 1); return true; }
+    this.atMost(amount, 0);
+    return false;
+  }
+}
+
+export function buildBatchSupplyPlan(options: BatchSupplyOptions): BatchSupplyPlan {
+  return planBatchSupply(options);
+}
+
+type BatchSupplyOptions = {
   mission?: SupplyMission;
   targetCoordinates: Coordinates;
   targetIsMoon?: boolean;
@@ -126,10 +208,26 @@ export function buildBatchSupplyPlan({
   /** Per-source eligibility. Missing sources use defaults; empty arrays exclude every type. */
   shipTypesBySource?: SupplyShipTypesBySource;
   maxOrders?: number;
-}): BatchSupplyPlan {
+};
+
+function planBatchSupply({
+  mission = "transport",
+  targetCoordinates,
+  targetIsMoon = false,
+  requested,
+  selectedPlanetIds,
+  sourceCargoOverrides = {},
+  shipTypesBySource = {},
+  sources,
+  maxOrders = Number.MAX_SAFE_INTEGER,
+}: BatchSupplyOptions, maxTrace?: { resource: keyof SupplyResources; range: SupplyMaxRange }): BatchSupplyPlan {
   const normalizedRequested = normalizeSupplyResources(requested);
   const remaining = { ...normalizedRequested };
   const delivered = emptySupplyResources();
+  const trace = maxTrace?.range;
+  const slopes = emptySupplyResources();
+  if (maxTrace) slopes[maxTrace.resource] = 1;
+  const amount = (key: keyof SupplyResources): SupplyAmount => ({ value: remaining[key], slope: slopes[key] });
   const orders: BatchSupplyOrder[] = [];
   const blockedSources: BatchSupplyPlan["blockedSources"] = [];
   // Prefer the shortest routes by default: they consume less fuel and arrive sooner. The UI still
@@ -153,7 +251,10 @@ export function buildBatchSupplyPlan({
       continue;
     }
     const manualCargo = sourceCargoOverrides[source.planetId];
-    if (resourceTotal(remaining) === 0 && manualCargo === undefined) continue;
+    const hasRemaining = trace
+      ? trace.positive({ value: resourceTotal(remaining), slope: resourceTotal(slopes) })
+      : resourceTotal(remaining) > 0;
+    if (!hasRemaining && manualCargo === undefined) continue;
 
     const requestedFromSource = manualCargo === undefined
       ? {
@@ -166,17 +267,26 @@ export function buildBatchSupplyPlan({
         crystal: Math.min(safeAmount(manualCargo.crystal), safeAmount(source.resources.crystal)),
         deuterium: Math.min(safeAmount(manualCargo.deuterium), safeAmount(source.resources.deuterium)),
       };
+    const cargoSlopes = emptySupplyResources();
+    if (trace && manualCargo === undefined) {
+      for (const key of ["metal", "crystal", "deuterium"] as const) {
+        cargoSlopes[key] = trace.min(amount(key), { value: safeAmount(source.resources[key]), slope: 0 }).slope;
+      }
+    }
     // A selected source with an explicit zero allocation does not need to launch. Check before
     // capacity capping so a real shipment with no usable cargo fleet still reaches the blocker path.
-    if (resourceTotal(requestedFromSource) === 0) continue;
+    if (trace
+      ? !trace.positive({ value: resourceTotal(requestedFromSource), slope: resourceTotal(cargoSlopes) })
+      : resourceTotal(requestedFromSource) === 0) continue;
     // A colony should contribute what it can carry, rather than being skipped just because the
     // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
     // the preview exactly matches the generated child missions.
     const cargo = capCargoToCapacity(
       requestedFromSource,
       maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels, targetIsMoon),
+      trace, cargoSlopes,
     );
-    const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon });
+    const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon, trace, cargoSlopes });
     if (!loadout) {
       blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
       continue;
@@ -193,9 +303,15 @@ export function buildBatchSupplyPlan({
     delivered.metal += loadout.cargo.metal;
     delivered.crystal += loadout.cargo.crystal;
     delivered.deuterium += loadout.cargo.deuterium;
-    remaining.metal = Math.max(0, remaining.metal - loadout.cargo.metal);
-    remaining.crystal = Math.max(0, remaining.crystal - loadout.cargo.crystal);
-    remaining.deuterium = Math.max(0, remaining.deuterium - loadout.cargo.deuterium);
+    for (const key of ["metal", "crystal", "deuterium"] as const) {
+      if (trace) {
+        trace.delivered[key].value += loadout.cargo[key];
+        trace.delivered[key].slope += cargoSlopes[key];
+        const difference = { value: loadout.cargo[key] - remaining[key], slope: cargoSlopes[key] - slopes[key] };
+        slopes[key] = -trace.min(difference, { value: 0, slope: 0 }).slope;
+      }
+      remaining[key] = Math.max(0, remaining[key] - loadout.cargo[key]);
+    }
   }
 
   return {
@@ -229,11 +345,16 @@ function maximumCargoCapacity(
   );
 }
 
-function capCargoToCapacity(cargo: SupplyResources, capacity: number): SupplyResources {
+function capCargoToCapacity(cargo: SupplyResources, capacity: number, trace?: SupplyMaxRange, slopes = emptySupplyResources()): SupplyResources {
   let remainingCapacity = Math.max(0, Math.trunc(capacity));
   const limited = emptySupplyResources();
+  let capacitySlope = 0;
   for (const resource of ["metal", "crystal", "deuterium"] as const) {
     const amount = Math.min(Math.max(0, Math.trunc(cargo[resource])), remainingCapacity);
+    if (trace) {
+      slopes[resource] = trace.min({ value: cargo[resource], slope: slopes[resource] }, { value: remainingCapacity, slope: capacitySlope }).slope;
+      capacitySlope -= slopes[resource];
+    }
     limited[resource] = amount;
     remainingCapacity -= amount;
   }
@@ -245,7 +366,11 @@ function supplyLoadoutForCargo({
   source,
   targetCoordinates,
   targetIsMoon,
+  trace,
+  cargoSlopes = emptySupplyResources(),
 }: {
+  trace?: SupplyMaxRange | undefined;
+  cargoSlopes?: SupplyResources;
   cargo: SupplyResources;
   source: BatchSupplySource;
   targetCoordinates: Coordinates;
@@ -258,7 +383,7 @@ function supplyLoadoutForCargo({
   // fleet after reducing deuterium cargo; this lets a metal/crystal shipment proceed even when the
   // player asked to transfer more deuterium than the origin can spare for fuel.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const ships = minimumCargoFleet(source.ships, resourceTotal(cargo), distance, source.driveLevels);
+    const ships = minimumCargoFleet(source.ships, resourceTotal(cargo), distance, source.driveLevels, trace, resourceTotal(cargoSlopes));
     if (!ships) return null;
     // The contract charges the same dispatch fuel for Transport and Deploy.
     // Deploy has no normal return leg, but does not halve fuel or refund it at arrival.
@@ -266,10 +391,14 @@ function supplyLoadoutForCargo({
     const availableDeuterium = safeAmount(source.resources.deuterium);
     const maxCargoDeuterium = Math.max(0, availableDeuterium - fuelCost);
     if (cargo.deuterium > maxCargoDeuterium) {
+      trace?.atLeast({ value: cargo.deuterium, slope: cargoSlopes.deuterium }, maxCargoDeuterium + 1);
       cargo.deuterium = maxCargoDeuterium;
+      cargoSlopes.deuterium = 0;
       continue;
     }
-    if (resourceTotal(cargo) === 0 || availableDeuterium < fuelCost) return null;
+    trace?.atMost({ value: cargo.deuterium, slope: cargoSlopes.deuterium }, maxCargoDeuterium);
+    const hasCargo = trace ? trace.positive({ value: resourceTotal(cargo), slope: resourceTotal(cargoSlopes) }) : resourceTotal(cargo) > 0;
+    if (!hasCargo || availableDeuterium < fuelCost) return null;
     return {
       cargo,
       ships,
@@ -285,14 +414,19 @@ function minimumCargoFleet(
   cargoTotal: number,
   distance: number,
   driveLevels: FleetDriveLevels,
+  trace?: SupplyMaxRange,
+  slope = 0,
 ): MissionShips | null {
-  if (cargoTotal <= 0) return null;
+  const total = { value: cargoTotal, slope };
+  if (trace ? !trace.positive(total) : cargoTotal <= 0) return null;
   const ships = emptyMissionShips();
   for (const candidate of cargoShipKeys) {
     const available = Math.max(0, Math.trunc(availableShips[candidate.key] ?? 0));
     if (available === 0) continue;
-    const requiredBefore = Math.max(0, cargoTotal - fleetMissionAvailableCargoCapacity(ships, distance, driveLevels));
-    if (requiredBefore <= 0) return ships;
+    const capacityBefore = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels);
+    const requiredBefore = Math.max(0, cargoTotal - capacityBefore);
+    if (requiredBefore <= 0) { trace?.atMost(total, capacityBefore); return ships; }
+    trace?.atLeast(total, capacityBefore + 1);
 
     // Start with the capacity-only estimate, then add single ships until the exact fuel-adjusted
     // capacity matches the contract formula. This remains bounded by the selected source inventory.
@@ -301,13 +435,20 @@ function minimumCargoFleet(
         : candidate.key === "recycler" ? 20_000
           : 7_500;
     ships[candidate.key] = Math.min(available, Math.max(1, Math.ceil(requiredBefore / assumedUnitCapacity)));
+    // Keep the capacity-only initial estimate constant as well as every exact
+    // fuel-adjusted comparison; mixed fleets can change fuel discontinuously.
+    trace?.atLeast(total, capacityBefore + (ships[candidate.key] - 1) * assumedUnitCapacity + 1);
+    if (ships[candidate.key] < available) trace?.atMost(total, capacityBefore + ships[candidate.key] * assumedUnitCapacity);
     while (
       ships[candidate.key] < available
       && fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) < cargoTotal
     ) {
+      trace?.atLeast(total, fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) + 1);
       ships[candidate.key] += 1;
     }
-    if (fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) >= cargoTotal) return ships;
+    const capacity = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels);
+    if (capacity >= cargoTotal) { trace?.atMost(total, capacity); return ships; }
+    trace?.atLeast(total, capacity + 1);
   }
   return fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) >= cargoTotal ? ships : null;
 }

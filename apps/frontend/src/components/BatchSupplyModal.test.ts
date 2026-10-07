@@ -8,6 +8,13 @@ import {
 const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", import.meta.url)).text();
 
 describe("Batch Supply source row presentation", () => {
+  test("Max shares all preview inputs and submission uses that same preview", () => {
+    expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
+    expect(batchSupplyModalSource).toContain("maximumBatchSupplyResource(planOptions, resource)");
+    expect(batchSupplyModalSource).toContain("onConfirm(plan.orders, shipTypesBySource, mission)");
+    expect(batchSupplyModalSource).not.toContain("Number.MAX_SAFE_INTEGER");
+  });
+
   test("prefills only the missing resources supplied by an action", () => {
     expect(supplyResourceInputValues({
       metal: 197_455,

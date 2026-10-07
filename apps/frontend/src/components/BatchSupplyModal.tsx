@@ -12,6 +12,7 @@ import {
 import {
   allowedSupplyShips,
   buildBatchSupplyPlan,
+  maximumBatchSupplyResource,
   defaultSupplyShipTypes,
   hasUsableSupplyCargoFleet,
   type SupplyShipKey,
@@ -151,7 +152,7 @@ export function BatchSupplyModal({
     crystal: inputAmount(requested.crystal),
     deuterium: inputAmount(requested.deuterium),
   }), [requested]);
-  const plan = useMemo(() => buildBatchSupplyPlan({
+  const planOptions = useMemo(() => ({
     mission,
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
     targetIsMoon,
@@ -162,6 +163,7 @@ export function BatchSupplyModal({
     sources,
     maxOrders: maxSources,
   }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
+  const plan = useMemo(() => buildBatchSupplyPlan(planOptions), [planOptions]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -182,16 +184,7 @@ export function BatchSupplyModal({
   const selectableSourceCount = Math.min(maxSources, sources.length);
 
   const setMax = (resource: keyof SupplyResources) => {
-    const maximum = buildBatchSupplyPlan({
-      mission,
-      targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
-      targetIsMoon,
-      requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
-      selectedPlanetIds: selected,
-      shipTypesBySource,
-      sources,
-      maxOrders: maxSources,
-    }).delivered[resource];
+    const maximum = maximumBatchSupplyResource(planOptions, resource);
     setRequested((current) => ({ ...current, [resource]: maximum === 0 ? "" : String(maximum) }));
   };
 
