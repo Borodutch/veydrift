@@ -1,0 +1,2 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/publisher	5.834s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/publisher/cmd/proof-publisher	2.084s
