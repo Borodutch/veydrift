@@ -1,0 +1,16 @@
+{
+  "Role": "output-pipeline",
+  "Values": [
+    "8725089850973820821544443436338025465234877126330408629045567443456129041913"
+  ],
+  "Hashes": {
+    "proof": "f36d486520e067b7296f86c642bdd83d0132e4ee9cfdb8a87afd48a52173c6f9",
+    "public": "fd4390225186432fc5c9f352142a75bd9da6dce8cfb00ea70c1836337a9c15e2",
+    "vk": "03687a256c002fef45db994965b9240e95af90232f9fb32e0f31d91524a8836b"
+  },
+  "CCSHash": "b4ef7d8cfd6cad778cc4b00f7eecd433cfbab762b59fe0055ec20bdcecf1214d",
+  "Dependencies": [
+    "output/stage-04/manifest.json",
+    "adapters/pipeline/manifest.json"
+  ]
+}

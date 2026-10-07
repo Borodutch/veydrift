@@ -2,6 +2,7 @@ import { decodeFunctionResult, encodeFunctionData, parseTransaction, toHex, type
 import { privateKeyToAccount } from "viem/accounts";
 
 import type { JsonRpcTransport } from "./transport";
+import { readAndPlanProofDelivery, type ProofDeliveryPlan } from "./proofDelivery";
 import { readMissionProgress, type MissionProgress } from "./progress";
 import { assertSignedTarget, signedAttempt, resumeSignedAttempt, PreBroadcastError, type AttemptStore } from "./transaction";
 
@@ -81,6 +82,8 @@ export type MissionResolver = {
   hasSignedAttempt?(missionId: string, leg: MissionLeg): boolean;
   acknowledgeReceipt?(missionId: string, leg: MissionLeg): void;
   missionProgress?(missionId: string): Promise<MissionProgress>;
+  /** Read-only preview. Never authorizes signing or consumes an ordinary mission checkpoint. */
+  planProofDelivery?(missionId: string, artifactJson: string, limits: { maxArtifactBytes: number; maxLeaves: number; batchSize?: number }): Promise<ProofDeliveryPlan>;
   /** Canonical post-receipt state; combat and missile settlement can require several receipts. */
   missionStatus?(missionId: string): Promise<CanonicalMissionStatus>;
   keeperAddress(): string;
@@ -179,6 +182,10 @@ export class ViemMissionResolver implements MissionResolver {
 
   keeperAddress(): string {
     return this.account.address;
+  }
+
+  planProofDelivery(missionId: string, artifactJson: string, limits: { maxArtifactBytes: number; maxLeaves: number; batchSize?: number }): Promise<ProofDeliveryPlan> {
+    return readAndPlanProofDelivery(this.transport, this.to, BigInt(missionId), BigInt(this.chainId), artifactJson, limits);
   }
 
   async missionProgress(missionId: string): Promise<MissionProgress> {

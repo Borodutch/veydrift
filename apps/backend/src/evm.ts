@@ -1,3 +1,5 @@
+import { proofBattleAcceptedTopic } from "./proofAcceptanceEvent";
+import { readProofBattleStatus, type ProofBattleStatus } from "./proofBattleProgress";
 import { decodeStagedBattleEvidence, stagedMemberShips, stagedReportTopicList, stagedReportTopics, type StagedBattleEvidence } from "./stagedBattleReport";
 import type * as Api from "../../../packages/api-types/src/index";
 import { solarSatelliteEnergy } from "@veydrift/universe";
@@ -666,6 +668,7 @@ export type FleetMissionSummary = {
   resolutionEligible?: boolean;
   // Canonical progress while a large Attack is resolving across gas-bounded transactions.
   // Zero rounds denotes staged preparation/sub-round work; omitted before combat and after settlement.
+  proofBattleProgress?: ProofBattleStatus;
   combatResolutionProgress?: {
     roundsCompleted: number;
     totalRounds: number;
@@ -711,6 +714,7 @@ export type CanonicalFleetMissionSnapshot = {
   fuelCost: string;
   cargo: Resources;
   randomnessRequestId: string | null;
+  proofBattleProgress?: ProofBattleStatus;
   combatResolutionProgress?: FleetMissionSummary["combatResolutionProgress"];
 };
 
@@ -2226,8 +2230,26 @@ export class VeydriftGameReader implements ChainReader {
     if (!/^0x[0-9a-fA-F]{192}$/.test(proof)) return false;
     const words = splitWords(proof);
     if (decodeUintWord(wordAt(words, 0)) !== 1n || decodeUintWord(wordAt(words, 2)) !== 1n) return false;
+    if (leg === "arrival" && !await this.isOrdinaryMissionResolutionAvailable(missionId)) return false;
     const result = await this.call(leg === "arrival" ? "0xde09e7cf" : "0xc2472852", [encodeUint(missionId)]);
     return result === "0x";
+  }
+
+  /** Successful resolve simulation is a no-op during proof waits. No paid polling there.
+   * Future proof-specific writers require an approved runtime and durable proof checkpoints. */
+  async isOrdinaryMissionResolutionAvailable(missionId: bigint, blockNumber?: bigint): Promise<boolean> {
+    try {
+      const result = await this.callContract(this.gameContractAddress, toFunctionSelector("stagedBattleProgress(uint256)"),
+        [encodeUint(missionId)], blockNumber === undefined ? "latest" : `0x${blockNumber.toString(16)}`);
+      if (!/^0x[0-9a-f]{192}$/i.test(result)) return false;
+      const phase = Number(decodeUintWord(wordAt(splitWords(result), 0)));
+      return phase !== 16 && phase !== 17;
+    } catch (error) {
+      // Explicit missing-selector revert alone supports a legacy deployment, not RPC failure.
+      if (error && typeof error === "object" && "data" in error && error.data === "0x"
+        && "message" in error && /revert/i.test(String(error.message))) return true;
+      throw error;
+    }
   }
 
   async isFleetChronologyOrderingReady(missionId: bigint, blockNumber?: bigint): Promise<boolean> {
@@ -2412,7 +2434,7 @@ export class VeydriftGameReader implements ChainReader {
       })));
     } catch { /* Older implementations have no staged getter. */ }
     const next = [...missions];
-    attackIndexes.forEach(({ mission, index }, resultIndex) => {
+    await Promise.all(attackIndexes.map(async ({ mission, index }, resultIndex) => {
       const result = results[resultIndex] ?? "0x";
       if (result.length < 130) return;
       const words = splitWords(result);
@@ -2420,12 +2442,35 @@ export class VeydriftGameReader implements ChainReader {
       const totalRounds = Number(decodeUintWord(wordAt(words, 1)));
       const staged = stagedResults[resultIndex] ?? "0x";
       const phase = staged.length >= 194 ? Number(decodeUintWord(wordAt(splitWords(staged), 0))) : 0;
+      // Exclusive proof waits are never legacy round progress. Re-read the complete proof
+      // observation at one canonical hash; failures expose unknown, never legacy percentages.
+      if ((phase > 0 && phase <= 5) || phase === 11 || phase === 12 || phase >= 14) {
+        try {
+          const proof = await readProofBattleStatus(this.transport, this.gameContractAddress, BigInt(mission.missionId));
+          if (proof) {
+            const { combatResolutionProgress: _legacy, ...base } = mission;
+            next[index] = { ...base, proofBattleProgress: proof };
+            return;
+          }
+          if (phase === 16 || phase === 17) {
+            const { combatResolutionProgress: _legacy, ...base } = mission;
+            next[index] = base; // canonical reread advanced/reorganized out of the observed wait
+            return;
+          }
+        } catch {
+          if (phase === 16 || phase === 17) {
+            const { combatResolutionProgress: _legacy, ...base } = mission;
+            next[index] = { ...base, proofBattleProgress: { state: "unavailable", stagedPhase: phase } };
+            return;
+          }
+        }
+      }
       // Phase 13 is terminal; 14/15 prepare protection before the first combat round.
       const stagedInProgress = (phase > 0 && phase < 13) || phase === 14 || phase === 15;
       next[index] = phase !== 13 && (roundsCompleted > 0 || stagedInProgress)
         ? { ...mission, combatResolutionProgress: { roundsCompleted, totalRounds } }
         : mission;
-    });
+    }));
     return next;
   }
 
@@ -5710,11 +5755,12 @@ export function isBattleReportLog(log: RpcLog): boolean {
 export function decodeCombatResolutionProgressLog(log: RpcLog): {
   missionId: string;
   roundsCompleted: number;
+  stagedPhase?: number;
   terminal?: boolean;
 } | null {
   if (topicAt(log.topics, 0) === combatStageAdvancedTopic) {
     const words = splitWords(log.data);
-    return { missionId: decodeUint(topicAt(log.topics, 1)).toString(), roundsCompleted: Number(decodeUintWord(wordAt(words, 2))), terminal: decodeUintWord(wordAt(words, 0)) === 13n };
+    return { missionId: decodeUint(topicAt(log.topics, 1)).toString(), stagedPhase: Number(decodeUintWord(wordAt(words, 0))), roundsCompleted: Number(decodeUintWord(wordAt(words, 2))), terminal: decodeUintWord(wordAt(words, 0)) === 13n };
   }
   if (topicAt(log.topics, 0) !== combatRoundResolvedTopic) return null;
   return {
@@ -6166,6 +6212,7 @@ const eventNamesByTopic = new Map<string, string>([
   [attackBattleResolvedTopic, "AttackBattleResolved"],
   [combatRoundResolvedTopic, "CombatRoundResolved"],
   [combatStageAdvancedTopic, "CombatStageAdvanced"],
+  [proofBattleAcceptedTopic, "ProofBattleAccepted"],
   [stagedReportTopics.snapshot, "CombatMemberSnapshot"],
   [stagedReportTopics.losses, "CombatMissionLosses"],
   [stagedReportTopics.repair, "CombatDefenseRepair"],

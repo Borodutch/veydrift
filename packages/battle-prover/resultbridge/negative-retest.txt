@@ -1,0 +1,4 @@
+=== RUN   TestNegativeSteps
+--- PASS: TestNegativeSteps (4.78s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/resultbridge	5.323s

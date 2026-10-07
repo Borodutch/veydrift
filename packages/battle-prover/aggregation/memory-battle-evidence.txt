@@ -1,0 +1,14 @@
+=== RUN   TestMemoryBattleRecursiveLeaves
+    tree_test.go:97: Groth16 compile constraints=112751 public=9 time=288.997667ms
+    tree_test.go:97: Groth16 compile constraints=119552 public=9 time=282.677375ms
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=2efed8a145286bde071642614e8cdbeb45dcea300fb66e694ad17fd591552446 time=20.03150875s
+    tree_test.go:110: Groth16 DEVELOPMENT setup vk_sha256=bacb0be6a91491c2b9452c07089bd1353b8e7a4f5f8b4a85e691a74f44030a39 time=21.122908209s
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.234138084s
+    tree_test.go:125: Groth16 proof start=<nil> end=<nil> count=<nil> time=1.2749495s
+    tree_test.go:97: Groth16 compile constraints=3449701 public=9 time=7.697561542s
+    memory_battle_test.go:68: ACTUAL MEMORYBATTLE: genuine Boot+Ready proofs authenticated by generated MemoryPair constraints; empty roster only, no outer proof
+    memory_battle_test.go:71: REJECTED actual leaf terminal result mutation (compiled recursive constraints, not generated negative proof)
+    memory_battle_test.go:72: REJECTED actual heterogeneous leaf replay (compiled recursive constraints, not generated negative proof)
+--- PASS: TestMemoryBattleRecursiveLeaves (55.34s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	55.933s

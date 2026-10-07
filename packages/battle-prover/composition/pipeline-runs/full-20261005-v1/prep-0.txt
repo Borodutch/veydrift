@@ -1,0 +1,43 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE prep-D0 constraints=2246440 public=3 time=4.2708655s
+    family_proof_test.go:40: MEMORY SETUP START prep-D0
+    family_proof_test.go:45: MEMORY SETUP DONE prep-D0 elapsed=8m45.429046667s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-000 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=532a7ddf8e8d1b12696dcbca879976c5cdfc7b2262997acf89c194ab24a34873 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.008893458s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-001 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=d6187b96672a5d7abf6a0f61dd7597c1bcabb03e0587d86657701e8d950dfd02 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.039203416s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-002 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=a84de685d947a2177d3e15e2c95e5b948338d61f21468fc5516e982a973eebeb vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.29144525s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-003 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=d2ae6cf763d470accec398ea80276e7fbf14441674bffa209a22d70f63f00828 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.198233541s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-004 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=35bd91450a58234d314e0ca6d42b604695ff07ed9abc0190fb970cd13a6eda8b vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.030430792s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-005 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=8d9f49a6c0afecf0ac04a4c3d81a0f8201d66b375612799ff95d676dda3801d3 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.082481417s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-006 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=77856b4eb4b4f52447215ace71ac66b8972c14dc7c8c69b0654962b5823547c1 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.031546542s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-007 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=f278aa4725cf7d607298ad114347113d87ec17cd22b2c02d3bf0f1e69d4b23af vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.882017458s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-008 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=be1512453eebdff64b080ba5450f0d462a21a3270f6e97bddb762b742ffcb7b0 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.035708916s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-009 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=978ad10116e130fa0ac833bc9c19fc75e7d1c8c02015caef0df05308458308d1 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.284600292s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-010 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=3d3fc8be8b43fbe0c973bed48b76051578f2032da4afb6f7d6de1340fe93765d vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.06603475s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-011 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=4d23169c30415d42e560925d986581b99eeb0daf9740ec4321b255a7db610793 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.901297791s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-012 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=97e8beeb77b4088e73b6ab4cf5fc1dc1780465562920d531d9e2efccb36855d8 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.965181333s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-013 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=5a16fddea680eca1d78aa113cd63bf4f9b87c8ae3d8caaac590d5edc9b7efefa vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.919118208s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-014 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=50e9e5bf537cc58bf1a65247e4b326461136faeda3b0063324ede8edc2d7055f vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.97912s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-015 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=493df326b74de633ca71b094551653ade0cfcfd35fef2a76e6fe0d5549e03456 vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=30.092500375s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/prep/stage-00/g00-D-016 id={Phase:0 Level:0 Kind:0 Arity:1} proof_sha256=883edc0482bcd5b9247a8534546c5b09bd4ea77852509f4607c3fb315b72e06e vk_sha256=65a64af3052ea2eff40eac09112534d508bedf89232e4b16b95f580b5efc4360 ccs_sha256=873f508f9a1ee4488ba86b50ff391f4f7344fef82482dc28bcb2f767178d9cfc time=29.952112458s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=prep stage=0 testHeight=5 groups=[17] elapsed=17m23.077379708s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1043.08s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1044.004s
+     1044.46 real      1971.67 user         5.14 sys
+          6841204736  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              449159  page reclaims
+                1147  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               68646  signals received
+               20936  voluntary context switches
+              203362  involuntary context switches
+          3702424644  instructions retired
+          1218429536  cycles elapsed
+            27411128  peak memory footprint

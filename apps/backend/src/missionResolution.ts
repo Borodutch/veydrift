@@ -27,6 +27,7 @@ import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReco
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
+import { proofExecutionCapability, validateProofPlan, reconcileProofReceipt, type ProofPlanProvider } from "./proofExecution";
 import { cancelResolverTransaction } from "./resolverCancellation";
 import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
@@ -808,7 +809,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady" | "isOrdinaryMissionResolutionAvailable">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -820,10 +821,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly randomnessEngineAddress?: Address,
     private readonly batchPolicy: MissionBatchPolicy = defaultMissionBatchPolicy
   ) {
-    if (this.publicClient && this.chain && this.reader.getCanonicalFleetMission) {
+    if (this.publicClient && this.chain) {
       const address = typeof this.sender === "string" ? this.sender : this.sender.address;
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
-        (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+        (hash, membership, stored, pass) => this.reconcilePreparedReceipt(hash, membership, stored, pass));
     }
   }
 
@@ -856,7 +857,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
     // Reconcile even when no indexed candidates remain: a mined batch can disappear from the
     // index before a process restarts, but its durable intent must still release the signer.
-    await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+    await this.transactionCoordinator.reconcilePrepared(chainId, account.address, (hash, membership, stored, pass) => this.reconcilePreparedReceipt(hash, membership, stored, pass));
     if (!Number.isInteger(this.batchPolicy.maxItems) || this.batchPolicy.maxItems < 1 || this.batchPolicy.maxItems > 32
       || this.batchPolicy.maxFeeWei <= 0n || this.batchPolicy.maxFeeWei > 400_000_000_000_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
@@ -914,7 +915,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           assertBeforeBroadcast: () => assertBatchQuoteFresh(fees.provenance),
           broadcast: () => client.sendRawTransaction({ serializedTransaction: signed }) };
       },
-      reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),
+      reconcilePrepared: (hash, membership, stored, pass) => this.reconcilePreparedReceipt(hash, membership, stored, pass),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: async () => false, // partial progress may require another bounded tx
       confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
@@ -945,9 +946,115 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
         continue;
       }
+      if (item.leg === "arrival" && this.reader.isOrdinaryMissionResolutionAvailable
+        && !await this.reader.isOrdinaryMissionResolutionAvailable(BigInt(item.missionId), blockNumber)) {
+        exclusions.push({ item, reason: "proof-wait" });
+        continue;
+      }
       fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
     }
     return fresh.sort(compareBatchLegs);
+  }
+
+  /** No public arbitrary-calldata sender. Capability is fixed off before provider/RPC/allocation. */
+  async resolveProofOperation(provider: ProofPlanProvider): Promise<{ hash: string | null; deliveryEnabled: false; gaps: readonly string[] }> {
+    const capability = proofExecutionCapability();
+    if (!capability.deliveryEnabled) return { hash: null, ...capability };
+    return { hash: await this.executeProofOperation(provider), ...capability };
+  }
+
+  /** Internal, unconnected execution seam for coordinator fixtures and later reviewed capability.
+   * It receives only the keeper's immutable proof plan, never a general transaction request. */
+  private async executeProofOperation(provider: ProofPlanProvider): Promise<Hex | null> {
+    if (typeof this.sender === "string" || !this.publicClient || !this.chain) throw new Error("proof delivery requires existing local resolver");
+    const account = this.sender, client = this.publicClient, chainId = this.chain.id;
+    // Reconcile retained hashes even if the provider now reports competitor acceptance/no action.
+    // This is receipt-only: it cannot reconstruct, sign or resend stale calldata.
+    await this.reconcileProofOperations();
+    const first = await provider();
+    if (!first) return null;
+    const initial = validateProofPlan(first, chainId, this.gameAddress);
+    const fresh = async () => {
+      if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
+      const next = await provider();
+      if (!next) throw new Error("proof plan changed or completed");
+      const current = validateProofPlan(next, chainId, this.gameAddress);
+      if (current.membership !== initial.membership || current.operationId !== initial.operationId
+        || current.data !== initial.data || current.to !== initial.to) throw new Error("proof plan identity changed");
+      const [canonical, latest] = await Promise.all([
+        client.getBlock({ blockNumber: current.blockNumber }), client.getBlock({ blockTag: "latest" })
+      ]);
+      if (canonical.hash !== current.blockHash || latest.hash !== current.blockHash || latest.number !== current.blockNumber)
+        throw new Error("proof plan block changed");
+      return current;
+    };
+    await fresh(); // before nonce allocation
+    return this.transactionCoordinator.submit({
+      chainId, address: account.address, operationId: initial.operationId,
+      getTransactionCount: blockTag => client.getTransactionCount({ address: account.address, blockTag }),
+      submit: async () => { throw new Error("proof requires persisted preparation"); },
+      prepare: async (nonce, signing) => {
+        let current = await fresh();
+        const quote = await quoteResolverGas(client, { chainId, dataBytes: (current.data.length - 2) / 2, gas: fleetMissionResolutionGas,
+          expectedBlock: { number: current.blockNumber, hash: current.blockHash } });
+        const quoteBlockHash = current.blockHash;
+        const simulate = async () => {
+          await client.call({ account: account.address, to: current.to, data: current.data, nonce, value: 0n,
+            gas: quote.gas, maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+            blockNumber: current.blockNumber });
+          const block = await client.getBlock({ blockNumber: current.blockNumber });
+          if (block.hash !== current.blockHash) throw new Error("proof simulation block changed");
+          quote.assertFresh();
+        };
+        current = await fresh();
+        if (current.blockHash !== quoteBlockHash) throw new Error("proof fee block changed");
+        await simulate();
+        const signed = await signing.sign(initial.membership, () => {
+          quote.assertFresh();
+          return account.signTransaction({ type: "eip1559", chainId, to: current.to, data: current.data,
+            nonce, value: 0n, gas: quote.gas, maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas });
+        });
+        return { hash: keccak256(signed), membership: initial.membership,
+          validateBeforeBroadcast: async () => {
+            current = await fresh();
+            if (current.blockHash !== quoteBlockHash) throw new Error("proof fee block changed");
+            await simulate();
+          },
+          assertBeforeBroadcast: quote.assertFresh,
+          broadcast: () => client.sendRawTransaction({ serializedTransaction: signed }) };
+      },
+      reconcilePrepared: (hash, membership, stored, pass) => this.reconcilePreparedReceipt(hash, membership, stored, pass),
+      isConfirmedCanonical: async hash => {
+        const receipt = await client.getTransactionReceipt({ hash });
+        const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+        // Never return false: the shared coordinator would retire this immutable
+        // proof checkpoint and allocate again. A reorg requires explicit recovery.
+        if (receipt.transactionHash !== hash || !["success", "reverted"].includes(receipt.status)
+          || !block.hash || block.hash !== receipt.blockHash)
+          throw new Error("proof confirmed receipt is not canonical; explicit recovery required");
+        // Reverted inclusion also consumes this immutable attempt.
+        return true;
+      },
+      // Every proof cursor/data has its own identity: a mined checkpoint is never sent twice.
+      isOperationComplete: async () => true,
+      confirm: async hash => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
+      // Deliberately no replacement/cancellation or retained signed-byte replay.
+    });
+  }
+
+  async reconcileProofOperations(): Promise<void> {
+    if (!this.publicClient || !this.chain) throw new Error("proof receipt client unavailable");
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    await this.transactionCoordinator.reconcilePrepared(this.chain.id, address,
+      (hash, membership, stored, pass) => this.reconcilePreparedReceipt(hash, membership, stored, pass));
+  }
+
+  private reconcilePreparedReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt> {
+    // Preserve historical batch arrays byte-for-byte; unknown tagged operations fail closed.
+    const parsed: unknown = JSON.parse(membership);
+    return Array.isArray(parsed) ? this.reconcileBatchReceipt(hash, membership, stored, pass)
+      : reconcileProofReceipt(this.publicClient!, hash, membership, stored, pass, this.chain!.id, this.gameAddress);
   }
 
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
@@ -1065,6 +1172,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
       if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
+      }
+      if (functionName === "resolveFleetMission" && this.reader.isOrdinaryMissionResolutionAvailable
+        && !await this.reader.isOrdinaryMissionResolutionAvailable(BigInt(missionId))) {
+        throw new Error("proof wait: ordinary paid resolution unavailable");
       }
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
       // the exact funded entrypoint at the exact capped gas under the nonce lease before both

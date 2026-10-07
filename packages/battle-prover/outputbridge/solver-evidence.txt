@@ -1,0 +1,166 @@
+=== RUN   TestFullWidthCheckpointAndOverflow
+    boundaries_test.go:17: *outputbridge.Step constraints=649222 public=6
+--- PASS: TestFullWidthCheckpointAndOverflow (2.94s)
+=== RUN   TestIndependentOracleAndSolidityABI
+    oracle_test.go:48: binding=0x96c8730c05585ddb230917c200d884196e9313fd14db0ec2ff49f1851793f2b7 root=0x21fe8c470d38b24fb90a25ee65cd5b38b97a5e59abc5432056737b3e672e103f tail=0x36136de6e8b45e48e10583f5294f2adec1380c9c0ad4d0deb2ce81ae4f745802 rows=3
+--- PASS: TestIndependentOracleAndSolidityABI (1.07s)
+=== RUN   TestNativeFixture
+--- PASS: TestNativeFixture (1.34s)
+=== RUN   TestOutputSolvers
+=== RUN   TestOutputSolvers/0
+    outputbridge_test.go:21: *outputbridge.Step constraints=120309 public=6
+=== RUN   TestOutputSolvers/0/changed-state
+=== RUN   TestOutputSolvers/0/root
+=== RUN   TestOutputSolvers/0/chain-binding
+=== RUN   TestOutputSolvers/0/terminal-claim
+=== RUN   TestOutputSolvers/1
+    outputbridge_test.go:21: *outputbridge.Step constraints=148061 public=6
+=== RUN   TestOutputSolvers/1/terminal-claim
+=== RUN   TestOutputSolvers/1/changed-state
+=== RUN   TestOutputSolvers/1/phase-restart
+=== RUN   TestOutputSolvers/1/root
+=== RUN   TestOutputSolvers/1/chain-binding
+=== RUN   TestOutputSolvers/2
+    outputbridge_test.go:21: *outputbridge.Step constraints=649222 public=6
+=== RUN   TestOutputSolvers/2/field-alias
+=== RUN   TestOutputSolvers/2/phase-restart
+=== RUN   TestOutputSolvers/2/skip-zero-loss-member
+=== RUN   TestOutputSolvers/2/loss-overflow
+=== RUN   TestOutputSolvers/2/wrong-cohort
+=== RUN   TestOutputSolvers/2/chain-binding
+=== RUN   TestOutputSolvers/2/terminal-claim
+=== RUN   TestOutputSolvers/2/wrong-loss
+=== RUN   TestOutputSolvers/2/wrong-side
+=== RUN   TestOutputSolvers/2/wrong-unit
+=== RUN   TestOutputSolvers/2/wrong-owner
+=== RUN   TestOutputSolvers/2/owner-overflow
+=== RUN   TestOutputSolvers/2/suffix
+=== RUN   TestOutputSolvers/2/root
+=== RUN   TestOutputSolvers/2/wrong-source
+=== RUN   TestOutputSolvers/2/full-width-cursor-gap
+=== RUN   TestOutputSolvers/2/changed-state
+=== RUN   TestOutputSolvers/2/zero-quantity
+=== RUN   TestOutputSolvers/2/survivor-overflow
+=== RUN   TestOutputSolvers/2/limb-alias
+=== RUN   TestOutputSolvers/3
+    outputbridge_test.go:21: *outputbridge.Step constraints=151968 public=6
+=== RUN   TestOutputSolvers/3/changed-state
+=== RUN   TestOutputSolvers/3/phase-restart
+=== RUN   TestOutputSolvers/3/root
+=== RUN   TestOutputSolvers/3/chain-binding
+=== RUN   TestOutputSolvers/3/terminal-claim
+=== RUN   TestOutputSolvers/4
+    outputbridge_test.go:21: *outputbridge.Step constraints=362912 public=6
+=== RUN   TestOutputSolvers/4/changed-state
+=== RUN   TestOutputSolvers/4/root
+=== RUN   TestOutputSolvers/4/chain-binding
+=== RUN   TestOutputSolvers/4/terminal-claim
+=== RUN   TestOutputSolvers/4/wrong-cohort-output
+=== RUN   TestOutputSolvers/4/wrong-tail
+=== RUN   TestOutputSolvers/4/phase-restart
+=== RUN   TestOutputSolvers/4/incomplete-members
+=== RUN   TestOutputSolvers/4/changed-report
+=== RUN   TestOutputSolvers/4/changed-complete-result
+--- PASS: TestOutputSolvers (9.84s)
+    --- PASS: TestOutputSolvers/0 (0.83s)
+        --- PASS: TestOutputSolvers/0/changed-state (0.00s)
+        --- PASS: TestOutputSolvers/0/root (0.00s)
+        --- PASS: TestOutputSolvers/0/chain-binding (0.17s)
+        --- PASS: TestOutputSolvers/0/terminal-claim (0.00s)
+    --- PASS: TestOutputSolvers/1 (1.08s)
+        --- PASS: TestOutputSolvers/1/terminal-claim (0.00s)
+        --- PASS: TestOutputSolvers/1/changed-state (0.00s)
+        --- PASS: TestOutputSolvers/1/phase-restart (0.00s)
+        --- PASS: TestOutputSolvers/1/root (0.18s)
+        --- PASS: TestOutputSolvers/1/chain-binding (0.18s)
+    --- PASS: TestOutputSolvers/2 (3.08s)
+        --- PASS: TestOutputSolvers/2/field-alias (0.00s)
+        --- PASS: TestOutputSolvers/2/phase-restart (0.00s)
+        --- PASS: TestOutputSolvers/2/skip-zero-loss-member (0.00s)
+        --- PASS: TestOutputSolvers/2/loss-overflow (0.00s)
+        --- PASS: TestOutputSolvers/2/wrong-cohort (0.00s)
+        --- PASS: TestOutputSolvers/2/chain-binding (0.05s)
+        --- PASS: TestOutputSolvers/2/terminal-claim (0.01s)
+        --- PASS: TestOutputSolvers/2/wrong-loss (0.00s)
+        --- PASS: TestOutputSolvers/2/wrong-side (0.01s)
+        --- PASS: TestOutputSolvers/2/wrong-unit (0.01s)
+        --- PASS: TestOutputSolvers/2/wrong-owner (0.00s)
+        --- PASS: TestOutputSolvers/2/owner-overflow (0.00s)
+        --- PASS: TestOutputSolvers/2/suffix (0.00s)
+        --- PASS: TestOutputSolvers/2/root (0.42s)
+        --- PASS: TestOutputSolvers/2/wrong-source (0.00s)
+        --- PASS: TestOutputSolvers/2/full-width-cursor-gap (0.01s)
+        --- PASS: TestOutputSolvers/2/changed-state (0.01s)
+        --- PASS: TestOutputSolvers/2/zero-quantity (0.00s)
+        --- PASS: TestOutputSolvers/2/survivor-overflow (0.00s)
+        --- PASS: TestOutputSolvers/2/limb-alias (0.00s)
+    --- PASS: TestOutputSolvers/3 (1.10s)
+        --- PASS: TestOutputSolvers/3/changed-state (0.00s)
+        --- PASS: TestOutputSolvers/3/phase-restart (0.00s)
+        --- PASS: TestOutputSolvers/3/root (0.18s)
+        --- PASS: TestOutputSolvers/3/chain-binding (0.18s)
+        --- PASS: TestOutputSolvers/3/terminal-claim (0.00s)
+    --- PASS: TestOutputSolvers/4 (2.39s)
+        --- PASS: TestOutputSolvers/4/changed-state (0.00s)
+        --- PASS: TestOutputSolvers/4/root (0.36s)
+        --- PASS: TestOutputSolvers/4/chain-binding (0.02s)
+        --- PASS: TestOutputSolvers/4/terminal-claim (0.18s)
+        --- PASS: TestOutputSolvers/4/wrong-cohort-output (0.00s)
+        --- PASS: TestOutputSolvers/4/wrong-tail (0.00s)
+        --- PASS: TestOutputSolvers/4/phase-restart (0.00s)
+        --- PASS: TestOutputSolvers/4/incomplete-members (0.00s)
+        --- PASS: TestOutputSolvers/4/changed-report (0.19s)
+        --- PASS: TestOutputSolvers/4/changed-complete-result (0.19s)
+=== RUN   TestChunkRestartCoverage
+    outputbridge_test.go:117: *outputbridge.links constraints=4 public=1
+    outputbridge_test.go:118: *outputbridge.links constraints=334 public=1
+--- PASS: TestChunkRestartCoverage (0.99s)
+=== RUN   TestActualRawQualificationAndPipelineLinks
+    outputbridge_test.go:179: *outputbridge.linking constraints=80984 public=1
+=== RUN   TestActualRawQualificationAndPipelineLinks/raw-result
+=== RUN   TestActualRawQualificationAndPipelineLinks/raw-prefix
+=== RUN   TestActualRawQualificationAndPipelineLinks/qualification-context
+=== RUN   TestActualRawQualificationAndPipelineLinks/qualification-input
+=== RUN   TestActualRawQualificationAndPipelineLinks/chain-record
+=== RUN   TestActualRawQualificationAndPipelineLinks/root
+=== RUN   TestActualRawQualificationAndPipelineLinks/count
+=== RUN   TestActualRawQualificationAndPipelineLinks/round
+=== RUN   TestActualRawQualificationAndPipelineLinks/survivors
+=== RUN   TestActualRawQualificationAndPipelineLinks/outcome
+=== RUN   TestActualRawQualificationAndPipelineLinks/report
+=== RUN   TestActualRawQualificationAndPipelineLinks/complete
+=== RUN   TestActualRawQualificationAndPipelineLinks/limb
+--- PASS: TestActualRawQualificationAndPipelineLinks (1.18s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/raw-result (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/raw-prefix (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/qualification-context (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/qualification-input (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/chain-record (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/root (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/count (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/round (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/survivors (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/outcome (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/report (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/complete (0.00s)
+    --- PASS: TestActualRawQualificationAndPipelineLinks/limb (0.00s)
+=== RUN   TestActualAttributionStreams
+    outputbridge_test.go:219: *attribution.Step constraints=79628 public=6
+    outputbridge_test.go:219: *attribution.Step constraints=63287 public=6
+    outputbridge_test.go:219: *attribution.Step constraints=80127 public=6
+    outputbridge_test.go:219: *attribution.Step constraints=137899 public=6
+--- PASS: TestActualAttributionStreams (2.13s)
+=== RUN   TestLinkedQualificationSolver
+    outputbridge_test.go:233: *qualification.LinkedCircuit constraints=1184815 public=8
+--- PASS: TestLinkedQualificationSolver (3.46s)
+=== RUN   TestActualRawJournalSolvers
+    upstream_test.go:15: *rawbridge.Step constraints=1052086 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=1504917 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=1205867 public=6
+    upstream_test.go:15: *rawbridge.Step constraints=298101 public=6
+--- PASS: TestActualRawJournalSolvers (16.35s)
+=== RUN   TestActualReportSolvers
+    upstream_test.go:27: *resultbridge.ReportStep constraints=293880 public=8
+--- PASS: TestActualReportSolvers (2.83s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/outputbridge	43.197s

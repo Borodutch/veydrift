@@ -250,6 +250,28 @@ export function isMissionQueued(mission: FleetMissionSummary): boolean {
   return (mission.status === "Returning" || mission.status === "Recalled") && mission.asOfNow?.returned === true;
 }
 
+// Proof application counts are unit-result entries, not ships, fleets, rounds or a battle percentage.
+// Authoritative lifecycle changes win over a retained arrival proof record.
+export function proofBattlePresentation(mission: FleetMissionSummary): { label: string; detail: string; counts?: string } | undefined {
+  const progress = mission.proofBattleProgress;
+  if (!progress || mission.status !== "Outbound") return undefined;
+  switch (progress.state) {
+    case "preparing": return { label: "Preparing battle", detail: "The battle is being prepared. Its outcome is not yet available." };
+    case "randomness-wait": return { label: "Battle pending", detail: "Waiting for battle randomness. Its outcome is not yet available." };
+    case "proving": return { label: "Calculating battle", detail: "The battle result is being calculated. Its outcome is not yet available." };
+    case "applying": {
+      const { nextIndex, memberCount } = progress;
+      const validCounts = typeof nextIndex === "string" && /^(0|[1-9][0-9]*)$/.test(nextIndex)
+        && typeof memberCount === "string" && /^(0|[1-9][0-9]*)$/.test(memberCount)
+        && BigInt(memberCount) > 0n && BigInt(nextIndex) <= BigInt(memberCount);
+      return { label: "Updating battle results", detail: "Battle results are being applied. Final settlement is still pending.",
+        ...(validCounts ? { counts: "Unit results applied: " + nextIndex + " of " + memberCount } : {}) };
+    }
+    case "economics": return { label: "Settling battle", detail: "Battle settlement is in progress. Final results are not yet available." };
+    default: return { label: "Battle status unavailable", detail: "Battle progress is temporarily unavailable. No final result is confirmed." };
+  }
+}
+
 // Staged battles prepare before round 1, so zero completed rounds is preparation, not "0/6".
 export function combatProgressLabel(progress: { roundsCompleted: number; totalRounds: number }): string {
   return progress.roundsCompleted === 0 ? "Preparing battle" : "Battle in progress";

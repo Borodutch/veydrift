@@ -1,0 +1,36 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE raw-B1 constraints=3367681 public=3 time=6.69583225s
+    family_proof_test.go:40: MEMORY SETUP START raw-B1
+    family_proof_test.go:45: MEMORY SETUP DONE raw-B1 elapsed=12m28.610409958s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-B-000 id={Phase:5 Level:1 Kind:0 Arity:2} proof_sha256=8fc65cf056747b6aea1cada0bb11af2d13a033dd4d4b52d7649d035914b7637b vk_sha256=a69f8e3cbe6758904a8b2f3fb20a32ea297d5eca019a2760806832aaf74bdf79 ccs_sha256=a9acd6523148624532da1d7373564dcc866c7e5976c5e94084bcf45f04743ba1 time=39.406754334s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-B-001 id={Phase:5 Level:1 Kind:0 Arity:2} proof_sha256=5048a8283199176f7de659c1c2a470b1dbc2da84652adf970d392c344584437d vk_sha256=a69f8e3cbe6758904a8b2f3fb20a32ea297d5eca019a2760806832aaf74bdf79 ccs_sha256=a9acd6523148624532da1d7373564dcc866c7e5976c5e94084bcf45f04743ba1 time=39.473481459s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-B-002 id={Phase:5 Level:1 Kind:0 Arity:2} proof_sha256=df643fac1d8a2d1240408ed4f3955fbdac38934fa6668616f1f7a46d4d41098b vk_sha256=a69f8e3cbe6758904a8b2f3fb20a32ea297d5eca019a2760806832aaf74bdf79 ccs_sha256=a9acd6523148624532da1d7373564dcc866c7e5976c5e94084bcf45f04743ba1 time=39.3351315s
+    family_proof_test.go:37: COMPILE raw-D1 constraints=2216185 public=3 time=4.122766834s
+    family_proof_test.go:40: MEMORY SETUP START raw-D1
+    family_proof_test.go:45: MEMORY SETUP DONE raw-D1 elapsed=8m52.899033084s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-D-000 id={Phase:5 Level:1 Kind:0 Arity:1} proof_sha256=5316a10b7c4e071864e60643c84178895d658ff7b1a0aed5333eb033a4ccf7ea vk_sha256=5a11bb76d27cb9cc3e3ddef5c885ab1bc3100b676820b994acc4e3e2f58e34f7 ccs_sha256=2ff23bda56d675542724c2fc7108221b6c703d03d8b9e4e66c81a40a54d6878b time=29.566511041s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-D-001 id={Phase:5 Level:1 Kind:0 Arity:1} proof_sha256=502ccfa9b14886f037ba3d56176fa0d13fbb640b6e7c2708ac0bc6a114de99de vk_sha256=5a11bb76d27cb9cc3e3ddef5c885ab1bc3100b676820b994acc4e3e2f58e34f7 ccs_sha256=2ff23bda56d675542724c2fc7108221b6c703d03d8b9e4e66c81a40a54d6878b time=29.638400583s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-D-002 id={Phase:5 Level:1 Kind:0 Arity:1} proof_sha256=8ed0e523d1033b0347c0ea2da6ccaac4b07de03e3c9395e8a4660d371767e4ce vk_sha256=5a11bb76d27cb9cc3e3ddef5c885ab1bc3100b676820b994acc4e3e2f58e34f7 ccs_sha256=2ff23bda56d675542724c2fc7108221b6c703d03d8b9e4e66c81a40a54d6878b time=29.6410035s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-01/g00-D-003 id={Phase:5 Level:1 Kind:0 Arity:1} proof_sha256=532b964603d7d63870446dc526c0bf99e4f58c317fb3157f6362a332b136eb94 vk_sha256=5a11bb76d27cb9cc3e3ddef5c885ab1bc3100b676820b994acc4e3e2f58e34f7 ccs_sha256=2ff23bda56d675542724c2fc7108221b6c703d03d8b9e4e66c81a40a54d6878b time=29.442036041s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=raw stage=1 testHeight=3 groups=[7] elapsed=25m31.458586917s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1531.46s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1532.366s
+     1532.80 real      2826.22 user         6.45 sys
+          8220409856  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              532062  page reclaims
+                1147  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               99974  signals received
+               48726  voluntary context switches
+              277393  involuntary context switches
+          3748355650  instructions retired
+          1300008644  cycles elapsed
+            28754616  peak memory footprint

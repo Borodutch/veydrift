@@ -319,11 +319,12 @@ const expectedRandomnessStorage = [
   ["_queuedCommitmentHead", "8", 0],
   ["_queuedCommitmentTail", "9", 0],
   ["_recoveryCommitmentBlocks", "10", 0],
+  ["battleRequestPolicy", "11", 0],
 ];
 const actualRandomnessStorage = randomnessStorage.map(({label, slot, offset}) => [label, slot, offset]);
 if (JSON.stringify(actualRandomnessStorage) !== JSON.stringify(expectedRandomnessStorage)) {
-  console.error("RandomnessEngine storage layout is not the reviewed v1-prefix + FIFO append layout");
+  console.error("RandomnessEngine storage layout is not the reviewed v1-prefix + FIFO + battle-policy append layout");
   process.exit(1);
 }
 
-console.log("RandomnessEngine storage layout preserves the live v1 prefix and appended recovery state");
+console.log("RandomnessEngine storage layout preserves the live v1 prefix, recovery state and appended battle policy");

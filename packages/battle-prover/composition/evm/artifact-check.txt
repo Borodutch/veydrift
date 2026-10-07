@@ -1,0 +1,10 @@
+public/Verifier.sol: OK
+public/fixture.json: OK
+public/verifier.abi.json: OK
+public/verifier.runtime.hex: OK
+public/verifier.init.hex: OK
+test/SettlementVerifier.t.sol: OK
+foundry.toml: OK
+check_provenance.py: OK
+summarize.py: OK
+run.sh: OK

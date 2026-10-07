@@ -54,6 +54,48 @@ export type PlayerQueues<Wallet extends string = string> = {
   research: QueueState | null;
 };
 
+/** Observed proof lifecycle, not prover availability, acceptance evidence or percent complete.
+ * Absent for legacy/unobserved missions. Economics is NOT terminal settlement.
+ * Optional block identity is present for canonical getter observations, absent for event-only
+ * or unavailable observations. Application cursors are decimal strings, never JS numbers.
+ */
+export type ProofBattleProgress = {
+  state: "preparing" | "randomness-wait" | "proving" | "applying" | "economics" | "unavailable";
+  stagedPhase: number;
+  blockNumber?: string;
+  blockHash?: string;
+  nextIndex?: string;
+  memberCount?: string;
+};
+
+/** Canonical event archive, not terminal battle/report or release authorization. */
+export type ProofBattleAcceptance = {
+  battleId: string; binding: string; releaseId: string; root: string; memberCount: string;
+  rounds: number; finalTotals: [string, string]; outcome: number; version: number;
+  address: string; blockNumber: string; blockHash: string; transactionHash: string; logIndex: string;
+};
+
+/** Runtime FinalArtifact serialized fields; Proof is compressed gnark/base64, NOT EVM calldata.
+ * Leaves/manifest are untrusted until compared with the pinned accepted summary and root. */
+export type FinalBattleArtifact = {
+  Schema: "raw-linked-settlement22-v3";
+  Manifest: { VKHash: string; InputHash: string; ProofHash: string; ChainRecord: string; OutputRoot: string;
+    MemberCount: string; Rounds: string; FinalSide0: string; FinalSide1: string; Outcome: string };
+  Public: string[]; Proof: string;
+  Leaves: Array<{ Index: string; Cohort: string; Owner: string; Source: string; Side: string;
+    Unit: string; Count: string; Lost: string; Survivors: string; Next: string }>;
+};
+
+/** Verified native EVM export wire; ProofHash still identifies COMPRESSED transport bytes.
+ * File provenance and authoritative job/release metadata must be checked separately. */
+export type EVMFinalBattleArtifact = {
+  schema: FinalBattleArtifact["Schema"];
+  proof: string;
+  public: string[];
+  manifest: FinalBattleArtifact["Manifest"];
+  leaves: FinalBattleArtifact["Leaves"];
+};
+
 export type MissionArchiveEntry<Mission, Report> =
   | { kind: "mission"; mission: Mission; report?: Report | undefined }
   | { kind: "battleReport"; report: Report };

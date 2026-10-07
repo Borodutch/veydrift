@@ -1,0 +1,32 @@
+=== RUN   TestFinalSettlementAttacks
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[0] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[1] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[2] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[3] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[4] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[5] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[6] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[7] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[8] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[9] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[10] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[11] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[12] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[13] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[14] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[15] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[16] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[17] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[18] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[19] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[20] mutation
+    pipeline_adapter_test.go:234: REJECTED actual final proof public[21] mutation
+    pipeline_adapter_test.go:236: COMPILE actual-final-bundle-attacks constraints=3362421 public=22 time=11.000185625s
+    pipeline_adapter_test.go:252: REJECTED final genuine-bundle swap-bundles
+    pipeline_adapter_test.go:252: REJECTED final genuine-bundle omit-raw-result
+    pipeline_adapter_test.go:252: REJECTED final genuine-bundle omit-output-result
+    pipeline_adapter_test.go:252: REJECTED final genuine-bundle wrong-chain
+    pipeline_adapter_test.go:342: FINAL ATTACK GATE COMPLETE; proof checkpoint preserved independently
+--- PASS: TestFinalSettlementAttacks (13.62s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	14.665s

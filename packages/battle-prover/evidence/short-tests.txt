@@ -1,0 +1,16 @@
+=== RUN   TestStep
+    probe_test.go:50: step constraints=235
+--- PASS: TestStep (0.00s)
+=== RUN   TestRecursivePair
+    probe_test.go:71: set RUN_RECURSION_PROBE=1 for genuine recursive proof
+--- SKIP: TestRecursivePair (0.00s)
+=== RUN   TestStepProofRoundTrip
+=== RUN   TestStepProofRoundTrip/job
+=== RUN   TestStepProofRoundTrip/seed
+=== RUN   TestStepProofRoundTrip/rules
+--- PASS: TestStepProofRoundTrip (0.06s)
+    --- PASS: TestStepProofRoundTrip/job (0.00s)
+    --- PASS: TestStepProofRoundTrip/seed (0.00s)
+    --- PASS: TestStepProofRoundTrip/rules (0.00s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/recursion	0.869s

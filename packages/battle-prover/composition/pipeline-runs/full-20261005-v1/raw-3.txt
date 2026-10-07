@@ -1,0 +1,31 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE raw-B3 constraints=3367681 public=3 time=6.670923792s
+    family_proof_test.go:40: MEMORY SETUP START raw-B3
+    family_proof_test.go:45: MEMORY SETUP DONE raw-B3 elapsed=12m12.723164416s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-03/g00-B-000 id={Phase:5 Level:3 Kind:0 Arity:2} proof_sha256=05742ce6d9c9b7408340f59e42dda5264f1b3f052bdf60f7a152c03307d32023 vk_sha256=1546964317e223b76b52f4d479c056d2e0cba832c5840906e824d571b0a3b00a ccs_sha256=8221f72cdfc1df686fca95369d3d3a6087db4af6c9c60a38b9ec5744c21d0e0f time=38.520222542s
+    family_proof_test.go:37: COMPILE raw-D3 constraints=2216185 public=3 time=4.166067459s
+    family_proof_test.go:40: MEMORY SETUP START raw-D3
+    family_proof_test.go:45: MEMORY SETUP DONE raw-D3 elapsed=8m38.495765166s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/raw/stage-03/g00-D-000 id={Phase:5 Level:3 Kind:0 Arity:1} proof_sha256=80a71ed191415a27ccc89ff268042786aecc8933d78c4e66cb5ca6698d047489 vk_sha256=c7543b292ef8a3423fb1bcec7c887f11f9ddc2eda2713d75f5a50fddef096c0c ccs_sha256=ef38cb4103db5ccfb2720f8c95bfb1d7e89093fffcd9cc3d3ad821f805f17006 time=29.495342584s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=raw stage=3 testHeight=3 groups=[7] elapsed=22m12.583438125s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1332.58s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1334.176s
+     1334.75 real      2442.39 user         5.30 sys
+          7643070464  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              497801  page reclaims
+                1170  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               86052  signals received
+               31783  voluntary context switches
+              240886  involuntary context switches
+          4172683259  instructions retired
+          1540791300  cycles elapsed
+            28721872  peak memory footprint

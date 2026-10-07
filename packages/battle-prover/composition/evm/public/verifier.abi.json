@@ -1,0 +1,92 @@
+[
+  {
+    "type": "function",
+    "name": "compressProof",
+    "inputs": [
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "compressed",
+        "type": "uint256[4]",
+        "internalType": "uint256[4]"
+      },
+      {
+        "name": "compressedCommitments",
+        "type": "uint256[1]",
+        "internalType": "uint256[1]"
+      },
+      {
+        "name": "compressedCommitmentPok",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "verifyCompressedProof",
+    "inputs": [
+      {
+        "name": "compressedProof",
+        "type": "uint256[4]",
+        "internalType": "uint256[4]"
+      },
+      {
+        "name": "compressedCommitments",
+        "type": "uint256[1]",
+        "internalType": "uint256[1]"
+      },
+      {
+        "name": "compressedCommitmentPok",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "input",
+        "type": "uint256[22]",
+        "internalType": "uint256[22]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "verifyProof",
+    "inputs": [
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "input",
+        "type": "uint256[22]",
+        "internalType": "uint256[22]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "CommitmentInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProofInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "PublicInputNotInField",
+    "inputs": []
+  }
+]

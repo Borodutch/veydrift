@@ -1,3 +1,5 @@
+import { decodeProofBattleAccepted, isProofBattleAcceptedLog, proofBattleAcceptedTopic } from "./proofAcceptanceEvent";
+import { parseProofBattleStatus } from "./proofBattleProgress";
 import { combatStageAdvancedTopic } from "./evm";
 import { deterministicFleetEffects } from "./currentFleet";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
@@ -4978,7 +4980,20 @@ export class SettlementIndexer {
     ) as EventRow[]).map((row) => parseEvent<IndexedRpcLog>(row.event_json));
   }
 
+  /** Raw acceptance archive uses the existing atomic canonical event ledger. Removed logs disappear;
+   * replay/restart does not synthesize a battle report, rounds or terminal mission transition. */
+  proofBattleAcceptances(game: string, battleId: string, limit = 32) {
+    if (!/^0x[0-9a-f]{40}$/i.test(game) || !/^(0|[1-9][0-9]*)$/.test(battleId)
+      || BigInt(battleId) >= 1n << 256n || !Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new Error("invalid acceptance archive query");
+    const rows = this.db.query(
+      "SELECT event_json FROM indexed_event_logs WHERE removed = 0 AND lower(json_extract(event_json, '$.address')) = ? AND lower(json_extract(event_json, '$.topics[0]')) = ? AND lower(json_extract(event_json, '$.topics[1]')) = ? ORDER BY length(block_number) DESC, block_number DESC, length(log_index) DESC, log_index DESC LIMIT ?"
+    ).all(game.toLowerCase(), proofBattleAcceptedTopic, fleetMissionIdTopic(battleId), limit) as EventRow[];
+    return rows.map(row => decodeProofBattleAccepted(parseEvent<IndexedRpcLog>(row.event_json)));
+  }
+
   private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
+    if (isProofBattleAcceptedLog(log)) decodeProofBattleAccepted(log);
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json, removed FROM indexed_event_logs WHERE event_id = ?").get(eventId) as (EventRow & { removed: number }) | null;
     if (existing) {
@@ -5018,6 +5033,13 @@ export class SettlementIndexer {
           );
         }
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isProofBattleAcceptedLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query("UPDATE indexed_event_logs SET removed = 0, event_json = ?, block_number = ?, received_at = ? WHERE event_id = ?")
+          .run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && isPlanetSettledLog(log)) {
         this.advanceIndexedRevision();
@@ -5222,6 +5244,9 @@ export class SettlementIndexer {
 
     this.recordPlayerActivityFeedFromLog(eventId, log);
 
+    if (isProofBattleAcceptedLog(log)) {
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -10215,17 +10240,24 @@ export class SettlementIndexer {
     const progressPayload = payload.mission && typeof payload.mission === "object"
       ? payload.mission as Record<string, unknown>
       : payload;
-    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
+    const previous = JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]);
     if (terminal) {
+      delete progressPayload.proofBattleProgress;
       delete progressPayload.combatResolutionProgress;
-    } else if (progress) {
+    } else if (progress?.stagedPhase === 16 || progress?.stagedPhase === 17) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: progress.stagedPhase === 16 ? "randomness-wait" : "unavailable", stagedPhase: progress.stagedPhase };
+    } else if (progressPayload.proofBattleProgress && (progress?.stagedPhase === 11 || progress?.stagedPhase === 12)) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: "economics", stagedPhase: progress.stagedPhase };
+    } else if (progress && !progressPayload.proofBattleProgress) {
       const current = parseCombatResolutionProgress(JSON.stringify(payload));
       progressPayload.combatResolutionProgress = {
         roundsCompleted: Math.max(current?.roundsCompleted ?? 0, progress.roundsCompleted),
         totalRounds: 6
       };
     }
-    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -10246,10 +10278,13 @@ export class SettlementIndexer {
     let roundsCompleted = 0;
     let started = false;
     let terminal = false;
+    let proofStage: number | undefined;
     for (const candidate of sortedEventRows(rows)) {
       const progress = decodeCombatResolutionProgressLog(candidate);
       if (progress?.missionId === missionId) {
         started = true;
+        if (progress.stagedPhase === 16 || progress.stagedPhase === 17
+          || (proofStage !== undefined && (progress.stagedPhase === 11 || progress.stagedPhase === 12))) proofStage = progress.stagedPhase;
         terminal ||= progress.terminal === true;
         roundsCompleted = Math.max(roundsCompleted, progress.roundsCompleted);
       }
@@ -10268,13 +10303,18 @@ export class SettlementIndexer {
     const progressPayload = payload.mission && typeof payload.mission === "object"
       ? payload.mission as Record<string, unknown>
       : payload;
-    const previous = JSON.stringify(progressPayload.combatResolutionProgress ?? null);
-    if (!terminal && started) {
+    const previous = JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]);
+    delete progressPayload.proofBattleProgress;
+    if (!terminal && proofStage !== undefined) {
+      delete progressPayload.combatResolutionProgress;
+      progressPayload.proofBattleProgress = { state: proofStage === 16 ? "randomness-wait"
+        : proofStage === 11 || proofStage === 12 ? "economics" : "unavailable", stagedPhase: proofStage };
+    } else if (!terminal && started) {
       progressPayload.combatResolutionProgress = { roundsCompleted, totalRounds: 6 };
     } else {
       delete progressPayload.combatResolutionProgress;
     }
-    if (JSON.stringify(progressPayload.combatResolutionProgress ?? null) === previous) return 0;
+    if (JSON.stringify([progressPayload.combatResolutionProgress, progressPayload.proofBattleProgress]) === previous) return 0;
     return this.db.query(`
       UPDATE contract_fleet_missions
       SET event_json = ?
@@ -13450,6 +13490,9 @@ export class SettlementIndexer {
     const canonicalEventMission = parseCanonicalFleetMissionEvent(row.event_json);
     const canonicalStorageDetails = parseCanonicalFleetMissionStorageDetails(row.event_json);
     const combatResolutionProgress = parseCombatResolutionProgress(row.event_json);
+    const progressPayload = parseJson<Record<string, unknown>>(row.event_json ?? "{}", {});
+    const proofBattleProgress = row.status_id === 1 ? parseProofBattleStatus(progressPayload.proofBattleProgress
+      ?? (progressPayload.mission as Record<string, unknown> | undefined)?.proofBattleProgress) : undefined;
     const base = eventMission ?? {
       missionId: row.mission_id,
       recallCost: null,
@@ -13509,6 +13552,8 @@ export class SettlementIndexer {
         targetIsMoon: canonicalStorageDetails.targetIsMoon
       }
       : mergedBase;
+    if (proofBattleProgress && "combatResolutionProgress" in detailedBase) delete detailedBase.combatResolutionProgress;
+    if (!proofBattleProgress && "proofBattleProgress" in detailedBase) delete detailedBase.proofBattleProgress;
     // Mission storage is mutable: when a Transport finishes, the contract clears its cargo slot
     // after crediting the target. The indexed FleetMissionCargo launch event is immutable and is
     // therefore the authoritative payload for history. Prefer it whenever the event ledger has a
@@ -13528,7 +13573,7 @@ export class SettlementIndexer {
       fuelCost,
       cargo,
       recallCost: row.status_id === 1 && detailedBase.recallCost === null ? projectedFleetRecallCost() : detailedBase.recallCost,
-      ...(combatResolutionProgress ? { combatResolutionProgress } : {}),
+      ...(proofBattleProgress ? { proofBattleProgress } : combatResolutionProgress ? { combatResolutionProgress } : {}),
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -16162,6 +16207,8 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
 function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot, existingEventJson: string | null): string {
   const existingMission = parseCanonicalFleetMissionEvent(existingEventJson);
   return JSON.stringify({ ...(existingMission ?? {}), ...mission,
+    proofBattleProgress: mission.proofBattleProgress,
+    ...(mission.proofBattleProgress ? { combatResolutionProgress: undefined } : {}),
     // A scalar refresh must invalidate retained launch/composition data as a
     // survivor proof. Only ships read in this very snapshot certify this status.
     compositionStatusId: "ships" in mission ? mission.statusId : null });

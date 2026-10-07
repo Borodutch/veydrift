@@ -2878,6 +2878,40 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
   });
 
+  test("proof wait events survive restart and duplicates without inventing rounds; reorg reconstructs status", () => {
+    const database = new Database(":memory:");
+    const reader = { async listDebrisFieldEvents() { return []; }, async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; } };
+    const make = () => new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const indexer = make(); indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x90", transactionHash: "0xproof-launch", logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(23_008n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1_900_000_000n, 1_900_000_600n, 2_348n) });
+    const waiting = { blockNumber: "0x91", transactionHash: "0xproof-wait", logIndex: "0x0",
+      topics: [combatStageAdvancedTopic, topic(23_008n)], data: abiWords(16n, 40n, 0n) };
+    const get = (i: SettlementIndexer) => i.fleetMissionVisibility(player).outgoing.find(m => m.missionId === "23008");
+    indexer.applyLog(waiting); indexer.applyLog(waiting);
+    expect(get(indexer)?.combatResolutionProgress).toBeUndefined();
+    expect(get(indexer)?.proofBattleProgress?.state).toBe("randomness-wait");
+    const restarted = make(); expect(get(restarted)?.proofBattleProgress?.state).toBe("randomness-wait");
+    const proving = { ...waiting, blockNumber: "0x92", transactionHash: "0xproof-ready", data: abiWords(17n, 41n, 0n) };
+    restarted.applyLog(proving);
+    expect(get(restarted)?.proofBattleProgress?.state).toBe("unavailable"); // staged17 alone cannot distinguish accepted output
+    const economics = { ...waiting, blockNumber: "0x93", transactionHash: "0xproof-economics", data: abiWords(11n, 45n, 6n) };
+    restarted.applyLog(economics);
+    expect(get(restarted)?.proofBattleProgress?.state).toBe("economics");
+    expect(get(restarted)?.status).toBe("Outbound");
+    expect(get(restarted)?.combatResolutionProgress).toBeUndefined();
+    restarted.applyLog({ ...economics, removed: true });
+    expect(get(restarted)?.proofBattleProgress?.state).toBe("unavailable");
+    restarted.applyLog({ ...proving, removed: true });
+    expect(get(restarted)?.proofBattleProgress?.state).toBe("randomness-wait");
+    restarted.applyLog({ ...waiting, removed: true });
+    expect(get(restarted)?.proofBattleProgress).toBeUndefined();
+    expect(get(restarted)?.combatResolutionProgress).toBeUndefined();
+    database.close();
+  });
+
   test("indexes zero-round staged preparation across restart, duplicate delivery and reorg", () => {
     const database = new Database(":memory:");
     const reader = {

@@ -1,0 +1,1 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/aggregation	1.100s

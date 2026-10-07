@@ -1,0 +1,49 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE bridge-leaf0 constraints=116662 public=3 time=227.866333ms
+    family_proof_test.go:40: MEMORY SETUP START bridge-leaf0
+    family_proof_test.go:45: MEMORY SETUP DONE bridge-leaf0 elapsed=21.100509917s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-000 id={Phase:3 Level:0 Kind:0 Arity:0} proof_sha256=2c753209ec6e91f9ae9d6a379188a3052c6e2128db7d50ea7749374bb0a70fc7 vk_sha256=a87770825c940071bbdc27314f1d35a083a22471b5c69956f135699cd7c1b100 ccs_sha256=05696f28bcbc9ec7ddf4a3a69b666df9c786f7bc713b064bcf0cf52be6ef06e2 time=1.627988416s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-006 id={Phase:3 Level:0 Kind:0 Arity:0} proof_sha256=a478fc7cad6b238c48aefe635af12f969987d05d51e4fce291c13a32fe1c30bf vk_sha256=a87770825c940071bbdc27314f1d35a083a22471b5c69956f135699cd7c1b100 ccs_sha256=05696f28bcbc9ec7ddf4a3a69b666df9c786f7bc713b064bcf0cf52be6ef06e2 time=1.605865083s
+    family_proof_test.go:37: COMPILE bridge-leaf1 constraints=139445 public=3 time=261.897083ms
+    family_proof_test.go:40: MEMORY SETUP START bridge-leaf1
+    family_proof_test.go:45: MEMORY SETUP DONE bridge-leaf1 elapsed=27.240903s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-001 id={Phase:3 Level:0 Kind:1 Arity:0} proof_sha256=07146e57f01cad26d116a9dae3028b422f685d076dcfa012136c0ecc9933cbeb vk_sha256=0537115981924fd20a373ed80374bd95e62b2ea3d75aeb85e1082b34e8914efb ccs_sha256=aeabed25c3437b5abb5936f7b26b60ae34da495e00f31b251c5c8385076cf95d time=2.039464709s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-002 id={Phase:3 Level:0 Kind:1 Arity:0} proof_sha256=0e972848164a3ce7c609262e1d2e0235c08d0dedc91d0513ff4aab138f7b7703 vk_sha256=0537115981924fd20a373ed80374bd95e62b2ea3d75aeb85e1082b34e8914efb ccs_sha256=aeabed25c3437b5abb5936f7b26b60ae34da495e00f31b251c5c8385076cf95d time=2.031797083s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-007 id={Phase:3 Level:0 Kind:1 Arity:0} proof_sha256=a2e497e4c6e49328c535e5990e53d29ec74286212ef4a0f3265ea33fe6e88123 vk_sha256=0537115981924fd20a373ed80374bd95e62b2ea3d75aeb85e1082b34e8914efb ccs_sha256=aeabed25c3437b5abb5936f7b26b60ae34da495e00f31b251c5c8385076cf95d time=2.003770792s
+    family_proof_test.go:37: COMPILE bridge-leaf2 constraints=329252 public=3 time=735.660666ms
+    family_proof_test.go:40: MEMORY SETUP START bridge-leaf2
+    family_proof_test.go:45: MEMORY SETUP DONE bridge-leaf2 elapsed=1m2.134842458s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-003 id={Phase:3 Level:0 Kind:2 Arity:0} proof_sha256=be40d8ac641a7c827b70a099f69925d3aa94669fb93f422a2a99bccd949a6dfc vk_sha256=80f65f89a6c41a3dbeace030bd0680938f5454364126ebd24759796a8758323a ccs_sha256=f9f34d2dbf6356b235f7e14ff48915fb04e2dfed60be01949790f553076e2ebc time=4.724638583s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-004 id={Phase:3 Level:0 Kind:2 Arity:0} proof_sha256=a090e6e104ad1d6508a83448b63fa2608f55d9b9bf494893ab02d5ee9be75a0c vk_sha256=80f65f89a6c41a3dbeace030bd0680938f5454364126ebd24759796a8758323a ccs_sha256=f9f34d2dbf6356b235f7e14ff48915fb04e2dfed60be01949790f553076e2ebc time=4.657572166s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-008 id={Phase:3 Level:0 Kind:2 Arity:0} proof_sha256=a20836222ec4ad06550ddcca7854abb0789bdddfa72ac76128d4e1c57cc8ce5b vk_sha256=80f65f89a6c41a3dbeace030bd0680938f5454364126ebd24759796a8758323a ccs_sha256=f9f34d2dbf6356b235f7e14ff48915fb04e2dfed60be01949790f553076e2ebc time=4.599598292s
+    family_proof_test.go:37: COMPILE bridge-leaf3 constraints=1829849 public=3 time=3.529877917s
+    family_proof_test.go:40: MEMORY SETUP START bridge-leaf3
+    family_proof_test.go:45: MEMORY SETUP DONE bridge-leaf3 elapsed=6m38.918090125s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-005 id={Phase:3 Level:0 Kind:3 Arity:0} proof_sha256=6a80a8e804dc3b271cd000e71b84efb06cf32e3c886cd6781b3472325cad68d2 vk_sha256=e750162a37c906a9a86653a4b2e0685df25dd5d30b10be93079023a19ecd0006 ccs_sha256=f7047d1ad824a0672721b9ab2804c723e4dad15e951dc0131bb14a1f8dfa7b69 time=21.816026125s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-009 id={Phase:3 Level:0 Kind:3 Arity:0} proof_sha256=526d67f0e2cc74a477d801395fa9f7d45312d29475a2bdc51c8a2240c058f055 vk_sha256=e750162a37c906a9a86653a4b2e0685df25dd5d30b10be93079023a19ecd0006 ccs_sha256=f7047d1ad824a0672721b9ab2804c723e4dad15e951dc0131bb14a1f8dfa7b69 time=21.789444042s
+    family_proof_test.go:37: COMPILE bridge-leaf4 constraints=93197 public=3 time=192.749584ms
+    family_proof_test.go:40: MEMORY SETUP START bridge-leaf4
+    family_proof_test.go:45: MEMORY SETUP DONE bridge-leaf4 elapsed=17.803963334s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/bridge/stage-leaf/g00-leaf-010 id={Phase:3 Level:0 Kind:4 Arity:0} proof_sha256=b226947a1dc1b97295013b54a25d62347fca2057eed8c0c4ea47dc9d2b047d75 vk_sha256=69b6de73a861266e89abdeabb1072e0785af4a2ee51bbab1ba5c9c83a48d477a ccs_sha256=b248dcd44fc088a4883ceb3cf21fdbd4d401c1621e0f0c0ca5e992926efba88b time=1.413318458s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=bridge stage=-1 testHeight=4 groups=[11] elapsed=10m4.63863075s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (604.64s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	605.117s
+      606.54 real      1124.42 user         3.60 sys
+          4463935488  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              287992  page reclaims
+               16348  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               40432  signals received
+               18680  voluntary context switches
+              186400  involuntary context switches
+          4043789878  instructions retired
+          1475746901  cycles elapsed
+            23904952  peak memory footprint

@@ -1,0 +1,57 @@
+=== RUN   TestAuthenticatedHighAddressElementary
+--- PASS: TestAuthenticatedHighAddressElementary (1.70s)
+=== RUN   TestSnapshotFieldAliasRejected
+--- PASS: TestSnapshotFieldAliasRejected (0.26s)
+=== RUN   TestActualPackageIntegration
+    integration_test.go:141: bridge kind=0 constraints=107719
+    integration_test.go:141: bridge kind=1 constraints=130502
+    integration_test.go:141: bridge kind=2 constraints=320309
+    integration_test.go:141: bridge kind=3 constraints=110787
+    integration_test.go:141: bridge kind=4 constraints=84192
+--- PASS: TestActualPackageIntegration (9.52s)
+=== RUN   TestCrossPackageElementarySolvers
+--- PASS: TestCrossPackageElementarySolvers (13.34s)
+=== RUN   TestBoundaryHighBits
+--- PASS: TestBoundaryHighBits (0.83s)
+=== RUN   TestNegativeSteps
+--- PASS: TestNegativeSteps (4.64s)
+=== RUN   TestOmittedDuplicatedReorderedStreams
+=== RUN   TestOmittedDuplicatedReorderedStreams/omitted-member
+=== RUN   TestOmittedDuplicatedReorderedStreams/duplicate-member
+=== RUN   TestOmittedDuplicatedReorderedStreams/reordered-members
+=== RUN   TestOmittedDuplicatedReorderedStreams/omitted-cohort
+=== RUN   TestOmittedDuplicatedReorderedStreams/duplicated-cohort
+=== RUN   TestOmittedDuplicatedReorderedStreams/reordered-cohorts
+--- PASS: TestOmittedDuplicatedReorderedStreams (0.51s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/omitted-member (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/duplicate-member (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/reordered-members (0.01s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/omitted-cohort (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/duplicated-cohort (0.00s)
+    --- PASS: TestOmittedDuplicatedReorderedStreams/reordered-cohorts (0.01s)
+=== RUN   TestStatementObligations
+--- PASS: TestStatementObligations (0.31s)
+=== RUN   TestReportProjection
+--- PASS: TestReportProjection (9.65s)
+=== RUN   TestValidHighWidthInputs
+--- PASS: TestValidHighWidthInputs (2.45s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/resultbridge	43.864s
+       44.72 real        44.98 user         1.27 sys
+          2981429248  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              216831  page reclaims
+                 510  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                2985  signals received
+                 134  voluntary context switches
+               49919  involuntary context switches
+          2629562893  instructions retired
+           902772305  cycles elapsed
+            23200440  peak memory footprint

@@ -1,0 +1,34 @@
+=== RUN   TestSettlementPipelineStage
+    family_proof_test.go:37: COMPILE combat-B4 constraints=3367666 public=3 time=6.732480208s
+    family_proof_test.go:40: MEMORY SETUP START combat-B4
+    family_proof_test.go:45: MEMORY SETUP DONE combat-B4 elapsed=12m22.477205958s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-04/g00-B-000 id={Phase:1 Level:4 Kind:0 Arity:2} proof_sha256=0cad3e4ecaf71c5485c8b064597879f1be0d18b78acdd4e241fa2c70b6a82660 vk_sha256=c932420a5e79722c40343deb3447f408e33b8f67845ba02b96a626e813c9d3b9 ccs_sha256=89484b540464480fa437de6d6ac96cc68a2e371a7c7e6380e3f24f3c062a05b8 time=39.422884084s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-04/g00-B-001 id={Phase:1 Level:4 Kind:0 Arity:2} proof_sha256=6e72fe9a34f9b5a8f8cb02a7b9c18fa98e7a0c9ff5cd7f6274f693d700226572 vk_sha256=c932420a5e79722c40343deb3447f408e33b8f67845ba02b96a626e813c9d3b9 ccs_sha256=89484b540464480fa437de6d6ac96cc68a2e371a7c7e6380e3f24f3c062a05b8 time=39.299813083s
+    family_proof_test.go:37: COMPILE combat-D4 constraints=2216173 public=3 time=4.044207083s
+    family_proof_test.go:40: MEMORY SETUP START combat-D4
+    family_proof_test.go:45: MEMORY SETUP DONE combat-D4 elapsed=8m39.001213209s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-04/g00-D-000 id={Phase:1 Level:4 Kind:0 Arity:1} proof_sha256=e72a195efc5639026aa36fc076bffab4c2fbe9b72e4b574ab8ce9d0120c2d871 vk_sha256=70533755e11d498edd27d8046d371b2207f92f95673efd25fb4e5060ef0dc86d ccs_sha256=fa43f8d2782bfea721afa6812f8766e82bac6a4fa747603ef6722a8d89d75caa time=30.111992834s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-04/g00-D-001 id={Phase:1 Level:4 Kind:0 Arity:1} proof_sha256=7a0fffc6104c47864fac31ede3868ee71d3a4a8bd186cf64445a948b85990b2c vk_sha256=70533755e11d498edd27d8046d371b2207f92f95673efd25fb4e5060ef0dc86d ccs_sha256=fa43f8d2782bfea721afa6812f8766e82bac6a4fa747603ef6722a8d89d75caa time=30.25439675s
+    pipeline_stage_test.go:526: PUBLIC CHECKPOINT staged-public/settlement-phases-v2/full-20261005-v1/combat/stage-04/g00-D-002 id={Phase:1 Level:4 Kind:0 Arity:1} proof_sha256=03e073a7f859acadb5e5e350c99943f155f507615a4103f53ba2d9143271ccd1 vk_sha256=70533755e11d498edd27d8046d371b2207f92f95673efd25fb4e5060ef0dc86d ccs_sha256=fa43f8d2782bfea721afa6812f8766e82bac6a4fa747603ef6722a8d89d75caa time=30.03171375s
+    pipeline_stage_test.go:666: PHASE STAGE VERIFIED phase=combat stage=4 testHeight=6 groups=[36] elapsed=24m3.998389375s; not D256 or final settlement proof
+--- PASS: TestSettlementPipelineStage (1444.00s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1444.586s
+     1445.87 real      2658.32 user         7.14 sys
+          8117256192  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              511172  page reclaims
+               16348  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               93976  signals received
+               37403  voluntary context switches
+              314552  involuntary context switches
+          4141275667  instructions retired
+          1516251803  cycles elapsed
+            23790264  peak memory footprint

@@ -1,0 +1,26 @@
+=== RUN   TestPersistedRecursiveAttacks
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED preparation
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED combat
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED prepared-combat
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED allocation
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED bridge
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED report
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED bridge-report
+    receipts_test.go:57: NATIVE RECEIPT VERIFIED final
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    receipts_test.go:62: COMPILE bridge-auth-attacks constraints=2536170 public=20 time=5.599159375s
+    receipts_test.go:84: REJECTED wrong-key actual pinned recursive circuit
+    receipts_test.go:84: REJECTED omitted-attribution actual pinned recursive circuit
+    receipts_test.go:84: REJECTED attribution-context actual pinned recursive circuit
+    receipts_test.go:84: REJECTED attribution-result actual pinned recursive circuit
+    receipts_test.go:84: REJECTED bridge-genesis actual pinned recursive circuit
+    receipts_test.go:84: REJECTED premature actual pinned recursive circuit
+    receipts_test.go:88: COMPILE final-attacks constraints=3454146 public=8 time=7.412830792s
+    receipts_test.go:105: REJECTED final replay genuine proofs
+    receipts_test.go:105: REJECTED final wrong-key genuine proofs
+    receipts_test.go:105: REJECTED final result genuine proofs
+    receipts_test.go:105: REJECTED final context genuine proofs
+    receipts_test.go:105: REJECTED final omission genuine proofs
+--- PASS: TestPersistedRecursiveAttacks (18.70s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	20.769s

@@ -2383,7 +2383,7 @@ describe("fleet mission resolution scheduling", () => {
     return new VeydriftGameReader(readerConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
         if (method === "eth_call") return ((params[0] as { data: string }).data.startsWith("0xce02abe2")
-          ? dataWords([word(BigInt(eligible)), word(0n), word(BigInt(orderingReady))]) : "0x") as T; // fixture proof and runtime simulation
+          ? dataWords([word(BigInt(eligible)), word(0n), word(BigInt(orderingReady))]) : (params[0] as { data: string }).data.startsWith(toFunctionSelector("stagedBattleProgress(uint256)")) ? dataWords([word(0n), word(0n), word(0n)]) : "0x") as T; // fixture proof and runtime simulation
         if (method === "eth_blockNumber") return "0x200" as T;
         expect(method).toBe("eth_getLogs");
         return logs as T;
@@ -2401,13 +2401,14 @@ describe("fleet mission resolution scheduling", () => {
             const data = (params[0] as { data: string }).data;
             calls.push(data);
             return (data.startsWith("0xce02abe2")
-              ? dataWords([word(1n), word(0n), word(1n)]) : "0x") as T;
+              ? dataWords([word(1n), word(0n), word(1n)]) : data.startsWith(toFunctionSelector("stagedBattleProgress(uint256)")) ? dataWords([word(0n), word(0n), word(0n)]) : "0x") as T;
           }
         });
         expect(await reader.isFleetChronologyOrderingReady(missionId)).toBe(true);
         expect(await reader.canResolveFleetMission(missionId, leg)).toBe(true);
         expect(calls).toEqual([
           "0xce02abe2" + word(missionId), "0xce02abe2" + word(missionId),
+          ...(leg === "arrival" ? [toFunctionSelector("stagedBattleProgress(uint256)") + word(missionId)] : []),
           (leg === "arrival" ? "0xde09e7cf" : "0xc2472852") + word(missionId)
         ]);
       });
@@ -3405,4 +3406,34 @@ describe("combat model capability getter", () => {
     }
     fail = true; expect(await reader.getCombatModelVersion()).toBeNull();
   });
+});
+
+test("proof-only staged waits suppress ordinary paid resolver and never expose legacy round estimates on outage", async () => {
+  let phase = 16n, outage = false;
+  const reader = new VeydriftGameReader(readerConfig, {
+    async request<T>(method: string, params: unknown[]): Promise<T> {
+      if (method === "eth_getBlockByNumber") throw new Error("proof observation RPC outage");
+      const data = (params[0] as { data: string }).data;
+      if (data.startsWith(toFunctionSelector("stagedBattleProgress(uint256)"))) {
+        if (outage) throw new Error("RPC timeout");
+        return dataWords([word(phase), word(0n), word(42n)]) as T;
+      }
+      if (data.startsWith("0xf158c946")) return fleetMissionResult({ status: 1n, missionType: 3n,
+        owner: "0x0000000000000000000000000000000000000abc" }) as T;
+      if (data.startsWith("0xa5edcf21")) return dataWords([word(0n), word(6n)]) as T;
+      throw new Error("unexpected call");
+    }
+  });
+  for (const stage of [16n, 17n]) {
+    phase = stage;
+    expect(await reader.isOrdinaryMissionResolutionAvailable(1n)).toBe(false);
+    const mission = await reader.getCanonicalFleetMission(1n);
+    expect(mission?.proofBattleProgress).toEqual({ state: "unavailable", stagedPhase: Number(stage) });
+    expect(mission?.combatResolutionProgress).toBeUndefined();
+  }
+  for (const stage of [0n, 11n, 12n, 13n]) {
+    phase = stage; expect(await reader.isOrdinaryMissionResolutionAvailable(1n)).toBe(true);
+  }
+  outage = true;
+  await expect(reader.isOrdinaryMissionResolutionAvailable(1n)).rejects.toThrow("timeout");
 });

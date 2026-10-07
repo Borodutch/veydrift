@@ -1,0 +1,9 @@
+=== RUN   TestActualPackageIntegration
+    integration_test.go:138: bridge kind=0 constraints=107667
+    integration_test.go:138: bridge kind=1 constraints=130502
+    integration_test.go:138: bridge kind=2 constraints=320309
+    integration_test.go:138: bridge kind=3 constraints=110787
+    integration_test.go:138: bridge kind=4 constraints=84192
+--- PASS: TestActualPackageIntegration (7.71s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/resultbridge	8.637s

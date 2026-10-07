@@ -10,7 +10,7 @@ const account = privateKeyToAccount("0x" + "11".repeat(32) as `0x${string}`);
 const game = "0x2222222222222222222222222222222222222222" as const;
 const blockHash = "0x" + "aa".repeat(32);
 const chain = { id: 8453, name: "fixture", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: ["http://invalid.test"] } } };
-function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boolean; reorg?: boolean } = {}) {
+function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boolean; reorg?: boolean; proofWait?: boolean } = {}) {
   let nonce = 4, broadcasts = 0, reads = 0, mined = false;
   const now = Math.floor(Date.now() / 1000);
   const receipt = () => ({ status: options.revert ? "reverted" : "success", blockNumber: 1n, blockHash,
@@ -40,6 +40,7 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
   const client = new ViemMissionResolutionChainClient({
     listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [],
     isFleetChronologyOrderingReady: async () => true,
+    isOrdinaryMissionResolutionAvailable: async () => !options.proofWait,
     getCanonicalFleetMission: async () => {
       reads++;
       return { status: options.stale && reads > 1 ? "Returned" : "Outbound", arrivalAt: String(now - 5), returnAt: String(now + 5) } as never;
@@ -78,4 +79,13 @@ test("reverted receipt consumes nonce without inventing per-leg success; noncano
   await expect(reorg.client.resolveMissionBatch(reorg.items)).rejects.toThrow("not canonical");
   await expect(reorg.client.resolveMissionBatch([])).rejects.toThrow("not canonical");
   expect(reorg.broadcasts()).toBe(1);
+});
+
+test("proof wait is excluded before nonce, quote or broadcast even if batch simulation would succeed", async () => {
+  const f = fixture({ proofWait: true });
+  const result = await f.client.resolveMissionBatch(f.items);
+  expect(result.hash).toBeNull();
+  expect(result.items).toEqual([]);
+  expect(result.exclusions[0]?.reason).toBe("proof-wait");
+  expect(f.broadcasts()).toBe(0);
 });

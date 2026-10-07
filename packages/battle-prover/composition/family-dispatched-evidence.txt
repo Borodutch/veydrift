@@ -1,0 +1,52 @@
+=== RUN   TestFamilyDispatchedProof
+    twosided_test.go:108: TWO-SIDED ORACLE raw=2 units=2 preparation=10 combat=24 bridge=9 closes=2 attribution=4+4 report=2 rounds=1 actualDamageSteps=2 lost=[0,1] survivors=[1,0]
+    family_proof_test.go:37: COMPILE dispatch-leaf-kind0 constraints=782864 public=3 time=2.023022334s
+    family_proof_test.go:40: MEMORY SETUP START dispatch-leaf-kind0
+    family_proof_test.go:45: MEMORY SETUP DONE dispatch-leaf-kind0 elapsed=2m21.985802791s
+    family_proof_test.go:66: GENUINE FAMILY PROOF leaf0-shot0 bytes=196 proof_sha256=2403df49988e18b7ccc0a09a0f03b11705635ab727c16d2fa9c823ca9ad7eda3 vk_sha256=9433d2e78e955166a410272403e0ef9a5fe31d5845322483e7fea3d1fba77728 elapsed=9.90779375s
+    family_proof_test.go:66: GENUINE FAMILY PROOF leaf0-shot1 bytes=196 proof_sha256=d38e0c1e1f834b532db01b3f15e68bd28afe1c2d98aee85ea376cd5f1a9c5b05 vk_sha256=9433d2e78e955166a410272403e0ef9a5fe31d5845322483e7fea3d1fba77728 elapsed=9.817318625s
+    family_proof_test.go:37: COMPILE dispatch-leaf-kind1 constraints=962022 public=3 time=2.267321209s
+    family_proof_test.go:40: MEMORY SETUP START dispatch-leaf-kind1
+    family_proof_test.go:45: MEMORY SETUP DONE dispatch-leaf-kind1 elapsed=3m4.979608042s
+    family_proof_test.go:66: GENUINE FAMILY PROOF leaf1-shot0 bytes=196 proof_sha256=d4eee908967a001c94a55526c5a6d53af02c26c9e7311dccde5e5b132d2de555 vk_sha256=29bea3fef199bb72b24476eed55db28d0d5c8091d026fe06c2d3c4b53314d16d elapsed=10.63486825s
+    family_proof_test.go:66: GENUINE FAMILY PROOF leaf1-shot1 bytes=196 proof_sha256=e87a8fe1084fc3479811bf338d5e7de3a4a098c0d8f1a7118e7bbac845bb1ce3 vk_sha256=29bea3fef199bb72b24476eed55db28d0d5c8091d026fe06c2d3c4b53314d16d elapsed=10.646556541s
+    family_proof_test.go:37: COMPILE unary-catalog-dispatch constraints=2216173 public=3 time=4.549224958s
+    family_proof_test.go:40: MEMORY SETUP START unary-catalog-dispatch
+    family_proof_test.go:45: MEMORY SETUP DONE unary-catalog-dispatch elapsed=9m27.032943083s
+    family_proof_test.go:66: GENUINE FAMILY PROOF dispatch0-shot0 bytes=196 proof_sha256=106b5c65ab33da9d864b4230084ef2459257952f45a82dc0a95d4f6bb58b4e5e vk_sha256=5685177180c6b659f991537dc2c07ae0ff2fc982cd158eeb872e9173a21774a3 elapsed=30.346884666s
+    family_proof_test.go:66: GENUINE FAMILY PROOF dispatch1-shot0 bytes=196 proof_sha256=fe1258578168c2d5c17923045a517cf084a4075bfcfb4ff80a69dd773ae33791 vk_sha256=5685177180c6b659f991537dc2c07ae0ff2fc982cd158eeb872e9173a21774a3 elapsed=30.198560875s
+    family_proof_test.go:66: GENUINE FAMILY PROOF dispatch0-shot1 bytes=196 proof_sha256=ca2d5f7da6a3571254203fe6c821202e78cebffed0fc0df53a05cd6d7a36cb73 vk_sha256=5685177180c6b659f991537dc2c07ae0ff2fc982cd158eeb872e9173a21774a3 elapsed=30.37588575s
+    family_proof_test.go:66: GENUINE FAMILY PROOF dispatch1-shot1 bytes=196 proof_sha256=452b517e5c91a3545d6917f1753cf5720b25033b9b460ee03b04fb449302af69 vk_sha256=5685177180c6b659f991537dc2c07ae0ff2fc982cd158eeb872e9173a21774a3 elapsed=30.173223084s
+    family_dispatched_test.go:74: REJECTED unary dispatch wrong-key
+    family_dispatched_test.go:74: REJECTED unary dispatch outside-catalog
+    family_dispatched_test.go:74: REJECTED unary dispatch phase
+    family_proof_test.go:37: COMPILE fixed-dispatched-pair constraints=3367666 public=3 time=6.767572583s
+    family_proof_test.go:40: MEMORY SETUP START fixed-dispatched-pair
+    family_proof_test.go:45: MEMORY SETUP DONE fixed-dispatched-pair elapsed=12m40.840054541s
+    family_dispatched_test.go:96: REJECTED fixed pair replay
+    family_dispatched_test.go:96: REJECTED fixed pair omission
+    family_dispatched_test.go:96: REJECTED fixed pair wrong-key
+    family_proof_test.go:66: GENUINE FAMILY PROOF nonzero-recursive-pair-shot0 bytes=196 proof_sha256=fc46a503201378e01afa6c05f77f49a315fc1598f112d541b7480064b566d4a5 vk_sha256=82280126a1d2c7ff1eb538de15a60ae248d7eb76751b60507488ecaf5ebd31e7 elapsed=38.132564s
+    family_proof_test.go:66: GENUINE FAMILY PROOF nonzero-recursive-pair-shot1 bytes=196 proof_sha256=af30c049d939531f8bbd27a89437b57e709d4220d91c3042a0047c707cbe5038 vk_sha256=82280126a1d2c7ff1eb538de15a60ae248d7eb76751b60507488ecaf5ebd31e7 elapsed=38.113546209s
+    family_dispatched_test.go:102: DISPATCHED NONZERO SUBRANGES VERIFIED leafKeys=2 dispatchKeys=1 pairKeys=1 proofs=10 elapsed=31m54.899057s; NOT complete battle or qualified final
+--- PASS: TestFamilyDispatchedProof (1914.90s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1916.324s
+     1918.45 real      3512.56 user        10.05 sys
+          7739801600  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              545206  page reclaims
+                 856  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+              128622  signals received
+               48451  voluntary context switches
+              756889  involuntary context switches
+          3898220171  instructions retired
+          1376691916  cycles elapsed
+            28197560  peak memory footprint

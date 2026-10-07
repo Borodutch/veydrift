@@ -1,0 +1,61 @@
+=== RUN   TestCompositionLink
+--- PASS: TestCompositionLink (0.00s)
+=== RUN   TestPinnedStatsAndHostCanonicality
+--- PASS: TestPinnedStatsAndHostCanonicality (0.73s)
+=== RUN   TestPinnedCompleteCatalog
+--- PASS: TestPinnedCompleteCatalog (3.39s)
+=== RUN   TestQualificationSolver
+    qualification_test.go:83: qualification constraints=743368 public=8
+=== RUN   TestQualificationSolver/catalog-substitution
+=== RUN   TestQualificationSolver/wrong-version
+=== RUN   TestQualificationSolver/wrong-identity-version
+=== RUN   TestQualificationSolver/wrong-seed-policy
+=== RUN   TestQualificationSolver/seed-byte
+=== RUN   TestQualificationSolver/seed-high-limb
+=== RUN   TestQualificationSolver/random-field-alias
+=== RUN   TestQualificationSolver/snapshot-alias
+=== RUN   TestQualificationSolver/wrong-purpose
+=== RUN   TestQualificationSolver/request-zero
+=== RUN   TestQualificationSolver/not-ready
+=== RUN   TestQualificationSolver/wrong-snapshot
+=== RUN   TestQualificationSolver/chain-replay
+=== RUN   TestQualificationSolver/game-replay
+=== RUN   TestQualificationSolver/battle-replay
+=== RUN   TestQualificationSolver/body-replay
+=== RUN   TestQualificationSolver/moon-replay
+=== RUN   TestQualificationSolver/incarnation-replay
+=== RUN   TestQualificationSolver/impact-replay
+=== RUN   TestQualificationSolver/rules-replay
+=== RUN   TestQualificationSolver/verifier-replay
+=== RUN   TestQualificationSolver/commitment-high-limb
+=== RUN   TestQualificationSolver/commitment-field-alias
+=== RUN   TestQualificationSolver/missing-rf-root
+=== RUN   TestQualificationSolver/sha-domain
+--- PASS: TestQualificationSolver (3.32s)
+    --- PASS: TestQualificationSolver/catalog-substitution (0.00s)
+    --- PASS: TestQualificationSolver/wrong-version (0.00s)
+    --- PASS: TestQualificationSolver/wrong-identity-version (0.05s)
+    --- PASS: TestQualificationSolver/wrong-seed-policy (0.01s)
+    --- PASS: TestQualificationSolver/seed-byte (0.02s)
+    --- PASS: TestQualificationSolver/seed-high-limb (0.01s)
+    --- PASS: TestQualificationSolver/random-field-alias (0.01s)
+    --- PASS: TestQualificationSolver/snapshot-alias (0.05s)
+    --- PASS: TestQualificationSolver/wrong-purpose (0.04s)
+    --- PASS: TestQualificationSolver/request-zero (0.01s)
+    --- PASS: TestQualificationSolver/not-ready (0.00s)
+    --- PASS: TestQualificationSolver/wrong-snapshot (0.03s)
+    --- PASS: TestQualificationSolver/chain-replay (0.03s)
+    --- PASS: TestQualificationSolver/game-replay (0.07s)
+    --- PASS: TestQualificationSolver/battle-replay (0.02s)
+    --- PASS: TestQualificationSolver/body-replay (0.06s)
+    --- PASS: TestQualificationSolver/moon-replay (0.06s)
+    --- PASS: TestQualificationSolver/incarnation-replay (0.06s)
+    --- PASS: TestQualificationSolver/impact-replay (0.07s)
+    --- PASS: TestQualificationSolver/rules-replay (0.07s)
+    --- PASS: TestQualificationSolver/verifier-replay (0.06s)
+    --- PASS: TestQualificationSolver/commitment-high-limb (0.07s)
+    --- PASS: TestQualificationSolver/commitment-field-alias (0.06s)
+    --- PASS: TestQualificationSolver/missing-rf-root (0.35s)
+    --- PASS: TestQualificationSolver/sha-domain (0.06s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/qualification	7.848s

@@ -1,0 +1,4 @@
+import {initialize,advance,result} from '../../battle-oracle/oracle';
+const s=initialize({seed:'0x'+(process.argv[2]??'0').padStart(64,'0'),catalog:Array.from({length:4},(_,type)=>({type,attack:45n,shield:5n,hull:100n})),groups:Array.from({length:4},(_,type)=>({side:Math.floor(type/2) as 0|1,type,count:1,owner:'0x'+(type+1).toString(16).padStart(40,'0'),source:String(type+1),technology:type===0?{weapons:1,shielding:2,armor:3}:{weapons:0,shielding:0,armor:0}})),rapidfire:[{shooter:0,target:2,factor:2},{shooter:0,target:3,factor:2}]});
+for(let i=0;!s.done&&i<2000;i++)advance(s,1);const r=result(s);
+console.log(JSON.stringify({Counter:Number(s.counter),Hull:s.units.map(u=>Number(u.hull)),Shield:s.units.map(u=>Number(u.shield)),Round:s.round,Outcome:{draw:0,attacker:1,defender:2}[r.outcome],RoundShots:Array.from({length:6},(_,i)=>r.rounds[i]?.shots.map(Number)??[0,0]),RoundSurvivors:Array.from({length:6},(_,i)=>r.rounds[i]?.survivors??[0,0,0,0])}));

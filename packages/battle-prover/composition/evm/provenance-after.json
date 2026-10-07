@@ -1,0 +1,17 @@
+{
+  "frozenRevision": "4a2b2e79503d876ae096daac493566790c4f993a",
+  "sourceEntriesVerifiedAgainstManifestAndGit": 168,
+  "directDependencyManifestsVerified": 2,
+  "receiptHashesVerified": {
+    "evm.json": "87a298a1d4da8aad5bde12eaf7c35d02dc879ffa2a00b476a9b2716b0a2e6556",
+    "proof": "2f737b89540723d81292c78f2c196c883cb9ad6dcdb911c2ff549e6ba3a8888a",
+    "public": "45ab58ee9f9af6971bb106c821b7c54bb359cbceeac3dffbae94765b284e6226",
+    "sol": "4d6279f22e749e203ac7bf42568254306881310711abb965c80a2645397ec8e9",
+    "vk": "bb99dcb236243b696f0cb812ccc16df40e50659f769168a5458df861473d6505"
+  },
+  "marshalSolidityProofSha256": "8c40bcefd450e7cd3d31ba8bb497c596a498b11c600d6903820d2b1eaf5fac7f",
+  "publicWitnessEqualsAll22ExportedScalars": true,
+  "copiedVerifierAndFixtureByteIdentical": true,
+  "corruptionPointsCanonicalAndOnCurve": true,
+  "status": "PASS"
+}

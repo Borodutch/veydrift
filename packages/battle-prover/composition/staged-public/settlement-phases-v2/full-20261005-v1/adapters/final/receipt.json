@@ -1,0 +1,39 @@
+{
+  "Role": "final",
+  "Values": [
+    "18395499706900017847",
+    "7967734143446093506",
+    "2524575188123157529",
+    "10865060596497800667",
+    "6229458217532788799",
+    "13365098583402300192",
+    "13333511352624175928",
+    "2449549484128514639",
+    "3",
+    "0",
+    "0",
+    "0",
+    "1",
+    "2",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "0",
+    "1"
+  ],
+  "Hashes": {
+    "evm.json": "87a298a1d4da8aad5bde12eaf7c35d02dc879ffa2a00b476a9b2716b0a2e6556",
+    "proof": "2f737b89540723d81292c78f2c196c883cb9ad6dcdb911c2ff549e6ba3a8888a",
+    "public": "45ab58ee9f9af6971bb106c821b7c54bb359cbceeac3dffbae94765b284e6226",
+    "sol": "4d6279f22e749e203ac7bf42568254306881310711abb965c80a2645397ec8e9",
+    "vk": "bb99dcb236243b696f0cb812ccc16df40e50659f769168a5458df861473d6505"
+  },
+  "CCSHash": "9ca4cc3af77a67b537db88c174e92cc9a2a93a3b0579abffeb600daff711105e",
+  "Dependencies": [
+    "adapters/raw-qualified/manifest.json",
+    "adapters/output-pipeline/manifest.json"
+  ]
+}

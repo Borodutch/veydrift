@@ -73,7 +73,7 @@ jobs:
           echo "frontend=$(printf '%s\n' "$planned" | grep -q '^frontend-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
-        if: steps.plan.outputs.work == 'true'
+        if: steps.plan.outputs.work == 'true' || matrix.group == 'rest'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.1.42
@@ -127,6 +127,25 @@ jobs:
       - name: Install dependencies
         if: steps.plan.outputs.work == 'true'
         run: bun install --frozen-lockfile
+
+      # Ticket #44 packages are offline prerequisites, not production consumers.
+      # Run their fast regression suites explicitly; no development setup keys are published.
+      - name: Set up Go for battle proof prerequisites
+        if: matrix.group == 'rest'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/battle-prover/go.mod
+          # setup-go caches both full module and build directories; go.sum only keys
+          # the archive. A 1.37 GB post-job upload exhausted the job after checks passed.
+          # Keep the checks unchanged; self-hosted runners retain their local Go caches.
+          cache: false
+
+      - name: Check battle proof prerequisites
+        if: matrix.group == 'rest'
+        run: |
+          bun test packages/battle-oracle
+          cd packages/battle-prover
+          GOMAXPROCS=2 go test -short -p 1 ./...
 
       - name: Run scoped checks
         if: steps.plan.outputs.docs == 'true'

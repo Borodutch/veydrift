@@ -1,0 +1,15 @@
+=== RUN   TestVerifyPipelineCheckpoint
+    pipeline_adapter_test.go:314: REVERIFIED phase=5 stage=-1
+--- PASS: TestVerifyPipelineCheckpoint (1.27s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	4.825s
+=== RUN   TestVerifyPipelineCheckpoint
+    pipeline_adapter_test.go:314: REVERIFIED phase=5 stage=0
+--- PASS: TestVerifyPipelineCheckpoint (0.05s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	1.838s
+=== RUN   TestVerifyPipelineCheckpoint
+    pipeline_adapter_test.go:288: REVERIFIED adapter=qualification
+--- PASS: TestVerifyPipelineCheckpoint (1.24s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	2.375s

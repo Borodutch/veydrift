@@ -1,0 +1,12 @@
+--- FAIL: TestPinFIFODeadlineAndCancellation (0.81s)
+    --- FAIL: TestPinFIFODeadlineAndCancellation/configured/deadline (0.20s)
+        pinning_unix_test.go:78: executable FIFO pinning exceeded cancellation/deadline by 200ms
+    --- FAIL: TestPinFIFODeadlineAndCancellation/configured/deadline/cancel (0.20s)
+        pinning_unix_test.go:78: executable FIFO pinning exceeded cancellation/deadline by 200ms
+    --- FAIL: TestPinFIFODeadlineAndCancellation/replaced/deadline (0.20s)
+        pinning_unix_test.go:78: executable FIFO pinning exceeded cancellation/deadline by 200ms
+    --- FAIL: TestPinFIFODeadlineAndCancellation/replaced/deadline/cancel (0.20s)
+        pinning_unix_test.go:78: executable FIFO pinning exceeded cancellation/deadline by 200ms
+FAIL
+FAIL	github.com/Borodutch/veydrift/packages/battle-prover/processrunner	1.348s
+FAIL

@@ -1,0 +1,24 @@
+=== RUN   TestCompleteBattleProof
+    proof_test.go:36: test-only setup kind=0 constraints=67119 elapsed=13.25857525s
+    proof_test.go:36: test-only setup kind=1 constraints=295266 elapsed=1m26.077660625s
+=== RUN   TestCompleteBattleProof/truncate
+=== RUN   TestCompleteBattleProof/skip
+=== RUN   TestCompleteBattleProof/reorder
+=== RUN   TestCompleteBattleProof/stale-memory
+=== RUN   TestCompleteBattleProof/result
+=== RUN   TestCompleteBattleProof/seed
+=== RUN   TestCompleteBattleProof/genesis
+=== RUN   TestCompleteBattleProof/proof-swap
+=== NAME  TestCompleteBattleProof
+    proof_test.go:98: COMPLETE battle proof: chunks=55 proofBytes=9468 counter=14 rounds=2 allocation=[{Side:0 Type:0 Owner:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1] Source:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1] Initial:1 Lost:1 Survivors:0} {Side:0 Type:1 Owner:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2] Source:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2] Initial:1 Lost:0 Survivors:1} {Side:1 Type:2 Owner:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3] Source:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3] Initial:1 Lost:1 Survivors:0} {Side:1 Type:3 Owner:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4] Source:[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 4] Initial:1 Lost:1 Survivors:0}] elapsed=2m52.232901792s
+--- PASS: TestCompleteBattleProof (172.23s)
+    --- PASS: TestCompleteBattleProof/truncate (0.15s)
+    --- PASS: TestCompleteBattleProof/skip (0.02s)
+    --- PASS: TestCompleteBattleProof/reorder (0.02s)
+    --- PASS: TestCompleteBattleProof/stale-memory (0.03s)
+    --- PASS: TestCompleteBattleProof/result (0.15s)
+    --- PASS: TestCompleteBattleProof/seed (0.00s)
+    --- PASS: TestCompleteBattleProof/genesis (0.00s)
+    --- PASS: TestCompleteBattleProof/proof-swap (0.03s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/battle	172.821s

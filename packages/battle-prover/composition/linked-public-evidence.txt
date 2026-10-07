@@ -1,0 +1,26 @@
+=== RUN   TestLinkedQualificationPublicProof
+    family_proof_test.go:37: COMPILE linked-qualification-v3 constraints=1184815 public=7 time=2.04536625s
+    family_proof_test.go:40: MEMORY SETUP START linked-qualification-v3
+    family_proof_test.go:45: MEMORY SETUP DONE linked-qualification-v3 elapsed=5m12.393334834s
+    settlement_stage_test.go:123: PUBLIC STAGE VERIFIED role=linked-qualification-v3 public=7 proof_sha256=8d7936a360c27a25b050c7ecabff9dc27c5e2e3906b59ef1b81207819491f5b7 vk_sha256=1ea7aac42cb0f8055d6d0e7282f47dbdd6c35ba2141c8e55bfbd46f2d45fb9e7
+--- PASS: TestLinkedQualificationPublicProof (332.52s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	333.999s
+      336.37 real       588.39 user         3.24 sys
+          3074113536  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              273545  page reclaims
+                 901  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+               22215  signals received
+                5177  voluntary context switches
+              347531  involuntary context switches
+          3607537433  instructions retired
+          1284393425  cycles elapsed
+            27787960  peak memory footprint

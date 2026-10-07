@@ -1,0 +1,51 @@
+=== RUN   TestCatalogRoles
+--- PASS: TestCatalogRoles (0.00s)
+=== RUN   TestDispatchDAG
+--- PASS: TestDispatchDAG (0.00s)
+=== RUN   TestProtocolWorkPlan
+    family_plan_test.go:24: uint256 work bits=1 level256 root=1
+    family_plan_test.go:24: uint256 work bits=2 level256 root=1
+    family_plan_test.go:24: uint256 work bits=5 level256 root=1
+    family_plan_test.go:24: uint256 work bits=201 level256 root=1
+    family_plan_test.go:24: uint256 work bits=256 level256 root=1
+--- PASS: TestProtocolWorkPlan (0.00s)
+=== RUN   TestRawIndependentApprovalAttacks
+    legacy_raw_pin_test.go:104: REJECTED independent approval coherent-proof-key-substitution
+    legacy_raw_pin_test.go:104: REJECTED independent approval CCS-version
+    legacy_raw_pin_test.go:104: REJECTED independent approval role
+    legacy_raw_pin_test.go:104: REJECTED independent approval public
+--- PASS: TestRawIndependentApprovalAttacks (0.01s)
+=== RUN   TestPipelineSplitPlan
+--- PASS: TestPipelineSplitPlan (0.00s)
+=== RUN   TestSettlementBindings
+    settlement_test.go:35: COMPILE settlement22-bindings constraints=80984 public=22 time=213.322083ms
+    settlement_test.go:75: REJECTED binding raw-genesis (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding raw-premature (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding raw-result (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding old-SHA-layout (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding context (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding combat-input (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding output-premature (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding output-root (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding report (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding allocation (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding settlement-root (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding settlement-chain (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding limb-alias (supplemental solver, not proof)
+    settlement_test.go:75: REJECTED binding member-omission (supplemental solver, not proof)
+    settlement_test.go:77: REAL FIXTURE raw=7 prep=17 combat=36 bridge=11 attributionGroups=2 report=3 output=9 completeSettlement=[18395499706900017847 7967734143446093506 2524575188123157529 10865060596497800667 6229458217532788799 13365098583402300192 13333511352624175928 2449549484128514639 3 0 0 0 1 2 0 0 0 0 0 0 0 1]
+--- PASS: TestSettlementBindings (1.59s)
+=== RUN   TestRawOutputFixedFamilies
+    settlement_test.go:89: COMPILE journal-phase5-kind0 constraints=1061037 public=3 time=1.854158959s
+    settlement_test.go:89: COMPILE journal-phase5-kind1 constraints=1513861 public=3 time=2.77743425s
+    settlement_test.go:89: COMPILE journal-phase5-kind2 constraints=1214810 public=3 time=2.620802458s
+    settlement_test.go:89: COMPILE journal-phase5-kind3 constraints=307052 public=3 time=575.145792ms
+    settlement_test.go:89: COMPILE journal-phase6-kind0 constraints=129314 public=3 time=316.623125ms
+    settlement_test.go:89: COMPILE journal-phase6-kind1 constraints=157004 public=3 time=362.766917ms
+    settlement_test.go:89: COMPILE journal-phase6-kind2 constraints=658165 public=3 time=1.217928583s
+    settlement_test.go:89: COMPILE journal-phase6-kind3 constraints=160911 public=3 time=361.077917ms
+    settlement_test.go:89: COMPILE journal-phase6-kind4 constraints=371863 public=3 time=755.930125ms
+    settlement_test.go:116: COMPILE actual-linked-qualification constraints=1184815 public=7 time=2.080311458s
+--- PASS: TestRawOutputFixedFamilies (24.16s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	28.229s

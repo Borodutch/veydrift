@@ -1,0 +1,125 @@
+=== RUN   TestAllTransitions
+    battle_test.go:53: rng=false constraints=17640
+    battle_test.go:53: rng=true constraints=245787
+    battle_test.go:83: terminal steps=55 counter=14 rounds=2 outcome=1 hull=[0 60 0 0] shots=[[3 2] [1 1] [0 0] [0 0] [0 0] [0 0]]
+--- PASS: TestAllTransitions (6.56s)
+=== RUN   TestIndependentOracle
+=== RUN   TestIndependentOracle/0
+=== RUN   TestIndependentOracle/1
+=== RUN   TestIndependentOracle/2
+=== RUN   TestIndependentOracle/3
+=== RUN   TestIndependentOracle/7
+=== RUN   TestIndependentOracle/31
+=== RUN   TestIndependentOracle/127
+=== RUN   TestIndependentOracle/255
+--- PASS: TestIndependentOracle (0.16s)
+    --- PASS: TestIndependentOracle/0 (0.02s)
+    --- PASS: TestIndependentOracle/1 (0.02s)
+    --- PASS: TestIndependentOracle/2 (0.02s)
+    --- PASS: TestIndependentOracle/3 (0.02s)
+    --- PASS: TestIndependentOracle/7 (0.02s)
+    --- PASS: TestIndependentOracle/31 (0.03s)
+    --- PASS: TestIndependentOracle/127 (0.02s)
+    --- PASS: TestIndependentOracle/255 (0.02s)
+=== RUN   TestHitBoundaries
+=== RUN   TestHitBoundaries/full-shield-bounce
+=== RUN   TestHitBoundaries/exact-one-percent-not-bounce
+=== RUN   TestHitBoundaries/shield-only-explosion
+=== RUN   TestHitBoundaries/zero-power-no-explosion
+=== RUN   TestHitBoundaries/dead-target
+=== RUN   TestHitBoundaries/exact-thirty-percent
+=== RUN   TestHitBoundaries/over-thirty-percent
+=== RUN   TestHitBoundaries/saturating-destruction
+--- PASS: TestHitBoundaries (0.08s)
+    --- PASS: TestHitBoundaries/full-shield-bounce (0.00s)
+    --- PASS: TestHitBoundaries/exact-one-percent-not-bounce (0.00s)
+    --- PASS: TestHitBoundaries/shield-only-explosion (0.00s)
+    --- PASS: TestHitBoundaries/zero-power-no-explosion (0.00s)
+    --- PASS: TestHitBoundaries/dead-target (0.00s)
+    --- PASS: TestHitBoundaries/exact-thirty-percent (0.01s)
+    --- PASS: TestHitBoundaries/over-thirty-percent (0.00s)
+    --- PASS: TestHitBoundaries/saturating-destruction (0.00s)
+=== RUN   TestSixRoundDraw
+--- PASS: TestSixRoundDraw (5.72s)
+=== RUN   TestCommittedPreimageBinding
+    committed_test.go:20: committed rng=false constraints=67119 public=7
+=== RUN   TestCommittedPreimageBinding/before-root
+=== RUN   TestCommittedPreimageBinding/after-root
+=== RUN   TestCommittedPreimageBinding/context
+=== RUN   TestCommittedPreimageBinding/private-memory
+=== RUN   TestCommittedPreimageBinding/private-seed
+=== RUN   TestCommittedPreimageBinding/step
+=== RUN   TestCommittedPreimageBinding/terminal
+=== RUN   TestCommittedPreimageBinding/identity
+=== NAME  TestCommittedPreimageBinding
+    committed_test.go:20: committed rng=true constraints=295266 public=7
+=== RUN   TestCommittedPreimageBinding/before-root#01
+=== RUN   TestCommittedPreimageBinding/after-root#01
+=== RUN   TestCommittedPreimageBinding/context#01
+=== RUN   TestCommittedPreimageBinding/private-memory#01
+=== RUN   TestCommittedPreimageBinding/private-seed#01
+=== RUN   TestCommittedPreimageBinding/step#01
+=== RUN   TestCommittedPreimageBinding/terminal#01
+=== RUN   TestCommittedPreimageBinding/identity#01
+--- PASS: TestCommittedPreimageBinding (2.84s)
+    --- PASS: TestCommittedPreimageBinding/before-root (0.06s)
+    --- PASS: TestCommittedPreimageBinding/after-root (0.06s)
+    --- PASS: TestCommittedPreimageBinding/context (0.02s)
+    --- PASS: TestCommittedPreimageBinding/private-memory (0.00s)
+    --- PASS: TestCommittedPreimageBinding/private-seed (0.02s)
+    --- PASS: TestCommittedPreimageBinding/step (0.00s)
+    --- PASS: TestCommittedPreimageBinding/terminal (0.00s)
+    --- PASS: TestCommittedPreimageBinding/identity (0.02s)
+    --- PASS: TestCommittedPreimageBinding/before-root#01 (0.26s)
+    --- PASS: TestCommittedPreimageBinding/after-root#01 (0.26s)
+    --- PASS: TestCommittedPreimageBinding/context#01 (0.21s)
+    --- PASS: TestCommittedPreimageBinding/private-memory#01 (0.19s)
+    --- PASS: TestCommittedPreimageBinding/private-seed#01 (0.22s)
+    --- PASS: TestCommittedPreimageBinding/step#01 (0.00s)
+    --- PASS: TestCommittedPreimageBinding/terminal#01 (0.00s)
+    --- PASS: TestCommittedPreimageBinding/identity#01 (0.21s)
+=== RUN   TestEmptySideInitialization
+--- PASS: TestEmptySideInitialization (0.04s)
+=== RUN   TestDeadRoundParticipantStillFires
+--- PASS: TestDeadRoundParticipantStillFires (0.05s)
+=== RUN   TestFixedInputValidation
+=== RUN   TestFixedInputValidation/owner-tech
+=== RUN   TestFixedInputValidation/source
+=== RUN   TestFixedInputValidation/catalog
+=== RUN   TestFixedInputValidation/rf
+=== RUN   TestFixedInputValidation/zero-hull
+=== RUN   TestFixedInputValidation/base-overflow
+=== RUN   TestFixedInputValidation/cohort-order
+--- PASS: TestFixedInputValidation (0.00s)
+    --- PASS: TestFixedInputValidation/owner-tech (0.00s)
+    --- PASS: TestFixedInputValidation/source (0.00s)
+    --- PASS: TestFixedInputValidation/catalog (0.00s)
+    --- PASS: TestFixedInputValidation/rf (0.00s)
+    --- PASS: TestFixedInputValidation/zero-hull (0.00s)
+    --- PASS: TestFixedInputValidation/base-overflow (0.00s)
+    --- PASS: TestFixedInputValidation/cohort-order (0.00s)
+=== RUN   TestMemoryLatestWrite
+=== RUN   TestMemoryLatestWrite/stale-read
+=== RUN   TestMemoryLatestWrite/stale-root
+=== RUN   TestMemoryLatestWrite/wrong-index
+=== RUN   TestMemoryLatestWrite/wrong-sibling
+=== RUN   TestMemoryLatestWrite/unrelated-write
+=== NAME  TestMemoryLatestWrite
+    memory_test.go:99: two authenticated updates constraints=12693
+--- PASS: TestMemoryLatestWrite (0.02s)
+    --- PASS: TestMemoryLatestWrite/stale-read (0.00s)
+    --- PASS: TestMemoryLatestWrite/stale-root (0.00s)
+    --- PASS: TestMemoryLatestWrite/wrong-index (0.00s)
+    --- PASS: TestMemoryLatestWrite/wrong-sibling (0.00s)
+    --- PASS: TestMemoryLatestWrite/unrelated-write (0.00s)
+=== RUN   TestCompleteBattleProof
+    proof_test.go:17: opt-in BATTLE_PROOF=1 GOMAXPROCS=2 go test ./battle -run TestCompleteBattleProof -timeout 10m -v
+--- SKIP: TestCompleteBattleProof (0.00s)
+=== RUN   TestRejectionBoundaries
+--- PASS: TestRejectionBoundaries (0.57s)
+=== RUN   TestResumeEveryElementaryBoundary
+--- PASS: TestResumeEveryElementaryBoundary (0.00s)
+=== RUN   TestCounterAndWorkCannotWrap
+--- PASS: TestCounterAndWorkCannotWrap (0.58s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/battle	16.923s

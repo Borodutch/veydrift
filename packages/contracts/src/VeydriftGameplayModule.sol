@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftProofBattle as Proof} from "./libraries/VeydriftProofBattle.sol";
 import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
 
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
@@ -369,11 +370,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
-        VeydriftBattleResearch.markLaunchedAttack(missionId);
-        address randomnessEngine = _randomnessEngine;
-        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
-        return IVeydriftAttackRandomnessEngine(randomnessEngine)
-            .requestRandomness(_attackBattlePurposeHash(missionId));
+        return Proof.request(missionId, _randomnessEngine, _attackBattlePurposeHash(missionId));
     }
 
     function _emitFleetMissionShips(uint256 missionId, MissionShips memory ships) private {
@@ -587,6 +584,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 return false;
             }
             if (abi.decode(result, (bool))) return true;
+            // Proof pending is not more combat work. Never spin until the gas envelope empties.
+            if (Store.battle(missionId).phase >= 16) return false;
         }
         return true;
     }

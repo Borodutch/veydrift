@@ -1,0 +1,37 @@
+=== RUN   TestSolidityABIInterop
+    abi_test.go:84: independent cast ABI all record kinds; snapshot=0x6c98a8401eb9d6ebc929f618eecbe67fd2f376180e9dd95106f1350c4813c42a
+--- PASS: TestSolidityABIInterop (0.35s)
+=== RUN   TestJournalSolver
+=== RUN   TestJournalSolver/0
+    rawbridge_test.go:63: kind=0 constraints=1052086
+=== RUN   TestJournalSolver/0/identity
+=== RUN   TestJournalSolver/0/journal
+=== RUN   TestJournalSolver/1
+    rawbridge_test.go:63: kind=1 constraints=1504917
+=== RUN   TestJournalSolver/1/identity
+=== RUN   TestJournalSolver/1/journal
+=== RUN   TestJournalSolver/2
+    rawbridge_test.go:63: kind=2 constraints=1205867
+=== RUN   TestJournalSolver/2/identity
+=== RUN   TestJournalSolver/2/journal
+=== RUN   TestJournalSolver/3
+    rawbridge_test.go:63: kind=3 constraints=298101
+=== RUN   TestJournalSolver/3/identity
+=== RUN   TestJournalSolver/3/journal
+--- PASS: TestJournalSolver (20.14s)
+    --- PASS: TestJournalSolver/0 (2.86s)
+        --- PASS: TestJournalSolver/0/identity (0.10s)
+        --- PASS: TestJournalSolver/0/journal (0.09s)
+    --- PASS: TestJournalSolver/1 (5.90s)
+        --- PASS: TestJournalSolver/1/identity (0.51s)
+        --- PASS: TestJournalSolver/1/journal (0.11s)
+    --- PASS: TestJournalSolver/2 (9.96s)
+        --- PASS: TestJournalSolver/2/identity (0.39s)
+        --- PASS: TestJournalSolver/2/journal (0.04s)
+    --- PASS: TestJournalSolver/3 (1.28s)
+        --- PASS: TestJournalSolver/3/identity (0.24s)
+        --- PASS: TestJournalSolver/3/journal (0.02s)
+=== RUN   TestStreamCompleteness
+--- PASS: TestStreamCompleteness (0.21s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/rawbridge	21.645s

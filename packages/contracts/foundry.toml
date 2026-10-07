@@ -35,6 +35,7 @@ compilation_restrictions = [
   { paths = "test/VeydriftLiveUpgradePolicy.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftMissionBatch.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftPlanetGeneration.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftProofBattle.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftScheduledReturns.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftSettlement.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftShipCatalog.t.sol", max_optimizer_runs = 0 },

@@ -1,0 +1,7 @@
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/devcatalog	1.050s
+?   	github.com/Borodutch/veydrift/packages/battle-prover/devcatalog/cmd/catalog-builder	[no test files]
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/runtime	60.236s
+?   	github.com/Borodutch/veydrift/packages/battle-prover/runtime/cmd/prover-engine	[no test files]
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/runtime/cmd/prover-service	0.719s
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/devcatalog	1.677s
+?   	github.com/Borodutch/veydrift/packages/battle-prover/devcatalog/cmd/catalog-builder	[no test files]

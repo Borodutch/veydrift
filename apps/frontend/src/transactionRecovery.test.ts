@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
 import { GameApiError } from "./gameApiError";
 import { transactionIsBusy, type WriteTransactionState } from "./transactionActionGate";
@@ -127,11 +127,47 @@ describe("automatic transaction recovery", () => {
   test("expired preparation cannot ask the wallet to send later", async () => {
     browser();
     const prepare = deferred<void>();
+    // Drive the actual foreground timeout explicitly; scheduler/GC pauses must not
+    // consume the next action's independent 5ms deadline. Leave production guards intact.
+    let clock = Date.now();
+    const dateNow = spyOn(Date, "now").mockImplementation(() => clock);
+    restorers.push(() => dateNow.mockRestore());
+    const realSetTimeout = globalThis.setTimeout;
+    const timeouts: Array<() => void> = [];
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      if (delay !== 5) return realSetTimeout(callback, delay, ...args);
+      timeouts.push(() => callback(...args));
+      return realSetTimeout(() => {}, 60_000); // cleared by the real transaction cleanup
+    }) as typeof setTimeout);
+    restorers.push(() => timer.mockRestore());
     const data = store({ transactionForegroundTimeoutMs: 5 });
     let sends = 0;
-    await expect(data.runWriteTransaction({ ...action(), prepare: () => prepare.promise, send: async beforeSend => { beforeSend(); sends++; return "0xlate"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
+    const expired = data.runWriteTransaction({ ...action(), prepare: () => prepare.promise, send: async beforeSend => { beforeSend(); sends++; return "0xlate"; } });
+    expect(timeouts).toHaveLength(1);
+    clock += 5;
+    timeouts[0]!();
+    await expect(expired).resolves.toMatchObject({ outcome: "not-submitted" });
     prepare.resolve();
-    await Bun.sleep(2);
+    await Promise.resolve(); // resume the expired preparation before inspecting sends
+    expect(sends).toBe(0);
+    await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
+    expect(timeouts).toHaveLength(2);
+  });
+
+  test("preparation deadline rejects a send even before its timer can run", async () => {
+    browser();
+    let clock = Date.now();
+    const dateNow = spyOn(Date, "now").mockImplementation(() => clock);
+    restorers.push(() => dateNow.mockRestore());
+    const data = store({ transactionForegroundTimeoutMs: 5 });
+    let sends = 0;
+    const result = await data.runWriteTransaction({ ...action(),
+      prepare: async () => { clock += 5; },
+      send: async beforeSend => { beforeSend(); sends++; return "0xlate"; },
+    });
+    expect(result).toMatchObject({ outcome: "not-submitted" });
+    expect(result.error).toBeInstanceOf(Error);
+    expect(String(result.error)).toContain("preparation attempt has expired");
     expect(sends).toBe(0);
     await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
   });

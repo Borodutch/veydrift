@@ -1,0 +1,57 @@
+=== RUN   TestActualPipelineProof
+    proof_test.go:195: RESOURCE CPUs=2 softMemory=6442450944 constraintCeiling=4000000 timeout=90min
+    fixture_test.go:105: NONEMPTY raw_rows=1 units=1 prep=5 combat=3 attribution=4 bridge=5 report=1 lost=0 survivors=1 rounds=0 shots=0
+    proof_test.go:197: COMPILE preparation constraints=2160524 public=8 time=6.105585083s
+    proof_test.go:197: SETUP START preparation
+    proof_test.go:197: SETUP DONE preparation time=7m31.102642959s
+    proof_test.go:197: PROOF VERIFIED preparation bytes=196 sha256=6709fda287703252c9acd0dd9ae31c290aed81e232b62353ba4e274396e8577a vk_sha256=e8ec4418a2d4ca6ce717793238ad8d0e735acb40a5f19fbeabcb2d4fb2cd3e40 time=34.245617375s
+    proof_test.go:198: COMPILE combat constraints=1170122 public=16 time=3.394741167s
+    proof_test.go:198: SETUP START combat
+    proof_test.go:198: SETUP DONE combat time=3m50.869241917s
+    proof_test.go:198: PROOF VERIFIED combat bytes=196 sha256=5ad2b386b3dd480a4700245c8e98863ae241dddbc09d85141a9629054a265ccf vk_sha256=964b7b3265a4a924def234bd731d6916016c05b9f4f5663812b01b2deb9ee0a2 time=15.450876167s
+    proof_test.go:199: COMPILE prepared-combat constraints=3559437 public=8 time=7.600451458s
+    proof_test.go:199: SETUP START prepared-combat
+    proof_test.go:199: SETUP DONE prepared-combat time=12m49.213487625s
+    proof_test.go:199: PROOF VERIFIED prepared-combat bytes=196 sha256=4646ee6a36983431e2b370ce817eac98dd4333ef03f27ad7490bacf9ee54700e vk_sha256=f822d97355d9b96759f7cc7973d37fb18b2a6a9d26e1a5a67afcf50cbc70566e time=39.14553125s
+    proof_test.go:203: COMPILE allocation constraints=359813 public=10 time=640.692542ms
+    proof_test.go:203: SETUP START allocation
+    proof_test.go:203: SETUP DONE allocation time=1m2.1073225s
+    proof_test.go:203: PROOF VERIFIED allocation bytes=196 sha256=325723851c959c8b5af8bc153110d5d4096c29dee9d746058b78a13bf47ed654 vk_sha256=3ed5d7e4bc73035a0472e1288509326de27195a56294ee1f0564d23b1aa8b9b8 time=3.445874375s
+    proof_test.go:205: COMPILE bridge constraints=2536170 public=20 time=4.927023208s
+    proof_test.go:205: SETUP START bridge
+    proof_test.go:205: SETUP DONE bridge time=9m24.346508083s
+    proof_test.go:205: PROOF VERIFIED bridge bytes=196 sha256=7cb969e06d69fc53ea887fa16873b71db06cd2ea60d092b16de79ff036a6d3b3 vk_sha256=61ec915bd27dc118c1339fc5f5dd2f10768c7f0ec036e7dea73ada8da7f51e91 time=31.87718975s
+    proof_test.go:208: COMPILE report constraints=60160 public=14 time=111.67025ms
+    proof_test.go:208: SETUP START report
+    proof_test.go:208: SETUP DONE report time=10.704879833s
+    proof_test.go:208: PROOF VERIFIED report bytes=164 sha256=9349e1c3038273dd366c32c77575f8b2876491c6774dfdd7b0e8aef1b814dbc3 vk_sha256=6f41c3347c5894d9337c745e2877843b50d89b577c5abc792fed43802da53253 time=907.726917ms
+    proof_test.go:209: COMPILE bridge-report constraints=3238220 public=8 time=7.125888208s
+    proof_test.go:209: SETUP START bridge-report
+    proof_test.go:209: SETUP DONE bridge-report time=11m48.678746917s
+    proof_test.go:209: PROOF VERIFIED bridge-report bytes=196 sha256=98ee1b5aba1d7437d47d5c032287260f4185272f3ad79e74b2c7162b289042b2 vk_sha256=426f8c2158e28ca7e63e0351597646c5bb2a1b071e749db620b480eddd0e63e2 time=37.001076042s
+    proof_test.go:214: COMPILE final constraints=3454146 public=8 time=7.123396875s
+    proof_test.go:214: SETUP START final
+    proof_test.go:214: SETUP DONE final time=12m44.717169917s
+    proof_test.go:214: PROOF VERIFIED final bytes=196 sha256=0aee8f36e0ef2ce890e71e8afdf79a0df30af4b65187a46dac1273f41e8df720 vk_sha256=fc8ac145d8b5381e2fac372f9443d36377c1f27d00604a5da7af15289c971baf time=38.7903465s
+    proof_test.go:222: COMPLETE PIPELINE VERIFIED public=[20042564944244354276664284616105374801388369328246232137696197165673995409066 6088271906762580911528064953664615606959956469899680433374656488067462299813 6620870973898061401514493743402126157954831625139133738738251470238962034399 14468271840956669237472893364620544207158266164009325881188561567901943782807 2844954724351316095628894091556379504215235050258799135507956911475656652510 13384591549812513904311746258862709783040014835950164683564537600473605878148 6583655601838441724923412661129295645403194643388401920347406765951559213722 19959317888746977820959818152134992733801138343498837831019578434520346920527] elapsed=1h3m29.875456333s; development setup, bounded one-sided fixture, external RF/seed qualification NOT authenticated
+--- PASS: TestActualPipelineProof (3809.88s)
+PASS
+ok  	github.com/Borodutch/veydrift/packages/battle-prover/composition	3810.347s
+     3811.17 real      7030.44 user        19.86 sys
+         10691805184  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+              742941  page reclaims
+                5808  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+              256161  signals received
+              103652  voluntary context switches
+             1699985  involuntary context switches
+          4172271075  instructions retired
+          1661493326  cycles elapsed
+            28017336  peak memory footprint

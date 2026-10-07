@@ -1,0 +1,13 @@
+Unable to resolve imports:
+      "../public/Verifier.sol" in "/Users/borodutch/code/veydrift-worktrees/ticket-44-6fbd/packages/battle-prover/aggregation/evm/test/CombatVerifier.t.sol"
+with remappings:
+
+Compiling 1 files with Solc 0.8.28
+Solc 0.8.28 finished in 15.01ms
+Error: Compiler run failed:
+Error (6275): Source "public/Verifier.sol" not found: File not found. Searched the following locations: "/Users/borodutch/code/veydrift-worktrees/ticket-44-6fbd/packages/battle-prover/aggregation/evm".
+ParserError: Source "public/Verifier.sol" not found: File not found. Searched the following locations: "/Users/borodutch/code/veydrift-worktrees/ticket-44-6fbd/packages/battle-prover/aggregation/evm".
+ --> test/CombatVerifier.t.sol:4:1:
+  |
+4 | import {Verifier} from "../public/Verifier.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
