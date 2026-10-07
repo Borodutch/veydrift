@@ -23,6 +23,7 @@ import {
   type BatchSupplySource,
   type SupplyResources,
 } from "../batchSupplyPlanner";
+import { useBatchSupplyMax } from "../useBatchSupplyMax";
 import { shipAssetByKey } from "../gameAssets";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
@@ -151,7 +152,7 @@ export function BatchSupplyModal({
     crystal: inputAmount(requested.crystal),
     deuterium: inputAmount(requested.deuterium),
   }), [requested]);
-  const plan = useMemo(() => buildBatchSupplyPlan({
+  const planOptions = useMemo(() => ({
     mission,
     targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
     targetIsMoon,
@@ -162,6 +163,7 @@ export function BatchSupplyModal({
     sources,
     maxOrders: maxSources,
   }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
+  const plan = useMemo(() => buildBatchSupplyPlan(planOptions), [planOptions]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
   const missingTotal = resourceTotal(plan.missing);
@@ -171,7 +173,10 @@ export function BatchSupplyModal({
     ? transactionState?.label
     : undefined;
   const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission);
-  const canSubmit = (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
+  const maximum = useBatchSupplyMax(planOptions, target.planetId, loading || actionPending || transactionPending, (resource, value) => {
+    setRequested((current) => ({ ...current, [resource]: value === 0 ? "" : String(value) }));
+  });
+  const canSubmit = !maximum.busy && (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
   const targetLabel = `${target.name?.trim() || target.coordinates}${targetIsMoon ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
@@ -180,20 +185,6 @@ export function BatchSupplyModal({
     }
     : undefined;
   const selectableSourceCount = Math.min(maxSources, sources.length);
-
-  const setMax = (resource: keyof SupplyResources) => {
-    const maximum = buildBatchSupplyPlan({
-      mission,
-      targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position },
-      targetIsMoon,
-      requested: { ...requestedNumbers, [resource]: Number.MAX_SAFE_INTEGER },
-      selectedPlanetIds: selected,
-      shipTypesBySource,
-      sources,
-      maxOrders: maxSources,
-    }).delivered[resource];
-    setRequested((current) => ({ ...current, [resource]: maximum === 0 ? "" : String(maximum) }));
-  };
 
   const toggleSource = (planetId: string) => {
     setSelectedSourceIds((current) => {
@@ -273,11 +264,17 @@ export function BatchSupplyModal({
                 placeholder="0"
                 value={requested[resource]}
               />
-              <button className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" onClick={() => setMax(resource)} type="button">Max</button>
+              <button className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" disabled={loading || actionPending || transactionPending} onClick={() => maximum.start(resource)} type="button">{maximum.busy === resource ? "Calculating…" : "Max"}</button>
             </span>
           </label>
         ))}
       </section>
+
+      {maximum.busy ? <div className="flex items-center gap-3 text-sm text-cyan-100">
+        <p role="status">Calculating {maximum.busy} Max… You can keep editing or cancel.</p>
+        <button className="min-h-8 rounded border border-white/20 px-2" type="button" onClick={maximum.cancel}>Cancel Max</button>
+      </div> : null}
+      {maximum.error ? <p role="alert" className="text-sm text-red-100">{maximum.error}</p> : null}
 
       <section className="grid gap-2" aria-label="Source planets">
         <div className="flex items-center justify-between gap-3">

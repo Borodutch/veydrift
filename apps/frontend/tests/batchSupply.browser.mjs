@@ -96,6 +96,15 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       }
       await settle();
+      // Max is deliberately asynchronous; normal interaction checks await its result.
+      if (expression.includes("closest")) {
+        const deadline = Date.now() + 20_000;
+        while (await evaluate('document.body.textContent.includes("Cancel Max")')) {
+          assert.ok(Date.now() < deadline, "Max did not finish");
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        await settle();
+      }
     }
     const selected = () => evaluate('[...document.querySelectorAll("[role=group] button[aria-describedby]")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
     async function expectTypes(expected, reason) { assert.deepEqual(await selected(), expected, reason); }
@@ -133,6 +142,106 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // Production worker: fifteen fuel-starved 10,000-ship sources used to block
+    // this same main thread for seconds. Measure event-loop progress, not throughput.
+    await load(1280, 'largeFleet=1');
+    const maxButton = resource => 'document.querySelector(' + JSON.stringify('input[aria-label="' + resource + ' to send"]') + ').closest("label").querySelector("button")';
+    const busy = () => evaluate('document.body.textContent.includes("Cancel Max")');
+    const elapsed = await evaluate('(() => { const start = performance.now(); ' + maxButton('metal') + '.click(); return performance.now() - start; })()');
+    assert.ok(elapsed < 250, 'Max click must not run the exact search on the UI thread: ' + elapsed);
+    await settle();
+    assert.equal(await busy(), true, 'large search has visible progress');
+    assert.equal(await evaluate(launch + '.disabled'), true, 'cannot launch the old preview during Max');
+    const heartbeat = await evaluate('new Promise(resolve => { let ticks = 0; const start = performance.now(); const timer = setInterval(() => { if (++ticks === 10) { clearInterval(timer); resolve(performance.now() - start); } }, 10); })');
+    assert.ok(heartbeat < 500, 'main-thread heartbeat stays responsive during exact search: ' + heartbeat);
+    const cancelStart = Date.now();
+    await click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")');
+    assert.equal(await busy(), false);
+    assert.ok(Date.now() - cancelStart < 1000, 'large search is immediately cancellable');
+    console.log('PASS 15 × 10,000 ships: click ' + elapsed.toFixed(1) + 'ms, ten UI ticks ' + heartbeat.toFixed(1) + 'ms, cancellable');
+
+    // Deterministic queued-event injection into the mounted production hook.
+    // Capture callbacks before cleanup to prove identity guards, not just null handlers.
+    await load(1280);
+    await evaluate(`(() => {
+      window.maxWorkers = [];
+      window.maxWorkerFailure = '';
+      window.Worker = class {
+        constructor() {
+          if (window.maxWorkerFailure === 'construct') throw new Error('fixture');
+          window.maxWorkers.push(this);
+        }
+        postMessage(request) {
+          if (window.maxWorkerFailure === 'post') throw new Error('fixture');
+          this.request = request;
+          this.reply = this.onmessage;
+          this.fail = this.onerror;
+          this.messageError = this.onmessageerror;
+        }
+        terminate() { this.terminated = true; }
+      };
+    })()`);
+    const startMax = async resource => { await evaluate(maxButton(resource) + '.click()'); await settle(); };
+    const amount = resource => evaluate('document.querySelector(' + JSON.stringify('input[aria-label="' + resource + ' to send"]') + ').value');
+    await startMax('metal');
+    assert.equal(await busy(), true);
+    await startMax('crystal');
+    assert.equal(await evaluate('maxWorkers[0].terminated'), true, 'replacement terminates CPU work');
+    await evaluate('maxWorkers[0].reply({data:{maximum:999999}}); maxWorkers[0].fail();');
+    await settle();
+    assert.equal(await amount('metal'), '1000', 'superseded result ignored');
+    assert.equal(await busy(), true, 'superseded error cannot finish current job');
+    await evaluate('maxWorkers[1].reply({data:{maximum:123}})'); await settle();
+    assert.equal(await amount('metal'), '1000');
+    assert.equal(await amount('crystal'), '123', 'only clicked resource changes');
+    assert.equal(await busy(), false);
+    assert.equal(await evaluate('maxWorkers[1].terminated'), true, 'success releases worker');
+
+    for (const change of [
+      () => input('metal to send', 777),
+      () => input('Astro metal to send', 400),
+      () => click(checkbox(0)),
+      () => click(source),
+      () => click(`document.querySelector('[aria-label="Mission type"] button:last-child')`),
+      async () => { await evaluate('supplyFixture.refresh()'); await settle(); },
+      async () => { await evaluate("supplyFixture.changeRoute()"); await settle(); },
+      async () => { await evaluate("supplyFixture.changeBody()"); await settle(); },
+      async () => { await evaluate("supplyFixture.changeLimit()"); await settle(); },
+      () => click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")'),
+      async () => { await evaluate('supplyFixture.pending("action")'); await settle(); },
+    ]) {
+      await startMax('metal');
+      await evaluate('window.staleMax = maxWorkers.at(-1)');
+      await change();
+      const expected = await amount('metal');
+      assert.equal(await evaluate('staleMax.terminated'), true, 'draft change terminates worker');
+      assert.equal(await busy(), false);
+      await evaluate('staleMax.reply({data:{maximum:999999}}); staleMax.fail();'); await settle();
+      assert.equal(await amount('metal'), expected, 'draft edit survives stale result');
+      assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'stale errors ignored');
+    }
+    await evaluate('supplyFixture.pending("none")'); await settle();
+    for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
+      await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
+      const expected = await amount('metal');
+      await startMax('metal');
+      if (failure === 'response') await evaluate('maxWorkers.at(-1).reply({data:{error:"fixture"}})');
+      if (failure === 'error') await evaluate('maxWorkers.at(-1).fail()');
+      if (failure === 'messageerror') await evaluate('maxWorkers.at(-1).messageError()');
+      await settle();
+      assert.equal(await busy(), false, failure + ' clears busy');
+      assert.equal(await amount('metal'), expected, failure + ' preserves request');
+      assert.ok(await evaluate('document.querySelector("[role=alert]")?.textContent.includes("Please retry")'), failure + ' visible retry message');
+      assert.equal(await evaluate('maxWorkers.at(-1).terminated'), true, failure + ' releases worker');
+    }
+    await evaluate('window.maxWorkerFailure = ""');
+    await startMax('metal');
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'retry clears error');
+    await evaluate('window.staleMax = maxWorkers.at(-1); supplyFixture.unmount();');
+    assert.equal(await evaluate('staleMax.terminated'), true, 'unmount terminates CPU work');
+    await evaluate('staleMax.reply({data:{maximum:999999}}); staleMax.fail();'); await settle();
+    assert.equal(await evaluate('Boolean(document.querySelector("[role=dialog]"))'), false, 'unmounted result cannot reopen modal');
+    console.log('PASS Max replacement, edits, overrides, ships, sources, mission, stock, pending, failures, retry and unmount');
     // Mission selection is draft-local, survives refresh/rejection, and reaches onConfirm.
     for (const width of [1280, 390, 320]) {
       await load(width);
