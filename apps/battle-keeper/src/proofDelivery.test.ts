@@ -366,3 +366,45 @@ test("actual readiness correction preserves accepted application economics and r
   f.state.proofPhase = 4;
   expect(await f.operationPlan()).toBeUndefined();
 });
+
+
+test("authority commit marker in separate pinned root gates all composed file plans", async () => {
+  const { openProofAuthorityResolver } = await import("./proofAuthorityFile");
+  const { mkdir } = await import("node:fs/promises");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "proof-pair-")));
+  const trust = "fixed-readonly-consumer-directory-and-immutable-ancestors" as const;
+  const source = {directory:join(root,"artifacts"),trust}, metadata = {directory:join(root,"authority"),trust};
+  await mkdir(source.directory); await mkdir(metadata.directory);
+  const f=exportedFixture(); f.state.unaccepted=true;
+  const name=proofArtifactBasename({chainId:"8453",battleId:"42",game,binding:f.binding,releaseId:f.state.releaseId});
+  const pins={catalogSha256:"a".repeat(64),publisherConfigSha256:"b".repeat(64)};
+  const record={schema:"veydrift.proof-artifact-authority.v1",chainId:"8453",game,battleId:"42",binding:f.binding,
+    releaseId:f.state.releaseId,vkHash:f.authority.vkHash,inputHash:f.authority.inputHash,
+    compressedProofHash:f.authority.compressedProofHash,exportSha256:f.authority.exportSha256,
+    catalogSha256:pins.catalogSha256,jobKey:"1".repeat(64),jobGeneration:"2".repeat(64),jobAnchorNumber:"1",
+    jobAnchorHash:"3".repeat(64),artifactBlobSha256:"4".repeat(64),publisherConfigSha256:pins.publisherConfigSha256};
+  const authority=await openProofAuthorityResolver({source:metadata,artifactSource:source,pins});
+  let provider=await openProofFileProvider({source,limits:exportLimits,transport:f.transport,game,battleId:42n,chainId:8453n,authority:authority.resolve});
+  const metadataPath=join(metadata.directory,name.replace(".evm.json",".authority.json"));
+  try {
+    await writeFile(join(source.directory,name),f.serialized());
+    await expect(provider.plan()).rejects.toThrow(); // orphan export, not committed
+    await writeFile(join(metadata.directory,"unfinished.tmp"),JSON.stringify(record));
+    await expect(provider.plan()).rejects.toThrow();
+    await rename(join(metadata.directory,"unfinished.tmp"),metadataPath);
+    const planned=await provider.plan();
+    expect(JSON.parse(planned!.membership).action).toBe("submit");
+    expect(planned!.deliveryEnabled).toBe(false);
+    expect(validateProofPlan(planned!,8453,game).operationId).toBe(planned!.operationId);
+    await provider.close();
+    provider=await openProofFileProvider({source,limits:exportLimits,transport:f.transport,game,battleId:42n,chainId:8453n,authority:authority.resolve});
+    expect((await provider.plan())!.operationId).toBe(planned!.operationId);
+    await writeFile(metadataPath,JSON.stringify({...record,publisherConfigSha256:"c".repeat(64)}));
+    await expect(provider.plan()).rejects.toThrow("pin mismatch");
+    await writeFile(metadataPath,JSON.stringify(record));
+    await rm(join(source.directory,name));
+    await expect(provider.plan()).rejects.toThrow(); // authority-only pair cannot plan either
+    expect(f.calls.some(c => /send|sign|getTransactionCount/i.test(c.method))).toBe(false);
+    expect(reviewedProofProgressVersions).toEqual([]);
+  } finally { await provider.close(); await authority.close(); await rm(root,{recursive:true,force:true}); }
+});

@@ -93,3 +93,37 @@ NO proof replacements or cancellation shortcuts: unknown or locally prevented si
 intents retain the existing coordinator's explicit-recovery blocking behavior.
 Controlled tests use inert mock signer bytes, not real keys or transactions. The
 reviewed runtime list, registry capability and standalone release guard remain off.
+
+
+## File authority resolver (offline composition only)
+
+Use openProofAuthorityResolver from src/proofAuthorityFile.ts with a fixed metadata
+source, the distinct artifactSource used by openProofFileProvider, and externally
+approved pins.catalogSha256 plus pins.publisherConfigSha256. Pass resolver.resolve
+as the provider's authority callback; close both after use. No paths or pins are
+discovered from jobs, records, environment defaults or artifact claims. The
+publisher executable is separately approved by the deployment owner; this parser
+cannot establish that provenance or grant release approval.
+
+Wire agrees with publisher/CONSUMER-CONTRACT.md and authority.go: identical
+identity-derived basename, .authority.json in the separate metadata root, exact
+17 ordered string fields, schema veydrift.proof-artifact-authority.v1. Digests
+are 64 lowercase hex without 0x except binding/releaseId; game has 0x. Chain/battle
+are positive uint256 decimal; jobAnchorNumber is uint64 decimal (zero allowed).
+Metadata is capped at 16KiB before allocation. Duplicate/unknown/omitted/reordered
+fields, noncanonical encodings, invalid UTF-8/BOM, mismatched identity or either
+external pin reject. Mandatory job generation/anchor/blob provenance never
+replaces the freshly observed canonical chain anchor or enrolls a release.
+
+The resolver reuses the bounded nofollow file reader and its explicit immutable
+parent/readonly mount contract; it is NOT openat protection against hostile
+mutable ancestors. Metadata must be writable only by the approved publisher.
+Roots must be canonical and disjoint. Metadata publication is the commit marker:
+export-only, metadata-only, temp-only or malformed pairs yield no plan. Every
+plan rereads metadata/export and retains canonical job, pause, ordering, row,
+release and block checks. Gates and recovery ownership are unchanged/disabled.
+
+Unit fixtures are synthetic. The filename vector was independently calculated
+with viem; producer Go/ethers cross-language execution remains a separate pending
+validation gate, not inferred from null expected hashes. No genuine job proof,
+production directory qualification or live publisher execution is claimed.

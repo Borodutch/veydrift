@@ -79,9 +79,17 @@ export interface TrustedProofArtifactDirectory {
   trust: "fixed-readonly-consumer-directory-and-immutable-ancestors";
 }
 
-export async function openProofArtifactDirectory(
-  source: TrustedProofArtifactDirectory,
-  maxBytes = MAX_PROOF_ARTIFACT_BYTES,
+export function openProofArtifactDirectory(source: TrustedProofArtifactDirectory, maxBytes = MAX_PROOF_ARTIFACT_BYTES) {
+  return openProofDirectory(source, maxBytes, ".evm.json");
+}
+/** Same bounded immutable-parent contract, fixed metadata suffix; never arbitrary paths. */
+export function openProofAuthorityDirectory(source: TrustedProofArtifactDirectory, maxBytes = 16 * 1024) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 16 * 1024)
+    throw new Error("invalid authority byte budget");
+  return openProofDirectory(source, maxBytes, ".authority.json");
+}
+async function openProofDirectory(
+  source: TrustedProofArtifactDirectory, maxBytes: number, suffix: ".evm.json" | ".authority.json",
 ): Promise<{ read(identity: ProofArtifactIdentity): Promise<Buffer>; close(): Promise<void> }> {
   const directory = source.directory;
   if (source.trust !== "fixed-readonly-consumer-directory-and-immutable-ancestors") {
@@ -120,7 +128,7 @@ export async function openProofArtifactDirectory(
   try { await assertDirectory(); } catch (error) { await handle.close(); throw error; }
   return {
     async read(identity) {
-      const basename = proofArtifactBasename(identity);
+      const basename = proofArtifactBasename(identity).slice(0, -9) + suffix;
       await assertDirectory();
       // Node has no portable openat(dirfd, basename, O_NOFOLLOW). These path
       // checks are diagnostic under the explicit immutable-parent contract;
