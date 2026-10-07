@@ -3,7 +3,6 @@ import { mkdtemp, realpath, mkdir, writeFile, rm, symlink, link, rename } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeAbiParameters, keccak256, parseAbiParameters, type Hex } from "viem";
-import { readFileSync } from "node:fs";
 import { proofArtifactBasename, openProofAuthorityDirectory } from "./proofArtifactFile";
 import { parseProofAuthority, openProofAuthorityResolver } from "./proofAuthorityFile";
 import type { CanonicalProofJob } from "./proofAcceptance";
@@ -48,15 +47,19 @@ test("authority rejects noncanonical or incomplete JSON and every mismatched tru
   expect(() => parseProofAuthority(good, job, {...pins,publisherConfigSha256:""})).toThrow();
 });
 test("filename input independently calculated with viem; producer Go/ethers cross-check remains separate", () => {
-  const v = JSON.parse(readFileSync(new URL("../../../packages/battle-prover/publisher/testdata/filename-vector.json", import.meta.url), "utf8"));
+  // Keeper-owned synthetic input, tracked with this test. Expected hashes below
+  // were computed with Viem only; Go/ethers agreement is a separate pending gate.
+  const v = { chainId: "8453", game: "0x0000000000000000000000000000000000000001" as Hex,
+    battleId: "100", binding: hex("1"), release: { version: "3", rules: "2".repeat(64),
+      catalog: "3".repeat(64), verifier: "0x0000000000000000000000000000000000000007" as Hex,
+      verifierCodehash: "4".repeat(64) } };
   const r=v.release;
   const releaseId = keccak256(encodeAbiParameters(parseAbiParameters("uint32,bytes32,bytes32,address,bytes32"),
     [Number(r.version), "0x"+r.rules as Hex, "0x"+r.catalog as Hex, r.verifier, "0x"+r.verifierCodehash as Hex]));
   expect(releaseId).toBe("0x5e9b91bfed181a6f776c1007673cb4204a49222b6d31b9a692c7b103cfdacc2e");
   expect(proofArtifactBasename({...v,releaseId})).toBe("3a814dbb9f06f663789f320ab0d37620a729bf174baa251f83e0f4200b43d643.evm.json");
-  // Null is a producer validation gate, NEVER an expected field/hash assumption.
-  if (v.expectedReleaseId !== null) expect(releaseId).toBe(v.expectedReleaseId);
-  if (v.expectedBasename !== null) expect(proofArtifactBasename({...v,releaseId})).toBe(v.expectedBasename + ".evm.json");
+  expect(proofArtifactBasename({...v,releaseId}).replace(".evm.json", ".authority.json"))
+    .toBe("3a814dbb9f06f663789f320ab0d37620a729bf174baa251f83e0f4200b43d643.authority.json");
 });
 test("authority fixed separate root fails closed for absent, partial, links, oversized and changed records", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "authority-reader-")));

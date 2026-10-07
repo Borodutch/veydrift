@@ -123,7 +123,10 @@ export-only, metadata-only, temp-only or malformed pairs yield no plan. Every
 plan rereads metadata/export and retains canonical job, pause, ordering, row,
 release and block checks. Gates and recovery ownership are unchanged/disabled.
 
-Unit fixtures are synthetic. The filename vector was independently calculated
-with viem; producer Go/ethers cross-language execution remains a separate pending
-validation gate, not inferred from null expected hashes. No genuine job proof,
-production directory qualification or live publisher execution is claimed.
+Unit fixtures are synthetic. The keeper-owned filename input lives directly in
+the tracked proofAuthorityFile.test.ts; its unconditional expected release hash
+and both filenames were calculated with Viem only. Tests do not read the separate
+unvalidated publisher package or depend on untracked files. Producer Go/ethers
+cross-language agreement remains a pending gate for a future coupled checkpoint,
+not an optional file read or an inferred approval. No genuine job proof, production
+directory qualification or live publisher execution is claimed.
