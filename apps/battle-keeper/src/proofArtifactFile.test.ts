@@ -151,3 +151,60 @@ test("reject same-size rewrite by metadata", async () => { await duringRead(path
 test("reject final path replacement even when old descriptor remains readable", async () => {
   await duringRead(async path => { await rename(path, path + ".old"); await writeFile(path, "replaced"); });
 });
+
+
+// Exercise the legacy FileHandle.stat shape even when tests run on modern Bun.
+async function descriptorStats(action: (f: Awaited<ReturnType<typeof fixture>>, proto: any, original: any) => Promise<void>) {
+  const f = await fixture(); await publish(f.path, "original");
+  const probe = await open(f.path, "r"), proto = Object.getPrototypeOf(probe);
+  await probe.close();
+  await action(f, proto, proto.stat);
+}
+test("safe numeric descriptor stats retain exact identities and readable bytes", async () => {
+  await descriptorStats(async (f, proto, original) => {
+    const intercepted = spyOn(proto, "stat").mockImplementation(function(this: unknown) { return original.call(this, { bigint: false }); });
+    try { expect((await f.reader.read(identity)).toString()).toBe("original"); }
+    finally { intercepted.mockRestore(); }
+  });
+});
+test("unsafe numeric descriptor identities sizes and link counts fail closed", async () => {
+  await descriptorStats(async (f, proto, original) => {
+    for (const key of ["dev", "ino", "mode", "uid", "gid", "size", "nlink"]) {
+      const intercepted = spyOn(proto, "stat").mockImplementation(async function(this: unknown) {
+        const result = await original.call(this, { bigint: false }); result[key] = Number.MAX_SAFE_INTEGER + 1; return result;
+      });
+      try { await expect(f.reader.read(identity)).rejects.toThrow("integer precision unavailable"); }
+      finally { intercepted.mockRestore(); }
+    }
+  });
+});
+test("missing descriptor timestamps never compare equal by undefined", async () => {
+  await descriptorStats(async (f, proto, original) => {
+    const intercepted = spyOn(proto, "stat").mockImplementation(async function(this: unknown) {
+      const result = await original.call(this, { bigint: false }); result.mtimeMs = undefined; return result;
+    });
+    try { await expect(f.reader.read(identity)).rejects.toThrow("changed before open"); }
+    finally { intercepted.mockRestore(); }
+  });
+});
+test("nanosecond-only path changes reject even with unchanged legacy descriptor projections", async () => {
+  const fs = await import("node:fs/promises");
+  await descriptorStats(async (f, proto, original) => {
+    const descriptor = spyOn(proto, "stat").mockImplementation(function(this: unknown) { return original.call(this, { bigint: false }); });
+    const originalLstat = fs.lstat;
+    let artifactReads = 0;
+    const pathStat = spyOn(fs, "lstat").mockImplementation((async (...args: Parameters<typeof fs.lstat>) => {
+      const stat = await originalLstat(...args);
+      if (args[0] === f.path && ++artifactReads === 2) {
+        const s = stat as import("node:fs").BigIntStats;
+        const ms = (ns: bigint) => Number(ns / 1_000_000_000n) * 1000 + Number(ns % 1_000_000_000n) / 1e6;
+        const delta = ms(s.mtimeNs + 1n) === ms(s.mtimeNs) ? 1n : -1n;
+        expect(ms(s.mtimeNs + delta)).toBe(ms(s.mtimeNs));
+        s.mtimeNs += delta;
+      }
+      return stat;
+    }) as typeof fs.lstat);
+    try { await expect(f.reader.read(identity)).rejects.toThrow("path changed during read"); expect(artifactReads).toBe(2); }
+    finally { pathStat.mockRestore(); descriptor.mockRestore(); }
+  });
+});

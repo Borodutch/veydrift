@@ -1,4 +1,4 @@
-import { constants, type BigIntStats } from "node:fs";
+import { constants, type BigIntStats, type Stats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, normalize, sep } from "node:path";
 import { encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
@@ -40,16 +40,38 @@ export function proofArtifactBasename(identity: ProofArtifactIdentity): string {
   return digest.slice(2) + ".evm.json";
 }
 
-function sameInode(a: BigIntStats, b: BigIntStats): boolean {
-  return a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid;
+type FileStats = BigIntStats | Stats;
+// Bun 1.1.42 fstat ignores bigint:true. Never round an unsafe numeric identity.
+function exactInteger(value: number | bigint): bigint {
+  if (typeof value === "bigint") return value;
+  if (!Number.isSafeInteger(value)) throw new Error("artifact stat integer precision unavailable");
+  return BigInt(value);
 }
-function sameFile(a: BigIntStats, b: BigIntStats): boolean {
-  return sameInode(a, b) && a.size === b.size && a.nlink === b.nlink &&
-    a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+function sameInode(a: FileStats, b: FileStats): boolean {
+  return (["dev", "ino", "mode", "uid", "gid"] as const).every(key => exactInteger(a[key]) === exactInteger(b[key]));
 }
-function checkFile(stat: BigIntStats, maxBytes: number): void {
-  if (!stat.isFile() || stat.nlink !== 1n) throw new Error("artifact must be a regular single-link file");
-  if (stat.size <= 0n || stat.size > BigInt(maxBytes)) throw new Error("artifact file size exceeds byte budget or is empty");
+function sameTime(a: FileStats, b: FileStats, key: "mtime" | "ctime"): boolean {
+  const an = (a as BigIntStats)[`${key}Ns`], bn = (b as BigIntStats)[`${key}Ns`];
+  if (typeof an === "bigint" && typeof bn === "bigint") return an === bn;
+  // Legacy descriptor times have millisecond-number precision. This supplements,
+  // NEVER replaces, the mandatory full-nanosecond path comparison across the read.
+  // Match timespec seconds*1000 + nanoseconds/1e6; Number(totalNs) rounds too early.
+  const am = typeof an === "bigint" ? Number(an / 1_000_000_000n) * 1000 + Number(an % 1_000_000_000n) / 1e6 : a[`${key}Ms`];
+  const bm = typeof bn === "bigint" ? Number(bn / 1_000_000_000n) * 1000 + Number(bn % 1_000_000_000n) / 1e6 : b[`${key}Ms`];
+  return typeof am === "number" && typeof bm === "number" && Number.isFinite(am) && Number.isFinite(bm) && am === bm;
+}
+function sameFile(a: FileStats, b: FileStats): boolean {
+  return sameInode(a, b) && exactInteger(a.size) === exactInteger(b.size) && exactInteger(a.nlink) === exactInteger(b.nlink) &&
+    sameTime(a, b, "mtime") && sameTime(a, b, "ctime");
+}
+function checkFile(stat: FileStats, maxBytes: number): void {
+  if (!stat.isFile() || exactInteger(stat.nlink) !== 1n) throw new Error("artifact must be a regular single-link file");
+  const size = exactInteger(stat.size);
+  if (size <= 0n || size > BigInt(maxBytes)) throw new Error("artifact file size exceeds byte budget or is empty");
+}
+function checkNanoseconds(stat: BigIntStats): void {
+  if (typeof stat.mtimeNs !== "bigint" || typeof stat.ctimeNs !== "bigint")
+    throw new Error("artifact path nanosecond precision unavailable");
 }
 
 async function directoryChain(directory: string): Promise<Array<{ path: string; stat: BigIntStats }>> {
@@ -136,6 +158,7 @@ async function openProofDirectory(
       const path = join(directory, basename);
       const before = await lstat(path, { bigint: true });
       checkFile(before, maxBytes);
+      checkNanoseconds(before);
       let file: FileHandle | undefined;
       try {
         // NONBLOCK prevents a regular-file -> FIFO swap from hanging open.
@@ -158,7 +181,8 @@ async function openProofDirectory(
         if (!sameFile(start, after)) throw new Error("artifact changed during read");
         const final = await lstat(path, { bigint: true });
         checkFile(final, maxBytes);
-        if (!sameFile(after, final)) throw new Error("artifact path changed during read");
+        checkNanoseconds(final);
+        if (!sameFile(after, final) || !sameFile(before, final)) throw new Error("artifact path changed during read");
         await assertDirectory();
         return bytes;
       } finally {

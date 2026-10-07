@@ -40,3 +40,23 @@ After successful acquisition the caller must strictly decode and authenticate th
 ## Local verification
 
 Tests use temporary fixtures only, including a test-only fsync/rename publication helper and deterministic descriptor-read interception to exercise truncation, growth, same-size mutation and final-name replacement. They do not claim malicious ancestor-race safety or genuine approved job proof. Run: `bun test src/proofArtifactFile.test.ts` from `apps/battle-keeper`.
+
+
+## Runtime stat precision
+
+Bun 1.1.42 returns numeric descriptor stats despite FileHandle.stat({bigint:true}),
+without mtimeNs/ctimeNs; path lstat does return BigIntStats. Bun 1.4 honors the
+option for both. Reader identity/size/link comparisons therefore accept bigint
+or **safe integer** numbers only, converting the latter exactly and rejecting
+unsafe/fractional/nonfinite numbers. This is not loose numeric equality.
+
+Descriptor timestamps retain exact nanoseconds when supplied; legacy descriptor
+millisecond numbers are compared to the matching timespec projection without
+a tolerance. Crucially, the complete before/final path metadata is also compared
+at full bigint nanosecond precision, and missing path nanoseconds fail closed.
+Thus a sub-millisecond change cannot hide behind a legacy descriptor projection.
+All existing directory/ancestor pinning, NOFOLLOW/NONBLOCK, regular single-link,
+bounded allocation/exact EOF, descriptor pre/post and final path checks remain.
+The explicit trusted immutable-parent contract remains required; neither this
+compatibility handling nor pathname checks claim protection against hostile
+mutable-parent ABA races. No runtime pin or filesystem policy is changed.
