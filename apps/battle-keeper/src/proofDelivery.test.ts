@@ -11,6 +11,7 @@ import { parseEVMArtifact } from "./proofEvmArtifact";
 import { readProofOperation, type ProofArtifactAuthority } from "./proofOperation";
 import { decodeFunctionData, encodeAbiParameters, encodeFunctionResult, keccak256, parseAbiParameters, stringToHex, toHex, type Hex } from "viem";
 import { acceptanceReadAbi, readCanonicalAcceptance } from "./proofAcceptance";
+import { readProofBattleStatus } from "../../backend/src/proofBattleProgress";
 import { decodeFinalArtifact, parseFinalArtifactFile, encodeFinal22Submission, proofDeliveryAbi, readAndPlanProofDelivery } from "./proofDelivery";
 import { proofLeafDigest, proofTailDigest, type ProofLeaf } from "./proofLeaves";
 import { ViemMissionResolver } from "./resolver";
@@ -40,7 +41,7 @@ function fixture(count = 33) {
     Public: [...limbs(BigInt(binding)), ...limbs(BigInt(root)), ...limbs(BigInt(count)), "1", ...limbs(BigInt(count)), ...limbs(0n), String(outcome)],
     Proof: "Zml4dHVyZQ==", // unverified compressed advice; NEVER EVM calldata or proof-validation evidence
     Leaves: leaves.map((v, i) => ({ Index: String(i), Cohort: "1", Owner: BigInt(game).toString(), Source: v.source.toString(), Side: "0", Unit: "0", Count: "1", Lost: "0", Survivors: "1", Next: BigInt(v.next).toString() })) };
-  const state = { blockHash: hash(1000n), cursor: 0n, phase: 1, staged: 17, root, binding, releaseId, verifierCode,
+  const state = { blockHash: hash(1000n), cursor: 0n, phase: 1, proofPhase: 3, context: 12n, seed: 13n, staged: 17, root, binding, releaseId, verifierCode,
     approved: 0n, reorgDuringRead: false, corruptCursor: false, count: BigInt(count), unaccepted: false, wrongMember: false, paused: false, ordering: true };
   const calls: Array<{ method: string; params: unknown[] }> = [];
   const transport: JsonRpcTransport = { async request<T>(method: string, params: unknown[]): Promise<T> {
@@ -63,10 +64,10 @@ function fixture(count = 33) {
           [{ source: i, owner: game, count: state.wrongMember ? 2 : 1, side: 0, unit: 0, weapons: 0, shielding: 0, armor: 0 }]);
         return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: "proofBattleRecord", result: row }) as T;
       }
-      const words = decoded.args[1] === 0 ? [...versionWords, 3n, 11n, 12n, 13n, BigInt(count)] : [BigInt(engine), 9n, 10n];
+      const words = decoded.args[1] === 0 ? [...versionWords, BigInt(state.proofPhase), 11n, state.context, state.seed, BigInt(count)] : [BigInt(engine), 9n, 10n];
       return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: "proofBattleRecord", result: ("0x" + words.map(n => hash(n).slice(2)).join("")) as Hex }) as T;
     }
-    if (decoded.functionName === "stagedBattleProgress") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName, result: [state.unaccepted ? 16 : state.staged, 0, 100n] }) as T;
+    if (decoded.functionName === "stagedBattleProgress") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName, result: [state.staged, 0, 100n] }) as T;
     if (decoded.functionName === "proofBattleAcceptedSummary") return encodeFunctionResult({ abi: acceptanceReadAbi, functionName: decoded.functionName,
       result: state.unaccepted ? [hash(0n), hash(0n), hash(0n), 0n, 0, [0n,0n], 0, 0] : [state.binding, state.releaseId, state.root, state.count, 1, [BigInt(count),0n], outcome, 3] }) as T;
     const digest = state.corruptCursor ? hash(9n) : state.cursor === 0n ? root : leaves[Number(state.cursor) - 1]!.next;
@@ -312,4 +313,56 @@ test("file provider never self-approves absent metadata or accepts stable partia
     await writeFile(path, f.serialized().replace(f.exported.proof, "0x" + "ab".repeat(384)));
     await expect(provider.plan()).rejects.toThrow("metadata mismatch");
   } finally { await provider.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+// Source trace (no contract execution): Proof.Phase enum=AwaitingRandomness2/AwaitingProof3;
+// Proof.awaitProof sets context/seed/phase3; PreparationModule40-41 sets stage17 in the
+// same call from stage16; SettlementModule57-58 requires phase3+stage17+Unaccepted0.
+test("actual readiness transition phase2 stage16 to phase3 stage17 gates acquisition", async () => {
+  const f = exportedFixture(); f.state.unaccepted = true;
+  f.state.proofPhase = 2; f.state.staged = 16; f.state.seed = 0n; f.state.context = 0n;
+  let acquisitions = 0;
+  const acquire = async () => { acquisitions++; return f.acquire(); };
+  const plan = () => readProofOperation(f.transport, game, 42n, 8453n, acquire, exportLimits);
+  expect((await readProofBattleStatus(f.transport, game, 42n))?.state).toBe("randomness-wait");
+  await expect(plan()).rejects.toThrow("not awaiting result");
+  expect(acquisitions).toBe(0);
+  expect(f.calls.some(c => /send|sign|getTransactionCount/i.test(c.method))).toBe(false);
+  // The actual atomic preparation transition freezes context and committed seed.
+  f.state.proofPhase = 3; f.state.staged = 17; f.state.context = 12n; f.state.seed = 13n;
+  expect((await readProofBattleStatus(f.transport, game, 42n))?.state).toBe("proving");
+  const ready = await plan();
+  expect(acquisitions).toBe(1);
+  expect(decodeFunctionData({ abi: proofDeliveryAbi, data: ready!.data }).functionName).toBe("submitBattleProof");
+  expect(ready!.deliveryEnabled).toBe(false);
+  expect(await readCanonicalAcceptance(f.transport, game, 42n, 8453n)).toBeUndefined();
+  expect(f.calls.some(c => /send|sign|getTransactionCount/i.test(c.method))).toBe(false);
+});
+test("actual readiness rejects incoherent proof and staged phase pairs before acquisition", async () => {
+  for (const [proofPhase, staged] of [[2,17], [3,16], [3,11], [3,12], [3,13], [1,16], [1,17]]) {
+    const f = exportedFixture(); f.state.unaccepted = true;
+    f.state.proofPhase = proofPhase!; f.state.staged = staged!;
+    let acquisitions = 0;
+    await expect(readProofOperation(f.transport, game, 42n, 8453n, async () => {
+      acquisitions++; return f.acquire();
+    }, exportLimits)).rejects.toThrow();
+    expect(acquisitions).toBe(0);
+    expect(f.calls.some(c => /send|sign|getTransactionCount/i.test(c.method))).toBe(false);
+  }
+});
+test("actual readiness correction preserves accepted application economics and retained terminal records", async () => {
+  const f = exportedFixture();
+  expect((await readProofBattleStatus(f.transport, game, 42n))?.state).toBe("applying");
+  expect(JSON.parse((await f.operationPlan())!.membership).action).toBe("apply");
+  f.state.phase = 2; f.state.cursor = 33n;
+  for (const stage of [11,12,13]) {
+    f.state.staged = stage;
+    expect((await readCanonicalAcceptance(f.transport, game, 42n, 8453n))?.progress.phase).toBe(2);
+    expect(await f.operationPlan()).toBeUndefined();
+    const status = await readProofBattleStatus(f.transport, game, 42n);
+    if (stage === 13) expect(status).toBeUndefined();
+    else expect(status?.state).toBe("economics");
+  }
+  f.state.proofPhase = 4;
+  expect(await f.operationPlan()).toBeUndefined();
 });

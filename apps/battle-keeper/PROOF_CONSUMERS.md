@@ -41,7 +41,9 @@ ABI roundtripping are not cryptographic verification.
 parseEVMArtifact enforces configured byte/leaf bounds capped at16MiB/16,384,
 rejects duplicate/unknown/noncanonical JSON and deep-freezes retained output.
 readCanonicalProofJob preserves the pinned frozen identity even before acceptance;
-readCanonicalAcceptance remains the accepted-only API. readProofOperation requires
+readCanonicalAcceptance remains the accepted-only API. Unaccepted acquisition requires
+AwaitingProof(3) plus stage17, after the preparation module atomically advances
+AwaitingRandomness(2)/stage16; stage16 is not submission-ready. readProofOperation requires
 independent trusted metadata binding chain/game/battle/ChainRecord/release to
 VKHash, InputHash, compressedProofHash and SHA256 of the entire immutable export.
 These are mandatory external publisher/release inputs, never copied from the

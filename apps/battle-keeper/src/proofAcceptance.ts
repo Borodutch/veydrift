@@ -78,7 +78,9 @@ export async function readCanonicalProofJob(transport: JsonRpcTransport, game: H
   if (applicationPhase === 0) {
     if ([binding, releaseId, root].some(v => BigInt(v) !== 0n) || memberCount || rounds || finalTotals.some(Boolean) || outcome || acceptedVersion || nextIndex || applicationCount || BigInt(expectedDigest))
       throw new Error("inconsistent unaccepted summary");
-    if (stagedPhase !== 16) throw new Error("unaccepted proof job is not in proof wait");
+    // Preparation calls Proof.awaitProof: AwaitingRandomness(2)/stage16 advances atomically to
+    // AwaitingProof(3)/stage17; submitBattleProof requires that same ready pair.
+    if (stagedPhase !== 17) throw new Error("unaccepted proof job is not in proof wait");
     Object.freeze(job.gaps);
     return Object.freeze(job);
   }
