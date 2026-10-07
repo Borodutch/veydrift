@@ -10,7 +10,9 @@ const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", 
 describe("Batch Supply source row presentation", () => {
   test("Max shares all preview inputs and submission uses that same preview", () => {
     expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
-    expect(batchSupplyModalSource).toContain("maximumBatchSupplyResource(planOptions, resource)");
+    expect(batchSupplyModalSource).toContain("useBatchSupplyMax(planOptions, target.planetId");
+    expect(batchSupplyModalSource).not.toContain("maximumBatchSupplyResource(");
+    expect(batchSupplyModalSource).toContain("!maximum.busy");
     expect(batchSupplyModalSource).toContain("onConfirm(plan.orders, shipTypesBySource, mission)");
     expect(batchSupplyModalSource).not.toContain("Number.MAX_SAFE_INTEGER");
   });

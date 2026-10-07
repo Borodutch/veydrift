@@ -7,6 +7,7 @@ import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 
+const largeFleet = new URLSearchParams(location.search).has("largeFleet");
 const moon = new URLSearchParams(location.search).has("moon");
 const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
@@ -27,7 +28,11 @@ declare global {
   interface Window {
     supplyFixture: {
       refresh: () => void;
+      unmount: () => void;
       changeStock: () => void;
+      changeRoute: () => void;
+      changeBody: () => void;
+      changeLimit: () => void;
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
@@ -37,16 +42,27 @@ declare global {
 }
 const submissions: Window["supplyFixture"]["submissions"] = [];
 function Fixture() {
-  const [sources, setSources] = useState(twoSources ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
+  const [sources, setSources] = useState(largeFleet ? Array.from({ length: 15 }, (_, i) => ({
+    ...source, planetId: String(200 + i), label: `Source ${i}`,
+    coordinates: { galaxy: 6, system: 10 + i, position: 14 },
+    resources: { metal: 250_000_000, crystal: 0, deuterium: 10 },
+    ships: { largeCargo: 10_000 }, driveLevels: {},
+  })) : twoSources ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
   const [draft, setDraft] = useState(0);
   const [account, setAccount] = useState("fixture-account");
   const [destination, setDestination] = useState(target);
+  const [targetIsMoon, setTargetIsMoon] = useState(moon);
+  const [maxSources, setMaxSources] = useState(moon ? 1 : 15);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {
     submissions,
+    unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
     changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),
+    changeRoute: () => setDestination(value => ({ ...value, system: value.system + 1 })),
+    changeBody: () => setTargetIsMoon(value => !value),
+    changeLimit: () => setMaxSources(value => value === 1 ? 15 : 1),
     pending: kind => {
       setActionPending(kind === "action");
       setTransactionState(kind === "transaction" ? { phase: "pending", label: "Awaiting wallet" } : undefined);
@@ -61,7 +77,7 @@ function Fixture() {
     },
   };
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
-    target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={moon} maxSources={moon ? 1 : 15}
+    target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={targetIsMoon} maxSources={maxSources}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
     onConfirm={(orders, shipTypesBySource, mission) => submissions.push(structuredClone({ orders, shipTypesBySource, mission }))} />;
 }

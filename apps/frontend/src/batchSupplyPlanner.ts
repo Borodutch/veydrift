@@ -129,8 +129,8 @@ export function maximumBatchSupplyResource(
   let upper = Math.min(Number.MAX_SAFE_INTEGER, options.sources.reduce((total, source) =>
     total + (options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason
       ? safeAmount(source.resources[resource]) : 0), 0));
-  // ponytail: work scales with planner branch/fleet-count boundaries, not stock
-  // units. If huge fleets make this slow, move this exact search off the UI thread.
+  // Work scales with planner branch/fleet-count boundaries, not stock units.
+  // UI callers must run this exact search in batchSupplyMax.worker, not render/events.
   while (upper >= 0) {
     const range = new SupplyMaxRange(upper);
     const plan = planBatchSupply({ ...options, requested: { ...requested, [resource]: upper } }, { resource, range });
