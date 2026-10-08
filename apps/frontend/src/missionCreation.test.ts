@@ -2070,15 +2070,32 @@ describe("mission creation", () => {
 
     (buttons[0]?.props?.onClick as (() => void) | undefined)?.();
     expect(cargo.metal).toBe("750");
-    expect(findElements(renderPicker(2_000), "button")[0]?.props?.disabled).toBe(true);
+    expect(findElements(renderPicker(2_000), "button")[0]?.props?.disabled).toBeFalsy();
 
     cargo = { metal: "750", crystal: "200", deuterium: "100" };
     const capacityLimited = renderPicker(600);
     const metalMax = findElements(capacityLimited, "button")[0];
     expect(metalMax?.props?.["aria-label"]).toBe("Set metal cargo to maximum (300)");
-    expect(metalMax?.props?.disabled).toBe(false);
+    expect(metalMax?.props?.disabled).toBeFalsy();
     (metalMax?.props?.onClick as (() => void) | undefined)?.();
     expect(cargo.metal).toBe("300");
+  });
+
+  test("Transport Max stays actionable and visually stable across inventory equality changes", () => {
+    let cargo: MissionCargoDraft = { metal: "750", crystal: "200", deuterium: "100" };
+    let previousClass: unknown;
+    for (const metal of [750, 751, 750, 749, 0]) {
+      const picker = MissionCargoPicker({
+        cargo, cargoCapacity: 2_000, maxCargoResources: { metal, crystal: 1_200, deuterium: 900 },
+        onCargoChange: updater => { cargo = updater(cargo); },
+      });
+      const button = findElements(picker, "button")[0]!;
+      expect(button.props?.disabled).toBeFalsy();
+      if (previousClass) expect(button.props?.className).toBe(previousClass);
+      previousClass = button.props?.className;
+      (button.props?.onClick as () => void)();
+      expect(cargo).toEqual({ metal: String(metal), crystal: "200", deuterium: "100" });
+    }
   });
 
   test("Deploy Max controls respect other selections and recompute after inventory and selection changes", () => {

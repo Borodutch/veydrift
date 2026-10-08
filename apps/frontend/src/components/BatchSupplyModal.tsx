@@ -217,6 +217,7 @@ export function BatchSupplyModal({
   };
 
   const updateSourceCargo = (source: BatchSupplySource, resource: keyof SupplyResources, value: string) => {
+    maximum.cancel();
     setSourceCargoOverrides((current) => {
       const existing = orderByOrigin.get(source.planetId)?.cargo ?? current[source.planetId] ?? emptySupplyResources();
       return {
@@ -284,20 +285,20 @@ export function BatchSupplyModal({
                 className="min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1 font-mono text-sm text-white outline-none focus:border-cyan-300"
                 inputMode="numeric"
                 min="0"
-                onInput={(event) => setRequested((current) => ({ ...current, [resource]: numericInput(event.currentTarget.value) }))}
+                onInput={(event) => { maximum.cancel(); setRequested((current) => ({ ...current, [resource]: numericInput(event.currentTarget.value) })); }}
                 placeholder="0"
                 value={requested[resource]}
               />
-              <button className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" disabled={loading || actionPending || transactionPending} onClick={() => maximum.start(resource)} type="button">{maximum.busy === resource ? "Calculating…" : "Max"}</button>
+              <button aria-busy={maximum.busy === resource} className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" disabled={loading || actionPending || transactionPending} onClick={() => maximum.start(resource)} type="button">Max</button>
             </span>
           </label>
         ))}
       </section>
 
-      {maximum.busy ? <div className="flex items-center gap-3 text-sm text-cyan-100">
-        <p role="status">Calculating {maximum.busy} Max… You can keep editing or cancel.</p>
-        <button className="min-h-8 rounded border border-white/20 px-2" type="button" onClick={maximum.cancel}>Cancel Max</button>
-      </div> : null}
+      <div className="flex min-h-8 items-center gap-3 text-xs text-cyan-100">
+        <p className="min-w-0 flex-1" role="status">{maximum.notice}</p>
+        <button className={`min-h-8 shrink-0 rounded border border-white/20 px-2 ${maximum.busy ? "" : "invisible"}`} disabled={!maximum.busy} type="button" onClick={maximum.cancel}>Cancel Max</button>
+      </div>
       {maximum.error ? <p role="alert" className="text-sm text-red-100">{maximum.error}</p> : null}
 
       <section className="grid gap-2" aria-label="Source planets">
