@@ -305,6 +305,46 @@ contract VeydriftScheduledReturnsTest is VeydriftMoonSystemTestBase {
         }
     }
 
+    function testRecoveryFullIntentReturnCreditsThirteenShipsOnce() public {
+        vm.warp(RETURN_AT - 1 days);
+        (uint256 home, uint256 away,) = _seedMoonAttackPlanets();
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setPlanetOwner(away, player);
+        _fundPlanet(home, 10_000_000, 10_000_000, 10_000_000);
+        _setShipCount(home, Ship.SmallCargo, 13);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 13;
+        vm.prank(player);
+        uint256 id = game.launchFleetMission(
+            home,
+            away,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources(0, 0, 0),
+            0
+        );
+        vm.prank(player);
+        game.recallFleetMission(id);
+        _setTimes(id, RETURN_AT - 100, RETURN_AT);
+        vm.warp(RETURN_AT);
+        MissionResolutionItem[] memory items = new MissionResolutionItem[](1);
+        items[0] = MissionResolutionItem(id, 1);
+        (MissionResolutionOutcome[] memory first,) =
+            game.resolveFleetMissionBatch{gas: 1_000_000}(items);
+        assertEq(uint8(first[0]), uint8(MissionResolutionOutcome.Settled));
+        assertEq(game.shipCount(home, Ship.SmallCargo), 13);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        VeydriftGameStorage.Resources memory resources = game.planet(home).resources;
+        (MissionResolutionOutcome[] memory second,) =
+            game.resolveFleetMissionBatch{gas: 1_000_000}(items);
+        assertEq(uint8(second[0]), uint8(MissionResolutionOutcome.AlreadySettled));
+        assertEq(game.shipCount(home, Ship.SmallCargo), 13);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.planet(home).resources.metal, resources.metal);
+        assertEq(game.planet(home).resources.crystal, resources.crystal);
+        assertEq(game.planet(home).resources.deuterium, resources.deuterium);
+    }
+
     function testBatchThirtyTwoCheapReturnsGasAndSender() public {
         vm.warp(RETURN_AT - 1 days);
         (uint256 home, uint256 away,) = _seedMoonAttackPlanets();

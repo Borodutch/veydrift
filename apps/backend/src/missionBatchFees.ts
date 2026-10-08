@@ -90,7 +90,7 @@ export function measuredBatchGas(executionGasUsed: bigint, data: Hex, count: num
 async function simulateProductiveBatch(client: PublicClient, input: {
   items: BatchLeg[]; account: Hex; game: Hex; data: Hex; nonce: number; gas: bigint; blockNumber: bigint;
   maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint;
-}) {
+}, allowAlreadySettled = false) {
   const result = await client.call({ account: input.account, to: input.game, data: input.data,
     nonce: input.nonce, value: 0n, gas: input.gas, blockNumber: input.blockNumber,
     ...(input.maxFeePerGas === undefined ? {} : { maxFeePerGas: input.maxFeePerGas, maxPriorityFeePerGas: input.maxPriorityFeePerGas }) });
@@ -99,7 +99,7 @@ async function simulateProductiveBatch(client: PublicClient, input: {
     functionName: "resolveFleetMissionBatch", data: result.data });
   if (outcomes.length !== input.items.length || executionGasUsed <= 0n || executionGasUsed > input.gas)
     throw new Error("invalid batch productive measurement");
-  const rejected = input.items.flatMap((item, i) => outcomes[i] === 0 || outcomes[i] === 7 ? []
+  const rejected = input.items.flatMap((item, i) => outcomes[i] === 0 || outcomes[i] === 7 || (allowAlreadySettled && outcomes[i] === 2) ? []
     : [{ item, reason: batchOutcomeNames[outcomes[i]!] ?? "UnknownOutcome", terminal: outcomes[i] === 2 || outcomes[i] === 3 }]);
   if (rejected.length) throw new BatchUnproductiveError(rejected);
   return { outcomes, executionGasUsed };
@@ -163,7 +163,7 @@ export async function quoteResolverGas(client: PublicClient, input: {
 /** Replay never changes gas/fees/calldata. Refresh uncapped Base charges at a canonical block. */
 export async function validateMissionBatchReplay(client: PublicClient, raw: Hex, input: {
   items: BatchLeg[]; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
-}, pass: PreparedReconciliationPass): Promise<() => void> {
+}, pass: PreparedReconciliationPass, recoveryAlreadySettled = false, observe?: (evidence: string) => void): Promise<() => void> {
   const tx = parseTransaction(raw);
   if (tx.type !== "eip1559" || tx.chainId !== input.chainId || tx.to?.toLowerCase() !== input.game.toLowerCase()
     || tx.data !== batchCalldata(input.items) || (tx.value ?? 0n) !== 0n || tx.nonce === undefined
@@ -182,13 +182,14 @@ export async function validateMissionBatchReplay(client: PublicClient, raw: Hex,
   const exact = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1Fee", args: [unsigned], blockNumber }));
   const upper = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt((unsigned.length - 2) / 2)], blockNumber }));
   const operatorFee = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [gas], blockNumber }));
-  totalBatchExposure({ gas: tx.gas, blockGasLimit: block.gasLimit, maxFeePerGas: tx.maxFeePerGas,
+  const exposure = totalBatchExposure({ gas: tx.gas, blockGasLimit: block.gasLimit, maxFeePerGas: tx.maxFeePerGas,
     maxPriorityFeePerGas: tx.maxPriorityFeePerGas, l1Fee: exact > upper ? exact : upper, operatorFee, policy: input.policy });
   const simulation = { ...input, data: tx.data!, nonce: tx.nonce, gas: tx.gas,
     maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, blockNumber };
-  await pass.read(() => simulateProductiveBatch(client, simulation));
+  const measured = await pass.read(() => simulateProductiveBatch(client, simulation, recoveryAlreadySettled));
   const canonical = await pass.read(() => client.getBlock({ blockNumber }));
   if (canonical.hash !== block.hash) throw new Error("replay fee block changed");
   assertBatchQuoteFresh(provenance);
+  observe?.(JSON.stringify({provenance,exposure,measured,l1Exact:exact,l1Upper:upper,operatorFee},(_,value)=>typeof value === "bigint" ? value.toString() : value));
   return () => assertBatchQuoteFresh(provenance);
 }
