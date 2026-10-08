@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { constants, hostname } from "node:os";
 
-import { keccak256, parseTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
+import { keccak256, parseTransaction, serializeTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
@@ -18,12 +18,28 @@ export type PreparedReconciliationPass = {
 type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
   pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
 
+export type PreparedReplayGuard = (() => void) & { finalCheck?: () => Promise<void> };
+
 export type PreparedReplay = {
   /** Only explicit not-found returns null; transport errors throw. */
   getTransaction: (hash: Hex) => Promise<{ hash: Hex; blockHash: Hex | null } | null>;
-  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<() => void>;
+  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<PreparedReplayGuard>;
   broadcast: (raw: Hex) => Promise<Hex>;
 };
+export type LegacyRecoveryBinding = {
+  chainId: number; address: Hex; nonce: number; originalHash: Hex; operationId: string;
+  membership: string; to: Hex; data: Hex; value: "0";
+  /** Complete reviewed public input, including fee provenance and deployment identity. */
+  evidence: string;
+};
+type RecoveryGroup = { nonce: number; max_fee_wei: string; binding: string; original_hash: Hex; alternative_hash: Hex | null;
+  reservation_id: string | null; unsigned_plan: Hex | null; winner_hash: Hex | null; winner_receipt: string | null; finalized: number };
+export type RecoveryObserver = {
+  invalidate: (hash: Hex) => void;
+  observe: (binding: LegacyRecoveryBinding, hash: Hex, pass: PreparedReconciliationPass) => Promise<PreparedReceipt | null>;
+  assertUnconsumed: (binding: LegacyRecoveryBinding, pass: PreparedReconciliationPass) => Promise<void>;
+};
+
 type ReplayIntent = { operationId: string; nonce: number; hash: Hex; membership: string;
   raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null };
 
@@ -132,6 +148,7 @@ export class ResolverTransactionCoordinator {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly localTails = new Map<string, Promise<void>>();
+  private readonly recoveryObservers = new Map<string, RecoveryObserver>();
   private readonly preparedReplayers = new Map<string, PreparedReplay>();
   private readonly preparedReconcilers = new Map<string, NonNullable<ResolverTransactionRequest["reconcilePrepared"]>>();
 
@@ -179,6 +196,16 @@ export class ResolverTransactionCoordinator {
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
         nonce INTEGER NOT NULL, transaction_hash TEXT NOT NULL, membership TEXT NOT NULL,
         status TEXT NOT NULL, PRIMARY KEY (chain_id, resolver_address)
+      );
+      CREATE TABLE IF NOT EXISTS resolver_nonce_recovery (
+        chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, nonce INTEGER NOT NULL,
+        binding TEXT NOT NULL, original_hash TEXT NOT NULL, alternative_hash TEXT, max_fee_wei TEXT NOT NULL,
+        reservation_id TEXT, unsigned_plan TEXT, winner_hash TEXT, winner_receipt TEXT, finalized INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(chain_id,resolver_address,nonce), UNIQUE(chain_id,resolver_address,original_hash)
+      );
+      CREATE TABLE IF NOT EXISTS resolver_nonce_recovery_history (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL,
+        nonce INTEGER NOT NULL, event TEXT NOT NULL, evidence TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS resolver_send_fences (
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, token TEXT NOT NULL,
@@ -275,12 +302,190 @@ export class ResolverTransactionCoordinator {
       (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)));
   }
 
+  setRecoveryObserver(chainId: number, address: Hex, observer: RecoveryObserver): void {
+    this.recoveryObservers.set(resolverKey(chainId, address), observer);
+  }
+
+  getRecoveryBinding(chainId: number, address: Hex, raw: Hex): LegacyRecoveryBinding | undefined {
+    const group = this.recoveryGroups(chainId, address).find((g) => g.alternative_hash === keccak256(raw));
+    return group ? JSON.parse(group.binding) : undefined;
+  }
+
+  private recoveryGroups(chainId: number, address: Hex): RecoveryGroup[] {
+    return this.database.query("SELECT * FROM resolver_nonce_recovery WHERE chain_id = ? AND resolver_address = ? ORDER BY nonce LIMIT 33")
+      .all(chainId, normalizeAddress(address)) as RecoveryGroup[];
+  }
+
+  recordRecoveryQuote(binding: LegacyRecoveryBinding, evidence: string, assertLease: () => void): void {
+    this.database.transaction(() => { assertLease(); this.recoveryEvent(binding,"quote",evidence); }).immediate();
+  }
+
+  private recoveryEvent(binding: LegacyRecoveryBinding, event: string, evidence: string): void {
+    this.database.query("INSERT INTO resolver_nonce_recovery_history(chain_id,resolver_address,nonce,event,evidence) VALUES(?,?,?,?,?)")
+      .run(binding.chainId, normalizeAddress(binding.address), binding.nonce, event, evidence);
+  }
+
+  /** Explicit operator path. A reservation without a result is never signed a second time. */
+  recoverLegacySameNonce(binding: LegacyRecoveryBinding,
+    prepare: (sign: (signer: () => Promise<Hex>, unsignedPlan: Hex, prevalidation?: PreparedReplayGuard) => Promise<Hex>, assertLease: () => void) => Promise<void>,
+    maxFeeWei: string): Promise<void> {
+    const { chainId, address, nonce } = binding;
+    return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address, async (assertLease) => {
+      if (!Number.isSafeInteger(nonce) || nonce < 0 || binding.value !== "0" || !binding.evidence)
+        throw new Error("invalid recovery binding");
+      const serialized = JSON.stringify(binding);
+      let group = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce);
+      if (group && group.binding !== serialized) throw new Error("recovery expected binding mismatch");
+      if (!group) {
+        if (!/^[0-9]{1,18}$/.test(maxFeeWei) || BigInt(maxFeeWei)<=0n || BigInt(maxFeeWei)>400_000_000_000_000n) throw new Error("invalid recovery policy cap");
+        this.database.transaction(() => {
+          assertLease();
+          const original = this.database.query("SELECT operation_id,membership,status,serialized_transaction FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND transaction_hash=?")
+            .get(chainId, normalizeAddress(address), nonce, binding.originalHash) as { operation_id: string; membership: string; status: string; serialized_transaction: string | null } | null;
+          if (!original || original.operation_id !== binding.operationId || original.membership !== binding.membership
+            || original.status !== "pending" || original.serialized_transaction !== null) throw new Error("original legacy recovery binding mismatch");
+          const others = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status!='finalized' AND transaction_hash!=? LIMIT 1")
+            .get(chainId, normalizeAddress(address), binding.originalHash);
+          const reservations = this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1")
+            .get(chainId, normalizeAddress(address));
+          if (others || reservations || this.recoveryGroups(chainId, address).some((row) => !row.finalized))
+            throw new Error("recovery requires exclusive original intent and no unresolved signing");
+          this.database.query("INSERT INTO resolver_nonce_recovery(chain_id,resolver_address,nonce,binding,original_hash,max_fee_wei) VALUES(?,?,?,?,?,?)")
+            .run(chainId, normalizeAddress(address), nonce, serialized, binding.originalHash, maxFeeWei);
+          this.recoveryEvent(binding, "claimed", serialized);
+          this.recoveryEvent(binding, "original-attempt", JSON.stringify(this.loadAttempt(chainId,address,binding.operationId)));
+        }).immediate();
+      }
+      // Examine both candidates before signing or transferring; an original winner needs no alternative.
+      await this.reconcileIntents(chainId, address, undefined, assertLease, true);
+      group = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
+      if (group.finalized && (!group.reservation_id || group.alternative_hash)) return;
+      if (group.winner_hash && (!group.reservation_id || group.alternative_hash)) throw new Error("recovery winner provisional; signer held until finality");
+      if (!group.alternative_hash) {
+        if (!group.reservation_id) {
+          await prepare(async (signer, unsignedPlan, prevalidation) => {
+            const plan = parseTransaction(unsignedPlan);
+            if (plan.type !== "eip1559" || plan.chainId !== chainId || plan.nonce !== nonce || plan.to?.toLowerCase() !== binding.to.toLowerCase()
+              || plan.data !== binding.data || (plan.value ?? 0n) !== 0n || (plan.accessList?.length ?? 0) !== 0 || plan.r || plan.s) throw new Error("recovery unsigned plan mismatch");
+            await this.reconcileIntents(chainId, address, undefined, assertLease, true);
+            const beforeSign = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
+            if (beforeSign.winner_hash) throw new Error("original recovery candidate included before signing; resume reconciliation");
+            await prevalidation?.finalCheck?.();
+            const id = randomUUID();
+            this.database.transaction(() => {
+              assertLease();
+              prevalidation?.(); // before irreversible reservation; no awaits before actual signer
+              const changed = this.database.query("UPDATE resolver_nonce_recovery SET reservation_id=?,unsigned_plan=? WHERE chain_id=? AND resolver_address=? AND nonce=? AND reservation_id IS NULL AND alternative_hash IS NULL AND winner_hash IS NULL")
+                .run(id, unsignedPlan, chainId, normalizeAddress(address), nonce);
+              if (changed.changes !== 1) throw new Error("recovery may sign only once");
+              this.database.query("INSERT INTO resolver_signing_reservations(id,chain_id,resolver_address,operation_id,nonce,membership) VALUES(?,?,?,?,?,?)")
+                .run(id, chainId, normalizeAddress(address), binding.operationId, nonce, binding.membership);
+              this.recoveryEvent(binding, "sign-reserved", id);
+            }).immediate();
+            assertLease();
+            const raw = await signer();
+            this.database.query("INSERT INTO resolver_signing_results(reservation_id,transaction_hash,serialized_transaction) VALUES(?,?,?)")
+              .run(id, keccak256(raw), raw);
+            assertLease();
+            return raw;
+          }, assertLease);
+        }
+        group = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
+        const result = this.database.query("SELECT transaction_hash AS hash,serialized_transaction AS raw FROM resolver_signing_results WHERE reservation_id=?")
+          .get(group.reservation_id) as { hash: Hex; raw: Hex } | null;
+        if (!result?.raw) throw new Error("recovery signing result unknown; preserve reservation, never re-sign");
+        await this.validateEnvelope(chainId, address, nonce, result.hash, result.raw);
+        const tx = parseTransaction(result.raw);
+        if (tx.type !== "eip1559" || (tx.accessList?.length ?? 0) !== 0 || !group.unsigned_plan
+          || serializeTransaction({type:"eip1559",chainId:tx.chainId!,nonce:tx.nonce!,to:tx.to,data:tx.data,value:tx.value ?? 0n,gas:tx.gas!,maxFeePerGas:tx.maxFeePerGas!,maxPriorityFeePerGas:tx.maxPriorityFeePerGas!}) !== group.unsigned_plan
+          || tx.to?.toLowerCase() !== binding.to.toLowerCase() || tx.data !== binding.data || (tx.value ?? 0n) !== 0n)
+          throw new Error("recovery signed full intent mismatch");
+        this.database.transaction(() => {
+          assertLease();
+          this.database.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,serialized_transaction,replay_state,replay_max_fee_wei) VALUES(?,?,?,?,?,?,'pending',?,'unvalidated',?)")
+            .run(chainId, normalizeAddress(address), binding.operationId, nonce, result.hash, binding.membership, result.raw, group!.max_fee_wei);
+          this.database.query("UPDATE resolver_nonce_recovery SET alternative_hash=? WHERE chain_id=? AND resolver_address=? AND nonce=? AND alternative_hash IS NULL")
+            .run(result.hash, chainId, normalizeAddress(address), nonce);
+          this.database.query("UPDATE resolver_signing_reservations SET transferred=1 WHERE id=?").run(group!.reservation_id);
+          this.recoveryEvent(binding, "candidate-persisted", result.hash);
+        }).immediate();
+      }
+      await this.reconcileIntents(chainId, address, undefined, assertLease);
+    }));
+  }
+
+  private async reconcileRecoveryGroup(chainId: number, address: Hex, group: RecoveryGroup,
+    pass: PreparedReconciliationPass, allowPreparation: boolean): Promise<void> {
+    const binding: LegacyRecoveryBinding = JSON.parse(group.binding);
+    const observer = this.recoveryObservers.get(resolverKey(chainId, address));
+    if (!observer) throw new Error("recovery-aware mission observer required; do not downgrade writers");
+    const hashes = [group.original_hash, ...(group.alternative_hash ? [group.alternative_hash] : [])];
+    const check = async () => {
+      const receipts: Array<{ hash: Hex; receipt: PreparedReceipt }> = [];
+      for (const hash of hashes) {
+        const receipt = await observer.observe(binding, hash, pass);
+        if (receipt) receipts.push({ hash, receipt });
+      }
+      pass.assertActive();
+      if (receipts.length > 1) throw new Error("conflicting canonical recovery winners; fail closed");
+      const winner = receipts[0];
+      if (group.finalized && (!winner || !winner.receipt.finalized || winner.hash !== group.winner_hash || winner.receipt.blockHash !== JSON.parse(group.winner_receipt!).blockHash))
+        throw new Error("finalized recovery contradiction; fail closed");
+      if (group.finalized) return winner;
+      this.database.transaction(() => {
+        pass.assertActive();
+        if (winner) {
+          if (group.winner_hash && group.winner_hash !== winner.hash) {
+            this.recoveryEvent(binding,"provisional-reorg",group.winner_receipt!);
+            observer.invalidate(group.winner_hash);
+            this.database.query("UPDATE resolver_prepared_intents SET status='pending',receipt_block_number=NULL,receipt_block_hash=NULL,outcomes=NULL WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
+              .run(chainId,normalizeAddress(address),group.winner_hash);
+          }
+          const evidence = JSON.stringify(winner.receipt);
+          if (group.winner_hash !== winner.hash || group.winner_receipt !== evidence) this.recoveryEvent(binding, "winner-observed", JSON.stringify(winner));
+          this.database.query("UPDATE resolver_nonce_recovery SET winner_hash=?,winner_receipt=?,finalized=? WHERE chain_id=? AND resolver_address=? AND nonce=?")
+            .run(winner.hash, evidence, winner.receipt.finalized ? 1 : 0, chainId, normalizeAddress(address), group.nonce);
+          // Only the actual winner receives its own receipt. The loser remains unchanged.
+          this.database.query("UPDATE resolver_prepared_intents SET status=?,receipt_block_number=?,receipt_block_hash=?,outcomes=? WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
+            .run(winner.receipt.finalized ? "finalized" : "confirmed", winner.receipt.blockNumber, winner.receipt.blockHash, winner.receipt.outcomes, chainId, normalizeAddress(address), winner.hash);
+          group.winner_hash = winner.hash; group.winner_receipt = evidence; group.finalized = winner.receipt.finalized ? 1 : 0;
+          // Preserve original operation attempt/audit; submit projects finalized lineage separately.
+        } else if (group.winner_hash) {
+          this.recoveryEvent(binding, "provisional-reorg", group.winner_receipt!);
+          observer.invalidate(group.winner_hash);
+          this.database.query("UPDATE resolver_prepared_intents SET status='pending',receipt_block_number=NULL,receipt_block_hash=NULL,outcomes=NULL WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
+            .run(chainId, normalizeAddress(address), group.winner_hash);
+          this.database.query("UPDATE resolver_nonce_recovery SET winner_hash=NULL,winner_receipt=NULL WHERE chain_id=? AND resolver_address=? AND nonce=?")
+            .run(chainId, normalizeAddress(address), group.nonce);
+          group.winner_hash = null; group.winner_receipt = null;
+        }
+      }).immediate();
+      return winner;
+    };
+    for (let retry = 0; retry <= 3; retry++) {
+      const winner = await check();
+      if (winner) {
+        if (group.reservation_id && !group.alternative_hash && !allowPreparation) throw new Error("recovery winner observed but signing reservation not transferred; explicit resume required");
+        if (!winner.receipt.finalized && !allowPreparation) throw new Error("recovery winner provisional; signer held until finality");
+        return;
+      }
+      await observer.assertUnconsumed(binding, pass);
+      if (allowPreparation) return;
+      if (!group.alternative_hash) throw new Error("recovery claim awaits explicit preparation; no automatic signing");
+      if (retry === 3) throw new Error("recovery pending; identical-byte retries exhausted this pass");
+      const intent = this.database.query("SELECT operation_id AS operationId,nonce,transaction_hash AS hash,membership,serialized_transaction AS raw,send_attempts AS attempts,next_retry_ms AS nextRetry,replay_state AS replayState,status,replay_max_fee_wei AS originalMaxFeeWei FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
+        .get(chainId, normalizeAddress(address), group.alternative_hash) as ReplayIntent;
+      await this.replayIntent(chainId, address, intent, pass.assertActive, pass);
+    }
+  }
+
   private async reconcileIntents(chainId: number, address: Hex,
-    confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void): Promise<void> {
+    confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void, allowPreparation = false): Promise<void> {
     const signing = this.database.query(
       "SELECT id FROM resolver_signing_reservations WHERE chain_id = ? AND resolver_address = ? AND transferred = 0 LIMIT 1"
     ).get(chainId, normalizeAddress(address));
-    if (signing) throw new Error("resolver signed preparation requires explicit fenced recovery; never re-sign or resend");
+    const ownedReservation = this.recoveryGroups(chainId, address).some((g) => g.reservation_id === (signing as { id: string } | null)?.id);
+    if (signing && !ownedReservation) throw new Error("resolver signed preparation requires explicit fenced recovery; never re-sign or resend");
     const key = resolverKey(chainId, address);
     confirm ??= this.preparedReconcilers.get(key);
     const started = performance.now();
@@ -298,12 +503,15 @@ export class ResolverTransactionCoordinator {
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
       membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes
       FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized'
+      AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)
       ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
         operationId: string; nonce: number; hash: Hex; membership: string; status: string;
         raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null;
         blockNumber: string | null; blockHash: Hex | null; outcomes: string | null;
       }>;
-    if (!intents.length) return;
+    const groups = this.recoveryGroups(chainId, address);
+    if (groups.length>32) throw blocked("recovery history window exceeded; explicit review required");
+    if (!intents.length && !groups.length) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
       timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
@@ -335,6 +543,7 @@ export class ResolverTransactionCoordinator {
     } };
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
+      for (const group of groups) await bounded(() => this.reconcileRecoveryGroup(chainId, address, group, pass, allowPreparation));
       for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) {
         if (intent.status === "prevented") throw new Error(
           "resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
@@ -365,7 +574,7 @@ export class ResolverTransactionCoordinator {
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
         durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: groups.length ? "recovery reconciliation held; inspect public lineage and prerequisites" : error instanceof Error ? error.message : String(error),
         action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
       throw error;
     } finally {
@@ -445,7 +654,8 @@ export class ResolverTransactionCoordinator {
     assertLease: () => void, pass: PreparedReconciliationPass): Promise<void> {
     const replay = this.preparedReplayers.get(resolverKey(chainId, address));
     if (!replay) throw this.replayError(intent, "replay client unavailable");
-    if (intent.replayState !== "retryable" && intent.replayState !== "ready"
+    const recovery = this.getRecoveryBinding(chainId,address,intent.raw!);
+    if (!(recovery && intent.replayState === "unvalidated") && intent.replayState !== "retryable" && intent.replayState !== "ready"
       && intent.replayState !== "deterministic-rejection" && intent.replayState !== "invalid-response")
       throw this.replayError(intent, "first-send validation not durably completed; explicit fenced recovery required; never auto-send");
     const binding = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND r.transferred = 1 AND s.transaction_hash = ? AND s.serialized_transaction = ? LIMIT 1")
@@ -464,15 +674,35 @@ export class ResolverTransactionCoordinator {
       await this.sleep(intent.nextRetry - this.now());
       assertLease();
     }
-    let guard: () => void;
+    let guard: PreparedReplayGuard;
     try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
-    catch { throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    catch { pass.assertActive(); throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
     assertLease();
+    const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
+    if (group) {
+      const binding: LegacyRecoveryBinding=JSON.parse(group.binding);
+      const observer=this.recoveryObservers.get(resolverKey(chainId,address))!;
+      for (const hash of [group.original_hash,group.alternative_hash!]) {
+        if (await observer.observe(binding,hash,pass)) throw new Error("recovery candidate included before dispatch; reconcile winner next pass");
+      }
+      await observer.assertUnconsumed(binding,pass);
+    }
+    await guard.finalCheck?.();
+    assertLease();
+    if (recovery && intent.replayState === "unvalidated") {
+      this.database.transaction(() => {
+        assertLease(); guard();
+        const ready=this.database.query("UPDATE resolver_prepared_intents SET replay_state='ready' WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND replay_state='unvalidated'")
+          .run(chainId,normalizeAddress(address),intent.hash);
+        if (ready.changes!==1) throw new Error("recovery validation state changed");
+      }).immediate();
+      intent.replayState="ready";
+    }
     await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
   }
 
   private assertPreparedAdmission(chainId: number, address: Hex): void {
-    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' ORDER BY nonce LIMIT ?")
+    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) ORDER BY nonce LIMIT ?")
       .all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents);
     if (rows.length >= this.maxUnfinalizedIntents) {
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address,
@@ -551,7 +781,10 @@ export class ResolverTransactionCoordinator {
     };
     await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
     if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
-    const previous = this.loadAttempt(request.chainId, request.address, request.operationId);
+    let previous = this.loadAttempt(request.chainId, request.address, request.operationId);
+    const settledGroup = this.recoveryGroups(request.chainId, request.address).find((g) => g.finalized && g.nonce === previous?.nonce
+      && JSON.parse(g.binding).operationId === request.operationId);
+    if (settledGroup?.winner_hash && previous) previous = { ...previous, status: "confirmed", transactionHash: settledGroup.winner_hash };
     if (previous?.status === "confirmed" && previous.transactionHash) {
       const isCanonical = !request.isConfirmedCanonical
         || await request.isConfirmedCanonical(previous.transactionHash);
@@ -561,7 +794,7 @@ export class ResolverTransactionCoordinator {
       }
       // Either a reorg removed the confirmation or the receipt completed only one bounded chunk.
       // Retire this attempt and allocate at the current pending nonce; never replay the old nonce.
-      recordOwnedAttempt(
+      if (!settledGroup) recordOwnedAttempt(
         request.chainId,
         request.address,
         request.operationId,

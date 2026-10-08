@@ -9,6 +9,7 @@ import {
   http,
   keccak256,
   parseAbi,
+  serializeTransaction,
   toHex,
   type Hex,
   type PublicClient,
@@ -25,7 +26,8 @@ import {
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass } from "./resolverTransactions";
+import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
+import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
@@ -826,6 +828,20 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       const address = typeof this.sender === "string" ? this.sender : this.sender.address;
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
         (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+      this.transactionCoordinator.setRecoveryObserver(this.chain.id, address, {
+        invalidate: (hash) => { this.batchReceiptOutcomes.delete(hash); },
+        observe: (binding, hash, pass) => this.observeRecoveryCandidate(binding, hash, pass),
+        assertUnconsumed: async (binding, pass) => {
+          const block = await pass.read(() => this.publicClient!.getBlock({blockTag:"latest"}));
+          if (block.number === null || !block.hash) throw new Error("recovery nonce block unavailable");
+          assertBatchQuoteFresh({blockNumber:block.number,blockHash:block.hash,blockTimestamp:block.timestamp});
+          const latest = await pass.read(() => this.publicClient!.getTransactionCount({address, blockNumber:block.number!}));
+          const canonical = await pass.read(() => this.publicClient!.getBlock({blockNumber:block.number!}));
+          if (canonical.hash !== block.hash) throw new Error("recovery nonce block changed");
+          const pending = await pass.read(() => this.publicClient!.getTransactionCount({address, blockTag:"pending"}));
+          if (latest !== binding.nonce || pending !== binding.nonce) throw new Error("recovery nonce changed; identify canonical hash or unexplained pending advance");
+        }
+      });
       this.transactionCoordinator.setPreparedReplayer(this.chain.id, address, {
         getTransaction: async (hash) => {
           try { return await this.publicClient!.getTransaction({ hash }); }
@@ -840,12 +856,78 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           if (!originalMaxFeeWei || !/^[0-9]{1,18}$/.test(originalMaxFeeWei) || BigInt(originalMaxFeeWei) <= 0n)
             throw new Error("original replay fee policy unavailable");
           const maxFeeWei = BigInt(originalMaxFeeWei) < this.batchPolicy.maxFeeWei ? BigInt(originalMaxFeeWei) : this.batchPolicy.maxFeeWei;
-          return validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
-            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei } }, pass);
+          const recovery = this.transactionCoordinator.getRecoveryBinding(this.chain!.id, address, raw);
+          let allowRecoveryNoop = false;
+          let identity: Awaited<ReturnType<typeof verifyRecoveryIdentity>> | undefined;
+          if (recovery) {
+            identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass);
+            allowRecoveryNoop = JSON.parse(recovery.evidence).allowAlreadySettled === true && identity.recoveryComplete;
+            const balance = await pass.read(() => this.publicClient!.getBalance({address,blockNumber:identity!.number!}));
+            if (balance < (maxFeeWei < 200_000_000_000_000n ? maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
+
+          }
+          const feeGuard = await validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
+            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop,
+            recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
+          return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard) : feeGuard;
         },
         broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
       });
     }
+  }
+
+  async recoverLegacyMission(input: MissionRecoveryInput): Promise<void> {
+    const binding = recoveryBinding(input);
+    if (typeof this.sender === "string" || !this.publicClient || !this.chain || !this.batchPolicy.enabled
+      || binding.chainId !== this.chain.id || binding.address !== this.sender.address.toLowerCase()
+      || binding.to !== this.gameAddress.toLowerCase()) throw new Error("recovery configured signer/deployment mismatch");
+    const account = this.sender, client = this.publicClient;
+    await this.transactionCoordinator.recoverLegacySameNonce(binding, async (sign, assertLease) => {
+      const pass: PreparedReconciliationPass = { read: async (operation) => { assertLease(); const result = await operation(); assertLease(); return result; }, assertActive: assertLease };
+      if (await this.gamePaused()) throw new Error("recovery game paused");
+      const {transaction, guard, evidence} = await prepareRecoveryEnvelope(client, input, this.batchPolicy, pass);
+      this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
+      await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
+    }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString());
+  }
+
+  private async observeRecoveryCandidate(binding: LegacyRecoveryBinding, hash: Hex,
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt | null> {
+    const client = this.publicClient!;
+    let receipt;
+    try { receipt = await pass.read(() => client.getTransactionReceipt({hash})); }
+    catch (error) {
+      if (!(error instanceof TransactionReceiptNotFoundError)) throw new Error("recovery receipt lookup unavailable");
+      try {
+        const tx = await pass.read(() => client.getTransaction({hash}));
+        if (tx.blockHash !== null) throw new Error("recovery transaction included; await exact receipt hydration");
+      } catch (missing) { if (!(missing instanceof TransactionNotFoundError)) throw new Error("recovery transaction inclusion unresolved; preserve group"); }
+      return null;
+    }
+    if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw new Error("recovery receipt hash mismatch");
+    const block = await pass.read(() => client.getBlock({blockNumber:receipt.blockNumber}));
+    if (block.hash !== receipt.blockHash) return null; // orphan observation, not a winner
+    const tx = await pass.read(() => client.getTransaction({hash}));
+    if (tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== binding.chainId
+      || tx.from.toLowerCase() !== binding.address.toLowerCase() || tx.nonce !== binding.nonce
+      || tx.to?.toLowerCase() !== binding.to.toLowerCase() || tx.value !== 0n || tx.input !== binding.data
+      || tx.blockHash !== receipt.blockHash || tx.blockNumber !== receipt.blockNumber)
+      throw new Error("recovery canonical full transaction mismatch");
+    // Bind finality to one coherent finalized snapshot, not an independently cached height.
+    const finalized = await pass.read(() => client.getBlock({blockTag:"finalized"}));
+    if (finalized.number === null || !finalized.hash) throw new Error("recovery finalized block unavailable");
+    await verifyRecoveryReference(client,JSON.parse(binding.evidence),receipt.blockNumber,receipt.blockHash,pass,receipt.blockNumber<=finalized.number);
+    pass.finalizedHead = Promise.resolve(finalized.number);
+    // Never reuse a sibling's receipt or a stale derived projection.
+    const result = await this.reconcileBatchReceipt(hash, binding.membership, undefined, pass);
+    if (!result || result.blockHash !== receipt.blockHash || result.blockNumber !== receipt.blockNumber.toString())
+      throw new Error("recovery receipt changed during hydration");
+    const finalCanonical = await pass.read(() => client.getBlock({blockNumber:finalized.number!}));
+    const receiptCanonical = await pass.read(() => client.getBlock({blockNumber:receipt.blockNumber}));
+    const finalAgain = await pass.read(() => client.getBlock({blockTag:"finalized"}));
+    if (finalCanonical.hash !== finalized.hash || receiptCanonical.hash !== receipt.blockHash
+      || finalAgain.number !== finalized.number || finalAgain.hash !== finalized.hash) throw new Error("recovery finality snapshot changed; retry");
+    return result;
   }
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
