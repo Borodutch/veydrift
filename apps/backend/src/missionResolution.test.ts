@@ -9,7 +9,7 @@ import {
   type MissionResolutionChainClient,
   type MissionResolutionLogger
 } from "./missionResolution";
-import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const config: BackendConfig = {
   chainId: 84532,
@@ -59,6 +59,48 @@ describe("MissionResolutionService", () => {
     expect(service.snapshot().healthWarnings).toContain("mission_resolver_admission_blocked");
     expect(service.snapshot().admission?.retainedConfirmed).toBe(4096);
   });
+  test("shared admission errors never poison 47 mission retries or wait for a 300-second candidate cooldown", async () => {
+    let now=1_000_000, fail=true;
+    const lengths:number[]=[];
+    const client=fakeClient({calls:[],resolvable:Array.from({length:43},(_,i)=>String(i+1)),returnable:Array.from({length:4},(_,i)=>String(i+44))});
+    client.resolveMissionBatch=async items=>{
+      lengths.push(items.length);
+      if(fail)throw new ResolverAdmissionBlockedError(new Error("resolver reconciliation backpressure: read deadline exceeded"));
+      return {hash:null,items,exclusions:[]};
+    };
+    client.isMissionLegComplete=async()=>true;
+    const service=new MissionResolutionService({...config,missionBatch:{enabled:true,maxItems:16,maxFeeWei:200_000_000_000_000n}},
+      {chainClient:client,now:()=>now,logger:silentLogger()});
+    for(const wait of [30_000,60_000,120_000,240_000]){await service.tick();now+=wait;}
+    await service.tick();
+    expect(service.snapshot().sharedAdmission?.blocked).toBe(true);
+    expect(service.snapshot().healthWarnings).toContain("mission_resolver_admission_blocked");
+    // Sub-interval ticks do not hammer RPC; due candidates remain visible.
+    now+=1000;await service.tick();expect(lengths).toHaveLength(5);
+    expect(service.snapshot().dueArrivals.count).toBe(43);expect(service.snapshot().dueReturns.count).toBe(4);
+    fail=false;now+=4000;await service.tick();
+    expect(lengths).toEqual([47,47,47,47,47,47]);
+    expect(service.snapshot().resolvedCount).toBe(43);expect(service.snapshot().returnedCount).toBe(4);
+    expect(service.snapshot().sharedAdmission).toEqual({blocked:false,nextRetryAt:null});
+  });
+
+  test("mission-specific batch outcomes retain their own backoff across a shared admission interruption", async()=>{
+    let now=1_000_000, stage=0;const seen:string[][]=[];
+    const client=fakeClient({calls:[],resolvable:["1","2"],returnable:[]});
+    client.resolveMissionBatch=async items=>{
+      seen.push(items.map(i=>i.missionId));
+      if(stage===0){stage++;return {hash:null,items:[],exclusions:[{item:items[0]!,reason:"specific-failure",terminal:false}]};}
+      if(stage===1){stage++;throw new ResolverAdmissionBlockedError(new Error("shared RPC unavailable"));}
+      return {hash:null,items};
+    };
+    client.isMissionLegComplete=async()=>true;
+    const service=new MissionResolutionService({...config,missionBatch:{enabled:true,maxItems:16,maxFeeWei:200_000_000_000_000n}},
+      {chainClient:client,now:()=>now,logger:silentLogger()});
+    await service.tick();now+=5000;await service.tick();now+=5000;await service.tick();
+    expect(seen).toEqual([["1","2"],["2"],["2"]]);
+    expect(service.snapshot().resolvedCount).toBe(1); // genuine candidate-1 hold is not cleared
+  });
+
   test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
     const calls: string[] = [];
     const client = fakeClient({ calls, resolvable: ["1", "2"], returnable: ["3"] });

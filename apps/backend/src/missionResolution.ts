@@ -27,7 +27,7 @@ import {
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
+import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
 import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
@@ -165,6 +165,7 @@ type MoonChanceResolutionSnapshot = {
 };
 
 export type MissionResolutionSnapshot = {
+  sharedAdmission?: { blocked: boolean; nextRetryAt: string | null };
   admission?: ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   enabled: boolean;
   resolverConfigured: boolean;
@@ -247,6 +248,8 @@ export class MissionResolutionService {
   private moonChanceLastError: string | null = null;
   private moonChanceRetryReconciliationOffset = 0;
   private lastError: string | null = null;
+  private sharedAdmissionRetryAtMs = 0;
+  private sharedAdmissionBlocked = false;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
@@ -296,7 +299,7 @@ export class MissionResolutionService {
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
     const admission = this.chainClient?.admissionSnapshot?.() ?? null;
-    if (admission?.blockedReason) healthWarnings.push("mission_resolver_admission_blocked");
+    if (admission?.blockedReason || this.sharedAdmissionBlocked) healthWarnings.push("mission_resolver_admission_blocked");
     const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
@@ -308,6 +311,7 @@ export class MissionResolutionService {
       healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
       healthWarnings,
       admission,
+      sharedAdmission: { blocked: this.sharedAdmissionBlocked, nextRetryAt: this.sharedAdmissionBlocked ? new Date(this.sharedAdmissionRetryAtMs).toISOString() : null },
       gamePaused: this.gamePaused,
       gamePauseObservedAt: this.gamePauseObservedAt,
       gamePausedSince: this.gamePausedSince,
@@ -541,9 +545,12 @@ export class MissionResolutionService {
       .slice(0, this.maxMissionsPerTick * 5);
     if (this.config.missionBatch?.enabled) {
       if (!this.chainClient?.resolveMissionBatch) throw new Error("batch rollout enabled without supported durable batch client");
+      if (this.now() < this.sharedAdmissionRetryAtMs) return;
       const candidates = attemptable.slice(0, this.maxMissionsPerTick);
       try {
         const result = await this.chainClient.resolveMissionBatch(candidates.map((c) => ({ missionId: c.mission.missionId, leg: c.leg, dueAt: c.dueAt })));
+        this.sharedAdmissionBlocked = false;
+        this.sharedAdmissionRetryAtMs = 0;
         for (const excluded of result.exclusions ?? []) {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
           const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
@@ -583,7 +590,10 @@ export class MissionResolutionService {
       } catch (error) {
         // A concurrent settlement or fresh block only invalidates this packing: repack next tick.
         const transient = error instanceof Error && /membership changed|block changed or expired/.test(error.message);
-        if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
+        if (error instanceof ResolverAdmissionBlockedError) {
+          this.sharedAdmissionBlocked = true;
+          this.sharedAdmissionRetryAtMs = this.now() + this.intervalMs;
+        } else if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
         this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
         emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
       }
@@ -835,6 +845,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
         (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
       this.transactionCoordinator.setRecoveryObserver(this.chain.id, address, {
+        verifyFinalized: (binding, winner, receipt, candidates, pass) => this.verifyFinalizedRecovery(binding, winner, receipt, candidates, pass),
         invalidate: (hash) => { this.batchReceiptOutcomes.delete(hash); },
         observe: (binding, hash, pass) => this.observeRecoveryCandidate(binding, hash, pass),
         assertUnconsumed: (binding, pass) => assertRecoveryNonce(this.publicClient!,binding,pass)
@@ -892,6 +903,48 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
       await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
     }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString(),trace);
+  }
+
+  private async verifyFinalizedRecovery(binding: LegacyRecoveryBinding, winner: Hex, stored: PreparedReceipt,
+    candidates: Hex[], pass: PreparedReconciliationPass): Promise<void> {
+    const client = this.publicClient!;
+    const contradiction = () => new Error("finalized recovery contradiction; fail closed");
+    if (JSON.stringify(recoveryBinding(JSON.parse(binding.evidence))) !== JSON.stringify(binding)) throw contradiction();
+    // Initial finalization already proved full transaction/domain/reference identity.
+    // Never repeat historical transaction/state/fee hydration to admit new traffic.
+    const identity = await (pass.finalizedRecoveryIdentity ??= (async () => ({
+      chainId: await pass.read(() => client.getChainId()),
+      nonce: await pass.read(() => client.getTransactionCount({ address: binding.address, blockTag: "latest" }))
+    }))());
+    if (identity.chainId !== binding.chainId || !Number.isSafeInteger(identity.nonce) || identity.nonce <= binding.nonce)
+      throw contradiction();
+    const blockNumber = BigInt(stored.blockNumber);
+    const losers: Array<{ blockNumber: bigint; blockHash: Hex }> = [];
+    for (const hash of candidates) {
+      let receipt;
+      try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
+      catch (error) {
+        pass.assertActive();
+        // Explicit absence may be pruning. The durable finalized anchor and consumed
+        // nonce remain authoritative; transport errors are NEVER absence evidence.
+        if (error instanceof TransactionReceiptNotFoundError) continue;
+        throw new RecoveryReadinessError("rpc-unavailable");
+      }
+      if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw contradiction();
+      if (hash === winner) {
+        if (receipt.blockNumber !== blockNumber || receipt.blockHash !== stored.blockHash) throw contradiction();
+      } else losers.push({ blockNumber: receipt.blockNumber, blockHash: receipt.blockHash });
+    }
+    // Validate the immutable finalized anchor AFTER candidate observations. The
+    // common two-candidate path costs three reads/group plus two shared identity
+    // reads, so all 32 retained groups fit the unchanged 128-read pass budget.
+    const canonical = await pass.read(() => client.getBlock({ blockNumber }));
+    if (canonical.number !== blockNumber || canonical.hash !== stored.blockHash) throw contradiction();
+    for (const loser of losers) {
+      const loserBlock = loser.blockNumber === blockNumber ? canonical
+        : await pass.read(() => client.getBlock({ blockNumber: loser.blockNumber }));
+      if (loserBlock.hash === loser.blockHash) throw new Error("conflicting canonical recovery winners; fail closed");
+    }
   }
 
   private async observeRecoveryCandidate(binding: LegacyRecoveryBinding, hash: Hex,

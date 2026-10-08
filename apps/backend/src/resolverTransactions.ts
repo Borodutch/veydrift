@@ -18,6 +18,7 @@ export type PreparedReconciliationPass = {
   assertActive: () => void;
   finalizedHead?: Promise<bigint>;
   archivalFinalizedHead?: Promise<bigint | null>;
+  finalizedRecoveryIdentity?: Promise<{ chainId: number; nonce: number }>;
   recoveryTrace?: RecoveryTrace;
   intentIdentity?: { chainId: number; address: Hex; nonce: number } | undefined;
   archive?: boolean;
@@ -42,6 +43,8 @@ export type LegacyRecoveryBinding = {
 type RecoveryGroup = { nonce: number; max_fee_wei: string; binding: string; original_hash: Hex; alternative_hash: Hex | null;
   reservation_id: string | null; unsigned_plan: Hex | null; winner_hash: Hex | null; winner_receipt: string | null; finalized: number };
 export type RecoveryObserver = {
+  /** Reuse a durably finalized full proof, with fresh bounded contradiction checks. */
+  verifyFinalized?: (binding: LegacyRecoveryBinding, winner: Hex, receipt: PreparedReceipt, candidates: Hex[], pass: PreparedReconciliationPass) => Promise<void>;
   invalidate: (hash: Hex) => void;
   observe: (binding: LegacyRecoveryBinding, hash: Hex, pass: PreparedReconciliationPass) => Promise<PreparedReceipt | null>;
   assertUnconsumed: (binding: LegacyRecoveryBinding, pass: PreparedReconciliationPass) => Promise<void>;
@@ -357,7 +360,8 @@ export class ResolverTransactionCoordinator {
   reconcilePrepared(chainId: number, address: Hex,
     confirm?: PreparedReconciler): Promise<void> {
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
-      (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)));
+      (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)))
+      .catch(error => { throw new ResolverAdmissionBlockedError(error); });
   }
 
   setRecoveryObserver(chainId: number, address: Hex, observer: RecoveryObserver): void {
@@ -480,6 +484,24 @@ export class ResolverTransactionCoordinator {
     const observer = this.recoveryObservers.get(resolverKey(chainId, address));
     if (!observer) throw new Error("recovery-aware mission observer required; do not downgrade writers");
     const hashes = [group.original_hash, ...(group.alternative_hash ? [group.alternative_hash] : [])];
+    if (group.finalized && observer.verifyFinalized) {
+      // finalized=1 is written only after the full winner/exclusion/reference proof.
+      // Bind that durable result to its exact intent before reusing it after restart.
+      const receipt = group.winner_receipt ? JSON.parse(group.winner_receipt) as PreparedReceipt : null;
+      const intent = group.winner_hash && this.database.query("SELECT operation_id,membership,status,receipt_block_number,receipt_block_hash,outcomes FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND transaction_hash=?")
+        .get(chainId, normalizeAddress(address), group.nonce, group.winner_hash) as { operation_id: string; membership: string; status: string; receipt_block_number: string; receipt_block_hash: string; outcomes: string } | null;
+      if (binding.chainId !== chainId || binding.address.toLowerCase() !== normalizeAddress(address) || binding.nonce !== group.nonce
+        || binding.originalHash !== group.original_hash || !group.winner_hash || !hashes.includes(group.winner_hash)
+        || receipt?.finalized !== true || !/^(0|[1-9][0-9]*)$/.test(receipt.blockNumber) || !/^0x[0-9a-f]{64}$/i.test(receipt.blockHash)
+        || !intent || intent.operation_id !== binding.operationId || intent.membership !== binding.membership || intent.status !== "finalized"
+        || intent.receipt_block_number !== receipt.blockNumber || intent.receipt_block_hash !== receipt.blockHash || intent.outcomes !== receipt.outcomes)
+        throw new Error("finalized recovery contradiction; durable winner binding changed");
+      if (group.reservation_id && !group.alternative_hash && !allowPreparation)
+        throw new Error("recovery winner observed but signing reservation not transferred; explicit resume required");
+      await observer.verifyFinalized(binding, group.winner_hash, receipt, hashes, pass);
+      pass.assertActive();
+      return;
+    }
     const check = async () => {
       const receipts: Array<{ hash: Hex; receipt: PreparedReceipt }> = [];
       for (const hash of hashes) {
@@ -927,10 +949,12 @@ export class ResolverTransactionCoordinator {
     const recordOwnedAttempt = (...args: Parameters<ResolverTransactionCoordinator["recordAttempt"]>) => {
       this.database.transaction(() => { assertLease(); this.recordAttempt(...args); }).immediate();
     };
-    await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
-    if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
-    else if (this.admissionSnapshot(request.chainId, request.address).journalBytes >= 240 * 1024 * 1024)
-      throw new Error("resolver admission blocked: journal-storage-full; preserve all signed evidence");
+    try {
+      await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
+      if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
+      else if (this.admissionSnapshot(request.chainId, request.address).journalBytes >= 240 * 1024 * 1024)
+        throw new Error("resolver admission blocked: journal-storage-full; preserve all signed evidence");
+    } catch (error) { throw new ResolverAdmissionBlockedError(error); }
     let previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     const settledGroup = this.recoveryGroups(request.chainId, request.address).find((g) => g.finalized && g.nonce === previous?.nonce
       && JSON.parse(g.binding).operationId === request.operationId);
@@ -1475,6 +1499,11 @@ export class ResolverTransactionCoordinator {
       `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now);
     }).immediate();
   }
+}
+
+/** No candidate was evaluated: retry the shared admission gate, not each mission. */
+export class ResolverAdmissionBlockedError extends Error {
+  constructor(error: unknown) { super(safeDiagnosticText(error)); this.name = "ResolverAdmissionBlockedError"; }
 }
 
 export class ResolverNonceStalledError extends Error {
