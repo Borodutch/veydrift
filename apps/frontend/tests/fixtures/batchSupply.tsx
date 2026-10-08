@@ -32,6 +32,7 @@ declare global {
   interface Window {
     supplyFixture: {
       refresh: () => void;
+      effectiveCargo: (count: number) => void;
       unmount: () => void;
       changeStock: () => void;
       changeEligibility: () => void;
@@ -63,6 +64,7 @@ function Fixture() {
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {
     submissions,
+    effectiveCargo: count => setSources(current => current.map(item => ({ ...item, ships: { largeCargo: count }, unavailableReason: count ? undefined : "No usable cargo ships are available on this planet." }))),
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
     changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),

@@ -949,7 +949,8 @@ export class BackendDataStore {
   private refreshGameplay(): void {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-    const timed = new Set(["settlement", "infrastructure", "shipyard", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
+    // Supply omits queues but its effective inventory changes on the same cadence as Shipyard.
+    const timed = new Set(["settlement", "infrastructure", "shipyard", "supply-sources", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
     const keys = [...this.resources.values()].filter(resource => {
       if (!this.state.subscriberCount(resource.key)) return false;
       if (resource.options.wallet && resource.options.wallet.toLowerCase() !== this.contextWallet) return false;

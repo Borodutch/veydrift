@@ -151,6 +151,33 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // API/store boundary coverage lives in batchSupplyEffectiveInventory.test.ts.
+    // Mount the same modal to prove refreshed effective counts drive real controls.
+    for (const width of [1280, 390]) {
+      await load(width, 'emptyFleet=1');
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
+      await click(source); // Preserve explicit selection; refresh must not reselect sources.
+      await input('metal to send', 0);
+      assert.equal(await evaluate(launch + '.disabled'), true, 'new ships alone must not send cargo');
+      await input('metal to send', 50000);
+      const transport = await submit();
+      assert.equal(transport.mission, 'transport');
+      assert.equal(transport.orders[0].ships.largeCargo, 3);
+      assert.equal(transport.orders[0].cargo.metal, 50000);
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Deploy")');
+      const deploy = await submit();
+      assert.equal(deploy.mission, 'deploy');
+      assert.equal(deploy.orders[0].ships.largeCargo, 3);
+      await evaluate('supplyFixture.effectiveCargo(1)'); await settle();
+      await input('metal to send', 10000);
+      const afterDebit = await submit();
+      assert.equal(afterDebit.orders[0].ships.largeCargo, 1, 'spent ships do not reappear');
+      await evaluate('supplyFixture.effectiveCargo(0)'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), true, 'unavailable inventory blocks submission');
+    }
+    console.log('PASS refreshed effective cargo: resource-selected Transport/Deploy at desktop/mobile widths');
+
     // Hold worker results so pending geometry is deterministic, even for tiny fleets.
     for (const width of [1280, 390, 320]) {
       await load(width);
