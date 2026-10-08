@@ -3,18 +3,20 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeFunctionResult, keccak256, type PublicClient } from "viem";
+import { encodeFunctionResult, keccak256, TransactionNotFoundError, TransactionReceiptNotFoundError, type PublicClient } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { defaultMissionBatchPolicy, missionBatchAbi } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 
-const address = "0x1111111111111111111111111111111111111111" as const;
+const account = privateKeyToAccount(("0x" + "11".repeat(32)) as `0x${string}`);
+const address = account.address;
 const game = "0x2222222222222222222222222222222222222222" as const;
 const blockHash = "0x" + "aa".repeat(32);
 const base = 1_800_000_000;
 const chain = { id: 8453, name: "inert", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["http://invalid.test"] } } };
-const inertBytes = "0x1234" as const; // not a signed transaction; no key or network used
+let inertBytes: `0x${string}`; // fixture-only signed envelope; no network used
 
 type Options = {
   blockAge?: number; exactDelayMs?: number; canonicalDelayMs?: number; signingDelayMs?: number;
@@ -75,12 +77,14 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
       return keccak256(inertBytes);
     },
     waitForTransactionReceipt: async () => receipt,
-    getTransactionReceipt: async () => { if (!mined) throw new Error("receipt unknown"); return receipt; }
+    getTransaction: async () => { throw new TransactionNotFoundError({}); },
+    getTransactionReceipt: async () => { if (!mined) throw new TransactionReceiptNotFoundError({ hash: keccak256(inertBytes) }); return receipt; }
   };
-  const sender = { address, signTransaction: async () => {
+  const sender = { address, signTransaction: async (tx: Parameters<typeof account.signTransaction>[0]) => {
     signs++;
     advance(options.signingDelayMs ?? 0);
     if (options.loseLeaseDuringSigning) loseLease();
+    inertBytes = await account.signTransaction(tx);
     return inertBytes;
   } };
   const makeClient = () => new ViemMissionResolutionChainClient({
@@ -88,7 +92,7 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
     isFleetChronologyOrderingReady: async () => true,
     getCanonicalFleetMission: async () => ({ status: "Outbound", arrivalAt: String(base - 5), returnAt: String(base + 5) }) as never
   }, game, sender as never, publicClient as unknown as PublicClient, undefined, chain, undefined,
-  new ResolverTransactionCoordinator(path), undefined, undefined,
+  new ResolverTransactionCoordinator(path, { sleep: async (ms) => advance(ms) }), undefined, undefined,
   { ...defaultMissionBatchPolicy, enabled: true, maxItems: 2 });
   const rows = () => {
     const db = new Database(path);
@@ -179,10 +183,10 @@ test("lease lost during async signing retains immutable original hash without to
 
 test("ambiguous network submission stays pending and never becomes locally prevented on restart", async () => {
   await scenario({ ambiguous: true }, async (f) => {
-    await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("connection lost");
+    await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("recoverable pending");
     f.advance(31_000);
-    await expect(f.restart().resolveMissionBatch(f.items)).rejects.toThrow("receipt unknown");
-    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    await expect(f.restart().resolveMissionBatch(f.items)).rejects.toThrow("cooling down");
+    expect(f.counts()).toEqual({ signs: 1, sends: 3 });
     expect(f.rows()).toEqual([{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "pending" }]);
   });
 });

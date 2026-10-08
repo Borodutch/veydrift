@@ -1,5 +1,7 @@
 import {
   decodeEventLog,
+  TransactionNotFoundError,
+  TransactionReceiptNotFoundError,
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -28,7 +30,7 @@ import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
+import { validateMissionBatchReplay, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -824,6 +826,25 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       const address = typeof this.sender === "string" ? this.sender : this.sender.address;
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
         (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+      this.transactionCoordinator.setPreparedReplayer(this.chain.id, address, {
+        getTransaction: async (hash) => {
+          try { return await this.publicClient!.getTransaction({ hash }); }
+          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new Error("replay transaction lookup unavailable"); }
+        },
+        validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
+          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new Error("mission replay disabled or paused");
+          const items: BatchLeg[] = JSON.parse(membership);
+          if (!Array.isArray(items) || items.length < 1 || items.length > 32
+            || operationId !== "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(batchCalldata(items)))
+            throw new Error("mission replay intent mismatch");
+          if (!originalMaxFeeWei || !/^[0-9]{1,18}$/.test(originalMaxFeeWei) || BigInt(originalMaxFeeWei) <= 0n)
+            throw new Error("original replay fee policy unavailable");
+          const maxFeeWei = BigInt(originalMaxFeeWei) < this.batchPolicy.maxFeeWei ? BigInt(originalMaxFeeWei) : this.batchPolicy.maxFeeWei;
+          return validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
+            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei } }, pass);
+        },
+        broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
+      });
     }
   }
 
@@ -904,7 +925,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
           estimatedGas: fees.gas.toString(), maxTotalFeeWei: fees.totalWei.toString(),
           l1FeeWei: fees.l1Fee.toString(), operatorFeeWei: fees.operatorFee.toString() });
-        return { hash: keccak256(signed), membership: JSON.stringify(items),
+        return { hash: keccak256(signed), membership: JSON.stringify(items), serializedTransaction: signed,
+          replayMaxFeeWei: this.batchPolicy.maxFeeWei.toString(),
           validateBeforeBroadcast: async () => {
             const canonical = await client.getBlock({ blockNumber: fees.provenance.blockNumber });
             if (canonical.hash !== fees.provenance.blockHash) throw new Error("batch quote block changed before broadcast");
@@ -953,7 +975,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
 
   private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
-    pass: PreparedReconciliationPass): Promise<PreparedReceipt> {
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt | void> {
     const client = this.publicClient!;
     // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
     const finalized = await (pass.finalizedHead ??= pass.read(async () => {
@@ -967,7 +989,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       pass.assertActive();
       return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
     }
-    const receipt = await pass.read(() => client.getTransactionReceipt({ hash }));
+    let receipt;
+    try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
+    catch (error) {
+      if (error instanceof TransactionReceiptNotFoundError) return;
+      throw new Error("canonical batch receipt lookup unavailable; preserve intent and retry reconciliation");
+    }
     const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
     if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
     const items: BatchLeg[] = JSON.parse(membership);

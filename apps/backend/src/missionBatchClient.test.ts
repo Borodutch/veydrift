@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { encodeFunctionResult, keccak256, parseTransaction, type PublicClient } from "viem";
+import { encodeFunctionResult, keccak256, parseTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
@@ -34,7 +34,8 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
       return keccak256(serializedTransaction);
     },
     waitForTransactionReceipt: async () => receipt(),
-    getTransactionReceipt: async () => { if (!mined) throw new Error("receipt unknown"); return receipt(); }
+    getTransaction: async () => { throw new TransactionNotFoundError({}); },
+    getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return receipt(); }
   };
   const coordinator = new ResolverTransactionCoordinator(":memory:");
   const client = new ViemMissionResolutionChainClient({
@@ -61,14 +62,14 @@ test("stale canonical membership under nonce lease aborts before broadcast", asy
   await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("membership changed");
   expect(f.broadcasts()).toBe(0);
 });
-test("ambiguous batch and missing receipt block retries; empty queue can recover exact hash", async () => {
+test("ambiguous batch retries three exact sends; empty queue can recover exact hash", async () => {
   const f = fixture({ ambiguous: true });
-  await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("connection lost");
-  await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("receipt unknown");
-  expect(f.broadcasts()).toBe(1);
+  await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("recoverable pending");
+  await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("cooling down");
+  expect(f.broadcasts()).toBe(3);
   f.mine();
   expect(await f.client.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
-  expect(f.broadcasts()).toBe(1);
+  expect(f.broadcasts()).toBe(3);
 });
 test("reverted receipt consumes nonce without inventing per-leg success; noncanonical receipt stays blocked", async () => {
   const reverted = fixture({ revert: true });

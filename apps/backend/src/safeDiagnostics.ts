@@ -4,7 +4,7 @@ const opaqueContainers = new Set(["config", "configuration", "env", "environment
 const publicHashKeys = new Set(["commithash", "gitsha", "runtimecodehash", "transactionhash", "upgradetransactionhash"]);
 const normalizedSensitiveKeyTokens = [
   "authorization", "cookie", "credential", "credentials", "password", "passwd", "secret", "token",
-  "apikey", "privatekey", "signingkey", "mnemonic", "seed"
+  "apikey", "privatekey", "signingkey", "mnemonic", "seed", "serializedtransaction", "signedtransaction", "rawtransaction"
 ];
 const normalizedOpaqueContainerTokens = [
   "configuration", "environment", "variables", "config", "headers", "header", "variable", "env"
@@ -51,6 +51,8 @@ export function safeDiagnosticText(value: unknown, maxChars = 2_048, preserveHas
   );
   text = text.replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b/gi, redacted);
   text = text.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, redacted);
+  // Signed envelopes/calldata are not public hash diagnostics, even in preserved-hash fields.
+  text = text.replace(/\b0x[0-9a-f]{66,}\b/gi, redacted);
   if (!preserveHash) text = text.replace(/\b0x[0-9a-f]{64}\b/gi, redacted);
   return text.length > maxChars ? `${text.slice(0, maxChars)}…[truncated]` : text;
 }

@@ -90,3 +90,12 @@ describe("safe diagnostics", () => {
     expect(output).toEndWith("…[truncated]");
   });
 });
+
+test("signed envelope bytes are redacted in raw errors, health diagnostics and preserved hash fields", () => {
+  const raw = "0x02" + "ab".repeat(200), hash = "0x" + "cd".repeat(32);
+  expect(safeDiagnosticText("send failed: " + raw, 2048, true)).toBe("send failed: [redacted]");
+  const diagnostic = sanitizeDiagnosticValue({ serializedTransaction: raw, signedTransaction: raw,
+    rawTransaction: raw, transactionHash: hash, error: new Error("RPC body " + raw) });
+  expect(JSON.stringify(diagnostic)).not.toContain(raw);
+  expect((diagnostic as { transactionHash: string }).transactionHash).toBe(hash);
+});
