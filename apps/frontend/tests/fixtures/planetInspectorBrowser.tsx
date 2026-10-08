@@ -902,7 +902,8 @@ if (fixtureParams.get("missionMemoProbe") === "true") {
 } else if (fixtureParams.get("snapshotProbe") === "true") {
   render(<SnapshotProbe />, appRoot);
 } else if (settlementShell) {
-  Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
+  // Farcaster hosts expose the wallet only through the SDK, never window.ethereum.
+  if (!farcasterBootstrapSetup) Object.defineProperty(window, "ethereum", { configurable: true, value: provider });
   if (farcasterBootstrapSetup) {
     // Stub only the external Mini App host boundary; exercise the real shell,
     // provider selection, network setup and confirmation polling unchanged.

@@ -21,28 +21,17 @@ export type FarcasterMiniAppWalletSupport =
   | { status: "unsupported"; code: string; capabilities: string[]; chains: string[]; message: string };
 
 type ReadyScheduler = (callback: () => void) => void;
-type MiniAppLocation = Pick<Location, "pathname" | "search">;
 
 export const FARCASTER_BASE_SEPOLIA_CHAIN = "eip155:84532";
 export const FARCASTER_WALLET_CAPABILITY = "wallet.getEthereumProvider";
 
 let readyPromise: Promise<void> | undefined;
 
-export function hasMiniAppUrlHint(
-  location: MiniAppLocation = window.location,
-): boolean {
-  const params = new URLSearchParams(location.search);
-  return location.pathname.startsWith("/miniapp") || params.get("miniApp") === "true";
-}
-
+// Only a host that answers the SDK handshake counts: the Base app opens the same
+// ?miniApp=true URLs in a plain in-app browser with an injected wallet.
 export async function detectFarcasterMiniApp(
   client: FarcasterReadyClient = sdk,
-  location: MiniAppLocation = window.location,
 ): Promise<boolean> {
-  if (hasMiniAppUrlHint(location)) {
-    return true;
-  }
-
   return client.isInMiniApp?.(500).catch(() => false) ?? false;
 }
 

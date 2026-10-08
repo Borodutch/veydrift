@@ -5,7 +5,6 @@ import {
   farcasterMiniAppPlatformType,
   FARCASTER_BASE_SEPOLIA_CHAIN,
   FARCASTER_WALLET_CAPABILITY,
-  hasMiniAppUrlHint,
   resetFarcasterReadyForTests,
   scheduleFarcasterReady,
   signalFarcasterReadyOnce,
@@ -65,28 +64,13 @@ describe("Farcaster Mini App ready lifecycle", () => {
     expect(calls).toBe(1);
   });
 
-  test("detects Mini App URL launch hints before probing the SDK", async () => {
-    expect(hasMiniAppUrlHint({ pathname: "/", search: "?miniApp=true" })).toBe(true);
-    expect(hasMiniAppUrlHint({ pathname: "/miniapp", search: "" })).toBe(true);
-    expect(hasMiniAppUrlHint({ pathname: "/", search: "" })).toBe(false);
-
-    await expect(detectFarcasterMiniApp({
-      isInMiniApp: () => {
-        throw new Error("should not probe when URL has the launch hint");
-      },
-      actions: {
-        ready: () => undefined,
-      },
-    }, { pathname: "/", search: "?miniApp=true" })).resolves.toBe(true);
-  });
-
-  test("falls back to bounded SDK Mini App detection", async () => {
+  test("detects Mini App hosts only through the bounded SDK handshake", async () => {
     await expect(detectFarcasterMiniApp({
       isInMiniApp: async () => true,
       actions: {
         ready: () => undefined,
       },
-    }, { pathname: "/", search: "" })).resolves.toBe(true);
+    })).resolves.toBe(true);
 
     await expect(detectFarcasterMiniApp({
       isInMiniApp: async () => {
@@ -95,7 +79,7 @@ describe("Farcaster Mini App ready lifecycle", () => {
       actions: {
         ready: () => undefined,
       },
-    }, { pathname: "/", search: "" })).resolves.toBe(false);
+    })).resolves.toBe(false);
   });
 
   test("reads Mini App platform type from SDK context", async () => {
