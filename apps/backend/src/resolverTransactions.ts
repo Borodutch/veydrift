@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { hostname } from "node:os";
+import { constants, hostname } from "node:os";
 
 import { keccak256, parseTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
@@ -996,7 +996,10 @@ export class ResolverTransactionCoordinator {
     if (fence.host === sendOwnerHost() && Number.isSafeInteger(fence.pid) && fence.pid > 0) {
       try { process.kill(fence.pid, 0); }
       catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+        const failure = error as NodeJS.ErrnoException;
+        // Bun 1.1.42 reports only the positive native errno, without a code.
+        // Accept only ESRCH; permissions, unknown errors and live/reused PIDs stay fenced.
+        if (failure.code === "ESRCH" || (failure.code === undefined && failure.errno === constants.errno.ESRCH)) {
           this.database.query("DELETE FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ? AND token = ?")
             .run(chainId, address, fence.token);
           return; // owner exited; exact-byte canonical recovery still mandatory

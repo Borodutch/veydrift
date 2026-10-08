@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { keccak256, type Hex } from "viem";
+import { keccak256, parseTransaction, type Hex } from "viem";
 import { replayMissionFixture, replayItems } from "./resolverReplayTransport.fixture";
 
 async function fixture(run: (path: string) => Promise<void>) {
@@ -103,14 +103,26 @@ test("real crashed process cannot overlap; verified same-namespace exit resumes 
         output += new TextDecoder().decode(next.value);
       } })();
       await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(new Error("fixture timeout")), 3000))]);
+      const db = new Database(path);
+      const original = db.query("SELECT serialized_transaction AS raw, transaction_hash AS hash, nonce FROM resolver_prepared_intents").get() as { raw: Hex; hash: Hex; nonce: number };
+      db.close();
+      expect(original.nonce).toBe(4);
+      expect(state(path)).toEqual({ intent: { attempts: 2, state: "retryable", status: "pending" }, fences: expect.any(Array) });
+      expect(state(path).fences.length).toBe(1);
       const clock = { now: 1000000 }; let sends = 0, mined = false;
-      const send = async (raw: Hex) => { sends++; mined = true; return keccak256(raw); };
+      const send = async (raw: Hex) => {
+        sends++;
+        expect(raw).toBe(original.raw); expect(keccak256(raw)).toBe(original.hash);
+        expect(parseTransaction(raw).nonce).toBe(original.nonce);
+        mined = true; return keccak256(raw);
+      };
       const successor = replayMissionFixture(path, send, clock, () => mined);
       await expect(successor.resolveMissionBatch([])).rejects.toThrow("send still outstanding"); expect(sends).toBe(0);
       child.kill("SIGKILL"); await child.exited;
       expect(await successor.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
       expect(sends).toBe(1); expect(state(path).fences).toEqual([]);
       expect((state(path).intent as any).attempts).toBe(3);
+      expect((state(path).intent as any).status).toBe("finalized");
     } finally { child.kill(); await child.exited; }
   });
 });
