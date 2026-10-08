@@ -8780,6 +8780,49 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.deuterium, 10_000 - expectedDeuterium);
     }
 
+    function testAttackLootRatioIgnoresBuilderCodeSuffix() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        // The Base app appends an ERC-8021 builder code to every transaction's calldata.
+        bytes memory data = bytes.concat(
+            abi.encodeCall(
+                game.launchAttackMission,
+                (
+                    originPlanetId,
+                    targetPlanetId,
+                    ships,
+                    VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                    VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
+                    811,
+                    VeydriftGameStorage.LootRatio({metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 2_000})
+                )
+            ),
+            hex"62635f32683979363869680b0080218021802180218021802180218021"
+        );
+
+        vm.prank(player);
+        (bool ok, bytes memory result) = address(game).call(data);
+        assertTrue(ok);
+        uint256 missionId = abi.decode(result, (uint256));
+        (,,,,,,,, uint128 fuelCost,,) = game.fleetMission(missionId);
+        uint256 availableCapacity = 5_000 - fuelCost;
+        uint256 expectedMetal = (availableCapacity * 5_000) / 10_000;
+        uint256 expectedCrystal = (availableCapacity * 3_000) / 10_000;
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 811);
+        _resolveAttackFully(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory cargo) = _fleetMission(missionId);
+        assertEq(cargo.metal, expectedMetal);
+        assertEq(cargo.crystal, expectedCrystal);
+        assertEq(cargo.deuterium, availableCapacity - expectedMetal - expectedCrystal);
+    }
+
     function testAttackLootRatioRollsUnfillableShareIntoNextResource() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
