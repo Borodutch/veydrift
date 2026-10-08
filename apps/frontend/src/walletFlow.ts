@@ -1462,6 +1462,7 @@ const GAME_SELECTORS = {
   launchBodyFleetMission: "0x0d0a9b08",
   launchFleetMission: "0x60eac16f",
   launchTransportBatch: "0x9c26e0be",
+  launchDeployBatch: "0xc47915ea",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -1929,6 +1930,7 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.launchBodyFleetMission,
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.launchTransportBatch,
+  GAME_SELECTORS.launchDeployBatch,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
 ]);
@@ -2738,7 +2740,15 @@ export type BatchTransportOrder = {
  * launch inputs, so a batch does not get a second set of fleet rules.
  */
 export function encodeLaunchTransportBatchCall({ targetPlanetId, orders }: { targetPlanetId: bigint | number | string; orders: readonly BatchTransportOrder[] }): string {
-  return `${GAME_SELECTORS.launchTransportBatch}${encodeAbiParameters(
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchTransportBatch, { targetPlanetId, orders });
+}
+
+export function encodeLaunchDeployBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchDeployBatch, params);
+}
+
+function encodeLaunchFleetBatchCall(selector: string, { targetPlanetId, orders }: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return `${selector}${encodeAbiParameters(
     parseAbiParameters(
       "uint256 targetPlanetId, (uint256 originPlanetId, (uint32 smallCargo, uint32 lightFighter, uint32 recycler, uint32 colonyShip, uint32 largeCargo, uint32 heavyFighter, uint32 cruiser, uint32 battleship, uint32 bomber, uint32 destroyer, uint32 deathstar, uint32 battlecruiser, uint32 reaper, uint32 pathfinder) ships, (uint128 metal, uint128 crystal, uint128 deuterium) cargo, uint16 speedPercent)[] orders",
     ),
@@ -4065,6 +4075,19 @@ export async function sendLaunchTransportBatchTransaction(
     from: account,
     to: contractAddress,
     data: encodeLaunchTransportBatchCall(params),
+  });
+}
+
+export async function sendLaunchDeployBatchTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchDeployBatchCall>[0],
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeLaunchDeployBatchCall(params),
   });
 }
 

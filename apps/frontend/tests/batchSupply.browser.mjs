@@ -273,10 +273,42 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click("document.querySelector('input[aria-label=\"metal to send\"]').closest('label').querySelector('button')");
       assert.equal((await submit()).orders.length, 2);
       await click(deploy);
-      assert.equal(await evaluate(launch + '.disabled'), true, 'multi-source Deploy cannot partially submit');
-      assert.ok(await evaluate('document.body.textContent.includes("Deselect other sources before launching")'));
+      assert.equal(await evaluate(launch + '.disabled'), false, 'multi-source Deploy uses an atomic batch');
+      assert.equal((await submit()).orders.length, 2);
       await click(transport);
       assert.equal(await evaluate(launch + '.disabled'), false, 'Transport still batches');
+    }
+    for (const width of [1280, 390]) {
+      await load(width, 'combatFleet=1');
+      const fighter = "document.querySelector('button[aria-label=\"Light Fighter at Astro\"]')";
+      const all = "document.querySelector('button[aria-label=\"Select all ships at Astro\"]')";
+      assert.equal(await evaluate(fighter + '.getAttribute("aria-pressed")'), 'false');
+      assert.equal(await evaluate(launch + '.disabled'), true, 'empty default cargo does not launch');
+      await click(fighter);
+      let fleet = await submit();
+      assert.equal(fleet.orders[0].ships.lightFighter, 70, 'opt-in type moves every ship');
+      assert.equal(fleet.orders[0].ships.largeCargo, 0);
+      assert.deepEqual(fleet.orders[0].cargo, {metal:0, crystal:0, deuterium:0});
+      await click(all);
+      fleet = await submit();
+      assert.equal(fleet.fleetModesBySource['188'], 'all');
+      assert.equal(fleet.orders[0].ships.largeCargo, 2);
+      assert.equal(fleet.orders[0].ships.recycler, 5);
+      assert.equal(fleet.orders[0].ships.cruiser, 12);
+      await click(fighter);
+      fleet = await submit();
+      assert.equal(fleet.orders[0].ships.lightFighter, 0, 'deselect after Select all keeps the type home');
+      assert.equal(fleet.orders[0].ships.largeCargo, 2);
+      await click("document.querySelector('[aria-label=\"Mission type\"] button:last-child')");
+      assert.equal((await submit()).mission, 'deploy');
+      await evaluate('supplyFixture.refresh()'); await settle();
+      assert.equal((await submit()).orders[0].ships.largeCargo, 2);
+      await evaluate('supplyFixture.pending("action")'); await settle();
+      assert.equal(await evaluate(all + '.disabled'), true);
+      await evaluate('supplyFixture.reject()'); await settle();
+      await click("Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Reset to automatic cargo')");
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      assert.equal(await evaluate(fighter + '.getAttribute("aria-pressed")'), 'false');
     }
     // Standalone moon Supply has no upgrade/shortfall props and may use its parent planet.
     for (const width of [1280, 390]) {
@@ -332,7 +364,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       }
       assert.notEqual(on.background, off.background, 'selected chip is highlighted');
       assert.equal(off.imageOpacity, '0.5', 'excluded ship image is subdued');
-      assert.equal(await evaluate(large + '.title'), 'Large Cargo');
+      assert.equal(await evaluate(large + '.title'), 'Large Cargo: 5 available; 2 planned');
       const layout = await evaluate('(() => { const group = ' + fleet + '; const boxes = [...group.querySelectorAll("button")].map(node => { const r = node.getBoundingClientRect(); return {left: r.left, right: r.right, top: r.top, bottom: r.bottom}; }); return {rowHeight: group.parentElement.getBoundingClientRect().height, groupHeight: group.getBoundingClientRect().height, boxes}; })()');
       assert.ok(layout.rowHeight <= 30 && layout.groupHeight <= 30, 'whole Planned Fleet row retains the original density');
       for (let i = 0; i < layout.boxes.length; i++) {
@@ -373,7 +405,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('document.querySelectorAll("[role=group] button[aria-describedby]").length'), 0);
       assert.equal(await evaluate(source + '.disabled'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
-      assert.ok(await evaluate('document.body.textContent.includes("No cargo ships")'));
+      assert.ok(await evaluate('document.body.textContent.includes("No mobile ships")'));
       assert.equal(await evaluate('document.body.textContent.includes("Enable another ship type")'), false, 'empty inventory must not suggest nonexistent type controls');
       assert.equal(await evaluate('document.body.textContent.includes("Enable more ship types")'), false, 'empty inventory shortfall must not suggest nonexistent type controls');
       assert.equal(await evaluate('supplyFixture.submissions.length'), 0);

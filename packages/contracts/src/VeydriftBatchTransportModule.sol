@@ -28,7 +28,7 @@ interface IVeydriftMoonArrivalResolver {
         returns (uint256);
 }
 
-/// @notice Bounded, atomic multi-origin transport entrypoint for the Game proxy.
+/// @notice Bounded, atomic multi-origin transport and deploy entrypoints for the Game proxy.
 /// @dev This module deliberately re-enters the proxy through its canonical single-mission selector
 ///      with `delegatecall`. That retains the original player as `msg.sender` and gives every child
 ///      exactly the same settlement, ship, fuel, resolution, and event semantics as a normal launch.
@@ -696,6 +696,21 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         external
         returns (uint256[] memory missionIds)
     {
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Transport);
+    }
+
+    function launchDeployBatch(uint256 targetPlanetId, TransportBatchOrder[] calldata orders)
+        external
+        returns (uint256[] memory missionIds)
+    {
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Deploy);
+    }
+
+    function _launchFleetBatch(
+        uint256 targetPlanetId,
+        TransportBatchOrder[] calldata orders,
+        FleetMissionType missionType
+    ) private returns (uint256[] memory missionIds) {
         uint256 count = orders.length;
         if (count == 0 || count > MAX_TRANSPORT_BATCH_ORDERS) revert InvalidQuantity();
 
@@ -722,7 +737,7 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
                 LAUNCH_FLEET_MISSION_SELECTOR,
                 order.originPlanetId,
                 targetPlanetId,
-                FleetMissionType.Transport,
+                missionType,
                 order.ships,
                 order.cargo,
                 order.speedPercent,

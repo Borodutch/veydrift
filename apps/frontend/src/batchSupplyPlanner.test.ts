@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildBatchSupplyPlan,
-  hasUsableSupplyCargoFleet,
+  hasUsableSupplyFleet,
   supplyResourceShortfall,
   type BatchSupplySource,
 } from "./batchSupplyPlanner";
@@ -124,7 +124,7 @@ describe("buildBatchSupplyPlan", () => {
     expect(plan.orders).toEqual([]);
     expect(plan.blockedSources).toEqual([{
       planetId: cargoSource.planetId,
-      reason: "No cargo fleet with enough deuterium for this route.",
+      reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium.",
     }]);
     expect(plan.missing).toEqual({ metal: 500, crystal: 0, deuterium: 0 });
   });
@@ -177,7 +177,7 @@ describe("buildBatchSupplyPlan", () => {
     });
     const expectedBlockedSource = {
       planetId: cargoSource.planetId,
-      reason: "No cargo fleet with enough deuterium for this route.",
+      reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium.",
     };
 
     expect(fuelCost).toBeGreaterThan(0);
@@ -268,7 +268,7 @@ describe("buildBatchSupplyPlan", () => {
       maxOrders: 1,
     });
 
-    expect(hasUsableSupplyCargoFleet(refreshedSource.ships)).toBe(true);
+    expect(hasUsableSupplyFleet(refreshedSource.ships)).toBe(true);
     expect(plan.orders).toHaveLength(1);
   });
 
@@ -286,7 +286,7 @@ describe("buildBatchSupplyPlan", () => {
       maxOrders: 1,
     });
 
-    expect(hasUsableSupplyCargoFleet(fullyCommitted.ships)).toBe(false);
+    expect(hasUsableSupplyFleet(fullyCommitted.ships)).toBe(false);
     expect(plan.orders).toEqual([]);
     expect(plan.blockedSources).toEqual([{
       planetId: "full",

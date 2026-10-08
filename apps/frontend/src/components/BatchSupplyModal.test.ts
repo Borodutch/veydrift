@@ -13,7 +13,7 @@ describe("Batch Supply source row presentation", () => {
     expect(batchSupplyModalSource).toContain("useBatchSupplyMax(planOptions, target.planetId");
     expect(batchSupplyModalSource).not.toContain("maximumBatchSupplyResource(");
     expect(batchSupplyModalSource).toContain("!maximum.busy");
-    expect(batchSupplyModalSource).toContain("onConfirm(plan.orders, shipTypesBySource, mission)");
+    expect(batchSupplyModalSource).toContain("onConfirm(plan.orders, shipTypesBySource, mission, fleetModesBySource)");
     expect(batchSupplyModalSource).not.toContain("Number.MAX_SAFE_INTEGER");
   });
 

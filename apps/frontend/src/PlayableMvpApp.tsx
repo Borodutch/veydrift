@@ -11,7 +11,7 @@ import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
-import { buildBatchSupplyPlan, hasUsableSupplyCargoFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource, type SupplyMission } from "./batchSupplyPlanner";
+import { buildBatchSupplyPlan, hasUsableSupplyFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource, type SupplyMission, type SupplyFleetModesBySource } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
   isStartedBuildingQueueSynced,
@@ -182,6 +182,7 @@ import {
   sendLaunchFleetMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchTransportBatchTransaction,
+  sendLaunchDeployBatchTransaction,
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
   fetchMission,
@@ -2195,8 +2196,8 @@ export function batchSupplySourceForPlanet(
     ?? (!resources ? RESOURCES_UNAVAILABLE : undefined)
     ?? (shipyard?.fleetLaunchAvailable === false
       ? (playerNotice(shipyard.fleetLaunchUnavailableReason) ?? playerNotice(shipyard.unavailableReason) ?? "Fleet slots are unavailable.")
-      : shipyard && !hasUsableSupplyCargoFleet(ships)
-        ? "No usable cargo ships are available on this planet."
+      : shipyard && !hasUsableSupplyFleet(ships)
+        ? "No usable mobile ships are available on this planet."
         : undefined);
   return {
     planetId: planet.planetId,
@@ -2226,6 +2227,7 @@ export function batchSupplySourceForPlanet(
 export function replanBatchSupplyForConfirmation({
   mission = "transport",
   shipTypesBySource,
+  fleetModesBySource = {},
   maxOrders,
   orders,
   sources,
@@ -2239,6 +2241,7 @@ export function replanBatchSupplyForConfirmation({
   sources: readonly BatchSupplySource[];
   target: Pick<ManagedPlanetResponse, "galaxy" | "position" | "system">;
   shipTypesBySource: SupplyShipTypesBySource;
+  fleetModesBySource?: SupplyFleetModesBySource;
 }): BatchSupplyPlan {
   const selectedPlanetIds = new Set(orders.map((order) => order.originPlanetId));
   const sourceCargoOverrides = Object.fromEntries(orders.map((order) => [order.originPlanetId, order.cargo]));
@@ -2261,6 +2264,7 @@ export function replanBatchSupplyForConfirmation({
     requested,
     selectedPlanetIds,
     shipTypesBySource,
+    fleetModesBySource,
     sourceCargoOverrides,
     sources,
     maxOrders,
@@ -2269,7 +2273,7 @@ export function replanBatchSupplyForConfirmation({
 
 /** The production wallet preflight: all reads use the captured destination, never the current page. */
 export async function prepareBatchSupplyConfirmation({
-  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, targetIsMoon = false, mission = "transport",
+  queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, targetIsMoon = false, mission = "transport", fleetModesBySource = {},
   isCurrent, onPreview, onShortfall,
 }: {
   queries: import("./backendDataStore").BackendDataStore["queries"];
@@ -2277,6 +2281,7 @@ export async function prepareBatchSupplyConfirmation({
   target: ManagedPlanetResponse;
   orders: BatchSupplyOrder[];
   shipTypesBySource: SupplyShipTypesBySource;
+  fleetModesBySource?: SupplyFleetModesBySource;
   levelSupply: LevelSupplyRequest | undefined;
   targetIsMoon?: boolean;
   mission?: SupplyMission;
@@ -2285,7 +2290,7 @@ export async function prepareBatchSupplyConfirmation({
   onPreview: (preview: LevelSupplyPreview) => void;
   onShortfall: (missing: SupplyResources) => void;
 }): Promise<void> {
-  if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
+  if (orders.length === 0 || orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
   if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   // Keep the single indexed snapshot read inside the shared
   // transaction deadline; never submit a late or changed plan.
@@ -2311,6 +2316,7 @@ export async function prepareBatchSupplyConfirmation({
   const refreshedPlan = replanBatchSupplyForConfirmation({
     mission,
     shipTypesBySource,
+    fleetModesBySource,
     maxOrders: snapshot.fleetSlots ? Math.max(0, snapshot.fleetSlots.limit - snapshot.fleetSlots.active) : 0,
     orders,
     sources: refreshedSources,
@@ -2328,9 +2334,8 @@ export const launchBatchSupplyTransaction = (
   target: ManagedPlanetResponse, orders: BatchSupplyOrder[], targetIsMoon = false,
   mission: SupplyMission = "transport",
 ) => {
-  // The atomic batch selector only supports Transport. Deploy uses a single canonical
-  // launch, never multiple sends that could leave a partially successful batch.
-  if (mission === "deploy" && orders.length !== 1) throw new Error("Deploy Supply requires exactly one source per launch.");
+  // Both planet batches are atomic. Moon launches retain the canonical body selector.
+  if (orders.length === 0 || orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
   if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
   return targetIsMoon
     ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
@@ -2339,13 +2344,13 @@ export const launchBatchSupplyTransaction = (
       ships: orders[0]!.ships,
       cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
     })
-    : mission === "deploy"
+    : mission === "deploy" && orders.length === 1
       ? sendLaunchFleetMissionTransaction(provider, signerAccount, gameContract, {
         originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId, missionType: 1,
         ships: orders[0]!.ships,
         cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
       })
-    : sendLaunchTransportBatchTransaction(provider, signerAccount, gameContract, {
+    : (mission === "deploy" ? sendLaunchDeployBatchTransaction : sendLaunchTransportBatchTransaction)(provider, signerAccount, gameContract, {
       targetPlanetId: target.planetId,
       orders: orders.map((order) => ({
         originPlanetId: order.originPlanetId,
@@ -2368,6 +2373,8 @@ export function batchSupplyPlanMatchesOrders(submitted: readonly BatchSupplyOrde
     const next = refreshedByOrigin.get(order.originPlanetId);
     if (!next) return false;
     return (
+      order.fuelCost === next.fuelCost &&
+      order.travelSeconds === next.travelSeconds &&
       order.cargo.metal === next.cargo.metal &&
       order.cargo.crystal === next.cargo.crystal &&
       order.cargo.deuterium === next.cargo.deuterium &&
@@ -4377,7 +4384,7 @@ export function PlayableMvpApp({
   }, [account, backendData, handleOpenBatchSupply, refreshLevelSupply, selectedManagedPlanet]);
 
   const handleConfirmBatchSupply = useCallback(
-    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission) => {
+    (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission, fleetModesBySource: SupplyFleetModesBySource) => {
       const target = batchSupplyTarget;
       if (!provider || !signerAccount || !account || !backendData || !gameContract || !target) {
         setBatchSupplyError("Wallet or target planet is unavailable.");
@@ -4401,7 +4408,7 @@ export function PlayableMvpApp({
             (provider: Eip1193Provider) => launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, batchSupplyTargetIsMoon, mission),
             {
               prepare: () => prepareBatchSupplyConfirmation({
-                queries: backendData.queries, account, target, orders, shipTypesBySource, levelSupply, levelPreview, targetIsMoon: batchSupplyTargetIsMoon, mission,
+                queries: backendData.queries, account, target, orders, shipTypesBySource, fleetModesBySource, levelSupply, levelPreview, targetIsMoon: batchSupplyTargetIsMoon, mission,
                 isCurrent: () => batchSupplySourceLoadIdRef.current === sourceLoadId,
                 onPreview: setLevelPreview, onShortfall: setBatchSupplyInitialRequested,
               }),

@@ -13,8 +13,9 @@ import {
   allowedSupplyShips,
   buildBatchSupplyPlan,
   defaultSupplyShipTypes,
-  hasUsableSupplyCargoFleet,
+  hasUsableSupplyFleet,
   type SupplyShipKey,
+  type SupplyFleetModesBySource,
   type SupplyMission,
   type SupplyShipTypesBySource,
   emptySupplyResources,
@@ -28,17 +29,27 @@ import { shipAssetByKey } from "../gameAssets";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
-const supplyCargoShips: Array<{ key: SupplyShipKey; label: string }> = [
+const supplyShips: Array<{ key: SupplyShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
   { key: "smallCargo", label: "Small Cargo" },
   { key: "recycler", label: "Recycler" },
   { key: "colonyShip", label: "Colony Ship" },
+  { key: "lightFighter", label: "Light Fighter" },
+  { key: "heavyFighter", label: "Heavy Fighter" },
+  { key: "cruiser", label: "Cruiser" },
+  { key: "battleship", label: "Battleship" },
+  { key: "bomber", label: "Bomber" },
+  { key: "destroyer", label: "Destroyer" },
+  { key: "deathstar", label: "Dreadstar" },
+  { key: "battlecruiser", label: "Battlecruiser" },
+  { key: "reaper", label: "Reaper" },
+  { key: "pathfinder", label: "Pathfinder" },
 ];
 
 export const MAX_TRANSPORT_BATCH_MISSIONS = 15;
 
-export function batchSupplyMissionLimitError(missionCount: number, mission: SupplyMission = "transport"): string | undefined {
-  if (mission === "deploy" && missionCount > 1) return "Deploy Supply launches one source at a time. Deselect other sources before launching.";
+export function batchSupplyMissionLimitError(missionCount: number, _mission: SupplyMission = "transport", targetIsMoon = false): string | undefined {
+  if (targetIsMoon && missionCount > 1) return "Moon Supply requires exactly one source per mission.";
   return missionCount > MAX_TRANSPORT_BATCH_MISSIONS
     ? `A Supply batch can launch at most ${MAX_TRANSPORT_BATCH_MISSIONS} missions. Reduce the plan before launching.`
     : undefined;
@@ -86,7 +97,7 @@ export function BatchSupplyModal({
   initialRequested?: Partial<SupplyResources> | undefined;
   loading?: boolean | undefined;
   onClose: () => void;
-  onConfirm: (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission) => void;
+  onConfirm: (orders: BatchSupplyOrder[], shipTypesBySource: SupplyShipTypesBySource, mission: SupplyMission, fleetModesBySource: SupplyFleetModesBySource) => void;
   sources: readonly BatchSupplySource[];
   maxSources: number;
   target: ManagedPlanetResponse;
@@ -127,6 +138,7 @@ export function BatchSupplyModal({
   const [requested, setRequested] = useState<Record<keyof SupplyResources, string>>(() => supplyResourceInputValues(initialRequested));
   const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
   const [shipTypesBySource, setShipTypesBySource] = useState<SupplyShipTypesBySource>({});
+  const [fleetModesBySource, setFleetModesBySource] = useState<SupplyFleetModesBySource>({});
   const sourcesInitialized = useRef(false);
   const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
@@ -136,6 +148,7 @@ export function BatchSupplyModal({
     if (!upgrade) {
       setSelectedSourceIds(new Set());
       setShipTypesBySource({});
+      setFleetModesBySource({});
       sourcesInitialized.current = false;
     }
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId]);
@@ -160,9 +173,10 @@ export function BatchSupplyModal({
     selectedPlanetIds: selected,
     sourceCargoOverrides,
     shipTypesBySource,
+    fleetModesBySource,
     sources,
     maxOrders: maxSources,
-  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
+  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, fleetModesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
   const plan = useMemo(() => buildBatchSupplyPlan(planOptions), [planOptions]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
@@ -172,11 +186,11 @@ export function BatchSupplyModal({
   const canonicalTransactionError = transactionState?.phase === "error" || transactionOutcome === "unknown" || transactionOutcome === "reverted"
     ? transactionState?.label
     : undefined;
-  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission);
+  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission, targetIsMoon);
   const maximum = useBatchSupplyMax(planOptions, target.planetId, loading || actionPending || transactionPending, (resource, value) => {
     setRequested((current) => ({ ...current, [resource]: value === 0 ? "" : String(value) }));
   });
-  const canSubmit = !maximum.busy && (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && !missionLimitError;
+  const canSubmit = !maximum.busy && (!upgrade || (Boolean(preview) && !preview?.inProgress)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && !missionLimitError;
   const targetLabel = `${target.name?.trim() || target.coordinates}${targetIsMoon ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
@@ -235,8 +249,10 @@ export function BatchSupplyModal({
             </button>
           ))}
         </div>
-        <p className="text-xs text-slate-300">{plan.shipsReturn ? "Delivers resources, then ships return to their source planets." : "Delivers resources and leaves the planned ships at the destination. No return trip. Deploy launches one source at a time."}</p>
+        <p className="text-xs text-slate-300">{plan.shipsReturn ? "Delivers resources, then ships return to their source planets." : "Delivers resources and leaves the planned ships at the destination. No return trip."}</p>
       </section>
+
+      <p className="text-xs text-slate-400">Cargo ships are allocated automatically. Enabling a combat ship type sends every available ship of that type, even without resources. Select all ships sends the entire available fleet from that source; deselect any types you want to keep.</p>
 
       {upgrade ? <section aria-label="Upgrade requirement" className="grid gap-2 text-sm text-slate-300">
         <strong className="text-white">{upgrade.label} · Level {upgrade.level} · {upgrade.kind === "moon" ? "Moon" : "Planet"} {target.coordinates}</strong>
@@ -257,6 +273,7 @@ export function BatchSupplyModal({
             <span className="contents">
               <input
                 aria-label={`${resource} to send`}
+                disabled={loading || actionPending || transactionPending}
                 className="min-w-0 w-full rounded border border-white/15 bg-black/30 px-2 py-1 font-mono text-sm text-white outline-none focus:border-cyan-300"
                 inputMode="numeric"
                 min="0"
@@ -305,10 +322,10 @@ export function BatchSupplyModal({
             const selectionLimitReached = sourceLimitReason !== undefined;
             const allowedShipTypes = shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes;
             const eligibleShips = allowedSupplyShips(source.ships, allowedShipTypes);
-            const typeUnavailableReason = hasUsableSupplyCargoFleet(source.ships) && !hasUsableSupplyCargoFleet(eligibleShips)
+            const typeUnavailableReason = hasUsableSupplyFleet(source.ships) && !hasUsableSupplyFleet(eligibleShips)
               ? "No ships of the selected types. Enable another ship type to use this source."
               : undefined;
-            const disabled = Boolean(source.unavailableReason) || (!checked && !hasUsableSupplyCargoFleet(eligibleShips)) || selectionLimitReached;
+            const disabled = loading || actionPending || transactionPending || Boolean(source.unavailableReason) || (!checked && !hasUsableSupplyFleet(eligibleShips)) || selectionLimitReached;
             const order = orderByOrigin.get(source.planetId);
             const requestedSourceCargo = sourceCargoOverrides[source.planetId];
             const sourceCargo = order?.cargo ?? requestedSourceCargo ?? emptySupplyResources();
@@ -339,6 +356,7 @@ export function BatchSupplyModal({
                           <span className="text-[10px] font-bold text-slate-400">{resource === "metal" ? "M" : resource === "crystal" ? "C" : "D"}</span>
                           <input
                             aria-label={`${source.label} ${resource} to send`}
+                            disabled={loading || actionPending || transactionPending}
                             className="min-w-0 w-full bg-transparent font-mono text-xs text-white outline-none placeholder:text-slate-600"
                             inputMode="numeric"
                             min="0"
@@ -347,21 +365,37 @@ export function BatchSupplyModal({
                           />
                         </label>
                       ))}
-                      {hasManualCargo ? <button className="min-h-7 rounded border border-white/15 px-1.5 text-[10px] font-semibold text-slate-300 hover:bg-white/10" onClick={() => restoreAutomaticSourceCargo(source.planetId)} type="button">Auto</button> : <span aria-hidden="true" />}
+                      {hasManualCargo ? <button className="min-h-7 rounded border border-white/15 px-1.5 text-[10px] font-semibold text-slate-300 hover:bg-white/10" disabled={loading || actionPending || transactionPending} onClick={() => restoreAutomaticSourceCargo(source.planetId)} type="button">Auto</button> : <span aria-hidden="true" />}
                     </span>
                   ) : null}
                   {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Adjusted to available stock, cargo capacity, and fuel.</span> : null}
                   <span className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs text-cyan-100"
+                      aria-label={`Select all ships at ${source.label}`}
+                      disabled={actionPending || transactionPending || loading || Boolean(source.unavailableReason) || !hasUsableSupplyFleet(source.ships)}
+                      onClick={() => {
+                        setShipTypesBySource(current => ({ ...current, [source.planetId]: supplyShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key }) => key) }));
+                        setFleetModesBySource(current => ({ ...current, [source.planetId]: "all" }));
+                      }}>Select all ships</button>
+                    {fleetModesBySource[source.planetId] === "all" ? <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs text-slate-300"
+                      disabled={actionPending || transactionPending || loading}
+                      onClick={() => {
+                        setFleetModesBySource(current => ({ ...current, [source.planetId]: "auto" }));
+                        setShipTypesBySource(current => ({ ...current, [source.planetId]: defaultSupplyShipTypes }));
+                      }}>Reset to automatic cargo</button> : null}
+                    <span className="text-xs text-slate-400">{fleetModesBySource[source.planetId] === "all" ? "All selected ships" : "Automatic cargo + all selected combat ships"}</span>
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Planned fleet</span>
                     <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Planned fleet at ${source.label}`}>
-                      {supplyCargoShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key, label }) => {
+                      {supplyShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key, label }) => {
                         const included = allowedShipTypes.includes(key);
                         return (
                           <button key={key} type="button" aria-pressed={included}
                             aria-label={label + " at " + source.label}
                             aria-describedby={`supply-planned-${source.planetId}-${key}`}
                             disabled={actionPending || transactionPending || loading || Boolean(source.unavailableReason)}
-                            title={label}
+                            title={`${label}: ${format(source.ships[key] ?? 0)} available; ${format(order?.ships[key] ?? 0)} planned`}
                             className="group inline-flex min-h-6 min-w-6 items-center justify-center rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                             onClick={() => setShipTypesBySource((current) => {
                               const types = current[source.planetId] ?? defaultSupplyShipTypes;
@@ -374,10 +408,10 @@ export function BatchSupplyModal({
                           </button>
                         );
                       })}
-                      {!hasUsableSupplyCargoFleet(source.ships) ? <span className="text-xs text-slate-500">No cargo ships</span> : null}
+                      {!hasUsableSupplyFleet(source.ships) ? <span className="text-xs text-slate-500">No mobile ships</span> : null}
                     </span>
                   </span>
-                  {!order && hasUsableSupplyCargoFleet(source.ships) ? <span className="mt-1 block text-xs text-slate-400">No ships planned from this source.</span> : null}
+                  {!order && hasUsableSupplyFleet(source.ships) ? <span className="mt-1 block text-xs text-slate-400">No ships planned from this source.</span> : null}
                   {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
                   {typeUnavailableReason ? <span className="block text-xs text-amber-200">{typeUnavailableReason}</span> : null}
                   {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
@@ -391,8 +425,8 @@ export function BatchSupplyModal({
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
         {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
         {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
-        {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((source) => source.reason).join(" ")}</p> : null}
-        {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. {sources.some((source) => !source.unavailableReason && supplyCargoShips.some(({ key }) => (source.ships[key] ?? 0) > 0 && !(shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes).includes(key))) ? "Enable more ship types, select more sources, or reduce the request." : "Select more sources with available cargo ships, or reduce the request."}</p> : null}
+        {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((blocked) => `${sources.find(source => source.planetId === blocked.planetId)?.label ?? blocked.planetId}: ${blocked.reason}`).join(" ")}</p> : null}
+        {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. {sources.some((source) => !source.unavailableReason && supplyShips.some(({ key }) => (source.ships[key] ?? 0) > 0 && !(shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes).includes(key))) ? "Enable more ship types, select more sources, or reduce the request." : "Select more sources with available cargo ships, or reduce the request."}</p> : null}
         {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
         {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
         {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}
@@ -403,7 +437,7 @@ export function BatchSupplyModal({
             <span> · M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)} · Fuel {format(plan.fuelCost)} D</span>
             {etaRange ? <span> · arrives {formatDuration(etaRange.earliest)}{etaRange.latest === etaRange.earliest ? "" : `–${formatDuration(etaRange.latest)}`}</span> : null}
           </div>
-          <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource, mission)} type="button">
+          <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => onConfirm(plan.orders, shipTypesBySource, mission, fleetModesBySource)} type="button">
             <Check aria-hidden="true" className="shrink-0" size={16} />
             <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${targetIsMoon ? "to moon" : "in one call"}`}</span>
           </button>

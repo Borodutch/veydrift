@@ -2,6 +2,7 @@ import type { Coordinates } from "./types";
 import { emptyMissionShips, type MissionShips } from "./galaxyActions";
 import {
   fleetMissionAvailableCargoCapacity,
+  fleetMissionCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
   fleetMissionTravelSeconds,
@@ -48,7 +49,12 @@ export type BatchSupplyPlan = {
   sourceLimitReached: boolean;
 };
 
-export type SupplyShipKey = "largeCargo" | "smallCargo" | "recycler" | "colonyShip";
+export type SupplyShipKey = keyof MissionShips;
+
+export type SupplyFleetModesBySource = Readonly<Record<string, "auto" | "all">>;
+
+/** Only mobile mission ships; solar satellites and probes are not mission manifests. */
+export const supplyShipKeys = Object.keys(emptyMissionShips()) as SupplyShipKey[];
 
 export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
 
@@ -61,14 +67,14 @@ const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
   { id: 3, key: "colonyShip" },
 ];
 
-export function hasUsableSupplyCargoFleet(ships: Partial<MissionShips>): boolean {
-  return cargoShipKeys.some(({ key }) => safeAmount(ships[key]) > 0);
+export function hasUsableSupplyFleet(ships: Partial<MissionShips>): boolean {
+  return supplyShipKeys.some((key) => safeAmount(ships[key]) > 0);
 }
 
 /** Filter once, before capacity, fuel and fallback fleet calculations. Never mutate inventory. */
 export function allowedSupplyShips(ships: Partial<MissionShips>, allowedShipTypes: readonly SupplyShipKey[]): MissionShips {
   const allowed = emptyMissionShips();
-  for (const { key } of cargoShipKeys) {
+  for (const key of supplyShipKeys) {
     if (allowedShipTypes.includes(key)) allowed[key] = safeAmount(ships[key]);
   }
   return allowed;
@@ -123,7 +129,7 @@ export function maximumBatchSupplyResource(
   const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
   // A different Max must never hide an existing shortfall or displace its cargo.
   // The clicked field itself may be oversized and is intentionally replaced.
-  const missionLimit = options.mission === "deploy" || options.targetIsMoon ? 1 : 15;
+  const missionLimit = options.targetIsMoon ? 1 : 15;
   if (baseline.sourceLimitReached || otherResources.some(key => baseline.missing[key] > 0)) return requested[resource];
 
   let upper = Math.min(Number.MAX_SAFE_INTEGER, options.sources.reduce((total, source) =>
@@ -207,6 +213,9 @@ type BatchSupplyOptions = {
   sources: readonly BatchSupplySource[];
   /** Per-source eligibility. Missing sources use defaults; empty arrays exclude every type. */
   shipTypesBySource?: SupplyShipTypesBySource;
+  /** Auto minimizes cargo ships, but always sends all explicitly enabled combat ships.
+   * All sends every available ship of each selected type, even without resource cargo. */
+  fleetModesBySource?: SupplyFleetModesBySource;
   maxOrders?: number;
 };
 
@@ -218,6 +227,7 @@ function planBatchSupply({
   selectedPlanetIds,
   sourceCargoOverrides = {},
   shipTypesBySource = {},
+  fleetModesBySource = {},
   sources,
   maxOrders = Number.MAX_SAFE_INTEGER,
 }: BatchSupplyOptions, maxTrace?: { resource: keyof SupplyResources; range: SupplyMaxRange }): BatchSupplyPlan {
@@ -251,10 +261,13 @@ function planBatchSupply({
       continue;
     }
     const manualCargo = sourceCargoOverrides[source.planetId];
+    const fixedShips = allowedSupplyShips(source.ships, fleetModesBySource[source.planetId] === "all"
+      ? supplyShipKeys : supplyShipKeys.filter(key => !cargoShipKeys.some(candidate => candidate.key === key)));
+    const hasFixedFleet = hasUsableSupplyFleet(fixedShips);
     const hasRemaining = trace
       ? trace.positive({ value: resourceTotal(remaining), slope: resourceTotal(slopes) })
       : resourceTotal(remaining) > 0;
-    if (!hasRemaining && manualCargo === undefined) continue;
+    if (!hasRemaining && manualCargo === undefined && !hasFixedFleet) continue;
 
     const requestedFromSource = manualCargo === undefined
       ? {
@@ -273,11 +286,12 @@ function planBatchSupply({
         cargoSlopes[key] = trace.min(amount(key), { value: safeAmount(source.resources[key]), slope: 0 }).slope;
       }
     }
-    // A selected source with an explicit zero allocation does not need to launch. Check before
-    // capacity capping so a real shipment with no usable cargo fleet still reaches the blocker path.
-    if (trace
-      ? !trace.positive({ value: resourceTotal(requestedFromSource), slope: resourceTotal(cargoSlopes) })
-      : resourceTotal(requestedFromSource) === 0) continue;
+    // Zero cargo skips automatic sources, but never cancels explicit fleet movement.
+    // Check before capping so a real shipment without a fleet still reports a blocker.
+    const hasRequestedCargo = trace
+      ? trace.positive({ value: resourceTotal(requestedFromSource), slope: resourceTotal(cargoSlopes) })
+      : resourceTotal(requestedFromSource) > 0;
+    if (!hasRequestedCargo && !hasFixedFleet) continue;
     // A colony should contribute what it can carry, rather than being skipped just because the
     // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
     // the preview exactly matches the generated child missions.
@@ -286,9 +300,9 @@ function planBatchSupply({
       maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels, targetIsMoon),
       trace, cargoSlopes,
     );
-    const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon, trace, cargoSlopes });
+    const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon, trace, cargoSlopes, fixedShips });
     if (!loadout) {
-      blockedSources.push({ planetId: source.planetId, reason: "No cargo fleet with enough deuterium for this route." });
+      blockedSources.push({ planetId: source.planetId, reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium." });
       continue;
     }
 
@@ -334,10 +348,7 @@ function maximumCargoCapacity(
   driveLevels: FleetDriveLevels,
   targetIsMoon: boolean,
 ): number {
-  const ships = emptyMissionShips();
-  for (const candidate of cargoShipKeys) {
-    ships[candidate.key] = Math.max(0, Math.trunc(availableShips[candidate.key] ?? 0));
-  }
+  const ships = allowedSupplyShips(availableShips, supplyShipKeys);
   return fleetMissionAvailableCargoCapacity(
     ships,
     fleetMissionDistance(originCoordinates, targetCoordinates, { targetIsMoon }),
@@ -363,6 +374,7 @@ function capCargoToCapacity(cargo: SupplyResources, capacity: number, trace?: Su
 
 function supplyLoadoutForCargo({
   cargo: initialCargo,
+  fixedShips,
   source,
   targetCoordinates,
   targetIsMoon,
@@ -372,6 +384,7 @@ function supplyLoadoutForCargo({
   trace?: SupplyMaxRange | undefined;
   cargoSlopes?: SupplyResources;
   cargo: SupplyResources;
+  fixedShips: MissionShips;
   source: BatchSupplySource;
   targetCoordinates: Coordinates;
   targetIsMoon: boolean;
@@ -383,7 +396,7 @@ function supplyLoadoutForCargo({
   // fleet after reducing deuterium cargo; this lets a metal/crystal shipment proceed even when the
   // player asked to transfer more deuterium than the origin can spare for fuel.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const ships = minimumCargoFleet(source.ships, resourceTotal(cargo), distance, source.driveLevels, trace, resourceTotal(cargoSlopes));
+    const ships = minimumCargoFleet(source.ships, resourceTotal(cargo), distance, source.driveLevels, trace, resourceTotal(cargoSlopes), fixedShips);
     if (!ships) return null;
     // The contract charges the same dispatch fuel for Transport and Deploy.
     // Deploy has no normal return leg, but does not halve fuel or refund it at arrival.
@@ -398,7 +411,8 @@ function supplyLoadoutForCargo({
     }
     trace?.atMost({ value: cargo.deuterium, slope: cargoSlopes.deuterium }, maxCargoDeuterium);
     const hasCargo = trace ? trace.positive({ value: resourceTotal(cargo), slope: resourceTotal(cargoSlopes) }) : resourceTotal(cargo) > 0;
-    if (!hasCargo || availableDeuterium < fuelCost) return null;
+    if ((!hasCargo && !hasUsableSupplyFleet(fixedShips)) || availableDeuterium < fuelCost
+      || resourceTotal(cargo) + fuelCost > fleetMissionCargoCapacity(ships)) return null;
     return {
       cargo,
       ships,
@@ -416,14 +430,22 @@ function minimumCargoFleet(
   driveLevels: FleetDriveLevels,
   trace?: SupplyMaxRange,
   slope = 0,
+  fixedShips = emptyMissionShips(),
 ): MissionShips | null {
   const total = { value: cargoTotal, slope };
-  if (trace ? !trace.positive(total) : cargoTotal <= 0) return null;
-  const ships = emptyMissionShips();
+  const hasCargo = trace ? trace.positive(total) : cargoTotal > 0;
+  if (!hasCargo && !hasUsableSupplyFleet(fixedShips)) return null;
+  const ships = { ...fixedShips };
+  const fixedCapacity = fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, driveLevels);
+  if (hasUsableSupplyFleet(ships) && fixedCapacity >= cargoTotal) {
+    trace?.atMost(total, fixedCapacity);
+    return ships;
+  }
+  if (hasUsableSupplyFleet(ships)) trace?.atLeast(total, fixedCapacity + 1);
   for (const candidate of cargoShipKeys) {
     const available = Math.max(0, Math.trunc(availableShips[candidate.key] ?? 0));
-    if (available === 0) continue;
-    const capacityBefore = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels);
+    if (available === 0 || fixedShips[candidate.key] > 0) continue;
+    const capacityBefore = fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, driveLevels);
     const requiredBefore = Math.max(0, cargoTotal - capacityBefore);
     if (requiredBefore <= 0) { trace?.atMost(total, capacityBefore); return ships; }
     trace?.atLeast(total, capacityBefore + 1);
@@ -441,12 +463,12 @@ function minimumCargoFleet(
     if (ships[candidate.key] < available) trace?.atMost(total, capacityBefore + ships[candidate.key] * assumedUnitCapacity);
     while (
       ships[candidate.key] < available
-      && fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) < cargoTotal
+      && fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, driveLevels) < cargoTotal
     ) {
-      trace?.atLeast(total, fleetMissionAvailableCargoCapacity(ships, distance, driveLevels) + 1);
+      trace?.atLeast(total, fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, driveLevels) + 1);
       ships[candidate.key] += 1;
     }
-    const capacity = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels);
+    const capacity = fleetMissionCargoCapacity(ships) - fleetMissionFuelCost(ships, distance, driveLevels);
     if (capacity >= cargoTotal) { trace?.atMost(total, capacity); return ships; }
     trace?.atLeast(total, capacity + 1);
   }

@@ -106,8 +106,8 @@ describe("Supply Max preserves the actual shipment", () => {
     const transport = maxPlan(multi, "metal");
     const deploy = maxPlan({ ...multi, mission: "deploy" }, "metal");
     expect(transport.plan.orders).toHaveLength(2);
-    expect(deploy.plan.orders).toHaveLength(1);
-    expect(deploy.maximum).toBeLessThan(transport.maximum);
+    expect(deploy.plan.orders).toHaveLength(2);
+    expect(deploy.maximum).toBe(transport.maximum);
     const many = options(Array.from({ length: 16 }, (_, i) => source(String(i), { resources: { metal: 10, crystal: 0, deuterium: 100 } })));
     const batch = maxPlan(many, "metal");
     expect(batch.maximum).toBe(150);
