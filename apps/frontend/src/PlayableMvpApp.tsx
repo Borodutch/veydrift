@@ -2460,7 +2460,7 @@ export function useBatchSupplyActions({
             (provider: Eip1193Provider) => {
               if (!isCurrent()) throw new Error("Supply selection changed before submission.");
               // Wallet simulation, gas estimation and the final chain read all await.
-              // Check the draft at eth_sendTransaction, before the coordinator marks
+              // Check the draft at the wallet send boundary, before the coordinator marks
               // submission started; never cancel recovery once the send has begun.
               const supplyProvider = transactionWalletProvider(provider, () => {
                 if (!isCurrent()) throw new Error("Supply selection changed before submission.");
