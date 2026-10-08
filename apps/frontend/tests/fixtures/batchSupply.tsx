@@ -17,7 +17,8 @@ const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
 const twoSources = new URLSearchParams(location.search).has("twoSources");
 const plannedFleetExample = new URLSearchParams(location.search).has("plannedFleetExample");
-const initialRequested = { metal: combatFleet ? 0 : plannedFleetExample ? 34_900 : 1000, crystal: 0, deuterium: 0 };
+const denver = new URLSearchParams(location.search).has("denver");
+const initialRequested = denver ? { metal: 12300, crystal: 3340, deuterium: 6400 } : { metal: combatFleet ? 0 : plannedFleetExample ? 34_900 : 1000, crystal: 0, deuterium: 0 };
 const source: BatchSupplySource = {
   planetId: moon ? "189" : "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: moon ? 14 : 13 },
   resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
@@ -26,7 +27,7 @@ const source: BatchSupplySource = {
   driveLevels: { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 },
 };
 // Only the modal's presentation/route fields are consumed; this fixture does not load a wallet response.
-const target = { planetId: "189", name: "Home", galaxy: 6, system: 9, position: 14, coordinates: "6:9:14" } as ManagedPlanetResponse;
+const target = denver ? { planetId: "831", name: "New Denver", galaxy: 6, system: 9, position: 12, coordinates: "6:9:12" } as ManagedPlanetResponse : { planetId: "189", name: "Home", galaxy: 6, system: 9, position: 14, coordinates: "6:9:14" } as ManagedPlanetResponse;
 
 declare global {
   interface Window {
@@ -35,6 +36,7 @@ declare global {
       effectiveCargo: (count: number) => void;
       unmount: () => void;
       changeStock: () => void;
+      accrueStock: () => void;
       changeEligibility: () => void;
       changeDrives: () => void;
       changeRoute: () => void;
@@ -49,7 +51,11 @@ declare global {
 }
 const submissions: Window["supplyFixture"]["submissions"] = [];
 function Fixture() {
-  const [sources, setSources] = useState(largeFleet ? Array.from({ length: 15 }, (_, i) => ({
+  const [sources, setSources] = useState(denver ? [
+    { ...source, planetId: "astro", resources: { metal: 0, crystal: 0, deuterium: 4825 } },
+    { ...source, planetId: "montreal", label: "Montreal", coordinates: { galaxy: 6, system: 9, position: 10 }, resources: { metal: 11181, crystal: 5000, deuterium: 2000 } },
+    { ...source, planetId: "1", label: "New Zion", coordinates: { galaxy: 6, system: 9, position: 1 }, resources: { metal: 1133873, crystal: 855054, deuterium: 54388 }, ships: { largeCargo: 20 }, driveLevels: { combustionDrive: 8, impulseDrive: 6, hyperspaceDrive: 7 } },
+  ] : largeFleet ? Array.from({ length: 15 }, (_, i) => ({
     ...source, planetId: String(200 + i), label: `Source ${i}`,
     coordinates: { galaxy: 6, system: 10 + i, position: 14 },
     resources: { metal: 250_000_000, crystal: 0, deuterium: 10 },
@@ -67,6 +73,7 @@ function Fixture() {
     effectiveCargo: count => setSources(current => current.map(item => ({ ...item, ships: { largeCargo: count }, unavailableReason: count ? undefined : "No usable cargo ships are available on this planet." }))),
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
+    accrueStock: () => setSources(current => current.map(item => ({ ...item, resources: { metal: item.resources.metal + 100, crystal: item.resources.crystal + 100, deuterium: item.resources.deuterium + 100 } }))),
     changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),
     changeEligibility: () => setSources(current => current.map(item => ({ ...item, unavailableReason: "Fleet unavailable" }))),
     changeDrives: () => setSources(current => current.map(item => ({ ...item, driveLevels: { ...item.driveLevels, combustionDrive: 7 } }))),
@@ -87,6 +94,8 @@ function Fixture() {
     },
   };
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
+    upgrade={denver ? { kind: "building", key: "roboticsFactory", label: "Robotics Factory", level: 6 } : undefined}
+    preview={denver ? { requirement: { metal: 12800, crystal: 3840, deuterium: 6400 }, missing: { metal: 12300, crystal: 3340, deuterium: 6400 }, energyOnly: false } : undefined}
     target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={targetIsMoon} maxSources={maxSources}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
     onConfirm={(orders, shipTypesBySource, mission, fleetModesBySource) => submissions.push(structuredClone({ orders, shipTypesBySource, mission, fleetModesBySource }))} />;

@@ -3031,6 +3031,8 @@ export function PlayableMvpApp({
   const [batchSupplySubmitting, setBatchSupplySubmitting] = useState(false);
   const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
   const batchSupplySourceLoadIdRef = useRef(0);
+  const levelSupplyRefreshIdRef = useRef(0);
+  const batchSupplySubmitLockRef = useRef(false);
   useEffect(() => {
     batchSupplySourceLoadIdRef.current += 1;
     setBatchSupplyTarget(null);
@@ -4360,18 +4362,19 @@ export function PlayableMvpApp({
 
   const refreshLevelSupply = useCallback(async (request: LevelSupplyRequest, target: ManagedPlanetResponse) => {
     const loadId = batchSupplySourceLoadIdRef.current;
+    const refreshId = ++levelSupplyRefreshIdRef.current;
     setLevelSupplyLoading(true);
     setLevelPreview(undefined);
     setBatchSupplyError(undefined);
     try {
       const preview = await readLevelSupply(request, target);
-      if (loadId !== batchSupplySourceLoadIdRef.current) return;
+      if (loadId !== batchSupplySourceLoadIdRef.current || refreshId !== levelSupplyRefreshIdRef.current) return;
       setLevelPreview(preview);
       setBatchSupplyInitialRequested(preview.missing);
     } catch (error) {
-      if (loadId === batchSupplySourceLoadIdRef.current) setBatchSupplyError(error instanceof Error ? error.message : "Destination resources could not be refreshed.");
+      if (loadId === batchSupplySourceLoadIdRef.current && refreshId === levelSupplyRefreshIdRef.current) setBatchSupplyError(error instanceof Error ? error.message : "Destination resources could not be refreshed.");
     } finally {
-      if (loadId === batchSupplySourceLoadIdRef.current) setLevelSupplyLoading(false);
+      if (loadId === batchSupplySourceLoadIdRef.current && refreshId === levelSupplyRefreshIdRef.current) setLevelSupplyLoading(false);
     }
   }, [readLevelSupply]);
 
@@ -4394,6 +4397,8 @@ export function PlayableMvpApp({
         setBatchSupplyError("The target planet cannot also be a Supply origin.");
         return;
       }
+      if (batchSupplySubmitLockRef.current) return;
+      batchSupplySubmitLockRef.current = true;
       const sourceLoadId = batchSupplySourceLoadIdRef.current;
       setBatchSupplyError(undefined);
       void (async () => {
@@ -4425,6 +4430,7 @@ export function PlayableMvpApp({
         } catch (error) {
           if (batchSupplySourceLoadIdRef.current === sourceLoadId) setBatchSupplyError(error instanceof Error ? error.message : "Could not refresh Supply sources before sending the transaction.");
         } finally {
+          batchSupplySubmitLockRef.current = false;
           if (batchSupplySourceLoadIdRef.current === sourceLoadId) setBatchSupplySubmitting(false);
         }
       })();

@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 120_000 }, async () => {
+test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 240_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
@@ -48,6 +48,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       while ((end = buffered.indexOf("\0")) >= 0) {
         const message = JSON.parse(buffered.slice(0, end));
         buffered = buffered.slice(end + 1);
+        if (message.method === "Runtime.exceptionThrown") console.error("Browser exception", JSON.stringify(message.params));
         const command = pending.get(message.id);
         if (!command) continue;
         pending.delete(message.id); clearTimeout(command.timer);
@@ -59,6 +60,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
     ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
     await send("Page.enable");
+    await send("Runtime.enable");
     async function evaluate(expression) {
       const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
       assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
@@ -82,29 +84,36 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       // Source autoselection is a mounted useEffect, not a synchronous initial render.
-      const autoSource = query.includes('combatOnlyFirst') ? `document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[1]` : source;
+      const autoSource = query.includes('denver') ? `document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[2]` : query.includes('combatOnlyFirst') ? `document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[1]` : source;
       while (!query.includes('emptyFleet') && !query.includes('recyclerOnly') && !(await evaluate(autoSource + '.checked'))) {
         assert.ok(Date.now() < deadline, 'source selection effect did not run');
         await settle();
       }
+      await evaluate('document.querySelector("[data-supply-details]")?.setAttribute("open", ""); document.querySelector("[data-supply-amounts]")?.setAttribute("open", "")');
       await evaluate('document.fonts.ready');
       await evaluate('Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => {})))');
       await settle();
     }
     async function point(expression) {
-      return evaluate('(() => { const node = ' + expression + '; node.scrollIntoView({block:"nearest", inline:"nearest"}); const r = node.getBoundingClientRect(); const x = r.x + r.width/2, y = r.y + r.height/2; return {x, y, reachable: x >= 0 && x < innerWidth && y >= 0 && y < innerHeight && (document.elementFromPoint(x,y) === node || node.contains(document.elementFromPoint(x,y)))}; })()');
+      await evaluate('(() => { const node = ' + expression + '; const scroll = node.closest("[data-supply-scroll]"); if (scroll) { const r=node.getBoundingClientRect(), box=scroll.getBoundingClientRect(); scroll.scrollTop += r.y + r.height/2 - box.y - box.height/2; } })()'); await settle();
+      return evaluate('(() => { const node = ' + expression + '; const r = node.getBoundingClientRect(); const x = r.x + r.width/2, y = r.y + r.height/2; return {x, y, reachable: x >= 0 && x < innerWidth && y >= 0 && y < innerHeight && (document.elementFromPoint(x,y) === node || node.contains(document.elementFromPoint(x,y)))}; })()');
     }
     async function click(expression) {
-      const { x, y, reachable } = await point(expression);
+      let { x, y, reachable } = await point(expression);
+      // Wait for native scroll/layout settling before hit-testing a trusted tap.
+      if (touch) { await new Promise(resolve => setTimeout(resolve, 100)); ({ x, y, reachable } = await point(expression)); }
       assert.ok(reachable, 'reachable pointer target: ' + expression);
       if (touch) {
         await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+        await new Promise(resolve => setTimeout(resolve, 50));
         await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       } else {
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       }
       await settle();
+      // Chromium dispatches the compatibility click after touchend; wait for it before scrolling to another target.
+      if (touch) await new Promise(resolve => setTimeout(resolve, 350));
       // Max is deliberately asynchronous; normal interaction checks await its result.
       if (expression.includes("closest")) {
         const deadline = Date.now() + 20_000;
@@ -151,12 +160,44 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // Reporter-equivalent read-only fixture; production modal, never a real wallet.
+    for (const width of [1280, 390, 320]) {
+      await load(width, 'denver=1', 568);
+      await evaluate('document.querySelector("[data-supply-details]").removeAttribute("open"); document.querySelector("[data-supply-amounts]").removeAttribute("open")'); await settle();
+      assert.equal(await evaluate('document.querySelector("[data-supply-details]").open'), false);
+      if (artifacts) { const shot = await send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(artifacts, 'denver-auto-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
+      const first = await submit();
+      assert.equal(first.orders.length, 1);
+      assert.equal(first.orders[0].originPlanetId, '1');
+      assert.deepEqual(first.orders[0].cargo, {metal:12300, crystal:3340, deuterium:6400});
+      assert.equal(first.orders[0].ships.largeCargo, 1);
+      assert.equal(first.orders[0].fuelCost, 7);
+      await evaluate('supplyFixture.accrueStock()'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), false, 'production refresh does not flicker Launch');
+      assert.deepEqual((await submit()).orders, first.orders, 'production never increases reviewed shipment');
+      const footer = await evaluate('(() => { const r = document.querySelector("footer").getBoundingClientRect(); return {top:r.top,bottom:r.bottom}; })()');
+      assert.ok(footer.top >= 0 && footer.bottom <= 568, 'persistent footer fits short viewport');
+      await evaluate('document.querySelector("[data-supply-details]").setAttribute("open", "")'); await settle();
+      await click('document.querySelector(' + JSON.stringify('button[aria-label="Use only New Zion"]') + ')');
+      assert.deepEqual((await submit()).orders, first.orders, 'one-click source comparison preserves exact complete loadout');
+      await input('New Zion metal to send', 12500);
+      await evaluate('supplyFixture.changeStock()'); await settle();
+      assert.equal(await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="New Zion metal to send"]') + ').value'), '12500', 'refresh keeps exact manual input');
+      assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock requires explicit review');
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      assert.equal(await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="New Zion metal to send"]') + ').value'), '12500', 'review does not erase oversized manual input');
+      assert.equal(await evaluate(launch + '.disabled'), true, 'exact remaining shortfall blocks incomplete plan');
+      assert.ok(await evaluate('document.querySelector("section[aria-label$=totals]").textContent.includes("Remaining")'));
+      assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
+      if (artifacts) { const shot = await send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(artifacts, 'denver-review-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
+    }
     // API/store boundary coverage lives in batchSupplyEffectiveInventory.test.ts.
     // Mount the same modal to prove refreshed effective counts drive real controls.
     for (const width of [1280, 390]) {
       await load(width, 'emptyFleet=1');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
       await click(source); // Preserve explicit selection; refresh must not reselect sources.
       await input('metal to send', 0);
       assert.equal(await evaluate(launch + '.disabled'), true, 'new ships alone must not send cargo');
@@ -169,7 +210,10 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       const deploy = await submit();
       assert.equal(deploy.mission, 'deploy');
       assert.equal(deploy.orders[0].ships.largeCargo, 3);
+      await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
+      assert.deepEqual((await submit()).orders, deploy.orders, 'partial/final credit snapshot does not double count the effective fleet');
       await evaluate('supplyFixture.effectiveCargo(1)'); await settle();
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
       await input('metal to send', 10000);
       const afterDebit = await submit();
       assert.equal(afterDebit.orders[0].ships.largeCargo, 1, 'spent ships do not reappear');
@@ -258,6 +302,8 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('Boolean(maxWorkers[0].terminated)'), false);
       assert.equal(await amount('metal'), '1000', 'refresh never rewrites the draft');
     }
+    await evaluate('supplyFixture.accrueStock()'); await settle();
+    assert.equal(await busy(), true, 'production increase cannot cancel reviewed-snapshot Max');
     await startMax('crystal');
     assert.equal(await evaluate('maxWorkers[0].terminated'), true, 'replacement terminates CPU work');
     await evaluate('maxWorkers[0].reply({data:{maximum:999999}}); maxWorkers[0].fail();');
@@ -289,6 +335,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       () => click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")'),
       async () => { await evaluate('supplyFixture.pending("action")'); await settle(); },
     ]) {
+      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")?.click()'); await settle();
       await startMax('metal');
       await evaluate('window.staleMax = maxWorkers.at(-1)');
       await change();
@@ -301,6 +348,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'stale errors ignored');
     }
     await evaluate('supplyFixture.pending("none")'); await settle();
+    await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
       const expected = await amount('metal');
@@ -378,6 +426,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.reset("draft")'); await settle();
       assert.equal((await submit()).mission, 'transport', 'new draft defaults to Transport');
       await load(width, 'twoSources=1');
+      await evaluate('[...document.querySelectorAll("[data-supply-details] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click())'); await settle();
       await click("document.querySelector('input[aria-label=\"metal to send\"]').closest('label').querySelector('button')");
       assert.equal((await submit()).orders.length, 2);
       await click(deploy);
@@ -491,7 +540,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal((await chipStyle(large)).imageOpacity, '0.5');
       assert.equal(await evaluate(source + '.checked'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
-      assert.ok(await evaluate('document.body.textContent.includes("No ships planned from this source.")'));
+      assert.ok(await evaluate('document.body.textContent.includes("No contribution: check stock, selected ships and fuel.")'));
       await evaluate('supplyFixture.refresh()'); await settle();
       assert.equal(await evaluate(large + '.getAttribute("aria-pressed")'), 'false');
       await click(large);
@@ -618,6 +667,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       for (const kind of ['draft', 'target', 'account']) {
         await evaluate('supplyFixture.reset(' + JSON.stringify(kind) + ')');
         await settle();
+        await evaluate('document.querySelector("[data-supply-details]").setAttribute("open", ""); document.querySelector("[data-supply-amounts]").setAttribute("open", "")'); await settle();
         await expectTypes(defaults, kind + ' starts fresh defaults');
         await click(checkbox(2));
         await click(checkbox(0));
@@ -655,6 +705,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     // Two distinct source inventories: physical taps/keyboard must not toggle another source or checkbox.
     for (const width of [1280, 390, 320]) {
       await load(width, 'twoSources=1', 568);
+      await evaluate('[...document.querySelectorAll("[data-supply-details] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click())'); await settle();
       const lunaSmall = `document.querySelector('button[aria-label="Small Cargo at Luna"]')`;
       const lunaRecycler = `document.querySelector('button[aria-label="Recycler at Luna"]')`;
       const sourceChecks = `[...document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')].map(input => input.checked)`;
@@ -700,6 +751,8 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await pressed(lunaRecycler), true);
       await click(source); await click(secondSource);
       await evaluate('supplyFixture.changeStock()'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), true, 'stock refresh requires explicit review');
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
       assert.equal(await evaluate(lunaSmall + '.textContent.includes("×1")'), true, 'fresh planned count');
       assert.equal(await pressed(lunaRecycler), true, 'changed inventory retains opt-in');
       assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock blocks short shipment');
