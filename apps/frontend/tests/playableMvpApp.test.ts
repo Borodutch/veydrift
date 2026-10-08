@@ -1145,7 +1145,7 @@ describe("Playable MVP app display helpers", () => {
 
     expect(batchSupplySourceForPlanet(planet, { ...state, launchableShips: [] })).toMatchObject({
       ships: { largeCargo: 0, smallCargo: 0 },
-      unavailableReason: "No usable cargo ships are available on this planet.",
+      unavailableReason: "No usable mobile ships are available on this planet.",
     });
   });
 

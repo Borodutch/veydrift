@@ -19,6 +19,7 @@ function wallet() {
   return { sent, provider: { request: async <T>(call: { method: string; params?: unknown[] }): Promise<T> => {
     if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
     if (call.method === "eth_call") return "0x" as T;
+    if (call.method === "eth_estimateGas") return "0xf4240" as T;
     if (call.method !== "eth_sendTransaction") throw new Error(call.method);
     sent.push((call.params as Array<{ data: string }>)[0]!);
     return "0xfixture" as T;
@@ -67,15 +68,16 @@ describe("Supply mission selection", () => {
     });
   }
 
-  test("rejects multi-source Deploy before reads or sends; Transport batching remains available", async () => {
+  test("batches planet Deploy atomically but rejects multi-source moon launches", async () => {
     const order = buildBatchSupplyPlan(args).orders[0]!;
     const orders = [order, { ...order, originPlanetId: "2" }];
-    expect(batchSupplyMissionLimitError(2, "deploy")).toContain("one source at a time");
+    expect(batchSupplyMissionLimitError(2, "deploy")).toBeUndefined();
+    expect(batchSupplyMissionLimitError(2, "deploy", true)).toContain("exactly one source");
     expect(batchSupplyMissionLimitError(1, "deploy")).toBeUndefined();
     expect(batchSupplyMissionLimitError(2)).toBeUndefined();
     const mock = wallet();
-    expect(() => launchBatchSupplyTransaction(mock.provider, account, contract, target, orders, undefined, "deploy")).toThrow("exactly one source");
-    await expect(prepareBatchSupplyConfirmation({ queries: {} as BackendDataStore["queries"], account, target, orders, shipTypesBySource: {}, mission: "deploy", levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} })).rejects.toThrow("exactly one source");
+    expect(() => launchBatchSupplyTransaction(mock.provider, account, contract, target, orders, true, "deploy")).toThrow("exactly one source");
+    await expect(prepareBatchSupplyConfirmation({ queries: {} as BackendDataStore["queries"], account, target, orders, shipTypesBySource: {}, mission: "deploy", targetIsMoon: true, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} })).rejects.toThrow("exactly one source");
     expect(mock.sent).toHaveLength(0);
     await launchBatchSupplyTransaction(mock.provider, account, contract, target, orders, undefined);
     expect(mock.sent[0]!.data.slice(0, 10)).toBe("0x9c26e0be");

@@ -1656,7 +1656,7 @@ describe("walletFlow", () => {
     configureWalletTransactionTransport(provider, "injected", "https://base-mainnet-rpc.example.test", BASE_MAINNET);
     globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
-      return Response.json({ result: body.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : "0x" });
+      return Response.json({ result: body.method === "eth_chainId" ? BASE_MAINNET.chainIdHex : body.method === "eth_estimateGas" ? "0xf4240" : "0x" });
     }) as unknown as typeof fetch;
 
     const ships = {
@@ -2226,7 +2226,7 @@ describe("walletFlow", () => {
     expect(requests).toEqual([
       {
         method: "eth_sendTransaction",
-        params: [{ from: account, to: contract, data }],
+        params: [{ from: account, to: contract, data, gas: "0x124f80" }],
       },
     ]);
   });
@@ -4851,6 +4851,7 @@ function mockProvider(
       const call = args.params?.[0];
       const isTransactionSimulation = Boolean(call && typeof call === "object" && "from" in call && typeof (call as { from?: unknown }).from === "string");
       if (args.method === "eth_call" && isTransactionSimulation && !options.forwardSimulation) return "0x" as T;
+      if (args.method === "eth_estimateGas" && !options.forwardSimulation) return "0xf4240" as T;
       if (args.method === "eth_chainId" && !options.forwardNetwork) return defaultVeydriftChainForLocation().chainIdHex as T;
       if (args.method === "eth_sendTransaction" && !options.forwardNetwork && call && typeof call === "object" && "chainId" in call) {
         const { chainId: _chainId, ...transaction } = call as Record<string, unknown>;

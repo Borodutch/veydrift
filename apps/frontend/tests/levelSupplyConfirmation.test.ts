@@ -35,6 +35,7 @@ function mockWallet() {
   const provider = { request: async <T>(call: { method: string; params?: unknown[] }): Promise<T> => {
     if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
     if (call.method === "eth_call") return "0x" as T;
+    if (call.method === "eth_estimateGas") return "0xf4240" as T;
     if (call.method !== "eth_sendTransaction") throw new Error(call.method);
     sent.push((call.params as Array<{ data: string }>)[0]!);
     return "0xfixture" as T;

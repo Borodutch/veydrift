@@ -3,22 +3,25 @@ import { render } from "preact";
 import { useState } from "preact/hooks";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
 import { MissionCargoPicker } from "../../src/components/MissionCreationPage";
-import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource, SupplyMission } from "../../src/batchSupplyPlanner";
+import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource, SupplyMission, SupplyFleetModesBySource } from "../../src/batchSupplyPlanner";
 import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 
+const combatOnlyFirst = new URLSearchParams(location.search).has("combatOnlyFirst");
+const oneSlot = new URLSearchParams(location.search).has("oneSlot");
+const combatFleet = new URLSearchParams(location.search).has("combatFleet");
 const largeFleet = new URLSearchParams(location.search).has("largeFleet");
 const moon = new URLSearchParams(location.search).has("moon");
 const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
 const twoSources = new URLSearchParams(location.search).has("twoSources");
 const plannedFleetExample = new URLSearchParams(location.search).has("plannedFleetExample");
-const initialRequested = { metal: plannedFleetExample ? 34_900 : 1000, crystal: 0, deuterium: 0 };
+const initialRequested = { metal: combatFleet ? 0 : plannedFleetExample ? 34_900 : 1000, crystal: 0, deuterium: 0 };
 const source: BatchSupplySource = {
   planetId: moon ? "189" : "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: moon ? 14 : 13 },
   resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
-  ships: emptyFleet ? {} : recyclerOnly ? { recycler: 5 } : plannedFleetExample ? { largeCargo: 5, recycler: 3 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
+  ships: combatOnlyFirst ? { lightFighter: 5 } : combatFleet ? { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1, lightFighter: 70, cruiser: 12 } : emptyFleet ? {} : recyclerOnly ? { recycler: 5 } : plannedFleetExample ? { largeCargo: 5, recycler: 3 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
   unavailableReason: emptyFleet ? "No usable cargo ships are available on this planet." : undefined,
   driveLevels: { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 },
 };
@@ -39,7 +42,7 @@ declare global {
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
-      submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource; mission: SupplyMission }>;
+      submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource; mission: SupplyMission; fleetModesBySource: SupplyFleetModesBySource }>;
     };
   }
 }
@@ -50,12 +53,12 @@ function Fixture() {
     coordinates: { galaxy: 6, system: 10 + i, position: 14 },
     resources: { metal: 250_000_000, crystal: 0, deuterium: 10 },
     ships: { largeCargo: 10_000 }, driveLevels: {},
-  })) : twoSources ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
+  })) : (twoSources || combatOnlyFirst) ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
   const [draft, setDraft] = useState(0);
   const [account, setAccount] = useState("fixture-account");
   const [destination, setDestination] = useState(target);
   const [targetIsMoon, setTargetIsMoon] = useState(moon);
-  const [maxSources, setMaxSources] = useState(moon ? 1 : 15);
+  const [maxSources, setMaxSources] = useState(moon || oneSlot ? 1 : 15);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {
@@ -84,7 +87,7 @@ function Fixture() {
   return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
     target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={targetIsMoon} maxSources={maxSources}
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
-    onConfirm={(orders, shipTypesBySource, mission) => submissions.push(structuredClone({ orders, shipTypesBySource, mission }))} />;
+    onConfirm={(orders, shipTypesBySource, mission, fleetModesBySource) => submissions.push(structuredClone({ orders, shipTypesBySource, mission, fleetModesBySource }))} />;
 }
 function NormalTransportFixture() {
   const [cargo, setCargo] = useState({ metal: "750", crystal: "200", deuterium: "100" });
