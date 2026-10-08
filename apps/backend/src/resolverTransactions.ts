@@ -2,21 +2,25 @@ import { BatchQuoteExpiredError } from "./missionBatchFees";
 import { classifyRecoveryReadError, RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readlinkSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { constants, hostname } from "node:os";
 
 import { keccak256, parseTransaction, serializeTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
+import { safeDiagnosticText } from "./safeDiagnostics";
 
-export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
+export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string; admissionProven?: boolean };
 
 export type PreparedReconciliationPass = {
   /** Every asynchronous read must pass here; late completions cannot resume hydration. */
   read: <T>(operation: () => Promise<T>) => Promise<T>;
   assertActive: () => void;
   finalizedHead?: Promise<bigint>;
+  archivalFinalizedHead?: Promise<bigint | null>;
   recoveryTrace?: RecoveryTrace;
+  intentIdentity?: { chainId: number; address: Hex; nonce: number } | undefined;
+  archive?: boolean;
 };
 type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
   pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
@@ -99,6 +103,7 @@ export type ResolverTransactionCoordinatorOptions = {
   replacementPollMs?: number;
   staleTransactionMs?: number;
   maxUnfinalizedIntents?: number;
+  maxRetainedConfirmedIntents?: number;
   reconciliationTimeoutMs?: number;
   reconciliationReadLimit?: number;
   now?: () => number;
@@ -124,7 +129,7 @@ const defaultLeaseWaitMs = 60_000;
 const defaultReplacementWaitMs = 15_000;
 const defaultReplacementPollMs = 250;
 const defaultStaleTransactionMs = 5 * 60_000;
-// 32 retained receipts => 33 reads on a warm pass; cold hydration is separately bounded.
+// Active/unproven intents are bounded independently of confirmed archival retention.
 const defaultMaxUnfinalizedIntents = 32;
 const defaultReconciliationTimeoutMs = 5_000;
 const defaultReconciliationReadLimit = 128;
@@ -144,6 +149,8 @@ export class ResolverTransactionCoordinator {
   private readonly replacementPollMs: number;
   private readonly staleTransactionMs: number;
   private readonly maxUnfinalizedIntents: number;
+  private readonly maxRetainedConfirmedIntents: number;
+  private readonly admissionBlocks = new Map<string, string>();
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
   // A transport may not support abort. Never stack abandoned reads on the same signer.
@@ -166,9 +173,10 @@ export class ResolverTransactionCoordinator {
     this.replacementPollMs = options.replacementPollMs ?? defaultReplacementPollMs;
     this.staleTransactionMs = options.staleTransactionMs ?? defaultStaleTransactionMs;
     this.maxUnfinalizedIntents = options.maxUnfinalizedIntents ?? defaultMaxUnfinalizedIntents;
+    this.maxRetainedConfirmedIntents = options.maxRetainedConfirmedIntents ?? 4096;
     this.reconciliationTimeoutMs = options.reconciliationTimeoutMs ?? defaultReconciliationTimeoutMs;
     this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
-    for (const value of [this.maxUnfinalizedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit]) {
+    for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
     }
     this.now = options.now ?? Date.now;
@@ -183,6 +191,10 @@ export class ResolverTransactionCoordinator {
     this.database.exec("PRAGMA synchronous = FULL;");
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec(`
+      CREATE TABLE IF NOT EXISTS resolver_archive_progress (
+        chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, cursor_nonce INTEGER NOT NULL DEFAULT -1, last_confirmation_ms INTEGER,
+        PRIMARY KEY(chain_id,resolver_address)
+      );
       CREATE TABLE IF NOT EXISTS resolver_signing_reservations (
         id TEXT PRIMARY KEY, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL,
         operation_id TEXT NOT NULL, nonce INTEGER NOT NULL, membership TEXT NOT NULL,
@@ -261,7 +273,7 @@ export class ResolverTransactionCoordinator {
         DROP TABLE resolver_prepared_intents_v1;`);
       }
       const intentColumns = this.database.query("PRAGMA table_info(resolver_prepared_intents)").all() as Array<{ name: string }>;
-      for (const [name, definition] of Object.entries({ serialized_transaction: "TEXT", replay_state: "TEXT NOT NULL DEFAULT 'legacy'",
+      for (const [name, definition] of Object.entries({ admission_proven: "INTEGER NOT NULL DEFAULT 0", serialized_transaction: "TEXT", replay_state: "TEXT NOT NULL DEFAULT 'legacy'",
         send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT" })) {
         if (!intentColumns.some((column) => column.name === name)) this.database.exec(`ALTER TABLE resolver_prepared_intents ADD COLUMN ${name} ${definition}`);
       }
@@ -278,10 +290,53 @@ export class ResolverTransactionCoordinator {
         ON resolver_signing_reservations(chain_id, resolver_address, nonce, operation_id);
       CREATE INDEX IF NOT EXISTS resolver_intents_unfinalized_nonce
         ON resolver_prepared_intents(chain_id, resolver_address, nonce) WHERE status != 'finalized';
+      CREATE INDEX IF NOT EXISTS resolver_intents_active_nonce
+        ON resolver_prepared_intents(chain_id, resolver_address, nonce) WHERE status != 'finalized' AND admission_proven=0;
+      CREATE INDEX IF NOT EXISTS resolver_intents_unresolved
+        ON resolver_prepared_intents(chain_id, resolver_address) WHERE admission_proven=0 AND status NOT IN ('confirmed','finalized');
+      CREATE INDEX IF NOT EXISTS resolver_intents_confirmed_nonce
+        ON resolver_prepared_intents(chain_id, resolver_address, nonce DESC) WHERE admission_proven=1;
+      CREATE INDEX IF NOT EXISTS resolver_intents_archive_nonce
+        ON resolver_prepared_intents(chain_id, resolver_address, nonce) WHERE admission_proven=1 AND status != 'finalized';
       CREATE INDEX IF NOT EXISTS resolver_intents_nonce
         ON resolver_prepared_intents(chain_id, resolver_address, nonce);
     `);
   }
+  private journalBytes(): number {
+    const pages = (this.database.query("PRAGMA page_count").get() as { page_count: number }).page_count
+      * (this.database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
+    let wal = 0;
+    if (this.databasePath !== ":memory:") {
+      try { wal = statSync(this.databasePath + "-wal").size; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    return pages + wal;
+  }
+
+  admissionSnapshot(chainId: number, address: Hex) {
+    const count = (predicate: string, limit: number) => (this.database.query(
+      "SELECT count(*) AS n FROM (SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND " + predicate + " LIMIT ?)")
+      .get(chainId, normalizeAddress(address), limit) as { n: number }).n;
+    const active = count("status != 'finalized' AND admission_proven=0 AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)", this.maxUnfinalizedIntents + 1);
+    const retainedConfirmed = count("status != 'finalized' AND admission_proven=1", this.maxRetainedConfirmedIntents + 1);
+    const journalBytes = this.journalBytes();
+    const lastProgress = (this.database.query("SELECT last_confirmation_ms AS n FROM resolver_archive_progress WHERE chain_id=? AND resolver_address=?")
+      .get(chainId, normalizeAddress(address)) as { n: number | null } | null)?.n;
+    const recovery = this.database.query("SELECT 1 FROM resolver_nonce_recovery WHERE chain_id=? AND resolver_address=? AND finalized=0 LIMIT 1")
+      .get(chainId, normalizeAddress(address));
+    const unresolved = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND admission_proven=0 AND status NOT IN ('confirmed','finalized') AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) LIMIT 1")
+      .get(chainId, normalizeAddress(address));
+    const reservation = this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1")
+      .get(chainId, normalizeAddress(address));
+    const capacity = retainedConfirmed >= this.maxRetainedConfirmedIntents ? "confirmed-retention-full"
+      : journalBytes >= 240 * 1024 * 1024 ? "journal-storage-full" : null;
+    return { active, retainedConfirmed, countsCapped: active > this.maxUnfinalizedIntents || retainedConfirmed > this.maxRetainedConfirmedIntents,
+      activeLimit: this.maxUnfinalizedIntents, retainedLimit: this.maxRetainedConfirmedIntents, journalBytes,
+      lastCanonicalSettlementAt: lastProgress == null ? null : new Date(lastProgress).toISOString(),
+      blockedReason: capacity ?? this.admissionBlocks.get(resolverKey(chainId, address))
+        ?? (recovery ? "recovery-reconciliation-required" : reservation ? "signing-reservation-unresolved" : unresolved ? "unresolved-intent" : null) };
+  }
+
   /** The mission client registers the canonical batch reader for sibling randomness/moon writers.
    * A standalone writer without it fails closed while any unfinalized batch remains. */
   setPreparedReconciler(chainId: number, address: Hex, reconcile: NonNullable<ResolverTransactionRequest["reconcilePrepared"]>): void {
@@ -300,7 +355,7 @@ export class ResolverTransactionCoordinator {
   }
 
   reconcilePrepared(chainId: number, address: Hex,
-    confirm: PreparedReconciler): Promise<void> {
+    confirm?: PreparedReconciler): Promise<void> {
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
       (assertLease) => this.reconcileIntents(chainId, address, confirm, assertLease)));
   }
@@ -504,19 +559,34 @@ export class ResolverTransactionCoordinator {
       if (!active || performance.now() >= deadline) throw blocked("read deadline exceeded");
       assertLease();
     };
+    // The highest proven receipt is a canonical descendant of all admitted history.
+    // Archive cursor pages are housekeeping, never authority for admission.
+    const projection = `operation_id AS operationId, nonce, transaction_hash AS hash,
+      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry,
+      replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei,
+      receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven`;
+    type Intent = ReplayIntent & { blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number };
+    let frontier = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_confirmed_nonce
+      WHERE chain_id=? AND resolver_address=? AND admission_proven=1 ORDER BY nonce DESC LIMIT 1`)
+      .get(chainId, normalizeAddress(address)) as Intent | null;
+    const cursor = (this.database.query("SELECT cursor_nonce AS n FROM resolver_archive_progress WHERE chain_id=? AND resolver_address=?")
+      .get(chainId, normalizeAddress(address)) as { n: number } | null)?.n ?? -1;
+    const archive = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_archive_nonce
+      WHERE chain_id=? AND resolver_address=? AND admission_proven=1 AND status != 'finalized' AND nonce > ? ORDER BY nonce LIMIT 8`)
+      .all(chainId, normalizeAddress(address), cursor) as Intent[];
     // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
-      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes
-      FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized'
+      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven
+      FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0
       AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)
       ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
         operationId: string; nonce: number; hash: Hex; membership: string; status: string;
         raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null;
-        blockNumber: string | null; blockHash: Hex | null; outcomes: string | null;
+        blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number;
       }>;
     const groups = this.recoveryGroups(chainId, address);
     if (groups.length>32) throw blocked("recovery history window exceeded; explicit review required");
-    if (!intents.length && !groups.length) return;
+    if (!intents.length && !groups.length && !frontier) { this.admissionBlocks.delete(key); return; }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
       timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
@@ -551,14 +621,31 @@ export class ResolverTransactionCoordinator {
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
       for (const group of groups) await bounded(() => this.reconcileRecoveryGroup(chainId, address, group, pass, allowPreparation));
-      for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) {
+      const verifyFrontier = async () => {
+        if (!frontier) return;
+        if (!confirm) throw blocked("canonical checkpoint reader unavailable");
+        pass.intentIdentity = { chainId, address, nonce: frontier.nonce };
+        pass.archive = false;
+        const receipt = await bounded(() => confirm!(frontier!.hash, frontier!.membership, {
+          finalized: frontier!.status === "finalized", blockNumber: frontier!.blockNumber!, blockHash: frontier!.blockHash!,
+          outcomes: frontier!.outcomes!, admissionProven: true
+        }, pass));
+        if (!receipt?.admissionProven || receipt.blockNumber !== frontier.blockNumber
+          || receipt.blockHash !== frontier.blockHash || receipt.outcomes !== frontier.outcomes)
+          throw blocked("canonical checkpoint contradiction");
+      };
+      await verifyFrontier();
+      const reconcile = async (intent: Intent, archival = false) => {
+        pass.intentIdentity = intent.raw || intent.admissionProven ? { chainId, address, nonce: intent.nonce } : undefined;
+        pass.archive = archival;
         if (intent.status === "prevented") throw new Error(
           "resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
         if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
           "durable batch intent cannot bypass canonical receipt/finality reconciliation");
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
-          ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes } : undefined;
-        let receipt = await bounded(() => confirm!(intent.hash, intent.membership, stored, pass));
+          ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes, admissionProven: Boolean(intent.admissionProven) } : undefined;
+        if (intent.raw && !intent.admissionProven) await bounded(() => this.validatePreparedBinding(chainId, address, intent));
+        let receipt = await bounded(() => confirm!(intent.hash, intent.membership, intent.raw && !intent.admissionProven ? undefined : stored, pass));
         for (let retry = 0; !receipt && !stored && retry < 3; retry++) {
           if (!intent.raw) throw new Error("legacy durable batch intent missing signed bytes; canonical receipt unknown; preserve journal and obtain independently reviewed original-envelope recovery; never re-sign/reset");
           await bounded(() => this.replayIntent(chainId, address, intent, assertActive, pass));
@@ -566,22 +653,65 @@ export class ResolverTransactionCoordinator {
         }
         assertActive();
         if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
-        if (!stored || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
-          this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
-            .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes,
-              chainId, normalizeAddress(address), intent.hash);
-          if (intent.status !== "confirmed") this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
+        if (intent.admissionProven && (!receipt.admissionProven || !stored || receipt.blockNumber !== stored.blockNumber
+          || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes)) throw blocked("canonical checkpoint contradiction");
+        if (receipt.admissionProven && !pass.intentIdentity) throw blocked("unbound confirmation proof");
+        if (receipt.admissionProven && !intent.admissionProven) {
+          if (frontier && ((intent.nonce > frontier.nonce && BigInt(receipt.blockNumber) < BigInt(frontier.blockNumber!))
+            || (intent.nonce < frontier.nonce && BigInt(receipt.blockNumber) > BigInt(frontier.blockNumber!))
+            || intent.nonce === frontier.nonce)) throw blocked("confirmed nonce/block order contradiction");
+          // Revalidate BEFORE persisting the successor; crashes cannot commit an
+          // unchecked replacement checkpoint and forget its old ancestry anchor.
+          await verifyFrontier();
+          assertActive();
         }
+        if (!stored || receipt.admissionProven !== Boolean(intent.admissionProven) || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
+          this.database.transaction(() => {
+            assertActive();
+            this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ?, admission_proven = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
+              .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes, receipt.admissionProven ? 1 : 0,
+                chainId, normalizeAddress(address), intent.hash);
+            if (intent.status !== "confirmed") {
+              this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
+              this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,last_confirmation_ms) VALUES (?,?,?) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET last_confirmation_ms=excluded.last_confirmation_ms")
+                .run(chainId, normalizeAddress(address), this.now());
+            }
+            if (archival && receipt.finalized && receipt.admissionProven) {
+              const recovery = this.database.query("SELECT 1 FROM resolver_nonce_recovery WHERE chain_id=? AND resolver_address=? AND nonce=?")
+                .get(chainId, normalizeAddress(address), intent.nonce);
+              if (!recovery) {
+                this.database.query("UPDATE resolver_prepared_intents SET serialized_transaction=NULL WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND status='finalized'")
+                  .run(chainId, normalizeAddress(address), intent.hash);
+                this.database.query("UPDATE resolver_signing_results SET serialized_transaction=NULL WHERE transaction_hash=? AND reservation_id IN (SELECT id FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND nonce=? AND transferred=1)")
+                  .run(intent.hash, chainId, normalizeAddress(address), intent.nonce);
+              }
+            }
+          }).immediate();
+        }
+        if (receipt.admissionProven && (!frontier || intent.nonce > frontier.nonce))
+          frontier = { ...intent, admissionProven: 1, status: receipt.finalized ? "finalized" : "confirmed", blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, outcomes: receipt.outcomes };
         checked++;
+      };
+      for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) await reconcile(intent);
+      for (const intent of archive) {
+        await reconcile(intent, true);
+        assertActive();
+        this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,cursor_nonce) VALUES (?,?,?) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET cursor_nonce=excluded.cursor_nonce")
+          .run(chainId, normalizeAddress(address), intent.nonce);
       }
+      if (!archive.length && cursor !== -1) this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,cursor_nonce) VALUES (?,?,-1) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET cursor_nonce=-1")
+        .run(chainId, normalizeAddress(address));
+      await verifyFrontier();
       // An oversized old journal may drain finalized rows in bounded passes, but NEVER
       // authorize a writer based on only a page of canonical evidence.
       if (intents.length > this.maxUnfinalizedIntents) throw blocked("retained window exceeded; reconciliation-only drain required");
+      this.admissionBlocks.delete(key);
     } catch (error) {
+      this.admissionBlocks.set(key, "canonical-reconciliation-required");
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
         durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
-        reason: groups.length ? "recovery reconciliation held; inspect public lineage and prerequisites" : error instanceof Error ? error.message : String(error),
+        reason: groups.length ? "recovery reconciliation held; inspect public lineage and prerequisites" : safeDiagnosticText(error),
         action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
       throw error;
     } finally {
@@ -592,6 +722,7 @@ export class ResolverTransactionCoordinator {
 
   private async validateEnvelope(chainId: number, address: Hex, nonce: number, hash: Hex, raw: Hex): Promise<void> {
     try {
+      if (raw.length > 2 * 1024 * 1024 + 2) throw new Error();
       const tx = parseTransaction(raw);
       if (keccak256(raw).toLowerCase() !== hash.toLowerCase() || tx.chainId !== chainId || tx.nonce !== nonce
         || (await recoverTransactionAddress({ serializedTransaction: raw as TransactionSerialized })).toLowerCase() !== normalizeAddress(address)) throw new Error();
@@ -657,6 +788,13 @@ export class ResolverTransactionCoordinator {
     intent.replayState = state;
   }
 
+  private async validatePreparedBinding(chainId: number, address: Hex, intent: ReplayIntent): Promise<void> {
+    const binding = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND r.transferred = 1 AND s.transaction_hash = ? AND s.serialized_transaction = ? LIMIT 1")
+      .get(chainId, normalizeAddress(address), intent.operationId, intent.nonce, intent.membership, intent.hash, intent.raw);
+    if (!binding) throw new Error("persisted signed envelope identity mismatch; signing reservation binding missing");
+    await this.validateEnvelope(chainId, address, intent.nonce, intent.hash, intent.raw!);
+  }
+
   private async replayIntent(chainId: number, address: Hex, intent: ReplayIntent,
     assertLease: () => void, pass: PreparedReconciliationPass): Promise<void> {
     const replay = this.preparedReplayers.get(resolverKey(chainId, address));
@@ -665,10 +803,7 @@ export class ResolverTransactionCoordinator {
     if (!(recovery && intent.replayState === "unvalidated") && intent.replayState !== "retryable" && intent.replayState !== "ready"
       && intent.replayState !== "deterministic-rejection" && intent.replayState !== "invalid-response")
       throw this.replayError(intent, "first-send validation not durably completed; explicit fenced recovery required; never auto-send");
-    const binding = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND r.transferred = 1 AND s.transaction_hash = ? AND s.serialized_transaction = ? LIMIT 1")
-      .get(chainId, normalizeAddress(address), intent.operationId, intent.nonce, intent.membership, intent.hash, intent.raw);
-    if (!binding) throw new Error("persisted signed envelope identity mismatch; signing reservation binding missing");
-    await this.validateEnvelope(chainId, address, intent.nonce, intent.hash, intent.raw!);
+    await this.validatePreparedBinding(chainId, address, intent);
     assertLease();
     // Receipt has just been checked. Reconcile transaction inclusion before each resend.
     const transaction = await pass.read(() => replay.getTransaction(intent.hash));
@@ -712,9 +847,12 @@ export class ResolverTransactionCoordinator {
   }
 
   private assertPreparedAdmission(chainId: number, address: Hex): void {
-    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) ORDER BY nonce LIMIT ?")
+    const health = this.admissionSnapshot(chainId, address);
+    if (health.blockedReason) throw new Error("resolver admission blocked: " + health.blockedReason + "; preserve all signed evidence");
+    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0 AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) ORDER BY nonce LIMIT ?")
       .all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents);
     if (rows.length >= this.maxUnfinalizedIntents) {
+      this.admissionBlocks.set(resolverKey(chainId, address), "active-window-full");
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address,
         retainedAtLeast: rows.length, maxRetained: this.maxUnfinalizedIntents, reason: "retained window full",
         action: "wait for explicit RPC finality; keep reconciliation running; no new batch signatures" }, "warn");
@@ -791,6 +929,8 @@ export class ResolverTransactionCoordinator {
     };
     await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
     if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
+    else if (this.admissionSnapshot(request.chainId, request.address).journalBytes >= 240 * 1024 * 1024)
+      throw new Error("resolver admission blocked: journal-storage-full; preserve all signed evidence");
     let previous = this.loadAttempt(request.chainId, request.address, request.operationId);
     const settledGroup = this.recoveryGroups(request.chainId, request.address).find((g) => g.finalized && g.nonce === previous?.nonce
       && JSON.parse(g.binding).operationId === request.operationId);
@@ -1170,6 +1310,12 @@ export class ResolverTransactionCoordinator {
     address: `0x${string}`,
     operation: (assertLease: () => void) => Promise<T>
   ): Promise<T> {
+    // Leave headroom for in-flight reconciliation and late signer evidence. Do not
+    // even churn lease/cursor writes once a pinned WAL reader exhausts the budget.
+    if (this.journalBytes() >= 240 * 1024 * 1024) {
+      this.admissionBlocks.set(resolverKey(chainId, address), "journal-storage-full");
+      throw new Error("resolver admission blocked: journal-storage-full; preserve evidence and inspect WAL readers/disk");
+    }
     const holder = randomUUID();
     await this.acquireLease(chainId, address, holder);
     let leaseError: unknown;

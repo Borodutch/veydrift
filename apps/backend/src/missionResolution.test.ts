@@ -49,6 +49,16 @@ function addResolverFeeReads<T extends object>(client: T): T {
 }
 
 describe("MissionResolutionService", () => {
+  test("admission blocking degrades health even with zero lastError", () => {
+    const client = fakeClient({ calls: [], resolvable: [], returnable: [] });
+    client.admissionSnapshot = () => ({ active: 0, retainedConfirmed: 4096, activeLimit: 32, retainedLimit: 4096,
+      countsCapped: false, journalBytes: 1024, lastCanonicalSettlementAt: "2026-10-08T00:00:00.000Z", blockedReason: "confirmed-retention-full" });
+    const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
+    expect(service.snapshot().lastError).toBeNull();
+    expect(service.snapshot().healthStatus).toBe("degraded");
+    expect(service.snapshot().healthWarnings).toContain("mission_resolver_admission_blocked");
+    expect(service.snapshot().admission?.retainedConfirmed).toBe(4096);
+  });
   test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
     const calls: string[] = [];
     const client = fakeClient({ calls, resolvable: ["1", "2"], returnable: ["3"] });

@@ -35,7 +35,7 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
     },
     waitForTransactionReceipt: async () => receipt(),
     getTransaction: async () => { throw new TransactionNotFoundError({}); },
-    getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return receipt(); }
+    getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return { ...receipt(), transactionHash: hash, from: account.address, to: game }; }
   };
   const coordinator = new ResolverTransactionCoordinator(":memory:");
   const client = new ViemMissionResolutionChainClient({

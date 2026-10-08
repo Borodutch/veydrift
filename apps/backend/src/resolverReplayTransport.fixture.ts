@@ -28,7 +28,7 @@ export function replayMissionFixture(path: string, send: (raw: Hex) => Promise<H
     getTransaction: async () => { throw new TransactionNotFoundError({}); },
     getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
       if (!mined()) throw new TransactionReceiptNotFoundError({ hash });
-      return { status: "success", blockNumber: 1n, blockHash: replayBlockHash, logs: [], gasUsed: 100000n,
+      return { transactionHash: hash, from: replayAccount.address, to: game, status: "success", blockNumber: 1n, blockHash: replayBlockHash, logs: [], gasUsed: 100000n,
         effectiveGasPrice: 100n, l1Fee: 100n, operatorFee: 100n };
     }
   };

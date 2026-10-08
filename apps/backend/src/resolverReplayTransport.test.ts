@@ -29,7 +29,9 @@ test.each(["invalid sender", "invalid signature", "intrinsic gas too low", "exec
     await expect(make().resolveMissionBatch([])).rejects.toThrow("operator review"); expect(sends).toBe(1);
     mined = true;
     expect(await make().resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
-    expect(sends).toBe(1); expect((state(path).intent as any).status).toBe("finalized");
+    expect(sends).toBe(1); expect((state(path).intent as any).status).toBe("confirmed");
+    await make().resolveMissionBatch([]); // archival finality is a separate bounded pass
+    expect((state(path).intent as any).status).toBe("finalized");
   });
 });
 
@@ -72,7 +74,9 @@ test.each([false, true])("timed-out production replay retains cross-instance sen
     release(); await new Promise((r) => setTimeout(r, 5));
     expect(state(path).fences).toEqual([]);
     expect(await second.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
-    expect(sends).toBe(3); expect(peak).toBe(1); expect((state(path).intent as any).status).toBe("finalized");
+    expect(sends).toBe(3); expect(peak).toBe(1); expect((state(path).intent as any).status).toBe("confirmed");
+    await second.resolveMissionBatch([]);
+    expect((state(path).intent as any).status).toBe("finalized");
   });
 });
 
@@ -122,6 +126,8 @@ test("real crashed process cannot overlap; verified same-namespace exit resumes 
       expect(await successor.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
       expect(sends).toBe(1); expect(state(path).fences).toEqual([]);
       expect((state(path).intent as any).attempts).toBe(3);
+      expect((state(path).intent as any).status).toBe("confirmed");
+      await successor.resolveMissionBatch([]);
       expect((state(path).intent as any).status).toBe("finalized");
     } finally { child.kill(); await child.exited; }
   });

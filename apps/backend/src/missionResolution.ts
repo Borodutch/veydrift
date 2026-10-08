@@ -90,6 +90,7 @@ const veydriftGameResolutionAbi = [
 ] as const;
 
 export type MissionResolutionChainClient = {
+  admissionSnapshot?(): ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
@@ -164,6 +165,7 @@ type MoonChanceResolutionSnapshot = {
 };
 
 export type MissionResolutionSnapshot = {
+  admission?: ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   enabled: boolean;
   resolverConfigured: boolean;
   resolverAddress: Address | null;
@@ -293,6 +295,8 @@ export class MissionResolutionService {
     const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
+    const admission = this.chainClient?.admissionSnapshot?.() ?? null;
+    if (admission?.blockedReason) healthWarnings.push("mission_resolver_admission_blocked");
     const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
@@ -303,6 +307,7 @@ export class MissionResolutionService {
       promptnessTargetSeconds: Math.ceil(this.promptnessTargetMs / 1_000),
       healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
       healthWarnings,
+      admission,
       gamePaused: this.gamePaused,
       gamePauseObservedAt: this.gamePauseObservedAt,
       gamePausedSince: this.gamePausedSince,
@@ -1044,22 +1049,57 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return fresh.sort(compareBatchLegs);
   }
 
+  admissionSnapshot() {
+    if (!this.chain) return null;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    return this.transactionCoordinator.admissionSnapshot(this.chain.id, address);
+  }
+
+  private async proveConsumedNonce(blockNumber: bigint, blockHash: Hex, pass: PreparedReconciliationPass) {
+    const identity = pass.intentIdentity!;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    if (identity.chainId !== this.chain?.id || identity.address.toLowerCase() !== address.toLowerCase())
+      throw new Error("batch confirmation signer/chain mismatch");
+    const consumed = await pass.read(() => this.publicClient!.getTransactionCount({ address, blockNumber }));
+    const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber }));
+    if (!Number.isSafeInteger(consumed) || consumed <= identity.nonce) throw new Error("batch confirmation nonce not consumed");
+    if (!canonical.hash || canonical.hash !== blockHash || canonical.number !== blockNumber)
+      throw new Error("batch receipt is not canonical after nonce proof");
+  }
+
+  private async archiveFinality(pass: PreparedReconciliationPass): Promise<bigint | null> {
+    // Ordinary admission never depends on this tag. Missing/failed archival reads
+    // retain bytes; malformed or contradictory canonical identity remains a fault.
+    return pass.archivalFinalizedHead ??= (async () => {
+      let block;
+      try { block = await pass.read(() => this.publicClient!.getBlock({ blockTag: "finalized" })); }
+      catch { pass.assertActive(); return null; }
+      if (block.number === null || !block.hash) return null;
+      const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber: block.number! }));
+      if (canonical.number !== block.number || canonical.hash !== block.hash)
+        throw new Error("archival finalized identity contradiction");
+      return block.number;
+    })();
+  }
+
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
 
   private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
     pass: PreparedReconciliationPass): Promise<PreparedReceipt | void> {
     const client = this.publicClient!;
-    // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
-    const finalized = await (pass.finalizedHead ??= pass.read(async () => {
+    // Reuse durable domain outcomes; ordinary admission adds a pinned consumed-nonce proof.
+    let finalized = pass.intentIdentity ? null : await (pass.finalizedHead ??= pass.read(async () => {
       const block = await client.getBlock({ blockTag: "finalized" });
       if (block.number === null) throw new Error("explicit finalized block unavailable");
       return block.number;
     }));
     if (stored) {
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
-      if (!block.hash || block.hash !== stored.blockHash) throw new Error("batch receipt is not canonical");
+      if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();
-      return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
+      if (pass.intentIdentity && !stored.finalized) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
+      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
+      return { ...stored, finalized: stored.finalized || (finalized !== null && BigInt(stored.blockNumber) <= finalized) };
     }
     let receipt;
     try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
@@ -1069,6 +1109,9 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
     const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
     if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
+    if (pass.intentIdentity && (receipt.transactionHash?.toLowerCase() !== hash.toLowerCase()
+      || receipt.from?.toLowerCase() !== pass.intentIdentity.address.toLowerCase()
+      || receipt.to?.toLowerCase() !== this.gameAddress.toLowerCase())) throw new Error("batch canonical receipt identity mismatch");
     const items: BatchLeg[] = JSON.parse(membership);
     if (!Array.isArray(items) || items.length > 32) throw new Error("invalid persisted batch membership");
     const events = (receipt.logs ?? []).flatMap((log) => {
@@ -1105,6 +1148,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       } catch { /* unknown is NOT zero; actual total remains unavailable */ }
     }
     pass.assertActive();
+    if (pass.intentIdentity) await this.proveConsumedNonce(receipt.blockNumber, receipt.blockHash, pass);
+    pass.assertActive();
     const executionFee = receipt.gasUsed * receipt.effectiveGasPrice;
     emitObservabilityEvent({ kind: "mission_batch_receipt", hash, status: receipt.status, outcomes,
       gasUsed: receipt.gasUsed.toString(), executionFeeWei: executionFee.toString(),
@@ -1113,7 +1158,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     this.batchReceiptOutcomes.set(hash, outcomes);
     // Bounded in-memory reporting cache; immutable membership/outcomes remain in SQLite.
     if (this.batchReceiptOutcomes.size > 128) this.batchReceiptOutcomes.delete(this.batchReceiptOutcomes.keys().next().value!);
-    return { finalized: receipt.blockNumber <= finalized, blockNumber: receipt.blockNumber.toString(),
+    return { finalized: finalized !== null && receipt.blockNumber <= finalized, admissionProven: Boolean(pass.intentIdentity), blockNumber: receipt.blockNumber.toString(),
       blockHash: receipt.blockHash, outcomes: JSON.stringify(outcomes) };
   }
 
