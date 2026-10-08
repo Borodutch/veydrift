@@ -20,6 +20,8 @@ function fixture(cap = 4096) {
   let reads = 0, sends = 0, signatures = 0, missingDomain = false, orphanOldOnDomain = false;
   let receiptFault: Record<string, unknown> = {};
   let prunedBefore = 0;
+  let finalityHook: (() => Promise<void> | void) | undefined;
+  let headerHook: ((n: bigint) => Promise<void> | void) | undefined;
   const receipts = new Map<Hex, Record<string, unknown>>();
   const dueAt = Math.floor(Date.now() / 1000) - 5;
   const mine = (txHash: Hex, n: number) => {
@@ -40,10 +42,13 @@ function fixture(cap = 4096) {
     getBlock: async ({ blockTag, blockNumber }: { blockTag?: string; blockNumber?: bigint }) => {
       reads++;
       if (blockTag === "finalized") {
+        await finalityHook?.();
         if (unavailableFinality) throw new Error("upstream unavailable with private provider detail");
-        return { number: finalized, hash: disagreeFinality ? hash(888) : hash(Number(finalized)) };
+        return { number: finalized, hash: disagreeFinality ? hash(888) : block(finalized).hash };
       }
-      return block(blockNumber ?? BigInt(1000 + nonce));
+      const n = blockNumber ?? BigInt(1000 + nonce);
+      await headerHook?.(n);
+      return block(n);
     },
     getTransactionCount: async ({ blockNumber }: { blockNumber?: bigint }) => {
       reads++; if (blockNumber !== undefined && Number(blockNumber) < prunedBefore) throw new Error("historical nonce state pruned");
@@ -85,6 +90,8 @@ function fixture(cap = 4096) {
     reorg: (from: number) => { reorgFrom = from; }, badNonce: () => { wrongNonce = true; },
     finality: (n: bigint) => { finalized = n; }, finalityUnavailable: () => { unavailableFinality = true; },
     finalityDisagreement: () => { disagreeFinality = true; },
+    onFinality: (hook?: () => Promise<void> | void) => { finalityHook = hook; },
+    onHeader: (hook?: (n: bigint) => Promise<void> | void) => { headerHook = hook; },
     pruneBefore: (n: number) => { prunedBefore = n; },
     corruptReceipt: (fault: Record<string, unknown>) => { receiptFault = fault; },
     missingDomain: () => { missingDomain = true; }, reorgDuringHydration: () => { orphanOldOnDomain = true; },
@@ -216,5 +223,80 @@ test("storage backpressure blocks before lease writes and leaves evidence intact
     expect(f.db.query("SELECT count(*) AS n FROM resolver_transaction_audit").get()).toEqual(before);
     expect(f.db.query("SELECT count(*) AS n FROM resolver_transaction_leases").get()).toEqual({ n: 0 });
     expect(f.client.admissionSnapshot()?.blockedReason).toBe("journal-storage-full");
+  } finally { f.close(); }
+});
+
+
+// Compare the complete persisted proof and BOTH signed copies, not just the blob count.
+function archiveEvidence(f: ReturnType<typeof fixture>) {
+  return {
+    intents: f.db.query("SELECT nonce,status,admission_proven,receipt_block_number,receipt_block_hash,outcomes,serialized_transaction FROM resolver_prepared_intents ORDER BY nonce").all(),
+    signed: f.db.query("SELECT * FROM resolver_signing_results ORDER BY reservation_id").all(),
+    progress: f.db.query("SELECT * FROM resolver_archive_progress").all()
+  };
+}
+
+for (const count of [1, 12]) {
+  test("reorg during finalized-tag lookup retains both signed copies across restart: " + count + " rows", async () => {
+    const f = fixture();
+    try {
+      for (let n = 0; n < count; n++) await f.submit();
+      // Force the page to include nonce 0 even with the frontier beyond this page.
+      f.db.query("UPDATE resolver_archive_progress SET cursor_nonce=-1").run();
+      const before = archiveEvidence(f);
+      f.finality(2000n);
+      f.onFinality(() => f.reorg(1000)); // coherent replacement branch finalizes
+      await expect(f.reconcile()).rejects.toThrow("not canonical");
+      expect(archiveEvidence(f)).toEqual(before);
+      f.restart();
+      await expect(f.reconcile()).rejects.toThrow("not canonical");
+      expect(archiveEvidence(f)).toEqual(before);
+      expect(f.counters().signatures).toBe(count); expect(f.counters().sends).toBe(count);
+    } finally { f.close(); }
+  });
+}
+
+test("uncertain post-finality containing header cannot promote or compact an archival row", async () => {
+  const f = fixture();
+  try {
+    await f.submit(); const before = archiveEvidence(f); f.finality(2000n);
+    f.onFinality(() => { f.onHeader(n => { if (n === 1000n) throw new Error("containing header unavailable"); }); });
+    await expect(f.reconcile()).rejects.toThrow();
+    expect(archiveEvidence(f)).toEqual(before);
+    f.restart(); await expect(f.reconcile()).rejects.toThrow();
+    expect(archiveEvidence(f)).toEqual(before);
+    f.onHeader(); f.onFinality(); await f.reconcile();
+    expect(f.db.query("SELECT status,serialized_transaction FROM resolver_prepared_intents").get()).toEqual({status:"finalized",serialized_transaction:null});
+    expect(f.db.query("SELECT serialized_transaction FROM resolver_signing_results").get()).toEqual({serialized_transaction:null});
+    expect(f.counters().signatures).toBe(1);
+  } finally { f.close(); }
+});
+
+test("compaction SQL failure rolls back finality promotion and BOTH signed envelopes before restart", async () => {
+  const f = fixture();
+  try {
+    await f.submit(); const before = archiveEvidence(f); f.finality(2000n);
+    f.db.exec("CREATE TRIGGER fail_archive_compaction BEFORE UPDATE OF serialized_transaction ON resolver_signing_results WHEN NEW.serialized_transaction IS NULL BEGIN SELECT RAISE(ABORT, 'injected archive write failure'); END");
+    await expect(f.reconcile()).rejects.toThrow("injected archive write failure");
+    expect(archiveEvidence(f)).toEqual(before);
+    f.restart(); await expect(f.reconcile()).rejects.toThrow("injected archive write failure");
+    expect(archiveEvidence(f)).toEqual(before);
+    f.db.exec("DROP TRIGGER fail_archive_compaction"); await f.reconcile();
+    expect(f.db.query("SELECT status,serialized_transaction FROM resolver_prepared_intents").get()).toEqual({status:"finalized",serialized_transaction:null});
+    expect(f.db.query("SELECT serialized_transaction FROM resolver_signing_results").get()).toEqual({serialized_transaction:null});
+    expect(f.counters().signatures).toBe(1); expect(f.counters().sends).toBe(1);
+  } finally { f.close(); }
+});
+
+test("lease loss after finality lookup fences retirement and retains bytes on restart", async () => {
+  const f = fixture();
+  try {
+    await f.submit(); const before = archiveEvidence(f); f.finality(2000n);
+    f.onFinality(() => { f.db.exec("DELETE FROM resolver_transaction_leases"); });
+    await expect(f.reconcile()).rejects.toThrow();
+    expect(archiveEvidence(f)).toEqual(before);
+    f.restart(); await expect(f.reconcile()).rejects.toThrow();
+    expect(archiveEvidence(f)).toEqual(before);
+    expect(f.counters().signatures).toBe(1);
   } finally { f.close(); }
 });

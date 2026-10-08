@@ -1147,13 +1147,16 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       return block.number;
     }));
     if (stored) {
+      // Retirement needs a containing-header observation AFTER finalized identity.
+      // Otherwise an ordinary reorg during the finality reads can promote an old
+      // branch receipt and irreversibly discard both signed envelopes.
+      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
       if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();
       // Historical archival rows inherit the checked frontier ancestry; only the
       // active frontier needs a fresh nonce read (old state may already be pruned).
       if (pass.intentIdentity && !stored.finalized && !pass.archive) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
-      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
       return { ...stored, finalized: stored.finalized || (finalized !== null && BigInt(stored.blockNumber) <= finalized) };
     }
     let receipt;
