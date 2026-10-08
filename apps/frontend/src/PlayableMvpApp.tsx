@@ -2459,7 +2459,13 @@ export function useBatchSupplyActions({
             `Supply ${orders.length} ${mission === "transport" ? "transport" : "deployment"}${orders.length === 1 ? "" : "s"}`,
             (provider: Eip1193Provider) => {
               if (!isCurrent()) throw new Error("Supply selection changed before submission.");
-              return launchBatchSupplyTransaction(provider, signerAccount, gameContract, target, orders, batchSupplyTargetIsMoon, mission);
+              // Wallet simulation, gas estimation and the final chain read all await.
+              // Check the draft at eth_sendTransaction, before the coordinator marks
+              // submission started; never cancel recovery once the send has begun.
+              const supplyProvider = transactionWalletProvider(provider, () => {
+                if (!isCurrent()) throw new Error("Supply selection changed before submission.");
+              });
+              return launchBatchSupplyTransaction(supplyProvider, signerAccount, gameContract, target, orders, batchSupplyTargetIsMoon, mission);
             },
             {
               prepare: () => prepareBatchSupplyConfirmation({

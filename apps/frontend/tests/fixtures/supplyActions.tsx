@@ -1,5 +1,5 @@
-// Mount the production action hook and modal. Only external reads, coordinated
-// transaction scheduling and the EIP-1193 transport are fixtures; no real wallet.
+// Mount the production action hook and modal. External reads and wallet/RPC
+// transports are fixtures; optional real coordinator coverage never uses a wallet.
 import { render } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
@@ -7,8 +7,9 @@ import { useBatchSupplyActions, batchSupplySourcesFromSnapshot } from "../../src
 import { buildBatchSupplyPlan, type SupplyResources } from "../../src/batchSupplyPlanner";
 import { levelSupplyPreview, type LevelSupplyPreview, type LevelSupplyRequest } from "../../src/levelSupply";
 import { buildingContractIds } from "../../src/playableMvp";
-import { defaultVeydriftChainForLocation, type ManagedPlanetResponse, type SupplySourcesResponse, type Eip1193Provider } from "../../src/walletFlow";
-import type { BackendDataStore } from "../../src/backendDataStore";
+import { configureWalletTransactionTransport, transactionWalletProvider, defaultVeydriftChainForLocation, type ManagedPlanetResponse, type SupplySourcesResponse, type Eip1193Provider } from "../../src/walletFlow";
+import { BackendDataStore } from "../../src/backendDataStore";
+import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 const wallet = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
@@ -25,6 +26,29 @@ let deferred = false;
 const reads: Array<{kind: string; account: string; planetId: string; resolve?: (value: any) => void}> = [];
 const sent: any[] = [];
 const failures: string[] = [];
+const rpcCalls: string[] = [], walletCalls: string[] = [], recovered: string[] = [];
+const outcomes: string[] = [];
+let coordinated = false, rpcConfigured = false, foregroundTimeout = 10_000;
+let store: BackendDataStore | undefined;
+let heldStage: string | undefined, releaseStage: (() => void) | undefined;
+let gasRead = false;
+async function pause(stage: string) {
+  if (heldStage === stage) await new Promise<void>(resolve => { releaseStage = resolve; });
+}
+async function simulationCall(method: string) {
+  if (method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex;
+  if (method === "eth_call") { await pause("simulation"); return "0x"; }
+  if (method === "eth_estimateGas") { await pause("gas"); gasRead = true; return "0xf4240"; }
+  throw new Error(method);
+}
+const fixtureRpc = "https://supply-rpc.fixture.invalid";
+const originalFetch = window.fetch.bind(window);
+window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (String(input) !== fixtureRpc) return originalFetch(input, init);
+  const call = JSON.parse(String(init?.body));
+  rpcCalls.push(call.method);
+  return Response.json({ jsonrpc: "2.0", id: call.id, result: await simulationCall(call.method) });
+}, originalFetch);
 let runs = 0, holdSend = false, releaseSend: (() => void) | undefined;
 const queries = Object.fromEntries(["supplySources", "infrastructure", "moon", "shipyard"].map(kind => [kind, (account: string, planetId: string) => ({read: () => {
   const row: typeof reads[number] = {kind, account, planetId}; reads.push(row);
@@ -33,11 +57,18 @@ const queries = Object.fromEntries(["supplySources", "infrastructure", "moon", "
   return new Promise(resolve => { row.resolve = override => resolve(override ?? value); });
 }})])) as unknown as BackendDataStore["queries"];
 const provider: Eip1193Provider = { request: async <T,>(call: {method: string; params?: readonly unknown[]}) => {
-  if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
-  if (call.method === "eth_call") return "0x" as T;
-  if (call.method === "eth_estimateGas") return "0xf4240" as T;
-  if (call.method !== "eth_sendTransaction") throw new Error(call.method);
-  sent.push(structuredClone(call.params)); return "0xfixture" as T;
+  walletCalls.push(call.method);
+  if (call.method === "eth_chainId") {
+    if (gasRead) await pause("chain");
+    return defaultVeydriftChainForLocation().chainIdHex as T;
+  }
+  if (call.method !== "eth_sendTransaction") {
+    if (rpcConfigured) throw new Error("Configured simulation must use app RPC");
+    return await simulationCall(call.method) as T;
+  }
+  sent.push(structuredClone(call.params));
+  await pause("send");
+  return "0xfixture" as T;
 }};
 function Fixture() {
   const generation = useRef(1);
@@ -56,6 +87,27 @@ function Fixture() {
     setBatchSupplyInitialRequested: setRequested, setBatchSupplySubmitting: setPending, setBatchSupplyTarget: setTarget,
     runGalaxyTransaction: async (_label, send, options) => {
       runs++;
+      if (coordinated) {
+        store ??= new BackendDataStore("https://supply-coordinator.fixture.invalid", {
+          transactionForegroundTimeoutMs: foregroundTimeout,
+          transactionPollIntervalMs: 0,
+          transactionStatusReader: async hash => {
+            recovered.push(hash);
+            return { events: [], indexedEventCount: 0, latestIndexedBlock: "20", phase: "applied", receiptBlock: "20", transactionHash: hash };
+          },
+        });
+        const outcome = await store.runWriteTransaction({
+          key: "galaxy:supply", label: _label, chainId: defaultVeydriftChainForLocation().chainIdHex,
+          planetIds: options.affectedPlanetIds,
+          invalidateTags: [`wallet:${account.toLowerCase()}`],
+          prepare: options.prepare, onErrorRefresh: options.onErrorRefresh,
+          waitForIndexing: false,
+          send: beforeWalletSend => send(transactionWalletProvider(provider, beforeWalletSend)),
+        });
+        outcomes.push(outcome.outcome);
+        if (outcome.error) failures.push(String(outcome.error));
+        return outcome;
+      }
       try { await options.prepare(); if (holdSend) await new Promise<void>(resolve => { releaseSend = resolve; });
         const txHash = await send(provider); return {outcome: "submitted", txHash};
       } catch (error) { failures.push(String(error)); await options.onErrorRefresh(); throw error; }
@@ -63,7 +115,15 @@ function Fixture() {
   });
   const originalOrders = useRef(buildBatchSupplyPlan({ sources, requested: {metal:12300,crystal:3340,deuterium:6400}, selectedPlanetIds: new Set(["1"]), targetCoordinates: target }).orders);
   (window as any).actionsFixture = {
-    status: () => ({reads: reads.map(({kind, account, planetId, resolve}) => ({kind, account, planetId, waiting: Boolean(resolve)})), sent, failures, runs, preview, requested, pending, loading, target: currentTarget?.planetId, error, readyToSend: Boolean(releaseSend)}),
+    coordinate: (timeout = 10_000, appRpc = false) => {
+      coordinated = true; foregroundTimeout = timeout;
+      if (appRpc) { rpcConfigured = true; configureWalletTransactionTransport(provider, "injected", fixtureRpc); }
+    },
+    holdStage: (stage: string) => { heldStage = stage; },
+    releaseStage: () => { heldStage = undefined; const finish = releaseStage; releaseStage = undefined; finish?.(); },
+    status: () => ({stagePending: Boolean(releaseStage), rpcCalls, walletCalls, outcomes, recovered,
+      transaction: store?.snapshot<WriteTransactionState>(store.writeTransactionKey("galaxy:supply", wallet, "1"))?.data,
+      reads: reads.map(({kind, account, planetId, resolve}) => ({kind, account, planetId, waiting: Boolean(resolve)})), sent, failures, runs, preview, requested, pending, loading, target: currentTarget?.planetId, error, readyToSend: Boolean(releaseSend)}),
     defer: (value = true) => { deferred = value; },
     spend: () => { destination = {metal:"0",crystal:"0",deuterium:"0"}; },
     resolve: (index: number, metal?: string) => { const row=reads[index]!; const finish=row.resolve!; delete row.resolve; finish(metal === undefined ? undefined : snapshot(row.account,row.planetId,{metal,crystal:"500",deuterium:"0"})); },

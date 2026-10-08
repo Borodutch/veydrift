@@ -69,7 +69,7 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 
     const state = () => evaluate('actionsFixture.status()');
-    const waitFor = async (expression) => { const end=Date.now()+10000; while(!(await evaluate(expression))) {assert.ok(Date.now()<end, expression); await new Promise(r=>setTimeout(r,20));} await settle(); };
+    const waitFor = async (expression) => { const end=Date.now()+10000; while(!(await evaluate(expression))) {if(Date.now()>=end) assert.fail(expression+' '+JSON.stringify(await evaluate('window.actionsFixture?.status()'))); await new Promise(r=>setTimeout(r,20));} await settle(); };
     const load = async () => {
       await send('Emulation.setDeviceMetricsOverride',{width:390,height:568,deviceScaleFactor:1,mobile:true});
       await send('Page.navigate',{url});
@@ -137,6 +137,69 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     assert.equal((await state()).sent.length,0,'context checked again between preflight and transport');
     }
     console.log('PASS mounted close/reopen/account/body/target/unmount and delayed wallet send guards');
+
+    // Hold actual wallet awaits with the real coordinator, not just its scheduling.
+    const changeContext = async change => {
+      if (change === 'unmount') await evaluate('actionsFixture.unmount()');
+      else if (change === 'reopen') {
+        await evaluate('actionsFixture.change("close")'); await settle();
+        await evaluate('actionsFixture.change("reopen")');
+      } else await evaluate('actionsFixture.change('+JSON.stringify(change)+')');
+      await settle();
+    };
+    for (const appRpc of [false, true]) {
+      for (const stage of ['simulation', 'gas', 'chain']) {
+        for (const change of ['close', 'reopen', 'account', 'target', 'body', 'unmount']) {
+          await load();
+          await evaluate('actionsFixture.coordinate(10000,'+appRpc+');actionsFixture.holdStage('+JSON.stringify(stage)+')');
+          await launch(); await waitFor('actionsFixture.status().stagePending');
+          await changeContext(change);
+          await evaluate('actionsFixture.releaseStage()');
+          await waitFor('actionsFixture.status().outcomes.length===1');
+          result = await state();
+          assert.equal(result.sent.length, 0, stage+'/'+change+': obsolete draft cannot reach wallet');
+          assert.deepEqual(result.outcomes, ['not-submitted']);
+          assert.ok(result.failures.some(message => message.includes('Supply selection changed')));
+          assert.deepEqual(result.recovered, []);
+          assert.equal(result.transaction.phase, 'error');
+          if (appRpc) {
+            assert.ok(result.rpcCalls.includes('eth_call'));
+            assert.ok(result.rpcCalls.includes('eth_estimateGas'));
+            assert.ok(!result.walletCalls.includes('eth_call') && !result.walletCalls.includes('eth_estimateGas'));
+          }
+        }
+      }
+    }
+    console.log('PASS 36 real-coordinator simulation/gas/final-chain context races, including configured app RPC');
+
+    // An unchanged draft still cannot outlive the existing coordinator deadline.
+    await load();await evaluate('actionsFixture.coordinate(500,true);actionsFixture.holdStage("simulation")');
+    await launch();await waitFor('actionsFixture.status().stagePending');
+    await waitFor('actionsFixture.status().outcomes.length===1');
+    assert.deepEqual((await state()).outcomes,['not-submitted']);
+    await evaluate('actionsFixture.releaseStage()');
+    await waitFor('actionsFixture.status().walletCalls.filter(method=>method==="eth_chainId").length===2');
+    await settle(); assert.equal((await state()).sent.length,0,'deadline survives nested provider guard');
+
+    // Once send started, changing the draft must not discard a late hash.
+    // Expire foreground to prove background recovery, not a fixture return.
+    for (const change of ['close', 'reopen', 'account', 'target', 'body', 'unmount']) {
+      await load();await evaluate('actionsFixture.coordinate(500,true);actionsFixture.holdStage("send")');
+      await launch();await waitFor('actionsFixture.status().stagePending');
+      assert.equal((await state()).sent.length,1);
+      await changeContext(change);
+      await waitFor('actionsFixture.status().outcomes.length===1');
+      assert.deepEqual((await state()).outcomes,['unknown']);
+      await evaluate('actionsFixture.releaseStage()');
+      await waitFor('actionsFixture.status().transaction?.phase==="success"');
+      result=await state();
+      assert.deepEqual(result.recovered,['0xfixture']);
+      assert.equal(result.transaction.txHash,'0xfixture');
+      assert.equal(result.sent.length,1);
+      if (change==='reopen' || change==='account' || change==='body') assert.equal(result.target,'831','old completion cannot close replacement draft');
+      if (change==='target') assert.equal(result.target,'832');
+    }
+    console.log('PASS preserved coordinator deadline and late-hash recovery after six post-send context changes');
 
     await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
     await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').closest("label").querySelector("button").click()');await settle();
