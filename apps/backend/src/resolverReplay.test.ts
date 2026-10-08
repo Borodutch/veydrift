@@ -180,7 +180,7 @@ test("bounded replay timeout retains outstanding RPC and late completion cannot 
     c.setPreparedReplayer(chainId, account.address, f.replay);
     await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("deadline");
     expect(f.counts().sends).toBe(4); const saved = JSON.stringify(f.rows());
-    await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("previous read still unresolved");
+    await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("send still outstanding");
     release(); await new Promise((r) => setTimeout(r, 2));
     expect(JSON.stringify(f.rows())).toBe(saved);
   });

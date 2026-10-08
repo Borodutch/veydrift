@@ -105,6 +105,29 @@ reconciliation continues on normal ticks. Restart reloads this schedule, never a
 nonce, and never treats three failures, already-known, or null lookups as absence/success proof.
 Canonical transaction inclusion without a receipt waits for receipt hydration. Deterministic
 send rejection stays operator-actionable while canonical receipt reconciliation remains active.
+Classification reads a bounded viem cause chain (message/shortMessage/details), retaining only a
+fixed category; the generic top-level RPC summary is not the node rejection reason.
+
+An attempt also atomically creates a durable, unique-token **outstanding send fence** before RPC.
+A reconciliation deadline still returns within its existing bound and the ordinary lease may
+release, but no process can acquire signer ownership while that transport is outstanding.
+Lease/retry expiry is never transport-settlement evidence. The underlying send settles its
+fixed result category and removes only its exact token atomically, even after a read deadline.
+This prevents another replica overlapping a live send or losing a late deterministic rejection.
+No lease is renewed forever merely because a transport is hung.
+
+After a genuine process crash, automatic recovery is allowed only when the new process shares
+the recorded host/PID namespace and the OS reports the owner PID no longer exists (ESRCH).
+Linux identity includes hostname, boot ID and PID-namespace inode. The normal lease still
+expires; canonical reconciliation, unchanged bytes and fee guards still precede recovery.
+Process exit is not evidence of transaction rejection: the remote node may already have accepted
+the envelope. PID reuse, permission failures, host changes or replaced container namespaces
+are **not** death proof and remain actionable explicit-recovery cases. A live permanently hung
+transport requires safe transport settlement or owner-process termination through authorized
+management, not a journal reset. Foreign-namespace orphan fences require independently verified
+old-owner termination and a separately reviewed recovery; no automatic TTL deletion or unsafe
+force-unlock command is supplied. Drain outstanding sends before rolling container replacement
+when possible; do not downgrade to a build that ignores these fences.
 
 Replay verifies the hash, recovered signer, chain and nonce against the immutable signing
 reservation, and calldata/target against mission membership and operation ID. It refreshes Base
@@ -124,5 +147,6 @@ an intent, replaces its nonce or re-signs. In particular this change does **not*
 Keep its existing lock until a canonical receipt or separately reviewed supported recovery exists.
 
 Deploy only after independent review/tests, using the persistent journal and compatible writers.
-Rollback to an older build disables replay (it cannot recover raw envelopes), so preserve the
-journal and do not interpret the old build's hash-only diagnostics as permission for nonce repair.
+An older build cannot enforce the outstanding-send fence or recover raw envelopes. Do not roll
+back resolver-capable processes across that compatibility boundary with active/orphan sends.
+Preserve the journal and never interpret older hash-only diagnostics as permission for nonce repair.

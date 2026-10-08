@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { hostname } from "node:os";
 
 import { keccak256, parseTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
@@ -93,6 +94,11 @@ type StoredAttempt = {
   updatedAt: string;
 };
 
+function sendOwnerHost(): string {
+  return hostname() + (process.platform === "linux"
+    ? ":" + readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() + ":" + readlinkSync("/proc/self/ns/pid") : "");
+}
+
 const defaultLeaseDurationMs = 90_000;
 const defaultLeaseRenewIntervalMs = 15_000;
 const defaultLeaseWaitMs = 60_000;
@@ -173,6 +179,11 @@ export class ResolverTransactionCoordinator {
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
         nonce INTEGER NOT NULL, transaction_hash TEXT NOT NULL, membership TEXT NOT NULL,
         status TEXT NOT NULL, PRIMARY KEY (chain_id, resolver_address)
+      );
+      CREATE TABLE IF NOT EXISTS resolver_send_fences (
+        chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, token TEXT NOT NULL,
+        owner_host TEXT NOT NULL, owner_pid INTEGER NOT NULL, transaction_hash TEXT NOT NULL,
+        PRIMARY KEY (chain_id, resolver_address)
       );
       CREATE TABLE IF NOT EXISTS resolver_transaction_leases (
         chain_id INTEGER NOT NULL,
@@ -377,9 +388,12 @@ export class ResolverTransactionCoordinator {
 
   private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
     assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<void> {
+    const sendToken = randomUUID();
     this.database.transaction(() => {
       assertLease();
       guard?.();
+      this.database.query("INSERT INTO resolver_send_fences (chain_id,resolver_address,token,owner_host,owner_pid,transaction_hash) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(chainId, normalizeAddress(address), sendToken, sendOwnerHost(), process.pid, intent.hash);
       intent.attempts++;
       intent.nextRetry = this.now() + (intent.attempts < 3 ? 250 * 2 ** (intent.attempts - 1) : 60_000);
       const result = this.database.query("UPDATE resolver_prepared_intents SET send_attempts = ?, next_retry_ms = ?, replay_state = 'retryable' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND operation_id = ? AND membership = ? AND nonce = ? AND status = 'pending' AND serialized_transaction = ? AND send_attempts = ?")
@@ -388,38 +402,43 @@ export class ResolverTransactionCoordinator {
       if (result.changes !== 1) throw this.replayError(intent, "send identity changed");
     }).immediate();
     intent.replayState = "retryable";
-    assertLease();
-    guard?.();
     let state = "retryable";
     const key = resolverKey(chainId, address);
     // Track the underlying RPC, not just the timed-out wrapper: a late send must settle
     // before this process starts another pass, just like a late canonical read.
     const sends = this.unfinishedReconciliations.get(key) ?? new Set<Promise<unknown>>();
     let send: Promise<Hex> | undefined;
+    let invoked = false;
     try {
+      assertLease();
+      guard?.();
+      invoked = true;
       send = broadcast();
       sends.add(send); this.unfinishedReconciliations.set(key, sends);
       const hash = await send;
       if (hash.toLowerCase() !== intent.hash.toLowerCase()) state = "invalid-response";
     } catch (error) {
+      if (!invoked) throw error; // no RPC invoked: preserve the synchronous guard error
       // viem send errors can contain raw signed bytes. Retain only a fixed category.
-      const reason = errorText(error).toLowerCase();
-      if (/execution reverted|transaction.*reverted|invalid sender|invalid signature|intrinsic gas too low|invalid chain/.test(reason))
+      if (isDeterministicSendRejection(error))
         state = "deterministic-rejection";
       // already-known, nonce-too-low and underpriced are not inclusion/absence evidence.
     } finally {
+      // Token-scoped settlement evidence remains valid after deadline/lease loss.
+      // Classify before atomically releasing the cross-process outstanding-send fence.
+      this.database.transaction(() => {
+        const fence = this.database.query("SELECT token FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ? AND token = ?")
+          .get(chainId, normalizeAddress(address), sendToken);
+        if (fence && state !== "retryable") this.database.query("UPDATE resolver_prepared_intents SET replay_state = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND send_attempts = ? AND status = 'pending'")
+          .run(state, chainId, normalizeAddress(address), intent.hash, intent.attempts);
+        this.database.query("DELETE FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ? AND token = ?")
+          .run(chainId, normalizeAddress(address), sendToken);
+      }).immediate();
       if (send) sends.delete(send);
       if (!sends.size && this.unfinishedReconciliations.get(key) === sends) this.unfinishedReconciliations.delete(key);
     }
     assertLease();
-    if (state !== "retryable") {
-      this.database.transaction(() => {
-        assertLease();
-        this.database.query("UPDATE resolver_prepared_intents SET replay_state = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND send_attempts = ?")
-          .run(state, chainId, normalizeAddress(address), intent.hash, intent.attempts);
-      }).immediate();
-      intent.replayState = state;
-    }
+    intent.replayState = state;
   }
 
   private async replayIntent(chainId: number, address: Hex, intent: ReplayIntent,
@@ -948,7 +967,9 @@ export class ResolverTransactionCoordinator {
     const normalizedAddress = normalizeAddress(address);
     while (true) {
       const now = this.now();
-      const result = this.database.query(`
+      const result = this.database.transaction(() => {
+        this.assertNoOutstandingSend(chainId, normalizedAddress);
+        return this.database.query(`
         INSERT INTO resolver_transaction_leases (
           chain_id, resolver_address, holder, expires_at_ms
         ) VALUES (?, ?, ?, ?)
@@ -957,12 +978,32 @@ export class ResolverTransactionCoordinator {
           expires_at_ms = excluded.expires_at_ms
         WHERE resolver_transaction_leases.expires_at_ms <= ?
       `).run(chainId, normalizedAddress, holder, now + this.leaseDurationMs, now) as { changes: number };
+      }).immediate();
       if (result.changes > 0) return;
       if (now >= deadline) {
         throw new Error(`timed out waiting for resolver transaction lease ${chainId}:${normalizedAddress}`);
       }
       await this.sleep(Math.min(50, this.replacementPollMs));
     }
+  }
+
+  private assertNoOutstandingSend(chainId: number, address: string): void {
+    const fence = this.database.query("SELECT token, owner_host AS host, owner_pid AS pid FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ?")
+      .get(chainId, address) as { token: string; host: string; pid: number } | null;
+    if (!fence) return;
+    // Expiry is not proof of transport settlement. Only the same OS/PID namespace
+    // can prove owner exit. PID reuse, EPERM and foreign hosts fail closed.
+    if (fence.host === sendOwnerHost() && Number.isSafeInteger(fence.pid) && fence.pid > 0) {
+      try { process.kill(fence.pid, 0); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          this.database.query("DELETE FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ? AND token = ?")
+            .run(chainId, address, fence.token);
+          return; // owner exited; exact-byte canonical recovery still mandatory
+        }
+      }
+    }
+    throw new Error("resolver send still outstanding; wait for transport settlement or verified owner exit; foreign-host orphan requires explicit recovery; preserve intent, no concurrent resend");
   }
 
   private renewLease(chainId: number, address: `0x${string}`, holder: string): void {
@@ -1101,4 +1142,24 @@ function validateNonceRange(fromNonce: number, throughNonce: number): void {
 
 function range(from: number, through: number): number[] {
   return Array.from({ length: through - from + 1 }, (_, index) => from + index);
+}
+
+/** Inspect only bounded standard error fields; never log/retain RPC bodies or signed bytes. */
+function isDeterministicSendRejection(error: unknown): boolean {
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 8 && current && typeof current === "object"; depth++) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const node = current as { message?: unknown; shortMessage?: unknown; details?: unknown; cause?: unknown };
+    for (const field of [node.shortMessage, node.details, node.message]) {
+      if (typeof field !== "string") continue;
+      // Viem's top-level message includes request parameters. Only classify the bounded
+      // human error prefix/details; exact bytes are neither needed nor propagated.
+      const reason = field.slice(0, 4096).toLowerCase();
+      if (/execution reverted|transaction[^\n]{0,160}reverted|invalid sender|invalid signature|intrinsic gas too low|invalid chain/.test(reason)) return true;
+    }
+    current = node.cause;
+  }
+  return false;
 }
