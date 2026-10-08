@@ -203,6 +203,58 @@ export function buildBatchSupplyPlan(options: BatchSupplyOptions): BatchSupplyPl
   return planBatchSupply(options);
 }
 
+/** Evaluate every single origin, nearest-first, and largest-contribution-first.
+ * ponytail: bounded O(n²) candidate heuristic, not a global fleet optimizer.
+ * Freeze the chosen source set in the modal; Max keeps its exact existing search.
+ */
+export function suggestBatchSupplySourceIds(options: Omit<BatchSupplyOptions, "selectedPlanetIds">): Set<string> {
+  const eligible = options.sources.filter(source => !source.unavailableReason
+    && hasUsableSupplyFleet(allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes)));
+  const distance = (source: BatchSupplySource) => fleetMissionDistance(source.coordinates, options.targetCoordinates, { targetIsMoon: options.targetIsMoon ?? false });
+  const nearest = [...eligible].sort((a, b) => distance(a) - distance(b) || a.planetId.localeCompare(b.planetId));
+  const limit = Math.max(0, Math.min(options.maxOrders ?? 15, options.targetIsMoon ? 1 : 15));
+  const evaluate = (sources: readonly BatchSupplySource[]) => planBatchSupply({ ...options, sources, selectedPlanetIds: new Set(sources.map(s => s.planetId)), maxOrders: limit });
+  if (resourceTotal(normalizeSupplyResources(options.requested)) === 0) return new Set(nearest.slice(0, limit).map(s => s.planetId));
+  const singles = nearest.map(source => ({ source, plan: evaluate([source]) }));
+  const largest = [...singles].sort((a, b) => resourceTotal(b.plan.delivered) - resourceTotal(a.plan.delivered) || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId)).map(item => item.source);
+  const candidates = [...singles.map(item => item.plan), evaluate(nearest.slice(0, limit)), evaluate(largest.slice(0, limit))];
+  // Add the origin which fills the current residual, rather than repeatedly
+  // ranking overlapping inventories against the original request (A metal,
+  // B metal, C crystal must choose A+C when only two slots are available).
+  const residualSources: BatchSupplySource[] = [];
+  let residual = evaluate(residualSources);
+  while (residualSources.length < limit && resourceTotal(residual.missing) > 0) {
+    const next = nearest.filter(source => !residualSources.includes(source))
+      .map(source => ({ source, plan: evaluate([...residualSources, source]) }))
+      .sort((a, b) => resourceTotal(a.plan.missing) - resourceTotal(b.plan.missing)
+        || a.plan.blockedSources.length - b.plan.blockedSources.length
+        || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId))[0];
+    if (!next || resourceTotal(next.plan.missing) >= resourceTotal(residual.missing)) break;
+    residualSources.push(next.source);
+    residual = next.plan;
+    candidates.push(residual);
+  }
+  // The ordinary planner is nearest-first. Candidate pruning evaluates progressively
+  // smaller sets so a complete plan never retains empty/fuel-starved origins.
+  for (const ordering of [nearest, largest]) {
+    let ids = ordering.slice(0, limit);
+    for (const source of [...ids].reverse()) {
+      const reduced = ids.filter(item => item.planetId !== source.planetId);
+      const plan = evaluate(reduced);
+      candidates.push(plan);
+      if (resourceTotal(plan.missing) === 0 && plan.blockedSources.length === 0) ids = reduced;
+    }
+  }
+  candidates.sort((a, b) => resourceTotal(a.missing) - resourceTotal(b.missing)
+    || a.blockedSources.length - b.blockedSources.length
+    || a.orders.length - b.orders.length
+    || Math.max(0, ...a.orders.map(o => o.travelSeconds)) - Math.max(0, ...b.orders.map(o => o.travelSeconds))
+    || a.fuelCost - b.fuelCost
+    || a.orders.map(o => o.originPlanetId).join(",").localeCompare(b.orders.map(o => o.originPlanetId).join(",")));
+  const best = candidates[0];
+  return new Set(best?.orders.length ? best.orders.map(order => order.originPlanetId) : nearest.slice(0, limit).map(s => s.planetId));
+}
+
 type BatchSupplyOptions = {
   mission?: SupplyMission;
   targetCoordinates: Coordinates;
