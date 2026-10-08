@@ -87,3 +87,42 @@ Verify for at least one complete resolver interval after the queues reach zero:
 If any check fails, stop further resolver-capable processes, preserve the exact latest/pending nonce,
 public transaction hashes/receipts, queue counts, health response, and index/chain heads, and resume from
 the first unverified nonce only after a new review. Do not rerun a range after any nonce has been consumed.
+
+## Durable mission replay
+
+Prepared mission batches store their exact signed bytes in the private SQLite signing result
+before preparation returns, then transfer the hash/chain/signer/nonce/operation/membership binding
+atomically to the prepared intent. The journal is WAL/FULL synchronous and 0600. Signed bytes are
+broadcast-capable: protect the database, WAL, backups and volume; never attach them to tickets,
+logs or API responses. Send errors retain fixed categories, not raw RPC/viem error objects.
+
+The shared signer lease owns reconciliation and replay across mission/randomness writers and
+rolling replicas. Before each RPC send it commits the attempt count and next retry time. Transient
+or ambiguous sends receive three initial total attempts (250ms then 500ms backoff), subject to
+canonical reads, fee guards and bounded reconciliation deadlines. A slow RPC may spread those
+attempts over later resolver ticks. Afterward, one identical replay per 60 seconds remains eligible;
+reconciliation continues on normal ticks. Restart reloads this schedule, never allocates a new
+nonce, and never treats three failures, already-known, or null lookups as absence/success proof.
+Canonical transaction inclusion without a receipt waits for receipt hydration. Deterministic
+send rejection stays operator-actionable while canonical receipt reconciliation remains active.
+
+Replay verifies the hash, recovered signer, chain and nonce against the immutable signing
+reservation, and calldata/target against mission membership and operation ID. It refreshes Base
+L1/operator estimates and productive simulation at the **same signed gas and fee fields**, using
+the stricter original/current batch budget and immutable 0.0002 ETH transaction cap, with a
+canonical <=30s fee block and synchronous final guard. An unaffordable/stale/unproductive envelope
+waits for prerequisites or reviewed operator recovery; it is never fee-bumped or re-signed.
+Receipt inclusion, per-member domain completion and finality retirement remain separate gates.
+
+Crash states before signing-result transfer or before first-send validation stay explicitly fenced
+(no automatic send), retaining any available raw envelope for independently reviewed recovery.
+They do not silently restart preparation. Pending legacy rows with no signed bytes are labeled
+as requiring original-envelope recovery evidence; no migration fabricates bytes, resets/deletes
+an intent, replaces its nonce or re-signs. In particular this change does **not** recover mission
+99306 / nonce 186225 / hash
+`0x9a5173dcaaab65ef248fa34eba6014b7a718a0021c4826ac77fb9f8dcf218a09`.
+Keep its existing lock until a canonical receipt or separately reviewed supported recovery exists.
+
+Deploy only after independent review/tests, using the persistent journal and compatible writers.
+Rollback to an older build disables replay (it cannot recover raw envelopes), so preserve the
+journal and do not interpret the old build's hash-only diagnostics as permission for nonce repair.

@@ -34,7 +34,10 @@ It has no multi-transaction fan-out, automatic replacements, or cancellations.
 Thus one invocation cannot exceed the aggregate ceiling. Any future multi-envelope
 batch must reserve at most 0.0004 ETH across the whole batch, while preserving the
 0.0002 ETH limit for every constituent transaction, before it may be activated.
-An unknown batch receipt retains the shared signer and never causes another send.
+An unknown batch receipt retains the shared signer and never permits a new nonce or replacement.
+Durable signed envelopes may be replayed byte-for-byte after receipt/transaction reconciliation
+and a fresh canonical fixed-envelope Base fee/productivity check; see
+[durable replay](resolver-nonce-recovery.md#durable-mission-replay). Legacy hash-only intents cannot be replayed.
 
 Single initial/replacement preflight includes sender, target, data, zero value,
 exact nonce, gas and both EIP-1559 fee fields. Sends are lease-fenced after the last

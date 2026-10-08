@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { encodeFunctionResult, parseTransaction, type PublicClient } from "viem";
 import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
-import { quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
+import { privateKeyToAccount } from "viem/accounts";
+import { validateMissionBatchReplay, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
 
 const now = BigInt(Math.floor(Date.now() / 1000));
 const input = { items: [{ missionId: "1", leg: "arrival" as const, dueAt: Number(now - 5n) }], nonce: 99,
@@ -128,4 +129,35 @@ test("0.0004 ETH batch policy cannot exceed the 0.0002 ETH transaction ceiling",
   const quote = await quoteMissionBatch(fixture({ getBlock: async () => block(now, 50_000_000n), readContract: async () => 0n }).client, input);
   expect(quote.totalWei).toBeLessThanOrEqual(200_000_000_000_000n);
   expect(quote.gas).toBeLessThan(signedGas);
+});
+
+const replayAccount = privateKeyToAccount(("0x" + "11".repeat(32)) as `0x${string}`);
+const replayRaw = await replayAccount.signTransaction({ type: "eip1559", chainId: input.chainId, nonce: 99,
+  to: input.game, data: batchCalldata(input.items), gas: signedGas, maxFeePerGas: 210n, maxPriorityFeePerGas: 10n, value: 0n });
+const replayPass = { read: async <T>(op: () => Promise<T>) => op(), assertActive: () => {} };
+test("replay refreshes exact fixed envelope fee exposure, canonical block and synchronous freshness", async () => {
+  const f = fixture();
+  const guard = await validateMissionBatchReplay(f.client, replayRaw, input, replayPass);
+  guard();
+  const simulation = f.calls.find((call) => call.data);
+  expect(simulation?.gas).toBe(signedGas); expect(simulation?.maxFeePerGas).toBe(210n);
+  expect(simulation?.nonce).toBe(99);
+  const old = Date.now;
+  try { Date.now = () => Number(now + 31n) * 1000; expect(guard).toThrow("expired"); } finally { Date.now = old; }
+});
+test("replay never bypasses current Base fees, original budget, productivity or canonical freshness", async () => {
+  for (const overrides of [
+    { getBlock: async () => block(now - 31n) }, { getBlock: async () => block(now + 31n) },
+    { getBlock: async () => block(now, 211n) },
+    { readContract: async () => { throw new Error("oracle unavailable"); } },
+    { readContract: async () => 200_000_000_000_000n },
+    { call: async () => result(2) }, { call: async () => result(5) }
+  ]) await expect(validateMissionBatchReplay(fixture(overrides).client, replayRaw, input, replayPass)).rejects.toThrow();
+  await expect(validateMissionBatchReplay(fixture().client, replayRaw,
+    { ...input, policy: { ...input.policy, maxFeeWei: 1000n } }, replayPass)).rejects.toThrow("cap");
+  await expect(validateMissionBatchReplay(fixture().client, replayRaw,
+    { ...input, items: [{ ...input.items[0]!, missionId: "2" }] }, replayPass)).rejects.toThrow("mismatch");
+  let blocks = 0;
+  await expect(validateMissionBatchReplay(fixture({ getBlock: async () => ({ ...block(), hash: blocks++ ? "0xdead" : block().hash }) }).client,
+    replayRaw, input, replayPass)).rejects.toThrow("changed");
 });

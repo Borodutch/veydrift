@@ -1,6 +1,7 @@
-import { decodeFunctionResult, parseAbi, serializeTransaction, type Hex, type PublicClient } from "viem";
+import { decodeFunctionResult, parseAbi, parseTransaction, serializeTransaction, type Hex, type PublicClient } from "viem";
 import { BatchUnproductiveError, resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 
+import type { PreparedReconciliationPass } from "./resolverTransactions";
 import { resolverReplacementFees } from "./resolverReplacementFees";
 
 export const oracleAbi = parseAbi([
@@ -157,4 +158,37 @@ export async function quoteResolverGas(client: PublicClient, input: {
   if (gas <= 0n) throw new ResolverFeeCapError("network fees exceed the resolver ETH cap");
   assertFresh();
   return Object.freeze({ gas, ...fees, assertFresh });
+}
+
+/** Replay never changes gas/fees/calldata. Refresh uncapped Base charges at a canonical block. */
+export async function validateMissionBatchReplay(client: PublicClient, raw: Hex, input: {
+  items: BatchLeg[]; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
+}, pass: PreparedReconciliationPass): Promise<() => void> {
+  const tx = parseTransaction(raw);
+  if (tx.type !== "eip1559" || tx.chainId !== input.chainId || tx.to?.toLowerCase() !== input.game.toLowerCase()
+    || tx.data !== batchCalldata(input.items) || (tx.value ?? 0n) !== 0n || tx.nonce === undefined
+    || tx.gas === undefined || tx.maxFeePerGas === undefined || tx.maxPriorityFeePerGas === undefined
+    || ![8453, 84532].includes(input.chainId)) throw new Error("replay mission envelope mismatch");
+  const block = await pass.read(() => client.getBlock({ blockTag: "latest" }));
+  if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("replay fee block unavailable");
+  const provenance = { blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp };
+  assertBatchQuoteFresh(provenance);
+  if (block.baseFeePerGas > tx.maxFeePerGas) throw new Error("fixed replay fee below current base fee; wait, never replace");
+  // getL1Fee adds signature overhead itself; strip only signature, never change envelope fields.
+  const unsigned = serializeTransaction({ type: "eip1559", chainId: tx.chainId!, to: tx.to, data: tx.data,
+    value: tx.value ?? 0n, nonce: tx.nonce, gas: tx.gas, maxFeePerGas: tx.maxFeePerGas,
+    maxPriorityFeePerGas: tx.maxPriorityFeePerGas, accessList: tx.accessList });
+  const blockNumber = block.number, gas = tx.gas;
+  const exact = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1Fee", args: [unsigned], blockNumber }));
+  const upper = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt((unsigned.length - 2) / 2)], blockNumber }));
+  const operatorFee = await pass.read(() => client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [gas], blockNumber }));
+  totalBatchExposure({ gas: tx.gas, blockGasLimit: block.gasLimit, maxFeePerGas: tx.maxFeePerGas,
+    maxPriorityFeePerGas: tx.maxPriorityFeePerGas, l1Fee: exact > upper ? exact : upper, operatorFee, policy: input.policy });
+  const simulation = { ...input, data: tx.data!, nonce: tx.nonce, gas: tx.gas,
+    maxFeePerGas: tx.maxFeePerGas, maxPriorityFeePerGas: tx.maxPriorityFeePerGas, blockNumber };
+  await pass.read(() => simulateProductiveBatch(client, simulation));
+  const canonical = await pass.read(() => client.getBlock({ blockNumber }));
+  if (canonical.hash !== block.hash) throw new Error("replay fee block changed");
+  assertBatchQuoteFresh(provenance);
+  return () => assertBatchQuoteFresh(provenance);
 }

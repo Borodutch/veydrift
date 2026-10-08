@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { keccak256, type Hex } from "viem";
+import { keccak256, parseTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string };
@@ -17,17 +17,28 @@ export type PreparedReconciliationPass = {
 type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
   pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
 
+export type PreparedReplay = {
+  /** Only explicit not-found returns null; transport errors throw. */
+  getTransaction: (hash: Hex) => Promise<{ hash: Hex; blockHash: Hex | null } | null>;
+  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<() => void>;
+  broadcast: (raw: Hex) => Promise<Hex>;
+};
+type ReplayIntent = { operationId: string; nonce: number; hash: Hex; membership: string;
+  raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null };
+
 export type ResolverTransactionRequest = {
   chainId: number;
   address: `0x${string}`;
   operationId: string;
   getTransactionCount: (blockTag: "latest" | "pending") => Promise<number>;
   submit: (nonce: number, assertLease: () => void) => Promise<Hex>;
-  /** Batch-only: locally sign without broadcasting; persist exact public intent before send. */
+  /** Batch-only: locally sign without broadcasting; persist exact envelope and intent before send. */
   prepare?: (nonce: number, signing: {
-    /** Reserve identity under the lease, fence actual signer invocation, retain its public result. */
+    /** Reserve identity under the lease, fence actual signer invocation, privately retain its result. */
     sign: (membership: string, signer: () => Promise<Hex>) => Promise<Hex>;
   }) => Promise<{ hash: Hex; membership: string;
+    serializedTransaction?: Hex;
+    replayMaxFeeWei?: string;
     /** Read-only preflight after persistence; failure proves broadcast was never invoked. */
     validateBeforeBroadcast?: () => Promise<void>;
     /** Synchronous final guard, run after the last await and lease check. */
@@ -95,8 +106,9 @@ const defaultReconciliationReadLimit = 128;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
- * processes. SQLite stores coordination metadata only: operation labels, nonces, and public hashes;
- * private keys, calldata, randomness words, and RPC credentials never enter this database.
+ * processes. SQLite retains signed mission envelopes in its private (0600) journal for exact replay.
+ * These bytes are broadcast-capable: never log/export them. Private keys and RPC credentials
+ * never enter this database; randomness writers do not use this prepared mission path.
  */
 export class ResolverTransactionCoordinator {
   private readonly database: Database;
@@ -110,10 +122,11 @@ export class ResolverTransactionCoordinator {
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
   // A transport may not support abort. Never stack abandoned reads on the same signer.
-  private readonly unfinishedReconciliations = new Map<string, Promise<unknown>>();
+  private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly localTails = new Map<string, Promise<void>>();
+  private readonly preparedReplayers = new Map<string, PreparedReplay>();
   private readonly preparedReconcilers = new Map<string, NonNullable<ResolverTransactionRequest["reconcilePrepared"]>>();
 
   constructor(
@@ -151,7 +164,7 @@ export class ResolverTransactionCoordinator {
       );
       CREATE INDEX IF NOT EXISTS resolver_signing_untransferred
         ON resolver_signing_reservations(chain_id, resolver_address) WHERE transferred = 0;
-      -- Append-only public evidence, not ownership/admission state. A late signer result
+      -- Append-only signing evidence, not ownership/admission state. A late signer result
       -- may only INSERT against its unique reservation; it cannot update a successor.
       CREATE TABLE IF NOT EXISTS resolver_signing_results (
         reservation_id TEXT PRIMARY KEY, transaction_hash TEXT NOT NULL
@@ -206,12 +219,22 @@ export class ResolverTransactionCoordinator {
             CASE WHEN status = 'reconciled' THEN 'confirmed' ELSE status END FROM resolver_prepared_intents_v1;
         DROP TABLE resolver_prepared_intents_v1;`);
       }
+      const intentColumns = this.database.query("PRAGMA table_info(resolver_prepared_intents)").all() as Array<{ name: string }>;
+      for (const [name, definition] of Object.entries({ serialized_transaction: "TEXT", replay_state: "TEXT NOT NULL DEFAULT 'legacy'",
+        send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT" })) {
+        if (!intentColumns.some((column) => column.name === name)) this.database.exec(`ALTER TABLE resolver_prepared_intents ADD COLUMN ${name} ${definition}`);
+      }
+      const resultColumns = this.database.query("PRAGMA table_info(resolver_signing_results)").all() as Array<{ name: string }>;
+      if (!resultColumns.some((column) => column.name === "serialized_transaction"))
+        this.database.exec("ALTER TABLE resolver_signing_results ADD COLUMN serialized_transaction TEXT");
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
       throw error;
     }
     this.database.exec(`
+      CREATE INDEX IF NOT EXISTS resolver_signing_binding
+        ON resolver_signing_reservations(chain_id, resolver_address, nonce, operation_id);
       CREATE INDEX IF NOT EXISTS resolver_intents_unfinalized_nonce
         ON resolver_prepared_intents(chain_id, resolver_address, nonce) WHERE status != 'finalized';
       CREATE INDEX IF NOT EXISTS resolver_intents_nonce
@@ -222,6 +245,10 @@ export class ResolverTransactionCoordinator {
    * A standalone writer without it fails closed while any unfinalized batch remains. */
   setPreparedReconciler(chainId: number, address: Hex, reconcile: NonNullable<ResolverTransactionRequest["reconcilePrepared"]>): void {
     this.preparedReconcilers.set(resolverKey(chainId, address), reconcile);
+  }
+
+  setPreparedReplayer(chainId: number, address: Hex, replay: PreparedReplay): void {
+    this.preparedReplayers.set(resolverKey(chainId, address), replay);
   }
 
   submit(request: ResolverTransactionRequest): Promise<Hex> {
@@ -258,10 +285,11 @@ export class ResolverTransactionCoordinator {
     };
     // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
-      membership, status, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes
+      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes
       FROM resolver_prepared_intents INDEXED BY resolver_intents_unfinalized_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized'
       ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
         operationId: string; nonce: number; hash: Hex; membership: string; status: string;
+        raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null;
         blockNumber: string | null; blockHash: Hex | null; outcomes: string | null;
       }>;
     if (!intents.length) return;
@@ -274,8 +302,13 @@ export class ResolverTransactionCoordinator {
     const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
       assertActive();
       const work = Promise.resolve().then(() => { assertActive(); return operation(); });
-      this.unfinishedReconciliations.set(key, work);
-      const clear = () => { if (this.unfinishedReconciliations.get(key) === work) this.unfinishedReconciliations.delete(key); };
+      const unfinished = this.unfinishedReconciliations.get(key) ?? new Set<Promise<unknown>>();
+      unfinished.add(work);
+      this.unfinishedReconciliations.set(key, unfinished);
+      const clear = () => {
+        unfinished.delete(work);
+        if (!unfinished.size && this.unfinishedReconciliations.get(key) === unfinished) this.unfinishedReconciliations.delete(key);
+      };
       void work.then(clear, clear);
       const result = await Promise.race([work, expired]);
       assertActive();
@@ -298,7 +331,12 @@ export class ResolverTransactionCoordinator {
           "durable batch intent cannot bypass canonical receipt/finality reconciliation");
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
           ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes } : undefined;
-        const receipt = await bounded(() => confirm!(intent.hash, intent.membership, stored, pass));
+        let receipt = await bounded(() => confirm!(intent.hash, intent.membership, stored, pass));
+        for (let retry = 0; !receipt && !stored && retry < 3; retry++) {
+          if (!intent.raw) throw new Error("legacy durable batch intent missing signed bytes; canonical receipt unknown; preserve journal and obtain independently reviewed original-envelope recovery; never re-sign/reset");
+          await bounded(() => this.replayIntent(chainId, address, intent, assertActive, pass));
+          receipt = await bounded(() => confirm!(intent.hash, intent.membership, undefined, pass));
+        }
         assertActive();
         if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
         if (!stored || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
@@ -323,6 +361,95 @@ export class ResolverTransactionCoordinator {
       active = false;
       clearTimeout(timer);
     }
+  }
+
+  private async validateEnvelope(chainId: number, address: Hex, nonce: number, hash: Hex, raw: Hex): Promise<void> {
+    try {
+      const tx = parseTransaction(raw);
+      if (keccak256(raw).toLowerCase() !== hash.toLowerCase() || tx.chainId !== chainId || tx.nonce !== nonce
+        || (await recoverTransactionAddress({ serializedTransaction: raw as TransactionSerialized })).toLowerCase() !== normalizeAddress(address)) throw new Error();
+    } catch { throw new Error("persisted signed envelope identity mismatch; preserve journal for explicit recovery"); }
+  }
+
+  private replayError(intent: ReplayIntent, reason: string): Error {
+    return new Error(`resolver durable replay ${intent.hash} nonce ${intent.nonce}: ${reason}; attempts=${intent.attempts}, nextRetryMs=${intent.nextRetry}; preserve journal, no new nonce or replacement`);
+  }
+
+  private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
+    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<void> {
+    this.database.transaction(() => {
+      assertLease();
+      guard?.();
+      intent.attempts++;
+      intent.nextRetry = this.now() + (intent.attempts < 3 ? 250 * 2 ** (intent.attempts - 1) : 60_000);
+      const result = this.database.query("UPDATE resolver_prepared_intents SET send_attempts = ?, next_retry_ms = ?, replay_state = 'retryable' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND operation_id = ? AND membership = ? AND nonce = ? AND status = 'pending' AND serialized_transaction = ? AND send_attempts = ?")
+        .run(intent.attempts, intent.nextRetry, chainId, normalizeAddress(address), intent.hash, intent.operationId,
+          intent.membership, intent.nonce, intent.raw, intent.attempts - 1);
+      if (result.changes !== 1) throw this.replayError(intent, "send identity changed");
+    }).immediate();
+    intent.replayState = "retryable";
+    assertLease();
+    guard?.();
+    let state = "retryable";
+    const key = resolverKey(chainId, address);
+    // Track the underlying RPC, not just the timed-out wrapper: a late send must settle
+    // before this process starts another pass, just like a late canonical read.
+    const sends = this.unfinishedReconciliations.get(key) ?? new Set<Promise<unknown>>();
+    let send: Promise<Hex> | undefined;
+    try {
+      send = broadcast();
+      sends.add(send); this.unfinishedReconciliations.set(key, sends);
+      const hash = await send;
+      if (hash.toLowerCase() !== intent.hash.toLowerCase()) state = "invalid-response";
+    } catch (error) {
+      // viem send errors can contain raw signed bytes. Retain only a fixed category.
+      const reason = errorText(error).toLowerCase();
+      if (/execution reverted|transaction.*reverted|invalid sender|invalid signature|intrinsic gas too low|invalid chain/.test(reason))
+        state = "deterministic-rejection";
+      // already-known, nonce-too-low and underpriced are not inclusion/absence evidence.
+    } finally {
+      if (send) sends.delete(send);
+      if (!sends.size && this.unfinishedReconciliations.get(key) === sends) this.unfinishedReconciliations.delete(key);
+    }
+    assertLease();
+    if (state !== "retryable") {
+      this.database.transaction(() => {
+        assertLease();
+        this.database.query("UPDATE resolver_prepared_intents SET replay_state = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND send_attempts = ?")
+          .run(state, chainId, normalizeAddress(address), intent.hash, intent.attempts);
+      }).immediate();
+      intent.replayState = state;
+    }
+  }
+
+  private async replayIntent(chainId: number, address: Hex, intent: ReplayIntent,
+    assertLease: () => void, pass: PreparedReconciliationPass): Promise<void> {
+    const replay = this.preparedReplayers.get(resolverKey(chainId, address));
+    if (!replay) throw this.replayError(intent, "replay client unavailable");
+    if (intent.replayState !== "retryable" && intent.replayState !== "ready"
+      && intent.replayState !== "deterministic-rejection" && intent.replayState !== "invalid-response")
+      throw this.replayError(intent, "first-send validation not durably completed; explicit fenced recovery required; never auto-send");
+    const binding = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND r.transferred = 1 AND s.transaction_hash = ? AND s.serialized_transaction = ? LIMIT 1")
+      .get(chainId, normalizeAddress(address), intent.operationId, intent.nonce, intent.membership, intent.hash, intent.raw);
+    if (!binding) throw new Error("persisted signed envelope identity mismatch; signing reservation binding missing");
+    await this.validateEnvelope(chainId, address, intent.nonce, intent.hash, intent.raw!);
+    assertLease();
+    // Receipt has just been checked. Reconcile transaction inclusion before each resend.
+    const transaction = await pass.read(() => replay.getTransaction(intent.hash));
+    if (transaction && (transaction.hash.toLowerCase() !== intent.hash.toLowerCase() || transaction.blockHash !== null))
+      throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
+    if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
+      throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
+    if (intent.nextRetry > this.now()) {
+      if (intent.attempts >= 3) throw this.replayError(intent, "recoverable pending; bounded retry cooling down");
+      await this.sleep(intent.nextRetry - this.now());
+      assertLease();
+    }
+    let guard: () => void;
+    try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
+    catch { throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    assertLease();
+    await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
   }
 
   private assertPreparedAdmission(chainId: number, address: Hex): void {
@@ -644,8 +771,8 @@ export class ResolverTransactionCoordinator {
             const signed = await signer();
             // Immutable, reservation-scoped evidence only: even a late result cannot touch
             // shared attempts/intents. The reservation already blocks all automatic writers.
-            this.database.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash) VALUES (?, ?)")
-              .run(id, keccak256(signed));
+            this.database.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash,serialized_transaction) VALUES (?, ?, ?)")
+              .run(id, keccak256(signed), signed);
             assertLease();
             return signed;
           } }); } catch (error) {
@@ -658,19 +785,23 @@ export class ResolverTransactionCoordinator {
             }
             throw error;
           }
+          if (prepared.serializedTransaction) {
+            if (!reservationId) throw new Error("durable replay requires fenced signing reservation");
+            await this.validateEnvelope(request.chainId, request.address, nonce, prepared.hash, prepared.serializedTransaction);
+          }
           this.database.transaction(() => {
             assertLease();
             const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
             if (attempt?.nonce !== nonce || attempt.transactionHash !== null || attempt.status !== "allocating")
               throw new Error("batch preparation allocation identity changed; explicit recovery required");
             if (reservationId) {
-              const reserved = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.id = ? AND r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND s.transaction_hash = ? AND r.transferred = 0")
-                .get(reservationId, request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.membership, prepared.hash);
+              const reserved = this.database.query("SELECT r.id FROM resolver_signing_reservations r JOIN resolver_signing_results s ON s.reservation_id = r.id WHERE r.id = ? AND r.chain_id = ? AND r.resolver_address = ? AND r.operation_id = ? AND r.nonce = ? AND r.membership = ? AND s.transaction_hash = ? AND (s.serialized_transaction = ? OR ? IS NULL) AND r.transferred = 0")
+                .get(reservationId, request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.membership, prepared.hash, prepared.serializedTransaction ?? null, prepared.serializedTransaction ?? null);
               if (!reserved) throw new Error("signed preparation identity mismatch; explicit recovery required");
             }
             this.database.query(
-              "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?, ?, ?, ?, ?, ?, 'pending')"
-            ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership);
+              "INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,serialized_transaction,replay_state,replay_max_fee_wei) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
+            ).run(request.chainId, normalizeAddress(request.address), request.operationId, nonce, prepared.hash, prepared.membership, prepared.serializedTransaction ?? null, prepared.serializedTransaction ? "unvalidated" : "legacy", prepared.replayMaxFeeWei ?? null);
             recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
             if (reservationId) this.database.query("UPDATE resolver_signing_reservations SET transferred = 1 WHERE id = ?").run(reservationId);
           }).immediate();
@@ -693,8 +824,28 @@ export class ResolverTransactionCoordinator {
             }).immediate();
             throw error;
           }
-          hash = await prepared.broadcast();
-          if (hash.toLowerCase() !== prepared.hash.toLowerCase()) throw new Error("broadcast hash differs from persisted local batch hash");
+          if (prepared.serializedTransaction) {
+            // A durable ready marker distinguishes completed first-send validation from
+            // a crash while it was in flight; the latter must remain explicitly fenced.
+            this.database.transaction(() => {
+              assertLease(); prepared.assertBeforeBroadcast?.();
+              const ready = this.database.query("UPDATE resolver_prepared_intents SET replay_state = 'ready' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND status = 'pending' AND replay_state = 'unvalidated'")
+                .run(request.chainId, normalizeAddress(request.address), prepared.hash);
+              if (ready.changes !== 1) throw new Error("first-send validation identity changed");
+            }).immediate();
+            const intent: ReplayIntent = { operationId: request.operationId, nonce, hash: prepared.hash,
+              membership: prepared.membership, raw: prepared.serializedTransaction, attempts: 0, nextRetry: 0,
+              replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };
+            await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
+            hash = prepared.hash;
+            await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
+            // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
+            // confirmed intent to submitted or enter the generic replacement/confirm path.
+            return hash;
+          } else {
+            hash = await prepared.broadcast();
+            if (hash.toLowerCase() !== prepared.hash.toLowerCase()) throw new Error("broadcast hash differs from persisted local batch hash");
+          }
         } else hash = await request.submit(nonce, assertLease);
       } catch (error) {
         if (request.prepare) throw error; // never discard a possibly broadcast durable hash
