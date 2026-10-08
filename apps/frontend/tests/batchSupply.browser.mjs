@@ -175,6 +175,10 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.accrueStock()'); await settle();
       assert.equal(await evaluate(launch + '.disabled'), false, 'production refresh does not flicker Launch');
       assert.deepEqual((await submit()).orders, first.orders, 'production never increases reviewed shipment');
+      await evaluate('supplyFixture.harmlessStock()'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), false, 'unselected locks, unselected ships and irrelevant stock decreases preserve feasibility');
+      assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').closest("label").querySelector("button").disabled`), false, 'irrelevant changes do not disable Max');
+      assert.deepEqual((await submit()).orders, first.orders, 'unrelated changes retain exact reviewed shipment');
       const footer = await evaluate('(() => { const r = document.querySelector("footer").getBoundingClientRect(); return {top:r.top,bottom:r.bottom}; })()');
       assert.ok(footer.top >= 0 && footer.bottom <= 568, 'persistent footer fits short viewport');
       await evaluate('document.querySelector("[data-supply-details]").setAttribute("open", "")'); await settle();
@@ -197,7 +201,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await load(width, 'emptyFleet=1');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")');
       await click(source); // Preserve explicit selection; refresh must not reselect sources.
       await input('metal to send', 0);
       assert.equal(await evaluate(launch + '.disabled'), true, 'new ships alone must not send cargo');
@@ -222,6 +226,17 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     }
     console.log('PASS refreshed effective cargo: resource-selected Transport/Deploy at desktop/mobile widths');
 
+    // Selected feasibility changes still cancel in-flight Max and preserve edits.
+    for (const change of ['changeStock', 'changeEligibility', 'changeDrives']) {
+      await load(1280);
+      await evaluate('window.Worker = class { constructor() { window.feasibilityWorker = this; } postMessage() {} terminate() { this.terminated = true; } };');
+      await evaluate(`document.querySelector('input[aria-label="metal to send"]').closest("label").querySelector("button").click()`);
+      await settle();
+      await evaluate('supplyFixture.' + change + '()'); await settle();
+      assert.equal(await evaluate('feasibilityWorker.terminated'), true, change + ': relevant change cancels Max');
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '1000');
+    }
     // Hold worker results so pending geometry is deterministic, even for tiny fleets.
     for (const width of [1280, 390, 320]) {
       await load(width);
@@ -326,9 +341,6 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       () => click(checkbox(0)),
       () => click(source),
       () => click(`document.querySelector('[aria-label="Mission type"] button:last-child')`),
-      async () => { await evaluate('supplyFixture.changeStock()'); await settle(); },
-      async () => { await evaluate('supplyFixture.changeEligibility()'); await settle(); },
-      async () => { await evaluate('supplyFixture.changeDrives()'); await settle(); },
       async () => { await evaluate("supplyFixture.changeRoute()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeBody()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeLimit()"); await settle(); },
@@ -348,7 +360,14 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'stale errors ignored');
     }
     await evaluate('supplyFixture.pending("none")'); await settle();
-    await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")?.click()'); await settle();
+    // The preceding selection toggle left no contributing shipment. Unrelated
+    // availability changes must neither cancel Max nor adopt a different snapshot.
+    await startMax('metal');
+    await evaluate('window.staleMax = maxWorkers.at(-1); supplyFixture.changeStock(); supplyFixture.changeEligibility(); supplyFixture.changeDrives()'); await settle();
+    assert.equal(await busy(), true, 'unselected inventory changes do not cancel Max');
+    assert.notEqual(await evaluate('staleMax.terminated'), true);
+    await click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")');
+    await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
       const expected = await amount('metal');

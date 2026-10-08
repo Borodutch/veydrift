@@ -36,6 +36,7 @@ declare global {
       effectiveCargo: (count: number) => void;
       unmount: () => void;
       changeStock: () => void;
+      harmlessStock: () => void;
       accrueStock: () => void;
       changeEligibility: () => void;
       changeDrives: () => void;
@@ -74,6 +75,9 @@ function Fixture() {
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
     accrueStock: () => setSources(current => current.map(item => ({ ...item, resources: { metal: item.resources.metal + 100, crystal: item.resources.crystal + 100, deuterium: item.resources.deuterium + 100 } }))),
+    harmlessStock: () => setSources(current => current.map(item => item.planetId === "1"
+      ? { ...item, resources: { metal: 500000, crystal: 500000, deuterium: 10000 }, ships: { ...item.ships, lightFighter: 1000 } }
+      : { ...item, unavailableReason: "Unrelated source locked", ships: {}, resources: { metal: 0, crystal: 0, deuterium: 0 } })),
     changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),
     changeEligibility: () => setSources(current => current.map(item => ({ ...item, unavailableReason: "Fleet unavailable" }))),
     changeDrives: () => setSources(current => current.map(item => ({ ...item, driveLevels: { ...item.driveLevels, combustionDrive: 7 } }))),

@@ -36,6 +36,19 @@ test("suggestion honors slot/moon limits, exclusions, fuel and partial deficits 
   expect(suggestBatchSupplySourceIds({ sources: combatOnly, requested, targetCoordinates }).size).toBe(0);
 });
 
+test("residual contribution finds complementary origins outside nearest and largest prefixes", () => {
+  const complementary = [
+    { ...sources[0]!, planetId: "a", resources: { metal: 1000, crystal: 0, deuterium: 100 } },
+    { ...sources[1]!, planetId: "b", resources: { metal: 1000, crystal: 0, deuterium: 100 } },
+    { ...sources[2]!, planetId: "c", resources: { metal: 0, crystal: 500, deuterium: 100 } },
+  ];
+  const options = { sources: complementary, targetCoordinates, requested: { metal: 1000, crystal: 500, deuterium: 0 }, maxOrders: 2 };
+  const selectedPlanetIds = suggestBatchSupplySourceIds(options);
+  expect([...selectedPlanetIds]).toEqual(["a", "c"]);
+  expect(buildBatchSupplyPlan({ ...options, selectedPlanetIds }).missing).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
+  expect(suggestBatchSupplySourceIds({ ...options, sources: [...complementary].reverse() })).toEqual(selectedPlanetIds);
+});
+
 test("partial candidates and fuel-starved near sources cannot hide an available complete origin", () => {
   const starved = { ...sources[0]!, ships: { largeCargo: 10 }, resources: { metal: 999999, crystal: 999999, deuterium: 0 } };
   const options = { sources: [starved, sources[2]!], targetCoordinates, requested, maxOrders: 1 };

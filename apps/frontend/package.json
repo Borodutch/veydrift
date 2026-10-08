@@ -16,7 +16,7 @@
     "serve": "bun scripts/serve.mjs",
     "start": "bun run serve",
     "test": "bun test tests src/*.test.ts",
-    "test:touch-browser": "node --test tests/sidebar.browser.mjs && node --test tests/planetPickerTouchBrowser.browser.mjs && node --test tests/productionQueueSizing.browser.mjs && node --test tests/galaxySlots.browser.mjs && node --test tests/batchSupply.browser.mjs && node --test tests/levelSupply.browser.mjs && node --test tests/resolvedGroupMissions.browser.mjs && node --test tests/planetFleetActivity.browser.mjs && node --test tests/combatModelRefresh.browser.mjs && node --test tests/trailerPlayer.browser.mjs && node --test tests/currentState.browser.mjs"
+    "test:touch-browser": "node --test tests/sidebar.browser.mjs && node --test tests/planetPickerTouchBrowser.browser.mjs && node --test tests/productionQueueSizing.browser.mjs && node --test tests/galaxySlots.browser.mjs && node --test tests/batchSupply.browser.mjs && node --test tests/levelSupply.browser.mjs && node --test tests/supplyConfirmation.browser.mjs && node --test tests/resolvedGroupMissions.browser.mjs && node --test tests/planetFleetActivity.browser.mjs && node --test tests/combatModelRefresh.browser.mjs && node --test tests/trailerPlayer.browser.mjs && node --test tests/currentState.browser.mjs"
   },
   "dependencies": {
     "@farcaster/miniapp-sdk": "^0.3.0",
