@@ -58,13 +58,28 @@ export function recoveryBinding(input: MissionRecoveryInput): LegacyRecoveryBind
     to: input.game.toLowerCase() as Hex, data, value: "0", evidence: JSON.stringify(input) };
 }
 
+// Fixed fan-out, not a new RPC budget: every operation still enters pass.read.
+// Settle the current wave before returning or starting another. On a pass deadline,
+// the coordinator retains any underlying reads and rejects retries until they settle.
+async function recoveryReads(operations: Array<() => Promise<void>>): Promise<void> {
+  for (let offset = 0; offset < operations.length; offset += 8) {
+    const results = await Promise.allSettled(operations.slice(offset, offset + 8).map(operation => operation()));
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+  }
+}
+
 export async function verifyRecoveryReference(client: PublicClient, input: MissionRecoveryInput, blockNumber: bigint, blockHash: Hex, pass: PreparedReconciliationPass, finalized = false): Promise<void> {
   const reference = createPublicClient({transport:http(input.referenceRpcUrl,{retryCount:0,timeout:5000})});
-  if (await pass.read(() => reference.getChainId())!==input.chainId) throw new Error("recovery reference chain mismatch");
-  const block = await pass.read(() => reference.getBlock({blockNumber}));
-  if (block.hash!==blockHash) throw new Error("recovery reference canonical disagreement");
-  const localNonce = await pass.read(() => client.getTransactionCount({address:input.address,blockNumber}));
-  const remoteNonce = await pass.read(() => reference.getTransactionCount({address:input.address,blockNumber}));
+  let localNonce: number | undefined, remoteNonce: number | undefined;
+  await recoveryReads([
+    async () => { if (await pass.read(() => reference.getChainId())!==input.chainId) throw new Error("recovery reference chain mismatch"); },
+    async () => {
+      const block = await pass.read(() => reference.getBlock({blockNumber}));
+      if (block.hash!==blockHash) throw new Error("recovery reference canonical disagreement");
+    },
+    async () => { localNonce = await pass.read(() => client.getTransactionCount({address:input.address,blockNumber})); },
+    async () => { remoteNonce = await pass.read(() => reference.getTransactionCount({address:input.address,blockNumber})); }
+  ]);
   if (localNonce!==remoteNonce) throw new Error("recovery reference nonce disagreement");
   if (finalized) {
     const final = await pass.read(() => reference.getBlock({blockTag:"finalized"}));
@@ -80,12 +95,16 @@ export async function verifyRecoveryIdentity(client: PublicClient, input: Missio
   const block = await pass.read(() => client.getBlock(blockNumber === undefined ? { blockTag: "latest" } : { blockNumber }));
   if (block.number === null || !block.hash) throw new Error("recovery canonical block unavailable");
   assertBatchQuoteFresh({blockNumber:block.number,blockHash:block.hash,blockTimestamp:block.timestamp});
-  const slot = await pass.read(() => client.getStorageAt({ address: input.game, slot: implementationSlot, blockNumber: block.number! }));
-  if (slot?.slice(-40).toLowerCase() !== input.implementation.slice(2).toLowerCase()) throw new Error("recovery implementation changed");
-  for (const identity of input.identities) {
-    const code = await pass.read(() => client.getCode({ address: identity.address, blockNumber: block.number! }));
-    if (!code || keccak256(code) !== identity.codeHash) throw new Error("recovery deployed code changed");
-  }
+  await recoveryReads([
+    async () => {
+      const slot = await pass.read(() => client.getStorageAt({ address: input.game, slot: implementationSlot, blockNumber: block.number! }));
+      if (slot?.slice(-40).toLowerCase() !== input.implementation.slice(2).toLowerCase()) throw new Error("recovery implementation changed");
+    },
+    ...input.identities.map(identity => async () => {
+      const code = await pass.read(() => client.getCode({ address: identity.address, blockNumber: block.number! }));
+      if (!code || keccak256(code) !== identity.codeHash) throw new Error("recovery deployed code changed");
+    })
+  ]);
   const items: BatchLeg[] = JSON.parse(input.membership);
   const id = BigInt(items[0]!.missionId);
   const abi = parseAbi(["function fleetMission(uint256) view returns (uint8,uint8,address,uint256,uint256,uint64,uint64,uint64,uint128,(uint128 metal,uint128 crystal,uint128 deuterium),uint256)"]);
@@ -95,10 +114,10 @@ export async function verifyRecoveryIdentity(client: PublicClient, input: Missio
     || mission[9].metal!==0n || mission[9].crystal!==0n || mission[9].deuterium!==0n
     || ![2,3,4,5].includes(mission[0])) throw new Error("recovery planet transport prestate mismatch");
   const base = BigInt(keccak256(encodeAbiParameters([{type:"uint256"},{type:"uint256"}],[id,24n])));
-  for (const [offset,expected] of [[7n,input.mission.shipsWords[0]],[8n,input.mission.shipsWords[1]],[11n,input.mission.bodyFlags]] as const) {
+  await recoveryReads(([[7n,input.mission.shipsWords[0]],[8n,input.mission.shipsWords[1]],[11n,input.mission.bodyFlags]] as const).map(([offset,expected]) => async () => {
     const value = await pass.read(() => client.getStorageAt({address:input.game,slot:toHex(base+offset,{size:32}),blockNumber:block.number!}));
     if (value!==expected) throw new Error("recovery mission ships/body flags changed");
-  }
+  }));
   await verifyRecoveryReference(client,input,block.number,block.hash,pass);
   const canonical = await pass.read(() => client.getBlock({ blockNumber: block.number! }));
   if (canonical.hash !== block.hash) throw new Error("recovery identity block changed");

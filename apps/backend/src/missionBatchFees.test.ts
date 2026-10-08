@@ -146,8 +146,10 @@ test("replay refreshes exact fixed envelope fee exposure, canonical block and sy
   try { Date.now = () => Number(now + 31n) * 1000; expect(guard).toThrow("expired"); } finally { Date.now = old; }
 });
 test("replay never bypasses current Base fees, original budget, productivity or canonical freshness", async () => {
+  // Derive skew when the RPC executes, not at module load before slower suites run.
   for (const overrides of [
-    { getBlock: async () => block(now - 31n) }, { getBlock: async () => block(now + 31n) },
+    { getBlock: async () => block(BigInt(Math.floor(Date.now() / 1000)) - 31n) },
+    { getBlock: async () => block(BigInt(Math.floor(Date.now() / 1000)) + 31n) },
     { getBlock: async () => block(now, 211n) },
     { readContract: async () => { throw new Error("oracle unavailable"); } },
     { readContract: async () => 200_000_000_000_000n },

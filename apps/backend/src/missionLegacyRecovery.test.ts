@@ -9,7 +9,7 @@ import { missionBatchAbi, batchCalldata, defaultMissionBatchPolicy } from "./mis
 import { ViemMissionResolutionChainClient } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { runMissionRecovery, verifyReviewedRecoveryManifest } from "./missionLegacyRecoveryCli";
-import { recoveryBinding, type MissionRecoveryInput } from "./missionLegacyRecovery";
+import { prepareRecoveryEnvelope, verifyRecoveryIdentity, recoveryBinding, type MissionRecoveryInput } from "./missionLegacyRecovery";
 const account = privateKeyToAccount(("0x"+"11".repeat(32)) as Hex);
 const game = ("0x"+"22".repeat(20)) as Hex, implementation=("0x"+"33".repeat(20)) as Hex;
 const original=("0x"+"44".repeat(32)) as Hex, blockHash=("0x"+"aa".repeat(32)) as Hex;
@@ -24,7 +24,7 @@ beforeAll(()=>{globalThis.fetch=(async (url: string|URL|Request, init?:RequestIn
 }) as typeof fetch;});
 afterAll(()=>{globalThis.fetch=originalFetch;});
 function plan(binding: ReturnType<typeof recoveryBinding>) {return serializeTransaction({type:"eip1559",chainId:8453,nonce:4,to:game,data:binding.data,value:0n,gas:1000000n,maxFeePerGas:23995623n,maxPriorityFeePerGas:23995423n});}
-function fixture() {
+function fixture(reconciliationTimeoutMs = 5000) {
  referenceNonce=4;
  const dir=mkdtempSync(join(tmpdir(),"recovery58-")), path=join(dir,"journal.sqlite");
  const items=[{missionId:"99306",leg:"return" as const,dueAt:1791480343}];
@@ -54,7 +54,7 @@ function fixture() {
   getTransactionReceipt:async({hash}:{hash:Hex})=>{if(hash!==winner&&!reportedBoth)throw new TransactionReceiptNotFoundError({hash});return {transactionHash:hash,status:receiptStatus,blockNumber:1n,blockHash,logs:[],gasUsed:100000n,effectiveGasPrice:100n,l1Fee:100n,operatorFee:0n};}
  };
  const create=()=>{
-  const coordinator=new ResolverTransactionCoordinator(path,{now:()=>now,sleep:async ms=>{now+=ms;},leaseWaitMs:1,reconciliationTimeoutMs:5000});
+  const coordinator=new ResolverTransactionCoordinator(path,{now:()=>now,sleep:async ms=>{now+=ms;},leaseWaitMs:1,reconciliationTimeoutMs});
   const client=new ViemMissionResolutionChainClient({listResolvableFleetMissions:async()=>[],listReturnableFleetMissions:async()=>[],getCanonicalFleetMission:async()=>({status:winner&&completed?"Returned":"Returning",returnAt:String(items[0]!.dueAt)}) as never},game,signedAccount,publicClient as unknown as PublicClient,undefined,chain,undefined,coordinator,undefined,undefined,{...defaultMissionBatchPolicy,enabled:true});
   return {coordinator,client};
  };
@@ -262,4 +262,71 @@ test("late signature after lease loss remains immutable and resumes without a se
  f.send(async bytes=>{expect(bytes).toBe(raw);f.win(keccak256(bytes));return keccak256(bytes);});await f.create().client.recoverLegacyMission(f.input);
  expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(1);
  }finally{f.cleanup();}
+});
+
+function fifteenIdentities(input: MissionRecoveryInput) {
+ for (let n=0;n<12;n++) input.identities.push({address:('0x'+(n+100).toString(16).padStart(40,'0')) as Hex,codeHash:keccak256('0x6000')});
+}
+
+test("parallel proof retains all 63 charged reads and fits a deterministic 2s head window",async()=>{
+ const f=fixture();try{
+  fifteenIdentities(f.input);
+  let clock=0,active=0,peak=0,reads=0;
+  const block=f.publicClient.getBlock;
+  f.publicClient.getBlock=async(args:any)=>({...await block(args),number:args.blockNumber??(clock<2000?1n:2n),hash:!args.blockNumber&&clock>=2000?original:blockHash});
+  const pass={assertActive:()=>{if(clock>=5000)throw new Error("deadline");},read:async<T>(operation:()=>Promise<T>)=>{
+   if(++reads>128)throw new Error("read budget");
+   const end=clock+40;active++;peak=Math.max(peak,active);
+   try{await new Promise(resolve=>setTimeout(resolve,1));clock=Math.max(clock,end);return await operation();}finally{active--;}
+  }};
+  const prepared=await prepareRecoveryEnvelope(f.publicClient as unknown as PublicClient,f.input,defaultMissionBatchPolicy,pass);
+  await prepared.guard.finalCheck!();prepared.guard();
+  expect(reads).toBe(63);expect(peak).toBe(8);expect(active).toBe(0);expect(clock).toBeLessThan(2000);
+  // The old serial implementation takes 63*40=2520ms and rejects the moved head.
+  expect(clock).toBeLessThanOrEqual(1040);expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(0);
+ }finally{f.cleanup();}
+});
+
+test("failed parallel identity wave drains siblings and never launches the next wave or signs",async()=>{
+ const f=fixture();try{
+  fifteenIdentities(f.input);
+  let release!:()=>void,entered!:()=>void,settled=false,calls=0;
+  const held=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{entered=resolve;});
+  f.publicClient.getCode=async()=>{const n=++calls;if(n===1){entered();await held;}if(n===2)throw new Error("injected code read failure");return "0x6000";};
+  const attempt=f.client.recoverLegacyMission(f.input);
+  void attempt.then(()=>{settled=true;},()=>{settled=true;});
+  await ready;await new Promise(resolve=>setTimeout(resolve,10));
+  expect(calls).toBe(7);expect(settled).toBe(false);expect(f.signs()).toBe(0);
+  release();await expect(attempt).rejects.toThrow("injected code read failure");
+  expect(calls).toBe(7);expect(f.bytes).toHaveLength(0);
+  expect(f.db.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({n:0});
+ }finally{f.cleanup();}
+});
+
+test("parallel wave cannot exceed the remaining pass read budget",async()=>{
+ const f=fixture();try{
+  fifteenIdentities(f.input);let reads=0,active=0,peak=0;
+  const pass={assertActive:()=>{},read:async<T>(operation:()=>Promise<T>)=>{
+   if(reads>=10)throw new Error("read budget exhausted");reads++;
+   active++;peak=Math.max(peak,active);
+   try{await new Promise(resolve=>setTimeout(resolve,1));return await operation();}finally{active--;}
+  }};
+  await expect(verifyRecoveryIdentity(f.publicClient as unknown as PublicClient,f.input,pass)).rejects.toThrow("read budget exhausted");
+  expect(reads).toBe(10);expect(peak).toBe(8);expect(active).toBe(0);expect(f.signs()).toBe(0);
+ }finally{f.cleanup();}
+});
+
+test("timed-out replay retains every unfinished parallel read and blocks retry fan-out",async()=>{
+ const f=fixture(50);let release!:()=>void;
+ try{
+  fifteenIdentities(f.input);let pending=0,codeCalls=0;
+  const held=new Promise<void>(resolve=>{release=resolve;});
+  f.publicClient.getCode=async()=>{codeCalls++;if(f.signs()){pending++;try{await held;}finally{pending--;}}return "0x6000";};
+  await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("read deadline exceeded");
+  expect(pending).toBe(7);expect(f.signs()).toBe(1);expect(f.bytes).toHaveLength(0);
+  const before=codeCalls;
+  await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("previous read still unresolved");
+  expect(codeCalls).toBe(before);expect(pending).toBe(7);expect(f.bytes).toHaveLength(0);
+  release();await new Promise(resolve=>setTimeout(resolve,10));expect(pending).toBe(0);
+ }finally{release?.();f.cleanup();}
 });

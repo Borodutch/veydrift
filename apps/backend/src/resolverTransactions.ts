@@ -516,8 +516,9 @@ export class ResolverTransactionCoordinator {
     const expired = new Promise<never>((_, reject) => {
       timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
     });
-    // One underlying read at a time; a timeout releases the lease, not permission to keep
-    // hydrating or write late. Retain the unresolved handle so retries cannot pile up reads.
+    // Recovery identity reads use bounded parallel waves; a timeout releases the lease,
+    // not permission to hydrate/write late. Retain every unresolved handle so retries
+    // cannot pile up reads.
     const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
       assertActive();
       const work = Promise.resolve().then(() => { assertActive(); return operation(); });
