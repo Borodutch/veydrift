@@ -144,7 +144,9 @@ export function changedScriptTests(files, exists = existsSync) {
   const names = files
     .map((file) => /^scripts\/([^/]+?)(\.test)?\.mjs$/.exec(file)?.[1])
     .filter(Boolean);
-  return unique(names.map((name) => `scripts/${name}.test.mjs`)).filter((test) => exists(test));
+  const tests = names.map((name) => `scripts/${name}.test.mjs`);
+  if (files.some((file) => file.startsWith("scripts/base-node/"))) tests.push("scripts/base-node-reliability.test.mjs");
+  return unique(tests).filter((test) => exists(test));
 }
 
 export function computeScope(options = {}) {
