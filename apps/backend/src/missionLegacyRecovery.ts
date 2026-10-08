@@ -175,7 +175,7 @@ export async function prepareRecoveryEnvelope(client: PublicClient, input: Missi
 
 /** Complete pre-sign read path, with no coordinator, lease or signing capability. */
 export async function recoveryReadiness(client: PublicClient, input: MissionRecoveryInput, policy: MissionBatchPolicy,
-  trace = new RecoveryTrace(), persisted?: {raw: Hex; hash: Hex; maxFeeWei: string}) {
+  trace = new RecoveryTrace(), persisted?: {raw: Hex; hash: Hex; maxFeeWei: string; attempts: number; nextRetry: number}) {
   const binding=recoveryBinding(input);
   const reconcile=async (pass: PreparedReconciliationPass)=>{
     for(const hash of [binding.originalHash,...(persisted?[persisted.hash]:[])])
@@ -192,6 +192,9 @@ export async function recoveryReadiness(client: PublicClient, input: MissionReco
         const tx=await pass.read(()=>client.getTransaction({hash:persisted.hash}));
         if(tx.hash.toLowerCase()!==persisted.hash.toLowerCase() || tx.blockHash!==null)throw new RecoveryReadinessError("candidate-included");
       } catch(error) {pass.assertActive();if(!(error instanceof TransactionNotFoundError))throw error;}
+      // Conservative read-only result: never skip even an early-attempt production wait.
+      trace.stage="retry-hold";
+      if(persisted.nextRetry>Date.now())throw new RecoveryReadinessError("retry-cooldown");
     }
     trace.stage="pause";
     const paused=await pass.read(()=>client.getStorageAt({address:binding.to,slot:toHex(52n,{size:32})}));

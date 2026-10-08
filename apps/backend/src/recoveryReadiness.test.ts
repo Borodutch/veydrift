@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { toHex, type PublicClient } from "viem";
-import { acquireRecoveryHead, readOnlyRecoveryPass, RecoveryTrace } from "./recoveryReadiness";
+import { classifyRecoveryReadError, RecoveryReadinessError, acquireRecoveryHead, readOnlyRecoveryPass, RecoveryTrace } from "./recoveryReadiness";
 import { assertRecoveryJournalReadiness, verifyReviewedRecoveryManifest } from "./missionLegacyRecoveryCli";
 import { recoveryBinding } from "./missionLegacyRecovery";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
@@ -44,4 +44,25 @@ test("diagnostic never copies arbitrary transport exception fields or messages",
  const trace=new RecoveryTrace();
  expect(trace.diagnostic(Object.assign(new Error("credential raw envelope"),{reason:"credential",request:"raw envelope"}))).toMatchObject({stage:"journal",reason:"proof-rejected",reads:0});
  expect(JSON.stringify(trace.diagnostic(new Error("credential raw envelope")))).not.toContain("credential");
+});
+
+// Exercise nested viem wrappers without consulting provider-controlled messages.
+import { BaseError, HttpRequestError, RpcRequestError, TimeoutError, ContractFunctionRevertedError, ExecutionRevertedError } from "viem";
+import { BatchQuoteExpiredError } from "./missionBatchFees";
+test("typed read diagnostics preserve domain, lease, deadline and freshness errors", async()=>{
+ const trace=new RecoveryTrace();
+ for(const error of [new HttpRequestError({url:"https://local.invalid",details:"DO_NOT_PRINT"}),
+   new RpcRequestError({url:"https://local.invalid",body:{},error:{code:-32000,message:"DO_NOT_PRINT"}}),
+   new TimeoutError({url:"https://local.invalid",body:{}})]) {
+   const wrapped=new BaseError("DO_NOT_PRINT",{cause:error});
+   const classified=classifyRecoveryReadError(wrapped);
+   expect(trace.diagnostic(classified).reason).toBe("rpc-unavailable");
+   expect(JSON.stringify(trace.diagnostic(classified))).not.toContain("DO_NOT_PRINT");
+ }
+ for(const error of [new RecoveryReadinessError("lease-lost"),new RecoveryReadinessError("pass-deadline"),
+   new BatchQuoteExpiredError(),new Error("domain rejection"),new ExecutionRevertedError(),
+   new ContractFunctionRevertedError({abi:[],functionName:"fixture",cause:new RpcRequestError({url:"https://local.invalid",body:{},error:{code:3,message:"DO_NOT_PRINT"}})})])expect(classifyRecoveryReadError(error)).toBe(error);
+ const deadline=new RecoveryReadinessError("pass-deadline");
+ const wrapped=trace.wrap({assertActive:()=>{throw deadline;},read:async()=>{throw new HttpRequestError({url:"https://local.invalid"});}});
+ await expect(wrapped.read(async()=>0)).rejects.toBe(deadline);
 });

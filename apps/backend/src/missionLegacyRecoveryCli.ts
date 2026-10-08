@@ -71,7 +71,7 @@ if (import.meta.main) runMissionRecovery(process.argv.slice(2)).catch(() => {
 });
 
 /** SELECT-only admission; never migrate, claim a lease, or expose envelope bytes. */
-export function assertRecoveryJournalReadiness(db: Database, binding: ReturnType<typeof recoveryBinding>, maxFeeWei: string): {raw:Hex;hash:Hex;maxFeeWei:string}|undefined {
+export function assertRecoveryJournalReadiness(db: Database, binding: ReturnType<typeof recoveryBinding>, maxFeeWei: string): {raw:Hex;hash:Hex;maxFeeWei:string;attempts:number;nextRetry:number}|undefined {
   const {chainId,address,nonce,originalHash}=binding;
   const reject=():never=>{throw new RecoveryReadinessError("journal-mismatch");};
   const row=db.query("SELECT operation_id,membership,nonce,status,serialized_transaction FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
@@ -85,8 +85,8 @@ export function assertRecoveryJournalReadiness(db: Database, binding: ReturnType
     || db.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1").get(chainId,address)
     || db.query("SELECT 1 FROM resolver_send_fences WHERE chain_id=? AND resolver_address=? LIMIT 1").get(chainId,address))reject();
   if(!group?.alternative_hash) {if(group?.reservation_id)reject();return undefined;}
-  const persisted=db.query("SELECT i.serialized_transaction AS raw,i.transaction_hash AS hash,i.replay_max_fee_wei AS maxFeeWei FROM resolver_prepared_intents i JOIN resolver_signing_reservations r ON r.id=? AND r.chain_id=i.chain_id AND r.resolver_address=i.resolver_address AND r.operation_id=i.operation_id AND r.nonce=i.nonce AND r.membership=i.membership AND r.transferred=1 JOIN resolver_signing_results s ON s.reservation_id=r.id AND s.transaction_hash=i.transaction_hash AND s.serialized_transaction=i.serialized_transaction WHERE i.chain_id=? AND i.resolver_address=? AND i.transaction_hash=? AND i.operation_id=? AND i.membership=? AND i.nonce=? AND i.status='pending' AND i.replay_state IN ('unvalidated','ready','retryable')")
-    .get(group.reservation_id,chainId,address,group.alternative_hash,binding.operationId,binding.membership,nonce) as {raw:Hex;hash:Hex;maxFeeWei:string}|null;
-  if(!persisted?.raw || persisted.maxFeeWei!==maxFeeWei)reject();
+  const persisted=db.query("SELECT i.serialized_transaction AS raw,i.transaction_hash AS hash,i.replay_max_fee_wei AS maxFeeWei,i.send_attempts AS attempts,i.next_retry_ms AS nextRetry FROM resolver_prepared_intents i JOIN resolver_signing_reservations r ON r.id=? AND r.chain_id=i.chain_id AND r.resolver_address=i.resolver_address AND r.operation_id=i.operation_id AND r.nonce=i.nonce AND r.membership=i.membership AND r.transferred=1 JOIN resolver_signing_results s ON s.reservation_id=r.id AND s.transaction_hash=i.transaction_hash AND s.serialized_transaction=i.serialized_transaction WHERE i.chain_id=? AND i.resolver_address=? AND i.transaction_hash=? AND i.operation_id=? AND i.membership=? AND i.nonce=? AND i.status='pending' AND i.replay_state IN ('unvalidated','ready','retryable')")
+    .get(group.reservation_id,chainId,address,group.alternative_hash,binding.operationId,binding.membership,nonce) as {raw:Hex;hash:Hex;maxFeeWei:string;attempts:number;nextRetry:number}|null;
+  if(!persisted?.raw || persisted.maxFeeWei!==maxFeeWei || !Number.isSafeInteger(persisted.attempts) || persisted.attempts<0 || !Number.isSafeInteger(persisted.nextRetry) || persisted.nextRetry<0)reject();
   return persisted!;
 }

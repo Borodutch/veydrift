@@ -1,14 +1,27 @@
 import type { PublicClient, Hex } from "viem";
-import { TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
+import { BaseError, HttpRequestError, RpcRequestError, TimeoutError, WebSocketRequestError, ContractFunctionRevertedError, ExecutionRevertedError, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
 import type { PreparedReconciliationPass, LegacyRecoveryBinding } from "./resolverTransactions";
 import { assertBatchQuoteFresh, BatchQuoteExpiredError } from "./missionBatchFees";
 
-export type RecoveryStage = "journal" | "initial-candidates" | "pause" | "fresh-head" | "proof" | "post-quote-candidates" | "final-identity" | "final-head" | "final-guard" | "dispatch";
-export type RecoveryReason = "rpc-unavailable" | "candidate-included" | "nonce-changed" | "canonical-changed" | "paused" | "head-timeout" | "latency-margin" | "head-moved" | "pass-deadline" | "pass-budget" | "lease-lost" | "proof-rejected" | "journal-mismatch" | "reference-disagreement" | "quote-expired";
+export type RecoveryStage = "journal" | "retry-hold" | "initial-candidates" | "pause" | "fresh-head" | "proof" | "post-quote-candidates" | "final-identity" | "final-head" | "final-guard" | "dispatch";
+export type RecoveryReason = "retry-cooldown" | "rpc-unavailable" | "candidate-included" | "nonce-changed" | "canonical-changed" | "paused" | "head-timeout" | "latency-margin" | "head-moved" | "pass-deadline" | "pass-budget" | "lease-lost" | "proof-rejected" | "journal-mismatch" | "reference-disagreement" | "quote-expired";
 export class RecoveryReadinessError extends Error {
   constructor(readonly reason: RecoveryReason, message: string = reason) { super(message); }
 }
 export type RecoveryDiagnostic = { stage: RecoveryStage; reason: RecoveryReason | "ready"; elapsedMs: number; reads: number; blockNumber?: string; blockHash?: Hex };
+/** Classify viem transport causes by type only, keeping domain/revert errors intact.
+ * Called at read boundaries; never inspect or copy provider messages or request fields. */
+export function classifyRecoveryReadError(error: unknown): unknown {
+  if (!(error instanceof BaseError)) return error;
+  let cause: unknown = error;
+  for (let depth=0; cause instanceof BaseError && depth<16; depth++, cause=cause.cause) {
+    if (cause instanceof ContractFunctionRevertedError || cause instanceof ExecutionRevertedError) return error;
+    if (cause instanceof HttpRequestError || cause instanceof RpcRequestError
+      || cause instanceof TimeoutError || cause instanceof WebSocketRequestError) return new RecoveryReadinessError("rpc-unavailable");
+  }
+  return error;
+}
+
 /** Only our finite codes cross the operator boundary; never serialize caught RPC errors. */
 export class RecoveryTrace {
   private started = performance.now();
@@ -16,7 +29,7 @@ export class RecoveryTrace {
   reads = 0;
   block?: { number: bigint; hash: Hex };
   wrap(pass: PreparedReconciliationPass): PreparedReconciliationPass {
-    return { assertActive: pass.assertActive, read: async operation => { this.reads++; return pass.read(operation); } };
+    return { assertActive: pass.assertActive, read: async operation => { this.reads++; try { return await pass.read(operation); } catch(error) { pass.assertActive(); throw classifyRecoveryReadError(error); } } };
   }
   diagnostic(error?: unknown): RecoveryDiagnostic {
     return { stage: this.stage, reason: error === undefined ? "ready" : error instanceof RecoveryReadinessError ? error.reason : error instanceof BatchQuoteExpiredError ? "quote-expired" : "proof-rejected",

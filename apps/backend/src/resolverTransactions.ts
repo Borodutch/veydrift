@@ -1,4 +1,5 @@
-import { RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
+import { BatchQuoteExpiredError } from "./missionBatchFees";
+import { classifyRecoveryReadError, RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
@@ -545,7 +546,7 @@ export class ResolverTransactionCoordinator {
       }
       reads++;
       if(trace)trace.reads++;
-      return bounded(operation);
+      try { return await bounded(operation); } catch(error) { assertActive(); throw classifyRecoveryReadError(error); }
     } };
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
@@ -675,14 +676,15 @@ export class ResolverTransactionCoordinator {
       throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
     if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
+    if (recovery && pass.recoveryTrace) pass.recoveryTrace.stage="retry-hold";
     if (intent.nextRetry > this.now()) {
-      if (intent.attempts >= 3) throw this.replayError(intent, "recoverable pending; bounded retry cooling down");
+      if (intent.attempts >= 3) throw recovery ? new RecoveryReadinessError("retry-cooldown", "recoverable pending; bounded retry cooling down") : this.replayError(intent, "recoverable pending; bounded retry cooling down");
       await this.sleep(intent.nextRetry - this.now());
       assertLease();
     }
     let guard: PreparedReplayGuard;
     try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
-    catch(error) { pass.assertActive(); if(error instanceof RecoveryReadinessError)throw error; throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    catch(error) { pass.assertActive(); if(error instanceof RecoveryReadinessError || error instanceof BatchQuoteExpiredError)throw error; throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
     assertLease();
     const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
     if (group) {

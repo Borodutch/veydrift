@@ -837,11 +837,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.setPreparedReplayer(this.chain.id, address, {
         getTransaction: async (hash) => {
           try { return await this.publicClient!.getTransaction({ hash }); }
-          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new Error("replay transaction lookup unavailable"); }
+          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new RecoveryReadinessError("rpc-unavailable"); }
         },
         validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
           if(pass.recoveryTrace)pass.recoveryTrace.stage="pause";
-          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new Error("mission replay disabled or paused");
+          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");
           const items: BatchLeg[] = JSON.parse(membership);
           if (!Array.isArray(items) || items.length < 1 || items.length > 32
             || operationId !== "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(batchCalldata(items)))
