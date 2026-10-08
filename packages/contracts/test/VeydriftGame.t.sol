@@ -7164,13 +7164,13 @@ contract VeydriftGameTest is Test {
     {
         (target, orders) = _seedDeployBatch(count);
         uint64 readyAt;
-        for (uint256 i; i < count; ++i) {
+        for (uint16 i; i < count; ++i) {
             // All 14 storage fields are nonzero, with heterogeneous counts/speeds/cargo.
-            uint32 quantity = uint32(i + 1);
+            uint32 quantity = i + 1;
             orders[i].ships =
                 VeydriftGameStorage.MissionShips(quantity, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
-            orders[i].speedPercent = uint16(70 + (i % 4) * 10);
-            orders[i].cargo = VeydriftGameStorage.Resources(uint128(i), uint128(i + 1), uint128(i));
+            orders[i].speedPercent = 70 + (i % 4) * 10;
+            orders[i].cargo = VeydriftGameStorage.Resources(i, i + 1, i);
             uint256 origin = orders[i].originPlanetId;
             for (uint8 j; j <= uint8(Ship.Pathfinder); ++j) {
                 if (j != uint8(Ship.SolarSatellite)) _setShipCount(origin, Ship(j), 1);
