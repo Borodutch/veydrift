@@ -50,3 +50,13 @@ The stdlib fault harness uses only loopback mock upstreams and covers legitimate
 7. If regression occurs, restore ONLY the saved relay file and merged relay-only configuration and recreate l1-rpc once under the same owner; retain node data and all backend journal state. Record rollback reason and renewed observations. Never use a restart to bypass rate-limit or canonical disagreement holds. Restore operator-reviewed state, not stale mission DB snapshots.
 
 Residual scope: implementation is not deployed; fork readiness, beacon payload continuity, actual provider quota headroom, production max-RSS, WS/natural-log workload and long-window finality/mission drainage are explicit release evidence still required. No paid dependency, new signer, infrastructure reset or automatic destructive repair was introduced.
+
+## Independent-review corrections
+
+Ordinary validated JSON-RPC application/capability errors (including method-not-found, invalid parameters and call revert) are forwarded as HTTP200 with original code/id and a fixed message, without provider cooldown or fallback. Arbitrary upstream message/data and unknown envelope extensions are removed; successful result payloads remain protocol data, not sanitized public telemetry. Rate-limit envelopes are scanned across the entire response batch before sibling validation, so reverse ordering or malformed siblings cannot hide a quota hold.
+
+The absolute ingress timer starts in handler setup, before request-line/header parsing, and remains through response completion. Regression tests exercise four simultaneous request-line and header trickles and require slot release followed by successful normal traffic.
+
+Receipt collections must contain ordered unique transactions, consistent block hash/number, valid gas/status/bloom and logs with matching receipt/transaction identities. Hash requests bind directly; numeric requests additionally bind retained learned identity when unambiguous. Empty receipt arrays are valid; tag responses must be internally coherent but no pinned-tag claim is made. Raw header/receipt results require hex-string/list shapes. These checks do not recompute trie roots or decode raw RLP; execution remains the consensus verifier. The >8MiB fixture now consists of 3,500 structurally realistic logs, not a giant arbitrary string.
+
+Every local/reference head timestamp is parsed. Whole-network lag requires both references independently stale; a stale local head with fresh reference timestamps is local-staleness even inside the height-gap tolerance. Full HTTP sampler tests use ordered heads and same-height canonical lookups. No new live reliability claim follows from these offline corrections.

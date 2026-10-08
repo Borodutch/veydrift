@@ -10,7 +10,7 @@ def heads(n=100,ts=5000):
 
 class HealthTests(unittest.TestCase):
     def test_local_finality_frozen(self):
-        local=heads();ref=heads();ref['finalized']['number']=hex(2000)
+        local=heads(5000);ref=heads(5000);local['finalized']['number']=hex(1000);ref['finalized']['number']=hex(2000)
         result=h.classify(local,[ref,ref],[local,local],5100)
         self.assertEqual(result['tags']['finalized']['status'],'local-lag')
         self.assertEqual(result['tags']['latest']['status'],'observed')

@@ -13,6 +13,14 @@ H = '0x' + 'a'*64
 P = '0x' + 'b'*64
 BLOCK = {'number': '0x10', 'hash': H, 'parentHash': P, 'timestamp': '0x10'}
 
+def receipts(large=False):
+    tx='0x'+'c'*64
+    log={'address':'0x'+'d'*40,'topics':['0x'+'e'*64], 'data':'0x'+'ab'*1024,
+         'blockHash':H,'blockNumber':'0x10','transactionHash':tx,'transactionIndex':'0x0','removed':False}
+    return [{'blockHash':H,'blockNumber':'0x10','transactionHash':tx,'transactionIndex':'0x0',
+             'status':'0x1','gasUsed':'0x100','cumulativeGasUsed':'0x100','logsBloom':'0x'+'00'*256,
+             'logs':[dict(log,logIndex=hex(i)) for i in range(3500 if large else 1)]}]
+
 def request(method='eth_blockNumber', params=None, ident=1):
     return {'jsonrpc': '2.0', 'id': ident, 'method': method, 'params': params or []}
 
@@ -36,12 +44,28 @@ class Upstream:
                     if owner.mode == 'wrong-chain' and method == 'eth_chainId': value = '0x2'
                     if owner.mode == 'wrong-hash' and method.startswith('eth_getBlockBy'): value['hash'] = P
                     if owner.mode == 'null' and method.startswith('eth_getBlockBy'): value = None
-                    if method == 'eth_getBlockReceipts': value = ['x' * 8500398] if owner.mode == 'large' else []
+                    if method == 'eth_getBlockReceipts': value = receipts(owner.mode=='large')
+                    if method == 'debug_getRawReceipts': value = ['0x01']
+                    if method == 'debug_getRawHeader': value = '0x01'
+                    if method == 'eth_getBlockReceipts' and owner.mode == 'receipt-hash': value[0]['blockHash']=P
+                    if method == 'eth_getBlockReceipts' and owner.mode == 'receipt-number': value[0]['blockNumber']='0x99'
+                    if method == 'eth_getBlockReceipts' and owner.mode == 'receipt-log': value[0]['logs'][0]['blockHash']=P
+                    if method == 'eth_getBlockReceipts' and owner.mode == 'receipt-shape': value=['not a receipt']
+                    if method == 'eth_getBlockReceipts' and owner.mode == 'empty': value=[]
+                    if method.startswith('debug_getRaw') and owner.mode == 'raw-shape': value={'raw':'invalid'}
                     result = {'jsonrpc': '2.0', 'id': q['id'], 'result': value}
                     if owner.mode == 'rpc429': result = {'jsonrpc':'2.0','id':q['id'],'error':{'code':-32005,'message':'secret'}}
                     if owner.mode == 'id': result['id'] = 'wrong'
+                    if method in ('debug_getRawReceipts','eth_call','eth_getCode') and owner.mode in ('application','mixed-rate','mixed-reverse'):
+                        result={'jsonrpc':'2.0','id':q['id'],'error':{'code':{'debug_getRawReceipts':-32601,'eth_call':3,'eth_getCode':-32602}[method], 'message':'SYNTHETIC_SECRET', 'data':'SYNTHETIC_SECRET'}}
+                    if owner.mode.startswith('mixed-') and q['id']==2:
+                        result={'jsonrpc':'2.0','id':2,'error':{'code':-32005,'message':'quota'}}
+                    if owner.mode=='mixed-malformed' and q['id']==1: result={'invalid':True}
+                    if owner.mode=='extension': result['providerDebug']='SYNTHETIC_SECRET'
                     return result
-                body = json.dumps([answer(q) for q in data] if isinstance(data,list) else answer(data)).encode()
+                response = [answer(q) for q in data] if isinstance(data,list) else answer(data)
+                if owner.mode=='mixed-reverse' and isinstance(response,list): response.reverse()
+                body = json.dumps(response).encode()
                 if owner.mode == 'malformed': body = b'not json secret'
                 self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers()
                 try:
@@ -81,7 +105,7 @@ class RelayTests(unittest.TestCase):
             with self.assertRaises(r.RelayError): self.call()
             self.assertEqual(len(self.a.calls),count)
     def test_large_receipt_and_bounded_oversize(self):
-        self.a.mode='large'; self.assertGreater(len(self.call('eth_getBlockReceipts',['0x10'])['result'][0]),8388608)
+        self.a.mode='large'; self.assertGreater(len(json.dumps(self.call('eth_getBlockReceipts',['0x10']))),8388608)
         self.relay.max_body=8388608; self.b.mode='large'
         with self.assertRaises(r.RelayError): self.call('eth_getBlockReceipts',['0x10'])
         self.assertEqual(self.relay.last_error,'upstream body limit exceeded')

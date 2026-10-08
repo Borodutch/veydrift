@@ -16,10 +16,13 @@ def sample(url, timeout=6):
     relay = r.Relay([url], timeout=timeout)
     deadline = time.monotonic()+timeout
     def rpc(method, params):
-        return relay._request(0, {'jsonrpc':'2.0','id':1,'method':method,'params':params},deadline,1024*1024)[1]['result']
+        response=relay._request(0, {'jsonrpc':'2.0','id':1,'method':method,'params':params},deadline,1024*1024)[1]
+        if 'error' in response: raise r.RelayError('probe RPC capability unavailable')
+        return response['result']
     if r.quantity(rpc('eth_chainId', [])) != 8453:
         raise r.RelayError('reference chain mismatch')
     heads={tag:r.block(rpc('eth_getBlockByNumber',[tag,False])) for tag in TAGS}
+    for head in heads.values(): r.quantity(head.get('timestamp'))
     if not all(r.quantity(heads[a]['number']) >= r.quantity(heads[b]['number']) for a,b in [('latest','safe'),('safe','finalized')]):
         raise r.RelayError('inconsistent head ordering')
     def canonical(tags):
@@ -36,6 +39,8 @@ def classify(local, references, canonical, now):
         number=r.quantity(local[tag]['number'])
         age=now-r.quantity(local[tag]['timestamp'])
         refnums=[r.quantity(ref[tag]['number']) for ref in references]
+        refages=[now-r.quantity(ref[tag].get('timestamp')) for ref in references]
+        threshold={'latest':120,'safe':1800,'finalized':2100}[tag]
         gaps=[n-number for n in refnums]
         match=all(c[tag]['hash'].lower()==local[tag]['hash'].lower() for c in canonical)
         if not match:
@@ -44,13 +49,15 @@ def classify(local, references, canonical, now):
             status='local-lag'
         elif max(refnums)-min(refnums) > (60 if tag=='latest' else 900):
             status='reference-disagreement'
-        elif age > {'latest':120,'safe':1800,'finalized':2100}[tag] and all(abs(g)<=60 for g in gaps):
+        elif age > threshold and all(abs(g)<=60 for g in gaps) and all(a > threshold for a in refages):
             status='chainwide-lag'
+        elif age > threshold and any(a <= threshold for a in refages):
+            status='local-staleness'
         else:
             status='observed'
-        report['tags'][tag]={'number':number,'ageSeconds':age,'referenceGaps':gaps,'status':status}
+        report['tags'][tag]={'number':number,'ageSeconds':age,'referenceGaps':gaps,'referenceAgesSeconds':refages,'status':status}
     states=[v['status'] for v in report['tags'].values()]
-    for state in ('provider-disagreement','reference-disagreement','local-lag','chainwide-lag'):
+    for state in ('provider-disagreement','reference-disagreement','local-lag','local-staleness','chainwide-lag'):
         if state in states:
             report['status']=state;break
     return report

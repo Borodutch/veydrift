@@ -30,6 +30,14 @@ def quantity(value):
         raise RelayError('malformed quantity') from None
 
 
+def hexdata(value, size=None):
+    if not isinstance(value, str) or not value.startswith('0x') or len(value) % 2 or (size is not None and len(value) != 2+size*2):
+        raise RelayError('malformed hex data')
+    try: bytes.fromhex(value[2:])
+    except ValueError: raise RelayError('malformed hex data') from None
+    return value
+
+
 def block(value):
     if not isinstance(value, dict):
         raise RelayError('required block unavailable')
@@ -131,7 +139,20 @@ class Relay:
             if time.monotonic() >= deadline:
                 raise RelayError('request deadline exceeded')
             self._validate(payload, parsed)
-            return bytes(raw), parsed
+            responses = parsed if isinstance(parsed, list) else [parsed]
+            clean = []
+            for item in responses:
+                envelope = {'jsonrpc': '2.0', 'id': item['id']}
+                if 'error' in item:
+                    envelope['error'] = {'code': item['error']['code'], 'message': 'upstream RPC application error'}
+                else:
+                    envelope['result'] = item['result']
+                clean.append(envelope)
+            parsed = clean if isinstance(parsed, list) else clean[0]
+            encoded = json.dumps(parsed, separators=(',', ':')).encode()
+            if len(encoded) > cap: raise RelayError('upstream body limit exceeded')
+            if time.monotonic() >= deadline: raise RelayError('request deadline exceeded')
+            return encoded, parsed
         except RelayError:
             raise
         except (OSError, ValueError, http.client.HTTPException, RecursionError):
@@ -143,6 +164,12 @@ class Relay:
     def _validate(self, payload, parsed):
         requests = payload if isinstance(payload, list) else [payload]
         responses = parsed if isinstance(parsed, list) else [parsed]
+        # Rate-limit envelopes dominate malformed/capability siblings in any order.
+        for response in responses:
+            if isinstance(response, dict):
+                error = response.get('error')
+                if isinstance(error, dict) and error.get('code') in (429, -32005, -32016):
+                    raise RelayError('upstream rate limited', 60)
         if isinstance(payload, list) != isinstance(parsed, list) or len(requests) != len(responses):
             raise RelayError('invalid RPC response shape')
         by_id = {}
@@ -159,13 +186,18 @@ class Relay:
                 raise RelayError('missing RPC result')
             error = response.get('error')
             if error is not None:
-                # Provider JSON-RPC rate limits must not become fallback roulette.
-                code = error.get('code') if isinstance(error, dict) else None
-                if code in (429, -32005, -32016):
-                    raise RelayError('upstream rate limited', 60)
-                raise RelayError('upstream RPC failure')
+                if not isinstance(error, dict) or type(error.get('code')) is not int or not isinstance(error.get('message'), str):
+                    raise RelayError('malformed RPC error')
+                continue  # Capability errors/reverts are not transport failures.
             if request['method'] in self.REQUIRED and response['result'] is None:
                 raise RelayError('required result unavailable')
+            if request['method'] == 'eth_getBlockReceipts':
+                self._receipts(request['params'], response['result'])
+            if request['method'] == 'debug_getRawHeader':
+                hexdata(response['result'])
+            if request['method'] == 'debug_getRawReceipts':
+                if not isinstance(response['result'], list): raise RelayError('malformed raw receipts')
+                for raw_receipt in response['result']: hexdata(raw_receipt)
             if request['method'] in ('eth_getBlockByNumber', 'eth_getBlockByHash'):
                 b = block(response['result'])
                 param = request['params'][0]
@@ -174,9 +206,55 @@ class Relay:
                 if request['method'] == 'eth_getBlockByNumber' and param.startswith('0x') and quantity(b['number']) != quantity(param):
                     raise RelayError('requested block number mismatch')
 
+    def _receipts(self, params, receipts):
+        if not params or not isinstance(params[0], str) or not isinstance(receipts, list):
+            raise RelayError('malformed receipt collection')
+        requested = params[0]
+        expected_hash = requested.lower() if len(requested) == 66 and requested.startswith('0x') else None
+        expected_number = quantity(requested) if requested.startswith('0x') and expected_hash is None else None
+        if expected_hash and expected_hash in self.learned:
+            expected_number = quantity(self.learned[expected_hash])
+        if expected_number is not None:
+            learned = [h.lower() for h, n in self.learned.items() if quantity(n) == expected_number]
+            if len(set(learned)) == 1: expected_hash = learned[0]
+        seen = set()
+        identity = None
+        for receipt in receipts:
+            if not isinstance(receipt, dict): raise RelayError('malformed receipt')
+            h = hexdata(receipt.get('blockHash'), 32).lower()
+            n = quantity(receipt.get('blockNumber'))
+            tx = hexdata(receipt.get('transactionHash'), 32).lower()
+            index = quantity(receipt.get('transactionIndex'))
+            if tx in seen or index != len(seen): raise RelayError('invalid receipt ordering')
+            seen.add(tx)
+            if identity is not None and identity != (h, n): raise RelayError('mixed receipt blocks')
+            identity = (h, n)
+            if (expected_hash is not None and h != expected_hash) or (expected_number is not None and n != expected_number):
+                raise RelayError('receipt block identity mismatch')
+            if 'status' in receipt:
+                if quantity(receipt['status']) not in (0, 1): raise RelayError('malformed receipt status')
+            elif 'root' in receipt: hexdata(receipt['root'], 32)
+            else: raise RelayError('missing receipt status')
+            for key in ('cumulativeGasUsed', 'gasUsed'): quantity(receipt.get(key))
+            hexdata(receipt.get('logsBloom'), 256)
+            if not isinstance(receipt.get('logs'), list): raise RelayError('malformed receipt logs')
+            for log in receipt['logs']:
+                if not isinstance(log, dict): raise RelayError('malformed receipt log')
+                if (hexdata(log.get('blockHash'), 32).lower() != h or quantity(log.get('blockNumber')) != n
+                    or hexdata(log.get('transactionHash'), 32).lower() != tx or quantity(log.get('transactionIndex')) != index):
+                    raise RelayError('receipt log identity mismatch')
+                quantity(log.get('logIndex'))
+                hexdata(log.get('address'), 20)
+                hexdata(log.get('data'))
+                if not isinstance(log.get('topics'), list) or len(log['topics']) > 4: raise RelayError('malformed log topics')
+                for topic in log['topics']: hexdata(topic, 32)
+                if log.get('removed') is not False: raise RelayError('removed or malformed receipt log')
+
     def _proof(self, index, deadline):
         def rpc(method, params):
-            return self._request(index, {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}, deadline, 1024*1024)[1]['result']
+            result = self._request(index, {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}, deadline, 1024*1024)[1]
+            if 'error' in result: raise RelayError('upstream proof capability unavailable')
+            return result['result']
         if quantity(rpc('eth_chainId', [])) != self.chain_id:
             raise RelayError('upstream chain mismatch')
         if self.anchor:
@@ -230,9 +308,9 @@ class Relay:
                     raw, parsed = self._request(index, payload, deadline)
                     # Update bounded learned evidence only after the entire response validates.
                     responses = parsed if isinstance(parsed, list) else [parsed]
-                    by_id = {r['id']: r['result'] for r in responses}
+                    by_id = {r['id']: r['result'] for r in responses if 'result' in r}
                     for request in requests:
-                        if request['method'] in ('eth_getBlockByHash', 'eth_getBlockByNumber'):
+                        if request['id'] in by_id and request['method'] in ('eth_getBlockByHash', 'eth_getBlockByNumber'):
                             b = by_id[request['id']]
                             self.learned[b['hash']] = b['number']
                             self.learned.move_to_end(b['hash'])
@@ -289,6 +367,20 @@ class Handler(BaseHTTPRequestHandler):
     def setup(self):
         super().setup()
         self.connection.settimeout(self.server.relay.timeout)
+        def abort():
+            try: self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            self.connection.close()
+        self.deadline_timer = threading.Timer(self.server.relay.timeout * 2, abort)
+        self.deadline_timer.daemon = True
+        self.deadline_timer.start()
+    def handle(self):
+        try: super().handle()
+        except OSError: self.close_connection = True
+    def finish(self):
+        try: super().finish()
+        except OSError: pass
+        finally: self.deadline_timer.cancel()
     def reply(self, status, body, retry=0):
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
@@ -303,13 +395,6 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200 if self.path == '/healthz' else 404,
                    json.dumps(self.server.relay.health() if self.path == '/healthz' else {'error': 'not found'}).encode())
     def do_POST(self):
-        def abort():
-            try: self.connection.shutdown(socket.SHUT_RDWR)
-            except OSError: pass
-            self.connection.close()
-        timer = threading.Timer(self.server.relay.timeout * 2, abort)
-        timer.daemon = True
-        timer.start()
         try:
             length = self.headers.get('Content-Length', '')
             if len(self.headers.get_all('Content-Length', [])) != 1 or self.headers.get('Transfer-Encoding') or not length.isdecimal() or not 0 < int(length) <= 1024*1024:
@@ -326,8 +411,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
         except (OSError, ValueError):
             self.close_connection = True
-        finally:
-            timer.cancel()
     def log_message(self, *_args):
         pass
 
