@@ -144,16 +144,7 @@ export function BatchSupplyModal({
   const [draftSources, setDraftSources] = useState(sources);
   const initializedRequest = useRef(false);
   const refreshRequested = useRef(false);
-  // Accruing production alone cannot invalidate a reviewed shipment every ten seconds.
-  // Compare inventories/locks, but only resource decreases below the reviewed reserve.
-  const inventoryChanged = draftSources.length !== sources.length || draftSources.some(previous => {
-    const current = sources.find(source => source.planetId === previous.planetId);
-    return !current || current.unavailableReason !== previous.unavailableReason
-      || JSON.stringify(current.ships) !== JSON.stringify(previous.ships)
-      || JSON.stringify(current.driveLevels) !== JSON.stringify(previous.driveLevels)
-      || JSON.stringify(current.coordinates) !== JSON.stringify(previous.coordinates)
-      || (["metal", "crystal", "deuterium"] as const).some(key => current.resources[key] < previous.resources[key]);
-  });
+  const [reviewedGoal, setReviewedGoal] = useState(preview);
   const [sourceCargoOverrides, setSourceCargoOverrides] = useState<Record<string, Partial<SupplyResources>>>({});
 
   useEffect(() => {
@@ -162,6 +153,7 @@ export function BatchSupplyModal({
     if (initializedRequest.current && !refreshRequested.current) return;
     initializedRequest.current = true;
     refreshRequested.current = false;
+    setReviewedGoal(preview);
     setRequested(supplyResourceInputValues(initialRequested));
     setSourceCargoOverrides({});
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, loading, preview]);
@@ -196,7 +188,29 @@ export function BatchSupplyModal({
   const plan = useMemo(() => buildBatchSupplyPlan(planOptions), [planOptions]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
-  const missingTotal = resourceTotal(plan.missing);
+  const keys = ["metal", "crystal", "deuterium"] as const;
+  // Publishing a fresh preflight preview is not consent to a changed goal.
+  const goalNeedsReview = Boolean(upgrade && preview && (!reviewedGoal
+    || keys.some(key => preview.requirement[key] !== reviewedGoal.requirement[key] || preview.missing[key] > reviewedGoal.missing[key])
+    || Boolean(preview.inProgress) !== Boolean(reviewedGoal.inProgress)));
+  const needed = Object.fromEntries(keys.map(key => [key, Math.max(requestedNumbers[key], upgrade && preview ? preview.missing[key] : 0)])) as SupplyResources;
+  const remaining = Object.fromEntries(keys.map(key => [key, Math.max(0, needed[key] - plan.delivered[key])])) as SupplyResources;
+  // Revalidate reviewed shipments only; unrelated inventory/production cannot
+  // interrupt review or Max when cargo, fuel and the dispatched fleet still match.
+  const latestPlan = useMemo(() => buildBatchSupplyPlan({ ...planOptions, sources,
+    requested: plan.delivered,
+    selectedPlanetIds: new Set(plan.orders.map(order => order.originPlanetId)),
+    sourceCargoOverrides: Object.fromEntries(plan.orders.map(order => [order.originPlanetId, order.cargo])),
+  }), [planOptions, sources, plan]);
+  const inventoryChanged = latestPlan.blockedSources.length > 0 || latestPlan.sourceLimitReached
+    || plan.orders.length !== latestPlan.orders.length
+    || plan.orders.some(order => {
+      const current = latestPlan.orders.find(next => next.originPlanetId === order.originPlanetId);
+      return !current || current.fuelCost !== order.fuelCost || current.travelSeconds !== order.travelSeconds
+        || keys.some(key => current.cargo[key] !== order.cargo[key])
+        || supplyShips.some(({ key }) => current.ships[key] !== order.ships[key]);
+    });
+  const missingTotal = resourceTotal(remaining);
   const manualCargoAdjusted = Object.entries(sourceCargoOverrides).some(([id, cargo]) => selected.has(id)
     && (["metal", "crystal", "deuterium"] as const).some(key => (cargo[key] ?? 0) !== (orderByOrigin.get(id)?.cargo[key] ?? 0)));
   const transactionOutcome = transactionStateOutcome(transactionState);
@@ -205,10 +219,10 @@ export function BatchSupplyModal({
     ? transactionState?.label
     : undefined;
   const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission, targetIsMoon);
-  const maximum = useBatchSupplyMax(planOptions, target.planetId, loading || actionPending || transactionPending || inventoryChanged, (resource, value) => {
+  const maximum = useBatchSupplyMax(planOptions, target.planetId, loading || actionPending || transactionPending || inventoryChanged || goalNeedsReview, (resource, value) => {
     setRequested((current) => ({ ...current, [resource]: value === 0 ? "" : String(value) }));
   });
-  const canSubmit = !inventoryChanged && !manualCargoAdjusted && fleetSlotsKnown && !maximum.busy && (!upgrade || (Boolean(preview) && !preview?.inProgress && resourceTotal(preview!.missing) > 0)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && !missionLimitError;
+  const canSubmit = !goalNeedsReview && !inventoryChanged && !manualCargoAdjusted && fleetSlotsKnown && !maximum.busy && (!upgrade || (Boolean(preview) && !preview?.inProgress && resourceTotal(preview!.missing) > 0)) && !loading && !actionPending && !transactionPending && plan.orders.length > 0 && missingTotal === 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && !missionLimitError;
   const targetLabel = `${target.name?.trim() || target.coordinates}${targetIsMoon ? " moon" : ""}`;
   const etaRange = plan.orders.length > 0
     ? {
@@ -295,10 +309,11 @@ export function BatchSupplyModal({
         {onRefresh ? <button className="min-h-8 justify-self-start rounded border border-white/20 px-2" disabled={loading || actionPending || transactionPending} onClick={() => { refreshRequested.current = true; onRefresh(); }} type="button">Refresh destination and shortfall</button> : null}
       </section> : null}
       <section aria-label="Supply totals" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg surface-inset p-2 text-xs font-mono">
-        <span className="text-slate-400">Needed</span><span>M {format(requestedNumbers.metal)} · C {format(requestedNumbers.crystal)} · D {format(requestedNumbers.deuterium)}</span>
+        <span className="text-slate-400">Needed</span><span>M {format(needed.metal)} · C {format(needed.crystal)} · D {format(needed.deuterium)}</span>
         <span className="text-cyan-200">Planned</span><span>M {format(plan.delivered.metal)} · C {format(plan.delivered.crystal)} · D {format(plan.delivered.deuterium)}</span>
-        <span className={missingTotal ? "text-amber-200" : "text-slate-400"}>Remaining</span><span>M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}</span>
+        <span className={missingTotal ? "text-amber-200" : "text-slate-400"}>Remaining</span><span>M {format(remaining.metal)} · C {format(remaining.crystal)} · D {format(remaining.deuterium)}</span>
       </section>
+      {goalNeedsReview ? <p role="alert" className="text-xs text-amber-100">Destination goal changed. Your draft is unchanged; refresh destination and shortfall to review it before launching.</p> : null}
       {inventoryChanged ? <div className="flex flex-wrap items-center gap-2 text-xs text-amber-100" aria-live="polite">
         <span>Source inventory changed. Your draft is unchanged.</span>
         <button type="button" className="min-h-8 rounded border border-amber-200/30 px-2" disabled={actionPending || transactionPending || loading} onClick={recalculate}>Review latest inventory</button>
@@ -485,7 +500,7 @@ export function BatchSupplyModal({
         {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
         {plan.blockedSources.length > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Some selected sources cannot launch: {plan.blockedSources.map((blocked) => `${sources.find(source => source.planetId === blocked.planetId)?.label ?? blocked.planetId}: ${blocked.reason}`).join(" ")}</p> : null}
         {manualCargoAdjusted ? <p className="text-xs text-amber-100">A manual shipment exceeds current stock or capacity. Edit it or restore Auto before launching.</p> : null}
-        {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(plan.missing.metal)} · C {format(plan.missing.crystal)} · D {format(plan.missing.deuterium)}. {sources.some((source) => !source.unavailableReason && supplyShips.some(({ key }) => (source.ships[key] ?? 0) > 0 && !(shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes).includes(key))) ? "Enable more ship types, select more sources, or reduce the request." : "Select more sources with available cargo ships, or reduce the request."}</p> : null}
+        {missingTotal > 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Missing: M {format(remaining.metal)} · C {format(remaining.crystal)} · D {format(remaining.deuterium)}. {sources.some((source) => !source.unavailableReason && supplyShips.some(({ key }) => (source.ships[key] ?? 0) > 0 && !(shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes).includes(key))) ? "Enable more ship types, select more sources, or reduce the request." : "Select more sources with available cargo ships, or reduce the request."}</p> : null}
         {transactionPending ? <p className="rounded border border-cyan-300/30 bg-cyan-300/10 p-2 text-sm text-cyan-100">Processing… You can close this window.</p> : null}
         {missionLimitError ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{missionLimitError}</p> : null}
         {(error ?? canonicalTransactionError) ? <p className="rounded border border-red-300/30 bg-red-300/10 p-2 text-sm text-red-100">{error ?? canonicalTransactionError}</p> : null}

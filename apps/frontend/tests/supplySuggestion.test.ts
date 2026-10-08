@@ -49,3 +49,15 @@ test("partial candidates and fuel-starved near sources cannot hide an available 
   expect(plan.orders).toHaveLength(2);
   expect(plan.missing).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
 });
+
+test("two slots choose complementary residual inventory beyond both naive prefixes", () => {
+  const sources: BatchSupplySource[] = [
+    { planetId:"a",label:"A",coordinates:{galaxy:1,system:1,position:14},resources:{metal:10000,crystal:0,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+    { planetId:"b",label:"B",coordinates:{galaxy:1,system:1,position:13},resources:{metal:9000,crystal:0,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+    { planetId:"c",label:"C",coordinates:{galaxy:1,system:1,position:12},resources:{metal:0,crystal:1000,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+  ];
+  const args={sources,targetCoordinates:{galaxy:1,system:1,position:15},requested:{metal:10000,crystal:1000,deuterium:0},maxOrders:2};
+  const selectedPlanetIds=suggestBatchSupplySourceIds(args);
+  expect([...selectedPlanetIds]).toEqual(["a","c"]);
+  expect(buildBatchSupplyPlan({...args,selectedPlanetIds}).missing).toEqual({metal:0,crystal:0,deuterium:0});
+});

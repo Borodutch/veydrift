@@ -218,6 +218,22 @@ export function suggestBatchSupplySourceIds(options: Omit<BatchSupplyOptions, "s
   const singles = nearest.map(source => ({ source, plan: evaluate([source]) }));
   const largest = [...singles].sort((a, b) => resourceTotal(b.plan.delivered) - resourceTotal(a.plan.delivered) || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId)).map(item => item.source);
   const candidates = [...singles.map(item => item.plan), evaluate(nearest.slice(0, limit)), evaluate(largest.slice(0, limit))];
+  // Add the origin which fills the current residual, rather than repeatedly
+  // ranking overlapping inventories against the original request (A metal,
+  // B metal, C crystal must choose A+C when only two slots are available).
+  const residualSources: BatchSupplySource[] = [];
+  let residual = evaluate(residualSources);
+  while (residualSources.length < limit && resourceTotal(residual.missing) > 0) {
+    const next = nearest.filter(source => !residualSources.includes(source))
+      .map(source => ({ source, plan: evaluate([...residualSources, source]) }))
+      .sort((a, b) => resourceTotal(a.plan.missing) - resourceTotal(b.plan.missing)
+        || a.plan.blockedSources.length - b.plan.blockedSources.length
+        || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId))[0];
+    if (!next || resourceTotal(next.plan.missing) >= resourceTotal(residual.missing)) break;
+    residualSources.push(next.source);
+    residual = next.plan;
+    candidates.push(residual);
+  }
   // The ordinary planner is nearest-first. Candidate pruning evaluates progressively
   // smaller sets so a complete plan never retains empty/fuel-starved origins.
   for (const ordering of [nearest, largest]) {

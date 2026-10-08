@@ -184,7 +184,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.changeStock()'); await settle();
       assert.equal(await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="New Zion metal to send"]') + ').value'), '12500', 'refresh keeps exact manual input');
       assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock requires explicit review');
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      await click('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))');
       assert.equal(await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="New Zion metal to send"]') + ').value'), '12500', 'review does not erase oversized manual input');
       assert.equal(await evaluate(launch + '.disabled'), true, 'exact remaining shortfall blocks incomplete plan');
       assert.ok(await evaluate('document.querySelector("section[aria-label$=totals]").textContent.includes("Remaining")'));
@@ -197,7 +197,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await load(width, 'emptyFleet=1');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      await click('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))');
       await click(source); // Preserve explicit selection; refresh must not reselect sources.
       await input('metal to send', 0);
       assert.equal(await evaluate(launch + '.disabled'), true, 'new ships alone must not send cargo');
@@ -213,7 +213,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
       assert.deepEqual((await submit()).orders, deploy.orders, 'partial/final credit snapshot does not double count the effective fleet');
       await evaluate('supplyFixture.effectiveCargo(1)'); await settle();
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      await click('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))');
       await input('metal to send', 10000);
       const afterDebit = await submit();
       assert.equal(afterDebit.orders[0].ships.largeCargo, 1, 'spent ships do not reappear');
@@ -326,16 +326,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       () => click(checkbox(0)),
       () => click(source),
       () => click(`document.querySelector('[aria-label="Mission type"] button:last-child')`),
-      async () => { await evaluate('supplyFixture.changeStock()'); await settle(); },
-      async () => { await evaluate('supplyFixture.changeEligibility()'); await settle(); },
-      async () => { await evaluate('supplyFixture.changeDrives()'); await settle(); },
       async () => { await evaluate("supplyFixture.changeRoute()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeBody()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeLimit()"); await settle(); },
       () => click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")'),
       async () => { await evaluate('supplyFixture.pending("action")'); await settle(); },
     ]) {
-      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")?.click()'); await settle();
+      await evaluate('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))?.click()'); await settle();
       await startMax('metal');
       await evaluate('window.staleMax = maxWorkers.at(-1)');
       await change();
@@ -348,7 +345,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'stale errors ignored');
     }
     await evaluate('supplyFixture.pending("none")'); await settle();
-    await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")?.click()'); await settle();
+    await evaluate('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
       const expected = await amount('metal');
@@ -752,7 +749,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click(source); await click(secondSource);
       await evaluate('supplyFixture.changeStock()'); await settle();
       assert.equal(await evaluate(launch + '.disabled'), true, 'stock refresh requires explicit review');
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      await click('[...document.querySelectorAll("button")].find(b => ["Review latest inventory", "Recalculate with latest stock"].includes(b.textContent))');
       assert.equal(await evaluate(lunaSmall + '.textContent.includes("×1")'), true, 'fresh planned count');
       assert.equal(await pressed(lunaRecycler), true, 'changed inventory retains opt-in');
       assert.equal(await evaluate(launch + '.disabled'), true, 'changed stock blocks short shipment');
