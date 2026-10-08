@@ -11,7 +11,6 @@ import {
   detectFarcasterMiniApp,
   farcasterMiniAppPlatformType,
   farcasterMiniAppWalletSupport,
-  hasMiniAppUrlHint,
   signalFarcasterReadyOnce,
   type FarcasterMiniAppPlatformType,
   type FarcasterMiniAppWalletSupport,
@@ -275,7 +274,7 @@ export function FirstPlanetSettlementApp() {
   const [planet, setPlanet] = useState<PlanetState>({
     kind: "idle",
   });
-  const [miniAppMode, setMiniAppMode] = useState(() => (typeof window !== "undefined" ? hasMiniAppUrlHint(window.location) : false));
+  const [miniAppMode, setMiniAppMode] = useState(false);
   const [miniAppPlatformType, setMiniAppPlatformType] = useState<FarcasterMiniAppPlatformType | undefined>();
   const [referralProgramPhase, setReferralProgramPhase] = useState<ReferralProgramPhase>({ status: "idle" });
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());

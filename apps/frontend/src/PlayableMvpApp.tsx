@@ -61,7 +61,7 @@ import {
 } from "./constructionProgress";
 import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import { formatDurationUntil } from "./durationFormat";
-import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
+import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
 import { fleetMissionDistance, type FleetDriveLevels } from "./fleetMissionRules";
 import { emptyMissionShips, galaxyActionsForSlot, missionTypeId, type GalaxyAction, type MissionShipKey, type MissionShips } from "./galaxyActions";
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
@@ -2540,7 +2540,7 @@ export function PlayableMvpApp({
   const [miniAppProvider, setMiniAppProvider] = useState<Eip1193Provider>();
   const [miniAppAccount, setMiniAppAccount] = useState<string | undefined>();
   const [miniAppWalletError, setMiniAppWalletError] = useState<string | undefined>();
-  const [detectedMiniAppMode, setDetectedMiniAppMode] = useState(() => providedMiniAppMode || (typeof window !== "undefined" && hasMiniAppUrlHint(window.location)));
+  const [detectedMiniAppMode, setDetectedMiniAppMode] = useState(() => Boolean(providedMiniAppMode));
   const miniAppWalletConnectAttempted = useRef(false);
   const provider = providedProvider ?? miniAppProvider;
   const walletProviderSource = providedWalletProviderSource ?? (providedProvider ? "injected" : miniAppProvider ? "farcaster" : undefined);

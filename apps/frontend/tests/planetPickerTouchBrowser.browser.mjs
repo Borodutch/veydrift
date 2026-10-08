@@ -2600,6 +2600,12 @@ test("cold bootstrap coalesces duplicate chain events and discards the stale rea
   assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length"), 2);
 });
 
+test("Base app launch URL binds the injected wallet when no Farcaster host answers", async () => {
+  await loadInspectorFixture("/?miniApp=true", 1280, { shell: "settlement", waitForPlanetSelectors: "false" });
+  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
+  assert.equal(await evaluate("document.body.textContent.includes('Farcaster')"), false);
+});
+
 test("cold bootstrap Farcaster setup retains confirmation polling after chainChanged", async () => {
   await loadInspectorFixture("/?miniApp=true", 1280, { shell: "settlement", farcasterBootstrapSetup: "true", waitForPlanetSelectors: "false" });
   await waitForExpression("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_chainId').length >= 4");
