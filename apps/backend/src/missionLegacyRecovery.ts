@@ -1,7 +1,7 @@
 import { createPublicClient, http, encodeAbiParameters, parseAbi, toHex, keccak256, serializeTransaction, type Hex, type PublicClient } from "viem";
 import { batchCalldata, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 import { assertBatchQuoteFresh, validateMissionBatchReplay } from "./missionBatchFees";
-import type { LegacyRecoveryBinding, PreparedReconciliationPass } from "./resolverTransactions";
+import type { LegacyRecoveryBinding, PreparedReconciliationPass, PreparedReplayGuard } from "./resolverTransactions";
 
 export type MissionRecoveryInput = {
   chainId: number; address: Hex; nonce: number; originalHash: Hex; operationId: string;
@@ -16,7 +16,15 @@ export type MissionRecoveryInput = {
 };
 export const implementationSlot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc" as const;
 const hex32 = /^0x[0-9a-f]{64}$/i, address = /^0x[0-9a-f]{40}$/i, integer = /^(0|[1-9][0-9]*)$/;
+function exactKeys(value: unknown, keys: string): void {
+  if (!value || typeof value!=="object" || Array.isArray(value)
+    || Object.keys(value).sort().join(",")!==keys.split(" ").sort().join(",")) throw new Error("recovery manifest schema mismatch");
+}
 export function recoveryBinding(input: MissionRecoveryInput): LegacyRecoveryBinding {
+  exactKeys(input,"chainId address nonce originalHash operationId membership game calldataHash identities implementation originalFee gas allowAlreadySettled recoveryId maxFeeWei referenceRpcUrl mission");
+  exactKeys(input.originalFee,"gas totalWei l1ReserveWei operatorReserveWei maxFeePerGas priority source sourceDigest");
+  exactKeys(input.mission,"owner origin target returnAt shipsWords bodyFlags");
+  if (Array.isArray(input.identities)) for (const identity of input.identities) exactKeys(identity,"address codeHash");
   if (!Number.isSafeInteger(input.chainId) || ![8453,84532].includes(input.chainId)
     || !Number.isSafeInteger(input.nonce) || input.nonce < 0 || !address.test(input.address)
     || !address.test(input.game) || !address.test(input.implementation) || !hex32.test(input.originalHash)
@@ -35,6 +43,7 @@ export function recoveryBinding(input: MissionRecoveryInput): LegacyRecoveryBind
   if (!Array.isArray(items) || items.length !== 1 || items.some((i) => !/^[1-9][0-9]*$/.test(i.missionId)
     || i.leg !== "return" || !Number.isSafeInteger(i.dueAt) || i.dueAt <= 0 || i.dueAt.toString()!==input.mission.returnAt)
     || new Set(items.map((i) => i.missionId + ":" + i.leg)).size !== items.length) throw new Error("invalid recovery membership");
+  for (const item of items) exactKeys(item,"missionId leg dueAt");
   const data = batchCalldata(items);
   if (keccak256(data) !== input.calldataHash || input.operationId !== "mission-batch:" + input.game.toLowerCase() + ":" + input.calldataHash)
     throw new Error("recovery calldata/operation mismatch");
@@ -66,12 +75,11 @@ export async function verifyRecoveryReference(client: PublicClient, input: Missi
   }
 }
 
-export async function verifyRecoveryIdentity(client: PublicClient, input: MissionRecoveryInput, pass: PreparedReconciliationPass) {
+export async function verifyRecoveryIdentity(client: PublicClient, input: MissionRecoveryInput, pass: PreparedReconciliationPass, blockNumber?: bigint) {
   if (await pass.read(() => client.getChainId()) !== input.chainId) throw new Error("recovery RPC chain mismatch");
-  const block = await pass.read(() => client.getBlock({ blockTag: "latest" }));
+  const block = await pass.read(() => client.getBlock(blockNumber === undefined ? { blockTag: "latest" } : { blockNumber }));
   if (block.number === null || !block.hash) throw new Error("recovery canonical block unavailable");
   assertBatchQuoteFresh({blockNumber:block.number,blockHash:block.hash,blockTimestamp:block.timestamp});
-  await verifyRecoveryReference(client,input,block.number,block.hash,pass);
   const slot = await pass.read(() => client.getStorageAt({ address: input.game, slot: implementationSlot, blockNumber: block.number! }));
   if (slot?.slice(-40).toLowerCase() !== input.implementation.slice(2).toLowerCase()) throw new Error("recovery implementation changed");
   for (const identity of input.identities) {
@@ -91,9 +99,28 @@ export async function verifyRecoveryIdentity(client: PublicClient, input: Missio
     const value = await pass.read(() => client.getStorageAt({address:input.game,slot:toHex(base+offset,{size:32}),blockNumber:block.number!}));
     if (value!==expected) throw new Error("recovery mission ships/body flags changed");
   }
+  await verifyRecoveryReference(client,input,block.number,block.hash,pass);
   const canonical = await pass.read(() => client.getBlock({ blockNumber: block.number! }));
   if (canonical.hash !== block.hash) throw new Error("recovery identity block changed");
   return { ...block, recoveryComplete: mission[0]===3 || mission[0]===4 };
+}
+
+/** Recheck the exact proof after all candidate/nonce awaits. A moved head requires a fresh
+ * whole proof; never combine old code/asset identity with newer fee/simulation provenance. */
+export function recoveryProofGuard(client: PublicClient, input: MissionRecoveryInput,
+  block: Awaited<ReturnType<typeof verifyRecoveryIdentity>>, pass: PreparedReconciliationPass,
+  feeGuard: () => void): PreparedReplayGuard {
+  const assertFresh = () => {
+    pass.assertActive(); feeGuard();
+    assertBatchQuoteFresh({blockNumber:block.number!,blockHash:block.hash!,blockTimestamp:block.timestamp});
+  };
+  return Object.assign(assertFresh, { finalCheck: async () => {
+    const identity = await verifyRecoveryIdentity(client,input,pass,block.number!);
+    if (identity.hash!==block.hash) throw new Error("recovery proof block changed");
+    const latest = await pass.read(() => client.getBlock({blockTag:"latest"}));
+    if (latest.number!==block.number || latest.hash!==block.hash) throw new Error("recovery proof head moved; refresh complete proof");
+    assertFresh();
+  } });
 }
 
 export async function prepareRecoveryEnvelope(client: PublicClient, input: MissionRecoveryInput,
@@ -112,11 +139,11 @@ export async function prepareRecoveryEnvelope(client: PublicClient, input: Missi
     to: binding.to, data: binding.data, value: 0n, gas: BigInt(input.gas), maxFeePerGas, maxPriorityFeePerGas };
   let evidence = "";
   const guard = await validateMissionBatchReplay(client, serializeTransaction(transaction), {
-    items: JSON.parse(binding.membership), account: binding.address, game: binding.to, chainId: binding.chainId, policy
+    items: JSON.parse(binding.membership), account: binding.address, game: binding.to, chainId: binding.chainId, policy, blockNumber: block.number!
   }, pass, input.allowAlreadySettled && block.recoveryComplete, (value) => { evidence=value; });
   const balance = await pass.read(() => client.getBalance({ address: binding.address, blockNumber: block.number! }));
   // Funding check is deliberately conservative: require the entire immutable transaction budget.
   if (balance < (policy.maxFeeWei < 200_000_000_000_000n ? policy.maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
   guard();
-  return { transaction, guard, evidence };
+  return { transaction, guard: recoveryProofGuard(client,input,block,pass,guard), evidence };
 }

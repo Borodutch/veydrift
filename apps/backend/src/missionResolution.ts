@@ -27,7 +27,7 @@ import {
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
-import { prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
+import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
@@ -858,16 +858,18 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           const maxFeeWei = BigInt(originalMaxFeeWei) < this.batchPolicy.maxFeeWei ? BigInt(originalMaxFeeWei) : this.batchPolicy.maxFeeWei;
           const recovery = this.transactionCoordinator.getRecoveryBinding(this.chain!.id, address, raw);
           let allowRecoveryNoop = false;
+          let identity: Awaited<ReturnType<typeof verifyRecoveryIdentity>> | undefined;
           if (recovery) {
-            const identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass);
+            identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass);
             allowRecoveryNoop = JSON.parse(recovery.evidence).allowAlreadySettled === true && identity.recoveryComplete;
-            const balance = await pass.read(() => this.publicClient!.getBalance({address,blockTag:"latest"}));
+            const balance = await pass.read(() => this.publicClient!.getBalance({address,blockNumber:identity!.number!}));
             if (balance < (maxFeeWei < 200_000_000_000_000n ? maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
 
           }
-          return validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
-            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei } }, pass, allowRecoveryNoop,
+          const feeGuard = await validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
+            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop,
             recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
+          return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard) : feeGuard;
         },
         broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
       });
@@ -885,7 +887,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       if (await this.gamePaused()) throw new Error("recovery game paused");
       const {transaction, guard, evidence} = await prepareRecoveryEnvelope(client, input, this.batchPolicy, pass);
       this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
-      await sign(() => { guard(); return account.signTransaction(transaction); }, serializeTransaction(transaction));
+      await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
     }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString());
   }
 

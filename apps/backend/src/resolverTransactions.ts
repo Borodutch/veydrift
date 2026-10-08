@@ -18,10 +18,12 @@ export type PreparedReconciliationPass = {
 type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
   pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
 
+export type PreparedReplayGuard = (() => void) & { finalCheck?: () => Promise<void> };
+
 export type PreparedReplay = {
   /** Only explicit not-found returns null; transport errors throw. */
   getTransaction: (hash: Hex) => Promise<{ hash: Hex; blockHash: Hex | null } | null>;
-  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<() => void>;
+  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<PreparedReplayGuard>;
   broadcast: (raw: Hex) => Promise<Hex>;
 };
 export type LegacyRecoveryBinding = {
@@ -325,7 +327,7 @@ export class ResolverTransactionCoordinator {
 
   /** Explicit operator path. A reservation without a result is never signed a second time. */
   recoverLegacySameNonce(binding: LegacyRecoveryBinding,
-    prepare: (sign: (signer: () => Promise<Hex>, unsignedPlan: Hex) => Promise<Hex>, assertLease: () => void) => Promise<void>,
+    prepare: (sign: (signer: () => Promise<Hex>, unsignedPlan: Hex, prevalidation?: PreparedReplayGuard) => Promise<Hex>, assertLease: () => void) => Promise<void>,
     maxFeeWei: string): Promise<void> {
     const { chainId, address, nonce } = binding;
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address, async (assertLease) => {
@@ -361,16 +363,18 @@ export class ResolverTransactionCoordinator {
       if (group.winner_hash && (!group.reservation_id || group.alternative_hash)) throw new Error("recovery winner provisional; signer held until finality");
       if (!group.alternative_hash) {
         if (!group.reservation_id) {
-          await prepare(async (signer, unsignedPlan) => {
+          await prepare(async (signer, unsignedPlan, prevalidation) => {
             const plan = parseTransaction(unsignedPlan);
             if (plan.type !== "eip1559" || plan.chainId !== chainId || plan.nonce !== nonce || plan.to?.toLowerCase() !== binding.to.toLowerCase()
               || plan.data !== binding.data || (plan.value ?? 0n) !== 0n || (plan.accessList?.length ?? 0) !== 0 || plan.r || plan.s) throw new Error("recovery unsigned plan mismatch");
             await this.reconcileIntents(chainId, address, undefined, assertLease, true);
             const beforeSign = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
             if (beforeSign.winner_hash) throw new Error("original recovery candidate included before signing; resume reconciliation");
+            await prevalidation?.finalCheck?.();
             const id = randomUUID();
             this.database.transaction(() => {
               assertLease();
+              prevalidation?.(); // before irreversible reservation; no awaits before actual signer
               const changed = this.database.query("UPDATE resolver_nonce_recovery SET reservation_id=?,unsigned_plan=? WHERE chain_id=? AND resolver_address=? AND nonce=? AND reservation_id IS NULL AND alternative_hash IS NULL AND winner_hash IS NULL")
                 .run(id, unsignedPlan, chainId, normalizeAddress(address), nonce);
               if (changed.changes !== 1) throw new Error("recovery may sign only once");
@@ -670,9 +674,9 @@ export class ResolverTransactionCoordinator {
       await this.sleep(intent.nextRetry - this.now());
       assertLease();
     }
-    let guard: () => void;
+    let guard: PreparedReplayGuard;
     try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
-    catch { throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    catch { pass.assertActive(); throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
     assertLease();
     const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
     if (group) {
@@ -683,6 +687,8 @@ export class ResolverTransactionCoordinator {
       }
       await observer.assertUnconsumed(binding,pass);
     }
+    await guard.finalCheck?.();
+    assertLease();
     if (recovery && intent.replayState === "unvalidated") {
       this.database.transaction(() => {
         assertLease(); guard();

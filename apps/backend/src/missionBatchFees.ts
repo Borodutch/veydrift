@@ -162,14 +162,14 @@ export async function quoteResolverGas(client: PublicClient, input: {
 
 /** Replay never changes gas/fees/calldata. Refresh uncapped Base charges at a canonical block. */
 export async function validateMissionBatchReplay(client: PublicClient, raw: Hex, input: {
-  items: BatchLeg[]; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
+  items: BatchLeg[]; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy; blockNumber?: bigint;
 }, pass: PreparedReconciliationPass, recoveryAlreadySettled = false, observe?: (evidence: string) => void): Promise<() => void> {
   const tx = parseTransaction(raw);
   if (tx.type !== "eip1559" || tx.chainId !== input.chainId || tx.to?.toLowerCase() !== input.game.toLowerCase()
     || tx.data !== batchCalldata(input.items) || (tx.value ?? 0n) !== 0n || tx.nonce === undefined
     || tx.gas === undefined || tx.maxFeePerGas === undefined || tx.maxPriorityFeePerGas === undefined
     || ![8453, 84532].includes(input.chainId)) throw new Error("replay mission envelope mismatch");
-  const block = await pass.read(() => client.getBlock({ blockTag: "latest" }));
+  const block = await pass.read(() => client.getBlock(input.blockNumber === undefined ? { blockTag: "latest" } : { blockNumber: input.blockNumber }));
   if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("replay fee block unavailable");
   const provenance = { blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp };
   assertBatchQuoteFresh(provenance);

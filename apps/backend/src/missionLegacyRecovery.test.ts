@@ -8,7 +8,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { missionBatchAbi, batchCalldata, defaultMissionBatchPolicy } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
-import { runMissionRecovery } from "./missionLegacyRecoveryCli";
+import { runMissionRecovery, verifyReviewedRecoveryManifest } from "./missionLegacyRecoveryCli";
 import { recoveryBinding, type MissionRecoveryInput } from "./missionLegacyRecovery";
 const account = privateKeyToAccount(("0x"+"11".repeat(32)) as Hex);
 const game = ("0x"+"22".repeat(20)) as Hex, implementation=("0x"+"33".repeat(20)) as Hex;
@@ -177,9 +177,89 @@ test("dry run opens journal read-only even when network preflight fails; no sign
  const f=fixture();const keys=["VEYDRIFT_RPC_URL","VEYDRIFT_CHAIN_ID","VEYDRIFT_GAME_CONTRACT_ADDRESS","VEYDRIFT_RESOLVER_TRANSACTION_STORE_PATH","VEYDRIFT_MISSION_BATCH_ENABLED"];
  const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
  try{process.env.VEYDRIFT_RPC_URL="https://local.invalid";process.env.VEYDRIFT_CHAIN_ID="8453";process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS=game;process.env.VEYDRIFT_RESOLVER_TRANSACTION_STORE_PATH=f.path;process.env.VEYDRIFT_MISSION_BATCH_ENABLED="true";
- const inputPath=join(f.dir,"input.json");writeFileSync(inputPath,JSON.stringify(f.input));
+ const reviewedContent=readFileSync(new URL("../../../docs/recovery-58-input.json",import.meta.url),"utf8");
+ const reviewed=verifyReviewedRecoveryManifest(reviewedContent);
+ process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS=reviewed.game;
+ f.db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES(?,?,?,?,?,?,'pending')").run(reviewed.chainId,reviewed.address,reviewed.operationId,reviewed.nonce,reviewed.originalHash,reviewed.membership);
+ const inputPath=join(f.dir,"input.json");writeFileSync(inputPath,reviewedContent);
  const files=[f.path,f.path+"-wal"].filter(existsSync);const before=files.map(path=>readFileSync(path).toString("hex"));
  await expect(runMissionRecovery(["--input",inputPath])).rejects.toThrow();expect(files.map(path=>readFileSync(path).toString("hex"))).toEqual(before);expect(f.signs()).toBe(0);expect(f.db.query("SELECT count(*) AS n FROM resolver_nonce_recovery").get()).toEqual({n:0});
  await expect(runMissionRecovery(["--input",inputPath,"--force"])).rejects.toThrow("usage");
  }finally{for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}f.cleanup();}
+});
+
+test("reference disagreement after identity is rejected before dispatch",async()=>{
+ const f=fixture();try{let calls=0;const real=f.publicClient.call;f.publicClient.call=async()=>{if(++calls===2)referenceNonce=9;return real();};
+ await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow();expect(f.bytes).toHaveLength(0);expect(f.signs()).toBe(1);
+ }finally{f.cleanup();}
+});
+test("moved fee head and implementation after identity cannot sign or dispatch",async()=>{
+ const f=fixture();try{const originalStorage=f.publicClient.getStorageAt;let feeRead=false;
+ const hash2=("0x"+"bb".repeat(32)) as Hex;
+ const originalBlock=f.publicClient.getBlock;f.publicClient.getBlock=async (args:any)=>{const n=args.blockNumber??(feeRead?2n:1n);const b=await originalBlock(args);return {...b,number:n,hash:n===2n?hash2:blockHash};};
+ f.publicClient.getStorageAt=async(args:any)=>args.slot.startsWith("0x360894")&&args.blockNumber===2n?"0x"+"99".repeat(32):originalStorage(args);
+ const readContract=f.publicClient.readContract;f.publicClient.readContract=async(args:any)=>{if(args.functionName==="getL1Fee")feeRead=true;return readContract(args);};
+ await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("proof head moved");expect(f.bytes).toHaveLength(0);expect(f.signs()).toBe(0);
+ expect(f.db.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({n:0});
+ }finally{f.cleanup();}
+});
+test("synchronous prevalidation failure leaves claim resumable without a signing reservation",async()=>{
+ const f=fixture();try{const binding=recoveryBinding(f.input);let signs=0;
+ await expect(f.coordinator.recoverLegacySameNonce(binding,async sign=>{await sign(async()=>{signs++;throw new Error("must not reach signer");},plan(binding),()=>{throw new Error("batch quote block expired");});},"200000000000000")).rejects.toThrow("expired");
+ expect(signs).toBe(0);expect(f.db.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({n:0});
+ expect(f.db.query("SELECT reservation_id FROM resolver_nonce_recovery").get()).toEqual({reservation_id:null});
+ f.send(async raw=>{f.win(keccak256(raw));return keccak256(raw);});await f.client.recoverLegacyMission(f.input);expect(f.signs()).toBe(1);
+ }finally{f.cleanup();}
+});
+
+test("implementation changes during replay fee simulation never dispatch persisted bytes",async()=>{
+ const f=fixture();try{let simulation=0, changed=false;const call=f.publicClient.call,storage=f.publicClient.getStorageAt;
+ f.publicClient.call=async()=>{if(++simulation===2)changed=true;return call();};
+ f.publicClient.getStorageAt=async(args:any)=>changed&&args.slot.startsWith("0x360894")?"0x"+"99".repeat(32):storage(args);
+ await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("implementation changed");expect(f.signs()).toBe(1);expect(f.bytes).toHaveLength(0);
+ changed=false;f.publicClient.call=call;f.send(async raw=>{f.win(keccak256(raw));return keccak256(raw);});await f.create().client.recoverLegacyMission(f.input);expect(f.signs()).toBe(1);expect(f.bytes).toHaveLength(1);
+ }finally{f.cleanup();}
+});
+test("fifteen identities retain three identical attempts across unchanged bounded passes",async()=>{
+ const f=fixture();try{for(let n=0;n<12;n++)f.input.identities.push({address:("0x"+(n+100).toString(16).padStart(40,"0")) as Hex,codeHash:keccak256("0x6000")});
+ await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow();await expect(f.create().client.recoverLegacyMission(f.input)).rejects.toThrow();await expect(f.create().client.recoverLegacyMission(f.input)).rejects.toThrow();
+ expect(f.bytes).toHaveLength(3);expect(new Set(f.bytes).size).toBe(1);expect(f.signs()).toBe(1);
+ }finally{f.cleanup();}
+});
+
+test("operator input requires the exact independently reviewed full identity manifest",()=>{
+ const content=readFileSync(new URL("../../../docs/recovery-58-input.json",import.meta.url),"utf8");
+ expect(verifyReviewedRecoveryManifest(content).identities).toHaveLength(15);
+ expect(()=>verifyReviewedRecoveryManifest(content+" ")).toThrow("reviewed digest");
+ const reduced=JSON.parse(content);reduced.identities=reduced.identities.slice(0,3);
+ expect(()=>verifyReviewedRecoveryManifest(JSON.stringify(reduced))).toThrow("reviewed digest");
+ const f=fixture();try{
+ expect(()=>recoveryBinding({...f.input,unexpectedForce:true} as MissionRecoveryInput)).toThrow("schema mismatch");
+ expect(()=>recoveryBinding({...f.input,mission:{...f.input.mission,force:true}} as MissionRecoveryInput)).toThrow("schema mismatch");
+ const items=JSON.parse(f.input.membership);items[0].force=true;expect(()=>recoveryBinding({...f.input,membership:JSON.stringify(items)})).toThrow("schema mismatch");
+ }finally{f.cleanup();}
+});
+
+test("real clock expiry during pre-sign reconciliation creates no reservation and safely retries",async()=>{
+ const f=fixture(), realNow=Date.now;try{let quoted=false,expire=true;const call=f.publicClient.call,receipt=f.publicClient.getTransactionReceipt;
+ f.publicClient.call=async()=>{quoted=true;return call();};
+ f.publicClient.getTransactionReceipt=async args=>{if(quoted&&expire)Date.now=()=>realNow()+31000;return receipt(args);};
+ const block=f.publicClient.getBlock;f.publicClient.getBlock=async args=>({...await block(args),timestamp:BigInt(Math.floor(realNow()/1000))});
+ await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("expired");expect(f.signs()).toBe(0);expect(f.db.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({n:0});
+ Date.now=realNow;expire=false;f.send(async raw=>{f.win(keccak256(raw));return keccak256(raw);});await f.create().client.recoverLegacyMission(f.input);expect(f.signs()).toBe(1);
+ }finally{Date.now=realNow;f.cleanup();}
+});
+
+test("late signature after lease loss remains immutable and resumes without a second signer",async()=>{
+ const f=fixture();try{const binding=recoveryBinding(f.input);let release!:(raw:Hex)=>void,entered!:()=>void;
+ const held=new Promise<Hex>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{entered=resolve;});
+ const owner=f.coordinator.recoverLegacySameNonce(binding,async sign=>{await sign(()=>{entered();return held;},plan(binding),()=>{});},"200000000000000");
+ await ready;f.advance();f.advance();
+ await expect(f.create().client.recoverLegacyMission(f.input)).rejects.toThrow("result unknown");
+ const raw=await account.signTransaction({type:"eip1559",chainId:8453,nonce:4,to:game,data:binding.data,value:0n,gas:1000000n,maxFeePerGas:23995623n,maxPriorityFeePerGas:23995423n});release(raw);
+ await expect(owner).rejects.toThrow("lease was lost");
+ expect(f.db.query("SELECT transaction_hash FROM resolver_signing_results").get()).toEqual({transaction_hash:keccak256(raw)});
+ f.send(async bytes=>{expect(bytes).toBe(raw);f.win(keccak256(bytes));return keccak256(bytes);});await f.create().client.recoverLegacyMission(f.input);
+ expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(1);
+ }finally{f.cleanup();}
 });
