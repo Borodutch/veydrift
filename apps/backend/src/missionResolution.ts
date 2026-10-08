@@ -1097,7 +1097,9 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
       if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();
-      if (pass.intentIdentity && !stored.finalized) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
+      // Historical archival rows inherit the checked frontier ancestry; only the
+      // active frontier needs a fresh nonce read (old state may already be pruned).
+      if (pass.intentIdentity && !stored.finalized && !pass.archive) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
       if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
       return { ...stored, finalized: stored.finalized || (finalized !== null && BigInt(stored.blockNumber) <= finalized) };
     }

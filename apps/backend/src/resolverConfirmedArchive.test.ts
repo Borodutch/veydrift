@@ -19,6 +19,7 @@ function fixture(cap = 4096) {
   let nonce = 0, finalized = 0n, reorgFrom = Infinity, wrongNonce = false, unavailableFinality = false, disagreeFinality = false;
   let reads = 0, sends = 0, signatures = 0, missingDomain = false, orphanOldOnDomain = false;
   let receiptFault: Record<string, unknown> = {};
+  let prunedBefore = 0;
   const receipts = new Map<Hex, Record<string, unknown>>();
   const dueAt = Math.floor(Date.now() / 1000) - 5;
   const mine = (txHash: Hex, n: number) => {
@@ -45,7 +46,8 @@ function fixture(cap = 4096) {
       return block(blockNumber ?? BigInt(1000 + nonce));
     },
     getTransactionCount: async ({ blockNumber }: { blockNumber?: bigint }) => {
-      reads++; return wrongNonce ? 0 : blockNumber === undefined ? nonce : Number(blockNumber) - 1000 + 1;
+      reads++; if (blockNumber !== undefined && Number(blockNumber) < prunedBefore) throw new Error("historical nonce state pruned");
+      return wrongNonce ? 0 : blockNumber === undefined ? nonce : Number(blockNumber) - 1000 + 1;
     },
     getTransactionReceipt: async ({ hash }: { hash: Hex }) => { reads++; return { ...receipts.get(hash), ...receiptFault }; },
     readContract: async ({ functionName }: { functionName: string }) => { reads++; return functionName === "fleetMissionEligibility" ? [false, 0n, true] : 100n; }
@@ -83,6 +85,7 @@ function fixture(cap = 4096) {
     reorg: (from: number) => { reorgFrom = from; }, badNonce: () => { wrongNonce = true; },
     finality: (n: bigint) => { finalized = n; }, finalityUnavailable: () => { unavailableFinality = true; },
     finalityDisagreement: () => { disagreeFinality = true; },
+    pruneBefore: (n: number) => { prunedBefore = n; },
     corruptReceipt: (fault: Record<string, unknown>) => { receiptFault = fault; },
     missingDomain: () => { missingDomain = true; }, reorgDuringHydration: () => { orphanOldOnDomain = true; },
     counters: () => ({ reads, sends, signatures }), resetReads: () => { reads = 0; },
@@ -100,6 +103,7 @@ test("48 real signed coordinator admissions continue with frozen finality, bound
     expect(f.counters().sends).toBe(48); expect(f.counters().signatures).toBe(48);
     expect(f.client.admissionSnapshot()).toMatchObject({ active: 0, retainedConfirmed: 48, blockedReason: null });
     expect(f.db.query("SELECT count(*) AS n FROM resolver_prepared_intents WHERE serialized_transaction IS NOT NULL").get()).toEqual({ n: 48 });
+    f.pruneBefore(1040); // old retained rows need headers, not indefinitely retained historical nonce state
     f.resetReads(); await f.reconcile(); expect(f.counters().reads).toBeLessThanOrEqual(32);
     const cursor = f.db.query("SELECT cursor_nonce FROM resolver_archive_progress").get();
     f.restart(); await f.reconcile();
