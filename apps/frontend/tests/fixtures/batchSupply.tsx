@@ -2,6 +2,7 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
+import { MissionCargoPicker } from "../../src/components/MissionCreationPage";
 import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource, SupplyMission } from "../../src/batchSupplyPlanner";
 import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
@@ -30,6 +31,8 @@ declare global {
       refresh: () => void;
       unmount: () => void;
       changeStock: () => void;
+      changeEligibility: () => void;
+      changeDrives: () => void;
       changeRoute: () => void;
       changeBody: () => void;
       changeLimit: () => void;
@@ -60,6 +63,8 @@ function Fixture() {
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
     changeStock: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships, smallCargo: 1 }, resources: { ...item.resources, metal: 500 } }))),
+    changeEligibility: () => setSources(current => current.map(item => ({ ...item, unavailableReason: "Fleet unavailable" }))),
+    changeDrives: () => setSources(current => current.map(item => ({ ...item, driveLevels: { ...item.driveLevels, combustionDrive: 7 } }))),
     changeRoute: () => setDestination(value => ({ ...value, system: value.system + 1 })),
     changeBody: () => setTargetIsMoon(value => !value),
     changeLimit: () => setMaxSources(value => value === 1 ? 15 : 1),
@@ -81,5 +86,13 @@ function Fixture() {
     actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
     onConfirm={(orders, shipTypesBySource, mission) => submissions.push(structuredClone({ orders, shipTypesBySource, mission }))} />;
 }
+function NormalTransportFixture() {
+  const [cargo, setCargo] = useState({ metal: "750", crystal: "200", deuterium: "100" });
+  const [resources, setResources] = useState({ metal: 750, crystal: 1_200, deuterium: 900 });
+  return <section aria-label="Normal transport cargo" className="p-4">
+    <button onClick={() => setResources(current => ({ ...current, metal: current.metal === 750 ? 751 : 750 }))}>Refresh stock</button>
+    <MissionCargoPicker cargo={cargo} cargoCapacity={2_000} maxCargoResources={resources} onCargoChange={setCargo} />
+  </section>;
+}
 document.body.style.background = "#05070d";
-render(<Fixture />, document.getElementById("app")!);
+render(new URLSearchParams(location.search).has("normal") ? <NormalTransportFixture /> : <Fixture />, document.getElementById("app")!);
