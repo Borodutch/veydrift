@@ -13,7 +13,14 @@ test("Supply ship eligibility persists through mounted draft interactions at des
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({
+    // This fixture renders cargo controls, not planet animations. Avoid a full cold
+    // animation encode before Chrome starts (production builds still verify it).
+    plugins: [{ name: "supply-fixture-no-animation-precompute", configResolved(config) {
+      const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");
+      if (animations) { animations.buildStart = undefined; animations.configureServer = undefined; }
+    } }],
+    logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.BATCH_SUPPLY_ARTIFACTS;
@@ -80,6 +87,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         await settle();
       }
       await evaluate('document.fonts.ready');
+      await evaluate('Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => {})))');
       await settle();
     }
     async function point(expression) {
@@ -99,7 +107,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       // Max is deliberately asynchronous; normal interaction checks await its result.
       if (expression.includes("closest")) {
         const deadline = Date.now() + 20_000;
-        while (await evaluate('document.body.textContent.includes("Cancel Max")')) {
+        while (await evaluate('Boolean(document.querySelector("button[aria-busy=true]"))')) {
           assert.ok(Date.now() < deadline, "Max did not finish");
           await new Promise(resolve => setTimeout(resolve, 20));
         }
@@ -142,11 +150,42 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // Hold worker results so pending geometry is deterministic, even for tiny fleets.
+    for (const width of [1280, 390, 320]) {
+      await load(width);
+      await evaluate('window.Worker = class { constructor() { window.layoutWorker = this; } postMessage() {} terminate() {} };');
+      const geometry = () => evaluate(`(() => {
+        const rect = node => { const r = node.getBoundingClientRect(); return {x:r.x, y:r.y, width:r.width, height:r.height}; };
+        return {controls: [...document.querySelectorAll('[aria-label="Resources to send"] input, [aria-label="Resources to send"] button')].map(rect), sources: rect(document.querySelector('[aria-label="Source planets"]'))};
+      })()`);
+      const before = await geometry();
+      for (const resource of ['metal', 'crystal', 'deuterium']) {
+        const button = 'document.querySelector(' + JSON.stringify('input[aria-label="' + resource + ' to send"]') + ').closest("label").querySelector("button")';
+        await evaluate(button + '.focus(); ' + button + '.click()'); await settle();
+        assert.deepEqual(await geometry(), before, width + ': pending ' + resource + ' must not shift controls or sources');
+        assert.equal(await evaluate('document.activeElement === ' + button), true, 'Max keeps focus');
+        await evaluate('supplyFixture.refresh()'); await settle();
+        assert.deepEqual(await geometry(), before, width + ': refresh keeps pending layout');
+        assert.equal(await evaluate(button + '.getAttribute("aria-busy")'), 'true');
+        // Return the same amount: isolate Max's own layout from legitimate preview changes.
+        await evaluate('layoutWorker.onmessage({data:{maximum:' + (resource === 'metal' ? 1000 : 0) + '}})'); await settle();
+        assert.deepEqual(await geometry(), before, width + ': completion keeps layout');
+        assert.ok(await evaluate('document.querySelector("[role=status]").textContent.includes("Max applied")'));
+        assert.equal(await evaluate('document.activeElement === ' + button), true);
+        await evaluate(button + '.click()'); await settle();
+        await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Cancel Max").click()'); await settle();
+        assert.deepEqual(await geometry(), before, width + ': cancellation keeps layout');
+        assert.ok(await evaluate('document.querySelector("[role=status]").textContent.includes("Max cancelled")'));
+      }
+      measurements.push({label: width + '-stable-max', ...before});
+    }
+    console.log('PASS stable pending/completed Max geometry and focus at 1280, 390 and 320px');
+
     // Production worker: fifteen fuel-starved 10,000-ship sources used to block
     // this same main thread for seconds. Measure event-loop progress, not throughput.
     await load(1280, 'largeFleet=1');
     const maxButton = resource => 'document.querySelector(' + JSON.stringify('input[aria-label="' + resource + ' to send"]') + ').closest("label").querySelector("button")';
-    const busy = () => evaluate('document.body.textContent.includes("Cancel Max")');
+    const busy = () => evaluate('Boolean(document.querySelector("button[aria-busy=true]"))');
     const elapsed = await evaluate('(() => { const start = performance.now(); ' + maxButton('metal') + '.click(); return performance.now() - start; })()');
     assert.ok(elapsed < 250, 'Max click must not run the exact search on the UI thread: ' + elapsed);
     await settle();
@@ -185,6 +224,12 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     const amount = resource => evaluate('document.querySelector(' + JSON.stringify('input[aria-label="' + resource + ' to send"]') + ').value');
     await startMax('metal');
     assert.equal(await busy(), true);
+    for (let refresh = 0; refresh < 3; refresh++) {
+      await evaluate('supplyFixture.refresh()'); await settle();
+      assert.equal(await busy(), true, 'identical refresh must not cancel pending Max');
+      assert.equal(await evaluate('Boolean(maxWorkers[0].terminated)'), false);
+      assert.equal(await amount('metal'), '1000', 'refresh never rewrites the draft');
+    }
     await startMax('crystal');
     assert.equal(await evaluate('maxWorkers[0].terminated'), true, 'replacement terminates CPU work');
     await evaluate('maxWorkers[0].reply({data:{maximum:999999}}); maxWorkers[0].fail();');
@@ -199,11 +244,15 @@ test("Supply ship eligibility persists through mounted draft interactions at des
 
     for (const change of [
       () => input('metal to send', 777),
+      () => input('metal to send', '0777'), // Numeric-equivalent edits still cancel.
       () => input('Astro metal to send', 400),
+      () => input('Astro metal to send', 400), // Re-entering an override also cancels.
       () => click(checkbox(0)),
       () => click(source),
       () => click(`document.querySelector('[aria-label="Mission type"] button:last-child')`),
-      async () => { await evaluate('supplyFixture.refresh()'); await settle(); },
+      async () => { await evaluate('supplyFixture.changeStock()'); await settle(); },
+      async () => { await evaluate('supplyFixture.changeEligibility()'); await settle(); },
+      async () => { await evaluate('supplyFixture.changeDrives()'); await settle(); },
       async () => { await evaluate("supplyFixture.changeRoute()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeBody()"); await settle(); },
       async () => { await evaluate("supplyFixture.changeLimit()"); await settle(); },
@@ -216,6 +265,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       const expected = await amount('metal');
       assert.equal(await evaluate('staleMax.terminated'), true, 'draft change terminates worker');
       assert.equal(await busy(), false);
+      assert.ok(await evaluate('document.querySelector("[role=status]").textContent.includes("Max cancelled")'));
       await evaluate('staleMax.reply({data:{maximum:999999}}); staleMax.fail();'); await settle();
       assert.equal(await amount('metal'), expected, 'draft edit survives stale result');
       assert.equal(await evaluate('Boolean(document.querySelector("[role=alert]"))'), false, 'stale errors ignored');
@@ -242,6 +292,34 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     await evaluate('staleMax.reply({data:{maximum:999999}}); staleMax.fail();'); await settle();
     assert.equal(await evaluate('Boolean(document.querySelector("[role=dialog]"))'), false, 'unmounted result cannot reopen modal');
     console.log('PASS Max replacement, edits, overrides, ships, sources, mission, stock, pending, failures, retry and unmount');
+    // Normal transport's actual cargo controls: stock equality is not an action gate.
+    for (const width of [1280, 320]) {
+      await send('Emulation.setDeviceMetricsOverride', {width, height:900, deviceScaleFactor:1, mobile:false});
+      await send('Page.navigate', {url: url + '?normal=1'});
+      const deadline = Date.now() + 20_000;
+      while (!(await evaluate('Boolean(document.querySelector("#resource-metal"))'))) {
+        assert.ok(Date.now() < deadline, 'normal cargo fixture did not render');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      await evaluate('document.fonts.ready'); await settle();
+      const metal = `document.querySelector('button[aria-label^="Set metal cargo"]')`;
+      const style = () => evaluate('(() => { const b = ' + metal + '; const r = b.getBoundingClientRect(); const s = getComputedStyle(b); return {width:r.width, height:r.height, opacity:s.opacity}; })()');
+      const before = await style();
+      for (let cycle = 0; cycle < 4; cycle++) {
+        await evaluate('document.querySelector("section > button").click()'); await settle();
+        assert.equal(await evaluate(metal + '.disabled'), false, 'refresh does not toggle Max disabled');
+        assert.deepEqual(await style(), before, 'stock refresh does not flash opacity or resize Max');
+        const expected = cycle % 2 === 0 ? '751' : '750';
+        await evaluate(metal + '.focus(); ' + metal + '.click()'); await settle();
+        assert.equal(await evaluate('document.querySelector("#resource-metal").value'), expected);
+        assert.equal(await evaluate('document.querySelector("#resource-crystal").value'), '200');
+        assert.equal(await evaluate('document.querySelector("#resource-deuterium").value'), '100');
+        assert.equal(await evaluate(metal + '.disabled'), false);
+        assert.equal(await evaluate('document.activeElement === ' + metal), true);
+        assert.deepEqual(await style(), before, 'Max completion keeps opacity and geometry');
+      }
+    }
+    console.log('PASS normal transport Max stock refresh, appearance, focus and cargo preservation');
     // Mission selection is draft-local, survives refresh/rejection, and reaches onConfirm.
     for (const width of [1280, 390, 320]) {
       await load(width);

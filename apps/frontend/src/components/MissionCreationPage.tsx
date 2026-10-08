@@ -3778,11 +3778,11 @@ function ResourceField({
     <div className="grid min-w-0 gap-1">
       <div className="flex min-h-6 items-center justify-between gap-2">
         <label className="text-xs text-slate-500" htmlFor={inputId}>{label}</label>
+        {/* Max is an idempotent action, not an equality indicator that flashes as stock refreshes. */}
         {maxAction ? (
           <button
             aria-label={`Set ${label.toLowerCase()} cargo to maximum (${maxAction.value.toLocaleString()})`}
-            className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal transition hover:border-signal/50 hover:bg-signal/15 disabled:cursor-default disabled:opacity-45"
-            disabled={resourceDraftNumber(value) === maxAction.value}
+            className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal hover:border-signal/50 hover:bg-signal/15"
             onClick={maxAction.onSelect}
             type="button"
           >
