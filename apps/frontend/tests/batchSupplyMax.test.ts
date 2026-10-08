@@ -90,13 +90,28 @@ describe("Supply Max preserves the actual shipment", () => {
     expect(maxPlan({ ...args, selectedPlanetIds: new Set(["1", "3"]), requested: zero }, "metal").maximum).toBe(500);
   });
 
+  test("preserves the request rather than claiming a maximum while an explicit fleet is blocked", () => {
+    const sources = [source("1", { ships: { largeCargo: 1 }, resources: { metal: 100, crystal: 0, deuterium: 100 } }),
+      source("2", { ships: { lightFighter: 1000 }, resources: { metal: 0, crystal: 0, deuterium: 0 } })];
+    const args = { ...options(sources, { metal: 37 }), shipTypesBySource: { "2": ["lightFighter"] as const } };
+    expect(buildBatchSupplyPlan(args).missing).toEqual(zero);
+    expect(buildBatchSupplyPlan(args).blockedSources).toHaveLength(1);
+    expect(maxPlan(args, "metal").maximum).toBe(37);
+    const withoutBlocked = maxPlan({ ...args, selectedPlanetIds: new Set(["1"]) }, "metal");
+    expect(withoutBlocked.maximum).toBe(100);
+    expect(withoutBlocked.plan.blockedSources).toEqual([]);
+  });
+
   test("honors selection, inventory, unavailable origins, fuel, routes, body and mission limits", () => {
     const sources = [source("1", { ships: { smallCargo: 1, recycler: 10 } }), source("2", { unavailableReason: "Busy" })];
-    const args = { ...options(sources, { crystal: 100, deuterium: 50 }), shipTypesBySource: { "1": ["smallCargo"] as const } };
+    const args = { ...options(sources, { crystal: 100, deuterium: 50 }), selectedPlanetIds: new Set(["1"]), shipTypesBySource: { "1": ["smallCargo"] as const } };
     const { maximum, plan } = maxPlan(args, "metal");
     const capacity = fleetMissionAvailableCargoCapacity({ smallCargo: 1 }, fleetMissionDistance(sources[0]!.coordinates, target));
     expect(maximum).toBe(capacity - 150);
     expect(plan.orders).toHaveLength(1);
+    const blockedSelection = { ...args, requested: { ...args.requested, metal: 17 }, selectedPlanetIds: new Set(["1", "2"]) };
+    expect(maxPlan(blockedSelection, "metal").maximum).toBe(17);
+    expect(maxPlan(blockedSelection, "metal").plan.blockedSources).toHaveLength(1);
     expect(maxPlan({ ...args, shipTypesBySource: { "1": [] }, requested: zero }, "metal").maximum).toBe(0);
     expect(maxPlan({ ...args, selectedPlanetIds: new Set(), requested: zero }, "metal").maximum).toBe(0);
     expect(maxPlan({ ...args, sources: [source("1", { resources: { metal: 10, crystal: 0, deuterium: 0 } })], requested: zero }, "metal").maximum).toBe(0);
@@ -126,7 +141,10 @@ describe("Supply Max preserves the actual shipment", () => {
       source("2", { coordinates: { ...target, system: 120 }, resources: { metal: 54110, crystal: 24895, deuterium: 161 }, ships: { smallCargo: 2, largeCargo: 2, colonyShip: 1 }, driveLevels: { impulseDrive: 4, combustionDrive: 0 } }),
     ];
     const args = options(sources, { crystal: 17435, deuterium: 111 });
-    const feasible = (metal: number) => Object.values(buildBatchSupplyPlan({ ...args, requested: { ...args.requested, metal } }).missing).every(value => value === 0);
+    const feasible = (metal: number) => {
+      const plan = buildBatchSupplyPlan({ ...args, requested: { ...args.requested, metal } });
+      return plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && Object.values(plan.missing).every(value => value === 0);
+    };
     expect(feasible(0)).toBe(true);
     expect(feasible(37500)).toBe(false);
     expect(feasible(62500)).toBe(true);
@@ -159,7 +177,7 @@ describe("Supply Max preserves the actual shipment", () => {
       let expected = 0;
       for (let value = 0; value <= sources.reduce((sum, s) => sum + s.resources[resource], 0); value++) {
         const plan = buildBatchSupplyPlan({ ...args, requested: { ...requested, [resource]: value } });
-        if (keys.every(key => plan.missing[key] === 0)) expected = value;
+        if (plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0)) expected = value;
       }
       expect(maxPlan(args, resource).maximum).toBe(expected);
     }
@@ -175,6 +193,7 @@ describe("Supply Max preserves the actual shipment", () => {
       await launchBatchSupplyTransaction({ request: async <T>(call: { method: string; params?: unknown[] }): Promise<T> => {
         if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
         if (call.method === "eth_call") return "0x" as T;
+        if (call.method === "eth_estimateGas") return "0xf4240" as T;
         if (call.method !== "eth_sendTransaction") throw new Error(call.method);
         data = (call.params as Array<{ data: string }>)[0]!.data;
         return "0xfixture" as T;

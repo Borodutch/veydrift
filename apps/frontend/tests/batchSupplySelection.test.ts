@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { decodeAbiParameters, parseAbiParameters } from "viem";
 import { buildBatchSupplyPlan, defaultSupplyShipTypes, type BatchSupplySource, type SupplyShipKey } from "../src/batchSupplyPlanner";
 import { batchSupplyPlanMatchesOrders, replanBatchSupplyForConfirmation } from "../src/PlayableMvpApp";
+import { initialBatchSupplySourceIds } from "../src/components/BatchSupplyModal";
 import { fleetMissionAvailableCargoCapacity, fleetMissionDistance, fleetMissionFuelCost, fleetMissionTravelSeconds } from "../src/fleetMissionRules";
 import { defaultVeydriftChainForLocation, sendLaunchTransportBatchTransaction } from "../src/walletFlow";
 
@@ -17,6 +18,25 @@ function plan(allowedShipTypes: readonly SupplyShipKey[] = defaultSupplyShipType
 }
 
 describe("Supply draft type eligibility", () => {
+  for (const slots of [1, 2, 3]) test("default sources skip nearer opt-in fleets with " + slots + " slots", () => {
+    const sources: BatchSupplySource[] = [
+      { ...source, planetId: "combat", ships: { lightFighter: 5 }, coordinates: { ...target, position: 7 } },
+      { ...source, planetId: "recycler", ships: { recycler: 1 }, coordinates: { ...target, position: 6 } },
+      { ...source, planetId: "cargo", ships: { largeCargo: 1 }, coordinates: { ...target, position: 5 } },
+      { ...source, planetId: "colony", ships: { colonyShip: 1 }, coordinates: { ...target, position: 4 } },
+    ];
+    const selectedPlanetIds = initialBatchSupplySourceIds(sources, slots);
+    expect([...selectedPlanetIds]).toEqual(slots === 1 ? ["cargo"] : ["cargo", "colony"]);
+    const args = { sources, selectedPlanetIds, targetCoordinates: target, requested: { metal: 100 }, maxOrders: slots };
+    const defaults = buildBatchSupplyPlan(args);
+    expect(defaults.missing.metal).toBe(0);
+    expect(defaults.blockedSources).toEqual([]);
+    expect(defaults.orders[0]!.originPlanetId).toBe("cargo");
+    const explicit = buildBatchSupplyPlan({ ...args, selectedPlanetIds: new Set(["combat"]), shipTypesBySource: { combat: ["lightFighter"] } });
+    expect(explicit.orders[0]!.ships.lightFighter).toBe(5);
+    expect(explicit.blockedSources).toEqual([]);
+  });
+
   test("defaults exclude recyclers, preserves other cargo defaults, opts out and re-adds without mutating inventory", () => {
     const original = structuredClone(source);
     const defaults = buildBatchSupplyPlan({ targetCoordinates: target, requested: { metal: 80_000 }, selectedPlanetIds: new Set(["1"]), sources: [source] });
@@ -85,6 +105,7 @@ describe("Supply draft type eligibility", () => {
     await sendLaunchTransportBatchTransaction({ request: async <T>(call: { method: string; params?: unknown[] }) => {
       if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
       if (call.method === "eth_call") return "0x" as T;
+      if (call.method === "eth_estimateGas") return "0xf4240" as T;
       if (call.method !== "eth_sendTransaction") throw new Error(call.method);
       calls.push(call); return "0xfixture" as T;
     } }, "0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222", {
@@ -129,6 +150,7 @@ describe("Supply draft type eligibility", () => {
     await sendLaunchTransportBatchTransaction({ request: async <T>(call: { method: string; params?: unknown[] }) => {
       if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
       if (call.method === "eth_call") return "0x" as T;
+      if (call.method === "eth_estimateGas") return "0xf4240" as T;
       if (call.method !== "eth_sendTransaction") throw new Error(call.method);
       data = (call.params as Array<{ data: string }>)[0]!.data;
       return "0xfixture" as T;

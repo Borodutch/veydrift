@@ -108,7 +108,7 @@ describe("Opt-in Supply fleets", () => {
       let brute = 0;
       for (let metal = 0; metal <= 100; metal++) {
         const plan = buildBatchSupplyPlan({ ...options, requested: { ...options.requested, metal } });
-        if (Object.values(plan.missing).every(value => value === 0)) brute = metal;
+        if (plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && Object.values(plan.missing).every(value => value === 0)) brute = metal;
       }
       const maximum = maximumBatchSupplyResource(options, "metal");
       expect(maximum).toBe(brute);
@@ -139,7 +139,7 @@ describe("Opt-in Supply fleets", () => {
         let expected = 0;
         for (let value = 0; value <= sources.reduce((sum, source) => sum + source.resources[resource], 0); value++) {
           const plan = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: value } });
-          if (keys.every(key => plan.missing[key] === 0)) expected = value;
+          if (plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0)) expected = value;
         }
         expect(maximumBatchSupplyResource(options, resource)).toBe(expected);
       }
@@ -172,6 +172,7 @@ describe("Opt-in Supply fleets", () => {
     const provider = { request: async <T>(call: { method: string; params?: unknown[] }): Promise<T> => {
       if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
       if (call.method === "eth_call") return "0x" as T;
+      if (call.method === "eth_estimateGas") return "0xf4240" as T;
       if (call.method !== "eth_sendTransaction") throw new Error(call.method);
       sent.push((call.params as Array<{ data: string }>)[0]!.data); return "0xfixture" as T;
     } };

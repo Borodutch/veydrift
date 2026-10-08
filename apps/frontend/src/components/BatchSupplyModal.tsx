@@ -55,6 +55,13 @@ export function batchSupplyMissionLimitError(missionCount: number, _mission: Sup
     : undefined;
 }
 
+/** Sources are already nearest-first; combat/recycler-only origins remain opt-in. */
+export function initialBatchSupplySourceIds(sources: readonly BatchSupplySource[], maxSources: number): Set<string> {
+  return new Set(sources.filter(source => !source.unavailableReason
+    && hasUsableSupplyFleet(allowedSupplyShips(source.ships, defaultSupplyShipTypes)))
+    .slice(0, Math.max(0, maxSources)).map(source => source.planetId));
+}
+
 export function batchSupplySourceLimitReason({
   checked,
   maxSources,
@@ -156,7 +163,7 @@ export function BatchSupplyModal({
   useEffect(() => {
     if (sourcesInitialized.current || loading || sources.length === 0 || maxSources <= 0) return;
     sourcesInitialized.current = true;
-    setSelectedSourceIds(new Set(sources.filter((source) => !source.unavailableReason).slice(0, maxSources).map((source) => source.planetId)));
+    setSelectedSourceIds(initialBatchSupplySourceIds(sources, maxSources));
   }, [initialRequested?.crystal, initialRequested?.deuterium, initialRequested?.metal, target.planetId, loading, maxSources, sources]);
 
   const selected = useMemo(() => new Set(selectedSourceIds), [selectedSourceIds]);

@@ -144,7 +144,8 @@ export function maximumBatchSupplyResource(
     // requested total. Intersect those inequalities and keep its largest value.
     let lower = range.lower;
     let maximum = upper;
-    if (plan.orders.length <= missionLimit) {
+    // Match Launch eligibility: satisfying cargo must not hide a blocked explicit fleet.
+    if (plan.orders.length > 0 && plan.orders.length <= missionLimit && !plan.sourceLimitReached && plan.blockedSources.length === 0) {
       for (const key of ["metal", "crystal", "deuterium"] as const) {
         const delivered = range.delivered[key];
         const deficit = (key === resource ? upper : requested[key]) - delivered.value;

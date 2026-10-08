@@ -75,7 +75,8 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       // Source autoselection is a mounted useEffect, not a synchronous initial render.
-      while (!query.includes('emptyFleet') && !(await evaluate(source + '.checked'))) {
+      const autoSource = query.includes('combatOnlyFirst') ? `document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]')[1]` : source;
+      while (!query.includes('emptyFleet') && !query.includes('recyclerOnly') && !(await evaluate(autoSource + '.checked'))) {
         assert.ok(Date.now() < deadline, 'source selection effect did not run');
         await settle();
       }
@@ -519,8 +520,11 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       // A source with only Recyclers cannot supply by default, but opt-in unblocks it.
       await load(width, 'recyclerOnly=1');
       await expectTypes([false], 'Recycler-only source still defaults off');
+      assert.equal(await evaluate(source + '.checked'), false, 'opt-in-only source does not auto-select');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await click(checkbox(2));
+      assert.equal(await evaluate(source + '.checked'), false, 'enabling a type never silently selects the source');
+      await click(source);
       submission = await submit();
       assert.ok(submission.orders[0].ships.recycler > 0);
       await click(checkbox(2));
@@ -530,6 +534,17 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await record(width + '-recycler-only');
       console.log('PASS mounted Supply at ' + width + 'px: defaults, explicit intent, refresh, Max, edits, source toggle, empty selection, pending, rejection, resets, Recycler-only source');
     }
+    for (const width of [1280, 390]) for (const oneSlot of [true, false]) {
+      await load(width, 'combatOnlyFirst=1' + (oneSlot ? '&oneSlot=1' : ''), 568);
+      const sourceChecks = "[...document.querySelectorAll('[aria-label=\"Source planets\"] input[type=\"checkbox\"]')].map(input => input.checked)";
+      assert.deepEqual(await evaluate(sourceChecks), [false, true], 'nearest combat-only source must not displace default cargo source');
+      assert.equal(await evaluate(launch + '.disabled'), false);
+      const submission = await submit();
+      assert.equal(submission.orders.length, 1);
+      assert.equal(submission.orders[0].originPlanetId, '190');
+      assert.equal(submission.orders[0].cargo.metal, 1000);
+    }
+    console.log('PASS nearest combat-only origin stays opt-in with one and multiple slots on desktop/mobile');
     // Two distinct source inventories: physical taps/keyboard must not toggle another source or checkbox.
     for (const width of [1280, 390, 320]) {
       await load(width, 'twoSources=1', 568);

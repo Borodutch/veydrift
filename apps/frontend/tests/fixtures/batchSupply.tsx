@@ -7,6 +7,8 @@ import type { ManagedPlanetResponse } from "../../src/walletFlow";
 import type { WriteTransactionState } from "../../src/transactionActionGate";
 import "../../src/styles.css";
 
+const combatOnlyFirst = new URLSearchParams(location.search).has("combatOnlyFirst");
+const oneSlot = new URLSearchParams(location.search).has("oneSlot");
 const combatFleet = new URLSearchParams(location.search).has("combatFleet");
 const largeFleet = new URLSearchParams(location.search).has("largeFleet");
 const moon = new URLSearchParams(location.search).has("moon");
@@ -18,7 +20,7 @@ const initialRequested = { metal: combatFleet ? 0 : plannedFleetExample ? 34_900
 const source: BatchSupplySource = {
   planetId: moon ? "189" : "188", label: "Astro", coordinates: { galaxy: 6, system: 9, position: moon ? 14 : 13 },
   resources: { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 },
-  ships: combatFleet ? { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1, lightFighter: 70, cruiser: 12 } : emptyFleet ? {} : recyclerOnly ? { recycler: 5 } : plannedFleetExample ? { largeCargo: 5, recycler: 3 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
+  ships: combatOnlyFirst ? { lightFighter: 5 } : combatFleet ? { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1, lightFighter: 70, cruiser: 12 } : emptyFleet ? {} : recyclerOnly ? { recycler: 5 } : plannedFleetExample ? { largeCargo: 5, recycler: 3 } : { largeCargo: 2, smallCargo: 3, recycler: 5, colonyShip: 1 },
   unavailableReason: emptyFleet ? "No usable cargo ships are available on this planet." : undefined,
   driveLevels: { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 },
 };
@@ -48,12 +50,12 @@ function Fixture() {
     coordinates: { galaxy: 6, system: 10 + i, position: 14 },
     resources: { metal: 250_000_000, crystal: 0, deuterium: 10 },
     ships: { largeCargo: 10_000 }, driveLevels: {},
-  })) : twoSources ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
+  })) : (twoSources || combatOnlyFirst) ? [source, { ...source, planetId: "190", label: "Luna", coordinates: { ...source.coordinates, position: 12 }, ships: { smallCargo: 2, recycler: 3 } }] : [source]);
   const [draft, setDraft] = useState(0);
   const [account, setAccount] = useState("fixture-account");
   const [destination, setDestination] = useState(target);
   const [targetIsMoon, setTargetIsMoon] = useState(moon);
-  const [maxSources, setMaxSources] = useState(moon ? 1 : 15);
+  const [maxSources, setMaxSources] = useState(moon || oneSlot ? 1 : 15);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {

@@ -7095,15 +7095,124 @@ contract VeydriftGameTest is Test {
     function testLaunchDeployBatchAcceptsFifteenOrders() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
             _seedDeployBatch(15);
-        uint256 gasBefore = gasleft();
         vm.prank(player);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
-        uint256 launchGas = gasBefore - gasleft();
         assertEq(ids.length, 15);
         assertEq(game.activeFleetMissionCount(player), 15);
-        emit log_named_uint("launchDeployBatch(15) gas", launchGas);
-        assertLt(launchGas, 15_000_000, "15-order batch leaves insufficient block gas headroom");
+    }
+
+    // Isolation commits setup writes and resets warmth/refunds before the actual call.
+    // Production source artifacts remain optimized via dynamic_test_linking.
+    /// forge-config: default.isolate = true
+    function testLaunchDeployBatchMixedFifteenExceedsBaseGasCap() public {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _seedMixedDeployBatch(15, false);
+        vm.prank(player);
+        uint256[] memory ids =
+            ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
+        Vm.Gas memory measured = vm.lastCallGas();
+        uint256 gross = measured.gasTotalUsed + uint256(uint64(measured.gasRefunded));
+        emit log_named_uint("15 mixed origins gross transaction gas", gross);
+        assertEq(ids.length, 15);
+        assertGt(gross, 16_777_216, "source count alone must not be advertised as gas safety");
+    }
+
+    /// forge-config: default.isolate = true
+    function testLaunchDeployBatchMixedFifteenRevertsAtBaseGasCap() public {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _seedMixedDeployBatch(15, false);
+        uint256 nextId = game.nextFleetId();
+        vm.prank(player);
+        vm.expectRevert();
+        ITransportBatchEntrypoints(address(game)).launchDeployBatch{gas: 16_777_216 - 21_000}(
+            target, orders
+        );
+        assertEq(game.nextFleetId(), nextId);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.SmallCargo), 1);
+    }
+
+    /// forge-config: default.isolate = true
+    function testLaunchDeployBatchMixedEightWithDueSettlementFitsBaseGasCap() public {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _seedMixedDeployBatch(8, true);
+        vm.prank(player);
+        uint256[] memory ids = ITransportBatchEntrypoints(address(game))
+        .launchDeployBatch{gas: 16_777_216 - 21_000}(
+            target, orders
+        );
+        Vm.Gas memory measured = vm.lastCallGas();
+        uint256 gross = measured.gasTotalUsed + uint256(uint64(measured.gasRefunded));
+        emit log_named_uint("8 mixed origins with due settlement gross transaction gas", gross);
+        assertEq(ids.length, 8);
+        assertLt(gross, 16_777_216);
+        for (uint256 i; i < orders.length; ++i) {
+            uint256 origin = orders[i].originPlanetId;
+            assertFalse(game.activeBuildingConstruction(origin).active);
+            assertFalse(game.shipQueue(origin).active);
+            assertFalse(game.defenseQueue(origin).active);
+            assertEq(game.buildingLevel(origin, Building.MetalMine), 1);
+            assertEq(game.shipCount(origin, Ship.SmallCargo), 2);
+        }
+        assertFalse(game.researchQueue(player).active);
+    }
+
+    function _seedMixedDeployBatch(uint16 count, bool dueSettlement)
+        internal
+        returns (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders)
+    {
+        (target, orders) = _seedDeployBatch(count);
+        uint64 readyAt;
+        for (uint256 i; i < count; ++i) {
+            // All 14 storage fields are nonzero, with heterogeneous counts/speeds/cargo.
+            uint32 quantity = uint32(i + 1);
+            orders[i].ships =
+                VeydriftGameStorage.MissionShips(quantity, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+            orders[i].speedPercent = uint16(70 + (i % 4) * 10);
+            orders[i].cargo = VeydriftGameStorage.Resources(uint128(i), uint128(i + 1), uint128(i));
+            uint256 origin = orders[i].originPlanetId;
+            for (uint8 j; j <= uint8(Ship.Pathfinder); ++j) {
+                if (j != uint8(Ship.SolarSatellite)) _setShipCount(origin, Ship(j), 1);
+            }
+            _setShipCount(origin, Ship.SmallCargo, quantity);
+            _setResources(origin, 1_000_000, 1_000_000, 1_000_000);
+            if (dueSettlement) {
+                bytes32 planetSlot = keccak256(abi.encode(origin, uint256(4)));
+                vm.store(
+                    address(game),
+                    planetSlot,
+                    bytes32(uint256(vm.load(address(game), planetSlot)) | (uint256(200) << 200))
+                );
+                _setBuildingLevel(origin, Building.Shipyard, 4);
+                _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+                vm.startPrank(player);
+                game.startShipProduction(origin, Ship.SmallCargo, 2);
+                game.startDefenseProduction(origin, Defense.RocketLauncher, 3);
+                game.startBuildingUpgrade(origin, Building.MetalMine);
+                vm.stopPrank();
+                if (game.shipQueue(origin).readyAt > readyAt) {
+                    readyAt = game.shipQueue(origin).readyAt;
+                }
+                if (game.defenseQueue(origin).readyAt > readyAt) {
+                    readyAt = game.defenseQueue(origin).readyAt;
+                }
+                if (game.activeBuildingConstruction(origin).readyAt > readyAt) {
+                    readyAt = game.activeBuildingConstruction(origin).readyAt;
+                }
+            }
+        }
+        if (dueSettlement) {
+            uint256 origin = orders[0].originPlanetId;
+            _setBuildingLevel(origin, Building.ResearchLab, 2);
+            _setTechnologyLevel(player, Technology.Energy, 2);
+            vm.prank(player);
+            game.startResearch(origin, Technology.Laser);
+            if (game.researchQueue(player).readyAt > readyAt) {
+                readyAt = game.researchQueue(player).readyAt;
+            }
+            vm.warp(uint256(readyAt) + 1);
+        }
     }
 
     function testLaunchDeployBatchRejectsZeroAndSixteenOrders() public {

@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { decodeAbiParameters, parseAbiParameters, toFunctionSelector } from "viem";
 import {
   defaultVeydriftChainForLocation,
+  BASE_MAINNET,
+  configureWalletTransactionTransport,
+  sendLaunchTransportBatchTransaction,
   encodeLaunchDeployBatchCall,
   encodeLaunchTransportBatchCall,
   sendLaunchDeployBatchTransaction,
@@ -28,6 +31,7 @@ describe("atomic planet Deploy wallet calls", () => {
       calls.push(call);
       if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
       if (call.method === "eth_call") return "0x" as T;
+      if (call.method === "eth_estimateGas") return "0xf4240" as T;
       if (call.method === "eth_sendTransaction") return "0xfixture" as T;
       throw new Error(call.method);
     } }, account, contract, params);
@@ -38,8 +42,12 @@ describe("atomic planet Deploy wallet calls", () => {
     expect(submissions).toHaveLength(1);
     const transaction = { from: account, to: contract, data: encodeLaunchDeployBatchCall(params) };
     expect(simulations[0]!.params).toEqual([transaction, "pending"]);
-    expect(submissions[0]!.params).toEqual([{ ...transaction, chainId: defaultVeydriftChainForLocation().chainIdHex }]);
-    expect(calls.indexOf(simulations[0]!)).toBeLessThan(calls.indexOf(submissions[0]!));
+    expect(submissions[0]!.params).toEqual([{ ...transaction, gas: "0x124f80", chainId: defaultVeydriftChainForLocation().chainIdHex }]);
+    const estimates = calls.filter(call => call.method === "eth_estimateGas");
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]!.params).toEqual([{ ...transaction, gas: "0x1000000" }]);
+    expect(calls.indexOf(simulations[0]!)).toBeLessThan(calls.indexOf(estimates[0]!));
+    expect(calls.indexOf(estimates[0]!)).toBeLessThan(calls.indexOf(submissions[0]!));
   });
 
   test("classifies batch deploy as fleet calldata and never submits a reverted simulation", async () => {
@@ -68,3 +76,56 @@ describe("atomic planet Deploy wallet calls", () => {
     }
   });
 });
+
+// No live RPC or wallet: both signing-provider fallback and configured app RPC.
+for (const [mission, send, encode] of [
+  ["deploy", sendLaunchDeployBatchTransaction, encodeLaunchDeployBatchCall],
+  ["transport", sendLaunchTransportBatchTransaction, encodeLaunchTransportBatchCall],
+] as const) {
+  for (const appRpc of [false, true]) for (const gas of ["0x1000000", "0x1000001", "0x1249431", "0x", "0x0", "error"] as const) {
+    test(mission + " gas admission " + gas + (appRpc ? " via app RPC" : " via provider"), async () => {
+      const calls: Array<{ method: string; params?: unknown[] }> = [];
+      const rpcCalls: Array<{ method: string; params?: unknown[] }> = [];
+      const chain = appRpc ? BASE_MAINNET : defaultVeydriftChainForLocation();
+      const readRpc = (call: { method: string; params?: unknown[] }) => {
+        if (call.method === "eth_chainId") return chain.chainIdHex;
+        if (call.method === "eth_call") return "0x";
+        if (call.method === "eth_estimateGas") {
+          if (gas === "error") throw new Error("gas required exceeds allowance (16777216)");
+          return gas;
+        }
+        throw new Error(call.method);
+      };
+      const provider = { request: async <T>(call: { method: string; params?: unknown[] }) => {
+        calls.push(call);
+        if (call.method === "eth_sendTransaction") return "0xfixture" as T;
+        if (appRpc && call.method !== "eth_chainId") throw new Error("Reads must use app RPC");
+        return readRpc(call) as T;
+      } };
+      const originalFetch = globalThis.fetch;
+      if (appRpc) {
+        configureWalletTransactionTransport(provider, "injected", "https://batch-gas.example.test", chain);
+        globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+          const call = JSON.parse(String(init?.body));
+          rpcCalls.push(call);
+          try { return Response.json({ result: readRpc(call) }); }
+          catch (error) { return Response.json({ error: { code: -32000, message: (error as Error).message } }); }
+        }) as typeof fetch;
+      }
+      try {
+        const result = send(provider, account, contract, params);
+        if (gas === "0x1000000") await expect(result).resolves.toBe("0xfixture");
+        else await expect(result).rejects.toThrow("Reduce selected sources");
+        const reads = appRpc ? rpcCalls : calls;
+        expect(reads.filter(call => call.method === "eth_estimateGas").map(call => call.params)).toEqual([
+          [{ from: account, to: contract, data: encode(params), gas: "0x1000000" }],
+        ]);
+        const submissions = calls.filter(call => call.method === "eth_sendTransaction");
+        expect(submissions).toHaveLength(gas === "0x1000000" ? 1 : 0);
+        if (submissions.length) expect(submissions[0]!.params).toEqual([
+          { from: account, to: contract, data: encode(params), gas: "0x1000000", chainId: chain.chainIdHex },
+        ]);
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+}

@@ -10,6 +10,7 @@ const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", 
 describe("Batch Supply source row presentation", () => {
   test("Max shares all preview inputs and submission uses that same preview", () => {
     expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
+    expect(batchSupplyModalSource).toContain("setSelectedSourceIds(initialBatchSupplySourceIds(sources, maxSources))");
     expect(batchSupplyModalSource).toContain("useBatchSupplyMax(planOptions, target.planetId");
     expect(batchSupplyModalSource).not.toContain("maximumBatchSupplyResource(");
     expect(batchSupplyModalSource).toContain("!maximum.busy");

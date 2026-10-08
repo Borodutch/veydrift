@@ -65,6 +65,8 @@ const WALLET_READ_TIMEOUT_MS = 10_000;
 // Base caps one transaction at 2^24 gas. Supplying that envelope avoids wallet/Reth estimation
 // falsely rejecting a valid bounded multi-round fleet resolution at an inner delegatecall.
 const FLEET_MISSION_RESOLUTION_GAS = "0x1000000";
+const SUPPLY_BATCH_GAS_LIMIT = 16_777_216n;
+const SUPPLY_BATCH_GAS_ERROR = "Supply batch exceeds the transaction gas limit or could not be estimated. Reduce selected sources and try again; no ships have been sent.";
 // Initial first-planet bootstrap reads use a shorter timeout so a stalled
 // mobile wallet provider (e.g. Trust Wallet on Android intermittently not
 // answering the first eth_accounts/eth_chainId) is detected and retried
@@ -2285,6 +2287,29 @@ async function sendWalletTransaction(
       const message = walletRequestErrorMessage(error);
       throw new Error(`Transaction simulation failed: ${message}`);
     }
+  }
+
+  // A source-count limit is not a gas bound: mixed manifests and due settlement
+  // can exceed Base's transaction ceiling even below 15 origins. Fail closed on
+  // the exact atomic call, through the same chain-read authority as simulation.
+  const supplyBatch = [GAME_SELECTORS.launchTransportBatch, GAME_SELECTORS.launchDeployBatch].some(selector => transaction.data.startsWith(selector));
+  if (supplyBatch) {
+    const boundedTransaction = { ...transaction, gas: FLEET_MISSION_RESOLUTION_GAS };
+    let estimate: string;
+    try {
+      estimate = simulateThroughAppRpc
+        ? await transactionRpcRequest<string>(simulationRpcUrl ?? "", "eth_estimateGas", [boundedTransaction])
+        : await provider.request<string>({ method: "eth_estimateGas", params: [boundedTransaction] });
+    } catch {
+      throw new Error(SUPPLY_BATCH_GAS_ERROR);
+    }
+    if (!/^0x[0-9a-fA-F]+$/.test(estimate) || BigInt(estimate) <= 0n || BigInt(estimate) > SUPPLY_BATCH_GAS_LIMIT) {
+      throw new Error(SUPPLY_BATCH_GAS_ERROR);
+    }
+    // Leave headroom for settlement becoming due before inclusion, without a
+    // wallet adding a gas buffer beyond the chain cap. Never alter the manifest.
+    const bufferedGas = (BigInt(estimate) * 120n + 99n) / 100n;
+    transaction = { ...transaction, gas: `0x${(bufferedGas < SUPPLY_BATCH_GAS_LIMIT ? bufferedGas : SUPPLY_BATCH_GAS_LIMIT).toString(16)}` };
   }
 
   if (options.maxEstimatedGas) {
