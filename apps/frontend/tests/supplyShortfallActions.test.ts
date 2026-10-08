@@ -13,8 +13,8 @@ describe("resource-shortfall Supply actions", () => {
     expect(appSource).toContain("handleOpenBatchSupply(selectedManagedPlanet, resources)");
     expect(appSource).toContain("initialRequested={batchSupplyInitialRequested}");
     expect(appSource.match(/onSupply=\{handleSupplyCurrentPlanet\}/g)).toHaveLength(4);
-    expect(appSource).toContain("const { refreshLevelSupply, handleConfirmBatchSupply } = useBatchSupplyActions({");
-    expect(appSource).toContain("batchSupplySourceLoadIdRef.current === sourceLoadId");
+    expect(appSource).toContain("const isCurrent = () => mounted.current && batchSupplySourceLoadIdRef.current === sourceLoadId");
+    expect(appSource).toContain("const { refreshLevelSupply, handleConfirmBatchSupply } = useBatchSupplyActions(");
     expect(appSource).toContain('if (!isCurrent()) throw new Error("Supply selection changed before submission.');
     expect(appSource).toContain("order.originPlanetId === target.planetId");
   });

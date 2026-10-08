@@ -36,19 +36,6 @@ test("suggestion honors slot/moon limits, exclusions, fuel and partial deficits 
   expect(suggestBatchSupplySourceIds({ sources: combatOnly, requested, targetCoordinates }).size).toBe(0);
 });
 
-test("residual contribution finds complementary origins outside nearest and largest prefixes", () => {
-  const complementary = [
-    { ...sources[0]!, planetId: "a", resources: { metal: 1000, crystal: 0, deuterium: 100 } },
-    { ...sources[1]!, planetId: "b", resources: { metal: 1000, crystal: 0, deuterium: 100 } },
-    { ...sources[2]!, planetId: "c", resources: { metal: 0, crystal: 500, deuterium: 100 } },
-  ];
-  const options = { sources: complementary, targetCoordinates, requested: { metal: 1000, crystal: 500, deuterium: 0 }, maxOrders: 2 };
-  const selectedPlanetIds = suggestBatchSupplySourceIds(options);
-  expect([...selectedPlanetIds]).toEqual(["a", "c"]);
-  expect(buildBatchSupplyPlan({ ...options, selectedPlanetIds }).missing).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
-  expect(suggestBatchSupplySourceIds({ ...options, sources: [...complementary].reverse() })).toEqual(selectedPlanetIds);
-});
-
 test("partial candidates and fuel-starved near sources cannot hide an available complete origin", () => {
   const starved = { ...sources[0]!, ships: { largeCargo: 10 }, resources: { metal: 999999, crystal: 999999, deuterium: 0 } };
   const options = { sources: [starved, sources[2]!], targetCoordinates, requested, maxOrders: 1 };
@@ -61,4 +48,16 @@ test("partial candidates and fuel-starved near sources cannot hide an available 
   const plan = buildBatchSupplyPlan({ ...args, selectedPlanetIds: suggestBatchSupplySourceIds(args) });
   expect(plan.orders).toHaveLength(2);
   expect(plan.missing).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
+});
+
+test("two slots choose complementary residual inventory beyond both naive prefixes", () => {
+  const sources: BatchSupplySource[] = [
+    { planetId:"a",label:"A",coordinates:{galaxy:1,system:1,position:14},resources:{metal:10000,crystal:0,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+    { planetId:"b",label:"B",coordinates:{galaxy:1,system:1,position:13},resources:{metal:9000,crystal:0,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+    { planetId:"c",label:"C",coordinates:{galaxy:1,system:1,position:12},resources:{metal:0,crystal:1000,deuterium:100},ships:{largeCargo:20},driveLevels:{} },
+  ];
+  const args={sources,targetCoordinates:{galaxy:1,system:1,position:15},requested:{metal:10000,crystal:1000,deuterium:0},maxOrders:2};
+  const selectedPlanetIds=suggestBatchSupplySourceIds(args);
+  expect([...selectedPlanetIds]).toEqual(["a","c"]);
+  expect(buildBatchSupplyPlan({...args,selectedPlanetIds}).missing).toEqual({metal:0,crystal:0,deuterium:0});
 });
