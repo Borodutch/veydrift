@@ -1,3 +1,5 @@
+import { BatchQuoteExpiredError } from "./missionBatchFees";
+import { classifyRecoveryReadError, RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readlinkSync, readFileSync } from "node:fs";
@@ -14,6 +16,7 @@ export type PreparedReconciliationPass = {
   read: <T>(operation: () => Promise<T>) => Promise<T>;
   assertActive: () => void;
   finalizedHead?: Promise<bigint>;
+  recoveryTrace?: RecoveryTrace;
 };
 type PreparedReconciler = (hash: Hex, membership: string, stored: PreparedReceipt | undefined,
   pass: PreparedReconciliationPass) => Promise<PreparedReceipt | void>;
@@ -328,14 +331,14 @@ export class ResolverTransactionCoordinator {
   /** Explicit operator path. A reservation without a result is never signed a second time. */
   recoverLegacySameNonce(binding: LegacyRecoveryBinding,
     prepare: (sign: (signer: () => Promise<Hex>, unsignedPlan: Hex, prevalidation?: PreparedReplayGuard) => Promise<Hex>, assertLease: () => void) => Promise<void>,
-    maxFeeWei: string): Promise<void> {
+    maxFeeWei: string, trace?: RecoveryTrace): Promise<void> {
     const { chainId, address, nonce } = binding;
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address, async (assertLease) => {
       if (!Number.isSafeInteger(nonce) || nonce < 0 || binding.value !== "0" || !binding.evidence)
         throw new Error("invalid recovery binding");
       const serialized = JSON.stringify(binding);
       let group = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce);
-      if (group && group.binding !== serialized) throw new Error("recovery expected binding mismatch");
+      if (group && (group.binding !== serialized || group.max_fee_wei !== maxFeeWei)) throw new Error("recovery expected binding mismatch");
       if (!group) {
         if (!/^[0-9]{1,18}$/.test(maxFeeWei) || BigInt(maxFeeWei)<=0n || BigInt(maxFeeWei)>400_000_000_000_000n) throw new Error("invalid recovery policy cap");
         this.database.transaction(() => {
@@ -357,7 +360,8 @@ export class ResolverTransactionCoordinator {
         }).immediate();
       }
       // Examine both candidates before signing or transferring; an original winner needs no alternative.
-      await this.reconcileIntents(chainId, address, undefined, assertLease, true);
+      if(trace)trace.stage="initial-candidates";
+      await this.reconcileIntents(chainId, address, undefined, assertLease, true,trace);
       group = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
       if (group.finalized && (!group.reservation_id || group.alternative_hash)) return;
       if (group.winner_hash && (!group.reservation_id || group.alternative_hash)) throw new Error("recovery winner provisional; signer held until finality");
@@ -367,7 +371,8 @@ export class ResolverTransactionCoordinator {
             const plan = parseTransaction(unsignedPlan);
             if (plan.type !== "eip1559" || plan.chainId !== chainId || plan.nonce !== nonce || plan.to?.toLowerCase() !== binding.to.toLowerCase()
               || plan.data !== binding.data || (plan.value ?? 0n) !== 0n || (plan.accessList?.length ?? 0) !== 0 || plan.r || plan.s) throw new Error("recovery unsigned plan mismatch");
-            await this.reconcileIntents(chainId, address, undefined, assertLease, true);
+            if(trace)trace.stage="post-quote-candidates";
+            await this.reconcileIntents(chainId, address, undefined, assertLease, true,trace);
             const beforeSign = this.recoveryGroups(chainId, address).find((row) => row.nonce === nonce)!;
             if (beforeSign.winner_hash) throw new Error("original recovery candidate included before signing; resume reconciliation");
             await prevalidation?.finalCheck?.();
@@ -410,7 +415,7 @@ export class ResolverTransactionCoordinator {
           this.recoveryEvent(binding, "candidate-persisted", result.hash);
         }).immediate();
       }
-      await this.reconcileIntents(chainId, address, undefined, assertLease);
+      await this.reconcileIntents(chainId, address, undefined, assertLease,false,trace);
     }));
   }
 
@@ -480,7 +485,7 @@ export class ResolverTransactionCoordinator {
   }
 
   private async reconcileIntents(chainId: number, address: Hex,
-    confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void, allowPreparation = false): Promise<void> {
+    confirm: ResolverTransactionRequest["reconcilePrepared"], assertLease: () => void, allowPreparation = false, trace?: RecoveryTrace): Promise<void> {
     const signing = this.database.query(
       "SELECT id FROM resolver_signing_reservations WHERE chain_id = ? AND resolver_address = ? AND transferred = 0 LIMIT 1"
     ).get(chainId, normalizeAddress(address));
@@ -491,7 +496,7 @@ export class ResolverTransactionCoordinator {
     const started = performance.now();
     let reads = 0, checked = 0, active = true;
     let budgetError: Error | undefined;
-    const blocked = (reason: string) => new Error("resolver reconciliation backpressure: " + reason
+    const blocked = (reason: string) => new RecoveryReadinessError(reason === "read deadline exceeded" ? "pass-deadline" : reason === "read budget exhausted" ? "pass-budget" : "proof-rejected", "resolver reconciliation backpressure: " + reason
       + "; no nonce allocated; check RPC/finality and retry, preserve the intent journal");
     const deadline = started + this.reconciliationTimeoutMs;
     const assertActive = () => {
@@ -534,13 +539,14 @@ export class ResolverTransactionCoordinator {
       assertActive();
       return result;
     };
-    const pass: PreparedReconciliationPass = { assertActive, read: async (operation) => {
+    const pass: PreparedReconciliationPass = { assertActive, ...(trace?{recoveryTrace:trace}:{}), read: async (operation) => {
       if (reads >= this.reconciliationReadLimit) {
         budgetError = blocked("read budget exhausted");
         throw budgetError;
       }
       reads++;
-      return bounded(operation);
+      if(trace)trace.reads++;
+      try { return await bounded(operation); } catch(error) { assertActive(); throw classifyRecoveryReadError(error); }
     } };
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
@@ -670,17 +676,19 @@ export class ResolverTransactionCoordinator {
       throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
     if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
+    if (recovery && pass.recoveryTrace) pass.recoveryTrace.stage="retry-hold";
     if (intent.nextRetry > this.now()) {
-      if (intent.attempts >= 3) throw this.replayError(intent, "recoverable pending; bounded retry cooling down");
+      if (intent.attempts >= 3) throw recovery ? new RecoveryReadinessError("retry-cooldown", "recoverable pending; bounded retry cooling down") : this.replayError(intent, "recoverable pending; bounded retry cooling down");
       await this.sleep(intent.nextRetry - this.now());
       assertLease();
     }
     let guard: PreparedReplayGuard;
     try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
-    catch { pass.assertActive(); throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    catch(error) { pass.assertActive(); if(error instanceof RecoveryReadinessError || error instanceof BatchQuoteExpiredError)throw error; throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
     assertLease();
     const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
     if (group) {
+      if(pass.recoveryTrace)pass.recoveryTrace.stage="post-quote-candidates";
       const binding: LegacyRecoveryBinding=JSON.parse(group.binding);
       const observer=this.recoveryObservers.get(resolverKey(chainId,address))!;
       for (const hash of [group.original_hash,group.alternative_hash!]) {
@@ -699,6 +707,7 @@ export class ResolverTransactionCoordinator {
       }).immediate();
       intent.replayState="ready";
     }
+    if(pass.recoveryTrace)pass.recoveryTrace.stage="dispatch";
     await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
   }
 
@@ -1173,14 +1182,14 @@ export class ResolverTransactionCoordinator {
     }, this.leaseRenewIntervalMs);
     renew.unref?.();
     const assertLease = () => {
-      if (leaseError) throw leaseError;
+      if (leaseError) throw new RecoveryReadinessError("lease-lost","resolver transaction lease renewal failed");
       const row = this.database.query(`
         SELECT holder, expires_at_ms AS expiresAtMs
         FROM resolver_transaction_leases
         WHERE chain_id = ? AND resolver_address = ?
       `).get(chainId, normalizeAddress(address)) as { holder: string; expiresAtMs: number } | null;
       if (!row || row.holder !== holder || row.expiresAtMs <= this.now()) {
-        throw new Error("resolver transaction lease was lost before broadcast");
+        throw new RecoveryReadinessError("lease-lost","resolver transaction lease was lost before broadcast");
       }
     };
     try {

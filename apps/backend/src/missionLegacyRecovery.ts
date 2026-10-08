@@ -1,4 +1,5 @@
-import { createPublicClient, http, encodeAbiParameters, parseAbi, toHex, keccak256, serializeTransaction, type Hex, type PublicClient } from "viem";
+import { RecoveryReadinessError, RecoveryTrace, acquireRecoveryHead, recoveryCandidateReceipt, assertRecoveryNonce, readOnlyRecoveryPass } from "./recoveryReadiness";
+import { createPublicClient, http, encodeAbiParameters, parseAbi, toHex, keccak256, serializeTransaction, parseTransaction, recoverTransactionAddress, TransactionNotFoundError, type TransactionSerialized, type Hex, type PublicClient } from "viem";
 import { batchCalldata, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 import { assertBatchQuoteFresh, validateMissionBatchReplay } from "./missionBatchFees";
 import type { LegacyRecoveryBinding, PreparedReconciliationPass, PreparedReplayGuard } from "./resolverTransactions";
@@ -75,12 +76,12 @@ export async function verifyRecoveryReference(client: PublicClient, input: Missi
     async () => { if (await pass.read(() => reference.getChainId())!==input.chainId) throw new Error("recovery reference chain mismatch"); },
     async () => {
       const block = await pass.read(() => reference.getBlock({blockNumber}));
-      if (block.hash!==blockHash) throw new Error("recovery reference canonical disagreement");
+      if (block.hash!==blockHash) throw new RecoveryReadinessError("reference-disagreement","recovery reference canonical disagreement");
     },
     async () => { localNonce = await pass.read(() => client.getTransactionCount({address:input.address,blockNumber})); },
     async () => { remoteNonce = await pass.read(() => reference.getTransactionCount({address:input.address,blockNumber})); }
   ]);
-  if (localNonce!==remoteNonce) throw new Error("recovery reference nonce disagreement");
+  if (localNonce!==remoteNonce) throw new RecoveryReadinessError("reference-disagreement","recovery reference nonce disagreement");
   if (finalized) {
     const final = await pass.read(() => reference.getBlock({blockTag:"finalized"}));
     if (final.number===null || !final.hash || final.number<blockNumber) throw new Error("recovery reference finality pending");
@@ -128,25 +129,30 @@ export async function verifyRecoveryIdentity(client: PublicClient, input: Missio
  * whole proof; never combine old code/asset identity with newer fee/simulation provenance. */
 export function recoveryProofGuard(client: PublicClient, input: MissionRecoveryInput,
   block: Awaited<ReturnType<typeof verifyRecoveryIdentity>>, pass: PreparedReconciliationPass,
-  feeGuard: () => void): PreparedReplayGuard {
+  feeGuard: () => void, trace?: RecoveryTrace): PreparedReplayGuard {
   const assertFresh = () => {
     pass.assertActive(); feeGuard();
     assertBatchQuoteFresh({blockNumber:block.number!,blockHash:block.hash!,blockTimestamp:block.timestamp});
   };
   return Object.assign(assertFresh, { finalCheck: async () => {
+    if(trace)trace.stage="final-identity";
     const identity = await verifyRecoveryIdentity(client,input,pass,block.number!);
     if (identity.hash!==block.hash) throw new Error("recovery proof block changed");
+    if(trace)trace.stage="final-head";
     const latest = await pass.read(() => client.getBlock({blockTag:"latest"}));
-    if (latest.number!==block.number || latest.hash!==block.hash) throw new Error("recovery proof head moved; refresh complete proof");
+    if (latest.number!==block.number || latest.hash!==block.hash) throw new RecoveryReadinessError("head-moved","recovery proof head moved; refresh complete proof");
+    if(trace)trace.stage="final-guard";
     assertFresh();
   } });
 }
 
 export async function prepareRecoveryEnvelope(client: PublicClient, input: MissionRecoveryInput,
-  policy: MissionBatchPolicy, pass: PreparedReconciliationPass) {
+  policy: MissionBatchPolicy, pass: PreparedReconciliationPass, head?: {number: bigint | null; hash: Hex | null}, trace?: RecoveryTrace) {
   const binding = recoveryBinding(input);
   policy = {...policy,maxFeeWei: BigInt(input.maxFeeWei)<policy.maxFeeWei ? BigInt(input.maxFeeWei):policy.maxFeeWei};
-  const block = await verifyRecoveryIdentity(client, input, pass);
+  if(trace)trace.stage="proof";
+  const block = await verifyRecoveryIdentity(client, input, pass, head?.number ?? undefined);
+  if(head && block.hash!==head.hash)throw new RecoveryReadinessError("canonical-changed");
   if (block.baseFeePerGas === null) throw new Error("recovery base fee unavailable");
   const tip = await pass.read(() => client.estimateMaxPriorityFeePerGas());
   // Unknown original priority is bounded by the original max fee, not guessed equal to it.
@@ -164,5 +170,65 @@ export async function prepareRecoveryEnvelope(client: PublicClient, input: Missi
   // Funding check is deliberately conservative: require the entire immutable transaction budget.
   if (balance < (policy.maxFeeWei < 200_000_000_000_000n ? policy.maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
   guard();
-  return { transaction, guard: recoveryProofGuard(client,input,block,pass,guard), evidence };
+  return { transaction, guard: recoveryProofGuard(client,input,block,pass,guard,trace), evidence };
+}
+
+/** Complete pre-sign read path, with no coordinator, lease or signing capability. */
+export async function recoveryReadiness(client: PublicClient, input: MissionRecoveryInput, policy: MissionBatchPolicy,
+  trace = new RecoveryTrace(), persisted?: {raw: Hex; hash: Hex; maxFeeWei: string; attempts: number; nextRetry: number}) {
+  const binding=recoveryBinding(input);
+  const reconcile=async (pass: PreparedReconciliationPass)=>{
+    for(const hash of [binding.originalHash,...(persisted?[persisted.hash]:[])])
+      if(await recoveryCandidateReceipt(client,hash,pass))throw new RecoveryReadinessError("candidate-included");
+    await assertRecoveryNonce(client,binding,pass);
+  };
+  trace.stage="initial-candidates";
+  await readOnlyRecoveryPass(p=>reconcile(trace.wrap(p)));
+  const complete=async (pass: PreparedReconciliationPass)=>{
+    if(persisted) {
+      // Explicit recovery performs an initial reconciliation, then the replay pass.
+      await reconcile(pass);
+      try {
+        const tx=await pass.read(()=>client.getTransaction({hash:persisted.hash}));
+        if(tx.hash.toLowerCase()!==persisted.hash.toLowerCase() || tx.blockHash!==null)throw new RecoveryReadinessError("candidate-included");
+      } catch(error) {pass.assertActive();if(!(error instanceof TransactionNotFoundError))throw error;}
+      // Conservative read-only result: never skip even an early-attempt production wait.
+      trace.stage="retry-hold";
+      if(persisted.nextRetry>Date.now())throw new RecoveryReadinessError("retry-cooldown");
+    }
+    trace.stage="pause";
+    const paused=await pass.read(()=>client.getStorageAt({address:binding.to,slot:toHex(52n,{size:32})}));
+    if(!policy.enabled || (paused!==undefined && BigInt(paused)!==0n))throw new RecoveryReadinessError("paused");
+    const head=await acquireRecoveryHead(client,pass,trace);
+    let guard: PreparedReplayGuard;
+    if(persisted) {
+      trace.stage="proof";
+      const tx=parseTransaction(persisted.raw);
+      if(keccak256(persisted.raw)!==persisted.hash || tx.nonce!==binding.nonce || !tx.r || !tx.s
+        || (tx.accessList?.length??0)!==0 || (await recoverTransactionAddress({serializedTransaction:persisted.raw as TransactionSerialized})).toLowerCase()!==binding.address
+        || !/^[0-9]{1,18}$/.test(persisted.maxFeeWei) || BigInt(persisted.maxFeeWei)<=0n || BigInt(persisted.maxFeeWei)>BigInt(input.maxFeeWei))throw new RecoveryReadinessError("journal-mismatch");
+      const block=await verifyRecoveryIdentity(client,input,pass,head.number!);
+      if(block.hash!==head.hash)throw new RecoveryReadinessError("canonical-changed");
+      const cap=BigInt(persisted.maxFeeWei)<policy.maxFeeWei?BigInt(persisted.maxFeeWei):policy.maxFeeWei;
+      const balance=await pass.read(()=>client.getBalance({address:binding.address,blockNumber:block.number!}));
+      if(balance<cap)throw new RecoveryReadinessError("proof-rejected");
+      const feeGuard=await validateMissionBatchReplay(client,persisted.raw,{items:JSON.parse(binding.membership),account:binding.address,
+        game:binding.to,chainId:binding.chainId,policy:{...policy,maxFeeWei:cap},blockNumber:block.number!},pass,input.allowAlreadySettled&&block.recoveryComplete);
+      guard=recoveryProofGuard(client,input,block,pass,feeGuard,trace);
+    } else guard=(await prepareRecoveryEnvelope(client,input,policy,pass,head,trace)).guard;
+    trace.stage="post-quote-candidates";
+    if(persisted)await reconcile(pass);
+    else await readOnlyRecoveryPass(p=>reconcile(trace.wrap(p)));
+    await guard.finalCheck!();
+    guard();
+    return trace.diagnostic();
+  };
+  // Replay acquisition/proof/observer reads share ONE reconciliation budget.
+  // Pre-sign preparation remains lease-only in production, not a reconciliation.
+  return persisted ? readOnlyRecoveryPass(p=>{
+    const pass=trace.wrap(p);
+    // replayIntent charges the validation callback itself as well as its RPCs.
+    return pass.read(()=>complete(pass));
+  })
+    : complete(trace.wrap({assertActive:()=>{},read:operation=>operation()}));
 }

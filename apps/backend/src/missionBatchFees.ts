@@ -16,10 +16,12 @@ export type BatchQuoteProvenance = Readonly<{
   blockNumber: bigint; blockHash: Hex; blockTimestamp: bigint;
 }>;
 
+export class BatchQuoteExpiredError extends Error { constructor() { super("batch quote block expired"); } }
+
 export function assertBatchQuoteFresh(provenance: BatchQuoteProvenance, nowMs = Date.now()): void {
   if (typeof provenance.blockTimestamp !== "bigint" || provenance.blockTimestamp <= 0n
     || Math.abs(nowMs / 1000 - Number(provenance.blockTimestamp)) > 30)
-    throw new Error("batch quote block expired");
+    throw new BatchQuoteExpiredError();
 
 }
 

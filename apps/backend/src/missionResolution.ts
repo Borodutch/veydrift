@@ -1,3 +1,4 @@
+import { acquireRecoveryHead, assertRecoveryNonce, recoveryCandidateReceipt, RecoveryTrace, RecoveryReadinessError } from "./recoveryReadiness";
 import {
   decodeEventLog,
   TransactionNotFoundError,
@@ -831,24 +832,16 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.setRecoveryObserver(this.chain.id, address, {
         invalidate: (hash) => { this.batchReceiptOutcomes.delete(hash); },
         observe: (binding, hash, pass) => this.observeRecoveryCandidate(binding, hash, pass),
-        assertUnconsumed: async (binding, pass) => {
-          const block = await pass.read(() => this.publicClient!.getBlock({blockTag:"latest"}));
-          if (block.number === null || !block.hash) throw new Error("recovery nonce block unavailable");
-          assertBatchQuoteFresh({blockNumber:block.number,blockHash:block.hash,blockTimestamp:block.timestamp});
-          const latest = await pass.read(() => this.publicClient!.getTransactionCount({address, blockNumber:block.number!}));
-          const canonical = await pass.read(() => this.publicClient!.getBlock({blockNumber:block.number!}));
-          if (canonical.hash !== block.hash) throw new Error("recovery nonce block changed");
-          const pending = await pass.read(() => this.publicClient!.getTransactionCount({address, blockTag:"pending"}));
-          if (latest !== binding.nonce || pending !== binding.nonce) throw new Error("recovery nonce changed; identify canonical hash or unexplained pending advance");
-        }
+        assertUnconsumed: (binding, pass) => assertRecoveryNonce(this.publicClient!,binding,pass)
       });
       this.transactionCoordinator.setPreparedReplayer(this.chain.id, address, {
         getTransaction: async (hash) => {
           try { return await this.publicClient!.getTransaction({ hash }); }
-          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new Error("replay transaction lookup unavailable"); }
+          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new RecoveryReadinessError("rpc-unavailable"); }
         },
         validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
-          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new Error("mission replay disabled or paused");
+          if(pass.recoveryTrace)pass.recoveryTrace.stage="pause";
+          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");
           const items: BatchLeg[] = JSON.parse(membership);
           if (!Array.isArray(items) || items.length < 1 || items.length > 32
             || operationId !== "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(batchCalldata(items)))
@@ -860,7 +853,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           let allowRecoveryNoop = false;
           let identity: Awaited<ReturnType<typeof verifyRecoveryIdentity>> | undefined;
           if (recovery) {
-            identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass);
+            const head=await acquireRecoveryHead(this.publicClient!,pass,pass.recoveryTrace);
+            if(pass.recoveryTrace)pass.recoveryTrace.stage="proof";
+            identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass,head.number!);
+            if(identity.hash!==head.hash)throw new Error("recovery acquired block changed");
             allowRecoveryNoop = JSON.parse(recovery.evidence).allowAlreadySettled === true && identity.recoveryComplete;
             const balance = await pass.read(() => this.publicClient!.getBalance({address,blockNumber:identity!.number!}));
             if (balance < (maxFeeWei < 200_000_000_000_000n ? maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
@@ -869,41 +865,35 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           const feeGuard = await validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
             game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop,
             recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
-          return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard) : feeGuard;
+          return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard,pass.recoveryTrace) : feeGuard;
         },
         broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
       });
     }
   }
 
-  async recoverLegacyMission(input: MissionRecoveryInput): Promise<void> {
+  async recoverLegacyMission(input: MissionRecoveryInput, trace = new RecoveryTrace()): Promise<void> {
     const binding = recoveryBinding(input);
     if (typeof this.sender === "string" || !this.publicClient || !this.chain || !this.batchPolicy.enabled
       || binding.chainId !== this.chain.id || binding.address !== this.sender.address.toLowerCase()
       || binding.to !== this.gameAddress.toLowerCase()) throw new Error("recovery configured signer/deployment mismatch");
     const account = this.sender, client = this.publicClient;
     await this.transactionCoordinator.recoverLegacySameNonce(binding, async (sign, assertLease) => {
-      const pass: PreparedReconciliationPass = { read: async (operation) => { assertLease(); const result = await operation(); assertLease(); return result; }, assertActive: assertLease };
-      if (await this.gamePaused()) throw new Error("recovery game paused");
-      const {transaction, guard, evidence} = await prepareRecoveryEnvelope(client, input, this.batchPolicy, pass);
+      const pass = trace.wrap({ read: async (operation) => { assertLease(); const result = await operation(); assertLease(); return result; }, assertActive: assertLease });
+      trace.stage="pause";
+      if (await pass.read(()=>this.gamePaused())) throw new RecoveryReadinessError("paused","recovery game paused");
+      const head=await acquireRecoveryHead(client,pass,trace);
+      const {transaction, guard, evidence} = await prepareRecoveryEnvelope(client, input, this.batchPolicy, pass,head,trace);
       this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
       await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
-    }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString());
+    }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString(),trace);
   }
 
   private async observeRecoveryCandidate(binding: LegacyRecoveryBinding, hash: Hex,
     pass: PreparedReconciliationPass): Promise<PreparedReceipt | null> {
     const client = this.publicClient!;
-    let receipt;
-    try { receipt = await pass.read(() => client.getTransactionReceipt({hash})); }
-    catch (error) {
-      if (!(error instanceof TransactionReceiptNotFoundError)) throw new Error("recovery receipt lookup unavailable");
-      try {
-        const tx = await pass.read(() => client.getTransaction({hash}));
-        if (tx.blockHash !== null) throw new Error("recovery transaction included; await exact receipt hydration");
-      } catch (missing) { if (!(missing instanceof TransactionNotFoundError)) throw new Error("recovery transaction inclusion unresolved; preserve group"); }
-      return null;
-    }
+    const receipt=await recoveryCandidateReceipt(client,hash,pass);
+    if(!receipt)return null;
     if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw new Error("recovery receipt hash mismatch");
     const block = await pass.read(() => client.getBlock({blockNumber:receipt.blockNumber}));
     if (block.hash !== receipt.blockHash) return null; // orphan observation, not a winner
