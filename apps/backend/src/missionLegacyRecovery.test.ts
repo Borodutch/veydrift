@@ -16,16 +16,18 @@ const original=("0x"+"44".repeat(32)) as Hex, blockHash=("0x"+"aa".repeat(32)) a
 const chain = {id:8453,name:"fixture",nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18},rpcUrls:{default:{http:["http://invalid.test"]}}};
 const originalFetch=globalThis.fetch;
 let referenceNonce=4;
+let fixtureHead=1n;
+const fixtureHash=(n:bigint)=>n===1n?blockHash:("0x"+n.toString(16).padStart(64,"0")) as Hex;
 beforeAll(()=>{globalThis.fetch=(async (url: string|URL|Request, init?:RequestInit)=>{
  if(String(url)!=="https://reference.invalid/" && String(url)!=="https://reference.invalid") throw new Error("unexpected real network");
  const q=JSON.parse(init!.body as string);
- const result=q.method==="eth_chainId"?"0x2105":q.method==="eth_getTransactionCount"?"0x"+referenceNonce.toString(16):{number:"0x1",hash:blockHash,timestamp:"0x1",transactions:[]};
+ const result=q.method==="eth_chainId"?"0x2105":q.method==="eth_getTransactionCount"?"0x"+referenceNonce.toString(16):{number:q.params[0]==="finalized"?"0x1":q.params[0],hash:fixtureHash(q.params[0]==="finalized"?1n:BigInt(q.params[0])),timestamp:"0x1",transactions:[]};
  return new Response(JSON.stringify({jsonrpc:"2.0",id:q.id,result}),{headers:{"content-type":"application/json"}});
 }) as typeof fetch;});
 afterAll(()=>{globalThis.fetch=originalFetch;});
 function plan(binding: ReturnType<typeof recoveryBinding>) {return serializeTransaction({type:"eip1559",chainId:8453,nonce:4,to:game,data:binding.data,value:0n,gas:1000000n,maxFeePerGas:23995623n,maxPriorityFeePerGas:23995423n});}
 function fixture(reconciliationTimeoutMs = 5000) {
- referenceNonce=4;
+ referenceNonce=4;fixtureHead=1n;
  const dir=mkdtempSync(join(tmpdir(),"recovery58-")), path=join(dir,"journal.sqlite");
  const items=[{missionId:"99306",leg:"return" as const,dueAt:1791480343}];
  const data=batchCalldata(items);
@@ -33,6 +35,7 @@ function fixture(reconciliationTimeoutMs = 5000) {
   operationId:"mission-batch:"+game+":"+keccak256(data),membership:JSON.stringify(items),game,calldataHash:keccak256(data),implementation,
   identities:[implementation,game,("0x"+"55".repeat(20)) as Hex].map(address=>({address,codeHash:keccak256("0x6000")})),
   originalFee:{gas:"10414604",totalWei:"199999983326886",l1ReserveWei:"77724806734",operatorReserveWei:"0",maxFeePerGas:"19196338",priority:null,source:"fixture signed-prepared log",sourceDigest:keccak256("0x01")},mission:{owner:account.address,origin:"783",target:"210",returnAt:"1791480343",shipsWords:[("0x"+"00".repeat(31)+"0d") as Hex,("0x"+"00".repeat(32)) as Hex],bodyFlags:("0x"+"00".repeat(32)) as Hex},gas:"1000000",allowAlreadySettled:false,referenceRpcUrl:"https://reference.invalid",recoveryId:"fixture-58",maxFeeWei:"200000000000000"};
+ let previousLatestAt=0;
  let now=1000, winner:Hex|null=null, finalized=false, nonce=4, signCount=0, outcome=0;
  let afterSign:()=>void=()=>{};
  let receiptStatus="success", completed=true, reportedBoth=false;
@@ -45,7 +48,12 @@ function fixture(reconciliationTimeoutMs = 5000) {
   getChainId:async()=>8453,getCode:async()=>"0x6000",getBalance:async()=>10n**18n,
   getStorageAt:async({slot}:{slot:Hex})=>slot.startsWith("0x360894")?"0x"+"0".repeat(24)+implementation.slice(2):slot==="0x"+"0".repeat(62)+"34"?"0x00": BigInt(slot)===missionSlot+7n?input.mission.shipsWords[0]:input.mission.bodyFlags,
   getTransactionCount:async()=>nonce,
-  getBlock:async({blockTag}:{blockTag?:string})=>({number:blockTag==="finalized"&&!finalized?0n:1n,hash:blockHash,timestamp:BigInt(Math.floor(Date.now()/1000)),baseFeePerGas:100n,gasLimit:30000000n}),
+  getBlock:async({blockTag,blockNumber}:{blockTag?:string;blockNumber?:bigint})=>{
+   // Acquisition polls 100ms apart; immediate proof reads stay on the selected head.
+   if(blockTag==="latest") {const t=performance.now();if(previousLatestAt&&t-previousLatestAt>=90)fixtureHead++;previousLatestAt=t;}
+   const number=blockNumber??(blockTag==="finalized"?(finalized?1n:0n):fixtureHead);
+   return {number,hash:fixtureHash(number),timestamp:BigInt(Math.floor(Date.now()/1000)),baseFeePerGas:100n,gasLimit:30000000n};
+  },
   estimateMaxPriorityFeePerGas:async()=>10n,
   readContract:async({functionName}:{functionName:string})=>functionName==="fleetMissionEligibility"?[true,0n,true]:functionName==="fleetMission"?[winner||outcome===2?4:2,0,account.address,783n,210n,1n,2n,1791480343n,16n,{metal:0n,crystal:0n,deuterium:0n},0n]:100n,
   call:async()=>({data:encodeFunctionResult({abi:missionBatchAbi,functionName:"resolveFleetMissionBatch",result:[[outcome],100000n]})}),
@@ -195,9 +203,9 @@ test("reference disagreement after identity is rejected before dispatch",async()
 });
 test("moved fee head and implementation after identity cannot sign or dispatch",async()=>{
  const f=fixture();try{const originalStorage=f.publicClient.getStorageAt;let feeRead=false;
- const hash2=("0x"+"bb".repeat(32)) as Hex;
- const originalBlock=f.publicClient.getBlock;f.publicClient.getBlock=async (args:any)=>{const n=args.blockNumber??(feeRead?2n:1n);const b=await originalBlock(args);return {...b,number:n,hash:n===2n?hash2:blockHash};};
- f.publicClient.getStorageAt=async(args:any)=>args.slot.startsWith("0x360894")&&args.blockNumber===2n?"0x"+"99".repeat(32):originalStorage(args);
+ const hash2=fixtureHash(3n);
+ const originalBlock=f.publicClient.getBlock;f.publicClient.getBlock=async (args:any)=>{const b=await originalBlock(args);return feeRead&&!args.blockNumber?{...b,number:b.number+1n,hash:hash2}:b;};
+ f.publicClient.getStorageAt=async(args:any)=>args.slot.startsWith("0x360894")&&args.blockNumber===3n?"0x"+"99".repeat(32):originalStorage(args);
  const readContract=f.publicClient.readContract;f.publicClient.readContract=async(args:any)=>{if(args.functionName==="getL1Fee")feeRead=true;return readContract(args);};
  await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("proof head moved");expect(f.bytes).toHaveLength(0);expect(f.signs()).toBe(0);
  expect(f.db.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({n:0});
@@ -317,7 +325,7 @@ test("parallel wave cannot exceed the remaining pass read budget",async()=>{
 });
 
 test("timed-out replay retains every unfinished parallel read and blocks retry fan-out",async()=>{
- const f=fixture(50);let release!:()=>void;
+ const f=fixture(250);let release!:()=>void;
  try{
   fifteenIdentities(f.input);let pending=0,codeCalls=0;
   const held=new Promise<void>(resolve=>{release=resolve;});
