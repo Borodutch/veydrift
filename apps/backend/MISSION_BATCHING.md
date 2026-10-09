@@ -201,3 +201,48 @@ Raw Base RPC hex quantities are normalized to bigint. Actual operator fees use
 the receipt field or the fork-aware oracle at the canonical receipt block.
 Unavailable fee components and total are null, never invented zero or concatenated
 hex strings. Receipt totals are wei, not an immutable inclusion-time USD guarantee.
+
+## October 2026 freshness/backlog correction (#61)
+
+The current fee policy is ETH-denominated: the immutable transaction ceiling is
+0.0002 ETH, with the existing configured batch ceiling and Base gas cap unchanged;
+older USD rollout notes above are historical. This correction changes neither
+fee policy nor the 30-second block age boundary.
+
+Fixed-block candidate preflight groups at most 25 missions (mission + ordering
+support = 50 JSON-RPC calls) into each sequential HTTP wave. Up to 100 candidates
+need at most four waves rather than 200 individually paced requests. The existing
+300ms transport start pacing, request timeout, bounded retries and sequential
+batch fallback remain enabled. DefenseHold deadline storage remains pinned to
+that same block. Freshness checks before/after waves and individual fallback
+reads stop expired work without signing or issuing another wave. No parallel
+worker pool or detached timeout work is introduced. Receipt reconciliation keeps
+its existing per-member reads, 128-work-unit ceiling and five-second deadline.
+
+Packing uses the original canonical block; the existing 20-second packing budget
+can return a smaller productive prefix. Under the nonce lease, membership and
+chronology are read again at the newly selected block, and the exact signed-gas
+productive quote is recomputed at that same block. The last header, synchronous
+pre-sign and synchronous pre-send checks are preserved. An expired persisted
+signature remains locally prevented across restart; shared retry never authorizes
+re-signing or resending it.
+
+All quote-age failures use BatchQuoteExpiredError and retry as shared admission
+work after one normal tick, not per-mission 30–300s punishment. A valid HTTP
+Retry-After on 429/503 establishes a transport-wide cooldown and a shared resolver
+retry deadline, with no immediate retry or fallback burst. Individual semantic
+failures still retain their own cooldowns.
+
+mission_batch_phase emits only phase, candidate count, duration, block age and
+fixed outcome category; it adds no membership, endpoint, key or signed-envelope
+content. Phases cover candidates, packing, leased candidates/quote, pre-sign
+header, signing and pre-send header. Header/signing phase completion is not send
+permission: existing freshness checks follow and may still reject it. Correlate
+these with mission_batch_blocked and canonical outcomes. Empty successful ticks
+remain insufficient proof of backlog drainage.
+
+Regression: missionBatchBacklog.test.ts exercises the actual reader/HTTP transport,
+service and durable coordinator with 39 candidates and two-second blocks, bounded
+50-call waves, full and deadline-limited productive packs, shared expiry retry,
+Retry-After, and expiration before signing/after persistence with restart. Synthetic
+RPC/fee/state fixtures do not replace post-deployment receipt/accounting evidence.

@@ -35,7 +35,7 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   const data = batchCalldata(input.items);
   const block = await client.getBlock(input.blockNumber === undefined ? { blockTag: "latest" } : { blockNumber: input.blockNumber });
   if (typeof block.number !== "bigint" || !block.hash || block.baseFeePerGas === null) throw new Error("fresh EIP-1559 block unavailable");
-  if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("stale fee block");
+  if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new BatchQuoteExpiredError();
   const blockNumber = block.number;
   const cap = block.gasLimit < 16_777_216n ? block.gasLimit : 16_777_216n;
   const [reference, tip] = await Promise.all([
@@ -60,7 +60,7 @@ export async function quoteMissionBatch(client: PublicClient, input: {
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getL1FeeUpperBound", args: [BigInt((serialized.length - 2) / 2)], blockNumber }),
     client.readContract({ address: gasOracle, abi: oracleAbi, functionName: "getOperatorFee", args: [cap], blockNumber })
   ]);
-  if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new Error("fee quote expired during estimation");
+  if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new BatchQuoteExpiredError();
   const l1Fee = l1Exact > l1Upper ? l1Exact : l1Upper;
   // Staged battles use whatever gas they get and only start another stage with headroom left, so
   // sign as much as the ETH cap affords (unused gas is not charged), up to the cap, never below

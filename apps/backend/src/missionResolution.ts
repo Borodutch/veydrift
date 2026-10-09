@@ -20,7 +20,7 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { BackendConfig } from "./config";
 import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
-import { VeydriftGameReader } from "./evm";
+import { VeydriftGameReader, RpcRetryAfterError } from "./evm";
 import { emitObservabilityEvent } from "./observability";
 import {
   resolverReplacementFees,
@@ -33,7 +33,7 @@ import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { validateMissionBatchReplay, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
+import { validateMissionBatchReplay, BatchQuoteExpiredError, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -590,9 +590,9 @@ export class MissionResolutionService {
       } catch (error) {
         // A concurrent settlement or fresh block only invalidates this packing: repack next tick.
         const transient = error instanceof Error && /membership changed|block changed or expired/.test(error.message);
-        if (error instanceof ResolverAdmissionBlockedError) {
+        if (error instanceof ResolverAdmissionBlockedError || error instanceof BatchQuoteExpiredError || error instanceof RpcRetryAfterError) {
           this.sharedAdmissionBlocked = true;
-          this.sharedAdmissionRetryAtMs = this.now() + this.intervalMs;
+          this.sharedAdmissionRetryAtMs = Math.max(this.now() + this.intervalMs, error instanceof RpcRetryAfterError ? error.retryAtMs : 0);
         } else if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
         this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
         emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
@@ -828,7 +828,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "getCanonicalFleetMissionBatch" | "isFleetChronologyOrderingReady">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -1012,18 +1012,22 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       || this.batchPolicy.maxFeeWei <= 0n || this.batchPolicy.maxFeeWei > 400_000_000_000_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
     const exclusions: BatchExclusion[] = [];
+    // Empty ticks still reconcile above, but require no fee snapshot or candidate proof.
+    if (!candidates.length) return { hash: null, items: [], exclusions };
     const initialBlock = await client.getBlock({ blockTag: "latest" });
     if (initialBlock.number === null) throw new Error("canonical batch block unavailable");
-    const fresh = await this.freshBatchCandidates(candidates.slice(0, 100), initialBlock.number, exclusions);
+    const initialGuard = () => assertBatchQuoteFresh({ blockNumber: initialBlock.number!, blockHash: initialBlock.hash!, blockTimestamp: initialBlock.timestamp });
+    const fresh = await this.batchPhase("candidates", candidates.length, initialBlock.timestamp,
+      () => this.freshBatchCandidates(candidates.slice(0, 100), initialBlock.number!, exclusions, initialGuard));
     if (!fresh.length) return { hash: null, items: [], exclusions };
     const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
     const quote = (items: BatchLeg[], currentNonce = nonce, blockNumber = initialBlock.number!) => quoteMissionBatch(client, {
       items, blockNumber, nonce: currentNonce, account: account.address, game: this.gameAddress, chainId, policy: this.batchPolicy
     });
-    const packed = await packMissionBatch(fresh, this.batchPolicy.maxItems, quote, (item, reason) => {
+    const packed = await this.batchPhase("packing", fresh.length, initialBlock.timestamp, () => packMissionBatch(fresh, this.batchPolicy.maxItems, quote, (item, reason) => {
       emitObservabilityEvent({ kind: "mission_batch_indivisible_blocker", ...item, reason,
         action: "review contract gas/prerequisites; do not raise cap or bypass batching" }, "warn");
-    });
+    }));
     exclusions.push(...packed.exclusions);
     if (!packed.items.length) return { hash: null, items: [], exclusions };
     const items = packed.items;
@@ -1037,19 +1041,21 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
         const block = await client.getBlock({ blockTag: "latest" });
         if (block.number === null) throw new Error("canonical batch block unavailable");
-        const current = await this.freshBatchCandidates(items, block.number);
+        const currentGuard = () => assertBatchQuoteFresh({ blockNumber: block.number!, blockHash: block.hash!, blockTimestamp: block.timestamp });
+        const current = await this.batchPhase("leased-candidates", items.length, block.timestamp,
+          () => this.freshBatchCandidates(items, block.number!, [], currentGuard));
         if (JSON.stringify(current) !== JSON.stringify(items)) throw new Error("batch canonical membership changed; repack next tick");
-        const fees = await quote(items, currentNonce, block.number); // exact signed-gas productive simulation under lease
-        const canonical = await client.getBlock({ blockNumber: block.number });
+        const fees = await this.batchPhase("leased-quote", items.length, block.timestamp, () => quote(items, currentNonce, block.number!)); // exact signed-gas productive simulation under lease
+        const canonical = await this.batchPhase("presign-header", items.length, block.timestamp, () => client.getBlock({ blockNumber: block.number! }));
         if (fees.provenance.blockNumber !== block.number || fees.provenance.blockHash !== block.hash
           || fees.provenance.blockTimestamp !== block.timestamp || canonical.hash !== fees.provenance.blockHash)
           throw new Error("batch quote block changed before signing");
         assertBatchQuoteFresh(fees.provenance);
-        const signed = await signing.sign(JSON.stringify(items), () => {
+        const signed = await this.batchPhase("signing", items.length, fees.provenance.blockTimestamp, () => signing.sign(JSON.stringify(items), () => {
           assertBatchQuoteFresh(fees.provenance);
           return account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
             nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
-        });
+        }));
         emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
           fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
@@ -1058,7 +1064,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         return { hash: keccak256(signed), membership: JSON.stringify(items), serializedTransaction: signed,
           replayMaxFeeWei: this.batchPolicy.maxFeeWei.toString(),
           validateBeforeBroadcast: async () => {
-            const canonical = await client.getBlock({ blockNumber: fees.provenance.blockNumber });
+            const canonical = await this.batchPhase("presend-header", items.length, fees.provenance.blockTimestamp, () => client.getBlock({ blockNumber: fees.provenance.blockNumber }));
             if (canonical.hash !== fees.provenance.blockHash) throw new Error("batch quote block changed before broadcast");
             assertBatchQuoteFresh(fees.provenance);
           },
@@ -1075,10 +1081,26 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return { hash, items, exclusions, outcomes: this.batchReceiptOutcomes.get(hash) ?? [] };
   }
 
-  private async freshBatchCandidates(items: BatchLeg[], blockNumber?: bigint, exclusions: BatchExclusion[] = []): Promise<BatchLeg[]> {
+  private async batchPhase<T>(phase: string, candidates: number, blockTimestamp: bigint, work: () => Promise<T>): Promise<T> {
+    const started = Date.now();
+    let outcome = "ready";
+    try { return await work(); }
+    catch (error) { outcome = error instanceof BatchQuoteExpiredError ? "quote-expired" : "blocked"; throw error; }
+    finally { emitObservabilityEvent({ kind: "mission_batch_phase", phase, candidates, outcome,
+      durationMs: Math.max(0, Date.now() - started), blockAgeMs: Date.now() - Number(blockTimestamp) * 1000 }); }
+  }
+
+  private async freshBatchCandidates(items: BatchLeg[], blockNumber?: bigint, exclusions: BatchExclusion[] = [], assertActive = () => {}): Promise<BatchLeg[]> {
     const fresh: BatchLeg[] = [];
-    for (const item of items) {
-      const mission = await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), blockNumber);
+    assertActive();
+    const snapshots = blockNumber !== undefined && this.reader.getCanonicalFleetMissionBatch
+      ? await this.reader.getCanonicalFleetMissionBatch(items.map(item => BigInt(item.missionId)), blockNumber, assertActive) : undefined;
+    if (snapshots && snapshots.length !== items.length) throw new Error("canonical mission batch length mismatch");
+    for (let index = 0; index < items.length; index++) {
+      assertActive();
+      const item = items[index]!;
+      const mission = snapshots ? snapshots[index]!.mission : await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), blockNumber);
+      assertActive();
       if (!mission) throw new Error("canonical batch candidate unavailable: " + item.missionId);
       const complete = item.leg === "arrival" ? ["Returning", "Recalled", "Resolved", "Returned"].includes(mission.status)
         : ["Resolved", "Returned"].includes(mission.status);
@@ -1092,7 +1114,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: complete ? "settled" : "not-due-or-stale" });
         continue;
       }
-      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(item.missionId), blockNumber)) {
+      const orderingReady = snapshots ? snapshots[index]!.orderingReady
+        : await this.reader.isFleetChronologyOrderingReady?.(BigInt(item.missionId), blockNumber);
+      assertActive();
+      if (!orderingReady) {
         exclusions.push({ item, reason: "ordering-unavailable" });
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
         continue;

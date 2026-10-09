@@ -1560,6 +1560,10 @@ export type RpcBlock = {
   timestamp: string;
 };
 
+export class RpcRetryAfterError extends Error {
+  constructor(readonly retryAtMs: number) { super("RPC retry-after cooldown"); }
+}
+
 class RpcEndpointError extends Error {
   constructor(message: string, readonly retryReason: string | null, readonly failoverOnly = false) { super(message); }
 }
@@ -1599,6 +1603,7 @@ export class HttpJsonRpcTransport {
   private readonly minRequestIntervalMs: number;
   private readonly requestTimeoutMs: number;
   private nextRequestAt = 0;
+  private retryAfterMs = 0;
   private requestQueue: Promise<void> = Promise.resolve();
   private readonly rpcUrls: string[];
   private activeRpcIndex = 0;
@@ -1801,8 +1806,10 @@ export class HttpJsonRpcTransport {
   private fetchRpc<T>(init: RequestInit, rpcUrl: string): Promise<T> {
     // Serialize start slots, never response completion. Independent reads can overlap.
     const start = this.requestQueue.then(async () => {
+      if (Date.now() < this.retryAfterMs) throw new RpcRetryAfterError(this.retryAfterMs);
       const waitMs = Math.max(0, this.nextRequestAt - Date.now());
       if (waitMs > 0) await retryDelayMs(waitMs);
+      if (Date.now() < this.retryAfterMs) throw new RpcRetryAfterError(this.retryAfterMs);
       this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
     });
     this.requestQueue = start.catch(() => {});
@@ -1836,6 +1843,15 @@ export class HttpJsonRpcTransport {
       catch (error) { throw new RpcTransportError(error); }
       if (!response.ok) {
         void response.body?.cancel().catch(() => {});
+        if (response.status === 429 || response.status === 503) {
+          const value = response.headers.get("retry-after");
+          const until = value === null ? NaN : /^[0-9]+([.][0-9]+)?$/.test(value)
+            ? Date.now() + Number(value) * 1000 : Date.parse(value);
+          if (Number.isFinite(until) && until > Date.now()) {
+            this.retryAfterMs = Math.max(this.retryAfterMs, until);
+            throw new RpcRetryAfterError(this.retryAfterMs);
+          }
+        }
         throw new RpcEndpointError("RPC HTTP " + response.status, isRetryableRpcHttpStatus(response.status) ? "http_" + response.status : null);
       }
       return readRpcJson<T>(response);
@@ -2363,6 +2379,31 @@ export class VeydriftGameReader implements ChainReader {
     } catch {
       return null;
     }
+  }
+
+  /** Resolver preflight: sequential <=50-call waves retain pacing/backoff, paid per wave. */
+  async getCanonicalFleetMissionBatch(missionIds: readonly bigint[], blockNumber: bigint, assertActive: () => void) {
+    if (missionIds.length > 100) throw new Error("canonical mission batch exceeds 100 candidates");
+    const snapshots: Array<{ mission: CanonicalFleetMissionSnapshot | null; orderingReady: boolean }> = [];
+    for (let offset = 0; offset < missionIds.length; offset += 25) {
+      assertActive();
+      const wave = missionIds.slice(offset, offset + 25);
+      const values = await this.batchCallContract(this.gameContractAddress, wave.flatMap(id => [
+        { selector: "0xf158c946", args: [encodeUint(id)] },
+        { selector: "0xce02abe2", args: [encodeUint(id)] }
+      ]), "0x" + blockNumber.toString(16), assertActive);
+      assertActive();
+      for (let i = 0; i < wave.length; i++) {
+        let mission = this.decodeCanonicalFleetMission(wave[i]!, values[2 * i] ?? "0x");
+        // Hold deadlines use the existing pinned slot reader, never latest UI enrichment.
+        if (mission?.missionType === "DefenseHold") mission = await this.getCanonicalFleetMission(wave[i]!, blockNumber, assertActive);
+        assertActive();
+        const proof = values[2 * i + 1] ?? "0x";
+        snapshots.push({ mission, orderingReady: /^0x[0-9a-fA-F]{192}$/.test(proof)
+          && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n });
+      }
+    }
+    return snapshots;
   }
 
   async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {
