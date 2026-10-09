@@ -112,3 +112,30 @@ test("shell hex/gameplay decimal chains and unknown bootstrap IDs preserve ready
     expect(store.snapshot(query.key)).toBeUndefined();
   } finally { store.dispose(); globalThis.fetch = oldFetch; }
 });
+
+
+test.each([false, true])("new-chain Supply reads start before obsolete transport settles (subscribed=%s)", async subscribed => {
+  const oldFetch = globalThis.fetch;
+  const store = new BackendDataStore("https://api.test");
+  store.setContext("0xaaa", "7", "8453");
+  const query = store.queries.supplySources("0xaaa", "7");
+  const finish: Array<(response: Response) => void> = [];
+  globalThis.fetch = (() => new Promise(resolve => { finish.push(resolve); })) as typeof fetch;
+  const unsubscribe = subscribed ? store.subscribeKey(query.key, () => {}) : () => {};
+  try {
+    const old = query.read(); await Promise.resolve();
+    store.setContext("0xaaa", "7", "84532");
+    const current = query.read(); await Promise.resolve();
+    expect(finish).toHaveLength(2);
+    finish[0]!(Response.json({ ...payload(), technologyLevels: { "3": 1 } })); await old;
+    expect(store.snapshot(query.key)?.freshness).toBe("refreshing");
+    expect(store.snapshot(query.key)?.data).toBeUndefined();
+    // Obsolete finally must not erase new in-flight ownership.
+    const coalesced = query.read(); await Promise.resolve();
+    expect(finish).toHaveLength(2);
+    finish[1]!(Response.json({ ...payload(), technologyLevels: { "3": 9 } }));
+    expect((await current).technologyLevels?.["3"]).toBe(9);
+    expect((await coalesced).technologyLevels?.["3"]).toBe(9);
+    expect(store.isFresh(query.key)).toBe(true);
+  } finally { unsubscribe(); store.dispose(); globalThis.fetch = oldFetch; }
+});

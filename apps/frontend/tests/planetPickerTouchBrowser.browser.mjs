@@ -1198,7 +1198,13 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
 test("a stalled Supply inventory request does not block another planet or Shipyard", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
-  await evaluate(`(() => {
+  await evaluate(`(async () => {
+    const moduleUrl = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(moduleUrl);
+    const store = backendDataStoreFor('/local-api');
+    const query = store.queries.supplySources(window.inspectorProof.account, '101');
+    await query.read();
+    store.state.clear(query.key);
     const originalFetch = globalThis.fetch;
     window.supplyInventoryBlocked = false;
     globalThis.fetch = (input, init) => {
@@ -1261,14 +1267,14 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
-  assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 0, 'Opening Supply reuses the ready aggregated snapshot');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
   const titleAlignment = await evaluate(`(() => {
     // The shared modal header places the icon beside the heading.
     const heading = document.querySelector('[role="dialog"] h2');
-    const parts = [heading.parentElement.previousElementSibling, heading].map(node => node.getBoundingClientRect());
+    const parts = [heading.querySelector('[role="group"]'), heading].map(node => node.getBoundingClientRect());
     return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
   })()`);
   assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
@@ -1280,11 +1286,11 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
   await waitForExpression(`window.supplyProof.release !== undefined && document.querySelector('[role="dialog"]') === null`);
-  assert.equal(await evaluate("window.supplyProof.sourceReads"), 2, 'Confirmation revalidates all origins with one request');
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Confirmation revalidates all origins with one request');
   assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
@@ -1324,12 +1330,13 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
       if (!String(input).includes('/supply-sources')) return response;
       proof.reads++;
       const body = await response.json();
-      for (const source of body.sources) source.launchableShips = [{ id: 4, count: proof.available ? 2 : 0 }];
+      for (const source of body.sources) source.launchableShips = [{ id: 0, count: proof.available ? 5 : 0 }];
       return Response.json(body);
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -1337,7 +1344,7 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
   })()`);
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
-  await waitForExpression(`window.supplyRejectionProof.reads === 3 && document.querySelector('[role="dialog"]')?.textContent?.includes('only 0 available') === true`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 2 && document.querySelector('[role="dialog"]')?.textContent?.includes('only 0 available') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === true`);
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1);
   assert.equal(await evaluate(`window.supplyRejectionProof.shipyardReads`), 0);
@@ -1352,7 +1359,7 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Recovery never resubmits automatically');
   await evaluate(`window.supplyRejectionProof.available = false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
-  await waitForExpression(`window.supplyRejectionProof.reads === 6 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 5 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Changed inventory is rejected before wallet submission');
   await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
   await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
@@ -1366,20 +1373,22 @@ test("Supply preparation expires without locking the modal or submitting late", 
     const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
     const { backendDataStoreFor } = await import(url);
     const store = backendDataStoreFor('/local-api');
+    await store.queries.supplySources(window.inspectorProof.account, "101").read();
     const proof = window.supplyTimeoutProof = { reads: 0, sends: 0 };
     store.transactionForegroundTimeoutMs = 100;
     const originalWrite = store.runWriteTransaction.bind(store);
     store.runWriteTransaction = descriptor => originalWrite({ ...descriptor, send: async () => { proof.sends++; return '0xunexpected'; } });
     const originalFetch = window.fetch;
     window.fetch = async (input, init) => {
-      if (String(input).includes('/supply-sources') && ++proof.reads === 2) {
+      if (String(input).includes('/supply-sources') && ++proof.reads === 1) {
         await new Promise(resolve => { proof.release = resolve; });
       }
       return originalFetch(input, init);
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';

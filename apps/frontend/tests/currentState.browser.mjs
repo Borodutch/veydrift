@@ -95,6 +95,29 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         }
       }
     }
+    // The query stays mounted with the SAME descriptor/key across a real chain
+    // change; recovery must be store-owned, not a rerun of its mount effect.
+    await evaluate('import("/tests/fixtures/supplyPreload.tsx")');
+    const readiness = () => evaluate('document.querySelector("#supply-readiness").textContent');
+    const settle = () => evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await settle();
+    assert.equal(await evaluate('supplyPreload.calls()'), 1);
+    assert.equal(await readiness(), 'loading');
+    await evaluate('supplyPreload.chain("84532")'); await settle();
+    assert.equal(await evaluate('supplyPreload.calls()'), 2, 'mounted chain switch restarts without remount');
+    await evaluate('supplyPreload.finish(0, 1)'); await settle();
+    assert.equal(await readiness(), 'loading', 'late previous chain cannot end loading');
+    await evaluate('supplyPreload.finish(1, 9)'); await settle();
+    assert.equal(await readiness(), '9');
+    await evaluate('supplyPreload.chain("0x14a34")'); await settle();
+    assert.equal(await evaluate('supplyPreload.calls()'), 2, 'equivalent hex chain preserves ready inventory');
+    await evaluate('supplyPreload.chain("8453")'); await settle();
+    assert.equal(await readiness(), 'loading', 'ready old inventory removed while replacement loads');
+    assert.equal(await evaluate('supplyPreload.calls()'), 3);
+    await evaluate('supplyPreload.finish(2, 7)'); await settle();
+    assert.equal(await readiness(), '7');
+    await evaluate('supplyPreload.dispose()');
+    console.log('PASS mounted Supply readiness across pending/ready chain changes');
     await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
