@@ -260,6 +260,41 @@ class FutureBlockTests(unittest.TestCase):
             self.assertEqual(self.latest_calls(), 0)
             self.assertFalse(self.relay.learned)
 
+    def test_latest_identity_matches_anchor_retained_and_all_sibling_orders(self):
+        for evidence in ('anchor', 'retained', 'sibling'):
+            for request_reverse in (False, True):
+                for response_reverse in (False, True):
+                    for contradict in (False, True):
+                        with self.subTest(evidence=evidence, requests=request_reverse,
+                                          responses=response_reverse, contradict=contradict):
+                            self.reset()
+                            self.a.answer = self.answer
+                            self.head = 16 if evidence == 'anchor' else 32
+                            if evidence == 'retained':
+                                self.assertEqual(self.call(self.numeric(self.head))[0], 200)
+                            learned_before = dict(self.relay.learned)
+                            def answer(q):
+                                response = self.answer(q)
+                                if q['method'] == 'eth_getBlockByNumber' and q['params'][0] == 'latest':
+                                    response['result']['hash'] = ('0x' + 'f'*64 if contradict
+                                                                  else block_at(self.head)['hash'])
+                                return response
+                            self.a.answer = answer
+                            self.a.reverse = response_reverse
+                            payload = [self.numeric(self.head + 1),
+                                       self.numeric(self.head, 11) if evidence == 'sibling'
+                                       else request('eth_chainId', [], 11)]
+                            if request_reverse: payload.reverse()
+                            status, _ = self.call(payload)
+                            self.assertEqual(status, 503 if contradict else 200)
+                            self.assertEqual(self.latest_calls(), 1)
+                            if contradict:
+                                self.assertEqual(self.relay.last_error, 'upstream latest identity disagreement')
+                                self.assertEqual(dict(self.relay.learned), learned_before)
+                                self.assertGreater(self.relay.blocked[0], time.monotonic())
+                            else:
+                                self.assert_healthy()
+
     def test_future_application_unavailability_is_not_whitelisted(self):
         self.errors = {10: -32002}
         self.assertEqual(self.call(self.numeric(33))[0], 503)

@@ -192,10 +192,12 @@ class Relay:
                 raise RelayError('invalid RPC response id')
             by_id[ident] = response
         future_numbers = []
+        identities = [(quantity(n), h.lower()) for h, n in self.learned.items()]
         highest = self.highest_block
         for evidence in (self.anchor, anchor):
             if evidence is not None:
                 highest = max(highest, quantity(evidence['number']))
+                identities.append((quantity(evidence['number']), evidence['hash'].lower()))
         for number in self.learned.values():
             highest = max(highest, quantity(number))
         for request in requests:
@@ -241,6 +243,7 @@ class Relay:
                 if request['method'] == 'eth_getBlockByNumber' and param.startswith('0x') and quantity(b['number']) != quantity(param):
                     raise RelayError('requested block number mismatch')
                 highest = max(highest, quantity(b['number']))
+                identities.append((quantity(b['number']), b['hash'].lower()))
             if request['method'] == 'eth_blockNumber':
                 highest = max(highest, quantity(response['result']))
         if future_numbers:
@@ -253,7 +256,10 @@ class Relay:
                 deadline, 1024*1024)[1]
             if 'error' in latest:
                 raise RelayError('upstream latest proof unavailable')
-            head = quantity(block(latest['result'])['number'])
+            latest_block = block(latest['result'])
+            head = quantity(latest_block['number'])
+            if any(n == head and h != latest_block['hash'].lower() for n, h in identities):
+                raise RelayError('upstream latest identity disagreement')
             if head < highest or min(future_numbers) <= head:
                 raise RelayError('required result unavailable')
             highest = max(highest, head)
