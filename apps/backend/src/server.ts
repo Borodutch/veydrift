@@ -4191,7 +4191,10 @@ function indexedMoonState(
   _unavailableReason: string,
   indexer: SettlementIndexer
 ): MoonState {
-  return indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  return {
+    ...indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId),
+    ...indexedFleetLaunchContext(wallet, indexer)
+  };
 }
 
 function indexedProductionContext(

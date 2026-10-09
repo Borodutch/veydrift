@@ -353,11 +353,11 @@ test("Supply preserves unavailable current resources rather than reviving a raw 
   }
 });
 
-test("two-leg projected Transport return cannot promise first-source launch inventory", async () => {
+test.each([false, true])("two-leg projected Transport return cannot promise first-source launch inventory (moon=%s)", async moon => {
   setSystemTime(new Date(1030000));
-  const { indexer, wallet, anchor } = fixture();
+  const { indexer, wallet, anchor } = fixture(moon);
   anchor(1020);
-  const state = (await wallet("shipyard")).body;
+  const state = (await wallet(moon ? "moon" : "shipyard")).body;
   expect(state.ships[0].count).toBe(9);
   expect(state.launchableShips[0].count).toBe(9);
   expect(state.fleetSlots.active).toBe(0);
