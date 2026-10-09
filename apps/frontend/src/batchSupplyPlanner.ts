@@ -132,9 +132,15 @@ export function maximumBatchSupplyResource(
   const missionLimit = options.targetIsMoon ? 1 : 15;
   if (baseline.sourceLimitReached || otherResources.some(key => baseline.missing[key] > 0)) return requested[resource];
 
-  let upper = Math.min(Number.MAX_SAFE_INTEGER, options.sources.reduce((total, source) =>
-    total + (options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason
-      ? safeAmount(source.resources[resource]) : 0), 0));
+  // Bound by what a source could carry, not its potentially enormous stock.
+  // This is only an upper bound: the traced planner below remains authoritative
+  // for allocation, manual cargo, mixed fleets, fuel and non-monotone feasibility.
+  const capacities = options.sources.filter(source => options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason)
+    .map(source => ({ source, capacity: supplyMaxCapacityBound(source, options) }));
+  const largest = (values: number[]) => values.sort((a, b) => b - a).slice(0, missionLimit).reduce((total, value) => total + value, 0);
+  let upper = Math.min(Number.MAX_SAFE_INTEGER,
+    largest(capacities.map(({ source, capacity }) => Math.min(safeAmount(source.resources[resource]), capacity))),
+    Math.max(0, largest(capacities.map(({ capacity }) => capacity)) - otherResources.reduce((total, key) => total + requested[key], 0)));
   // Work scales with planner branch/fleet-count boundaries, not stock units.
   // UI callers must run this exact search in batchSupplyMax.worker, not render/events.
   while (upper >= 0) {
@@ -159,6 +165,27 @@ export function maximumBatchSupplyResource(
     upper = range.lower - 1;
   }
   return requested[resource];
+}
+
+/** Relaxed capacity bound; never changes which fleet the actual planner chooses. */
+function supplyMaxCapacityBound(source: BatchSupplySource, options: BatchSupplyOptions): number {
+  const ships = allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes);
+  const types = supplyShipKeys.filter(key => ships[key] > 0);
+  if (types.length !== 1) return fleetMissionCargoCapacity(ships);
+  const key = types[0]!;
+  const distance = fleetMissionDistance(source.coordinates, options.targetCoordinates, { targetIsMoon: options.targetIsMoon ?? false });
+  const availableDeuterium = safeAmount(source.resources.deuterium);
+  // With one type, fuel is monotone in ship count. Find an affordable relaxed
+  // fleet in O(log ships) instead of visiting every fuel-starved fleet boundary.
+  let low = 0, high = ships[key];
+  while (low < high) {
+    const count = low + Math.ceil((high - low) / 2);
+    if (fleetMissionFuelCost({ [key]: count }, distance, source.driveLevels) <= availableDeuterium) low = count;
+    else high = count - 1;
+  }
+  // Raw cargo is deliberately conservative: unusual routes can burn more fuel
+  // per ship than their capacity, and mixed-fleet speed changes are not monotone.
+  return fleetMissionCargoCapacity({ [key]: low });
 }
 
 type SupplyAmount = { value: number; slope: number };

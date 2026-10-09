@@ -1183,9 +1183,14 @@ export class BackendDataStore {
 
   setContext(wallet?: string, planetId?: string, chainId?: string): void {
     const nextWallet = wallet?.toLowerCase();
-    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainId !== this.contextChainId;
+    // Shell uses hex and gameplay uses decimal IDs. Unknown bootstrap values
+    // are not a different chain and must not erase already hydrated entries.
+    const chainChanged = Boolean(this.hasContext && chainId && this.contextChainId
+      && !sameChainId(chainId, this.contextChainId));
+    const chainLearned = Boolean(chainId && !this.contextChainId);
+    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainChanged || chainLearned;
     this.hasContext = true;
-    this.contextChainId = chainId;
+    this.contextChainId = chainId ?? this.contextChainId;
     if (!changed) return;
     const previousWallet = this.contextWallet;
     this.contextWallet = nextWallet;
@@ -1197,7 +1202,8 @@ export class BackendDataStore {
     // cache and makes accidental old-account projections possible. Clear only
     // wallet-scoped entries; public/global feeds remain shared and an older
     // in-flight wallet response is generation-blocked by `clear`.
-    if (!previousWallet || previousWallet === nextWallet) return;
+    // The same wallet on a new chain must not reuse a preloaded inventory.
+    if (!previousWallet || (previousWallet === nextWallet && !chainChanged)) return;
     const walletTag: BackendDataTag = `wallet:${previousWallet}`;
     for (const resource of [...this.resources.values()]) {
       if (!resource.tags.has(walletTag)) continue;
