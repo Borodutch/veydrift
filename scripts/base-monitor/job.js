@@ -12,7 +12,7 @@ function result(r) {
 const out = result(await exec({command: 'python3 ' + program + ' --health-dir ' + health + ' --state ' + state, host:'gateway', timeoutSeconds:150, yieldMs:1000, awaitResults:true}));
 // Custody is a degraded delivery subsystem, not a failed sampler. Keep it visible
 // in each run result without feeding a permanent scheduler auto-disable loop.
-const report = (status, extra = {}) => ({status, custody:out.custody, ...extra});
+const report = (status, extra = {}) => ({state:{status, custody:out.custody, ...extra}});
 if (out.status === 'quiet' || out.status === 'busy') return report(out.status);
 if (out.status === 'delivery-held') return report('delivery-degraded', {eventId:out.eventId});
 if (out.status !== 'proposed') throw new Error('monitor proposal failed');

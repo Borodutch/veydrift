@@ -29,8 +29,11 @@ capacity. One uncertain event cannot block unrelated signals; an indefinite brok
 messaging transport can exhaust the finite capacity and cannot be solved by retries.
 
 Crucially delivery uncertainty is a *degraded subsystem result*, not a failed
-sampler. Every scheduled result exposes custody count, exact event IDs, capacity,
-and required action, and state retains the same evidence. This avoids perpetual
+sampler. Every successful scheduled result returns the documented state field (<16KiB),
+which persists custody count, exact event IDs, capacity and required action in
+the scheduler. The next run receives it as trigger.state; the collector state
+remains authoritative. Do not expect arbitrary top-level result keys in history.
+Operator inspection must include the saved scheduler state, not just run status. This avoids perpetual
 error accounting and auto-disable. Real execution/persistence/invalid-result failures
 still throw to preserved scheduler failure routing. No automatic second-channel
 escalation is introduced (that would have its own ambiguous custody boundary).

@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -141,11 +142,16 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn('upstream.invalid', json.dumps(s))
 
     def test_429_never_retries_or_rotates(self):
-        error = urllib.error.HTTPError('https://example.invalid', 429, 'SECRET', {}, None)
+        # Real urllib HTTP errors own a response stream. fp=None creates an
+        # incomplete tempfile wrapper on Python 3.9 whose close() raises KeyError.
+        body = io.BytesIO(b'SECRET upstream error body')
+        error = urllib.error.HTTPError('https://example.invalid', 429, 'SECRET', {'Retry-After': '3600'}, body)
         with patch.object(m.urllib.request, 'build_opener') as factory:
             factory.return_value.open.side_effect = error
-            with self.assertRaisesRegex(ValueError, '^HTTP unavailable$'):
+            with self.assertRaisesRegex(m.RateLimited, '^HTTP unavailable$') as raised:
                 m.http_json('https://example.invalid')
+            self.assertEqual(raised.exception.retry_after, 3600)
+            self.assertTrue(body.closed)
             self.assertEqual(factory.return_value.open.call_count, 1)
 
     def test_atomicity_failed_replace_preserves_state(self):

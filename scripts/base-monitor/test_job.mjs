@@ -6,7 +6,14 @@ import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 const root=path.dirname(new URL(import.meta.url).pathname);
 const source=fs.readFileSync(path.join(root,'job.js'),'utf8');
-const run=new (Object.getPrototypeOf(async function(){}).constructor)('exec','message',source);
+const execute=new (Object.getPrototypeOf(async function(){}).constructor)('exec','message',source);
+// Scheduler persists only the documented state field, not arbitrary return keys.
+const run=async (...args)=>{
+ const raw=await execute(...args);
+ assert.deepEqual(Object.keys(raw),['state']);
+ assert.ok(Buffer.byteLength(JSON.stringify(raw.state))<=16384);
+ return JSON.parse(JSON.stringify(raw.state));
+};
 const patch=JSON.parse(fs.readFileSync(path.join(root,'scheduler-patch.json')));
 assert.equal(patch.payload.script,source); assert.equal(patch.payload.toolBudget,4);
 assert.equal(patch.payload.timeoutSeconds,210); assert.deepEqual(patch.payload.toolsAllow,['exec','message']);
