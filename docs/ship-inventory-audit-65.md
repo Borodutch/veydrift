@@ -49,7 +49,8 @@ Baseline: 571196bfe85c8d410804fb9f1cdfbeac548f8f74, same production build SHA re
 - Shared deterministic fleet projection now requires explicit survivor composition and return cargo for every canonical Returning/Recalled type; null/undefined is not a launch manifest. Cache-enabled HTTP six-Large-Cargo retraction test covers qualified→scalar invalidation. Existing chronology, moon incarnation, loss/restart/reorg and queue partial-completion suites remain gates.
 - Effective inventory remains one backend value. An additive `batchFleetSlots` describes the deployed batch entrypoint’s canonical pre-sweep constraint; it does not change displayed effective slots. `fleetLaunchAvailable` additionally fails closed for two-leg Outbound returns and projected effects in rosters beyond the bounded lazy sweep. Exact atomic simulation remains mandatory; backend projection is not a promise of pending-block execution.
 - Moon current defender responses and mission/system consistent SQLite snapshots are corrected, including independent WAL writer interleaving regressions.
-- Supply unknown resources are null; sibling nullable current-resource fixes and frontend integration are in progress at this draft.
+- Supply, owned overview/catalogs, public planet/moon and tactical/finder current-resource unknowns remain null; canonical historical balances and ship intel are retained. Warm-cache invalidation and per-body pending-resource tests cover these cases.
+- Production count/remaining-queue/cache-key composition pins one server second inside a consistent snapshot, and clock rewinds invalidate warmed projection fingerprints. The funded-production/unresolved-battle fixture explicitly preserves separate proof boundaries.
 
 ### Compatibility / release sequence
 
