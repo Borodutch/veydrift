@@ -45,11 +45,11 @@ def classify(local, references, canonical, now):
         match=all(c[tag]['hash'].lower()==local[tag]['hash'].lower() for c in canonical)
         if not match:
             status='provider-disagreement'
-        elif all(g > (60 if tag=='latest' else 900) for g in gaps):
-            status='local-lag'
         elif max(refnums)-min(refnums) > (60 if tag=='latest' else 900):
             status='reference-disagreement'
-        elif age > threshold and all(abs(g)<=60 for g in gaps) and all(a > threshold for a in refages):
+        elif all(g > (60 if tag=='latest' else 900) for g in gaps):
+            status='local-lag'
+        elif age > threshold and all(a > threshold for a in refages):
             status='chainwide-lag'
         elif age > threshold and any(a <= threshold for a in refages):
             status='local-staleness'

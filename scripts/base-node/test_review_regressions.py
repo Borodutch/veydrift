@@ -41,6 +41,89 @@ class IngressRegressions(unittest.TestCase):
             self.assertGreater(self.relay.rate_hold,time.monotonic()+59)
             self.assertFalse(self.b.calls)
             count=len(self.a.calls);self.assertEqual(self.call()[0],503);self.assertEqual(len(self.a.calls),count)
+    def test_internal_required_failure_uses_coherent_sticky_fallback(self):
+        for error in ((-32603,'internal SYNTHETIC_SECRET'),(-32002,'resource unavailable'),
+                      (-32001,'resource not found'),(-32000,'header not found SYNTHETIC_SECRET'),
+                      (-32000,'missing trie node SYNTHETIC_SECRET')):
+            with self.subTest(error=error):
+                self.relay=r.Relay([self.a.url,self.b.url],timeout=2);self.server.relay=self.relay
+                self.a.rpc_errors={};self.b.calls.clear()
+                self.assertEqual(self.call(request('eth_getBlockByHash',[H,False]))[0],200)
+                self.a.rpc_errors={'eth_getBlockByHash':error}
+                status,body=self.call(request('eth_getBlockByHash',[H,False]))
+                self.assertEqual(status,200);self.assertEqual(body['result']['hash'],H)
+                self.assertEqual(self.relay.preferred,1);self.assertEqual(self.relay.failures,[1,0])
+                self.assertGreater(self.relay.blocked[0],time.monotonic())
+                self.assertTrue(any(q['method']=='eth_getBlockByNumber' and q['params'][0]=='0x10' for q in self.b.calls))
+                count=len(self.a.calls)
+                self.assertEqual(self.call(request('eth_getBlockByHash',[H,False]))[0],200)
+                self.assertEqual(len(self.a.calls),count)
+                self.assertNotIn('SYNTHETIC_SECRET',json.dumps(self.relay.health()))
+    def test_internal_failure_cannot_report_success_or_accept_incoherent_fallback(self):
+        self.call(request('eth_getBlockByHash',[H,False]));last=self.relay.last_success
+        self.a.rpc_errors={'eth_getBlockByHash':(-32603,'SYNTHETIC_SECRET')}
+        self.b.mode='wrong-hash'
+        self.assertEqual(self.call(request('eth_getBlockByHash',[H,False]))[0],503)
+        self.assertEqual(self.relay.preferred,0);self.assertEqual(self.relay.last_success,last)
+        self.assertEqual(self.relay.failures,[1,1]);self.assertIsNotNone(self.relay.last_error)
+        self.assertNotIn('SYNTHETIC_SECRET',json.dumps(self.relay.health()))
+        count=len(self.a.calls)+len(self.b.calls)
+        self.assertEqual(self.call()[0],503)
+        self.assertEqual(len(self.a.calls)+len(self.b.calls),count)
+    def test_mixed_internal_errors_and_rate_limit_dominance(self):
+        payload=[request('eth_call',[],1),request('eth_getBlockByHash',[H,False],2),request(ident=3)]
+        for reverse in (False,True):
+            for rate in (False,True):
+                with self.subTest(reverse=reverse,rate=rate):
+                    self.relay=r.Relay([self.a.url,self.b.url],timeout=2);self.server.relay=self.relay
+                    self.a.rpc_errors={};self.b.calls.clear();self.a.reverse=reverse
+                    self.call(request('eth_getBlockByHash',[H,False]))
+                    self.a.rpc_errors={'eth_call':(3,'execution reverted SYNTHETIC_SECRET'),
+                                       'eth_getBlockByHash':(-32603,'internal SYNTHETIC_SECRET')}
+                    self.b.rpc_errors={'eth_call':(3,'execution reverted SYNTHETIC_SECRET')}
+                    if rate:self.a.rpc_errors['eth_blockNumber']=(-32005,'quota SYNTHETIC_SECRET')
+                    status,body=self.call(payload)
+                    self.assertNotIn('SYNTHETIC_SECRET',json.dumps(body))
+                    if rate:
+                        self.assertEqual(status,503);self.assertFalse(self.b.calls)
+                        self.assertEqual(self.relay.failures,[0,0]);self.assertEqual(self.relay.blocked,[0,0])
+                        self.assertGreater(self.relay.rate_hold,time.monotonic()+59)
+                        count=len(self.a.calls);self.assertEqual(self.call()[0],503)
+                        self.assertEqual(len(self.a.calls),count)
+                    else:
+                        self.assertEqual(status,200);self.assertEqual(self.relay.preferred,1)
+                        self.assertEqual(body[0]['error']['code'],3);self.assertEqual(body[1]['result']['hash'],H)
+    def test_ordinary_server_caller_and_revert_errors_do_not_rotate(self):
+        self.call()
+        for method,error in [('eth_call',(-32000,'execution reverted')),
+                             ('eth_call',(-32001,'resource not found')),
+                             ('eth_getBlockByHash',(-32602,'header not found: invalid params')),
+                             ('debug_getRawHeader',(-32601,'not supported')),
+                             ('eth_getBlockByHash',(-32000,'invalid argument'))]:
+            self.a.rpc_errors={method:error}
+            status,body=self.call(request(method,[H]))
+            self.assertEqual(status,200);self.assertEqual(body['error']['code'],error[0])
+            self.assertEqual(self.relay.blocked,[0,0]);self.assertFalse(self.b.calls)
+    def test_connection_close_chunk_framing_deadline_releases_lock_and_slots(self):
+        self.call()
+        self.relay.timeout=.15
+        for mode in ('chunk-size','chunk-trailer'):
+            with self.subTest(mode=mode):
+                self.relay.blocked=[0,0];self.a.mode=mode
+                start=time.monotonic()
+                status,_=self.call()
+                self.assertEqual(status,503)
+                self.assertLess(time.monotonic()-start,.45)
+                self.assertFalse(self.relay.lock.locked())
+                deadline=start+.55
+                while self.server.slots._value!=4 and time.monotonic()<deadline:time.sleep(.005)
+                self.assertEqual(self.server.slots._value,4)
+                count=len(self.a.calls)+len(self.b.calls)
+                self.assertEqual(self.call()[0],503)
+                self.assertEqual(len(self.a.calls)+len(self.b.calls),count)
+                # Advance only the test cooldown; production retains its failure hold.
+                self.relay.blocked=[0,0];self.a.mode='ok'
+                self.assertEqual(self.call()[0],200)
     def test_receipt_identity_shape_empty_and_tags(self):
         self.call(request('eth_getBlockByHash',[H,False]))
         for mode in ('receipt-hash','receipt-number','receipt-log','receipt-shape'):

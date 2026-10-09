@@ -28,6 +28,8 @@ class Upstream:
     def __init__(self):
         self.mode = 'ok'
         self.calls = []
+        self.rpc_errors = {}
+        self.reverse = False
         owner = self
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -62,21 +64,42 @@ class Upstream:
                         result={'jsonrpc':'2.0','id':2,'error':{'code':-32005,'message':'quota'}}
                     if owner.mode=='mixed-malformed' and q['id']==1: result={'invalid':True}
                     if owner.mode=='extension': result['providerDebug']='SYNTHETIC_SECRET'
+                    if method in owner.rpc_errors:
+                        code,message=owner.rpc_errors[method]
+                        result={'jsonrpc':'2.0','id':q['id'],'error':{'code':code,'message':message,'data':'SYNTHETIC_SECRET'}}
                     return result
                 response = [answer(q) for q in data] if isinstance(data,list) else answer(data)
-                if owner.mode=='mixed-reverse' and isinstance(response,list): response.reverse()
+                if (owner.mode=='mixed-reverse' or owner.reverse) and isinstance(response,list): response.reverse()
                 body = json.dumps(response).encode()
                 if owner.mode == 'malformed': body = b'not json secret'
-                self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers()
+                self.send_response(200)
+                chunked = owner.mode in ('chunk-size', 'chunk-trailer')
+                if chunked:
+                    self.send_header('Transfer-Encoding', 'chunked')
+                    self.send_header('Connection', 'close')
+                else: self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
                 try:
-                    if owner.mode == 'slow':
+                    if chunked:
+                        size = format(len(body), 'x').encode() + b'\r\n'
+                        if owner.mode == 'chunk-size':
+                            slow = b'0'*32 + size
+                            tail = body + b'\r\n0\r\n\r\n'
+                        else:
+                            self.wfile.write(size + body + b'\r\n0\r\n'); self.wfile.flush()
+                            slow = b'X-Slow: ' + b'x'*32 + b'\r\n'
+                            tail = b'\r\n'
+                        for byte in slow:
+                            self.wfile.write(bytes([byte])); self.wfile.flush(); time.sleep(.04)
+                        self.wfile.write(tail)
+                    elif owner.mode == 'slow':
                         for byte in body:
                             self.wfile.write(bytes([byte])); self.wfile.flush(); time.sleep(.04)
                     else: self.wfile.write(body)
                 except OSError: pass
             def log_message(self,*_): pass
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        self.server.daemon_threads = True
+        self.server.daemon_threads = False  # close() joins every bounded fixture handler.
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = 'http://127.0.0.1:' + str(self.server.server_port) + '/private-secret'
@@ -126,6 +149,14 @@ class RelayTests(unittest.TestCase):
         start=time.monotonic()
         with self.assertRaises(r.RelayError): self.call()
         self.assertLess(time.monotonic()-start, .6)
+    def test_connection_close_chunk_framing_total_deadline(self):
+        for mode in ('chunk-size','chunk-trailer'):
+            with self.subTest(mode=mode):
+                self.a.mode=mode
+                start=time.monotonic()
+                with self.assertRaises(r.RelayError):
+                    self.relay._request(0,request(),start+.15)
+                self.assertLess(time.monotonic()-start,.45)
     def test_blocked_upstreams_are_not_retried(self):
         self.a.mode=self.b.mode='http'
         with self.assertRaises(r.RelayError): self.call()

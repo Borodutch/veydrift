@@ -96,9 +96,12 @@ class Relay:
         u = self.urls[index]
         cls = http.client.HTTPSConnection if u.scheme == 'https' else http.client.HTTPConnection
         connection = cls(u.hostname, u.port, timeout=remaining)
-        # A wall-clock close also interrupts slow trickles (socket timeout alone cannot).
+        # getresponse() detaches connection.sock for Connection: close, but its
+        # HTTPResponse still owns the live socket while reading chunks/trailers.
+        upstream_socket = None
+        response = None
         def abort():
-            sock = connection.sock
+            sock = upstream_socket or connection.sock
             if sock:
                 try:
                     sock.shutdown(socket.SHUT_RDWR)
@@ -112,6 +115,9 @@ class Relay:
             path = (u.path or '/') + ('?' + u.query if u.query else '')
             connection.request('POST', path, json.dumps(payload).encode(),
                                {'Content-Type': 'application/json', 'Accept-Encoding': 'identity'})
+            upstream_socket = connection.sock
+            if time.monotonic() >= deadline:
+                raise RelayError('request deadline exceeded')
             response = connection.getresponse()
             if response.status == 429:
                 raise RelayError('upstream rate limited', retry_seconds(response.getheader('Retry-After')))
@@ -159,6 +165,9 @@ class Relay:
             raise RelayError('upstream transport or malformed response') from None
         finally:
             timer.cancel()
+            timer.join()
+            if response is not None:
+                response.close()
             connection.close()
 
     def _validate(self, payload, parsed):
@@ -188,7 +197,20 @@ class Relay:
             if error is not None:
                 if not isinstance(error, dict) or type(error.get('code')) is not int or not isinstance(error.get('message'), str):
                     raise RelayError('malformed RPC error')
-                continue  # Capability errors/reverts are not transport failures.
+                code = error['code']
+                # Standard internal errors and EIP-1474 resource failures are
+                # provider failures, not successful application responses. Geth
+                # also uses -32000 for missing historical state/required blocks.
+                message = error['message'].lower()
+                unavailable = any(marker in message for marker in (
+                    'header not found', 'block not found', 'unknown block',
+                    'missing trie node', 'state is not available', 'state unavailable',
+                    'historical state unavailable', 'required data unavailable'))
+                if code in (-32603, -32002) or (
+                    request['method'] in self.REQUIRED and (code == -32001 or (code == -32000 and unavailable))
+                ):
+                    raise RelayError('upstream RPC unavailable')
+                continue  # Caller/capability errors and reverts pass through.
             if request['method'] in self.REQUIRED and response['result'] is None:
                 raise RelayError('required result unavailable')
             if request['method'] == 'eth_getBlockReceipts':
