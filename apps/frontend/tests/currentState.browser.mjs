@@ -113,7 +113,10 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         assert.equal(await confirmDisabled(), false, "recovery after unsafe success " + label);
       }
       await evaluate('fixture.show("store-supply", "current"); new Promise(resolve => setTimeout(resolve, 150))');
-      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
+      assert.equal(await evaluate('[...document.querySelectorAll("button")].some(b => b.textContent === "Auto-plan cargo")'), false, "initial planning needs no removed manual action");
+      // A prior pass can leave a cached empty inventory. Fresh counts must not
+      // silently change source intent; select through the supported checkboxes.
+      await evaluate('[...document.querySelectorAll("[data-supply-source] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click()); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'normal subscribed store hydrates nine-source plan at ' + width + ': ' + await evaluate('document.body.innerText'));
       assert.match(await evaluate('document.body.innerText'), /9 transports/);
       await evaluate('fixture.show("store-supply", "unsafe"); new Promise(resolve => setTimeout(resolve, 150))');
@@ -186,7 +189,10 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       await fetch(apiBase + "/__fixture/recover");
       await evaluate('fixture.show("store-supply"); new Promise(resolve => setTimeout(resolve, 200))');
       await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
-      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
+      assert.equal(await evaluate('[...document.querySelectorAll("button")].some(b => b.textContent === "Auto-plan cargo")'), false, "initial planning needs no removed manual action");
+      // A prior pass can leave a cached empty inventory. Fresh counts must not
+      // silently change source intent; select through the supported checkboxes.
+      await evaluate('[...document.querySelectorAll("[data-supply-source] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click()); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'real HTTP Supply ready');
       await fetch(apiBase + "/__fixture/invalidate");
       await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
