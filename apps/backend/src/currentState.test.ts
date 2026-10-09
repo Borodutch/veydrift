@@ -220,3 +220,13 @@ test("one snapshot cannot cross a production boundary between inventory and rema
   expect(indexer.shipRows("7")[0]?.count).toBe(1);
   expect(indexer.planetQueue("7", "ship")?.quantity).toBe(2);
 });
+
+test("production fingerprints retract a warm completed projection after clock correction", () => {
+  const { indexer } = fixture("ship");
+  setSystemTime(new Date(1030000));
+  const warm = indexer.responseCacheVersion(), wallet = indexer.walletResponseCacheVersion(owner);
+  setSystemTime(new Date(1009000));
+  expect(indexer.responseCacheVersion()).not.toBe(warm);
+  expect(indexer.walletResponseCacheVersion(owner)).not.toBe(wallet);
+  expect(indexer.launchableShipCounts("7")[0]?.count).toBe(0);
+});

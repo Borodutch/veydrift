@@ -940,14 +940,14 @@ export class SettlementIndexer {
   // cost as much as a full queue projection under live polling. Cache the projection fingerprint until
   // either indexed state changes or the next queue completion boundary is reached.
   private productionQueueProjectionVersionCache:
-    | { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    | { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
     | null = null;
   // Wallet snapshot routes include that wallet's queues, not every production queue in the
   // universe. Keep their time-bound fingerprint scoped accordingly so an unrelated queue
   // completion cannot evict every player's overview cache.
   private readonly walletProductionQueueProjectionVersionCaches = new Map<
     string,
-    { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
   >();
   private technologyLevelsCache: TechnologyLevelsCache | null = null;
   private allianceIntelCache: AllianceIntelCache | null = null;
@@ -4407,6 +4407,7 @@ export class SettlementIndexer {
     const cached = this.productionQueueProjectionVersionCache;
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4447,6 +4448,7 @@ export class SettlementIndexer {
     const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
     this.productionQueueProjectionVersionCache = {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       // The fingerprint can change only when a queue becomes due. A subsequent indexed mutation
       // changes `indexedStateVersion` and invalidates this cache immediately.
       validThroughSecond: nextReadyAt,
@@ -4461,6 +4463,7 @@ export class SettlementIndexer {
     const cached = this.walletProductionQueueProjectionVersionCaches.get(normalizedWallet);
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4503,6 +4506,7 @@ export class SettlementIndexer {
     const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}:${global}`;
     this.walletProductionQueueProjectionVersionCaches.set(normalizedWallet, {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       validThroughSecond: nowSec + 1,
       value
     });
