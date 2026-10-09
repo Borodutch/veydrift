@@ -3822,7 +3822,8 @@ function resourceSnapshotMetadataForPlanet(planet: PlanetState | null): Resource
 function accruedPlanetState<T extends PlanetState | null>(
   indexer: SettlementIndexer,
   planet: T,
-  projectionTimeMs: number
+  projectionTimeMs: number,
+  includeFleetEffects = true
 ): T {
   if (!planet) return planet;
 
@@ -3835,7 +3836,7 @@ function accruedPlanetState<T extends PlanetState | null>(
       const cutoff = indexer.resourceAccrualCutoff(planet.planetId, through);
       let current = { ...planet };
       let productionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
-      for (const effect of indexer.currentFleetResourceEffects(planet.planetId, through)) {
+      for (const effect of includeFleetEffects ? indexer.currentFleetResourceEffects(planet.planetId, through) : []) {
         // Arrival preparation settles the target through arrivalAt; returns only
         // add cargo. Accruing before every return would invent storage headroom.
         const balance = effect.leg === "arrival"
@@ -3865,7 +3866,8 @@ function indexedCurrentResourcesForPlanet(
 
 function indexedCurrentPlanetState<T extends PlanetState>(
   indexer: SettlementIndexer,
-  planet: T | null
+  planet: T | null,
+  includeFleetEffects = true
 ): T | null {
   if (!planet) return null;
   return indexer.readConsistentSnapshot(() => {
@@ -3878,7 +3880,8 @@ function indexedCurrentPlanetState<T extends PlanetState>(
       return accruedPlanetState(
         indexer,
         { ...planet, ...canonicalPlanet } as T,
-        Number(canonicalPlanet.lastSettledAt) * 1_000
+        Number(canonicalPlanet.lastSettledAt) * 1_000,
+        includeFleetEffects
       );
     }
     if (!projection.safeToProject || !Number.isSafeInteger(projectionTimestamp) || projectionTimestamp < 0) {
@@ -3887,7 +3890,8 @@ function indexedCurrentPlanetState<T extends PlanetState>(
     return accruedPlanetState(
       indexer,
       { ...planet, ...canonicalPlanet } as T,
-      projectionTimestamp * 1_000
+      projectionTimestamp * 1_000,
+      includeFleetEffects
     );
   });
 }
@@ -4195,7 +4199,8 @@ function indexedMoonState(
 ): MoonState {
   return {
     ...indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId),
-    ...indexedFleetLaunchContext(wallet, indexer)
+    ...indexedFleetLaunchContext(wallet, indexer),
+    fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, true)
   };
 }
 
@@ -4224,8 +4229,7 @@ function indexedProductionContext(
 }
 
 function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementIndexer) {
-  const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0]
-    || indexer.fleetLaunchRequiresReconciliation(wallet);
+  const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0];
   return {
     fleetSlots: indexer.fleetSlots(wallet),
     fleetLaunchAvailable: !slotSettlementBlocker,
@@ -4233,6 +4237,20 @@ function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementInd
       fleetLaunchUnavailableReason: "A fleet operation is still in progress. Try again shortly.",
       stale: true
     } : {})
+  };
+}
+
+// No cursor proof is indexed: exclude fleet credits, but retain independently
+// settled production/accrual. Do not reject a wallet merely for having a credit.
+function indexedFleetLaunchConstraints(wallet: Address, planet: SettledPlanetEvent | null, indexer: SettlementIndexer, isMoon = false, currentResources?: Resources | null) {
+  return {
+    ships: planet ? indexer.fleetLaunchShipCounts(planet.planetId, isMoon) : [],
+    resources: isMoon
+      ? (planet && indexer.moonResourcesAsOfNow(planet.planetId) !== null ? indexer.moonResources(planet.planetId) : null)
+      : currentResources !== undefined && planet && indexer.currentFleetResourceEffects(planet.planetId, Number.MAX_SAFE_INTEGER).length === 0
+        ? currentResources
+        : indexedCurrentPlanetState(indexer, planet, false)?.resources ?? null,
+    fleetSlots: indexer.batchFleetSlots(wallet)
   };
 }
 
@@ -4251,6 +4269,7 @@ function indexedSupplySources(
     sources: indexer.settledPlanetsForOwner(wallet)
       .filter(planet => planet.planetId !== target?.planetId)
       .map(planet => {
+        const resources = indexedCurrentResourcesForPlanet(indexer, planet);
         return {
           planetId: planet.planetId,
           name: planet.name,
@@ -4258,8 +4277,9 @@ function indexedSupplySources(
           system: planet.system,
           position: planet.position,
           coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-          resources: indexedCurrentResourcesForPlanet(indexer, planet),
-          launchableShips: indexer.launchableShipCounts(planet.planetId)
+          resources,
+          launchableShips: indexer.launchableShipCounts(planet.planetId),
+          fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, false, resources)
         };
       })
   };
@@ -4290,6 +4310,7 @@ function indexedShipyardState(
     // between queue progress and the next lazy on-chain settlement transaction.
     ships: inventory.rows,
     launchableShips: inventory.launchable,
+    fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, false, state.resourcesAsOfNow),
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }

@@ -4095,14 +4095,13 @@ export class SettlementIndexer {
     };
   }
 
-  fleetLaunchRequiresReconciliation(wallet: Address): boolean {
-    const missions = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true });
-    const effects = this.currentFleetEffects();
-    const ids = new Set(missions.map(mission => mission.missionId));
-    // One bounded lazy visit advances one leg, not both an arrival and return.
-    return (missions.length > 12 && effects.some(effect => ids.has(effect.missionId))) || missions.some(mission =>
-      mission.status === "Outbound" && effects.some(effect => effect.missionId === mission.missionId && effect.leg === "return")
-    );
+  // The indexed mission graph does not prove the on-chain player/body cursors,
+  // retained inactive entries or incoming-owner roster. Never certify any fleet
+  // credit from its size. Production is settled independently of that sweep.
+  fleetLaunchShipCounts(planetId: string, isMoon = false): Array<{ id: number; count: number }> {
+    const counts = this.indexedLevelsById(isMoon ? "contract_moon_ship_counts" : "contract_ship_counts", "ship_id", "count", planetId);
+    const completed = this.completedQueueQuantities((isMoon ? "moon-ship:" : "ship:") + planetId);
+    return supportedShipIds.map(id => ({ id, count: (counts.get(id) ?? 0) + (completed.get(id) ?? 0) }));
   }
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {

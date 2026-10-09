@@ -274,7 +274,7 @@ for (const moon of [false, true]) for (const crossOwner of [false, true]) test(
         expect(state.status).toBe(200);
         // Proven arrival alone remains launchable; an unmined second leg cannot
         // supply launch inventory in the contract's one-visit lazy sweep.
-        expect(state.body.fleetLaunchAvailable).toBe(!blocked && !returned);
+        expect(state.body.fleetLaunchAvailable).toBe(!blocked);
         const expected = [...(arrived ? ["mission:1:arrival"] : []), ...(returned ? ["mission:1:return"] : [])];
         const activity = await wallet("activity");
         expect(activity.status).toBe(200);
@@ -361,8 +361,9 @@ test.each([false, true])("two-leg projected Transport return cannot promise firs
   expect(state.ships[0].count).toBe(9);
   expect(state.launchableShips[0].count).toBe(9);
   expect(state.fleetSlots.active).toBe(0);
-  expect(state.fleetLaunchAvailable).toBe(false);
-  expect((await wallet("supply-sources")).body.fleetLaunchAvailable).toBe(false);
+  expect(state.fleetLaunchAvailable).toBe(true);
+  expect(state.fleetLaunchConstraints.ships[0].count).toBe(0);
+  expect((await wallet("supply-sources")).body.fleetLaunchAvailable).toBe(true);
 });
 
 test("batch slot guard retains pre-sweep count without changing effective slots", async () => {
@@ -439,3 +440,34 @@ for (const moon of [false, true]) test("unknown body balances retain canonical h
     expect(owned.tactical.ships.count).toBe(3);
   }
 });
+
+for (const moon of [false, true]) for (const returning of [false, true]) for (const canonical of [0, 100]) {
+  test("launch constraints preserve funded body, exclude mixed-owner cursor credits moon=" + moon + " returning=" + returning + " canonical=" + canonical, async () => {
+    setSystemTime(new Date(1030000));
+    const { indexer, db, wallet, get, anchor } = fixture(moon, returning);
+    const other = "0x3333333333333333333333333333333333333333";
+    indexer.applyEvent({ ...indexer.planet("7")!, planetId: "8", position: 10, transactionHash: "0x8" } as SettledPlanetEvent);
+    db.query("INSERT INTO contract_technology_levels (owner, technology_id, level) VALUES (?,4,15)").run(owner);
+    db.query("INSERT INTO " + (moon ? "contract_moon_ship_counts" : "contract_ship_counts") + " (planet_id, ship_id, count) VALUES ('7',4,?)").run(canonical);
+    // Foreign future arrivals consume the player scan without being chronology blockers.
+    for (let id = 2; id <= 13; id++) (indexer as any).upsertCanonicalFleetMission({ missionId: String(id), statusId: 1, missionTypeId: 3, status: "Outbound", missionType: "Attack", owner: other, originPlanetId: "99", targetPlanetId: "8", departureAt: "900", arrivalAt: "9999999", returnAt: "99999999", fuelCost: "0", cargo: { metal: "0", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: false, targetIsMoon: false, ships: { lightFighter: "1" } });
+    (indexer as any).upsertCanonicalFleetMission({ missionId: "1", statusId: returning ? 2 : 1, missionTypeId: 0, status: returning ? "Returning" : "Outbound", missionType: "Transport", owner, originPlanetId: "7", targetPlanetId: "8", departureAt: "900", arrivalAt: "1010", returnAt: "1020", fuelCost: "0", cargo: { metal: "80", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: moon, targetIsMoon: false, ships: { largeCargo: "6" } });
+    anchor(1030);
+    const state = (await wallet(moon ? "moon" : "shipyard")).body;
+    expect(state.ships.find((ship: any) => ship.id === 4).count).toBe(canonical + 6);
+    expect(state.launchableShips.find((ship: any) => ship.id === 4).count).toBe(canonical + 6);
+    expect(state.fleetLaunchConstraints.ships.find((ship: any) => ship.id === 4).count).toBe(canonical);
+    expect(state.fleetLaunchAvailable).toBe(true);
+    expect(state.fleetLaunchConstraints.fleetSlots).toEqual({ active: 1, limit: 16 });
+    expect(state.fleetLaunchConstraints.resources.metal).toBe("100");
+    expect(state.resourcesAsOfNow.metal).toBe(returning ? "180" : "100");
+    const supply = (await get("/wallet/" + owner + "/supply-sources?planetId=8")).body;
+    const source = supply.sources.find((source: any) => source.planetId === "7");
+    expect(source.fleetLaunchConstraints.ships.find((ship: any) => ship.id === 4).count).toBe(moon ? 0 : canonical);
+    expect(supply.fleetLaunchAvailable).toBe(true);
+    // Unrelated planet inventory is neither replaced with moon credit nor wallet-blocked.
+    const sibling = (await get("/wallet/" + owner + "/shipyard?planetId=8")).body;
+    expect(sibling.fleetLaunchAvailable).toBe(true);
+    expect(sibling.fleetLaunchConstraints.ships.find((ship: any) => ship.id === 4).count).toBe(0);
+  });
+}

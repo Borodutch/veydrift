@@ -1,9 +1,9 @@
 import { playerPlanetTacticalSignals } from "./components/InspectPages";
 import { planetDetailRefreshResultPlanet } from "./components/PlanetDetail";
 import { expect, test } from "bun:test";
-import { prepareBatchSupplyConfirmation, shipyardStateForMissionActions, supplyLaunchSlots, batchSupplySourceForPlanet, batchSupplySourcesFromSnapshot, missionMoonShipyardState } from "./PlayableMvpApp";
-import { missionInventory, type ChainMoonState, type SupplySourcesResponse } from "./walletFlow";
-import { buildBatchSupplyPlan } from "./batchSupplyPlanner";
+import { missionShipInventoryBlocker, prepareBatchSupplyConfirmation, shipyardStateForMissionActions, supplyLaunchSlots, batchSupplySourceForPlanet, batchSupplySourcesFromSnapshot, missionMoonShipyardState } from "./PlayableMvpApp";
+import { fleetLaunchRequirementBlocker, missionInventory, type ChainMoonState, type SupplySourcesResponse } from "./walletFlow";
+import { buildBatchSupplyPlan, maximumBatchSupplyResource } from "./batchSupplyPlanner";
 const resources = { metal: "1000000", crystal: "1000000", deuterium: "1000000" };
 const planet = { planetId: "1", name: "Origin", coordinates: "1:1:1", galaxy: 1, system: 1, position: 1, resources };
 test("explicit unknown launchable counts cannot revive stale canonical ships", () => {
@@ -72,4 +72,48 @@ test("public detail and tactical panels do not resurrect positive unknown balanc
   const merged = planetDetailRefreshResultPlanet({ apiPlanet: fresh, currentPlanet: trusted, trustedHomePlanet: trusted, coords: planet });
   expect(merged?.publicState).toBeNull();
   expect(merged?.publicMoonState).toBeNull();
+});
+
+test.each([false, true])("selected launch respects body constraints without hiding effective inventory moon=%s", moon => {
+  const constraints = { ships: [{ id: 4, count: 100 }], resources, fleetSlots: { active: 1, limit: 16 } };
+  const state = { wallet: "owner", homePlanetId: "1", resources, shipyardLevel: 1, naniteLevel: 0, technologyLevels: {}, ships: [{ id: 4, count: 106, cost: resources }], launchableShips: [{ id: 4, count: 106 }], fleetLaunchConstraints: constraints, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 16 }, queue: null };
+  const origin = moon ? missionMoonShipyardState({ moonState: { ...state, moon: { exists: true, planetId: "1" } } as unknown as ChainMoonState, shipyardState: state })! : state;
+  expect(missionInventory(origin).ships[0]!.count).toBe(106);
+  expect(missionShipInventoryBlocker({ shipyardState: origin, ships: { largeCargo: 1 } })).toBeUndefined();
+  expect(missionShipInventoryBlocker({ shipyardState: origin, ships: { largeCargo: 106 } })).toContain("not yet ready for launch");
+  const empty = { ...origin, fleetLaunchConstraints: { ...constraints, ships: [{ id: 4, count: 0 }] } };
+  expect(missionShipInventoryBlocker({ shipyardState: empty, ships: { largeCargo: 6 } })).toContain("not yet ready for launch");
+  expect(missionShipInventoryBlocker({ shipyardState: { ...origin, fleetLaunchAvailable: false }, ships: { largeCargo: 1 } })).toBeDefined();
+});
+
+test("Supply keeps display proposals and blocks only selected requirements before send", async () => {
+  const target = { ...planet, planetId: "99", system: 2 } as any;
+  const constraints = { ships: [{ id: 4, count: 100 }], resources, fleetSlots: { active: 1, limit: 16 } };
+  const snapshot: SupplySourcesResponse = { wallet: "owner", technologyLevels: {}, fleetSlots: { active: 0, limit: 16 }, fleetLaunchAvailable: true, sources: [{ ...planet, launchableShips: [{ id: 4, count: 106 }], fleetLaunchConstraints: constraints }] };
+  const plan = (next = snapshot, metal = 1) => buildBatchSupplyPlan({ sources: batchSupplySourcesFromSnapshot(next, target), targetCoordinates: target, selectedPlanetIds: new Set(["1"]), requested: { metal } });
+  expect(batchSupplySourcesFromSnapshot(snapshot, target)[0]!.ships.largeCargo).toBe(106);
+  expect(plan().orders[0]?.ships.largeCargo).toBe(1);
+  expect(plan().blockedSources).toEqual([]);
+  const next = { ...snapshot, sources: snapshot.sources.map(source => ({ ...source, fleetLaunchConstraints: { ...constraints, ships: [{ id: 4, count: 0 }] } })) };
+  const blocked = plan(next, 140000);
+  expect(blocked.orders[0]?.ships.largeCargo).toBe(6);
+  expect(blocked.blockedSources[0]?.reason).toContain("not yet ready for launch");
+  const queries = { supplySources: () => ({ read: async () => next }) } as any;
+  await expect(prepareBatchSupplyConfirmation({ queries, account: "owner", target, orders: blocked.orders, shipTypesBySource: {}, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview() {}, onShortfall() {} })).rejects.toThrow("Supply inventory changed");
+  const noFuel = { ...snapshot, sources: snapshot.sources.map(source => ({ ...source, fleetLaunchConstraints: { ...constraints, resources: { ...resources, deuterium: "0" } } })) };
+  expect(plan(noFuel).blockedSources[0]?.reason).toContain("cargo or fuel");
+  expect(fleetLaunchRequirementBlocker({ ...constraints, resources: null }, [{ id: 4, count: 1 }], { metal: 1 })).toBeDefined();
+  expect(fleetLaunchRequirementBlocker({ ...constraints, fleetSlots: { active: 16, limit: 16 } }, [{ id: 4, count: 1 }])).toContain("Fleet slots");
+});
+
+test("Supply Max finds conservative feasible inventory rather than skipping its interval", () => {
+  const source = batchSupplySourceForPlanet(planet, { resources, technologyLevels: {}, launchableShips: [{ id: 4, count: 106 }], fleetLaunchConstraints: { ships: [{ id: 4, count: 1 }], resources, fleetSlots: { active: 1, limit: 16 } } });
+  const options = { sources: [source], targetCoordinates: { galaxy: 1, system: 2, position: 1 }, selectedPlanetIds: new Set(["1"]), requested: { metal: 1 } };
+  const max = maximumBatchSupplyResource(options, "metal");
+  expect(max).toBeGreaterThan(20000);
+  expect(max).toBeLessThanOrEqual(25000);
+  const plan = buildBatchSupplyPlan({ ...options, requested: { metal: max } });
+  expect(plan.orders[0]?.ships.largeCargo).toBe(1);
+  expect(plan.blockedSources).toEqual([]);
+  expect(source.ships.largeCargo).toBe(106);
 });

@@ -845,7 +845,15 @@ export type BattleReport = {
   stagedEvidence?: StagedBattleEvidence;
 };
 
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: Resources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
 export type ShipyardState = {
+  /** Conservative requirements for this body; effective display stays separate. */
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   homePlanetId: string | null;
   planetId: string | null;
@@ -879,8 +887,7 @@ export type ShipyardState = {
     // Shipyard detail payload, omitted on count-only projections.
     durationSeconds?: number;
   }>;
-  // Inventory the next fleet-launch transaction can use after the contract's
-  // deterministic lazy production settlement prologue.
+  // Effective display inventory; fleetLaunchConstraints qualifies next-launch use.
   launchableShips?: Array<Pick<ShipyardState["ships"][number], "id" | "count">>;
   queue: QueueState | null;
 };
@@ -967,6 +974,7 @@ export type InfrastructureState = {
 };
 
 export type MoonState = {
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   bodyKind: "moon";
   homePlanetId: string | null;

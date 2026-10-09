@@ -17,6 +17,7 @@ test.each(["ship", "defense", "moon-ship", "moon-defense"])("%s units appear onc
  const {indexer} = fixture(kind);
  for(const [at,count] of [[1009,0],[1010,1],[1020,2],[1030,3]]) {
   setSystemTime(new Date(at!*1000));
+  if (kind === "ship" || kind === "moon-ship") expect(indexer.fleetLaunchShipCounts("7", kind === "moon-ship")[0]?.count).toBe(count);
   if(kind.startsWith("moon")) {
    const state = indexer.moonState(owner,"7");
    const rows = kind === "moon-ship" ? state.ships : state.defenses;
@@ -202,8 +203,7 @@ test("large due roster keeps projected quantities but cannot certify bounded laz
   }
   indexer.recordResourceProjectionWatermark("2", "1030", "0x" + "a".repeat(64));
   expect(indexer.displayedUnitCounts("7", "ship")[0]?.count).toBe(117);
-  expect(indexer.fleetLaunchRequiresReconciliation(owner)).toBe(true);
-  expect(indexer.fleetLaunchRequiresReconciliation("0x3333333333333333333333333333333333333333")).toBe(false);
+  expect(indexer.fleetLaunchShipCounts("7")[0]?.count).toBe(0);
 });
 
 test("one snapshot cannot cross a production boundary between inventory and remaining queue", () => {

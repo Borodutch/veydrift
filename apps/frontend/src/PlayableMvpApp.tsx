@@ -129,7 +129,7 @@ import {
 import { playSfx } from "./sfx";
 import { timestampToMs } from "./timestampFormat";
 import { confirmTransactionRetry, transactionAwaitingWalletLabel, transactionWasSubmitted, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
-import { missionInventory, transactionWalletProvider } from "./walletFlow";
+import { fleetLaunchRequirementBlocker, missionInventory, transactionWalletProvider } from "./walletFlow";
 import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
 import { getSizedImageSrc } from "./utils/imageSizes";
 import { useBackendDataQuery } from "./useBackendDataQuery";
@@ -348,6 +348,7 @@ export function missionMoonShipyardState({ moonState, shipyardState }: { moonSta
     wallet: moonState.wallet,
     homePlanetId: moonState.homePlanetId,
     planetId: moonState.moon.planetId,
+    ...(moonState.fleetLaunchConstraints !== undefined ? { fleetLaunchConstraints: moonState.fleetLaunchConstraints } : {}),
     productionAvailable: true,
     resources: currentResources(moonState) ?? null,
     resourcesAsOfNow: currentResources(moonState) ?? null,
@@ -915,7 +916,7 @@ export function missionShipInventoryBlocker({
   ships,
 }: {
   originBody?: "moon" | "planet" | undefined;
-  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "unavailableReason"> | null | undefined;
+  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "fleetLaunchConstraints" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
 }): string | undefined {
   if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
@@ -939,7 +940,7 @@ export function missionShipInventoryBlocker({
     })
     .filter((row): row is string => Boolean(row));
 
-  if (overSelected.length <= 0) return undefined;
+  if (overSelected.length <= 0) return fleetLaunchRequirementBlocker(shipyardState.fleetLaunchConstraints, missionShipInventoryRows.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })));
   return `${overSelected.join(", ")} on the origin ${originBody}; refresh fleet state or reduce selected ships before launching.`;
 }
 
@@ -2195,6 +2196,7 @@ export function batchSupplySourceForPlanet(
   shipyard: ChainShipyardState | (Pick<ChainShipyardState, "resources" | "resourcesAsOfNow" | "technologyLevels" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "unavailableReason"> & {
     ships?: Array<{ id: number; count: number }>;
     launchableShips?: Array<{ id: number; count: number }> | null;
+    fleetLaunchConstraints?: ChainShipyardState["fleetLaunchConstraints"];
   }) | undefined,
   readUnavailableReason?: string,
 ): BatchSupplySource {
@@ -2229,6 +2231,7 @@ export function batchSupplySourceForPlanet(
     },
     ships,
     driveLevels: driveLevelsFromTechnologyLevels(shipyard?.technologyLevels),
+    ...(shipyard?.fleetLaunchConstraints !== undefined ? { fleetLaunchConstraints: shipyard.fleetLaunchConstraints } : {}),
     ...(fleetUnavailable ? { unavailableReason: fleetUnavailable } : {}),
   };
 }

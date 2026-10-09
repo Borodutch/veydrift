@@ -1,4 +1,6 @@
 import type { Coordinates } from "./types";
+import { shipCatalog } from "./playableMvp";
+import { fleetLaunchRequirementBlocker, type FleetLaunchConstraints } from "./walletFlow";
 import { emptyMissionShips, type MissionShips } from "./galaxyActions";
 import {
   fleetMissionAvailableCargoCapacity,
@@ -23,6 +25,7 @@ export type BatchSupplySource = {
   ships: Partial<MissionShips>;
   driveLevels: FleetDriveLevels;
   unavailableReason?: string;
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
 };
 
 export type SupplyMission = "transport" | "deploy";
@@ -59,6 +62,10 @@ export const supplyShipKeys = Object.keys(emptyMissionShips()) as SupplyShipKey[
 export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
 
 export const defaultSupplyShipTypes: readonly SupplyShipKey[] = ["largeCargo", "smallCargo", "colonyShip"];
+
+function supplyShipId(key: string): number {
+  return shipCatalog.find(ship => ship.key === key)?.id ?? -1;
+}
 
 const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
   { id: 4, key: "largeCargo" },
@@ -124,6 +131,21 @@ export function maximumBatchSupplyResource(
   options: BatchSupplyOptions,
   resource: keyof SupplyResources,
 ): number {
+  // Max may use server-provided conservative quantities as planner inputs, not
+  // reconstruct them. Keeping these bounds in the traced arithmetic avoids a
+  // post-loadout blocker skipping an otherwise feasible search interval.
+  options = { ...options, sources: options.sources.map(source => {
+    const constraints = source.fleetLaunchConstraints;
+    if (constraints === undefined) return source;
+    if (!constraints || !constraints.resources || constraints.fleetSlots.active >= constraints.fleetSlots.limit) {
+      return { ...source, unavailableReason: "Current launch inventory is unavailable." };
+    }
+    const { fleetLaunchConstraints: _constraints, ...displaySource } = source;
+    return { ...displaySource,
+      ships: Object.fromEntries(supplyShipKeys.map(key => [key, Math.min(safeAmount(source.ships[key]), constraints.ships.find(row => row.id === supplyShipId(key))?.count ?? 0)])),
+      resources: Object.fromEntries((["metal", "crystal", "deuterium"] as const).map(key => [key, Math.min(source.resources[key], Number(constraints.resources![key]))])) as SupplyResources,
+    };
+  }) };
   const requested = normalizeSupplyResources(options.requested);
   const baseline = buildBatchSupplyPlan(options);
   const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
@@ -385,6 +407,11 @@ function planBatchSupply({
       blockedSources.push({ planetId: source.planetId, reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium." });
       continue;
     }
+
+    const constraintBlocker = fleetLaunchRequirementBlocker(source.fleetLaunchConstraints,
+      Object.entries(loadout.ships).map(([key, count]) => ({ id: supplyShipId(key), count })),
+      { ...loadout.cargo, deuterium: loadout.cargo.deuterium + loadout.fuelCost });
+    if (constraintBlocker) blockedSources.push({ planetId: source.planetId, reason: constraintBlocker });
 
     orders.push({
       originPlanetId: source.planetId,

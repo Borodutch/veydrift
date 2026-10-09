@@ -52,7 +52,7 @@ import {
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { getSizedImageSrc } from "../utils/imageSizes";
-import { missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
+import { fleetLaunchRequirementBlocker, missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
@@ -746,7 +746,11 @@ export function MissionCreationPage({
     quantity,
     resources: effectiveResources,
     selectedShipCount,
-    staleShipQuantityBlocker,
+    staleShipQuantityBlocker: staleShipQuantityBlocker ?? (action.mode === "mission" ? fleetLaunchRequirementBlocker(
+      effectiveShipyardState?.fleetLaunchConstraints,
+      missionShipOptions.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })),
+      { metal: Number(normalizedCargo?.metal ?? 0), crystal: Number(normalizedCargo?.crystal ?? 0), deuterium: Number(normalizedCargo?.deuterium ?? 0) + effectiveFuelCost },
+    ) : undefined),
     submitBlocker: moonAttackNeedsUpgrade
       ? "Moon attacks are temporarily unavailable. Refresh shortly before launching."
       : effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState

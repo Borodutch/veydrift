@@ -833,7 +833,14 @@ export type BattleReport = {
   participants?: BattleReportParticipant[];
 };
 
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: OnChainResources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
 export type ChainShipyardState = {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
   wallet: string;
   homePlanetId: string | null;
   planetId?: string | null;
@@ -858,15 +865,33 @@ export type ChainShipyardState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
-  // Backend-authoritative launchable inventory. Explicit null is unknown, not a
-  // fallback to an older count; omission supports older backend responses.
+  // Backend-authoritative effective inventory; fleetLaunchConstraints qualifies
+  // selected launch requirements. Null is unknown; omission supports old responses.
   launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>> | null;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
-/** Mission controls and submission validation must use the same launchable inventory. */
+/** Compare only the selected requirements; never replace the effective display. */
+export function fleetLaunchRequirementBlocker(
+  constraints: FleetLaunchConstraints | null | undefined,
+  ships: ReadonlyArray<{ id: number; count: number }>,
+  resources?: Partial<Record<keyof OnChainResources, number>>,
+): string | undefined {
+  if (constraints === undefined) return undefined; // Older backend compatibility.
+  if (!constraints) return "Current launch inventory is unavailable. Refresh and retry.";
+  if (constraints.fleetSlots.active >= constraints.fleetSlots.limit) return "Fleet slots are not yet ready for launch. Refresh before launching.";
+  if (ships.some(ship => ship.count > (constraints.ships.find(row => row.id === ship.id)?.count ?? 0))) {
+    return "Some selected ships are not yet ready for launch. Reduce the fleet or refresh shortly.";
+  }
+  if (resources && (!constraints.resources || (["metal", "crystal", "deuterium"] as const).some(key => BigInt(Math.ceil(Math.max(0, resources[key] ?? 0))) > BigInt(constraints.resources![key])))) {
+    return "Selected cargo or fuel is not yet ready for launch. Reduce the shipment or refresh shortly.";
+  }
+  return undefined;
+}
+
+/** Mission controls and submission validation share authoritative effective inventory. */
 export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
   if (state.launchableShips === undefined) return state;
   const counts = new Map((state.launchableShips ?? []).map(ship => [ship.id, ship.count]));
@@ -880,6 +905,7 @@ export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fle
   sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates"> & {
     resources: OnChainResources | null;
     launchableShips: Array<{ id: number; count: number }>;
+    fleetLaunchConstraints?: FleetLaunchConstraints | null;
   }>;
 };
 
@@ -962,6 +988,7 @@ export type ChainInfrastructureState = {
 };
 
 export type ChainMoonState = {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
   fleetSlots?: ChainShipyardState["fleetSlots"];
   fleetLaunchAvailable?: boolean;
   fleetLaunchUnavailableReason?: string;
