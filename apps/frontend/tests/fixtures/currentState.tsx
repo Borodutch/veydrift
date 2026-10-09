@@ -1,8 +1,8 @@
 import { BackendDataStore } from "../../src/backendDataStore";
 import { useBackendDataQuery } from "../../src/useBackendDataQuery";
-import { batchSupplySourcesFromSnapshot } from "../../src/PlayableMvpApp";
+import { batchSupplySourcesFromSnapshot, missionInventoryAfterRead, missionMoonShipyardState } from "../../src/PlayableMvpApp";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
-import type { ManagedPlanetResponse, SupplySourcesResponse } from "../../src/walletFlow";
+import type { ChainShipyardState, ManagedPlanetResponse, SupplySourcesResponse } from "../../src/walletFlow";
 import { AttackReadinessError } from "../../src/playerNotice";
 import { MissionCreationPage, preparePublicTargetBattleForecast, AttackOutcomePanel } from "../../src/components/MissionCreationPage";
 import { emptyMissionShips } from "../../src/galaxyActions";
@@ -36,22 +36,53 @@ const store = new BackendDataStore(location.origin, { now: () => clock });
 const owner = "0x2222222222222222222222222222222222222222";
 store.setContext(owner, "99", "8453");
 let available = 6;
+let failedBody: "planet" | "moon" | undefined;
+let confirmed = 0;
+const inventory: ChainShipyardState = { ...defense, wallet: owner, planetId: "99", ships: [{ id: 4, count: 6, cost }], launchableShips: [{ id: 4, count: 6 }], fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 } };
 const originalFetch = window.fetch.bind(window);
 window.fetch = (input, init) => String(input).includes("/supply-sources") ? Promise.resolve(Response.json({
  wallet: owner, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 }, technologyLevels: {},
  sources: Array.from({ length: 9 }, (_, i) => ({ planetId: String(i + 1), name: "Source " + i, galaxy: 1, system: 1, position: i + 1, coordinates: "1:1:" + (i + 1), resources, launchableShips: [{ id: 4, count: available }] })),
-} satisfies SupplySourcesResponse)) : originalFetch(input, init);
+} satisfies SupplySourcesResponse)) : /\/(shipyard|moon)\?/.test(String(input)) ? (() => {
+ const moon = String(input).includes("/moon?");
+ if (failedBody === (moon ? "moon" : "planet")) return Promise.resolve(Response.json({ error: "Inventory unavailable" }, { status: 503 }));
+ return Promise.resolve(Response.json(moon ? { ...inventory, moon: { exists: true, planetId: "99" } } : inventory));
+})() : originalFetch(input, init);
 const supplyTarget = { planetId: "99", name: "Destination", coordinates: "1:2:1", galaxy: 1, system: 2, position: 1 } as ManagedPlanetResponse;
 function StoreSupply() {
  const { snapshot, isInitialLoading } = useBackendDataQuery(store.queries.supplySources(owner, "99"));
  const sources = snapshot?.data ? batchSupplySourcesFromSnapshot(snapshot.data, supplyTarget) : [];
  return <BatchSupplyModal sources={sources} maxSources={15} target={supplyTarget} initialRequested={{ metal: 1260000 }} loading={isInitialLoading} onClose={noop} onConfirm={noop} />;
 }
+function StoreComposer({ body, kind }: { body: "planet" | "moon"; kind: "transport" | "deploy" | "attack" | "acs" | "defend" }) {
+ const { snapshot: planet } = useBackendDataQuery(store.queries.shipyard(owner, "99"));
+ const { snapshot: moon } = useBackendDataQuery(store.queries.moon(owner, "99"));
+ const shipyardState = missionInventoryAfterRead(planet?.data ?? null, planet?.error);
+ const moonInventory = missionInventoryAfterRead(missionMoonShipyardState({ moonState: moon?.data, shipyardState: planet?.data ?? null }), moon?.error);
+ const actionKind = kind === "acs" ? "attack" : kind === "defend" ? "acsDefend" : kind;
+ return <MissionCreationPage action={{ enabled: true, kind: actionKind, mode: "mission", mission: actionKind, label: "Launch" }}
+   actionPending={false} coords={{ galaxy: 1, system: 1, position: 2 }} originCoords={{ galaxy: 1, system: 1, position: 1 }}
+   resources={{ metal: 999999, crystal: 999999, deuterium: 999999 }} shipyardState={shipyardState}
+   bodySelection={{ defaultOriginIsMoon: body === "moon", originMoonAvailable: true, originMoonShipyardState: moonInventory, originMoonResources: { metal: 999999, crystal: 999999, deuterium: 999999 } }}
+   joinAttackMode={kind === "acs"} acsDefendMode={kind === "defend"} acsDefendContext={kind === "defend" ? { hostileArrivalMs: now + 86400000, depotLevel: 10 } : undefined}
+   nowMs={now} moonAttackParityEnabled onBack={noop} onConfirm={() => { confirmed++; }} target={undefined} />;
+}
+function refreshInventory(body?: "planet" | "moon") {
+ failedBody = body;
+ clock += 20000;
+ (store as unknown as { refreshGameplay(): void }).refreshGameplay();
+}
 function show(surface = "defense", mode = "current") {
  const fleet: FleetMissionSummary = { ...mission, ...(mode === "randomness" ? { resolutionBlocker: "randomness_pending", resolutionEligible: false, needsResolution: false } : mode === "queued" ? { resolutionEligible: false, needsResolution: false } : mode === "staged" ? { combatResolutionProgress: { roundsCompleted: 3, totalRounds: 6 } } : {}) };
  const detail = { mission: fleet, battleReport: null } as MissionDetailResponse;
  const visibility = { wallet: "0xabc", homePlanetId: "7", incoming: [], outgoing: [fleet], returning: [], joinableAttacks: [], completedMissions: [], battleReports: [] };
  let page;
+ if (surface.startsWith("store-composer-")) {
+   const [, , body, kind] = surface.split("-");
+   failedBody = undefined;
+   page = <StoreComposer key={surface} body={body as "planet" | "moon"} kind={kind as "transport" | "deploy" | "attack" | "acs" | "defend"} />;
+   queueMicrotask(() => refreshInventory());
+ }
  if (surface === "store-supply") {
    available = mode === "empty" ? 0 : 6;
    clock = Math.max(clock + 20000, Date.now() + 20000);
@@ -78,5 +109,5 @@ function show(surface = "defense", mode = "current") {
  if (surface === "activity") page = <ActivityRow explorerUrl="https://basescan.org" item={{ ...activity, ...(mode === "indexed" ? { reconciliation: "indexed", transactionHash: "0xabc" } : {}) }} />;
  render(<main data-fixture-ready style={{ maxWidth: "1060px", margin: "16px auto", padding: "0 12px" }}>{page}</main>, document.getElementById("app")!);
 }
-Object.assign(window, { fixture: { show } });
+Object.assign(window, { fixture: { show, refreshInventory, confirmed: () => confirmed } });
 show();

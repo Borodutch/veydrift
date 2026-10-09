@@ -816,6 +816,16 @@ export function planetHasIncomingAttack(fleetVisibility: FleetMissionVisibilityR
   );
 }
 
+// Keep last-good rows visible, but never treat a failed refresh as launch authority.
+// Each origin carries its own read error so switching bodies selects the right guard.
+export function missionInventoryAfterRead(
+  state: ChainShipyardState | null,
+  error: string | undefined,
+): ChainShipyardState | null {
+  return state && error ? { ...state, fleetLaunchAvailable: false,
+    fleetLaunchUnavailableReason: "Current fleet inventory is unavailable. Refresh and retry." } : state;
+}
+
 export function shipyardStateForMissionActions({
   account,
   activePlanetId,
@@ -3369,10 +3379,17 @@ export function PlayableMvpApp({
   const missionLaunchStateBlocker = missionLaunchSubmitBlocker({
     actionState: galaxyAction,
   });
-  const selectedMissionShipyardState = useMemo(
-    () => activeBodyKind === "moon" ? missionMoonShipyardState({ moonState, shipyardState }) : shipyardState,
-    [activeBodyKind, moonState, shipyardState],
+  const missionPlanetShipyardState = useMemo(
+    () => missionInventoryAfterRead(shipyardState, shipyardError),
+    [shipyardState, shipyardError],
   );
+  const missionMoonInventory = useMemo(
+    () => missionInventoryAfterRead(missionMoonShipyardState({ moonState, shipyardState }), moonError),
+    [moonState, shipyardState, moonError],
+  );
+  const selectedMissionShipyardState = activeBodyKind === "moon" ? missionMoonInventory : missionPlanetShipyardState;
+  const selectedMissionInventoryError = activeBodyKind === "moon" ? moonError : shipyardError;
+  const selectedMissionInventoryLoading = activeBodyKind === "moon" ? moonLoading : shipyardLoading;
   const missionActionShipyardState = useMemo(
     () =>
       shipyardStateWithMissionLaunchBlocker({
@@ -3384,12 +3401,12 @@ export function PlayableMvpApp({
           account,
           activePlanetId,
           homePlanetId: onChainSettlement?.homePlanetId,
-          shipyardError,
-          shipyardLoading,
+          shipyardError: selectedMissionInventoryError,
+          shipyardLoading: selectedMissionInventoryLoading,
           shipyardState: selectedMissionShipyardState,
         }),
       }),
-    [account, activePlanetId, missionLaunchStateBlocker, onChainSettlement?.homePlanetId, shipyardError, shipyardLoading, selectedMissionShipyardState],
+    [account, activePlanetId, missionLaunchStateBlocker, onChainSettlement?.homePlanetId, selectedMissionInventoryError, selectedMissionInventoryLoading, selectedMissionShipyardState],
   );
   const activeShipyardProductionQueue = shipyardState ? activeProductionQueue(shipyardState.queue, undefined, "ship") : activeProductionQueue(undefined, onChainQueues?.ship, "ship");
   const activeDefenseProductionQueue = defenseState ? activeProductionQueue(defenseState.queue, undefined, "defense") : activeProductionQueue(undefined, onChainQueues?.defense, "defense");
@@ -6870,7 +6887,7 @@ export function PlayableMvpApp({
               originMoonAvailable: pendingMissionOriginMoonLoaded,
               targetMoonAvailable: Boolean(pendingMissionTarget?.hasMoon),
               originMoonResources: pendingMissionOriginMoonLoaded ? missionMoonResources(moonState) : undefined,
-              originMoonShipyardState: pendingMissionOriginMoonLoaded ? missionMoonShipyardState({ moonState, shipyardState }) : null,
+              originMoonShipyardState: pendingMissionOriginMoonLoaded ? missionMoonInventory : null,
             }
           : undefined;
       return (
@@ -6907,7 +6924,7 @@ export function PlayableMvpApp({
           missileInventory={(defenseState?.launchableDefenses ?? defenseState?.defenses ?? [])
             .find((defense) => defense.id === 9)?.count ?? 0}
           resources={pendingMissionOriginResources}
-          shipyardState={shipyardState}
+          shipyardState={missionPlanetShipyardState}
           submitBlocker={pendingMissionContextBlocker ?? pendingAttackPreparation.blocker ?? missionLaunchBlocker}
           target={pendingMissionTarget}
           targetIntelLoading={attackTargetQuery.isInitialLoading}
@@ -6941,10 +6958,7 @@ export function PlayableMvpApp({
             defaultTargetIsMoon: pendingJoinAttack.mission.targetIsMoon === true,
             originMoonAvailable: Boolean(selectedManagedPlanet?.moon?.exists && moonState?.moon?.exists),
             originMoonResources: missionMoonResources(moonState),
-            originMoonShipyardState: missionMoonShipyardState({
-              moonState,
-              shipyardState,
-            }),
+            originMoonShipyardState: missionMoonInventory,
             targetMoonAvailable: pendingJoinAttack.mission.targetIsMoon === true ? Boolean(pendingJoinAttackTarget?.hasMoon) : false,
             targetSelectionLocked: true,
           }}
@@ -6959,7 +6973,7 @@ export function PlayableMvpApp({
           originCoords={activePlanetCoords}
           originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
           resources={originMissionResources}
-          shipyardState={shipyardState}
+          shipyardState={missionPlanetShipyardState}
           submitBlocker={missionLaunchBlocker}
           target={pendingJoinAttackTarget}
         />
@@ -6994,7 +7008,7 @@ export function PlayableMvpApp({
           originCoords={activePlanetCoords}
           originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
           resources={originMissionResources}
-          shipyardState={shipyardState}
+          shipyardState={missionPlanetShipyardState}
           submitBlocker={missionLaunchBlocker}
           target={undefined}
         />

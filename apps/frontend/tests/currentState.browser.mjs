@@ -69,7 +69,28 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       await evaluate('fixture.show("inventory-composer", "empty"); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector(\'input[aria-label="Large Cargo quantity"]\').value'), '6', 'refresh preserves explicit fleet');
       assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected \/ 0 available/);
-      assert.equal(await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent.includes("Confirm")).disabled'), true);
+      assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), true);
+      for (const [body, kind] of ["planet", "moon"].flatMap(body => ["transport", "deploy", "attack", "acs", ...(body === "planet" ? ["defend"] : [])].map(kind => [body, kind]))) {
+        const label = body + " " + kind + " at " + width;
+        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-" + kind) + '); new Promise(resolve => setTimeout(resolve, 150))');
+        await evaluate(`(() => { const input = document.querySelector('input[aria-label="Large Cargo quantity"]'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)`);
+        const confirmDisabled = () => evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled');
+        const quantity = () => evaluate(`document.querySelector('input[aria-label="Large Cargo quantity"]').value`);
+        assert.equal(await confirmDisabled(), false, "ready " + label + ": " + await evaluate('document.body.innerText'));
+        // An unrelated body's failed read must not poison the selected origin.
+        await evaluate('fixture.refreshInventory(' + JSON.stringify(body === "planet" ? "moon" : "planet") + '); new Promise(resolve => setTimeout(resolve, 150))');
+        assert.equal(await confirmDisabled(), false, "other body failure " + label);
+        await evaluate('fixture.refreshInventory(' + JSON.stringify(body) + '); new Promise(resolve => setTimeout(resolve, 150))');
+        assert.equal(await quantity(), "6", "failed refresh preserves draft " + label);
+        assert.equal(await confirmDisabled(), true, "selected read503 blocks " + label);
+        assert.match(await evaluate('document.querySelector("main").innerText'), /Current fleet inventory is unavailable/, label);
+        assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected[\s\S]*\/ 6/, "retains last-good display " + label);
+        await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
+        assert.equal(await evaluate('fixture.confirmed()'), 0, "failed read cannot submit " + label);
+        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 150))');
+        assert.equal(await quantity(), "6", "recovery preserves draft " + label);
+        assert.equal(await confirmDisabled(), false, "fresh successful read restores launch " + label);
+      }
       await evaluate('fixture.show("store-supply", "current"); new Promise(resolve => setTimeout(resolve, 150))');
       await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'normal subscribed store hydrates nine-source plan at ' + width + ': ' + await evaluate('document.body.innerText'));
