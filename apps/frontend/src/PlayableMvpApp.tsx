@@ -3176,7 +3176,9 @@ export function PlayableMvpApp({
     if (batchSupplyTargetIsMoon && parent?.resources && !batchSupplyParentSnapshot?.error) sources.unshift(batchSupplySourceForPlanet(batchSupplyTarget, parent));
     return sources;
   }, [batchSupplySnapshot?.data, batchSupplyTarget, batchSupplyParentSnapshot, batchSupplyTargetIsMoon]);
-  const moonSupplyBatchSupported = useVerifiedMoonSupplyBatch(apiBaseUrl, Boolean(batchSupplyTarget && batchSupplyTargetIsMoon));
+  const moonSupplyBatchSupported = useVerifiedMoonSupplyBatch(apiBaseUrl, Boolean(batchSupplyTarget && batchSupplyTargetIsMoon),
+    runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined,
+    runtimeConfig.status === "ready" ? runtimeConfig.config.chainId : undefined);
   const batchSupplyFleetSlotsKnown = Boolean(batchSupplySnapshot?.data?.fleetSlots);
   const batchSupplyMaxSources = batchSupplySnapshot?.data?.fleetSlots
     ? Math.max(0, batchSupplySnapshot.data.fleetSlots.limit - batchSupplySnapshot.data.fleetSlots.active) : 0;

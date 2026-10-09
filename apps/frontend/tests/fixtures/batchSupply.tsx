@@ -15,7 +15,8 @@ const combatFleet = new URLSearchParams(location.search).has("combatFleet");
 const largeFleet = new URLSearchParams(location.search).has("largeFleet");
 const moon = new URLSearchParams(location.search).has("moon");
 const capabilityHook = new URLSearchParams(location.search).has("capabilityHook");
-let capabilityResponse: unknown = {version:1};
+const capabilityContract = "0x2222222222222222222222222222222222222222";
+let capabilityResponse: unknown = {version:1, gameContractAddress:capabilityContract, chainId:8453};
 const originalFetch = window.fetch.bind(window);
 if (capabilityHook) window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === "https://moon-capability.fixture.invalid/moon-supply-batch" ? Response.json(capabilityResponse) : originalFetch(input, init), originalFetch);
 const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
@@ -74,12 +75,12 @@ function Fixture() {
   const [targetIsMoon, setTargetIsMoon] = useState(moon);
   const [maxSources, setMaxSources] = useState(oneSlot ? 1 : 15);
   const [moonBatchSupported, setMoonBatchSupported] = useState(true);
-  const verified = useVerifiedMoonSupplyBatch("https://moon-capability.fixture.invalid", capabilityHook && moonBatchSupported);
+  const verified = useVerifiedMoonSupplyBatch("https://moon-capability.fixture.invalid", capabilityHook && moonBatchSupported, capabilityContract, 8453);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {
     submissions,
-    capability: supported => { capabilityResponse = {version: supported ? 1 : null}; setMoonBatchSupported(supported); },
+    capability: supported => { capabilityResponse = {version: supported ? 1 : null, gameContractAddress:capabilityContract, chainId:8453}; setMoonBatchSupported(supported); },
     effectiveCargo: count => setSources(current => current.map(item => ({ ...item, ships: { largeCargo: count }, unavailableReason: count ? undefined : "No usable cargo ships are available on this planet." }))),
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),

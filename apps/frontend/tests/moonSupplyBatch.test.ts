@@ -66,8 +66,14 @@ test("moon suggestion, Max, slot bound and mission switch preserve complete sele
   expect(batchSupplyMissionLimitError(16, "deploy", true, true)).toContain("15");
   expect(batchSupplySourceLimitReason({checked:false,maxSources:20,selectedSourceCount:15})).toContain("15");
   expect(batchSupplyMissionLimitError(2, "deploy", true, false)).toContain("not available");
-  for (const value of [null, {}, {version:null}, {version:"1"}, {version:2}]) expect(moonSupplyBatchMatches(value)).toBe(false);
-  expect(moonSupplyBatchMatches({version:1})).toBe(true);
+  for (const value of [null, {}, {version:null}, {version:"1"}, {version:2}]) expect(moonSupplyBatchMatches(value, contract, 8453)).toBe(false);
+  expect(moonSupplyBatchMatches({version:1}, contract, 8453)).toBe(false);
+  const proof = {version:1, gameContractAddress:contract, chainId:8453};
+  expect(moonSupplyBatchMatches(proof, contract, 8453)).toBe(true);
+  expect(moonSupplyBatchMatches(proof, account, 8453)).toBe(false);
+  expect(moonSupplyBatchMatches(proof, contract, 84532)).toBe(false);
+  expect(moonSupplyBatchMatches(proof, undefined, 8453)).toBe(false);
+  expect(moonSupplyBatchMatches({...proof, chainId:"8453"}, contract, 8453)).toBe(false);
 });
 test("fresh multi-moon confirmation reads parent separately and rejects stale selection/inventory with no send", async () => {
   const src = sources(2), orders = plan(2).orders;

@@ -1,17 +1,22 @@
 import { useEffect, useState } from "preact/hooks";
 import { fetchGameApiJson } from "./walletFlow";
 
-export function moonSupplyBatchMatches(value: unknown): boolean {
-  return typeof value === "object" && value !== null && (value as { version?: unknown }).version === 1;
+export function moonSupplyBatchMatches(value: unknown, gameContractAddress: string | undefined, chainId: number | undefined): boolean {
+  if (!gameContractAddress || !/^0x[0-9a-f]{40}$/i.test(gameContractAddress) || !Number.isSafeInteger(chainId) || !chainId || typeof value !== "object" || value === null) return false;
+  const proof = value as {version?: unknown; gameContractAddress?: unknown; chainId?: unknown};
+  return proof.version === 1 && proof.chainId === chainId
+    && typeof proof.gameContractAddress === "string"
+    && proof.gameContractAddress.toLowerCase() === gameContractAddress.toLowerCase();
 }
 
 // Presentation only. The wallet independently reads the exact contract's getter
 // on its configured simulation chain before every atomic moon batch.
-export function useVerifiedMoonSupplyBatch(apiBase: string | undefined, enabled: boolean): boolean {
+export function useVerifiedMoonSupplyBatch(apiBase: string | undefined, enabled: boolean, gameContractAddress: string | undefined, chainId: number | undefined): boolean {
+  const identity = JSON.stringify([apiBase, gameContractAddress?.toLowerCase(), chainId]);
   const [verifiedApi, setVerifiedApi] = useState<string>();
   useEffect(() => {
     setVerifiedApi(undefined);
-    if (!enabled || !apiBase) return;
+    if (!enabled || !apiBase || !gameContractAddress || !chainId) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     let expiry: ReturnType<typeof setTimeout>;
@@ -26,13 +31,13 @@ export function useVerifiedMoonSupplyBatch(apiBase: string | undefined, enabled:
         if (!active || request.signal.aborted) return;
         if (performance.now() >= deadline) { setVerifiedApi(undefined); return; }
         clearTimeout(expiry);
-        setVerifiedApi(moonSupplyBatchMatches(value) ? apiBase : undefined);
+        setVerifiedApi(moonSupplyBatchMatches(value, gameContractAddress, chainId) ? identity : undefined);
         expiry = setTimeout(() => { if (active) setVerifiedApi(undefined); }, 20_000);
       } catch { if (active) setVerifiedApi(undefined); }
       finally { clearTimeout(timeout); if (active) timer = setTimeout(check, 15_000); }
     };
     void check();
     return () => { active = false; controller?.abort(); clearTimeout(timer); clearTimeout(expiry); };
-  }, [apiBase, enabled]);
-  return enabled && apiBase !== undefined && verifiedApi === apiBase;
+  }, [apiBase, enabled, gameContractAddress, chainId, identity]);
+  return enabled && apiBase !== undefined && verifiedApi === identity;
 }
