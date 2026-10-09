@@ -70,6 +70,12 @@ test("nested Base node changes select the fault harness", async () => {
   assert.deepEqual(changedScriptTests(["scripts/base-node/health.py", "scripts/base-node/test_relay.py"], exists), ["scripts/base-node-reliability.test.mjs"]);
 });
 
+test("nested Base monitor changes select scheduled custody tests", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/base-monitor.test.mjs";
+  assert.deepEqual(changedScriptTests(["scripts/base-monitor/monitor.py", "scripts/base-monitor/job.js"], exists), ["scripts/base-monitor.test.mjs"]);
+});
+
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
   // This child runs its own node:test process, rather than joining the parent's test context.
