@@ -1,0 +1,34 @@
+# Frontend inventory authority audit (#65)
+
+Source baseline: 571196bf (Supply #63). Source-only findings and disposable local browser fixtures; no claim about the reporter's wallet, affected planet, deployed revision, or historical transaction. No wallet broadcasts or contract changes.
+
+| Producer / route | Frontend consumer and semantics | Freshness / ownership | Finding and regression |
+| --- | --- | --- | --- |
+| wallet shipyard | ShipyardPage deployed counts; MissionCreationPage; normal attack/transport/deploy, cooperative actions, recycler finder | Backend ships/launchableShips only; shared subscribed store | No timer-based ship credit found. Explicit null launchableShips formerly fell back to stale ships; now zero launchable counts. Failed shipyard reads block cached launch inventory. authoritativeShipInventory, missionCreation, playableMvpApp tests. |
+| wallet moon | MoonPage; missionMoonShipyardState; normal moon composer | Backend moon launchableShips, ships, or legacy fleet only | Explicit null launchableShips no longer falls through to older fleet. Missing moon remains null. Current-state browser covers real composer preserving six selected versus zero available. |
+| wallet supply-sources | BatchSupplyModal and source mapper | Shared BackendDataStore query, gameplay refresh; no local completion credits | Frozen draftSources was an independent obsolete inventory snapshot. Removed: planner and Max always use latest server sources. User resource totals, source choices, fleet modes and type choices remain explicit. Changed shipment requires review; blocked/zero current fleet removes obsolete proposals immediately. |
+| supply-sources batchFleetSlots | Supply limits and prepareBatchSupplyConfirmation | Same fresh response as launchable counts | Additive canonical batch pre-check constraint; effective fleetSlots remain display/single-moon semantics. Missing field supports old server; explicit null fails closed. Fresh preflight regression blocks canonical-full/effective-free batch. |
+| wallet overview / owned planets | overview catalogs, selectors, overview fleet rows | Separate canonical query keys; no overview fan-out into shipyard; mounted subscriptions | Added overview/planets to 10-second shared inventory cadence, since proven returns can advance without active queue metadata. Existing generation fencing prevents stale responses after wallet/chain switch. backendDataStore tests cover timing, switching and late overview isolation. |
+| selected detail versus overview queue | ShipyardPage and activeProductionQueue | Explicit detail null/empty wins; overview fallback only when detail unavailable | Existing #23/#59 tests retained; no ship quantities are synthesized from queue countdowns. |
+| fleet visibility / mission detail / archive | MissionControlPage, MissionDetailPage, fleetComposition | Backend dispatch/survivor composition is displayed; countdowns are presentation | No current inventory is credited from elapsed mission timer. Historical manifests and uncertain battle results are not rewritten. Existing fleet, mission control/detail and current-state browser regressions retained. |
+| public system / tactical / finder / defender / forecast | PlanetInspector, raidTargetFinder, MissionCreationPage target intel, MissionBattleForecastPanel | Backend public ship rows, participant composition and qualification; selection/forecast math is not own inventory | No local production/return credit found; unknown forecasts preserve uncertainty. Existing missionCreation, raidTargetFinder and current-state browser coverage retained. Public-route backend parity remains parent audit scope. |
+| Rift | RiftPage / wallet rift | Backend response rendering; no local ship settlement | No independent current ship-credit mechanism found; backend producer audit remains parent scope. |
+| send boundary | prepareBatchSupplyConfirmation then launchBatchSupplyTransaction / walletFlow | Fresh single server snapshot, exact encoded batch eth_call and gas estimation before wallet send | Keep exact entrypoint simulation and existing gas limits; no raw getter substitutes. Failed outcome now reaches modal error review gate even when refreshed server counts repeat. No automatic retry/send. |
+
+## Explicit behavior changes
+
+- Normal mission composers keep over-selected user quantities instead of silently shrinking a six-ship draft when inventory drops. Availability updates immediately, the existing blocker disables confirmation, and zero-available selected rows remain editable.
+- Supply recalculates from live inventory, but preserves user requested totals and selected source/type/mode/cargo overrides. Consent to changed shipment is separate from inventory state.
+- Every changed Max input (including freshly refreshed inventory) cancels the worker and ignores late replies; identical refreshes preserve useful work.
+- Supply null resources stays null through the API type/adapter and becomes an unavailable source, never stale positive resources. Nine-source/six-Large-Cargo regression covers both zero inventory and null resources.
+- A failed subscribed Supply read disables slot eligibility even if a cached payload exists; explicit review cannot authorize launching that failed snapshot.
+
+## Evidence boundaries
+
+Real cache-enabled backend-handler + ordinary store integration is covered by existing batchSupplyEffectiveInventory.test.ts (production boundaries, mining, launch debits, qualified returns/deploys and uncertainty negatives). Mounted currentState.browser.mjs additionally exercises the real store/query hooks and production Supply modal with a nine-source transport fixture; transport responses in that browser fixture are mocked. These are complementary tests, not a claim that one browser fixture runs Bun SQLite's HTTP handler. Dedicated production desktop/mobile and same-wallet chain comparison remain required after deployment.
+
+## Compatibility additions
+
+Frontend-first rollout supports nullable public/tactical current balances and nullable raidable/gross totals. Public mission intel no longer falls back from explicit unknown to the seeded target balances; inspector resource panels and ranking/finder loot render unavailable/Unknown, not positive canonical data. API publicState/publicMoonState explicit null wins over older trusted detail. New moon launch context owns its own eligibility and slots instead of borrowing the planet's guard; old payloads retain the parent compatibility path.
+
+Old-path proof: temporarily restoring only baseline BatchSupplyModal.tsx makes currentState.browser.mjs fail its normal subscribed-store assertion “normal refresh removes obsolete shipment proposals”; the fixed modal passes. The baseline test uses nine selected sources and the same store/query subscription path, without manual cache invalidation or a forced-fresh request during the update.

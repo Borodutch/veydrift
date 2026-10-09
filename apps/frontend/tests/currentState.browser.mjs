@@ -53,6 +53,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
     ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
     await send("Page.enable");
+    await send("Page.bringToFront");
     async function evaluate(expression) {
       const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
       assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
@@ -63,6 +64,21 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     while (!(await evaluate("Boolean(window.fixture)"))) { assert.ok(Date.now() < deadline, "fixture load"); await new Promise(r => setTimeout(r, 100)); }
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
+      await evaluate('fixture.show("inventory-composer", "current"); new Promise(requestAnimationFrame)');
+      await evaluate('(() => { const input = document.querySelector(\'input[aria-label="Large Cargo quantity"]\'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)');
+      await evaluate('fixture.show("inventory-composer", "empty"); new Promise(requestAnimationFrame)');
+      assert.equal(await evaluate('document.querySelector(\'input[aria-label="Large Cargo quantity"]\').value'), '6', 'refresh preserves explicit fleet');
+      assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected \/ 0 available/);
+      assert.equal(await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent.includes("Confirm")).disabled'), true);
+      await evaluate('fixture.show("store-supply", "current"); new Promise(resolve => setTimeout(resolve, 150))');
+      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
+      assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'normal subscribed store hydrates nine-source plan at ' + width + ': ' + await evaluate('document.body.innerText'));
+      assert.match(await evaluate('document.body.innerText'), /9 transports/);
+      await evaluate('fixture.show("store-supply", "empty"); new Promise(resolve => setTimeout(resolve, 150))');
+      assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'ordinary store refresh blocks obsolete six-ship proposals');
+      assert.equal(await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').value'), '1260000');
+      assert.equal(await evaluate('document.querySelectorAll(\'[aria-label="Source planets"] input[type="checkbox"]:checked\').length'), 9);
+      assert.equal(await evaluate('document.querySelector(\'[aria-label="Source planets"]\').textContent.includes("Sends ")'), false, "normal refresh removes obsolete shipment proposals");
       for (const [surface, modes] of Object.entries({ defense: ["current", "unknown", "partial", "missile-empty", "missile-partial", "loading", "empty", "error"], shipyard: ["unknown"], control: ["current", "randomness", "queued", "staged", "loading", "empty"], detail: ["current", "randomness", "queued", "staged", "report-pending", "report-failed", "loading", "empty", "error"], forecast: ["current", "missing", "stale", "arrived"], activity: ["current", "indexed"], readiness: ["current"], composer: ["current"], resources: ["unknown"] })) {
         for (const mode of modes) {
           await evaluate("window.fixture.show(" + JSON.stringify(surface) + "," + JSON.stringify(mode) + "); new Promise(requestAnimationFrame)");

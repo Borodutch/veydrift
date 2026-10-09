@@ -97,6 +97,7 @@ export type RaidTarget = {
   // Full production-accrued public resource total LOOT is plundered from (the figure the
   // planet/universe surface shows). 0 when the backend does not report it. (VEY-KANEO-454)
   grossLoot: number;
+  lootKnown?: boolean;
   currentResources: OnChainResources | null;
   raidableResources: OnChainResources | null;
   productionPerHour: OnChainResources | null;
@@ -430,6 +431,7 @@ export function buildRaidTargets({
         hasMoon: Boolean(planet.hasMoon),
         moonResources: currentResources(planet.moon) ?? null,
         distance: origin ? fleetMissionDistance(origin, planet.coordinates) : null,
+        lootKnown: tactical?.raidableResourceTotal != null,
         loot: safeNumber(tactical?.raidableResourceTotal),
         grossLoot: safeNumber(tactical?.grossResourceTotal),
         currentResources: tactical?.currentResources ?? null,

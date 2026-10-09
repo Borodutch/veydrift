@@ -4,7 +4,7 @@ import { Check, PackagePlus, ArrowRightLeft, MapPin } from "lucide-preact";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   fleetMissionDistance,
   fleetMissionTravelSeconds,
@@ -141,7 +141,12 @@ export function BatchSupplyModal({
   const [shipTypesBySource, setShipTypesBySource] = useState<SupplyShipTypesBySource>({});
   const [fleetModesBySource, setFleetModesBySource] = useState<SupplyFleetModesBySource>({});
   const sourcesInitialized = useRef(false);
-  const [draftSources, setDraftSources] = useState(sources);
+  const [inventoryNeedsReview, setInventoryNeedsReview] = useState(false);
+  const [reviewedFailure, setReviewedFailure] = useState<string>();
+  useLayoutEffect(() => {
+    if (!error || actionPending) setReviewedFailure(undefined);
+  }, [error, actionPending]);
+  const failureNeedsReview = Boolean(error && error !== reviewedFailure);
   const initializedRequest = useRef(false);
   const refreshRequested = useRef(false);
   const [reviewedGoal, setReviewedGoal] = useState(preview);
@@ -161,7 +166,6 @@ export function BatchSupplyModal({
   useEffect(() => {
     if (sourcesInitialized.current || loading || sources.length === 0 || maxSources <= 0 || (upgrade && !preview)) return;
     sourcesInitialized.current = true;
-    setDraftSources(sources);
     setSelectedSourceIds(suggestBatchSupplySourceIds({ sources, maxOrders: maxSources,
       requested: normalizeSupplyResources(initialRequested ?? {}), targetIsMoon,
       targetCoordinates: { galaxy: target.galaxy, system: target.system, position: target.position } }));
@@ -182,9 +186,9 @@ export function BatchSupplyModal({
     sourceCargoOverrides,
     shipTypesBySource,
     fleetModesBySource,
-    sources: draftSources,
+    sources,
     maxOrders: maxSources,
-  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, fleetModesBySource, draftSources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
+  }), [mission, requestedNumbers, selected, sourceCargoOverrides, shipTypesBySource, fleetModesBySource, sources, maxSources, target.galaxy, target.position, target.system, targetIsMoon]);
   const plan = useMemo(() => buildBatchSupplyPlan(planOptions), [planOptions]);
   const orderByOrigin = useMemo(() => new Map(plan.orders.map((order) => [order.originPlanetId, order])), [plan.orders]);
 
@@ -195,21 +199,19 @@ export function BatchSupplyModal({
     || Boolean(preview.inProgress) !== Boolean(reviewedGoal.inProgress)));
   const needed = Object.fromEntries(keys.map(key => [key, Math.max(requestedNumbers[key], upgrade && preview ? preview.missing[key] : 0)])) as SupplyResources;
   const remaining = Object.fromEntries(keys.map(key => [key, Math.max(0, needed[key] - plan.delivered[key])])) as SupplyResources;
-  // Revalidate reviewed shipments only; unrelated inventory/production cannot
-  // interrupt review or Max when cargo, fuel and the dispatched fleet still match.
-  const latestPlan = useMemo(() => buildBatchSupplyPlan({ ...planOptions, sources,
-    requested: plan.delivered,
-    selectedPlanetIds: new Set(plan.orders.map(order => order.originPlanetId)),
-    sourceCargoOverrides: Object.fromEntries(plan.orders.map(order => [order.originPlanetId, order.cargo])),
-  }), [planOptions, sources, plan]);
-  const inventoryChanged = latestPlan.blockedSources.length > 0 || latestPlan.sourceLimitReached
-    || plan.orders.length !== latestPlan.orders.length
-    || plan.orders.some(order => {
-      const current = latestPlan.orders.find(next => next.originPlanetId === order.originPlanetId);
-      return !current || current.fuelCost !== order.fuelCost || current.travelSeconds !== order.travelSeconds
-        || keys.some(key => current.cargo[key] !== order.cargo[key])
-        || supplyShips.some(({ key }) => current.ships[key] !== order.ships[key]);
-    });
+  // Inventory always comes from the newest server snapshot. Keep consent to a
+  // shipment separately: never freeze inventory to preserve a user's draft.
+  const draftKey = JSON.stringify([mission, requestedNumbers, [...selected].sort(), sourceCargoOverrides,
+    shipTypesBySource, fleetModesBySource, target.planetId, targetIsMoon]);
+  const shipmentKey = JSON.stringify([plan.orders, plan.blockedSources, plan.sourceLimitReached]);
+  const reviewed = useRef({ draftKey, shipmentKey });
+  const changedShipment = reviewed.current.draftKey === draftKey && reviewed.current.shipmentKey !== shipmentKey;
+  const inventoryChanged = failureNeedsReview || (reviewed.current.draftKey === draftKey && (inventoryNeedsReview || changedShipment));
+  useLayoutEffect(() => {
+    if (reviewed.current.draftKey !== draftKey) setInventoryNeedsReview(false);
+    else if (changedShipment) setInventoryNeedsReview(true);
+    reviewed.current = { draftKey, shipmentKey };
+  }, [draftKey, shipmentKey]);
   const missingTotal = resourceTotal(remaining);
   const manualCargoAdjusted = Object.entries(sourceCargoOverrides).some(([id, cargo]) => selected.has(id)
     && (["metal", "crystal", "deuterium"] as const).some(key => (cargo[key] ?? 0) !== (orderByOrigin.get(id)?.cargo[key] ?? 0)));
@@ -232,10 +234,11 @@ export function BatchSupplyModal({
     : undefined;
   const selectableSourceCount = sources.length;
 
-  const recalculate = () => { maximum.cancel(); setDraftSources(sources); };
+  const recalculate = () => { maximum.cancel(); setInventoryNeedsReview(false); setReviewedFailure(error); };
   const autoPlan = () => {
     maximum.cancel();
-    setDraftSources(sources);
+    setInventoryNeedsReview(false);
+    setReviewedFailure(error);
     setSourceCargoOverrides({});
     setShipTypesBySource({});
     setFleetModesBySource({});
@@ -409,7 +412,7 @@ export function BatchSupplyModal({
                     {order ? <span className="text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))} · Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
                   </span>
                   <span className="mt-0.5 block text-xs text-slate-400">Available: M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
-                  <button type="button" className="mt-1 min-h-7 rounded border border-white/15 px-2 text-xs text-cyan-100" aria-label={"Use only " + source.label} disabled={loading || actionPending || transactionPending || Boolean(source.unavailableReason) || maxSources < 1} onClick={() => { maximum.cancel(); setDraftSources(sources); setSelectedSourceIds(new Set([source.planetId])); }}>Use only this source</button>
+                  <button type="button" className="mt-1 min-h-7 rounded border border-white/15 px-2 text-xs text-cyan-100" aria-label={"Use only " + source.label} disabled={loading || actionPending || transactionPending || Boolean(source.unavailableReason) || maxSources < 1} onClick={() => { maximum.cancel(); setInventoryNeedsReview(false); setSelectedSourceIds(new Set([source.planetId])); }}>Use only this source</button>
                   <span className="mt-2 block text-[11px] text-slate-400">Selected cargo</span>
                   {(
                     <span className="mt-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5" aria-label={`${source.label} shipment`}>

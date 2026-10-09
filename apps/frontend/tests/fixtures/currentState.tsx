@@ -1,5 +1,10 @@
+import { BackendDataStore } from "../../src/backendDataStore";
+import { useBackendDataQuery } from "../../src/useBackendDataQuery";
+import { batchSupplySourcesFromSnapshot } from "../../src/PlayableMvpApp";
+import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
+import type { ManagedPlanetResponse, SupplySourcesResponse } from "../../src/walletFlow";
 import { AttackReadinessError } from "../../src/playerNotice";
-import { preparePublicTargetBattleForecast, AttackOutcomePanel } from "../../src/components/MissionCreationPage";
+import { MissionCreationPage, preparePublicTargetBattleForecast, AttackOutcomePanel } from "../../src/components/MissionCreationPage";
 import { emptyMissionShips } from "../../src/galaxyActions";
 import { ShipyardPage } from "../../src/components/ShipyardPage";
 import { resourcesFromChain } from "../../src/chainState";
@@ -22,11 +27,37 @@ const canonicalQueue = { active: true, kind: "defense", itemId: 0, quantity: 23,
 const defense: ChainDefenseState = { wallet: "0xabc", homePlanetId: "7", resources, resourcesAsOfNow: resources, shipyardLevel: 12, naniteLevel: 2, missileSiloLevel: 2, technologyLevels: {}, defenses: [{ id: 0, count: 101, cost }], queue: null, unsettledQueue: canonicalQueue };
 const mission: FleetMissionSummary = { missionId: "42", owner: "0xabc", status: "Outbound", missionType: "Attack", originPlanetId: "7", targetPlanetId: "9", arrivalAt: String(now / 1000 - 600), returnAt: String(now / 1000 + 600), fuelCost: "25", recallCost: null, attackGroupId: null, joinedAttackMissionIds: [], cargo: { metal: "0", crystal: "0", deuterium: "0" }, ships: { lightFighter: "10" }, transactionHash: "0xabc", blockNumber: "1", needsResolution: true, resolutionEligible: true, asOfNow: { arrived: true, returned: false, secondsUntilArrival: 0, secondsUntilReturn: 600 } };
 const activity: PlayerActivityItem = { id: "production:1", wallet: "0xabc", category: "production", kind: "defense-completed", direction: "personal", title: "Rocket Launcher completed", detail: "23 built", occurredAt: String(now / 1000 - 600), transactionAt: String(now / 1000), transactionHash: null, relatedTransactionHash: null, blockNumber: null, logIndex: null, reconciliation: "projected", metadata: {} };
+// Browser fixture transport; HTTP handler/cache qualification is covered separately
+// by batchSupplyEffectiveInventory.test.ts. Use the real query/store/mount boundary.
+const realNow = Date.now;
+let clock = realNow();
+Date.now = () => clock;
+const store = new BackendDataStore(location.origin, { now: () => clock });
+const owner = "0x2222222222222222222222222222222222222222";
+store.setContext(owner, "99", "8453");
+let available = 6;
+const originalFetch = window.fetch.bind(window);
+window.fetch = (input, init) => String(input).includes("/supply-sources") ? Promise.resolve(Response.json({
+ wallet: owner, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 }, technologyLevels: {},
+ sources: Array.from({ length: 9 }, (_, i) => ({ planetId: String(i + 1), name: "Source " + i, galaxy: 1, system: 1, position: i + 1, coordinates: "1:1:" + (i + 1), resources, launchableShips: [{ id: 4, count: available }] })),
+} satisfies SupplySourcesResponse)) : originalFetch(input, init);
+const supplyTarget = { planetId: "99", name: "Destination", coordinates: "1:2:1", galaxy: 1, system: 2, position: 1 } as ManagedPlanetResponse;
+function StoreSupply() {
+ const { snapshot, isInitialLoading } = useBackendDataQuery(store.queries.supplySources(owner, "99"));
+ const sources = snapshot?.data ? batchSupplySourcesFromSnapshot(snapshot.data, supplyTarget) : [];
+ return <BatchSupplyModal sources={sources} maxSources={15} target={supplyTarget} initialRequested={{ metal: 1260000 }} loading={isInitialLoading} onClose={noop} onConfirm={noop} />;
+}
 function show(surface = "defense", mode = "current") {
  const fleet: FleetMissionSummary = { ...mission, ...(mode === "randomness" ? { resolutionBlocker: "randomness_pending", resolutionEligible: false, needsResolution: false } : mode === "queued" ? { resolutionEligible: false, needsResolution: false } : mode === "staged" ? { combatResolutionProgress: { roundsCompleted: 3, totalRounds: 6 } } : {}) };
  const detail = { mission: fleet, battleReport: null } as MissionDetailResponse;
  const visibility = { wallet: "0xabc", homePlanetId: "7", incoming: [], outgoing: [fleet], returning: [], joinableAttacks: [], completedMissions: [], battleReports: [] };
  let page;
+ if (surface === "store-supply") {
+   available = mode === "empty" ? 0 : 6;
+   clock = Math.max(clock + 20000, Date.now() + 20000);
+   queueMicrotask(() => (store as unknown as { refreshGameplay(): void }).refreshGameplay());
+   page = <StoreSupply />;
+ }
  if (mode === "report-pending" || mode === "report-failed") detail.battleReportMaterialization = { status: mode === "report-pending" ? "pending" : "failed" } as MissionDetailResponse["battleReportMaterialization"];
  defense.resourcesAsOfNow = mode === "unknown" ? null : resources;
  defense.defenses = [{ id: 0, count: 101, cost }]; defense.missileSiloLevel = 2;
@@ -43,6 +74,7 @@ function show(surface = "defense", mode = "current") {
  if (surface === "forecast") { detail.mission = { ...mission, arrivalAt: String(now / 1000 + 600) }; if (mode !== "missing") detail.battleForecast = { leaderMissionId: "42", asOf: String(now / 1000 - (mode === "stale" ? 60 : 0)), arrivalAt: String(now / 1000 + (mode === "arrived" ? -1 : 600)), targetIsMoon: false, participants: [], stationedDefenders: [], target: null, unavailableReason: "INTERNAL raw indexing storage-order diagnostic" }; page = renderMissionBattleForecastPanel({ detail, now }, false); }
  if (surface === "readiness") page = <p role="alert">{new AttackReadinessError().message}</p>;
  if (surface === "composer") { const prepared = preparePublicTargetBattleForecast(emptyMissionShips(), undefined, undefined, false, { participants: [], stationedDefenders: [], selectedAttackerLaneGroup: null, unavailableReason: "INTERNAL unknown indexing roster diagnostic" }); page = prepared.status === "complete" ? <AttackOutcomePanel battleForecast={prepared.forecast} /> : null; }
+ if (surface === "inventory-composer") page = <MissionCreationPage action={{ enabled: true, kind: "transport", mode: "mission", mission: "transport", label: "Transport" }} actionPending={false} coords={{ galaxy: 1, system: 1, position: 2 }} originCoords={{ galaxy: 1, system: 1, position: 1 }} resources={{ metal: 999999, crystal: 999999, deuterium: 999999 }} shipyardState={{ ...defense, ships: [{ id: 4, count: mode === "empty" ? 0 : 6, cost }], launchableShips: [{ id: 4, count: mode === "empty" ? 0 : 6 }], fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 } }} onBack={noop} onConfirm={noop} target={undefined} />;
  if (surface === "activity") page = <ActivityRow explorerUrl="https://basescan.org" item={{ ...activity, ...(mode === "indexed" ? { reconciliation: "indexed", transactionHash: "0xabc" } : {}) }} />;
  render(<main data-fixture-ready style={{ maxWidth: "1060px", margin: "16px auto", padding: "0 12px" }}>{page}</main>, document.getElementById("app")!);
 }

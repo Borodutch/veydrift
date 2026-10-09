@@ -987,7 +987,7 @@ export function RaidTargetRow({
               </span>
               <span className="text-emerald-100" title={raidableResourcesLabel(target)}>
                 <span className="text-slate-600">Loot </span>
-                {compactNumber(target.loot)}
+                {target.lootKnown === false ? "Unknown" : compactNumber(target.loot)}
               </span>
               <span className="text-orange-100" title={defenseLabel(target)}>
                 <span className="text-slate-600">Def </span>
@@ -1008,7 +1008,7 @@ export function RaidTargetRow({
         className="hidden min-w-0 truncate text-right font-mono text-emerald-100 sm:block"
         title={raidableResourcesLabel(target)}
       >
-        {compactNumber(target.loot)}
+        {target.lootKnown === false ? "Unknown" : compactNumber(target.loot)}
       </span>
       <span className="hidden text-right font-mono text-orange-100 sm:block" title={defenseLabel(target)}>
         {compactNumber(target.combatPower)}

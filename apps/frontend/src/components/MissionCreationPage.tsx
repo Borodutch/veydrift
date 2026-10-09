@@ -3,7 +3,7 @@ import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   CONTRACT_COMBAT_MODEL_VERSION,
   contractCombatPower,
@@ -542,15 +542,9 @@ export function MissionCreationPage({
   const effectiveTargetIsMoon = targetIsMoon;
   const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
-  // Derive before rendering/submission, then persist reductions so a later return
-  // cannot silently resurrect a quantity the player no longer sees selected.
-  const ships = useMemo(() => reconcileMissionShips(shipDraft, effectiveShipyardState), [shipDraft, effectiveShipyardState]);
-  const [inventoryAdjusted, setInventoryAdjusted] = useState(false);
-  useLayoutEffect(() => {
-    if (ships === shipDraft) return;
-    setShips(ships);
-    setInventoryAdjusted(true);
-  }, [ships, shipDraft]);
+  // A refresh changes availability, never the user's requested fleet. The
+  // stale-quantity blocker requires an explicit edit before a smaller launch.
+  const ships = shipDraft;
   const distance = originCoords
     ? action.mode === "mission"
       ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
@@ -584,7 +578,7 @@ export function MissionCreationPage({
   const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
   const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
-  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
+  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState, ships), [action, effectiveShipyardState, ships]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
@@ -848,7 +842,6 @@ export function MissionCreationPage({
         {timingRows.length > 0 ? <MissionTimingGrid rows={timingRows} /> : null}
       </section>
 
-      {inventoryAdjusted ? <p role="status" className="text-sm text-amber-200">Fleet inventory changed. Unavailable ship quantities were reduced; review your fleet and cargo before confirming again.</p> : null}
       <div className="grid gap-3">
         <section className="grid gap-3">
           {bodySelectionVisibility.sectionVisible ? (
@@ -1664,20 +1657,6 @@ function cargoResourceOverdraft(
   return `Cargo exceeds available resources: ${missing.join(", ")}.`;
 }
 
-/** Reconcile only player quantities; inventory stays owned by BackendDataStore. */
-export function reconcileMissionShips(ships: MissionShips, inventory: MissionShipInventorySnapshot | null): MissionShips {
-  if (!inventory) return ships;
-  let next = ships;
-  for (const ship of missionShipOptions) {
-    const available = Math.max(0, Math.trunc(inventory.ships.find(row => row.id === ship.id)?.count ?? 0));
-    const count = Math.min(Math.max(0, Math.trunc(ships[ship.key] ?? 0)), available);
-    if (count === ships[ship.key]) continue;
-    if (next === ships) next = { ...ships };
-    next[ship.key] = count;
-  }
-  return next;
-}
-
 export function staleSelectedShipQuantityBlocker(
   action: EnabledGalaxyAction,
   ships: MissionShips,
@@ -1791,10 +1770,10 @@ export function initialMissionShips(
   return emptyMissionShips();
 }
 
-function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null): ShipOption[] {
+function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null, selected?: MissionShips): ShipOption[] {
   if (action.mode === "missile") return [];
   const allowed = allowedShipKeysForAction(action);
-  return missionShipOptions.filter((ship) => allowed.has(ship.key) && (shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0);
+  return missionShipOptions.filter((ship) => allowed.has(ship.key) && ((shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0 || (selected?.[ship.key] ?? 0) > 0));
 }
 
 export function stationedDefenderAttackWarningRows(
@@ -3426,6 +3405,7 @@ export function stationedDefenderCompositionUnits(
 
 function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
   const publicResources = target?.publicState?.resources;
+  if (publicResources === null || target?.publicState === null) return null;
   if (publicResources) {
     return {
       metal: safeResourceNumber(publicResources.metal),

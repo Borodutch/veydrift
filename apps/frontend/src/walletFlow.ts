@@ -377,13 +377,13 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   } | null;
   tactical?:
     | {
-        currentResources?: OnChainResources;
-        raidableResources: OnChainResources;
-        raidableResourceTotal: string;
+        currentResources?: OnChainResources | null;
+        raidableResources: OnChainResources | null;
+        raidableResourceTotal: string | null;
         // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
         // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
         // math instead of looking like it under-reports. (VEY-KANEO-454)
-        grossResourceTotal?: string;
+        grossResourceTotal?: string | null;
         productionPerHour?: OnChainResources | null;
         storageCaps?: OnChainResources | null;
         ships: {
@@ -858,10 +858,9 @@ export type ChainShipyardState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
-  // Canonical `ships` plus due production that the next fleet launch can
-  // settle atomically. Mission composition uses this; inventory displays use
-  // canonical `ships`.
-  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>>;
+  // Backend-authoritative launchable inventory. Explicit null is unknown, not a
+  // fallback to an older count; omission supports older backend responses.
+  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>> | null;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
@@ -869,14 +868,17 @@ export type ChainShipyardState = {
 
 /** Mission controls and submission validation must use the same launchable inventory. */
 export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
-  if (!state.launchableShips) return state;
-  const counts = new Map(state.launchableShips.map(ship => [ship.id, ship.count]));
+  if (state.launchableShips === undefined) return state;
+  const counts = new Map((state.launchableShips ?? []).map(ship => [ship.id, ship.count]));
   return { ...state, ships: state.ships.map(ship => ({ ...ship, count: counts.get(ship.id) ?? 0 })) };
 }
 
 export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+  /** Batch entrypoints check slots before lazy reconciliation; display slots remain effective. */
+  batchFleetSlots?: ChainShipyardState["fleetSlots"] | null;
   wallet: string;
-  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates" | "resources"> & {
+  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates"> & {
+    resources: OnChainResources | null;
     launchableShips: Array<{ id: number; count: number }>;
   }>;
 };
@@ -960,6 +962,9 @@ export type ChainInfrastructureState = {
 };
 
 export type ChainMoonState = {
+  fleetSlots?: ChainShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   wallet: string;
   bodyKind?: "moon";
   homePlanetId: string | null;
@@ -976,7 +981,7 @@ export type ChainMoonState = {
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships?: ChainShipyardState["ships"];
-  launchableShips?: ChainShipyardState["ships"];
+  launchableShips?: ChainShipyardState["ships"] | null;
   moon: {
     exists: boolean;
     planetId: string;
@@ -1278,13 +1283,13 @@ export type HighscorePlanet = {
   stationedDefenderForecastTimeline?: PublicStationedDefender[] | null;
   stationedDefenderTimelineComplete?: boolean;
   tactical?: {
-    currentResources?: OnChainResources;
-    raidableResources: OnChainResources;
-    raidableResourceTotal: string;
+    currentResources?: OnChainResources | null;
+    raidableResources: OnChainResources | null;
+    raidableResourceTotal: string | null;
     // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
     // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
     // math instead of looking like it under-reports. (VEY-KANEO-454)
-    grossResourceTotal?: string;
+    grossResourceTotal?: string | null;
     productionPerHour?: OnChainResources | null;
     storageCaps?: OnChainResources | null;
     ships: {

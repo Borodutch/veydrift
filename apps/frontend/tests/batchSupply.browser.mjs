@@ -77,10 +77,11 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       touch = width < 640;
       await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: touch });
       await send('Emulation.setTouchEmulationEnabled', { enabled: touch });
-      await send('Page.navigate', { url: url + '?' + query });
+      const navigationUrl = url + '?' + query + '&fixtureRun=' + Math.random();
+      await send('Page.navigate', { url: navigationUrl });
       await new Promise(resolve => setTimeout(resolve, 100));
       const deadline = Date.now() + 20_000;
-      while (!(await evaluate('Boolean(window.supplyFixture && document.querySelector("[role=dialog]"))'))) {
+      while (!(await evaluate('location.href === ' + JSON.stringify(navigationUrl) + ' && Boolean(window.supplyFixture && document.querySelector("[role=dialog]"))'))) {
         assert.ok(Date.now() < deadline, 'fixture did not render');
         await new Promise(resolve => setTimeout(resolve, 50));
       }
@@ -194,13 +195,31 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
       if (artifacts) { const shot = await send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(artifacts, 'denver-review-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
     }
+    for (const width of [1280, 390]) {
+      await load(width);
+      await evaluate('supplyFixture.effectiveCargo(6)'); await settle();
+      await input('metal to send', 140000);
+      assert.equal((await submit()).orders[0].ships.largeCargo, 6);
+      await evaluate('supplyFixture.effectiveCargo(0)'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), true);
+      assert.equal(await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').value'), '140000');
+      assert.equal(await evaluate(source + '.checked'), true);
+      assert.equal(await evaluate('document.querySelector(\'[aria-label="Source planets"]\').textContent.includes("Sends 140,000")'), false, 'no ghost proposal retained from frozen inventory');
+      await evaluate('supplyFixture.effectiveCargo(6)'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), true, 'restored inventory does not silently approve the changed proposal');
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      assert.equal((await submit()).orders[0].ships.largeCargo, 6);
+      await evaluate('supplyFixture.preflightFailed()'); await settle();
+      assert.equal(await evaluate(launch + '.disabled'), true, 'failed exact preflight requires explicit review even if a server refresh repeats counts');
+      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
+      assert.equal(await evaluate(launch + '.disabled'), false, 'review permits another guarded simulation, not an automatic send');
+    }
     // API/store boundary coverage lives in batchSupplyEffectiveInventory.test.ts.
     // Mount the same modal to prove refreshed effective counts drive real controls.
     for (const width of [1280, 390]) {
       await load(width, 'emptyFleet=1');
       assert.equal(await evaluate(launch + '.disabled'), true);
       await evaluate('supplyFixture.effectiveCargo(3)'); await settle();
-      await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")');
       await click(source); // Preserve explicit selection; refresh must not reselect sources.
       await input('metal to send', 0);
       assert.equal(await evaluate(launch + '.disabled'), true, 'new ships alone must not send cargo');
@@ -317,7 +336,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await amount('metal'), '1000', 'refresh never rewrites the draft');
     }
     await evaluate('supplyFixture.accrueStock()'); await settle();
-    assert.equal(await busy(), true, 'production increase cannot cancel reviewed-snapshot Max');
+    assert.equal(await busy(), false, 'production increase cancels obsolete inventory Max');
     await startMax('crystal');
     assert.equal(await evaluate('maxWorkers[0].terminated'), true, 'replacement terminates CPU work');
     await evaluate('maxWorkers[0].reply({data:{maximum:999999}}); maxWorkers[0].fail();');
@@ -363,9 +382,9 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     // availability changes must neither cancel Max nor adopt a different snapshot.
     await startMax('metal');
     await evaluate('window.staleMax = maxWorkers.at(-1); supplyFixture.changeStock(); supplyFixture.changeEligibility(); supplyFixture.changeDrives()'); await settle();
-    assert.equal(await busy(), true, 'unselected inventory changes do not cancel Max');
-    assert.notEqual(await evaluate('staleMax.terminated'), true);
-    await click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")');
+    assert.equal(await busy(), false, 'fresh inventory invalidates an obsolete Max search');
+    assert.equal(await evaluate('staleMax.terminated'), true);
+    await evaluate('staleMax.reply({data:{maximum:999999}})'); await settle();
     await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));

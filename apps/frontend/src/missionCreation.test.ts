@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BodySelectionRow, AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, reconcileMissionShips, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { BodySelectionRow, AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
 import { forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
 import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
@@ -310,10 +310,10 @@ describe("mission creation", () => {
       })).toBe("Choose at least one ship.");
     }
 
-    // Desktop/mobile share one draft. Inventory reconciliation only reduces it;
+    // Desktop/mobile share one explicit draft. Inventory refresh never rewrites it;
     // body changes clear it and hydration never selects ships on the player's behalf.
     expect(missionCreationSource.match(/useState<MissionShips>/g)).toHaveLength(1);
-    expect(reconcileMissionShips(initialMissionShips(attackAction), { ships: [{ id: 0, count: 99 }] })).toEqual(initialMissionShips(attackAction));
+    expect(Object.values(initialMissionShips(attackAction)).every(count => count === 0)).toBe(true);
     // The application shell already pads the page; the composer must not add a
     // second outer padding layer.
     expect(missionCreationSource).toContain('aria-label="Mission creation"');
@@ -2448,7 +2448,7 @@ describe("mission creation", () => {
 
     expect(text).toContain("No debris available");
     expect(text).toContain("Nothing to collect");
-    expect(text).not.toContain("Unknown");
+    expect(text).toContain("Resources Now Unknown");
   });
 
   test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {
@@ -3095,25 +3095,14 @@ function collectText(node: unknown): string[] {
 }
 
 
-describe("VEY-888 canonical mission quantities", () => {
-  test("reduces only invalid quantities and never reselects returned or newly produced ships", () => {
-    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 2, lightFighter: 3 };
-    const reduced = reconcileMissionShips(draft, { ships: [{ id: 0, count: 1 }, { id: 1, count: 3 }] });
-    expect(reduced).toEqual({ ...draft, smallCargo: 1 });
-    expect(draft.smallCargo).toBe(2);
-    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 9 }, { id: 1, count: 3 }] })).toBe(reduced);
-    expect(reconcileMissionShips(reduced, null)).toBe(reduced);
-    expect(reconcileMissionShips(reduced, { ships: [] })).toEqual(initialMissionShips({ mode: "mission" } as any));
-  });
-
-  test("last Small Cargo cannot survive canonical launchable inventory decreasing to zero", () => {
-    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 1 };
-    const inventory = missionInventory({ ships: [{ id: 0, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } }], launchableShips: [{ id: 0, count: 0 }] });
-    const reduced = reconcileMissionShips(draft, inventory);
-    expect(reduced.smallCargo).toBe(0);
-    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 1 }] }).smallCargo).toBe(0);
-  });
+test("refreshed quantities block rather than rewrite the explicit mission draft", () => {
+  expect(missionCreationSource).toContain("const ships = shipDraft;");
+  const draft = { ...initialMissionShips(attackAction), smallCargo: 6 };
+  const inventory = missionInventory({ ships: [{ id: 0, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } }], launchableShips: [{ id: 0, count: 0 }] });
+  expect(staleSelectedShipQuantityBlocker(attackAction, draft, inventory)).toContain("6 selected / 0 available");
+  expect(draft.smallCargo).toBe(6);
 });
+
 
 
 test("attack readiness preparation locks both body selectors and Confirm before awaiting", async () => {
@@ -3168,4 +3157,9 @@ test("attack readiness preparation locks both body selectors and Confirm before 
     await Promise.all([first, duplicate]);
     expect(sends).toBe(1);
   } finally { release(); store.dispose(); }
+});
+
+test("explicit null public resources never fall back to seeded target balances", () => {
+  const target = targetPlanet({ resources: { metal: 999999, crystal: 999999, deuterium: 999999, energy: 0 }, publicState: { resources: null } });
+  expect(targetResourceIntel(target, 600).current).toBeNull();
 });

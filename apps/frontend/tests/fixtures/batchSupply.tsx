@@ -45,6 +45,7 @@ declare global {
       changeLimit: () => void;
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
+      preflightFailed: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
       submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource; mission: SupplyMission; fleetModesBySource: SupplyFleetModesBySource }>;
     };
@@ -69,6 +70,7 @@ function Fixture() {
   const [maxSources, setMaxSources] = useState(moon || oneSlot ? 1 : 15);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
+  const [error, setError] = useState<string>();
   window.supplyFixture = {
     submissions,
     effectiveCargo: count => setSources(current => current.map(item => ({ ...item, ships: { largeCargo: count }, unavailableReason: count ? undefined : "No usable cargo ships are available on this planet." }))),
@@ -88,6 +90,7 @@ function Fixture() {
       setActionPending(kind === "action");
       setTransactionState(kind === "transaction" ? { phase: "pending", label: "Awaiting wallet" } : undefined);
     },
+    preflightFailed: () => setError("Need 6 Large Cargo, only 0 available on the origin planet."),
     reject: () => { setActionPending(false); setTransactionState({ phase: "error", label: "Wallet request rejected" }); },
     reset: kind => {
       setTransactionState(undefined);
@@ -101,7 +104,7 @@ function Fixture() {
     upgrade={denver ? { kind: "building", key: "roboticsFactory", label: "Robotics Factory", level: 6 } : undefined}
     preview={denver ? { requirement: { metal: 12800, crystal: 3840, deuterium: 6400 }, missing: { metal: 12300, crystal: 3340, deuterium: 6400 }, energyOnly: false } : undefined}
     target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={targetIsMoon} maxSources={maxSources}
-    actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
+    error={error} actionPending={actionPending} transactionState={transactionState} onClose={() => setDraft(value => value + 1)}
     onConfirm={(orders, shipTypesBySource, mission, fleetModesBySource) => submissions.push(structuredClone({ orders, shipTypesBySource, mission, fleetModesBySource }))} />;
 }
 function NormalTransportFixture() {
