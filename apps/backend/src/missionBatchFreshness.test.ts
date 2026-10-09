@@ -78,7 +78,7 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
     },
     waitForTransactionReceipt: async () => receipt,
     getTransaction: async () => { throw new TransactionNotFoundError({}); },
-    getTransactionReceipt: async () => { if (!mined) throw new TransactionReceiptNotFoundError({ hash: keccak256(inertBytes) }); return receipt; }
+    getTransactionReceipt: async () => { if (!mined) throw new TransactionReceiptNotFoundError({ hash: keccak256(inertBytes) }); return { ...receipt, transactionHash: keccak256(inertBytes), from: address, to: game }; }
   };
   const sender = { address, signTransaction: async (tx: Parameters<typeof account.signTransaction>[0]) => {
     signs++;

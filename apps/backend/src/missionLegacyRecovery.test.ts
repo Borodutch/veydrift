@@ -338,3 +338,95 @@ test("timed-out replay retains every unfinished parallel read and blocks retry f
   release();await new Promise(resolve=>setTimeout(resolve,10));expect(pending).toBe(0);
  }finally{release?.();f.cleanup();}
 });
+
+
+test("durably finalized recovery no longer rehydrates historical transactions/domain/reference during new admission", async () => {
+ const f=fixture();
+ try {
+  f.win(original); await f.client.recoverLegacyMission(f.input);
+  const before=f.db.query("SELECT * FROM resolver_nonce_recovery").get();
+  let historicalTransactions=0, historicalState=0, winnerReceipts=0, headers=0, allocated=-1;
+  const tx=f.publicClient.getTransaction, receipt=f.publicClient.getTransactionReceipt, block=f.publicClient.getBlock;
+  f.publicClient.getTransaction=async args=>{historicalTransactions++; await new Promise(resolve=>setTimeout(resolve,5100));return tx(args);};
+  f.publicClient.readContract=async()=>{historicalState++;throw new Error("historical state unavailable");};
+  f.publicClient.getTransactionReceipt=async args=>{winnerReceipts++;return receipt(args);};
+  f.publicClient.getBlock=async args=>{headers++;return block(args);};
+  const restarted=f.create();
+  const started=performance.now();
+  expect(await restarted.client.resolveMissionBatch([])).toEqual({hash:null,items:[],exclusions:[]});
+  await restarted.coordinator.submit({chainId:8453,address:account.address,operationId:"new-after-finality",getTransactionCount:async()=>5,
+   submit:async nonce=>{allocated=nonce;return ("0x"+"77".repeat(32)) as Hex;},confirm:async()=>{}});
+  expect(performance.now()-started).toBeLessThan(1000);
+  expect(historicalTransactions).toBe(0); expect(historicalState).toBe(0);
+  expect(winnerReceipts).toBe(2); expect(headers).toBeLessThanOrEqual(3); expect(allocated).toBe(5);
+  expect(f.db.query("SELECT * FROM resolver_nonce_recovery").get()).toEqual(before);
+  expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(0);
+ } finally {f.cleanup();}
+},10000);
+
+test("finalized reuse rejects winner, chain, nonce and durable evidence contradictions after restart", async () => {
+ for(const fault of ["winner","chain","nonce","journal"]) {
+  const f=fixture();try {
+   f.win(original);await f.client.recoverLegacyMission(f.input);
+   if(fault==="winner") { const receipt=f.publicClient.getTransactionReceipt; f.publicClient.getTransactionReceipt=async args=>({...await receipt(args),blockHash:("0x"+"bb".repeat(32)) as Hex}); }
+   if(fault==="chain") f.publicClient.getChainId=async()=>84532;
+   if(fault==="nonce") f.setNonce(4);
+   if(fault==="journal") f.db.query("UPDATE resolver_prepared_intents SET outcomes='[]' WHERE transaction_hash=?").run(original);
+   await expect(f.create().client.resolveMissionBatch([])).rejects.toThrow("finalized recovery contradiction");
+   expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(0);
+  } finally {f.cleanup();}
+ }
+});
+
+test("finalized cached proof still rejects a second canonical candidate, without re-observing historical assets", async () => {
+ const f=fixture();try {
+  f.send(async raw=>{f.win(keccak256(raw));return keccak256(raw);});await f.client.recoverLegacyMission(f.input);
+  f.both();
+  await expect(f.create().client.resolveMissionBatch([])).rejects.toThrow("conflicting canonical recovery winners");
+  expect(f.signs()).toBe(1);expect(f.bytes).toHaveLength(1);
+ } finally {f.cleanup();}
+});
+
+test("finalized reuse retains explicit pruned-receipt proof but fails closed on transport errors",async()=>{
+ const f=fixture();try {
+  f.win(original);await f.client.recoverLegacyMission(f.input);
+  f.publicClient.getTransactionReceipt=async({hash})=>{throw new TransactionReceiptNotFoundError({hash});};
+  await f.create().client.resolveMissionBatch([]);
+  expect(f.db.query("SELECT winner_hash,finalized FROM resolver_nonce_recovery").get()).toEqual({winner_hash:original,finalized:1});
+  f.publicClient.getTransactionReceipt=async()=>{throw new Error("upstream unavailable");};
+  await expect(f.create().client.resolveMissionBatch([])).rejects.toThrow("rpc-unavailable");
+  expect(f.signs()).toBe(0);
+ }finally{f.cleanup();}
+});
+
+
+test("full fresh mission readiness/sign/send path proceeds after finalized recovery despite slow historical transaction transport",async()=>{
+ const f=fixture();try {
+  f.win(original);await f.client.recoverLegacyMission(f.input);fixtureHead=2n;
+  const recovery=f.db.query("SELECT * FROM resolver_nonce_recovery").get();
+  const historicalReceipt=f.publicClient.getTransactionReceipt;
+  let historicalTransactions=0, newSigns=0, newSends=0, newHash:Hex|null=null;
+  const dueAt=Math.floor(Date.now()/1000)-5;
+  const rpc={...f.publicClient,
+   getTransaction:async()=>{historicalTransactions++;await new Promise(resolve=>setTimeout(resolve,5100));throw new Error("historic transaction unavailable");},
+   getTransactionCount:async()=>newHash?6:5,
+   sendRawTransaction:async({serializedTransaction}:{serializedTransaction:Hex})=>{
+    expect(parseTransaction(serializedTransaction).nonce).toBe(5);newSends++;newHash=keccak256(serializedTransaction);return newHash;
+   },
+   getTransactionReceipt:async({hash}:{hash:Hex})=>hash===newHash?{transactionHash:hash,from:account.address,to:game,status:"success",blockNumber:2n,blockHash:fixtureHash(2n),logs:[],gasUsed:100000n,effectiveGasPrice:100n,l1Fee:100n,operatorFee:0n}:historicalReceipt({hash})
+  };
+  const sender={...account,signTransaction:async(...args:Parameters<typeof account.signTransaction>)=>{newSigns++;return account.signTransaction(...args);}};
+  const coordinator=f.create().coordinator;
+  const client=new ViemMissionResolutionChainClient({listResolvableFleetMissions:async()=>[],listReturnableFleetMissions:async()=>[],
+   isFleetChronologyOrderingReady:async()=>true,
+   getCanonicalFleetMission:async()=>({status:newHash?"Returned":"Returning",arrivalAt:String(dueAt-10),returnAt:String(dueAt)}) as never
+  },game,sender,rpc as unknown as PublicClient,undefined,chain,undefined,coordinator,undefined,undefined,{...defaultMissionBatchPolicy,enabled:true});
+  const start=performance.now();
+  const result=await client.resolveMissionBatch([{missionId:"99999",leg:"return",dueAt}]);
+  expect(performance.now()-start).toBeLessThan(1000);
+  expect(result.items).toHaveLength(1);expect(result.outcomes?.[0]?.complete).toBe(true);
+  expect(newSigns).toBe(1);expect(newSends).toBe(1);expect(historicalTransactions).toBe(0);
+  expect(f.db.query("SELECT * FROM resolver_nonce_recovery").get()).toEqual(recovery);
+  expect(f.db.query("SELECT admission_proven FROM resolver_prepared_intents WHERE nonce=5").get()).toEqual({admission_proven:1});
+ }finally{f.cleanup();}
+},10000);

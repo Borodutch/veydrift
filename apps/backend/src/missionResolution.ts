@@ -27,7 +27,7 @@ import {
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
+import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
 import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
@@ -90,6 +90,7 @@ const veydriftGameResolutionAbi = [
 ] as const;
 
 export type MissionResolutionChainClient = {
+  admissionSnapshot?(): ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
@@ -164,6 +165,8 @@ type MoonChanceResolutionSnapshot = {
 };
 
 export type MissionResolutionSnapshot = {
+  sharedAdmission?: { blocked: boolean; nextRetryAt: string | null };
+  admission?: ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   enabled: boolean;
   resolverConfigured: boolean;
   resolverAddress: Address | null;
@@ -245,6 +248,8 @@ export class MissionResolutionService {
   private moonChanceLastError: string | null = null;
   private moonChanceRetryReconciliationOffset = 0;
   private lastError: string | null = null;
+  private sharedAdmissionRetryAtMs = 0;
+  private sharedAdmissionBlocked = false;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
@@ -293,6 +298,8 @@ export class MissionResolutionService {
     const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
+    const admission = this.chainClient?.admissionSnapshot?.() ?? null;
+    if (admission?.blockedReason || this.sharedAdmissionBlocked) healthWarnings.push("mission_resolver_admission_blocked");
     const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
@@ -303,6 +310,8 @@ export class MissionResolutionService {
       promptnessTargetSeconds: Math.ceil(this.promptnessTargetMs / 1_000),
       healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
       healthWarnings,
+      admission,
+      sharedAdmission: { blocked: this.sharedAdmissionBlocked, nextRetryAt: this.sharedAdmissionBlocked ? new Date(this.sharedAdmissionRetryAtMs).toISOString() : null },
       gamePaused: this.gamePaused,
       gamePauseObservedAt: this.gamePauseObservedAt,
       gamePausedSince: this.gamePausedSince,
@@ -536,9 +545,12 @@ export class MissionResolutionService {
       .slice(0, this.maxMissionsPerTick * 5);
     if (this.config.missionBatch?.enabled) {
       if (!this.chainClient?.resolveMissionBatch) throw new Error("batch rollout enabled without supported durable batch client");
+      if (this.now() < this.sharedAdmissionRetryAtMs) return;
       const candidates = attemptable.slice(0, this.maxMissionsPerTick);
       try {
         const result = await this.chainClient.resolveMissionBatch(candidates.map((c) => ({ missionId: c.mission.missionId, leg: c.leg, dueAt: c.dueAt })));
+        this.sharedAdmissionBlocked = false;
+        this.sharedAdmissionRetryAtMs = 0;
         for (const excluded of result.exclusions ?? []) {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
           const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
@@ -578,7 +590,10 @@ export class MissionResolutionService {
       } catch (error) {
         // A concurrent settlement or fresh block only invalidates this packing: repack next tick.
         const transient = error instanceof Error && /membership changed|block changed or expired/.test(error.message);
-        if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
+        if (error instanceof ResolverAdmissionBlockedError) {
+          this.sharedAdmissionBlocked = true;
+          this.sharedAdmissionRetryAtMs = this.now() + this.intervalMs;
+        } else if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
         this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
         emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
       }
@@ -830,6 +845,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
         (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
       this.transactionCoordinator.setRecoveryObserver(this.chain.id, address, {
+        verifyFinalized: (binding, winner, receipt, candidates, pass) => this.verifyFinalizedRecovery(binding, winner, receipt, candidates, pass),
         invalidate: (hash) => { this.batchReceiptOutcomes.delete(hash); },
         observe: (binding, hash, pass) => this.observeRecoveryCandidate(binding, hash, pass),
         assertUnconsumed: (binding, pass) => assertRecoveryNonce(this.publicClient!,binding,pass)
@@ -887,6 +903,48 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
       await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
     }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString(),trace);
+  }
+
+  private async verifyFinalizedRecovery(binding: LegacyRecoveryBinding, winner: Hex, stored: PreparedReceipt,
+    candidates: Hex[], pass: PreparedReconciliationPass): Promise<void> {
+    const client = this.publicClient!;
+    const contradiction = () => new Error("finalized recovery contradiction; fail closed");
+    if (JSON.stringify(recoveryBinding(JSON.parse(binding.evidence))) !== JSON.stringify(binding)) throw contradiction();
+    // Initial finalization already proved full transaction/domain/reference identity.
+    // Never repeat historical transaction/state/fee hydration to admit new traffic.
+    const identity = await (pass.finalizedRecoveryIdentity ??= (async () => ({
+      chainId: await pass.read(() => client.getChainId()),
+      nonce: await pass.read(() => client.getTransactionCount({ address: binding.address, blockTag: "latest" }))
+    }))());
+    if (identity.chainId !== binding.chainId || !Number.isSafeInteger(identity.nonce) || identity.nonce <= binding.nonce)
+      throw contradiction();
+    const blockNumber = BigInt(stored.blockNumber);
+    const losers: Array<{ blockNumber: bigint; blockHash: Hex }> = [];
+    for (const hash of candidates) {
+      let receipt;
+      try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
+      catch (error) {
+        pass.assertActive();
+        // Explicit absence may be pruning. The durable finalized anchor and consumed
+        // nonce remain authoritative; transport errors are NEVER absence evidence.
+        if (error instanceof TransactionReceiptNotFoundError) continue;
+        throw new RecoveryReadinessError("rpc-unavailable");
+      }
+      if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw contradiction();
+      if (hash === winner) {
+        if (receipt.blockNumber !== blockNumber || receipt.blockHash !== stored.blockHash) throw contradiction();
+      } else losers.push({ blockNumber: receipt.blockNumber, blockHash: receipt.blockHash });
+    }
+    // Validate the immutable finalized anchor AFTER candidate observations. The
+    // common two-candidate path costs three reads/group plus two shared identity
+    // reads, so all 32 retained groups fit the unchanged 128-read pass budget.
+    const canonical = await pass.read(() => client.getBlock({ blockNumber }));
+    if (canonical.number !== blockNumber || canonical.hash !== stored.blockHash) throw contradiction();
+    for (const loser of losers) {
+      const loserBlock = loser.blockNumber === blockNumber ? canonical
+        : await pass.read(() => client.getBlock({ blockNumber: loser.blockNumber }));
+      if (loserBlock.hash === loser.blockHash) throw new Error("conflicting canonical recovery winners; fail closed");
+    }
   }
 
   private async observeRecoveryCandidate(binding: LegacyRecoveryBinding, hash: Hex,
@@ -1044,22 +1102,62 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return fresh.sort(compareBatchLegs);
   }
 
+  admissionSnapshot() {
+    if (!this.chain) return null;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    return this.transactionCoordinator.admissionSnapshot(this.chain.id, address);
+  }
+
+  private async proveConsumedNonce(blockNumber: bigint, blockHash: Hex, pass: PreparedReconciliationPass) {
+    const identity = pass.intentIdentity!;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    if (identity.chainId !== this.chain?.id || identity.address.toLowerCase() !== address.toLowerCase())
+      throw new Error("batch confirmation signer/chain mismatch");
+    const consumed = await pass.read(() => this.publicClient!.getTransactionCount({ address, blockNumber }));
+    const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber }));
+    if (!Number.isSafeInteger(consumed) || consumed <= identity.nonce) throw new Error("batch confirmation nonce not consumed");
+    if (!canonical.hash || canonical.hash !== blockHash || canonical.number !== blockNumber)
+      throw new Error("batch receipt is not canonical after nonce proof");
+  }
+
+  private async archiveFinality(pass: PreparedReconciliationPass): Promise<bigint | null> {
+    // Ordinary admission never depends on this tag. Missing/failed archival reads
+    // retain bytes; malformed or contradictory canonical identity remains a fault.
+    return pass.archivalFinalizedHead ??= (async () => {
+      let block;
+      try { block = await pass.read(() => this.publicClient!.getBlock({ blockTag: "finalized" })); }
+      catch { pass.assertActive(); return null; }
+      if (block.number === null || !block.hash) return null;
+      const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber: block.number! }));
+      if (canonical.number !== block.number || canonical.hash !== block.hash)
+        throw new Error("archival finalized identity contradiction");
+      return block.number;
+    })();
+  }
+
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
 
   private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
     pass: PreparedReconciliationPass): Promise<PreparedReceipt | void> {
     const client = this.publicClient!;
-    // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
-    const finalized = await (pass.finalizedHead ??= pass.read(async () => {
+    // Reuse durable domain outcomes; ordinary admission adds a pinned consumed-nonce proof.
+    let finalized = pass.intentIdentity ? null : await (pass.finalizedHead ??= pass.read(async () => {
       const block = await client.getBlock({ blockTag: "finalized" });
       if (block.number === null) throw new Error("explicit finalized block unavailable");
       return block.number;
     }));
     if (stored) {
+      // Retirement needs a containing-header observation AFTER finalized identity.
+      // Otherwise an ordinary reorg during the finality reads can promote an old
+      // branch receipt and irreversibly discard both signed envelopes.
+      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
-      if (!block.hash || block.hash !== stored.blockHash) throw new Error("batch receipt is not canonical");
+      if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();
-      return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
+      // Historical archival rows inherit the checked frontier ancestry; only the
+      // active frontier needs a fresh nonce read (old state may already be pruned).
+      if (pass.intentIdentity && !stored.finalized && !pass.archive) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
+      return { ...stored, finalized: stored.finalized || (finalized !== null && BigInt(stored.blockNumber) <= finalized) };
     }
     let receipt;
     try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
@@ -1069,6 +1167,9 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
     const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
     if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
+    if (pass.intentIdentity && (receipt.transactionHash?.toLowerCase() !== hash.toLowerCase()
+      || receipt.from?.toLowerCase() !== pass.intentIdentity.address.toLowerCase()
+      || receipt.to?.toLowerCase() !== this.gameAddress.toLowerCase())) throw new Error("batch canonical receipt identity mismatch");
     const items: BatchLeg[] = JSON.parse(membership);
     if (!Array.isArray(items) || items.length > 32) throw new Error("invalid persisted batch membership");
     const events = (receipt.logs ?? []).flatMap((log) => {
@@ -1105,6 +1206,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       } catch { /* unknown is NOT zero; actual total remains unavailable */ }
     }
     pass.assertActive();
+    if (pass.intentIdentity) await this.proveConsumedNonce(receipt.blockNumber, receipt.blockHash, pass);
+    pass.assertActive();
     const executionFee = receipt.gasUsed * receipt.effectiveGasPrice;
     emitObservabilityEvent({ kind: "mission_batch_receipt", hash, status: receipt.status, outcomes,
       gasUsed: receipt.gasUsed.toString(), executionFeeWei: executionFee.toString(),
@@ -1113,7 +1216,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     this.batchReceiptOutcomes.set(hash, outcomes);
     // Bounded in-memory reporting cache; immutable membership/outcomes remain in SQLite.
     if (this.batchReceiptOutcomes.size > 128) this.batchReceiptOutcomes.delete(this.batchReceiptOutcomes.keys().next().value!);
-    return { finalized: receipt.blockNumber <= finalized, blockNumber: receipt.blockNumber.toString(),
+    return { finalized: finalized !== null && receipt.blockNumber <= finalized, admissionProven: Boolean(pass.intentIdentity), blockNumber: receipt.blockNumber.toString(),
       blockHash: receipt.blockHash, outcomes: JSON.stringify(outcomes) };
   }
 
