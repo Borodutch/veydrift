@@ -977,10 +977,12 @@ export type MoonState = {
   resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships: ShipyardState["ships"];
-  // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival
-  // settlement prologue runs. This can be ahead of `ships` while an arrived Deploy is still stored
-  // as Outbound and has not emitted its MoonShipCountChanged credit yet.
+  // Same authoritative effective inventory as ships; launch eligibility is a
+  // separate guard because the deployed lazy sweep is bounded.
   launchableShips?: ShipyardState["ships"];
+  fleetSlots?: ShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;
