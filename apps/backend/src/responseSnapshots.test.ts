@@ -164,3 +164,48 @@ test("system HTTP refresh reselects the version after waiting for cache ownershi
     cacheDb.close();
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+for (const query of ["?live=1&pageSize=10", "?pageSize=10", "?live=1&pageSize=10&currentWallet=" + owner]) {
+  test("rankings reselect cache version after shared ownership " + query, async () => {
+    const { dir, indexer, db, commit } = walFixture();
+    const cachePath = join(dir, "rank-http.sqlite");
+    const sharedResponseCache = new SharedResponseCache(cachePath);
+    try {
+      db.query("INSERT OR REPLACE INTO indexer_metadata (key,value) VALUES ('lastReconciledAt',?)").run(new Date().toISOString());
+      const oldVersion = indexer.responseCacheVersion();
+      const acquire = sharedResponseCache.tryAcquireRefresh.bind(sharedResponseCache);
+      let changed = false;
+      sharedResponseCache.tryAcquireRefresh = (...args) => {
+        if (!changed) { changed = true; commit(); }
+        return acquire(...args);
+      };
+      const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache });
+      const body = await get(handler, "/highscores" + query);
+      expect(body.rankings.total.find((r: any) => r.wallet === owner).planets[0].tactical.ships.count).toBe(3);
+      const cacheDb = new Database(cachePath, { readonly: true });
+      const rows = cacheDb.query("SELECT cache_key FROM response_cache").all() as Array<{ cache_key: string }>;
+      expect(rows).toHaveLength(1);
+      expect(indexer.responseCacheVersion()).not.toBe(oldVersion);
+      expect(rows[0]!.cache_key).toContain("indexer=" + indexer.responseCacheVersion());
+      cacheDb.close();
+    } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+}
+
+test("rankings retain one WAL view across leaderboard and ship-bearing rows", async () => {
+  const { dir, indexer, db, commit } = walFixture();
+  try {
+    db.query("INSERT OR REPLACE INTO indexer_metadata (key,value) VALUES ('lastReconciledAt',?)").run(new Date().toISOString());
+    const original = indexer.highscoreLeaderboard.bind(indexer);
+    let changed = false;
+    indexer.highscoreLeaderboard = () => {
+      const leaderboard = original();
+      if (!changed) { changed = true; commit(); }
+      return leaderboard;
+    };
+    const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache: null });
+    const count = (body: any) => body.rankings.total.find((r: any) => r.wallet === owner).planets[0].tactical.ships.count;
+    expect(count(await get(handler, "/highscores?live=1&pageSize=10"))).toBe(12);
+    expect(count(await get(handler, "/highscores?live=1&pageSize=10"))).toBe(3);
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+});

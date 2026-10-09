@@ -670,6 +670,93 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     process.env.VEYDRIFT_PREWARM_RESPONSE_CACHE === "true" && isWriter && enableResponseCache
   );
 
+  const routeHighscores = (url: URL): Response => {
+      const startedAt = Date.now();
+      try {
+        const pagination = highscorePagination(url);
+        const view = url.searchParams.get("view");
+        if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
+        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
+        let entries: HighscoreEntry[];
+        const source = "contract-state-indexer";
+
+        if (indexer) {
+          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
+          if (indexNotReady) return indexNotReady;
+          // Memoized against the indexer state version: the full leaderboard is recomputed only
+          // when integrated events change state, not on every request (VEY-KANEO-467).
+          const leaderboard = indexer.highscoreLeaderboard();
+          planetsByOwner = leaderboard.planetsByOwner;
+          entries = leaderboard.entries;
+        } else {
+          return indexedReadNotReadyResponse("highscores", indexer, {
+            page: url.searchParams.get("page"),
+            pageSize: url.searchParams.get("pageSize")
+          });
+        }
+
+        const totalEntries = entries.length;
+        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
+        const page = Math.min(pagination.page, totalPages);
+        const offset = (page - 1) * pagination.pageSize;
+        const requestedCategories = highscoreRequestedCategories(url);
+        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
+        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
+        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
+        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
+        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
+        const rankedRows = highscoreRows(
+          visibleEntries,
+          planetsByOwner,
+          profiles,
+          allianceIntel,
+          indexer,
+          view !== "scoreboard"
+        );
+        const rankings = highscoreRankings(
+          sortedRankings,
+          requestedCategories,
+          pagination.pageSize,
+          offset,
+          rankedRows
+        );
+        const protection = rankedHighscoreIndexedProtectionLookup(
+          highscoreRankingRows(rankings),
+          entries,
+          allianceIntel,
+          url.searchParams.get("currentWallet"),
+          highscoreAttackProtectionRequested(url),
+          indexer
+        );
+        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
+        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
+
+        return Response.json(
+          {
+            generatedAt: new Date().toISOString(),
+            durationMs: Date.now() - startedAt,
+            formula: highscoreFormula,
+            pagination: {
+              page,
+              pageSize: pagination.pageSize,
+              totalEntries,
+              totalPages,
+              hasPreviousPage: page > 1,
+              hasNextPage: page < totalPages
+            },
+            currentPlayer,
+            rankings: protectedRankings,
+            source
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return highscoreFailureResponse(error);
+      }
+  };
+
   const routeGalaxySystems = (request: Request, url: URL): Response => {
     if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
       const parts = url.pathname.split("/");
@@ -2084,90 +2171,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/highscores") {
-      const startedAt = Date.now();
-      try {
-        const pagination = highscorePagination(url);
-        const view = url.searchParams.get("view");
-        if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
-        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
-        let entries: HighscoreEntry[];
-        const source = "contract-state-indexer";
-
-        if (indexer) {
-          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
-          if (indexNotReady) return indexNotReady;
-          // Memoized against the indexer state version: the full leaderboard is recomputed only
-          // when integrated events change state, not on every request (VEY-KANEO-467).
-          const leaderboard = indexer.highscoreLeaderboard();
-          planetsByOwner = leaderboard.planetsByOwner;
-          entries = leaderboard.entries;
-        } else {
-          return indexedReadNotReadyResponse("highscores", indexer, {
-            page: url.searchParams.get("page"),
-            pageSize: url.searchParams.get("pageSize")
-          });
-        }
-
-        const totalEntries = entries.length;
-        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
-        const page = Math.min(pagination.page, totalPages);
-        const offset = (page - 1) * pagination.pageSize;
-        const requestedCategories = highscoreRequestedCategories(url);
-        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
-        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
-        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
-        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
-        const rankedRows = highscoreRows(
-          visibleEntries,
-          planetsByOwner,
-          profiles,
-          allianceIntel,
-          indexer,
-          view !== "scoreboard"
-        );
-        const rankings = highscoreRankings(
-          sortedRankings,
-          requestedCategories,
-          pagination.pageSize,
-          offset,
-          rankedRows
-        );
-        const protection = rankedHighscoreIndexedProtectionLookup(
-          highscoreRankingRows(rankings),
-          entries,
-          allianceIntel,
-          url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url),
-          indexer
-        );
-        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
-        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
-
-        return Response.json(
-          {
-            generatedAt: new Date().toISOString(),
-            durationMs: Date.now() - startedAt,
-            formula: highscoreFormula,
-            pagination: {
-              page,
-              pageSize: pagination.pageSize,
-              totalEntries,
-              totalPages,
-              hasPreviousPage: page > 1,
-              hasNextPage: page < totalPages
-            },
-            currentPlayer,
-            rankings: protectedRankings,
-            source
-          },
-          {
-            headers: corsHeaders
-          }
-        );
-      } catch (error) {
-        return highscoreFailureResponse(error);
-      }
+      return indexer ? indexer.readConsistentSnapshot(() => routeHighscores(url)) : routeHighscores(url);
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
@@ -2286,12 +2290,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               if (!owner) return null;
             }
             try {
-              if (indexer && isGalaxySystemRequest(request, url)) {
+              if (indexer && (isGalaxySystemRequest(request, url) || url.pathname === "/highscores")) {
                 // Refresh ownership can await a peer. Reselect the key together with the
                 // synchronous payload, never publish a newer snapshot under the old key.
                 const refresh = indexer.readConsistentSnapshot(() => ({
                   key: cacheableJsonRequestKey(request, url, indexer),
-                  response: routeGalaxySystems(request, url)
+                  response: url.pathname === "/highscores" ? routeHighscores(url) : routeGalaxySystems(request, url)
                 }));
                 return await refreshCachedJsonResponse(request, url, async () => refresh.response,
                   responseCache, sharedResponseCache, refresh.key, cacheTtlMs);
