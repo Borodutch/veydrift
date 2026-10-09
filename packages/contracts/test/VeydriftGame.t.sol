@@ -7512,11 +7512,12 @@ contract VeydriftGameTest is Test {
     }
 
     // Isolation commits setup writes and resets warmth/refunds before the actual call.
-    // Production source artifacts remain optimized via dynamic_test_linking.
+    // This file stays on the production profile, including linked libraries.
+    // Fifteen mixed orders alone fit after optimization; due settlement is the over-cap case.
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenExceedsBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         vm.prank(player);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
@@ -7530,7 +7531,7 @@ contract VeydriftGameTest is Test {
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenRevertsAtBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         uint256 nextId = game.nextFleetId();
         vm.prank(player);
         vm.expectRevert();
