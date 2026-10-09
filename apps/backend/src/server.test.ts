@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { toFunctionSelector } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -12897,6 +12898,79 @@ test("moon chance pending/terminal results converge in full system and watched p
   }
 });
 
+
+test("moon supply batch capability is uncached and fails closed during rollout", async () => {
+  class MoonSupplyBatchReader extends MockChainReader {
+    version: number | null = 1;
+    fail = false;
+    calls = 0;
+    async getMoonSupplyBatchVersion() {
+      this.calls++;
+      if (this.fail) throw new Error("RPC unavailable");
+      return this.version;
+    }
+  }
+  const reader = new MoonSupplyBatchReader();
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader,
+    indexer: new SettlementIndexer(reader, 100n), role: "reader", enableResponseCache: true,
+    prewarmResponseCache: false });
+  const versions = [null, 1, 0, 1, 2, 1, NaN, Infinity, -1, 1.5, 1];
+  for (const version of versions) {
+    reader.version = version;
+    const before = Date.now();
+    const response = await handler(new Request("https://api.veydrift.com/moon-supply-batch"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json();
+    expect(body).toEqual({ version: version === 1 ? 1 : null, asOf: expect.any(Number),
+      gameContractAddress: configuredTestConfig.gameContractAddress, chainId: configuredTestConfig.chainId });
+    expect(body.asOf).toBeGreaterThanOrEqual(before);
+    expect(body.asOf).toBeLessThanOrEqual(Date.now());
+  }
+  reader.fail = true;
+  expect((await (await handler(new Request("https://api.veydrift.com/moon-supply-batch"))).json()).version).toBeNull();
+  reader.fail = false;
+  expect((await (await handler(new Request("https://api.veydrift.com/moon-supply-batch"))).json()).version).toBe(1);
+  expect(reader.calls).toBe(versions.length + 2);
+
+  const oldReader = new MockChainReader();
+  const old = createRequestHandler({ config: configuredTestConfig, chainReader: oldReader,
+    indexer: new SettlementIndexer(oldReader, 100n), role: "reader", enableResponseCache: true });
+  const response = await old(new Request("https://api.veydrift.com/moon-supply-batch"));
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect((await response.json()).version).toBeNull();
+});
+
+test("moon supply batch capability uses uncached production RPC rather than health metadata", async () => {
+  const previousFetch = globalThis.fetch;
+  let result = "0x" + "1".padStart(64, "0");
+  let calls = 0;
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    calls++;
+    const batch = JSON.parse(String(init?.body)) as Array<{ id: number; method: string; params: unknown[] }>;
+    expect(batch).toHaveLength(1);
+    expect(batch[0]!.method).toBe("eth_call");
+    expect(batch[0]!.params).toEqual([{
+      to: configuredTestConfig.gameContractAddress,
+      data: toFunctionSelector("moonSupplyBatchVersion()")
+    }, "latest"]);
+    return Response.json([{ jsonrpc: "2.0", id: batch[0]!.id, result }]);
+  }) as typeof fetch;
+  try {
+    const handler = createRequestHandler({ config: configuredTestConfig,
+      indexer: new SettlementIndexer(new MockChainReader(), 100n), role: "reader",
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache: null });
+    for (const version of [1, 0, 1, 2, 1]) {
+      result = "0x" + version.toString(16).padStart(64, "0");
+      const response = await handler(new Request("https://api.veydrift.com/moon-supply-batch"));
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).version).toBe(version === 1 ? 1 : null);
+    }
+    expect(calls).toBe(5);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
 
 test("combat model capability is uncached and fails closed during rollout", async () => {
   class CombatModelReader extends MockChainReader {

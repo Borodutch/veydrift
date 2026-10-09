@@ -747,6 +747,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return Response.json({ version, asOf: Date.now() }, { headers: { "cache-control": "no-store" } });
     }
 
+    if (request.method === "GET" && url.pathname === "/moon-supply-batch") {
+      let version: number | null = null;
+      try {
+        // The eligibility reader bypasses both projection and RPC caches.
+        const liveVersion = await missionEligibilityReader?.getMoonSupplyBatchVersion?.();
+        version = liveVersion === 1 ? 1 : null;
+      } catch { /* Fail closed, including on pre-upgrade deployments. */ }
+      return Response.json({
+        version, asOf: Date.now(),
+        gameContractAddress: loaded.config.gameContractAddress ?? null,
+        chainId: loaded.config.chainId
+      }, { headers: { "cache-control": "no-store" } });
+    }
+
     if (request.method === "GET" && url.pathname === "/runtime-config") {
       return runtimeConfigResponse(workerRole);
     }

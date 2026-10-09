@@ -3386,6 +3386,43 @@ function fleetMissionLogs({
   ];
 }
 
+describe("moon supply batch capability getter", () => {
+  test("live-reads the game facade and accepts only exact supported uint256 responses", async () => {
+    let result: unknown = dataWords([word(1n)]);
+    let fail = false;
+    let calls = 0;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(): Promise<T> { throw new Error("unexpected single request"); },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        calls++;
+        expect(requests).toEqual([{
+          method: "eth_call",
+          params: [{ to: readerConfig.gameContractAddress, data: toFunctionSelector("moonSupplyBatchVersion()") }, "latest"]
+        }]);
+        if (fail) throw new Error("old deployment or unavailable RPC");
+        return [result as T];
+      }
+    });
+    expect(await reader.getMoonSupplyBatchVersion()).toBe(1);
+    const malformed = [undefined, null, 1, {}, "0x", "0x01", "1".repeat(64),
+      "0x" + "g".repeat(64), "0x" + "0".repeat(63) + " ",
+      dataWords([word(1n), word(0n)])];
+    const unsupported = [0n, 2n, 256n, BigInt(Number.MAX_SAFE_INTEGER) + 1n, (1n << 256n) - 1n];
+    for (const bad of [...malformed, ...unsupported.map(value => dataWords([word(value)]))]) {
+      result = bad;
+      expect(await reader.getMoonSupplyBatchVersion()).toBeNull();
+    }
+    fail = true;
+    expect(await reader.getMoonSupplyBatchVersion()).toBeNull();
+    fail = false;
+    for (const version of [1n, 0n, 1n, 2n, 1n]) {
+      result = dataWords([word(version)]);
+      expect(await reader.getMoonSupplyBatchVersion()).toBe(version === 1n ? 1 : null);
+    }
+    expect(calls).toBe(2 + malformed.length + unsupported.length + 5);
+  });
+});
+
 describe("combat model capability getter", () => {
   test("validates exact uint8 ABI response and fails closed", async () => {
     let result = dataWords([word(2n)]);
