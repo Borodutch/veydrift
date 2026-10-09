@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { createPublicClient, encodeFunctionData, webSocket, type Address as ViemAddress, type Log as ViemLog } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -2367,8 +2367,9 @@ export async function resourceViewResponse(request: Request, response: Response)
   headers.set("vary", vary ? vary + ", Accept" : "Accept");
   const capable = request.headers.get("accept")?.split(",").some(type => type.trim().toLowerCase() === "application/json; resource-view=nullable-v1");
   const legacyBody = !capable ? response.clone() : null;
-  const payload = legacyBody?.headers.get("content-encoding") === "gzip" && legacyBody.body
-    ? await new Response(legacyBody.body.pipeThrough(new DecompressionStream("gzip"))).json()
+  // Match cachedJsonResponse's zlib codec: Bun 1.1.42 has no DecompressionStream global.
+  const payload = legacyBody?.headers.get("content-encoding") === "gzip"
+    ? JSON.parse(gunzipSync(new Uint8Array(await legacyBody.arrayBuffer())).toString("utf8"))
     : await legacyBody?.json();
   if (!capable && requiresNullableResourceView(payload)) {
     headers.set("cache-control", "no-store");
