@@ -83,13 +83,14 @@ class Relay:
         self.rate_hold = 0.0
         self.failures = [0] * len(urls)
         self.anchor = None
+        self.highest_block = -1  # Retained even when learned identities are evicted.
         self.learned = collections.OrderedDict()
         self.cache_size = cache_size
         self.lock = threading.Lock()  # Serialize related calls AND failover validation.
         self.last_success = None
         self.last_error = None
 
-    def _request(self, index, payload, deadline, limit=None):
+    def _request(self, index, payload, deadline, limit=None, *, anchor=None, allow_future=False):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RelayError('request deadline exceeded')
@@ -144,7 +145,8 @@ class Relay:
             parsed = json.loads(raw)
             if time.monotonic() >= deadline:
                 raise RelayError('request deadline exceeded')
-            self._validate(payload, parsed)
+            self._validate(payload, parsed, index=index, deadline=deadline,
+                           anchor=anchor, allow_future=allow_future)
             responses = parsed if isinstance(parsed, list) else [parsed]
             clean = []
             for item in responses:
@@ -170,7 +172,7 @@ class Relay:
                 response.close()
             connection.close()
 
-    def _validate(self, payload, parsed):
+    def _validate(self, payload, parsed, *, index=None, deadline=None, anchor=None, allow_future=False):
         requests = payload if isinstance(payload, list) else [payload]
         responses = parsed if isinstance(parsed, list) else [parsed]
         # Rate-limit envelopes dominate malformed/capability siblings in any order.
@@ -189,6 +191,13 @@ class Relay:
             if type(ident) not in (str, int) or ident in by_id:
                 raise RelayError('invalid RPC response id')
             by_id[ident] = response
+        future_numbers = []
+        highest = self.highest_block
+        for evidence in (self.anchor, anchor):
+            if evidence is not None:
+                highest = max(highest, quantity(evidence['number']))
+        for number in self.learned.values():
+            highest = max(highest, quantity(number))
         for request in requests:
             response = by_id.get(request['id'])
             if response is None or ('result' in response) == ('error' in response) or ('error' in response and response['error'] is None):
@@ -212,6 +221,10 @@ class Relay:
                     raise RelayError('upstream RPC unavailable')
                 continue  # Caller/capability errors and reverts pass through.
             if request['method'] in self.REQUIRED and response['result'] is None:
+                param = request['params'][0] if request['params'] else None
+                if allow_future and request['method'] == 'eth_getBlockByNumber' and isinstance(param, str) and param.startswith('0x'):
+                    future_numbers.append(quantity(param))
+                    continue  # Deferred until ALL sibling block evidence is validated.
                 raise RelayError('required result unavailable')
             if request['method'] == 'eth_getBlockReceipts':
                 self._receipts(request['params'], response['result'])
@@ -227,6 +240,25 @@ class Relay:
                     raise RelayError('requested block hash mismatch')
                 if request['method'] == 'eth_getBlockByNumber' and param.startswith('0x') and quantity(b['number']) != quantity(param):
                     raise RelayError('requested block number mismatch')
+                highest = max(highest, quantity(b['number']))
+            if request['method'] == 'eth_blockNumber':
+                highest = max(highest, quantity(response['result']))
+        if future_numbers:
+            if min(future_numbers) <= highest:
+                raise RelayError('required result unavailable')
+            # One fresh SAME-provider latest read per response, not per null. It
+            # shares the outer deadline and has a 1MiB cap; null/error cannot recurse.
+            latest = self._request(index, {'jsonrpc': '2.0', 'id': 1,
+                'method': 'eth_getBlockByNumber', 'params': ['latest', False]},
+                deadline, 1024*1024)[1]
+            if 'error' in latest:
+                raise RelayError('upstream latest proof unavailable')
+            head = quantity(block(latest['result'])['number'])
+            if head < highest or min(future_numbers) <= head:
+                raise RelayError('required result unavailable')
+            highest = max(highest, head)
+        # Only fully validated responses can contribute durable negative evidence.
+        self.highest_block = highest
 
     def _receipts(self, params, receipts):
         if not params or not isinstance(params[0], str) or not isinstance(receipts, list):
@@ -327,13 +359,14 @@ class Relay:
                     continue
                 try:
                     anchor = self._proof(index, deadline) if self.anchor is None or index != self.preferred else self.anchor
-                    raw, parsed = self._request(index, payload, deadline)
+                    raw, parsed = self._request(index, payload, deadline, anchor=anchor, allow_future=True)
                     # Update bounded learned evidence only after the entire response validates.
                     responses = parsed if isinstance(parsed, list) else [parsed]
                     by_id = {r['id']: r['result'] for r in responses if 'result' in r}
                     for request in requests:
                         if request['id'] in by_id and request['method'] in ('eth_getBlockByHash', 'eth_getBlockByNumber'):
                             b = by_id[request['id']]
+                            if b is None: continue  # Proven future absence is not a block identity.
                             self.learned[b['hash']] = b['number']
                             self.learned.move_to_end(b['hash'])
                             while len(self.learned) > self.cache_size:
