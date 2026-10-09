@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { encodeFunctionResult, parseTransaction, type PublicClient } from "viem";
 import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
 import { privateKeyToAccount } from "viem/accounts";
-import { validateMissionBatchReplay, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
+import { validateMissionBatchReplay, BatchQuoteExpiredError, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
 
 const now = BigInt(Math.floor(Date.now() / 1000));
 const input = { items: [{ missionId: "1", leg: "arrival" as const, dueAt: Number(now - 5n) }], nonce: 99,
@@ -162,4 +162,15 @@ test("replay never bypasses current Base fees, original budget, productivity or 
   let blocks = 0;
   await expect(validateMissionBatchReplay(fixture({ getBlock: async () => ({ ...block(), hash: blocks++ ? "0xdead" : block().hash }) }).client,
     replayRaw, input, replayPass)).rejects.toThrow("changed");
+});
+
+test("every fee-age failure is typed for shared repacking, including oracle-await expiration", async () => {
+  await expect(quoteMissionBatch(fixture({ getBlock: async () => block(now - 31n) }).client, input)).rejects.toBeInstanceOf(BatchQuoteExpiredError);
+  const originalNow = Date.now;
+  let clock = Number(now) * 1000;
+  Date.now = () => clock;
+  try {
+    const client = fixture({ readContract: async () => { clock = Number(now + 31n) * 1000; return 100n; } }).client;
+    await expect(quoteMissionBatch(client, input)).rejects.toBeInstanceOf(BatchQuoteExpiredError);
+  } finally { Date.now = originalNow; }
 });
