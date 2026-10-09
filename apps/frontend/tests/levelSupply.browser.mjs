@@ -89,7 +89,8 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         const text = await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent`);
         assert.ok(text.includes(label) && text.includes('Level ' + level) && text.includes('1:1:2'));
         assert.ok(text.includes(kind === 'moon' ? 'Moon' : 'Planet'));
-        assert.ok(text.includes('this level only'));
+        assert.ok(text.includes('Level cost:'));
+        assert.equal(await evaluate('document.querySelectorAll("[role=dialog] details").length'), 0);
         assert.equal(await evaluate('document.activeElement.getAttribute("aria-label")'), 'Close supply resources');
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         assert.equal(await evaluate('Array.from(document.querySelectorAll("input")).some(el => el.getBoundingClientRect().right > innerWidth)'), false);

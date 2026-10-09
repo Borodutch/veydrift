@@ -118,6 +118,9 @@ export class GameStateStore {
 
   clear(key: string): void {
     this.nextGeneration(key);
+    // A cleared identity must never lend its old promise to a new scope.
+    // Existing consumers may drain it; generation checks fence publication.
+    this.inFlight.delete(key);
     this.entries.delete(key);
     this.emit([key]);
   }
@@ -132,6 +135,7 @@ export class GameStateStore {
     for (const [key, entry] of this.entries) {
       if (entry.wallet !== normalized) continue;
       this.nextGeneration(key);
+      this.inFlight.delete(key);
       this.entries.delete(key);
       cleared.push(key);
     }
@@ -141,7 +145,7 @@ export class GameStateStore {
   /** Drop an inactive canonical key completely so dynamic route/query keys do
    * not accumulate for the lifetime of a browser tab. */
   forget(key: string): boolean {
-    if (this.inFlight.has(key) || this.subscriberCount(key) > 0) return false;
+    if (this.inFlight.has(key) || [...this.activeReads].some(read => read.key === key) || this.subscriberCount(key) > 0) return false;
     this.entries.delete(key);
     this.generations.delete(key);
     this.emit([key]);

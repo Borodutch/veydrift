@@ -687,6 +687,12 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "overview" || page === "galaxy" || page === "planet" || page === "rankings" || page === "raid-target-finder";
 }
 
+/** Preload only screens with direct Supply controls, never every route/planet. */
+export function shouldPreloadSupplyForPage(page: Page): boolean {
+  return page === "overview" || page === "infrastructure" || page === "research"
+    || page === "shipyard" || page === "defenses" || page === "moon";
+}
+
 export function shouldRefreshShipyardStateForPage(page: Page): boolean {
   return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
 }
@@ -3143,12 +3149,18 @@ export function PlayableMvpApp({
     crystal: 0,
     deuterium: 0,
   });
-  const batchSupplyQuery = backendData && account && batchSupplyTarget
-    ? backendData.queries.supplySources(account, batchSupplyTarget.planetId) : undefined;
+  // One target-scoped query serves readiness and the modal. Keeping the same
+  // descriptor identity reuses its in-flight/readied snapshot on open; Max never
+  // starts a network request. Off-route there is no speculative subscription.
+  const supplyReadPlanetId = batchSupplyTarget?.planetId
+    ?? (shouldPreloadSupplyForPage(page) ? activePlanetId : undefined);
+  const batchSupplyQuery = backendData && account && supplyReadPlanetId
+    ? backendData.queries.supplySources(account, supplyReadPlanetId) : undefined;
   const { snapshot: batchSupplySnapshot, isInitialLoading: batchSupplyLoading } = useBackendDataQuery(batchSupplyQuery);
   // Planet batch sources exclude the parent, but it can supply its own moon.
-  const batchSupplyParentQuery = backendData && account && batchSupplyTarget && batchSupplyTargetIsMoon
-    ? backendData.queries.shipyard(account, batchSupplyTarget.planetId) : undefined;
+  const preloadMoonParent = !batchSupplyTarget && (page === "moon" || (page === "overview" && activeBodyKind === "moon"));
+  const batchSupplyParentQuery = backendData && account && supplyReadPlanetId && (batchSupplyTarget ? batchSupplyTargetIsMoon : preloadMoonParent)
+    ? backendData.queries.shipyard(account, supplyReadPlanetId) : undefined;
   const { snapshot: batchSupplyParentSnapshot, isInitialLoading: batchSupplyParentLoading } = useBackendDataQuery(batchSupplyParentQuery);
   const batchSupplySources = useMemo(() => {
     if (!batchSupplySnapshot?.data || !batchSupplyTarget) return [];
@@ -3167,7 +3179,7 @@ export function PlayableMvpApp({
     batchSupplySourceLoadIdRef.current += 1;
     setBatchSupplyTarget(null);
     setBatchSupplySubmitting(false);
-  }, [account, backendData]);
+  }, [account, backendData, runtimeConfig.status === "ready" ? runtimeConfig.config.chainId : undefined]);
 
   const pendingAttackTargetId = pendingGalaxyMission
     && (pendingGalaxyMission.action.kind === "attack" || pendingGalaxyMission.action.kind === "missileAttack")
@@ -4464,9 +4476,14 @@ export function PlayableMvpApp({
       setBatchSupplyInitialRequested(initialRequested ?? { metal: 0, crystal: 0, deuterium: 0 });
       setBatchSupplyError(undefined);
       setBatchSupplySubmitting(false);
-      // One canonical query owns inventory and errors; opening revalidates just this target.
-      void backendData.queries.supplySources(account, target.planetId, { fresh: true }).read().catch(() => {});
-      if (targetIsMoon) void backendData.queries.shipyard(account, target.planetId, { fresh: true }).read().catch(() => {});
+      // Reuse a <5s readiness snapshot, otherwise refresh/coalesce this target.
+      // Confirmation still requests authoritative fresh:true reads past commits.
+      const sourceQuery = backendData.queries.supplySources(account, target.planetId);
+      if (!backendData.isFresh(sourceQuery.key)) void sourceQuery.read().catch(() => {});
+      if (targetIsMoon) {
+        const parentQuery = backendData.queries.shipyard(account, target.planetId);
+        if (!backendData.isFresh(parentQuery.key)) void parentQuery.read().catch(() => {});
+      }
     },
     [account, backendData],
   );

@@ -175,7 +175,7 @@ describe("overview planet sections", () => {
     expect(overviewSource).toContain("onSupply={onSupplyMoon ? () => onSupplyMoon(group.planet) : undefined}");
     expect(appSource).toContain("onSupplyMoon={(target) => handleOpenBatchSupply(target, undefined, true)}");
     expect(appSource).toContain("setBatchSupplyTargetIsMoon(targetIsMoon)");
-    expect(appSource).toContain("backendData && account && batchSupplyTarget && batchSupplyTargetIsMoon");
+    expect(appSource).toContain("backendData && account && supplyReadPlanetId && (batchSupplyTarget ? batchSupplyTargetIsMoon : preloadMoonParent)");
     expect(appSource).toContain("targetIsMoon={batchSupplyTargetIsMoon}");
   });
 

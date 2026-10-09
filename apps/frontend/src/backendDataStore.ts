@@ -1183,9 +1183,14 @@ export class BackendDataStore {
 
   setContext(wallet?: string, planetId?: string, chainId?: string): void {
     const nextWallet = wallet?.toLowerCase();
-    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainId !== this.contextChainId;
+    // Shell uses hex and gameplay uses decimal IDs. Unknown bootstrap values
+    // are not a different chain and must not erase already hydrated entries.
+    const chainChanged = Boolean(this.hasContext && chainId && this.contextChainId
+      && !sameChainId(chainId, this.contextChainId));
+    const chainLearned = Boolean(chainId && !this.contextChainId);
+    const changed = !this.hasContext || nextWallet !== this.contextWallet || chainChanged || chainLearned;
     this.hasContext = true;
-    this.contextChainId = chainId;
+    this.contextChainId = chainId ?? this.contextChainId;
     if (!changed) return;
     const previousWallet = this.contextWallet;
     this.contextWallet = nextWallet;
@@ -1197,12 +1202,21 @@ export class BackendDataStore {
     // cache and makes accidental old-account projections possible. Clear only
     // wallet-scoped entries; public/global feeds remain shared and an older
     // in-flight wallet response is generation-blocked by `clear`.
-    if (!previousWallet || previousWallet === nextWallet) return;
+    // The same wallet on a new chain must not reuse a preloaded inventory.
+    if (!previousWallet || (previousWallet === nextWallet && !chainChanged)) return;
     const walletTag: BackendDataTag = `wallet:${previousWallet}`;
+    const sameWalletChainChange = previousWallet === nextWallet && chainChanged;
+    const restart: RegisteredResource[] = [];
     for (const resource of [...this.resources.values()]) {
       if (!resource.tags.has(walletTag)) continue;
       this.cancelEviction(resource.key);
       this.resources.delete(resource.key);
+      if (sameWalletChainChange) {
+        // Keep mounted query ownership, but retire the old transport lifecycle.
+        const replacement = { ...resource };
+        this.resources.set(resource.key, replacement);
+        restart.push(replacement);
+      }
       this.trailingInvalidations.delete(resource.key);
       this.trailingInvalidationSettlements.delete(resource.key);
       this.state.clear(resource.key);
@@ -1212,6 +1226,15 @@ export class BackendDataStore {
     // account-owned data and must not survive a wallet switch merely because
     // no screen happened to register their source resource first.
     this.state.clearWallet(previousWallet);
+    if (sameWalletChainChange) {
+      // Hook identity remains the same, so its mount effect cannot restart it.
+      // Restart only live subscriptions after every old snapshot is fenced.
+      for (const resource of restart) {
+        if (this.canRefreshResource(resource)) void this.readRegisteredResource(resource).catch(() => {});
+        else this.scheduleEviction(resource.key);
+      }
+      return;
+    }
 
     // Provider/account effects release their own references as they rerender,
     // but an immediate close prevents an old wallet's EventSource from
@@ -1963,7 +1986,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
   private readRegisteredResource(resource: RegisteredResource): Promise<unknown> {
     const read = this.state.read(resource.key, resource.load, resource.options);
     void read.finally(() => {
-      this.flushTrailingInvalidation(resource.key);
+      if (this.resources.get(resource.key) === resource) this.flushTrailingInvalidation(resource.key);
       this.scheduleEviction(resource.key);
     }).catch(() => { /* The canonical entry carries the failure. */ });
     return read;

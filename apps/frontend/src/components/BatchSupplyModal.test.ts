@@ -8,6 +8,17 @@ import {
 const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", import.meta.url)).text();
 
 describe("Batch Supply source row presentation", () => {
+  test("keeps source cargo and mode controls visible without duplicated shipments", () => {
+    expect(batchSupplyModalSource).not.toContain("<details");
+    expect(batchSupplyModalSource).not.toContain("<summary");
+    expect(batchSupplyModalSource).not.toContain("Ships return after delivery");
+    expect(batchSupplyModalSource).not.toContain("Proposed shipments");
+    expect(batchSupplyModalSource).toContain("aria-label={label} title={label} aria-pressed={mission === kind}");
+    expect(batchSupplyModalSource).toContain("Ships · planned / available");
+    expect(batchSupplyModalSource).toContain("Selected cargo");
+    expect(batchSupplyModalSource).toContain("Available: M");
+    expect(batchSupplyModalSource).toContain("disabled={!checked || loading");
+  });
   test("Max shares all preview inputs and submission uses that same preview", () => {
     expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
     expect(batchSupplyModalSource).toContain("setSelectedSourceIds(suggestBatchSupplySourceIds(");

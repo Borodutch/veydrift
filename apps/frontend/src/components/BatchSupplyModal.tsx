@@ -1,6 +1,6 @@
 import type { LevelSupplyRequest, LevelSupplyPreview } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
-import { Check, PackagePlus } from "lucide-preact";
+import { Check, PackagePlus, ArrowRightLeft, MapPin } from "lucide-preact";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
@@ -119,7 +119,7 @@ export function BatchSupplyModal({
         event.preventDefault(); event.stopImmediatePropagation(); closeRef.current();
       }
       if (event.key === "Tab") {
-        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, [tabindex="0"]') ?? []).filter(element => element.getClientRects().length > 0);
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]') ?? []).filter(element => element.getClientRects().length > 0);
         const first = controls[0], last = controls[controls.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
         if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -279,30 +279,27 @@ export function BatchSupplyModal({
       panelClassName="flex min-w-0 max-w-3xl flex-col !overflow-hidden [touch-action:manipulation] [overflow-wrap:anywhere]"
       panelRef={dialogRef}
     >
-      <div className="shrink-0 px-4 pt-4 pb-2"><ModalHeader closeLabel="Close supply resources" icon={PackagePlus} onClose={onClose} title={`Supply ${targetLabel}`} />
-
-      </div>
+      <div className="shrink-0 px-4 pt-4 pb-2"><ModalHeader closeLabel="Close supply resources" icon={PackagePlus} onClose={onClose} title={
+        <span className="flex min-w-0 items-center justify-between gap-2">
+          <span className="min-w-0">Supply {targetLabel}</span>
+          <span className="inline-flex shrink-0 rounded-lg border border-white/15 bg-black/20 p-0.5" role="group" aria-label="Mission type">
+            {(["transport", "deploy"] as const).map(kind => {
+              const Icon = kind === "transport" ? ArrowRightLeft : MapPin;
+              const label = kind === "transport" ? "Transport" : "Deploy";
+              return <button key={kind} type="button" aria-label={label} title={label} aria-pressed={mission === kind}
+                disabled={loading || actionPending || transactionPending}
+                onClick={() => { maximum.cancel(); setMission(kind); }}
+                className={"grid h-8 w-8 place-items-center rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50 " + (mission === kind ? "bg-cyan-300/20 text-cyan-100" : "text-slate-400 hover:text-white")}>
+                <Icon aria-hidden="true" size={16} />
+              </button>;
+            })}
+          </span>
+        </span>
+      } /></div>
       <div className="grid min-h-0 content-start gap-3 overflow-y-auto overscroll-contain px-4 pb-3 [overflow-anchor:none]" data-supply-scroll>
-      <section className="grid gap-2" aria-label="Supply mission">
-        <div className="inline-flex justify-self-start rounded-lg border border-white/15 bg-black/20 p-0.5" role="group" aria-label="Mission type">
-          {(["transport", "deploy"] as const).map((kind) => (
-            <button key={kind} type="button" aria-pressed={mission === kind}
-              disabled={loading || actionPending || transactionPending}
-              onClick={() => setMission(kind)}
-              className={"min-h-8 rounded-md px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50 " + (mission === kind ? "bg-cyan-300/20 text-cyan-100" : "text-slate-400 hover:text-white")}>
-              {kind === "transport" ? "Transport" : "Deploy"}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-slate-300">{plan.shipsReturn ? "Ships return after delivery." : "Delivers resources and leaves the planned ships at the destination. No return trip."}</p>
-      </section>
-
       {upgrade ? <section aria-label="Upgrade requirement" className="grid gap-1 text-xs text-slate-300">
         <strong className="text-sm text-white">{upgrade.label} · Level {upgrade.level} · {targetIsMoon ? "Moon" : "Planet"} {target.coordinates}</strong>
-        <details><summary className="cursor-pointer text-slate-400">Level cost and help</summary>
-          <p>Cost for this level only, not the sum of prerequisite levels. Supply does not start or unlock the upgrade. Energy cannot be shipped.</p>
-          {preview ? <p>Requirement: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p> : null}
-        </details>
+        {preview ? <p>Level cost: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p> : null}
         {preview && resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
         {preview && (["metal", "crystal", "deuterium"] as const).some(key => preview.missing[key] !== requestedNumbers[key]) ? <p className="text-amber-100">Current shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}. Refresh to replace your reviewed totals.</p> : null}
         {!preview ? <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p> : null}
@@ -319,21 +316,14 @@ export function BatchSupplyModal({
         <button type="button" className="min-h-8 rounded border border-amber-200/30 px-2" disabled={actionPending || transactionPending || loading} onClick={recalculate}>Review latest inventory</button>
       </div> : null}
       {targetIsMoon ? <p className="text-sm text-slate-300">Moon Supply uses one source per mission. Select a source and review before launching.</p> : null}
-      <section className="grid gap-2" aria-label="Proposed shipments">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Proposed shipments</h3>
-          <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs" disabled={loading || actionPending || transactionPending} onClick={autoPlan}>Auto-plan cargo</button>
-        </div>
-        <p className="text-xs text-slate-400">Fewer shipments first; compare fuel and ETA below.</p>
-        {plan.orders.map(order => <div key={order.originPlanetId} className="rounded border border-cyan-300/15 px-2 py-1.5 text-xs">
-          <strong className="text-cyan-100">{order.originLabel}</strong> · M {format(order.cargo.metal)} · C {format(order.cargo.crystal)} · D {format(order.cargo.deuterium)}
-          <div className="text-slate-400">{supplyShips.filter(({ key }) => order.ships[key] > 0).map(({ key, label }) => format(order.ships[key]) + " " + label).join(", ")} · Fuel {format(order.fuelCost)} D · {formatDuration(order.travelSeconds)}</div>
-        </div>)}
-      </section>
-      <details data-supply-amounts>
-        <summary className="cursor-pointer py-1 text-sm text-cyan-100">Edit resource totals / Max</summary>
-      <section className="grid grid-cols-[repeat(auto-fit,minmax(10.5rem,1fr))] gap-2" aria-label="Resources to send">
+      <div data-supply-amounts>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Resources to send</h3>
+        <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs" disabled={loading || actionPending || transactionPending} onClick={autoPlan}>Auto-plan cargo</button>
+      </div>
+      <section className="grid grid-cols-3 gap-2" aria-label="Resources to send">
         {(["metal", "crystal", "deuterium"] as const).map((resource) => (
-          <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg surface-inset px-2 py-1.5" key={resource}>
+          <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded-lg surface-inset px-2 py-1.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-2" key={resource}>
             <span className="text-xs font-bold uppercase tracking-wide text-slate-300">{resource === "metal" ? "M" : resource === "crystal" ? "C" : "D"}</span>
             <span className="contents">
               <input
@@ -346,7 +336,7 @@ export function BatchSupplyModal({
                 placeholder="0"
                 value={requested[resource]}
               />
-              <button aria-busy={maximum.busy === resource} className="min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" disabled={loading || actionPending || transactionPending} onClick={() => maximum.start(resource)} type="button">Max</button>
+              <button aria-busy={maximum.busy === resource} className="col-span-2 min-h-8 whitespace-nowrap rounded border border-cyan-300/35 px-2 sm:col-span-1 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10" disabled={loading || actionPending || transactionPending} onClick={() => maximum.start(resource)} type="button">Max</button>
             </span>
           </label>
         ))}
@@ -358,16 +348,15 @@ export function BatchSupplyModal({
       </div>
       {maximum.error ? <p role="alert" className="text-sm text-red-100">{maximum.error}</p> : null}
 
-      </details>
-      <details data-supply-details>
-        <summary className="cursor-pointer py-2 text-sm text-cyan-100">Sources and manual allocation · {selected.size}/{selectableSourceCount} selected</summary>
-        <p className="mb-2 text-xs text-slate-400">Auto-plan compares a bounded set of source combinations, not a global fastest or cheapest route.</p>
-        <button type="button" className="mb-2 min-h-8 rounded border border-white/20 px-2 text-xs" disabled={loading || actionPending || transactionPending} onClick={recalculate}>Recalculate with latest stock</button>
-        <p className="mb-2 text-xs text-slate-400">Cargo ships are automatic. Enabling a combat type sends every available ship of that type. Select all ships includes the entire fleet; deselect types to keep them home.</p>
+      </div>
+      <div data-supply-details>
       <section className="grid gap-2" aria-label="Source planets">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-slate-100">Source planets</h3>
-          <span className="text-xs text-slate-400">{selected.size}/{selectableSourceCount} selected</span>
+          <h3 className="shrink-0 text-sm font-semibold text-slate-100">Sources</h3>
+          <span className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-400">
+            {selected.size}/{selectableSourceCount} selected
+            <button type="button" className="min-h-8 rounded border border-white/20 px-2" disabled={loading || actionPending || transactionPending} onClick={recalculate}>Recalculate with latest stock</button>
+          </span>
         </div>
         <div className="grid content-start border-t border-cyan-300/[0.08] pr-1">
           {loading && sources.length === 0 ? (
@@ -416,19 +405,20 @@ export function BatchSupplyModal({
                 </label>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                    <span className="truncate text-sm font-medium text-white">{source.label}</span>
+                    <span className="text-sm font-medium text-white">{source.label} <span className="whitespace-nowrap font-mono text-xs text-slate-400">[{source.coordinates.galaxy}:{source.coordinates.system}:{source.coordinates.position}]</span></span>
                     {order ? <span className="text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))} · Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
                   </span>
-                  <span className="mt-0.5 block text-xs text-slate-400">M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
+                  <span className="mt-0.5 block text-xs text-slate-400">Available: M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
                   <button type="button" className="mt-1 min-h-7 rounded border border-white/15 px-2 text-xs text-cyan-100" aria-label={"Use only " + source.label} disabled={loading || actionPending || transactionPending || Boolean(source.unavailableReason) || maxSources < 1} onClick={() => { maximum.cancel(); setDraftSources(sources); setSelectedSourceIds(new Set([source.planetId])); }}>Use only this source</button>
-                  {checked ? (
-                    <span className="mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5" aria-label={`${source.label} shipment`}>
+                  <span className="mt-2 block text-[11px] text-slate-400">Selected cargo</span>
+                  {(
+                    <span className="mt-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5" aria-label={`${source.label} shipment`}>
                       {(["metal", "crystal", "deuterium"] as const).map((resource) => (
                         <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded surface-inset px-1.5 py-1" key={resource}>
                           <span className="text-[10px] font-bold text-slate-400">{resource === "metal" ? "M" : resource === "crystal" ? "C" : "D"}</span>
                           <input
                             aria-label={`${source.label} ${resource} to send`}
-                            disabled={loading || actionPending || transactionPending}
+                            disabled={!checked || loading || actionPending || transactionPending || Boolean(source.unavailableReason)}
                             className="min-w-0 w-full bg-transparent font-mono text-xs text-white outline-none placeholder:text-slate-600"
                             inputMode="numeric"
                             min="0"
@@ -439,7 +429,7 @@ export function BatchSupplyModal({
                       ))}
                       {hasManualCargo ? <button className="min-h-7 rounded border border-white/15 px-1.5 text-[10px] font-semibold text-slate-300 hover:bg-white/10" disabled={loading || actionPending || transactionPending} onClick={() => restoreAutomaticSourceCargo(source.planetId)} type="button">Auto</button> : <span aria-hidden="true" />}
                     </span>
-                  ) : null}
+                  )}
                   {shipmentAdjusted ? <span className="mt-1 block text-[11px] text-amber-200">Planned cargo is lower than your manual request. Review stock, capacity and fuel.</span> : null}
                   <span className="mt-2 flex flex-wrap items-center gap-1.5">
                     <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs text-cyan-100"
@@ -455,10 +445,10 @@ export function BatchSupplyModal({
                         setFleetModesBySource(current => ({ ...current, [source.planetId]: "auto" }));
                         setShipTypesBySource(current => ({ ...current, [source.planetId]: defaultSupplyShipTypes }));
                       }}>Reset to automatic cargo</button> : null}
-                    <span className="text-xs text-slate-400">{fleetModesBySource[source.planetId] === "all" ? "All selected ships" : "Automatic cargo + all selected combat ships"}</span>
+                    <span className="text-xs text-slate-400">{fleetModesBySource[source.planetId] === "all" ? "All selected ships" : "Auto cargo · selected combat ships"}</span>
                   </span>
                   <span className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Planned fleet</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ships · planned / available</span>
                     <span className="flex flex-wrap gap-1.5" role="group" aria-label={`Planned fleet at ${source.label}`}>
                       {supplyShips.filter(({ key }) => (source.ships[key] ?? 0) > 0).map(({ key, label }) => {
                         const included = allowedShipTypes.includes(key);
@@ -475,7 +465,7 @@ export function BatchSupplyModal({
                             })}>
                             <span className={"inline-flex items-center gap-0.5 rounded border p-0.5 text-[10px] group-hover:border-cyan-300/60 " + (included ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400")}>
                               <img alt="" className={"h-5 w-5 rounded object-contain " + (included ? "" : "opacity-50")} loading="lazy" src={shipAssetByKey[key]} />
-                              <span id={`supply-planned-${source.planetId}-${key}`}>×{format(order?.ships[key] ?? 0)}<span className="sr-only"> planned</span></span>
+                              <span id={`supply-planned-${source.planetId}-${key}`}>×{format(order?.ships[key] ?? 0)}<span className="sr-only"> planned</span> / {format(source.ships[key] ?? 0)}<span className="sr-only"> available</span></span>
                             </span>
                           </button>
                         );
@@ -494,7 +484,7 @@ export function BatchSupplyModal({
         </div>
       </section>
 
-      </details>
+      </div>
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
         {!loading && fleetSlotsKnown && maxSources === 0 ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">All fleet slots are currently occupied. Wait for a fleet to return or research Computer Technology before supplying this planet.</p> : null}
         {plan.sourceLimitReached ? <p className="rounded border border-amber-300/30 bg-amber-300/10 p-2 text-sm text-amber-100">Select at most {maxSources} sources because that is your current fleet-slot capacity.</p> : null}
