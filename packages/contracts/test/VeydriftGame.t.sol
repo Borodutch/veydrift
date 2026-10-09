@@ -13017,7 +13017,9 @@ contract VeydriftGameTest is Test {
         );
         VeydriftGame deployedGame = VeydriftGame(
             payable(deployCode(
-                    "VeydriftGame.sol:VeydriftGame",
+                    // Explicit production artifact: the tests profile also emits an unoptimized
+                    // Game artifact, and name-only getCode can select it after other test builds.
+                    "VeydriftGame.sol:VeydriftGame:0.8.28:default",
                     abi.encode(
                         owner,
                         address(firstPlanetSettlementModule),

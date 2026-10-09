@@ -668,7 +668,12 @@ contract VeydriftGame is VeydriftResourceReserves {
                 || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38
         ) {
             _delegateToFirstPlanetSettlementModule();
-        } else if (msg.sig == 0x9c26e0be || msg.sig == 0xc47915ea) {
+        } else if (
+            msg.sig == 0x9c26e0be || msg.sig == 0xc47915ea
+                || msg.sig == VeydriftBatchTransportModule.launchBodyTransportBatch.selector
+                || msg.sig == VeydriftBatchTransportModule.launchBodyDeployBatch.selector
+                || msg.sig == VeydriftBatchTransportModule.moonSupplyBatchVersion.selector
+        ) {
             (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
             assembly ("memory-safe") {
                 switch ok
