@@ -336,6 +336,8 @@ def transition(state, sample, now):
         item['active'] = item['streak'] >= threshold if bad else False
     # Retain uncertain attempts without blocking unrelated signal delivery.
     held = state.setdefault('held', [])
+    if state.get('sender'):
+        return state.get('pending')  # sampling progresses; external send still fenced
     if state.get('pending'):
         if not delivery_hold(state['pending']):
             return state['pending']
@@ -358,14 +360,22 @@ def transition(state, sample, now):
     changes = changes[:12]
     if len(held) >= MAX_HELD:
         changes = []
-    if not changes:
+    escalation = next((e for e in held if not e.get('diagnostic') and not e.get('escalationCreated')), None) if len(held) < MAX_HELD else None
+    if escalation:
+        changes = []
+    if not changes and not escalation:
         return None
     state['sequence'] = state.get('sequence', 0) + 1
     event = hashlib.sha256(json.dumps([state['sequence'], now, changes]).encode()).hexdigest()[:24]
     text = '#61 Base / resolver monitoring; event ' + event + '. ' + '; '.join(
         ('ALERT ' if active else 'RECOVERED ') + key for key, active in changes)
+    if escalation:
+        escalation['escalationCreated'] = event
+        text = '#61 Base / resolver monitoring; event ' + event + '. DELIVERY CUSTODY UNCERTAIN for ' + escalation['eventId'] + '; inspect exact provider receipt; never resend the original event'
     state['pending'] = {'eventId': event, 'text': text + ('. Delivery custody degraded: ' + str(len(held)) + ' uncertain events retained; operator reconciliation required.' if held else '') + '. Inspect; no automatic restart or failover.', 'changes': changes,
                         'delivery': {'status': 'ready'}}
+    if escalation:
+        state['pending']['diagnostic'] = True
     return state['pending']
 
 
@@ -382,6 +392,8 @@ def acknowledge(state, event, receipt, now):
         raise ValueError('matching event and successful numeric delivery receipt required')
     for key, active in pending['changes']:
         state['incidents'][key].update(notified=active, at=now)
+    if (state.get('sender') or {}).get('eventId') == event:
+        state['sender'] = None
     state['lastAck'] = {'eventId': event, 'receipt': receipt}
     if state.get('pending') is pending:
         state['pending'] = None
@@ -394,6 +406,7 @@ def custody(state):
     if state.get('pending') and delivery_hold(state['pending']):
         events.append(state['pending'])
     return {'status': 'degraded' if events else 'clear', 'heldCount': len(events),
+            'sender': state.get('sender'),
             'eventIds': [e['eventId'] for e in events],
             'capacity': MAX_HELD, 'capacityReached': len(events) >= MAX_HELD,
             'action': 'Reconcile exact provider receipts; never blind resend. Covered signals are fenced; sampling continues.' if events else None}
@@ -415,15 +428,40 @@ def held_output(event):
 def claim(state, event, now):
     pending = state.get('pending')
     if not pending or pending['eventId'] != event:
-        raise ValueError('matching pending event required')
+        return {'status': 'not-current', 'eventId': event}
+    if state.get('sender'):
+        return {'status': 'sender-held', 'eventId': event}
     if delivery_hold(pending):
         return held_output(pending)
     pending['delivery'] = {'status': 'uncertain', 'claimedAt': now}
+    state['sender'] = {'eventId': event, 'claimedAt': now}
     return {'status': 'claimed', 'eventId': event}
+
+
+def finish_send(state, event):
+    # Only after the async tool returned/threw; NOT delivery retry authorization.
+    sender = state.get('sender')
+    if sender and sender['eventId'] == event:
+        state['sender'] = None
+    elif sender:
+        raise ValueError('different sender owns state')
+    return {'status': 'send-finished', 'eventId': event}
+
+
+def abandon_sender(state, event, evidence, now):
+    # Operator stops/drains job and proves no outstanding invocation first.
+    if not re.fullmatch(r'[A-Za-z0-9:_./-]{1,160}', evidence):
+        raise ValueError('private terminal-run evidence required')
+    if (state.get('sender') or {}).get('eventId') != event:
+        raise ValueError('matching sender fence required')
+    finish_send(state, event)
+    state['lastSenderReconciliation'] = {'eventId': event, 'evidence': evidence, 'at': now}
 
 
 def release_not_delivered(state, event, evidence, now):
     # Operator-only reconciliation, NEVER automatic from an exception or delivered=false.
+    if state.get('sender'):
+        raise ValueError('sender must be stopped and reconciled before releasing delivery')
     pending = find_event(state, event)
     if (not pending or not delivery_hold(pending)
             or not re.fullmatch(r'[A-Za-z0-9:_./-]{1,160}', evidence)):
@@ -467,6 +505,8 @@ def main():
     action = p.add_mutually_exclusive_group()
     action.add_argument('--ack')
     action.add_argument('--claim')
+    action.add_argument('--finish-send')
+    action.add_argument('--abandon-sender')
     action.add_argument('--release-not-delivered')
     p.add_argument('--receipt')
     p.add_argument('--evidence', default='')
@@ -488,6 +528,11 @@ def main():
             output = {'status': 'acknowledged', 'eventId': args.ack}
         elif args.claim:
             output = claim(state, args.claim, now)
+        elif args.finish_send:
+            output = finish_send(state, args.finish_send)
+        elif args.abandon_sender:
+            abandon_sender(state, args.abandon_sender, args.evidence, now)
+            output = {'status': 'sender-reconciled', 'eventId': args.abandon_sender}
         elif args.release_not_delivered:
             release_not_delivered(state, args.release_not_delivered, args.evidence, now)
             output = {'status': 'released', 'eventId': args.release_not_delivered}

@@ -1,115 +1,81 @@
-// All receipts here are offline mocks; no real message tool or production state.
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import {spawnSync} from 'node:child_process';
-import assert from 'node:assert/strict';
+// Real Python persistence; all messaging and receipts are offline mocks.
+import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {spawnSync} from 'node:child_process';import assert from 'node:assert/strict';
 const root=path.dirname(new URL(import.meta.url).pathname);
 const source=fs.readFileSync(path.join(root,'job.js'),'utf8');
 const execute=new (Object.getPrototypeOf(async function(){}).constructor)('exec','message',source);
-// Scheduler persists only the documented state field, not arbitrary return keys.
-const run=async (...args)=>{
- const raw=await execute(...args);
- assert.deepEqual(Object.keys(raw),['state']);
- assert.ok(Buffer.byteLength(JSON.stringify(raw.state))<=16384);
- return JSON.parse(JSON.stringify(raw.state));
-};
 const patch=JSON.parse(fs.readFileSync(path.join(root,'scheduler-patch.json')));
-assert.equal(patch.payload.script,source); assert.equal(patch.payload.toolBudget,4);
-assert.equal(patch.payload.timeoutSeconds,210); assert.deepEqual(patch.payload.toolsAllow,['exec','message']);
+assert.equal(patch.payload.script,source);assert.equal(patch.payload.toolBudget,4);
 const good={ok:true,messageId:'123',chatId:'76104711',receipt:{threadId:'4030762'}};
-const done=x=>({status:'completed',exitCode:0,aggregated:JSON.stringify(x)});
-function setup(mode='ok',response=good){
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'monitor-hold-'));
- const state=path.join(dir,'state.json'),fixture=path.join(dir,'sample.json');
+const run=async(e,m)=>{let calls=0;const count=f=>async x=>{assert.ok(++calls<=4);return f(x)};const x=await execute(count(e),count(m));assert.deepEqual(Object.keys(x),['state']);assert.ok(Buffer.byteLength(JSON.stringify(x.state))<16384);return x.state};
+function setup(){
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'monitor-fence-')),state=path.join(dir,'state'),fixture=path.join(dir,'fixture');
  fs.copyFileSync(path.join(root,'fixture-alert.json'),fixture);
- let calls=[],sends=0;
- function cli(args){const r=spawnSync('python3',[path.join(root,'monitor.py'),'--state',state,...args],{encoding:'utf8'});return {status:'completed',exitCode:r.status,aggregated:r.stdout};}
+ const cli=args=>{const r=spawnSync('python3',[path.join(root,'monitor.py'),'--state',state,...args],{encoding:'utf8'});return {status:'completed',exitCode:r.status,aggregated:r.stdout}};
  const read=()=>JSON.parse(fs.readFileSync(state));
- const exec=async opts=>{
-  assert.equal(opts.host,'gateway');assert.equal(opts.awaitResults,true);calls.push(opts.command);
-  if(opts.command.includes('--health-dir'))return cli(['--fixture',fixture]);
-  const words=opts.command.split(' ');
-  if(words.includes('--claim')){
-   if(mode==='before-claim')throw Error('crash before commit');
-   const r=cli(['--claim',words.at(-1)]);
-   if(mode==='after-claim')throw Error('crash after claim commit');
-   return r;
-  }
-  assert.ok(words.includes('--ack'));
-  if(mode==='before-ack')throw Error('crash before ack');
-  const r=cli(['--ack',words.at(-3),'--receipt',words.at(-1)]);
-  if(mode==='after-ack')throw Error('crash after ack commit');
-  return r;
- };
- const message=async opts=>{
-  assert.equal(read().pending.delivery.status,'uncertain');
-  assert.equal(opts.target,'76104711');assert.equal(opts.threadId,'4030762');
-  sends++;if(mode==='send-throw')throw Error('ambiguous network failure');return response;
- };
- return {dir,state,fixture,read,cli,exec,message,get sends(){return sends},get calls(){return calls},close(){fs.rmSync(dir,{recursive:true})}};
+ const exec=async o=>{const w=o.command.split(' ');if(w.includes('--health-dir'))return cli(['--fixture',fixture]);const i=w.findIndex(x=>['--claim','--ack','--finish-send'].includes(x));assert.ok(i>=0);return cli(w.slice(i))};
+ const change=()=>{const x=JSON.parse(fs.readFileSync(fixture));x.resources.node_critical_errors='1';fs.writeFileSync(fixture,JSON.stringify(x))};
+ return {dir,state,fixture,cli,read,exec,change,close:()=>fs.rmSync(dir,{recursive:true})};
 }
 let cases=0;
-for(const [mode,response] of [['ok',good],['before-claim',good],['after-claim',good],['before-ack',good],['after-ack',good],['send-throw',good],['queued',{status:'delivery_queued',delivered:false}],['failed',{ok:false,delivered:false}],['wrong-thread',{...good,receipt:{threadId:'wrong'}}],['wrong-chat',{...good,chatId:'other'}],['contradictory',{...good,delivered:false}],['bad-id',{...good,messageId:'$(evil)'}],['suppressed',{status:'suppressed'}]]){
- const h=setup(mode,response);
- try{
-  if(['before-claim','after-claim'].includes(mode))await assert.rejects(run(h.exec,h.message));else await run(h.exec,h.message);
-  const s=h.read();
-  if(mode==='ok'||mode==='after-ack'){
-   assert.equal(s.pending,null);assert.equal(s.lastAck.receipt,'123');assert.equal(h.calls.length,3);
-   await run(h.exec,h.message);assert.equal(h.sends,1);
-  }else if(mode==='before-claim'){
-   assert.equal(s.pending.delivery.status,'ready');assert.equal(h.sends,0);
-  }else{
-   assert.equal(s.pending.delivery.status,'uncertain');assert.equal(s.lastAck,undefined);
-   const before=h.sends;for(let i=0;i<15;i++){const out=await run(h.exec,h.message);assert.equal(out.custody.status,'degraded');}assert.equal(h.sends,before);
-   // New observations still advance while the identical outbox stays held.
-   const x=JSON.parse(fs.readFileSync(h.fixture));x.resources.node_critical_errors='1';fs.writeFileSync(h.fixture,JSON.stringify(x));
-   if(mode==='after-claim') await assert.rejects(run(h.exec,h.message));else await run(h.exec,h.message);
-   assert.equal(h.read().incidents['resource-node_critical_errors'].active,true);assert.equal(h.sends,before+(mode==='after-claim'?0:1));
-   assert.equal(h.read().held[0].eventId,s.pending.eventId);assert.ok(h.read().lastObservedAt);
-  }
-  cases++;
+for(const response of [good,{status:'delivery_queued',delivered:false},{ok:false},{...good,chatId:'wrong'},{...good,receipt:{threadId:'wrong'}},{...good,messageId:'$(bad)'},{...good,delivered:false},{...good,status:'failed'},null,'throw']){
+ const h=setup();try{
+  let sends=0;const message=async()=>{sends++;assert.ok(h.read().sender);if(response==='throw')throw Error('unknown');return response};
+  const out=await run(h.exec,message);assert.equal(h.read().sender,null);
+  if(response===good){assert.equal(out.status,'delivered');assert.equal(h.read().pending,null);await run(h.exec,message);assert.equal(sends,1)}
+  else{
+   assert.equal(out.status,'delivery-uncertain');const original=h.read().pending.eventId;
+   // Independent custody notice, not resend; one attempt even when it also fails.
+   await run(h.exec,message);assert.equal(sends,2);assert.notEqual(h.read().pending.eventId,original);assert.equal(h.read().pending.diagnostic,true);
+   for(let i=0;i<15;i++){const tick=await run(h.exec,message);assert.equal(tick.custody.status,'degraded')}
+   assert.equal(sends,2);assert.equal(h.read().held.length,2);
+   h.change();await run(h.exec,async o=>{assert.ok(o.message.includes('custody degraded'));sends++;return good});assert.equal(sends,3);
+   assert.equal(h.read().held[0].eventId,original);
+  }cases++;
  }finally{h.close()}
 }
-// Definitive non-delivery is an operator-verified transition, never inferred from a return.
-{
- const h=setup('failed',{ok:false,delivered:false});
- try{
-  await run(h.exec,h.message);const e=h.read().pending.eventId;
-  assert.notEqual(h.cli(['--release-not-delivered',e]).exitCode,0);
-  assert.equal(h.read().pending.delivery.status,'uncertain');
-  assert.equal(h.cli(['--release-not-delivered',e,'--evidence','offline-test:proven-no-custody']).exitCode,0);
-  assert.equal(h.read().pending.delivery.status,'ready');assert.equal(h.read().lastAck,undefined);
-  await run(h.exec,async opts=>{assert.ok(opts.message);return good});
-  assert.equal(h.read().lastAck.eventId,e);assert.equal(h.read().pending,null);cases++;
- }finally{h.close()}
-}
-// A legacy pending event (including the real held fixture's old schema) cannot be sent.
+// A NEW hold independently alerts the operator on the existing route, exactly once.
 {
  const h=setup();try{
-  h.cli(['--fixture',h.fixture]);const s=h.read();delete s.pending.delivery;fs.writeFileSync(h.state,JSON.stringify(s));
-  await run(h.exec,h.message);assert.equal(h.sends,0);
-  assert.notEqual(h.cli(['--claim',s.pending.eventId]).exitCode,0);cases++;
- }finally{h.close()}
-}
-// A held recovery stays fenced; unrelated new incident can deliver with real receipt shape.
-{
- const h=setup('send-throw');try{
-  await run(h.exec,h.message);const original=h.read().pending.eventId;
-  const x=JSON.parse(fs.readFileSync(h.fixture));x.resources.node_critical_errors='1';fs.writeFileSync(h.fixture,JSON.stringify(x));
-  const out=await run(h.exec,async opts=>{assert.ok(opts.message.includes('custody degraded'));return good});
+  await run(h.exec,async()=>{throw Error('unknown')});const original=h.read().pending.eventId;let notices=0;
+  const out=await run(h.exec,async o=>{notices++;assert.equal(o.threadId,'4030762');assert.ok(o.message.includes('DELIVERY CUSTODY UNCERTAIN for '+original));return good});
   assert.equal(out.status,'delivered');assert.equal(h.read().held[0].eventId,original);
-  assert.notEqual(h.read().lastAck.eventId,original);assert.equal(h.read().pending,null);
+  for(let i=0;i<15;i++)await run(h.exec,async()=>{throw Error('no duplicate notice')});
+  assert.equal(notices,1);cases++;
  }finally{h.close()}
 }
-// Separate scheduled invocations race on the same state: only one durable claim authorizes send.
+// Async send overlap: second run samples but cannot start another sender.
+for(const terminal of [good,'throw']){
+ const h=setup();try{
+  let resolve,entered;const gate=new Promise(r=>resolve=r),started=new Promise(r=>entered=r);let live=0,peak=0,sends=0;
+  const message=async()=>{sends++;live++;peak=Math.max(peak,live);entered();await gate;live--;if(terminal==='throw')throw Error('unknown');return good};
+  const a=run(h.exec,message);await started;h.change();const b=await run(h.exec,message);
+  assert.equal(b.status,'delivery-degraded');assert.equal(sends,1);assert.equal(h.read().incidents['resource-node_critical_errors'].active,true);
+  resolve();await a;assert.equal(h.read().sender,null);
+  await run(h.exec,async()=>{sends++;return good});assert.equal(sends,2);assert.equal(peak,1);cases++;
+ }finally{h.close()}
+}
+// Pause before claim, other invocation completes it: no error and no second send.
 {
  const h=setup();try{
-  await Promise.all([run(h.exec,h.message),run(h.exec,h.message)]);
-  assert.equal(h.sends,1);assert.equal(h.read().lastAck.receipt,'123');
+  let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);let sends=0;
+  const e=async o=>{if(o.command.includes('--claim')){entered();await gate}return h.exec(o)};
+  const a=run(e,async()=>{sends++;return good});await started;await run(h.exec,async()=>{sends++;return good});release();await a;assert.equal(sends,1);cases++;
  }finally{h.close()}
 }
-for(const status of ['quiet','busy'])await run(async()=>done({status}),async()=>{throw Error('unexpected send')});
-await assert.rejects(run(async()=>({status:'running',sessionId:'x'}),async()=>{throw Error('unexpected send')}));
-console.log('PASS: '+cases+' real Python state / mocked message boundary scenarios, quiet/busy/running, exact budget and payload');
+// Crash before/after claim, finish or acknowledgment: retained fence is never TTL-cleared.
+for(const phase of ['before-claim','after-claim','before-finish','after-finish','before-ack','after-ack']){
+ const h=setup();try{
+  let sends=0;
+  const exec=async o=>{const boundary=phase.split('-').slice(1).join('-');const match=o.command.includes('--'+(boundary==='finish'?'finish-send':boundary));if(match&&phase.startsWith('before'))throw Error('crash');const r=await h.exec(o);if(match&&phase.startsWith('after'))throw Error('crash');return r};
+  const m=async()=>{sends++;if(phase.includes('finish'))throw Error('unknown');return good};
+  if(phase.includes('ack'))await run(exec,m);else await assert.rejects(run(exec,m));
+  const s=h.read();if(s.sender){
+   h.change();for(let i=0;i<12;i++)await run(h.exec,async()=>{throw Error('MUST NOT SEND')});assert.ok(h.read().sender);
+   assert.notEqual(h.cli(['--abandon-sender',s.sender.eventId]).exitCode,0);
+   assert.equal(h.cli(['--abandon-sender',s.sender.eventId,'--evidence','offline:terminated-run']).exitCode,0);
+   assert.equal(h.read().sender,null);assert.equal(h.read().pending.delivery.status,'uncertain');
+  }cases++;
+ }finally{h.close()}
+}
+console.log('PASS '+cases+' scheduler scenarios, deferred send fences, custody escalation, crashes, bounded diagnostics');

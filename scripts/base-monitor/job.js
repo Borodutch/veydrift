@@ -20,16 +20,21 @@ const event = out.event;
 if (!event || !/^[a-f0-9]{24}$/.test(event.eventId) || typeof event.text !== 'string' || event.text.length > 3900 || !event.text.startsWith('#61 Base / resolver monitoring; event ' + event.eventId + '. ')) throw new Error('invalid monitor event');
 // Durable custody is committed BEFORE crossing the message boundary. No TTL/retry.
 const claimed = result(await exec({command:'python3 ' + program + ' --state ' + state + ' --claim ' + event.eventId,host:'gateway',timeoutSeconds:10,yieldMs:1000,awaitResults:true}));
-if (claimed.status === 'delivery-held' || claimed.status === 'busy') return report('delivery-degraded', {eventId:event.eventId});
+if (['delivery-held','sender-held','not-current','busy'].includes(claimed.status)) return report('delivery-degraded', {eventId:event.eventId});
 if (claimed.status !== 'claimed' || claimed.eventId !== event.eventId) throw new Error('monitor claim failed; no send');
+async function terminalUncertain() {
+  const done = result(await exec({command:'python3 ' + program + ' --state ' + state + ' --finish-send ' + event.eventId,host:'gateway',timeoutSeconds:10,yieldMs:1000,awaitResults:true}));
+  if (done.status !== 'send-finished' || done.eventId !== event.eventId) throw new Error('sender finish uncertain; inspect custody');
+  return report('delivery-uncertain', {eventId:event.eventId, custody:done.custody});
+}
 let sent;
 try {
   sent = await message({action:'send',channel:'telegram',accountId:'default',target:'76104711',threadId:'4030762',message:event.text});
 } catch (_) {
-  return report('delivery-uncertain', {eventId:event.eventId, custody:claimed.custody});
+  return await terminalUncertain();
 }
 // Code Mode projects jsonResult.details; no successful receipt means no acknowledgment.
-if (!sent || sent.ok !== true || sent.delivered === false || sent.status === 'delivery_queued' || !/^[0-9]{1,128}$/.test(String(sent.messageId)) || String(sent.chatId) !== '76104711' || String(sent.receipt?.threadId) !== '4030762') return report('delivery-uncertain', {eventId:event.eventId, custody:claimed.custody});
+if (!sent || sent.ok !== true || sent.delivered === false || (sent.status !== undefined && !['sent','delivered','success'].includes(sent.status)) || !/^[0-9]{1,128}$/.test(String(sent.messageId)) || String(sent.chatId) !== '76104711' || String(sent.receipt?.threadId) !== '4030762') return await terminalUncertain();
 const receipt = String(sent.messageId);
 try {
   const ack = result(await exec({command:'python3 ' + program + ' --state ' + state + ' --ack ' + event.eventId + ' --receipt ' + receipt,host:'gateway',timeoutSeconds:10,yieldMs:1000,awaitResults:true}));

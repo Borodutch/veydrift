@@ -14,7 +14,15 @@ was corroborated by the activation owner: ok/messageId/chatId/receipt.threadId;
 a prior real failure threw at send, not at receipt parsing. Queued, suppressed,
 malformed, contradictory delivered=false, wrong chat/topic all remain uncertain.
 
-Next sample migrates an uncertain pending event, byte-for-byte, into held. Its
+Claim also persists a per-state sender fence spanning the asynchronous message
+call and its terminal persistence. While fenced, samples update but cannot migrate
+or propose another event. Success ack clears its matching fence; a returned/thrown
+message completes --finish-send, clearing only sender ownership, not delivery
+custody. Crash/timeout before that commit retains the fence forever: no TTL.
+
+After terminal sender completion, the next sample migrates uncertain pending into
+held. Original event identity/text/changes/delivery metadata are preserved; a
+bounded escalationCreated pointer may be added. Its
 covered signal keys are fenced against both reminders and recovery generation,
 so no new event ID disguises a retry. Unrelated signals continue through the one
 proposal slot and their messages disclose degraded custody. Samples always update
@@ -35,8 +43,19 @@ the scheduler. The next run receives it as trigger.state; the collector state
 remains authoritative. Do not expect arbitrary top-level result keys in history.
 Operator inspection must include the saved scheduler state, not just run status. This avoids perpetual
 error accounting and auto-disable. Real execution/persistence/invalid-result failures
-still throw to preserved scheduler failure routing. No automatic second-channel
-escalation is introduced (that would have its own ambiguous custody boundary).
+still throw to preserved scheduler failure routing. A newly held ordinary event creates ONE distinct custody-diagnostic proposal on
+the next tick, even without unrelated incidents, using the SAME original operator
+route and the SAME claim/send/ack custody machinery. It references the original
+event ID but does not replay its alert/recovery text. The diagnostic has no incident
+changes and never recursively creates another diagnostic. Its creation pointer is
+committed atomically with its proposal. An uncertain diagnostic remains held too,
+without repeat or alternate-channel retries. Capacity32 includes diagnostics.
+This adds at most one notification attempt per original held event, not per tick.
+A diagnostic receipt proves operator-route delivery, not original-event delivery.
+When the transport is unavailable, no push guarantee exists: persisted scheduler
+state/collector evidence and explicit operator reconciliation remain essential.
+A crashed outstanding sender also cannot send its diagnostic until the operator
+proves that invocation terminal and clears only the sender fence.
 The operator must act on custody degradation; an ok scheduler execution is NOT
 proof of successful notification delivery. The live acceptance gate explicitly
 requires an operator alert/receipt and reconciliation of the original uncertain
@@ -46,15 +65,19 @@ production event; green unit tests do not discharge it.
 
 1. Disable existing job through first-class scheduler and wait for its running tick
    to finish. Snapshot job and state. Inspect exact provider/tool/queue evidence.
-2. A proven matching delivered receipt allows monitor.py --state STATE --ack EVENT
+2. If sender is retained after a crash, prove the exact owning invocation terminal
+   and no message call outstanding, then --abandon-sender EVENT --evidence PRIVATE_REF.
+   This leaves uncertain event custody intact; it is NOT release/retry permission.
+   Never invoke scheduled --finish-send manually to bypass this evidence requirement.
+3. A proven matching delivered receipt allows monitor.py --state STATE --ack EVENT
    --receipt REAL_NUMERIC_ID. Ack searches both pending and held, updates only that
    event's incident notification state, and removes only its custody record.
    Existing lastAck with no matching event means no further mutation is needed.
-3. Authoritative NOT-delivered evidence PLUS absence of queued/in-flight custody
+4. Authoritative NOT-delivered evidence PLUS absence of queued/in-flight custody
    allows --release-not-delivered EVENT --evidence PRIVATE_REFERENCE. A held event
    moves to pending ready only if that slot is empty. Finish the current proposal
    first otherwise. This operator assertion is never inferred by scheduled code.
-4. Still unknown: leave held intact. Never delete state, reset notified flags, fake
+5. Still unknown: leave held intact. Never delete state, reset notified flags, fake
    a receipt, or resend. Continue sampling and unrelated signals with degraded
    results. Escalate exact evidence access need through the existing operator route.
 
@@ -81,3 +104,13 @@ read-only collection, labeled authorized alert + real ack + duplicate suppressio
 original production event reconciliation, enabled schedule and successive natural
 scheduled ok runs. Report custody separately even when scheduler says ok. Live
 acceptance/reconciliation remains with parent; this package performs no deployment.
+
+## Explicit release proof limitation
+
+Offline tests prove bounded diagnostic proposal, one attempt, receipt checks, no
+recursive retry, and sender exclusivity with a deferred tool call. They do NOT
+prove live diagnostic delivery or actual scheduler UI visibility. Activation owner
+must verify persisted scheduler state via first-class readback and a real labeled
+custody notice/receipt on topic4030762, without replaying historical held events.
+The original production recovery requires its own authoritative reconciliation.
+These are release gates, not cleared by successful tests or scheduler ok status.
