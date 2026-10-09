@@ -230,3 +230,17 @@ test("production fingerprints retract a warm completed projection after clock co
   expect(indexer.walletResponseCacheVersion(owner)).not.toBe(wallet);
   expect(indexer.launchableShipCounts("7")[0]?.count).toBe(0);
 });
+
+test("paid production and unknown battle outcomes retain distinct proof boundaries", () => {
+  const { indexer } = fixture("ship");
+  storedMission(indexer); // unresolved attack: its launched ships cannot return
+  setSystemTime(new Date(1030000));
+  indexer.recordResourceProjectionWatermark("2", "1009", "0x" + "a".repeat(64));
+  indexer.readConsistentSnapshot(() => {
+    expect(indexer.shipRows("7")[0]?.count).toBe(3); // known funded production
+    expect(indexer.planetQueue("7", "ship")).toBeNull();
+    expect(indexer.fleetSlots(owner).active).toBe(1);
+    expect(indexer.currentFleetResourceCredits("7", false).metal).toBe("0");
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(m => m.missionId)).toEqual(["1"]);
+  });
+});
