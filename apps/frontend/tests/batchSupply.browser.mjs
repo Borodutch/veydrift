@@ -177,7 +177,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         assert.ok(layout.modes.height>=40 && layout.close.height>=32, 'usable header targets');
         assert.equal(await evaluate(`document.querySelector('button[aria-label="Transport"] svg').classList.contains('lucide-package')`), true);
         assert.equal(await evaluate(`document.querySelector('button[aria-label="Deploy"] svg').classList.contains('lucide-rocket')`), true);
-        for (const copy of ['Auto-plan cargo','Resources to send','Use only this source','Selected cargo','Auto cargo · selected combat ships','All selected ships']) {
+        for (const copy of ['Recalculate with latest stock','Recalculate with latest block','Auto-plan cargo','Resources to send','Use only this source','Selected cargo','Auto cargo · selected combat ships','All selected ships']) {
           assert.equal(await evaluate('document.querySelector("[role=dialog]").innerText.includes(' + JSON.stringify(copy) + ')'), false, 'removed visible copy: ' + copy);
         }
         const compact = await evaluate(`[...document.querySelectorAll('[data-supply-source]')].filter(row=>!row.querySelector('input[type=checkbox]').checked).map(row=>({text:row.lastElementChild.innerText,controls:[...row.querySelectorAll('input,button')].map(el=>el.type)}))`);
@@ -248,6 +248,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate(launch + '.disabled'), true, 'failed exact preflight requires explicit review even if a server refresh repeats counts');
       await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');
       assert.equal(await evaluate(launch + '.disabled'), false, 'review permits another guarded simulation, not an automatic send');
+      assert.equal(await evaluate('[...document.querySelectorAll("button")].some(b => b.textContent === "Review latest inventory")'), false, 'recovery control disappears after explicit review');
     }
     // API/store boundary coverage lives in batchSupplyEffectiveInventory.test.ts.
     // Mount the same modal to prove refreshed effective counts drive real controls.
@@ -424,7 +425,6 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     assert.equal(await evaluate('staleMax.terminated'), true);
     await evaluate('staleMax.reply({data:{maximum:999999}})'); await settle();
     assert.equal(await amount('metal'), unchangedRequest, 'explicit cancellation still rejects a late worker result');
-    await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
       const expected = await amount('metal');

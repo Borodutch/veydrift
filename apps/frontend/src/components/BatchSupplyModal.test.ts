@@ -17,6 +17,7 @@ describe("Batch Supply source row presentation", () => {
     expect(batchSupplyModalSource).toContain("Ships · planned / available");
     expect(batchSupplyModalSource).not.toContain("Selected cargo");
     expect(batchSupplyModalSource).not.toContain("Auto-plan cargo");
+    expect(batchSupplyModalSource).not.toContain("Recalculate with latest");
     expect(batchSupplyModalSource).not.toContain("Use only this source");
     expect(batchSupplyModalSource).toContain("{checked ? <>");
     expect(batchSupplyModalSource).toContain("Available: M");
