@@ -23,8 +23,8 @@ async function fixture() {
   const apply = (event: string, quantity: bigint, total: bigint, block = 3n) => indexer.applyLog({ blockNumber: topic(block), blockTimestamp: topic(1030n), transactionHash: "0x" + event.slice(2, 10) + block, logIndex: "0x0", topics: [event, topic(1n), topic(4n)], data: event === planetShipCountChangedTopic ? words(total) : words(quantity, total) });
   indexer.applyLog({ blockNumber: "0x2", blockTimestamp: topic(1000n), transactionHash: "0xqueue", logIndex: "0x0", topics: [shipQueuedTopic, topic(1n), topic(4n)], data: words(3n, 1030n, 0n, 0n, 0n) });
   indexer.applyLog({ blockNumber: "0x2", blockTimestamp: topic(1000n), transactionHash: "0xqueue", logIndex: "0x1", topics: [shipQueueTimingSetTopic, topic(1n), topic(4n), topic(1030n)], data: words(1000n, 3n, 100n, 10n) });
-  const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true });
-  const fetcher = (async (input: RequestInfo | URL) => handler(new Request(String(input)))) as typeof fetch;
+  const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false });
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => handler(new Request(String(input), init))) as typeof fetch;
   let head = 2n;
   const anchor = (at = Math.floor(Date.now() / 1000)) => {
     // All fixture logs through this head have already been applied. Advancing

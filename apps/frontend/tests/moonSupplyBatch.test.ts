@@ -83,6 +83,6 @@ test("fresh multi-moon confirmation reads parent separately and rejects stale se
   const args = { queries, account, target, orders, targetIsMoon: true, shipTypesBySource: {}, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} };
   await prepareBatchSupplyConfirmation(args);
   await expect(prepareBatchSupplyConfirmation({ ...args, isCurrent: () => false })).rejects.toThrow("selection changed");
-  snapshotStale = true; await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("inventory changed");
+  snapshotStale = true; await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("Current fleet inventory is unavailable");
   snapshotStale = false; stale = true; await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("inventory changed");
 });

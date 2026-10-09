@@ -111,7 +111,7 @@ describe("VEY-KANEO-869 canonical activity", () => {
     const canonical = new VeydriftGameReader(config, { async request<T>(): Promise<T> { throw new Error("List reads must not call RPC"); } });
     const handler = createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical,
       enableResponseCache: true, sharedResponseCache: null, prewarmResponseCache: false });
-    const request = () => new Request(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
+    const request = () => nullableResourceRequest(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
     const before = await (await handler(request())).json();
     expect(before.rankings.total.find((row: { wallet: string }) => row.wallet === defender).attackProtection)
       .toMatchObject({ allowed: false, blockedReason: "score_protection", defenderInactive: false });
@@ -147,7 +147,7 @@ describe("VEY-KANEO-869 canonical activity", () => {
         const makeHandler = () => createRequestHandler({ role: "reader", config, indexer: f.indexer, chainReader: canonical,
           enableResponseCache: true, sharedResponseCache, prewarmResponseCache: false });
         const handler = makeHandler();
-        const request = () => new Request(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
+        const request = () => nullableResourceRequest(`http://localhost/highscores?currentWallet=${attacker}&includeAttackProtection=true&limit=10`);
         const protection = async (read: typeof handler) => {
           const response = await read(request());
           expect(response.status).toBe(200);
@@ -348,3 +348,10 @@ describe("VEY-KANEO-869 canonical activity", () => {
   });
 
 });
+
+// These tests inspect the nullable contract, not the unsupported legacy-client boundary.
+function nullableResourceRequest(input: string, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("accept", "application/json; resource-view=nullable-v1");
+  return new Request(input, { ...init, headers });
+}

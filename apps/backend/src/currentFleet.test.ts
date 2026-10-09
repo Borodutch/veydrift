@@ -7,6 +7,15 @@ const mission = (overrides: Partial<FleetMissionSummary> = {}): FleetMissionSumm
   cargo: { metal: "10", crystal: "20", deuterium: "30" }, returnCargo: null, ...overrides
 } as FleetMissionSummary);
 const exists = () => true;
+test.each(["Transport", "Deploy", "Harvest", "Colonize", "Attack", "DefenseHold"] as const)("%s scalar return never certifies a retained launch manifest", missionType => {
+  for (const status of ["Returning", "Recalled"] as const) {
+    const returning = mission({ missionType, status, returnCargo: { metal: "0", crystal: "0", deuterium: "0" } });
+    expect(deterministicFleetEffects([returning], 200, exists)).toEqual([]);
+    expect(deterministicFleetEffects([{ ...returning, survivingShips: { largeCargo: "6" } }], 200, exists)).toMatchObject([{ ships: { largeCargo: "6" } }]);
+    expect(deterministicFleetEffects([{ ...returning, survivingShips: {} }], 200, exists)).toMatchObject([{ ships: {} }]);
+    expect(deterministicFleetEffects([{ ...returning, survivingShips: { largeCargo: "6" }, returnCargo: undefined } as unknown as FleetMissionSummary], 200, exists)).toEqual([]);
+  }
+});
 test("unknown moon Deploy retains its possible return dependency", () => {
   const deploy=mission({missionType:"Deploy", targetIsMoon:true});
   const later=mission({missionId:"2",originPlanetId:"3",targetPlanetId:"1",arrivalAt:"300",returnAt:"400"});
@@ -42,7 +51,7 @@ test("deploy credits destination ships, cargo, slot at exact boundary", () => {
   ]);
 });
 test("earlier unknown impact blocks a later return but not a different body", () => {
-  const returning = mission({ status: "Returning", returnCargo: { metal: "2", crystal: "0", deuterium: "0" } });
+  const returning = mission({ status: "Returning", survivingShips: { smallCargo: "3" }, returnCargo: { metal: "2", crystal: "0", deuterium: "0" } });
   const attack = mission({ missionId: "2", missionType: "Attack", targetPlanetId: "1", originPlanetId: "3" });
   expect(deterministicFleetEffects([returning, attack], 200, exists)).toEqual([]);
   expect(deterministicFleetEffects([returning, { ...attack, targetIsMoon: true }], 200, exists)).toMatchObject([{ leg: "return" }]);
@@ -56,7 +65,7 @@ test("combat returns require survivor and cargo provenance; recalled known fleet
   const returning = mission({ status: "Returning", missionType: "Attack", returnCargo: { metal: "5", crystal: "0", deuterium: "0" } });
   expect(deterministicFleetEffects([returning], 200, exists)).toEqual([]);
   expect(deterministicFleetEffects([{ ...returning, survivingShips: { smallCargo: "1" } }], 200, exists)).toMatchObject([{ ships: { smallCargo: "1" }, cargo: { metal: "5" } }]);
-  expect(deterministicFleetEffects([mission({ status: "Recalled", returnCargo: returning.returnCargo })], 200, exists)).toHaveLength(1);
+  expect(deterministicFleetEffects([mission({ status: "Recalled", survivingShips: { smallCargo: "3" }, returnCargo: returning.returnCargo })], 200, exists)).toHaveLength(1);
 });
 test("missing body provenance and terminal stale legs cannot create inventory", () => {
   const missing = mission({ missionType: "Deploy" }); delete missing.targetIsMoon;
@@ -69,5 +78,5 @@ test("missing destination moon Deploy returns original cargo and ships without g
   expect(deterministicFleetEffects([m], 200, (_id, moon) => !moon)).toMatchObject([{leg: "return", planetId: "1", terminal: true, ships: {smallCargo: "3"}, cargo: {metal: "10"}}]);
 });
 test("destroyed origin moon falls back to parent without crediting destroyed moon", () => {
-  expect(deterministicFleetEffects([mission({ status: "Returning", originIsMoon: true, returnCargo: { metal: "5", crystal: "0", deuterium: "0" } })], 200, (_id, moon) => !moon)).toMatchObject([{ planetId: "1", isMoon: false }]);
+  expect(deterministicFleetEffects([mission({ status: "Returning", originIsMoon: true, survivingShips: { smallCargo: "3" }, returnCargo: { metal: "5", crystal: "0", deuterium: "0" } })], 200, (_id, moon) => !moon)).toMatchObject([{ planetId: "1", isMoon: false }]);
 });

@@ -146,6 +146,7 @@ export function changedScriptTests(files, exists = existsSync) {
     .filter(Boolean);
   const tests = names.map((name) => `scripts/${name}.test.mjs`);
   if (files.some((file) => file.startsWith("scripts/base-node/"))) tests.push("scripts/base-node-reliability.test.mjs");
+  if (files.some((file) => file.startsWith("scripts/base-monitor/"))) tests.push("scripts/base-monitor.test.mjs");
   return unique(tests).filter((test) => exists(test));
 }
 

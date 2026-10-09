@@ -3944,7 +3944,7 @@ describe("walletFlow", () => {
     }
 
     expect(calls).toHaveLength(20);
-    expect(calls.every((call) => call.init.cache === "no-store" && call.init.signal && JSON.stringify(call.init.headers) === JSON.stringify({ accept: "application/json" }))).toBe(true);
+    expect(calls.every((call) => call.init.cache === "no-store" && call.init.signal && JSON.stringify(call.init.headers) === JSON.stringify({ accept: "application/json; resource-view=nullable-v1" }))).toBe(true);
     expect(calls.filter((call) => call.url.endsWith(`/settlement`))).toHaveLength(2);
     expect(calls.filter((call) => call.url.endsWith(`/delegation`))).toHaveLength(1);
     expect(calls.filter((call) => call.url.endsWith(`/moon?planetId=7`))).toHaveLength(2);
@@ -4219,7 +4219,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/wallet/${account}/profile`);
       expect(init).toEqual({
         cache: "no-store",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify(profile), {
@@ -4248,7 +4248,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/wallet/${account}/profile`);
       expect(init?.method).toBe("POST");
       expect(init?.headers).toEqual({
-        accept: "application/json",
+        accept: "application/json; resource-view=nullable-v1",
         "content-type": "application/json",
       });
       expect(JSON.parse(String(init?.body))).toEqual({
@@ -4290,7 +4290,7 @@ describe("walletFlow", () => {
       expect(url.searchParams.get("signature")).toBeNull();
       expect(init).toEqual({
         cache: "no-store",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(
@@ -4330,7 +4330,7 @@ describe("walletFlow", () => {
       expect(url.searchParams.get("pageSize")).toBe("25");
       expect(init).toEqual({
         cache: "no-store",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(
@@ -4393,7 +4393,7 @@ describe("walletFlow", () => {
       });
       expect(init?.method).toBe("POST");
       expect(init?.headers).toEqual({
-        accept: "application/json",
+        accept: "application/json; resource-view=nullable-v1",
         "content-type": "application/json",
       });
       const invite = {
@@ -4463,7 +4463,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/wallet/${account}/watched-planets`);
       expect(init?.method).toBe("POST");
       expect(init?.headers).toEqual({
-        accept: "application/json",
+        accept: "application/json; resource-view=nullable-v1",
         "content-type": "application/json",
       });
       expect(JSON.parse(String(init?.body))).toEqual({
@@ -4505,7 +4505,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/wallet/${account}/watched-planets/42`);
       expect(init?.method).toBe("DELETE");
       expect(init?.headers).toEqual({
-        accept: "application/json",
+        accept: "application/json; resource-view=nullable-v1",
         "content-type": "application/json",
       });
       expect(JSON.parse(String(init?.body))).toEqual({
@@ -4570,7 +4570,7 @@ describe("walletFlow", () => {
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       expect(String(input)).toBe("https://api.example.test/highscores?limit=100");
       expect(init).toEqual({
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify(rankings), {
@@ -4617,7 +4617,7 @@ describe("walletFlow", () => {
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       expect(String(input)).toBe(`https://api.example.test/highscores?limit=50&category=military&currentWallet=${account}&includeAttackProtection=true&page=2&pageSize=50`);
       expect(init).toEqual({
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify(rankings), {
@@ -4663,7 +4663,7 @@ describe("walletFlow", () => {
       expect(String(input)).toBe(`https://api.example.test/wallet/${account}/alliance?view=summary`);
       expect(init).toEqual({
         cache: "no-store",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json; resource-view=nullable-v1" },
         signal: expect.any(AbortSignal),
       });
       return new Response(JSON.stringify({ error: "Alliance profile could not be decoded." }), {

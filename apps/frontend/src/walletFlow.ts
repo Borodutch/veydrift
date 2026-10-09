@@ -377,13 +377,13 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   } | null;
   tactical?:
     | {
-        currentResources?: OnChainResources;
-        raidableResources: OnChainResources;
-        raidableResourceTotal: string;
+        currentResources?: OnChainResources | null;
+        raidableResources: OnChainResources | null;
+        raidableResourceTotal: string | null;
         // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
         // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
         // math instead of looking like it under-reports. (VEY-KANEO-454)
-        grossResourceTotal?: string;
+        grossResourceTotal?: string | null;
         productionPerHour?: OnChainResources | null;
         storageCaps?: OnChainResources | null;
         ships: {
@@ -833,7 +833,31 @@ export type BattleReport = {
   participants?: BattleReportParticipant[];
 };
 
-export type ChainShipyardState = {
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: OnChainResources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
+export type InventoryReadiness = {
+  stale?: boolean;
+  degraded?: boolean;
+  indexedNotReady?: boolean;
+  safeToProject?: boolean;
+  indexer?: (BackendIndexerState & { safeToProject?: boolean }) | null;
+};
+
+/** Missing metadata is legacy-compatible; explicit unsafe metadata is never authority. */
+export function inventoryReadinessBlocker(state: InventoryReadiness | null | undefined): string | undefined {
+  return state && (state.stale === true || state.degraded === true || state.indexedNotReady === true
+    || state.safeToProject === false || state.indexer?.safeToProject === false
+    || state.indexer?.safeToServeIndexedState === false
+    || state.indexer?.indexedState === "stale" || state.indexer?.indexedState === "reconciling")
+    ? "Current fleet inventory is unavailable. Refresh and retry." : undefined;
+}
+
+export type ChainShipyardState = InventoryReadiness & {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
   wallet: string;
   homePlanetId: string | null;
   planetId?: string | null;
@@ -858,26 +882,49 @@ export type ChainShipyardState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
-  // Canonical `ships` plus due production that the next fleet launch can
-  // settle atomically. Mission composition uses this; inventory displays use
-  // canonical `ships`.
-  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>>;
+  // Backend-authoritative effective inventory; fleetLaunchConstraints qualifies
+  // selected launch requirements. Null is unknown; omission supports old responses.
+  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>> | null;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
-/** Mission controls and submission validation must use the same launchable inventory. */
-export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
-  if (!state.launchableShips) return state;
-  const counts = new Map(state.launchableShips.map(ship => [ship.id, ship.count]));
+/** Compare only the selected requirements; never replace the effective display. */
+export function fleetLaunchRequirementBlocker(
+  constraints: FleetLaunchConstraints | null | undefined,
+  ships: ReadonlyArray<{ id: number; count: number }>,
+  resources?: Partial<Record<keyof OnChainResources, number>>,
+): string | undefined {
+  if (constraints === undefined) return undefined; // Older backend compatibility.
+  if (!constraints) return "Current launch inventory is unavailable. Refresh and retry.";
+  if (constraints.fleetSlots.active >= constraints.fleetSlots.limit) return "Fleet slots are not yet ready for launch. Refresh before launching.";
+  if (ships.some(ship => ship.count > (constraints.ships.find(row => row.id === ship.id)?.count ?? 0))) {
+    return "Some selected ships are not yet ready for launch. Reduce the fleet or refresh shortly.";
+  }
+  if (resources && (!constraints.resources || (["metal", "crystal", "deuterium"] as const).some(key => BigInt(Math.ceil(Math.max(0, resources[key] ?? 0))) > BigInt(constraints.resources![key])))) {
+    return "Selected cargo or fuel is not yet ready for launch. Reduce the shipment or refresh shortly.";
+  }
+  return undefined;
+}
+
+/** Mission controls and submission validation share authoritative effective inventory. */
+export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips"> & InventoryReadiness>(state: T): T {
+  const blocker = inventoryReadinessBlocker(state);
+  if (blocker) state = { ...state, fleetLaunchAvailable: false, fleetLaunchUnavailableReason: blocker };
+  if (state.launchableShips === undefined) return state;
+  const counts = new Map((state.launchableShips ?? []).map(ship => [ship.id, ship.count]));
   return { ...state, ships: state.ships.map(ship => ({ ...ship, count: counts.get(ship.id) ?? 0 })) };
 }
 
-export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+export type SupplySourcesResponse = InventoryReadiness & Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+  /** Batch entrypoints check slots before lazy reconciliation; display slots remain effective. */
+  batchFleetSlots?: ChainShipyardState["fleetSlots"] | null;
   wallet: string;
-  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates" | "resources"> & {
+  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates"> & {
+    resources: OnChainResources | null;
     launchableShips: Array<{ id: number; count: number }>;
+    fleetLaunchConstraints?: FleetLaunchConstraints | null;
   }>;
 };
 
@@ -959,7 +1006,11 @@ export type ChainInfrastructureState = {
   queue: QueueStateResponse | null;
 };
 
-export type ChainMoonState = {
+export type ChainMoonState = InventoryReadiness & {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
+  fleetSlots?: ChainShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   wallet: string;
   bodyKind?: "moon";
   homePlanetId: string | null;
@@ -976,7 +1027,7 @@ export type ChainMoonState = {
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships?: ChainShipyardState["ships"];
-  launchableShips?: ChainShipyardState["ships"];
+  launchableShips?: ChainShipyardState["ships"] | null;
   moon: {
     exists: boolean;
     planetId: string;
@@ -1278,13 +1329,13 @@ export type HighscorePlanet = {
   stationedDefenderForecastTimeline?: PublicStationedDefender[] | null;
   stationedDefenderTimelineComplete?: boolean;
   tactical?: {
-    currentResources?: OnChainResources;
-    raidableResources: OnChainResources;
-    raidableResourceTotal: string;
+    currentResources?: OnChainResources | null;
+    raidableResources: OnChainResources | null;
+    raidableResourceTotal: string | null;
     // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
     // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
     // math instead of looking like it under-reports. (VEY-KANEO-454)
-    grossResourceTotal?: string;
+    grossResourceTotal?: string | null;
     productionPerHour?: OnChainResources | null;
     storageCaps?: OnChainResources | null;
     ships: {
@@ -5010,9 +5061,12 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   return message || "Rankings could not be loaded.";
 }
 
-export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; signal?: AbortSignal } = {}): Promise<unknown> {
-  const detail = options.detail ? `?detail=${options.detail}` : "";
-  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
+export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; fresh?: boolean; signal?: AbortSignal } = {}): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (options.detail) params.set("detail", options.detail);
+  if (options.fresh) params.set("fresh", "1");
+  const query = params.size ? `?${params}` : "";
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${query}`;
   return fetchGameApiJson<unknown>(url, "System", {
     httpErrorMessage: async () => "Galaxy could not be loaded. Please retry.",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -5106,7 +5160,8 @@ async function requestGameApiJson<T>(
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       ...(options.method ? { method: options.method } : {}),
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-      headers: { accept: "application/json", ...(options.body ? { "content-type": "application/json" } : {}) },
+      // Accept is CORS-safelisted: older backends ignore this additive capability.
+      headers: { accept: "application/json; resource-view=nullable-v1", ...(options.body ? { "content-type": "application/json" } : {}) },
       signal: controller.signal,
     });
     if (!response.ok) {

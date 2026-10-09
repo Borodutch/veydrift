@@ -1355,8 +1355,12 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
     proof.available = true;
     await proof.store.queries.supplySources(window.inspectorProof.account, '101', { fresh: true }).read();
   })()`);
-  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await waitForExpression(`[...document.querySelectorAll('[role="dialog"] button')].some(button => button.textContent === 'Review latest inventory')`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true, 'Recovery requires explicit review');
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '10');
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Recovery never resubmits automatically');
+  await clickExpression(`[...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Review latest inventory')`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await evaluate(`window.supplyRejectionProof.available = false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
   await waitForExpression(`window.supplyRejectionProof.reads === 5 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
@@ -2978,35 +2982,34 @@ async function openInventoryComposer({ spareFighter = false } = {}) {
 const cargoQuantity = `document.querySelector('input[aria-label="Small Cargo quantity"]')`;
 const increaseCargo = `document.querySelector('button[aria-label="Increase Small Cargo"]')`;
 
-test("VEY-888 mounted canonical updates clamp drafts and isolate planet/moon inventory", async () => {
+test("VEY-888 mounted canonical updates preserve drafts and isolate planet/moon inventory", async () => {
   await openInventoryComposer();
   await clickExpression(increaseCargo);
   await waitForExpression(`${cargoQuantity}?.value === '1'`);
   await evaluate(`window.inventoryProof.planet = 0; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity} === null && document.querySelector('[data-mission-composer]')?.textContent.includes('Unavailable ship quantities were reduced')`);
+  await waitForExpression(`${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   await evaluate(`window.inventoryProof.planet = 1; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity}?.value === '0'`);
-  await clickExpression(increaseCargo);
+  await waitForExpression(`${cargoQuantity}?.value === '1' && ${missionConfirmExpression(false)} !== undefined`);
   await clickExpression(`document.querySelector('button[title="Origin moon"]')`);
   await waitForExpression(`${cargoQuantity}?.value === '0'`);
   await clickExpression(increaseCargo);
   await clickExpression(increaseCargo);
   await waitForExpression(`${cargoQuantity}?.value === '2'`);
   await evaluate(`window.inventoryProof.moon = 1; window.inventoryProof.store.moon(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity}?.value === '1'`);
+  await waitForExpression(`${cargoQuantity}?.value === '2' && ${missionConfirmExpression(true)} !== undefined`);
   await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Origin planet')`);
   await waitForExpression(`${cargoQuantity}?.value === '0'`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
-test("VEY-888 final fresh preflight clamps the last cargo before any wallet send", async () => {
+test("VEY-888 final fresh preflight preserves and blocks the last cargo before any wallet send", async () => {
   await openInventoryComposer();
   await clickExpression(increaseCargo);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
   await evaluate(`window.inventoryProof.planet = 0`);
   await clickExpression(missionConfirmExpression(false));
-  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
   assert.ok(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('only 0 available')`));
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
@@ -3019,7 +3022,7 @@ test("VEY-888 exact-origin revert recovery updates the mounted moon, not parent 
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
   await evaluate(`window.inventoryProof.mode = 'revert'; window.inventoryProof.reads = []`);
   await clickExpression(missionConfirmExpression(false));
-  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
   assert.ok(await evaluate(`window.inventoryProof.reads.filter(read => read.moon && read.planetId === '101').length >= 2`));
   assert.ok(await evaluate(`window.inventoryProof.reads.every(read => read.planetId === '101')`));

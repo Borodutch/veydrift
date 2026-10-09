@@ -105,8 +105,8 @@ export function planetDetailRefreshResultPlanet({
   const matchingApiPlanet = apiPlanet && sameCoordinates(apiPlanet, coords) ? apiPlanet : null;
   if (matchingTrustedPlanet && matchingApiPlanet) {
     const moonName = matchingTrustedPlanet.moonName ?? matchingApiPlanet.moonName;
-    const publicMoonState = matchingApiPlanet.publicMoonState ?? matchingTrustedPlanet.publicMoonState;
-    const publicState = matchingApiPlanet.publicState ?? matchingTrustedPlanet.publicState;
+    const publicMoonState = matchingApiPlanet.publicMoonState === undefined ? matchingTrustedPlanet.publicMoonState : matchingApiPlanet.publicMoonState;
+    const publicState = matchingApiPlanet.publicState === undefined ? matchingTrustedPlanet.publicState : matchingApiPlanet.publicState;
     return {
       ...matchingApiPlanet,
       ...matchingTrustedPlanet,
