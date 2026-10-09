@@ -129,7 +129,7 @@ import {
 import { playSfx } from "./sfx";
 import { timestampToMs } from "./timestampFormat";
 import { confirmTransactionRetry, transactionAwaitingWalletLabel, transactionWasSubmitted, type WriteTransactionOutcome, type WriteTransactionState } from "./transactionActionGate";
-import { fleetLaunchRequirementBlocker, missionInventory, transactionWalletProvider } from "./walletFlow";
+import { inventoryReadinessBlocker, fleetLaunchRequirementBlocker, missionInventory, transactionWalletProvider } from "./walletFlow";
 import type { Coordinates, Planet, PlanetType, PublicStationedDefender } from "./types";
 import { getSizedImageSrc } from "./utils/imageSizes";
 import { useBackendDataQuery } from "./useBackendDataQuery";
@@ -340,7 +340,8 @@ function missionMoonResources(moonState: ChainMoonState | null | undefined): Pla
 
 export function missionMoonShipyardState({ moonState, shipyardState }: { moonState: ChainMoonState | null | undefined; shipyardState: ChainShipyardState | null }): ChainShipyardState | null {
   if (!moonState?.moon?.exists) return null;
-  const stale = moonState.stale ?? shipyardState?.stale;
+  const stale = moonState.stale === true || shipyardState?.stale === true;
+  const readinessBlocker = inventoryReadinessBlocker(moonState) ?? inventoryReadinessBlocker(shipyardState);
   // New moon responses qualify the moon's own chronology/lock surface. Only
   // older payloads without launch context may use the parent compatibility path.
   const launch = moonState.fleetLaunchAvailable !== undefined || moonState.fleetSlots !== undefined ? moonState : shipyardState;
@@ -360,7 +361,8 @@ export function missionMoonShipyardState({ moonState, shipyardState }: { moonSta
         }
       : {}),
     ...(launch?.unavailableReason ? { unavailableReason: playerNotice(launch.unavailableReason) } : {}),
-    ...(stale !== undefined ? { stale } : {}),
+    stale,
+    ...(readinessBlocker ? { fleetLaunchAvailable: false, fleetLaunchUnavailableReason: readinessBlocker } : {}),
     shipyardLevel: 0,
     naniteLevel: 0,
     technologyLevels: shipyardState?.technologyLevels ?? {},
@@ -822,7 +824,7 @@ export function missionInventoryAfterRead(
   state: ChainShipyardState | null,
   error: string | undefined,
 ): ChainShipyardState | null {
-  return state && error ? { ...state, fleetLaunchAvailable: false,
+  return state && (error || inventoryReadinessBlocker(state)) ? { ...state, fleetLaunchAvailable: false,
     fleetLaunchUnavailableReason: "Current fleet inventory is unavailable. Refresh and retry." } : state;
 }
 
@@ -949,6 +951,8 @@ export async function prepareMissionLaunchInventory(
     request.hostileMissionId ? backend.fleetVisibility(account, { fresh: true }) : Promise.resolve(null),
     request.holdSeconds !== undefined ? backend.system<ApiSystemResponse>(request.target.galaxy, request.target.system, { detail: "full", fresh: true }) : Promise.resolve(null),
   ]);
+  const readinessBlocker = inventoryReadinessBlocker(shipyard) ?? inventoryReadinessBlocker(moon);
+  if (readinessBlocker) throw new Error(readinessBlocker);
   const originState = request.originIsMoon ? missionMoonShipyardState({ moonState: moon, shipyardState: shipyard }) : shipyard;
   const drives = driveLevelsFromTechnologyLevels(shipyard.technologyLevels);
   const distance = fleetMissionDistanceForMission(request.origin, request.target, request.mission === "harvest" ? "harvest" : "transport", request);
@@ -979,11 +983,13 @@ export function missionShipInventoryBlocker({
   resources,
 }: {
   originBody?: "moon" | "planet" | undefined;
-  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "fleetLaunchConstraints" | "unavailableReason"> | null | undefined;
+  shipyardState: import("./walletFlow").InventoryReadiness & Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "fleetLaunchConstraints" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
   resources?: Partial<Record<keyof OnChainResources, number>>;
 }): string | undefined {
   if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
+  const readinessBlocker = inventoryReadinessBlocker(shipyardState);
+  if (readinessBlocker) return readinessBlocker;
   if (shipyardState.fleetLaunchAvailable === false) {
     return playerNotice(shipyardState.fleetLaunchUnavailableReason) ?? playerNotice(shipyardState.unavailableReason) ?? "Fleet slot state is still syncing.";
   }
@@ -1008,9 +1014,9 @@ export function missionShipInventoryBlocker({
   return `${overSelected.join(", ")} on the origin ${originBody}; refresh fleet state or reduce selected ships before launching.`;
 }
 
-export function missionCooperativeActionAvailable(shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetSlots" | "ships"> | null | undefined): boolean | undefined {
+export function missionCooperativeActionAvailable(shipyardState: import("./walletFlow").InventoryReadiness & Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetSlots" | "ships"> | null | undefined): boolean | undefined {
   if (!shipyardState) return undefined;
-  if (shipyardState.fleetLaunchAvailable === false) return false;
+  if (inventoryReadinessBlocker(shipyardState) || shipyardState.fleetLaunchAvailable === false) return false;
   if (!shipyardState.fleetSlots || shipyardState.fleetSlots.limit <= 0) return false;
   if (shipyardState.fleetSlots.active >= shipyardState.fleetSlots.limit) return false;
   return shipyardState.ships.some((ship) => ship.count > 0);
@@ -2247,17 +2253,19 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
 }
 
 export function supplyLaunchSlots(snapshot: SupplySourcesResponse | undefined, targetIsMoon: boolean) {
+  if (inventoryReadinessBlocker(snapshot)) return null;
   return targetIsMoon || snapshot?.batchFleetSlots === undefined ? snapshot?.fleetSlots : snapshot.batchFleetSlots;
 }
 
-export function batchSupplySourcesFromSnapshot(snapshot: SupplySourcesResponse, target: Coordinates): BatchSupplySource[] {
-  return snapshot.sources.map(source => batchSupplySourceForPlanet(source, { ...snapshot, ...source }))
+export function batchSupplySourcesFromSnapshot(snapshot: SupplySourcesResponse, target: Coordinates, readUnavailableReason?: string): BatchSupplySource[] {
+  const blocker = readUnavailableReason ?? inventoryReadinessBlocker(snapshot);
+  return snapshot.sources.map(source => batchSupplySourceForPlanet(source, { ...snapshot, ...source }, blocker))
     .sort((left, right) => fleetMissionDistance(left.coordinates, target) - fleetMissionDistance(right.coordinates, target));
 }
 
 export function batchSupplySourceForPlanet(
   planet: Pick<ManagedPlanetResponse, "planetId" | "name" | "coordinates" | "galaxy" | "system" | "position" | "resourcesAsOfNow"> & { resources: OnChainResources | null },
-  shipyard: ChainShipyardState | (Pick<ChainShipyardState, "resources" | "resourcesAsOfNow" | "technologyLevels" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "unavailableReason"> & {
+  shipyard: ChainShipyardState | (import("./walletFlow").InventoryReadiness & Pick<ChainShipyardState, "resources" | "resourcesAsOfNow" | "technologyLevels" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "unavailableReason"> & {
     ships?: Array<{ id: number; count: number }>;
     launchableShips?: Array<{ id: number; count: number }> | null;
     fleetLaunchConstraints?: ChainShipyardState["fleetLaunchConstraints"];
@@ -2274,6 +2282,7 @@ export function batchSupplySourceForPlanet(
   }
   const fleetUnavailable =
     readUnavailableReason
+    ?? inventoryReadinessBlocker(shipyard)
     ?? (!resources ? RESOURCES_UNAVAILABLE : undefined)
     ?? (shipyard?.fleetLaunchAvailable === false
       ? (playerNotice(shipyard.fleetLaunchUnavailableReason) ?? playerNotice(shipyard.unavailableReason) ?? "Fleet slots are unavailable.")
@@ -2380,6 +2389,8 @@ export async function prepareBatchSupplyConfirmation({
     queries.supplySources(account, target.planetId, { fresh: true }).read(),
     targetIsMoon ? queries.shipyard(account, target.planetId, { fresh: true }).read() : undefined,
   ]);
+  const readinessBlocker = inventoryReadinessBlocker(snapshot) ?? inventoryReadinessBlocker(parent);
+  if (readinessBlocker) throw new Error(readinessBlocker);
   if (levelSupply) {
     const fresh = await readLevelSupplyPreview(queries, account, target.planetId, levelSupply);
     if (!isCurrent()) throw new Error("Supply selection changed before submission.");
@@ -3242,11 +3253,11 @@ export function PlayableMvpApp({
   const { snapshot: batchSupplyParentSnapshot, isInitialLoading: batchSupplyParentLoading } = useBackendDataQuery(batchSupplyParentQuery);
   const batchSupplySources = useMemo(() => {
     if (!batchSupplySnapshot?.data || !batchSupplyTarget) return [];
-    const sources = batchSupplySourcesFromSnapshot(batchSupplySnapshot.data, batchSupplyTarget);
+    const sources = batchSupplySourcesFromSnapshot(batchSupplySnapshot.data, batchSupplyTarget, batchSupplySnapshot.error);
     const parent = batchSupplyParentSnapshot?.data;
     if (batchSupplyTargetIsMoon && parent?.resources && !batchSupplyParentSnapshot?.error) sources.unshift(batchSupplySourceForPlanet(batchSupplyTarget, parent));
     return sources;
-  }, [batchSupplySnapshot?.data, batchSupplyTarget, batchSupplyParentSnapshot, batchSupplyTargetIsMoon]);
+  }, [batchSupplySnapshot?.data, batchSupplySnapshot?.error, batchSupplyTarget, batchSupplyParentSnapshot, batchSupplyTargetIsMoon]);
   const batchSupplySlots = batchSupplySnapshot?.error ? undefined : supplyLaunchSlots(batchSupplySnapshot?.data, batchSupplyTargetIsMoon);
   const batchSupplyFleetSlotsKnown = Boolean(batchSupplySlots);
   const batchSupplyMaxSources = batchSupplySlots

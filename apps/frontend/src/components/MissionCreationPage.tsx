@@ -980,6 +980,7 @@ export function MissionCreationPage({
                   cargo={cargo}
                   cargoCapacity={cargoCapacity}
                   maxCargoResources={maxCargoResources}
+                  unavailable={effectiveShipyardState?.fleetLaunchAvailable === false}
                   onCargoChange={setCargo}
                 />
               </MissionFormSection>
@@ -1356,6 +1357,7 @@ export function missionCargoMaxForResource(
 }
 
 export function MissionCargoPicker({
+  unavailable,
   cargo,
   cargoCapacity,
   maxCargoResources,
@@ -1364,6 +1366,7 @@ export function MissionCargoPicker({
   cargo: MissionCargoDraft;
   cargoCapacity: number;
   maxCargoResources: MissionResourceSnapshot;
+  unavailable?: boolean;
   onCargoChange: (updater: (current: MissionCargoDraft) => MissionCargoDraft) => void;
 }) {
   const fields: Array<{ key: ResourceKey; label: string }> = [
@@ -1383,6 +1386,7 @@ export function MissionCargoPicker({
               label={label}
               max={maxCargoResources[key]}
               maxAction={{
+                disabled: unavailable,
                 value: maxValue,
                 onSelect: () => onCargoChange((current) => ({
                   ...current,
@@ -3751,6 +3755,7 @@ function ResourceField({
   label: string;
   max: number;
   maxAction?: {
+    disabled?: boolean | undefined;
     onSelect: () => void;
     value: number;
   } | undefined;
@@ -3767,6 +3772,7 @@ function ResourceField({
           <button
             aria-label={`Set ${label.toLowerCase()} cargo to maximum (${maxAction.value.toLocaleString()})`}
             className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal hover:border-signal/50 hover:bg-signal/15"
+            disabled={maxAction.disabled}
             onClick={maxAction.onSelect}
             type="button"
           >

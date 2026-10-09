@@ -15,13 +15,21 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
   // Local component proof does not need production animation baking or API proxies.
   const server = await createServer({ configFile: false, esbuild: { jsx: "automatic", jsxImportSource: "preact" }, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
-  let chrome;
+  let chrome, backend;
   const pending = new Map();
   const artifacts = process.env.CURRENT_STATE_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
   const measurements = [];
   try {
     await server.listen();
+    const apiBase = "http://127.0.0.1:" + await freePort();
+    backend = spawn("bun", ["tests/fixtures/inventory65Server.ts", new URL(apiBase).port], { stdio: "ignore",
+      env: { ...process.env, VEYDRIFT_ALLOWED_ORIGIN: `http://127.0.0.1:${server.httpServer.address().port}` } });
+    const apiDeadline = Date.now() + 15000;
+    while (!(await fetch(apiBase + "/__fixture/status").then(r => r.ok).catch(() => false))) {
+      assert.ok(Date.now() < apiDeadline && backend.exitCode === null, "real fixture backend starts");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
     const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/currentState.html`;
     chrome = spawn(executable, ["--headless=new", "--use-mock-keychain", "--no-first-run", "--no-default-browser-check", "--remote-debugging-pipe", `--user-data-dir=${profile}`, "about:blank"], {
       env: process.env,
@@ -90,11 +98,30 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 150))');
         assert.equal(await quantity(), "6", "recovery preserves draft " + label);
         assert.equal(await confirmDisabled(), false, "fresh successful read restores launch " + label);
+        for (const unsafe of [{ stale: true }, { degraded: true }, { safeToProject: false }, { indexer: { safeToServeIndexedState: false } }]) {
+          await evaluate('fixture.refreshInventory(undefined, ' + JSON.stringify(unsafe) + '); new Promise(resolve => setTimeout(resolve, 100))');
+          assert.equal(await quantity(), "6", "unsafe success preserves draft " + label);
+          assert.equal(await confirmDisabled(), true, "unsafe success blocks " + label);
+          assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected[\s\S]*\/ 6/, "unsafe rows are display-only " + label);
+          if (["transport", "deploy"].includes(kind)) {
+            assert.equal(await evaluate('[...document.querySelectorAll("button")].filter(b => b.textContent.trim() === "Max").every(b => b.disabled)'), true, "unsafe cargo Max disabled " + label);
+          }
+          await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
+          assert.equal(await evaluate('fixture.confirmed()'), 0, "unsafe success cannot submit " + label);
+        }
+        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 100))');
+        assert.equal(await confirmDisabled(), false, "recovery after unsafe success " + label);
       }
       await evaluate('fixture.show("store-supply", "current"); new Promise(resolve => setTimeout(resolve, 150))');
       await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'normal subscribed store hydrates nine-source plan at ' + width + ': ' + await evaluate('document.body.innerText'));
       assert.match(await evaluate('document.body.innerText'), /9 transports/);
+      await evaluate('fixture.show("store-supply", "unsafe"); new Promise(resolve => setTimeout(resolve, 150))');
+      assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'unsafe success blocks mounted Supply');
+      assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '1260000', 'unsafe Supply preserves cargo');
+      assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]:checked').length`), 9);
+      await evaluate('document.querySelector("footer button").click()');
+      assert.equal(await evaluate('fixture.confirmed()'), 0, 'unsafe Supply cannot submit');
       await evaluate('fixture.show("store-supply", "empty"); new Promise(resolve => setTimeout(resolve, 150))');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'ordinary store refresh blocks obsolete six-ship proposals');
       assert.equal(await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').value'), '1260000');
@@ -132,6 +159,43 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         }
       }
     }
+    // Actual cache-enabled HTTP handler + ordinary subscribed store + mounted controls.
+    // Its deleted anchor has timestamp:null, while six canonical ships remain populated.
+    await evaluate('fixture.realApi(' + JSON.stringify(apiBase) + ')');
+    for (const width of [390, 1280]) {
+      await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
+      for (const body of ["planet", "moon"]) {
+        await fetch(apiBase + "/__fixture/recover");
+        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-transport") + '); new Promise(resolve => setTimeout(resolve, 200))');
+        // A remount may reuse a recent successful (but unsafe) response. Drive the
+        // ordinary polling tick after subscriptions attach, not before layout effects.
+        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+        await evaluate(`(() => { const input = document.querySelector('input[aria-label="Large Cargo quantity"]'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)`);
+        assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), false, 'real HTTP inventory ready ' + body + ': ' + JSON.stringify(await evaluate('fixture.inventoryStatus()')) + await evaluate('document.body.innerText'));
+        const invalidated = await (await fetch(apiBase + "/__fixture/invalidate")).json();
+        assert.equal(invalidated.projection.timestamp, null);
+        assert.equal(invalidated.projection.safeToProject, false);
+        assert.equal(invalidated.ships, 6);
+        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+        assert.equal(await evaluate(`document.querySelector('input[aria-label="Large Cargo quantity"]').value`), "6");
+        assert.match(await evaluate('document.body.innerText'), /6 selected[\s\S]*\/ 6/);
+        assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), true, 'real invalidation blocks ' + body);
+        await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
+        assert.equal(await evaluate('fixture.confirmed()'), 0);
+      }
+      await fetch(apiBase + "/__fixture/recover");
+      await evaluate('fixture.show("store-supply"); new Promise(resolve => setTimeout(resolve, 200))');
+      await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+      await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Auto-plan cargo").click(); new Promise(requestAnimationFrame)');
+      assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'real HTTP Supply ready');
+      await fetch(apiBase + "/__fixture/invalidate");
+      await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+      assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'real invalidation blocks Supply');
+      assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '10000');
+      await evaluate('document.querySelector("footer button").click()');
+      assert.equal(await evaluate('fixture.confirmed()'), 0);
+    }
+    await evaluate('fixture.realApi()');
     // The query stays mounted with the SAME descriptor/key across a real chain
     // change; recovery must be store-owned, not a rerun of its mount effect.
     await evaluate('import("/tests/fixtures/supplyPreload.tsx")');
@@ -161,6 +225,11 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       chrome.kill();
+      await exited;
+    }
+    if (backend && backend.exitCode === null) {
+      const exited = new Promise(resolve => backend.once("exit", resolve));
+      backend.kill();
       await exited;
     }
     await server.close();

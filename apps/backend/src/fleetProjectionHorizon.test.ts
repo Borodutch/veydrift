@@ -25,7 +25,7 @@ function fixture(moon = false, returning = false, deploy = false) {
   (indexer as any).upsertCanonicalFleetMission({ missionId: "1", statusId: returning ? 2 : 1, missionTypeId: deploy ? 1 : 0, status: returning ? "Returning" : "Outbound", missionType: deploy ? "Deploy" : "Transport", owner, originPlanetId: "7", targetPlanetId: "7", departureAt: "900", arrivalAt: "1010", returnAt: "1020", fuelCost: "0", cargo: { metal: "80", crystal: "0", deuterium: "0" }, randomnessRequestId: null, originIsMoon: moon, targetIsMoon: moon, ships: { smallCargo: "9" } });
   const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true });
   const get = async (path: string) => {
-    const response = await handler(new Request("http://localhost" + path));
+    const response = await handler(new Request("http://localhost" + path, { headers: { accept: "application/json; resource-view=nullable-v1" } }));
     return { status: response.status, body: await response.json() as any };
   };
   const wallet = (route: string) => get("/wallet/" + owner + "/" + route + "?planetId=7");
@@ -167,7 +167,7 @@ test("shared public cache keys never reuse fleet credits across watermark change
     // A new reader instance has no local cache, forcing real shared-cache lookup.
     const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, sharedResponseCache: cache, prewarmResponseCache: false });
     for (const path of paths) {
-      const response = await handler(new Request("http://localhost" + path));
+      const response = await handler(new Request("http://localhost" + path, { headers: { accept: "application/json; resource-view=nullable-v1" } }));
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("public, no-store");
     }
@@ -349,7 +349,7 @@ test("Supply preserves unavailable current resources rather than reviving a raw 
   }
   async function getSource() {
     const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false });
-    return (await handler(new Request("http://localhost/wallet/" + owner + "/shipyard?planetId=8"))).json() as Promise<any>;
+    return (await handler(new Request("http://localhost/wallet/" + owner + "/shipyard?planetId=8", { headers: { accept: "application/json; resource-view=nullable-v1" } }))).json() as Promise<any>;
   }
 });
 

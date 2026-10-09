@@ -839,7 +839,24 @@ export type FleetLaunchConstraints = {
   fleetSlots: { active: number; limit: number };
 };
 
-export type ChainShipyardState = {
+export type InventoryReadiness = {
+  stale?: boolean;
+  degraded?: boolean;
+  indexedNotReady?: boolean;
+  safeToProject?: boolean;
+  indexer?: (BackendIndexerState & { safeToProject?: boolean }) | null;
+};
+
+/** Missing metadata is legacy-compatible; explicit unsafe metadata is never authority. */
+export function inventoryReadinessBlocker(state: InventoryReadiness | null | undefined): string | undefined {
+  return state && (state.stale === true || state.degraded === true || state.indexedNotReady === true
+    || state.safeToProject === false || state.indexer?.safeToProject === false
+    || state.indexer?.safeToServeIndexedState === false
+    || state.indexer?.indexedState === "stale" || state.indexer?.indexedState === "reconciling")
+    ? "Current fleet inventory is unavailable. Refresh and retry." : undefined;
+}
+
+export type ChainShipyardState = InventoryReadiness & {
   fleetLaunchConstraints?: FleetLaunchConstraints | null;
   wallet: string;
   homePlanetId: string | null;
@@ -892,13 +909,15 @@ export function fleetLaunchRequirementBlocker(
 }
 
 /** Mission controls and submission validation share authoritative effective inventory. */
-export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
+export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips"> & InventoryReadiness>(state: T): T {
+  const blocker = inventoryReadinessBlocker(state);
+  if (blocker) state = { ...state, fleetLaunchAvailable: false, fleetLaunchUnavailableReason: blocker };
   if (state.launchableShips === undefined) return state;
   const counts = new Map((state.launchableShips ?? []).map(ship => [ship.id, ship.count]));
   return { ...state, ships: state.ships.map(ship => ({ ...ship, count: counts.get(ship.id) ?? 0 })) };
 }
 
-export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+export type SupplySourcesResponse = InventoryReadiness & Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
   /** Batch entrypoints check slots before lazy reconciliation; display slots remain effective. */
   batchFleetSlots?: ChainShipyardState["fleetSlots"] | null;
   wallet: string;
@@ -987,7 +1006,7 @@ export type ChainInfrastructureState = {
   queue: QueueStateResponse | null;
 };
 
-export type ChainMoonState = {
+export type ChainMoonState = InventoryReadiness & {
   fleetLaunchConstraints?: FleetLaunchConstraints | null;
   fleetSlots?: ChainShipyardState["fleetSlots"];
   fleetLaunchAvailable?: boolean;
@@ -5101,7 +5120,8 @@ async function requestGameApiJson<T>(
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       ...(options.method ? { method: options.method } : {}),
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-      headers: { accept: "application/json", ...(options.body ? { "content-type": "application/json" } : {}) },
+      // Accept is CORS-safelisted: older backends ignore this additive capability.
+      headers: { accept: "application/json; resource-view=nullable-v1", ...(options.body ? { "content-type": "application/json" } : {}) },
       signal: controller.signal,
     });
     if (!response.ok) {

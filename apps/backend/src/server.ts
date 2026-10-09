@@ -2346,7 +2346,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     };
 
     try {
-      return await Promise.race([serve(), aborted]);
+      // Fence after every cache path, including a response warmed by a capable client.
+      return withRequestCors(request, await resourceViewResponse(request, await Promise.race([serve(), aborted])));
     } catch (error) {
       return withRequestCors(request, errorResponse(error, isSqliteBusyError(error) ? 503 : 500));
     } finally {
@@ -2356,6 +2357,35 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
   return logRequests ? createRequestLoggingFetch(serveWithResponseCache, workerRole) : serveWithResponseCache;
+}
+
+/** Already-open legacy consumers must not receive nullable current stock and revive raw balances. */
+export async function resourceViewResponse(request: Request, response: Response): Promise<Response> {
+  if (request.method !== "GET" || !response.ok || !jsonContentType(response.headers.get("content-type"))) return response;
+  const headers = new Headers(response.headers);
+  const vary = headers.get("vary");
+  headers.set("vary", vary ? vary + ", Accept" : "Accept");
+  const capable = request.headers.get("accept")?.split(",").some(type => type.trim().toLowerCase() === "application/json; resource-view=nullable-v1");
+  const legacyBody = !capable ? response.clone() : null;
+  const payload = legacyBody?.headers.get("content-encoding") === "gzip" && legacyBody.body
+    ? await new Response(legacyBody.body.pipeThrough(new DecompressionStream("gzip"))).json()
+    : await legacyBody?.json();
+  if (!capable && requiresNullableResourceView(payload)) {
+    headers.set("cache-control", "no-store");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("etag");
+    return Response.json({ error: "resource_view_upgrade_required", message: "Refresh the app to load current inventory safely." },
+      { status: 503, headers });
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function requiresNullableResourceView(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, child]) =>
+    (["resources", "resourcesAsOfNow", "currentResources", "raidableResources"].includes(key) && child === null)
+    || requiresNullableResourceView(child));
 }
 
 /**
@@ -3316,7 +3346,7 @@ function indexedWalletPlanetsWarmResponse(
   return indexer.readConsistentSnapshot(() => {
     if (!hasWarmPlanetIndex(indexer)) return null;
     const projection = indexer.resourceProjectionContext();
-    if (projection.timestamp !== null && !projection.safeToProject) {
+    if (!projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse("wallet planets", indexer, {
         wallet,
         reason: "resource_projection_not_ready"
@@ -3342,7 +3372,7 @@ async function indexedWalletOverviewWarmResponse(
 
   return indexer.readConsistentSnapshot(() => {
     const projection = indexer.resourceProjectionContext();
-    if (projection.timestamp !== null && !projection.safeToProject) {
+    if (!projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse("overview snapshot", indexer, {
         wallet,
         ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
@@ -3472,7 +3502,7 @@ function indexedWarmResponse<T extends object>(
   return indexer.readConsistentSnapshot(() => {
     if (!hasWarmPlanetIndex(indexer)) return null;
     const projection = indexer.resourceProjectionContext();
-    if (requiresSafeResources && projection.timestamp !== null && !projection.safeToProject) {
+    if (requiresSafeResources && !projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse(surface, indexer, {
         wallet,
         ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
@@ -3876,7 +3906,7 @@ function indexedCurrentPlanetState<T extends PlanetState>(
     if (indexer.hasPendingPlanetResources(planet.planetId)) return null;
     const projection = indexer.resourceProjectionContext();
     const projectionTimestamp = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
-    if (projection.timestamp === null) {
+    if (projection.canonicalBaseline) {
       return accruedPlanetState(
         indexer,
         { ...planet, ...canonicalPlanet } as T,
@@ -4229,10 +4259,13 @@ function indexedProductionContext(
 }
 
 function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementIndexer) {
+  const projection = indexer.resourceProjectionContext();
+  const unsafe = !projection.canonicalBaseline && !projection.safeToProject;
   const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0];
   return {
     fleetSlots: indexer.fleetSlots(wallet),
-    fleetLaunchAvailable: !slotSettlementBlocker,
+    fleetLaunchAvailable: !unsafe && !slotSettlementBlocker,
+    ...(unsafe ? { fleetLaunchUnavailableReason: "Current fleet inventory is unavailable. Refresh and retry.", stale: true } : {}),
     ...(slotSettlementBlocker ? {
       fleetLaunchUnavailableReason: "A fleet operation is still in progress. Try again shortly.",
       stale: true

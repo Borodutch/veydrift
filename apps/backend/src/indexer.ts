@@ -317,6 +317,7 @@ type ResourceProjectionContext = {
   indexedRevision: string;
   projectionRevision: string | null;
   safeToProject: boolean;
+  canonicalBaseline: boolean;
   timestamp: string | null;
 };
 
@@ -1193,6 +1194,7 @@ export class SettlementIndexer {
       }
     }
     return this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       // Websocket ingestion and the HTTP safety poll intentionally overlap. If websocket delivery
       // has already applied a later block, publishing this older poll head would couple its timestamp
       // to state from the future block. Leave projections frozen until a poll catches that head.
@@ -1221,6 +1223,7 @@ export class SettlementIndexer {
 
   invalidateResourceProjectionWatermark(cause: keyof typeof projectionInvalidationReasons): void {
     this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
       if (pendingReconciliationReason === null && cause !== "removedLog") {
         const block = this.metadata(resourceProjectionBlockMetadataKey);
@@ -1267,6 +1270,10 @@ export class SettlementIndexer {
       && value("transportStaleReason") === null
       && pendingReconciliationReason === null
       && (lastReconciliationError === null || lastReconciledAt !== null);
+    const baselineStateSafe = !reconciliationInProgress
+      && value("transportStaleReason") === null
+      && (pendingReconciliationReason === null || (lastReconciledAt !== null && isPlanetHydrationPendingReason(pendingReconciliationReason)))
+      && (lastReconciliationError === null || lastReconciledAt !== null);
     const block = value(resourceProjectionBlockMetadataKey);
     const hash = value(resourceProjectionHashMetadataKey);
     const timestamp = value(resourceProjectionTimestampMetadataKey);
@@ -1275,6 +1282,9 @@ export class SettlementIndexer {
       hash,
       indexedRevision,
       projectionRevision,
+      // Only a genuinely unanchored, healthy legacy index may expose settled balances.
+      // Deleted anchors during reconciliation must never regain that privilege.
+      canonicalBaseline: baselineStateSafe && value("resourceProjectionInitialized") === null && block === null && hash === null && timestamp === null && projectionRevision === null,
       safeToProject: projectionStateSafe
         && block !== null
         && hash !== null
@@ -3889,7 +3899,7 @@ export class SettlementIndexer {
     const snapshot = this.moonResourceSnapshot(planetId);
     if (!snapshot) return null;
     const projection = this.resourceProjectionContext();
-    if (projection.timestamp !== null && (!projection.safeToProject
+    if (!projection.canonicalBaseline && (!projection.safeToProject
       || !Number.isSafeInteger(Number(projection.timestamp)) || Number(projection.timestamp) < 0)) return null;
     return sumCurrentResources(
       { metal: snapshot.metal, crystal: snapshot.crystal, deuterium: snapshot.deuterium },
@@ -4306,20 +4316,20 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   walletResponseCacheVersion(wallet: `0x${string}`): string {
     // Overview includes fleet visibility, so retain the mission/report generations. Its queue
     // projection is wallet-scoped: a due queue belonging to a different player must not force a
     // cold rebuild of this wallet's response.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
       this.productionQueueProjectionCacheVersion(),
-      `fleet=${this.fleetProjectionHorizon()}`,
+      `fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`,
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
