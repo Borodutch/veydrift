@@ -1465,6 +1465,9 @@ const GAME_SELECTORS = {
   launchFleetMission: "0x60eac16f",
   launchTransportBatch: "0x9c26e0be",
   launchDeployBatch: "0xc47915ea",
+  launchBodyTransportBatch: toFunctionSelector("launchBodyTransportBatch(uint256,(uint256,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16)[])"),
+  launchBodyDeployBatch: toFunctionSelector("launchBodyDeployBatch(uint256,(uint256,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16)[])"),
+  moonSupplyBatchVersion: toFunctionSelector("moonSupplyBatchVersion()"),
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -1933,6 +1936,8 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.launchTransportBatch,
   GAME_SELECTORS.launchDeployBatch,
+  GAME_SELECTORS.launchBodyTransportBatch,
+  GAME_SELECTORS.launchBodyDeployBatch,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
 ]);
@@ -2262,6 +2267,19 @@ async function sendWalletTransaction(
     simulateThroughAppRpc
       ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)
       : (blockTag: "pending" | "latest") => provider.request<string>({ method: "eth_call", params: [transaction, blockTag] });
+  // Verify the exact destination through the same chain-read authority. Empty
+  // fallback success is NOT selector support; old proxies fail closed here.
+  const moonBatch = [GAME_SELECTORS.launchBodyTransportBatch, GAME_SELECTORS.launchBodyDeployBatch].some(selector => transaction.data.startsWith(selector));
+  if (moonBatch) {
+    const probe = { from: account, to: transaction.to, data: GAME_SELECTORS.moonSupplyBatchVersion };
+    let version: string;
+    try {
+      version = simulateThroughAppRpc
+        ? await transactionRpcRequest<string>(simulationRpcUrl ?? "", "eth_call", [probe, "latest"])
+        : await provider.request<string>({ method: "eth_call", params: [probe, "latest"] });
+    } catch { throw new Error(MOON_SUPPLY_BATCH_UNAVAILABLE); }
+    if (version !== `0x${"0".repeat(63)}1`) throw new Error(MOON_SUPPLY_BATCH_UNAVAILABLE);
+  }
   try {
     await simulate("pending");
   } catch (error) {
@@ -2292,7 +2310,7 @@ async function sendWalletTransaction(
   // A source-count limit is not a gas bound: mixed manifests and due settlement
   // can exceed Base's transaction ceiling even below 15 origins. Fail closed on
   // the exact atomic call, through the same chain-read authority as simulation.
-  const supplyBatch = [GAME_SELECTORS.launchTransportBatch, GAME_SELECTORS.launchDeployBatch].some(selector => transaction.data.startsWith(selector));
+  const supplyBatch = [GAME_SELECTORS.launchTransportBatch, GAME_SELECTORS.launchDeployBatch, GAME_SELECTORS.launchBodyTransportBatch, GAME_SELECTORS.launchBodyDeployBatch].some(selector => transaction.data.startsWith(selector));
   if (supplyBatch) {
     const boundedTransaction = { ...transaction, gas: FLEET_MISSION_RESOLUTION_GAS };
     let estimate: string;
@@ -2770,6 +2788,16 @@ export function encodeLaunchTransportBatchCall({ targetPlanetId, orders }: { tar
 
 export function encodeLaunchDeployBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
   return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchDeployBatch, params);
+}
+
+export const MOON_SUPPLY_BATCH_UNAVAILABLE = "Multi-source moon Supply is not available on the current network. Try again after the game update, or select one source.";
+
+export function encodeLaunchBodyTransportBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchBodyTransportBatch, params);
+}
+
+export function encodeLaunchBodyDeployBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchBodyDeployBatch, params);
 }
 
 function encodeLaunchFleetBatchCall(selector: string, { targetPlanetId, orders }: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
@@ -4113,6 +4141,18 @@ export async function sendLaunchDeployBatchTransaction(
     from: account,
     to: contractAddress,
     data: encodeLaunchDeployBatchCall(params),
+  });
+}
+
+export async function sendLaunchBodySupplyBatchTransaction(
+  provider: Eip1193Provider, account: string, contractAddress: string,
+  params: Parameters<typeof encodeLaunchTransportBatchCall>[0], mission: "transport" | "deploy",
+): Promise<string> {
+  if (params.orders.length < 1 || params.orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
+  if (new Set(params.orders.map(order => String(BigInt(order.originPlanetId)))).size !== params.orders.length) throw new Error("Supply origins must be unique.");
+  return sendWalletTransaction(provider, account, {
+    from: account, to: contractAddress,
+    data: (mission === "deploy" ? encodeLaunchBodyDeployBatchCall : encodeLaunchBodyTransportBatchCall)(params),
   });
 }
 

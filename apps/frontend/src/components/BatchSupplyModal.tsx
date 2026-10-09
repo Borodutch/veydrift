@@ -27,6 +27,7 @@ import {
 } from "../batchSupplyPlanner";
 import { useBatchSupplyMax } from "../useBatchSupplyMax";
 import { shipAssetByKey } from "../gameAssets";
+import { MOON_SUPPLY_BATCH_UNAVAILABLE } from "../walletFlow";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
 
@@ -49,8 +50,8 @@ const supplyShips: Array<{ key: SupplyShipKey; label: string }> = [
 
 export const MAX_TRANSPORT_BATCH_MISSIONS = 15;
 
-export function batchSupplyMissionLimitError(missionCount: number, _mission: SupplyMission = "transport", targetIsMoon = false): string | undefined {
-  if (targetIsMoon && missionCount > 1) return "Moon Supply requires exactly one source per mission.";
+export function batchSupplyMissionLimitError(missionCount: number, _mission: SupplyMission = "transport", targetIsMoon = false, moonBatchSupported = false): string | undefined {
+  if (targetIsMoon && missionCount > 1 && !moonBatchSupported) return MOON_SUPPLY_BATCH_UNAVAILABLE;
   return missionCount > MAX_TRANSPORT_BATCH_MISSIONS
     ? `A Supply batch can launch at most ${MAX_TRANSPORT_BATCH_MISSIONS} missions. Reduce the plan before launching.`
     : undefined;
@@ -67,7 +68,8 @@ export function batchSupplySourceLimitReason({
   selectedSourceCount: number;
   unavailableReason?: string | undefined;
 }): string | undefined {
-  if (checked || unavailableReason || selectedSourceCount < maxSources) return undefined;
+  if (checked || unavailableReason || selectedSourceCount < Math.min(maxSources, MAX_TRANSPORT_BATCH_MISSIONS)) return undefined;
+  if (selectedSourceCount >= MAX_TRANSPORT_BATCH_MISSIONS) return `A Supply batch can use at most ${MAX_TRANSPORT_BATCH_MISSIONS} sources.`;
   if (maxSources <= 0) return "No fleet slots are available for another transport.";
   return `Deselect another source to use this planet (${maxSources.toLocaleString()} fleet slot${maxSources === 1 ? "" : "s"} available).`;
 }
@@ -87,6 +89,7 @@ export function BatchSupplyModal({
   maxSources,
   target,
   targetIsMoon = false,
+  moonBatchSupported = false,
   transactionState,
 }: {
   actionPending?: boolean | undefined;
@@ -103,6 +106,7 @@ export function BatchSupplyModal({
   maxSources: number;
   target: ManagedPlanetResponse;
   targetIsMoon?: boolean;
+  moonBatchSupported?: boolean;
   transactionState?: Pick<WriteTransactionState, "label" | "phase" | "txHash"> | undefined;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -218,7 +222,7 @@ export function BatchSupplyModal({
   const canonicalTransactionError = transactionState?.phase === "error" || transactionOutcome === "unknown" || transactionOutcome === "reverted"
     ? transactionState?.label
     : undefined;
-  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission, targetIsMoon);
+  const missionLimitError = batchSupplyMissionLimitError(plan.orders.length, mission, targetIsMoon, moonBatchSupported);
   const maximum = useBatchSupplyMax(planOptions, target.planetId, loading || actionPending || transactionPending || inventoryChanged || goalNeedsReview, (resource, value) => {
     setRequested((current) => ({ ...current, [resource]: value === 0 ? "" : String(value) }));
   });
@@ -246,7 +250,7 @@ export function BatchSupplyModal({
     setSelectedSourceIds((current) => {
       const next = new Set(current);
       if (next.has(planetId)) next.delete(planetId);
-      else if (next.size < maxSources) next.add(planetId);
+      else if (next.size < Math.min(maxSources, MAX_TRANSPORT_BATCH_MISSIONS)) next.add(planetId);
       return next;
     });
   };
@@ -315,7 +319,7 @@ export function BatchSupplyModal({
         <span>Source inventory changed. Your draft is unchanged.</span>
         <button type="button" className="min-h-8 rounded border border-amber-200/30 px-2" disabled={actionPending || transactionPending || loading} onClick={recalculate}>Review latest inventory</button>
       </div> : null}
-      {targetIsMoon ? <p className="text-sm text-slate-300">Moon Supply uses one source per mission. Select a source and review before launching.</p> : null}
+      {targetIsMoon && !moonBatchSupported ? <p className="text-sm text-slate-300" role="status">{MOON_SUPPLY_BATCH_UNAVAILABLE}</p> : null}
       <div data-supply-amounts>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">Resources to send</h3>
@@ -505,7 +509,7 @@ export function BatchSupplyModal({
           </div>
           <button className="inline-flex w-full min-w-0 items-center justify-center gap-2 whitespace-normal rounded bg-cyan-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm" disabled={!canSubmit} onClick={() => { if (canSubmit) onConfirm(plan.orders, shipTypesBySource, mission, fleetModesBySource); }} type="button">
             <Check aria-hidden="true" className="shrink-0" size={16} />
-            <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${targetIsMoon ? "to moon" : "in one call"}`}</span>
+            <span className="min-w-0">{transactionPending ? "Processing…" : actionPending ? "Launching…" : `Launch ${plan.orders.length} ${mission === "transport" ? "transport" : "deployment"}${plan.orders.length === 1 ? "" : "s"} ${targetIsMoon ? "to moon in one call" : "in one call"}`}</span>
           </button>
         </footer>
     </Modal>

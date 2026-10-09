@@ -129,7 +129,7 @@ export function maximumBatchSupplyResource(
   const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
   // A different Max must never hide an existing shortfall or displace its cargo.
   // The clicked field itself may be oversized and is intentionally replaced.
-  const missionLimit = options.targetIsMoon ? 1 : 15;
+  const missionLimit = Math.max(0, Math.min(options.maxOrders ?? 15, 15));
   if (baseline.sourceLimitReached || otherResources.some(key => baseline.missing[key] > 0)) return requested[resource];
 
   // Bound by what a source could carry, not its potentially enormous stock.
@@ -239,7 +239,7 @@ export function suggestBatchSupplySourceIds(options: Omit<BatchSupplyOptions, "s
     && hasUsableSupplyFleet(allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes)));
   const distance = (source: BatchSupplySource) => fleetMissionDistance(source.coordinates, options.targetCoordinates, { targetIsMoon: options.targetIsMoon ?? false });
   const nearest = [...eligible].sort((a, b) => distance(a) - distance(b) || a.planetId.localeCompare(b.planetId));
-  const limit = Math.max(0, Math.min(options.maxOrders ?? 15, options.targetIsMoon ? 1 : 15));
+  const limit = Math.max(0, Math.min(options.maxOrders ?? 15, 15));
   const evaluate = (sources: readonly BatchSupplySource[]) => planBatchSupply({ ...options, sources, selectedPlanetIds: new Set(sources.map(s => s.planetId)), maxOrders: limit });
   if (resourceTotal(normalizeSupplyResources(options.requested)) === 0) return new Set(nearest.slice(0, limit).map(s => s.planetId));
   const singles = nearest.map(source => ({ source, plan: evaluate([source]) }));
@@ -332,7 +332,7 @@ function planBatchSupply({
       if (leftManual !== rightManual) return rightManual - leftManual;
       return fleetMissionDistance(left.coordinates, targetCoordinates, { targetIsMoon }) - fleetMissionDistance(right.coordinates, targetCoordinates, { targetIsMoon });
     });
-  const boundedMaxOrders = Math.max(0, Math.trunc(maxOrders));
+  const boundedMaxOrders = Math.max(0, Math.min(15, Math.trunc(maxOrders)));
   const sourceLimitReached = selected.length > boundedMaxOrders;
 
   for (const source of selected.slice(0, boundedMaxOrders)) {

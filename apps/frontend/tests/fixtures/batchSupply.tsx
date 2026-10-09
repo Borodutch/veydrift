@@ -1,6 +1,7 @@
 // Local-only mounted production modal. No wallet, API, or production entrypoint.
 import { render } from "preact";
 import { useState } from "preact/hooks";
+import { useVerifiedMoonSupplyBatch } from "../../src/moonSupplyBatch";
 import { BatchSupplyModal } from "../../src/components/BatchSupplyModal";
 import { MissionCargoPicker } from "../../src/components/MissionCreationPage";
 import type { BatchSupplyOrder, BatchSupplySource, SupplyShipTypesBySource, SupplyMission, SupplyFleetModesBySource } from "../../src/batchSupplyPlanner";
@@ -13,6 +14,10 @@ const oneSlot = new URLSearchParams(location.search).has("oneSlot");
 const combatFleet = new URLSearchParams(location.search).has("combatFleet");
 const largeFleet = new URLSearchParams(location.search).has("largeFleet");
 const moon = new URLSearchParams(location.search).has("moon");
+const capabilityHook = new URLSearchParams(location.search).has("capabilityHook");
+let capabilityResponse: unknown = {version:1};
+const originalFetch = window.fetch.bind(window);
+if (capabilityHook) window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => String(input) === "https://moon-capability.fixture.invalid/moon-supply-batch" ? Response.json(capabilityResponse) : originalFetch(input, init), originalFetch);
 const emptyFleet = new URLSearchParams(location.search).has("emptyFleet");
 const recyclerOnly = new URLSearchParams(location.search).has("recyclerOnly");
 const twoSources = new URLSearchParams(location.search).has("twoSources");
@@ -46,6 +51,7 @@ declare global {
       pending: (kind: "action" | "transaction" | "none") => void;
       reject: () => void;
       reset: (kind: "draft" | "target" | "account") => void;
+      capability: (supported: boolean) => void;
       submissions: Array<{ orders: BatchSupplyOrder[]; shipTypesBySource: SupplyShipTypesBySource; mission: SupplyMission; fleetModesBySource: SupplyFleetModesBySource }>;
     };
   }
@@ -66,11 +72,14 @@ function Fixture() {
   const [account, setAccount] = useState("fixture-account");
   const [destination, setDestination] = useState(target);
   const [targetIsMoon, setTargetIsMoon] = useState(moon);
-  const [maxSources, setMaxSources] = useState(moon || oneSlot ? 1 : 15);
+  const [maxSources, setMaxSources] = useState(oneSlot ? 1 : 15);
+  const [moonBatchSupported, setMoonBatchSupported] = useState(true);
+  const verified = useVerifiedMoonSupplyBatch("https://moon-capability.fixture.invalid", capabilityHook && moonBatchSupported);
   const [actionPending, setActionPending] = useState(false);
   const [transactionState, setTransactionState] = useState<WriteTransactionState>();
   window.supplyFixture = {
     submissions,
+    capability: supported => { capabilityResponse = {version: supported ? 1 : null}; setMoonBatchSupported(supported); },
     effectiveCargo: count => setSources(current => current.map(item => ({ ...item, ships: { largeCargo: count }, unavailableReason: count ? undefined : "No usable cargo ships are available on this planet." }))),
     unmount: () => render(null, document.getElementById("app")!),
     refresh: () => setSources(current => current.map(item => ({ ...item, ships: { ...item.ships }, resources: { ...item.resources } }))),
@@ -97,7 +106,7 @@ function Fixture() {
       if (kind === "account") setAccount(value => value + "-new");
     },
   };
-  return <BatchSupplyModal key={account + ":" + destination.planetId + ":" + draft}
+  return <BatchSupplyModal moonBatchSupported={capabilityHook ? verified : moonBatchSupported} key={account + ":" + destination.planetId + ":" + draft}
     upgrade={denver ? { kind: "building", key: "roboticsFactory", label: "Robotics Factory", level: 6 } : undefined}
     preview={denver ? { requirement: { metal: 12800, crystal: 3840, deuterium: 6400 }, missing: { metal: 12300, crystal: 3340, deuterium: 6400 }, energyOnly: false } : undefined}
     target={destination} sources={sources} initialRequested={initialRequested} targetIsMoon={targetIsMoon} maxSources={maxSources}
