@@ -63,7 +63,7 @@ Paid production remains the established wall-clock/timing-qualified #23 read con
 
 ## Local real-stack regression — 2026-10-09
 
-Base commit: `780d6ed89e00bd28e1d91ba0c4e0cf45f7ebcfee` (PR1913). The nine new `testInventory65*` tests reuse `VeydriftGameTest`'s real module implementation stack behind an initialized `ERC1967Proxy`; both batch selectors execute their actual delegatecall children. No reconciliation, chronology, batch entrypoint, or revert response is mocked. The existing mock reserve tokens and local `vm` setup seed owned bodies, funded raw balances/inventory and a matured research queue; all fleet lifecycles are created by real launches, not fabricated mission records. Existing compiler profiles and all production source/guards remain unchanged.
+Base commit: `780d6ed89e00bd28e1d91ba0c4e0cf45f7ebcfee` (PR1913). The nine new `testInventory65*` tests reuse `VeydriftGameTest`'s real module implementation stack behind an initialized `ERC1967Proxy`; both batch selectors execute their actual delegatecall children. No reconciliation, chronology, batch entrypoint, or revert response is mocked. The existing mock reserve tokens and local `vm` setup seed owned bodies, funded raw balances/inventory and a matured research queue; all fleet lifecycles are created by real launches, not fabricated mission records. The Game test file is excluded from the unoptimized tests profile so its real modules and linked libraries use production optimizer settings; a profile regression guards this boundary. All production source/guards remain unchanged.
 
 ### Assertions
 
@@ -85,6 +85,8 @@ forge test --match-contract "Veydrift(GameTest|ScheduledReturnsTest|MissionBatch
 forge fmt --check test/VeydriftGame.t.sol
 ```
 
-Full relevant run: **379 passed, 0 failed, 0 skipped** (VeydriftGameTest328, ScheduledReturns35, MissionBatch16), including all nine new regressions. Local output: `/tmp/inventory65-verified.log`. Initial fixture-only assertion mistakes (terminal Returned vs Resolved, which ordinary actions settle research, and the cursor window after appending a child) were corrected against real execution; production behavior was not altered to make tests pass.
+Initial default-profile relevant run: **379 passed, 0 failed, 0 skipped** (VeydriftGameTest328, ScheduledReturns35, MissionBatch16), including all nine new regressions. Local output: `/tmp/inventory65-verified.log`. Initial fixture-only assertion mistakes (terminal Returned vs Resolved, which ordinary actions settle research, and the cursor window after appending a child) were corrected against real execution; production behavior was not altered to make tests pass.
+
+Independent review additionally ran all nine cases with fully optimized modules/libraries and with the minimal Game-profile correction: **9/9 passed in both runs**. The committed profile now preserves this production-valid invocation; the prior default run alone was not production-gas evidence.
 
 **Limits:** source-derived, synthetic local proof only, not an RPC fork, deployment verification, wallet send, browser screenshot attribution, or same-wallet/body historical reproduction. No production Solidity/backend/frontend changes, broadcasts, deployments, pushes or board mutations were performed by this test lane. Parent owns integration, independent review and CI; dedicated QA still owns live evidence.

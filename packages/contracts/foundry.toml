@@ -14,6 +14,8 @@ bytecode_hash = "none"
 # optimizer running over test contracts. A test file stays optimized (unlisted) when it inherits
 # src code (harness), imports a deploy script, is a mainnet-fork test, or needs optimized code
 # to fit stack/gas (e.g. VeydriftStagedCohorts, VeydriftCombatArchitectureProxy).
+# VeydriftGame stays optimized: gas-bounded real-stack regressions require production
+# modules and linked libraries, not unoptimized .tests variants.
 # scripts/check-test-profiles.mjs guards the list.
 dynamic_test_linking = true
 additional_compiler_profiles = [{ name = "tests", via_ir = true, optimizer = false, optimizer_runs = 0 }]
@@ -30,7 +32,6 @@ compilation_restrictions = [
   { paths = "test/VeydriftCombatReferenceParity.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftDefenseRepair.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftFormulaConformance.t.sol", max_optimizer_runs = 0 },
-  { paths = "test/VeydriftGame.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftLiquidityLauncher.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftLiveUpgradePolicy.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftMissionBatch.t.sol", max_optimizer_runs = 0 },

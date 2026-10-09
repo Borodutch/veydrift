@@ -17,6 +17,9 @@ export function unoptimizedTestFiles(toml) {
 
 export function profileProblems(file, source, srcNames) {
   const problems = [];
+  if (file === "test/VeydriftGame.t.sol") {
+    problems.push("has production gas ceilings requiring production-profile linked libraries");
+  }
   if (/Fork\.t\.sol$/.test(file)) problems.push("is a mainnet-fork test");
   if (/import\s[^;]*["']\.\.\/script\//.test(source)) problems.push("imports a deploy script");
   for (const match of source.matchAll(/^\s*(?:abstract\s+)?contract\s+(\w+)\s+is\s+([^{]+)\{/gm)) {
