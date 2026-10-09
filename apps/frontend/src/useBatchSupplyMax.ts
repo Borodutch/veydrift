@@ -25,7 +25,7 @@ export function useBatchSupplyMax(options: SupplyMaxRequest["options"], draftKey
 
   // Snapshot refreshes recreate objects even when planner inputs are unchanged.
   // Compare values (including Set membership), not the options object identity.
-  const optionsKey = JSON.stringify(options, (_key, value) => value instanceof Set ? [...value].sort() : value);
+  const optionsKey = JSON.stringify({ ...options, sources: options.sources.filter(source => options.selectedPlanetIds.has(source.planetId)) }, (_key, value) => value instanceof Set ? [...value].sort() : value);
 
   // Layout cleanup invalidates results at commit, before a queued worker event
   // can overwrite edited resources, routes, inventory, eligibility or overrides.

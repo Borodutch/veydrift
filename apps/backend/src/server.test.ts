@@ -1410,7 +1410,7 @@ describe("Veydrift backend", () => {
     const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
       get(cacheKey: string, _now?: number, includeStale?: boolean) {
-        if (!includeStale || !cacheKey.endsWith(":fleet=null")) return null;
+        if (!includeStale || !cacheKey.endsWith(":fleet=null:baseline=true")) return null;
         staleKeyUsed = true;
         return {
           body: staleBody,
@@ -4816,7 +4816,7 @@ describe("Veydrift backend", () => {
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
       indexer
-    })(new Request("http://localhost/mission/51"));
+    })(nullableResourceRequest("http://localhost/mission/51"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -4848,7 +4848,7 @@ describe("Veydrift backend", () => {
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
       indexer
-    })(new Request("http://localhost/mission/52"));
+    })(nullableResourceRequest("http://localhost/mission/52"));
     const parentBody = await parentResponse.json();
     expect(parentResponse.status).toBe(200);
     expect(parentBody.targetCombatIntel).toMatchObject({
@@ -6033,7 +6033,7 @@ describe("Veydrift backend", () => {
       }()),
       config: configuredTestConfig
     });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6060,7 +6060,7 @@ describe("Veydrift backend", () => {
 
     const chainReader = new SlowMoonReader();
     const handler = createRequestHandler({ chainReader: withoutIndexLists(chainReader), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6090,7 +6090,7 @@ describe("Veydrift backend", () => {
     }
 
     const handler = createRequestHandler({ chainReader: withoutIndexLists(new RpcFailingMoonReader()), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6297,7 +6297,7 @@ describe("Veydrift backend", () => {
     });
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "score_protection" }), indexer });
 
-    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6311,13 +6311,13 @@ describe("Veydrift backend", () => {
       scoreComparison: { protected: true }
     });
 
-    const rankings = await (await handler(new Request(
+    const rankings = await (await handler(nullableResourceRequest(
       `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
     ))).json();
     expect(rankings.rankings.total.find((row: { wallet: string }) => row.wallet === player).attackProtection)
       .toMatchObject({ allowed: true, blockedReason: "none" });
 
-    const moonResponse = await handler(new Request(
+    const moonResponse = await handler(nullableResourceRequest(
       `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
     ));
     const moonBody = await moonResponse.json();
@@ -6499,11 +6499,11 @@ describe("Veydrift backend", () => {
       }
       const reader = protectionReader({ blockedReason: "bashing_limit" });
       const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader, indexer });
-      const planetResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
-      const moonResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
+      const planetResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+      const moonResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
       expect(await planetResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
       expect(await moonResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
-      const rankingsResponse = await handler(new Request(
+      const rankingsResponse = await handler(nullableResourceRequest(
         `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
       ));
       const rankingsBody = await rankingsResponse.json();
@@ -6512,10 +6512,10 @@ describe("Veydrift backend", () => {
 
       setSystemTime(new Date((nowSeconds + 86_401) * 1_000));
       reader.getAttackProtectionStatus = new MockChainReader().getAttackProtectionStatus;
-      const expiredPlanetResponse = await handler(new Request(
+      const expiredPlanetResponse = await handler(nullableResourceRequest(
         `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`
       ));
-      const expiredMoonResponse = await handler(new Request(
+      const expiredMoonResponse = await handler(nullableResourceRequest(
         `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
       ));
       expect(await expiredPlanetResponse.json()).toMatchObject({ allowed: true, blockedReason: "none" });
@@ -9981,7 +9981,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?planetId=125`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/infrastructure?planetId=125`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -10176,7 +10176,7 @@ describe("Veydrift backend", () => {
       ["moon", "moon"],
       ["rift", "rift"]
     ] as const) {
-      const response = await handler(new Request(`http://localhost/wallet/${player}/${path}`));
+      const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/${path}`));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -10554,23 +10554,23 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/settlement`));
     const settlementBody = await settlementResponse.json();
-    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/planets`));
     const planetsBody = await planetsResponse.json();
-    const queuesResponse = await handler(new Request(`http://localhost/wallet/${player}/queues`));
+    const queuesResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/queues`));
     const queuesBody = await queuesResponse.json();
-    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/infrastructure`));
     const infrastructureBody = await infrastructureResponse.json();
-    const shipyardResponse = await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
+    const shipyardResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/shipyard`));
     const shipyardBody = await shipyardResponse.json();
-    const defensesResponse = await handler(new Request(`http://localhost/wallet/${player}/defenses`));
+    const defensesResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/defenses`));
     const defensesBody = await defensesResponse.json();
-    const researchResponse = await handler(new Request(`http://localhost/wallet/${player}/research`));
+    const researchResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/research`));
     const researchBody = await researchResponse.json();
-    const moonResponse = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const moonResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const moonBody = await moonResponse.json();
-    const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift`));
+    const riftResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/rift`));
     const riftBody = await riftResponse.json();
 
     expect(settlementResponse.status).toBe(200);
@@ -11396,6 +11396,7 @@ describe("Veydrift backend", () => {
     }) as SettlementIndexer["moonState"];
     indexer.hasMoon = (planetId: string) => planetId === "11";
     indexer.moonResources = () => ({ metal: "12", crystal: "34", deuterium: "56" });
+    indexer.moonResourcesAsOfNow = () => ({ metal: "12", crystal: "34", deuterium: "56" });
     indexer.stationedDefenderForecastTimelineForPlanet = (() => {
       throw new Error("highscore discovery rows must defer stationed-defender forecasts until target selection");
     }) as SettlementIndexer["stationedDefenderForecastTimelineForPlanet"];
@@ -11905,7 +11906,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const response = await handler(nullableResourceRequest("http://localhost/highscores?limit=10"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -12988,3 +12989,10 @@ test("current state invalidates warm full-system and wallet caches at partial un
   setSystemTime(new Date((now+20)*1000));expect((await read()).defenses[0]?.count).toBe(2);
  } finally { setSystemTime(new Date(now*1000)); }
 });
+
+// These tests inspect the nullable contract, not the unsupported legacy-client boundary.
+function nullableResourceRequest(input: string, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("accept", "application/json; resource-view=nullable-v1");
+  return new Request(input, { ...init, headers });
+}

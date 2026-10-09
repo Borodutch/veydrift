@@ -701,3 +701,13 @@ test("unknown current resources never enable debris fuel from positive canonical
  const row = buildDebrisTargets({ targets: [debrisTarget()], origin: ORIGIN, shipyardState: shipyard({ resourcesAsOfNow: null }) })[0]!;
  expect(row.harvestDisabledReason).toBe("Current resources are unavailable. Please try again shortly.");
 });
+
+test("unknown tactical balances remain unknown while fleet intel stays available", () => {
+  const body = planet({ planetId: "9" });
+  body.tactical = { ...body.tactical!, currentResources: null, raidableResources: null, raidableResourceTotal: null, grossResourceTotal: null };
+  const target = buildRaidTargets({ entries: [entry({ wallet: "0xenemy", planets: [body] })], origin: ORIGIN })[0]!;
+  expect(target.currentResources).toBeNull();
+  expect(target.raidableResources).toBeNull();
+  expect(target.lootKnown).toBe(false);
+  expect(target.shipCount).toBe(body.tactical.ships.count);
+});

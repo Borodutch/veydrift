@@ -129,3 +129,20 @@ for (const [mission, send, encode] of [
     });
   }
 }
+
+for (const [mission, send, encode] of [["transport", sendLaunchTransportBatchTransaction, encodeLaunchTransportBatchCall], ["deploy", sendLaunchDeployBatchTransaction, encodeLaunchDeployBatchCall]] as const) {
+  test(mission + " exact nine-source six-cargo zero-available simulation never sends", async () => {
+    const params = { targetPlanetId: "99", orders: Array.from({ length: 9 }, (_, i) => ({ originPlanetId: String(i + 1), ships: { ...ships, largeCargo: 6 }, cargo: { metal: 140000, crystal: 0, deuterium: 0 }, speedPercent: 100 })) };
+    const calls: Array<{ method: string; params?: unknown[] }> = [];
+    const revert = "0x705f508b" + [4, 0, 6].map(n => n.toString(16).padStart(64, "0")).join("");
+    const provider = { request: async <T>(call: { method: string; params?: unknown[] }) => {
+      calls.push(call);
+      if (call.method === "eth_chainId") return defaultVeydriftChainForLocation().chainIdHex as T;
+      if (call.method === "eth_call") throw { code: 3, data: revert, message: "execution reverted" };
+      throw new Error("Unexpected wallet operation " + call.method);
+    } };
+    await expect(send(provider, account, contract, params)).rejects.toThrow("Need 6 Large Cargo, only 0 available on the origin planet");
+    expect(calls.filter(call => call.method === "eth_call").map(call => call.params)).toEqual([[{ from: account, to: contract, data: encode(params) }, "pending"]]);
+    expect(calls.some(call => call.method === "eth_sendTransaction" || call.method === "eth_estimateGas")).toBe(false);
+  });
+}

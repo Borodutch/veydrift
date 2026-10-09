@@ -110,6 +110,7 @@ import {
 
 type SystemReadOptions = {
   detail?: "full";
+  fresh?: boolean;
 };
 
 export type BackendDataTag = `kind:${string}` | `wallet:${string}` | `planet:${string}` | `resource:${string}`;
@@ -949,8 +950,9 @@ export class BackendDataStore {
   private refreshGameplay(): void {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-    // Supply omits queues but its effective inventory changes on the same cadence as Shipyard.
-    const timed = new Set(["settlement", "infrastructure", "shipyard", "supply-sources", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
+    // Inventory catalogs can change from qualified returns without a queue or log.
+    // Keep every mounted own-inventory view on the shared gameplay cadence.
+    const timed = new Set(["settlement", "overview", "planets", "infrastructure", "shipyard", "supply-sources", "moon", "queues", "fleet-visibility", "global-active-missions", "global-active-mission-count", "mission"]);
     const keys = [...this.resources.values()].filter(resource => {
       if (!this.state.subscriberCount(resource.key)) return false;
       if (resource.options.wallet && resource.options.wallet.toLowerCase() !== this.contextWallet) return false;

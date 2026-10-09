@@ -6831,6 +6831,415 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    // #65: synthetic local state, not attribution of the unidentified live screenshot.
+    /// forge-config: default.isolate = true
+    function testInventory65TransportOverdueOutboundNeedsSecondVisit() public {
+        _inventory65Overdue(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployOverdueOutboundNeedsSecondVisit() public {
+        _inventory65Overdue(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportNinthOrderRollsBackFundedPrefix() public {
+        _inventory65Rollback(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployNinthOrderRollsBackFundedPrefix() public {
+        _inventory65Rollback(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportCanonicalFullEffectiveFreeAndMaturedComputer() public {
+        _inventory65Slots(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployCanonicalFullEffectiveFreeAndMaturedComputer() public {
+        _inventory65Slots(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportBoundedSecondSourceRollsBackFirst() public {
+        _inventory65BoundedBatch(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployBoundedSecondSourceRollsBackFirst() public {
+        _inventory65BoundedBatch(true);
+    }
+
+    function _inventory65BoundedBatch(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256[] memory ids = new uint256[](13);
+        for (uint16 i; i < 13; ++i) {
+            // The first child advances this mission to Returning. Appending that child
+            // shifts the next twelve-entry window past its due return, so order two is unfunded.
+            uint256 origin = i == 11 ? orders[1].originPlanetId : 2_000 + i;
+            if (i != 11) _inventory65Planet(origin, i + 1);
+            _inventory65Planet(3_000 + i, i + 21);
+            vm.prank(player);
+            ids[i] = game.launchFleetMission(
+                origin,
+                3_000 + i,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[0].ships,
+                orders[0].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+        assertEq(game.activeFleetMissionCount(player), 13);
+        uint256 firstId = game.nextFleetId();
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "funded first order plus lazy credits roll back"
+        );
+        for (uint256 i; i < ids.length; ++i) {
+            (
+                VeydriftGameStorage.FleetMissionStatus status,,,
+                VeydriftGameStorage.Resources memory cargo
+            ) = _fleetMission(ids[i]);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+            assertEq(keccak256(abi.encode(cargo)), keccak256(abi.encode(orders[0].cargo)));
+            assertEq(
+                keccak256(abi.encode(game.planet(3_000 + i).resources)),
+                keccak256(
+                    abi.encode(VeydriftGameStorage.Resources(1_000_000, 1_000_000, 1_000_000))
+                )
+            );
+            if (i != 11) assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0);
+        }
+        (VeydriftGameStorage.FleetMissionStatus newStatus,,,) = _fleetMission(firstId);
+        assertEq(uint8(newStatus), uint8(VeydriftGameStorage.FleetMissionStatus.None));
+        // Execute the exact first order alone to prove the funded prefix and cursor boundary.
+        VeydriftGameStorage.TransportBatchOrder[] memory prefix =
+            new VeydriftGameStorage.TransportBatchOrder[](1);
+        prefix[0] = orders[0];
+        assertEq(_inventory65Launch(deploy, target, prefix)[0], firstId);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 0);
+        (VeydriftGameStorage.FleetMissionStatus missed,,,) = _fleetMission(ids[11]);
+        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+        vm.prank(player);
+        game.renamePlanet(target, "Second bounded visit");
+        (missed,,,) = _fleetMission(ids[11]);
+        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65BoundedSweepVisitsOnlyTwelveUniqueMissions() public {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256[] memory ids = new uint256[](13);
+        for (uint16 i; i < 13; ++i) {
+            uint256 origin = 2_000 + i;
+            uint256 destination = 3_000 + i;
+            _inventory65Planet(origin, i + 1);
+            _inventory65Planet(destination, i + 21);
+            vm.prank(player);
+            ids[i] = game.launchFleetMission(
+                origin,
+                destination,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[0].ships,
+                orders[0].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        // rename is a genuine player action, not a mocked/self-call-only reconciler.
+        vm.prank(player);
+        game.renamePlanet(target, "First bounded visit");
+        uint256 outbound;
+        uint256 returning;
+        for (uint256 i; i < ids.length; ++i) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ids[i]);
+            if (status == VeydriftGameStorage.FleetMissionStatus.Outbound) ++outbound;
+            if (status == VeydriftGameStorage.FleetMissionStatus.Returning) ++returning;
+            assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0, "one leg per visit");
+        }
+        assertEq(outbound, 1, "thirteenth unique entry remains unvisited");
+        assertEq(returning, 12, "production sweep bound must stay twelve");
+        assertEq(game.activeFleetMissionCount(player), 13);
+        // Bounded retries eventually settle all legs without duplicate credits.
+        for (uint256 i; i < 4; ++i) {
+            vm.prank(player);
+            game.renamePlanet(target, "Continue bounded visits");
+        }
+        assertEq(game.activeFleetMissionCount(player), 0);
+        for (uint256 i; i < ids.length; ++i) {
+            assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 6);
+        }
+    }
+
+    function _inventory65Fixture()
+        private
+        returns (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders)
+    {
+        // Fail closed if the inline isolated-transaction setting stops taking effect.
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGt(storageGas, 4_000, "batch gas checks need cold transaction boundaries");
+        assertEq(transientValue, 0);
+        // Reuse the real implementation/module stack, now behind the production proxy boundary.
+        game = VeydriftGame(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(game), abi.encodeCall(VeydriftGame.initialize, (admin))
+                    )
+                ))
+        );
+        _fundGameReserves(RESERVE_FUNDING);
+        vm.warp(1_790_000_000);
+        target = 900;
+        _inventory65Planet(target, 100);
+        _setShipCount(target, Ship.LargeCargo, 0);
+        _setTechnologyLevel(player, Technology.Computer, 40);
+        orders = new VeydriftGameStorage.TransportBatchOrder[](9);
+        for (uint16 i; i < 9; ++i) {
+            _inventory65Planet(1_000 + i, i + 1);
+            orders[i].originPlanetId = 1_000 + i;
+            orders[i].ships.largeCargo = 6;
+            orders[i].cargo = VeydriftGameStorage.Resources(17, 11, 3);
+            orders[i].speedPercent = 100;
+        }
+    }
+
+    function _inventory65Planet(uint256 id, uint16 system) private {
+        _setPlanetOwner(id, player);
+        _setPlanetCoordinates(id, 1, system, 8);
+        _setPlanetLastSettledAt(id, uint64(block.timestamp));
+        _setShipCount(id, Ship.LargeCargo, 6);
+        VeydriftGameStorage.Resources memory total = game.totalInternalResources();
+        _setResources(id, 1_000_000, 1_000_000, 1_000_000);
+        // The existing helper overwrites shared accounting; preserve the sum of seeded bodies.
+        vm.store(
+            address(game),
+            bytes32(uint256(14)),
+            _packResourcesHead(total.metal + 1_000_000, total.crystal + 1_000_000)
+        );
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(total.deuterium) + 1_000_000));
+    }
+
+    function _inventory65Launch(
+        bool deploy,
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder[] memory orders
+    ) private returns (uint256[] memory ids) {
+        vm.prank(player);
+        // Keep the real Base transaction ceiling, with conservative calldata/intrinsic headroom.
+        if (deploy) {
+            return ITransportBatchEntrypoints(address(game)).launchDeployBatch{gas: 16_000_000}(
+                target, orders
+            );
+        }
+        return ITransportBatchEntrypoints(address(game)).launchTransportBatch{gas: 16_000_000}(
+            target, orders
+        );
+    }
+
+    function _inventory65DueTransport(
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder memory order
+    ) private returns (uint256 id) {
+        vm.prank(player);
+        id = game.launchFleetMission(
+            order.originPlanetId,
+            target,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            order.ships,
+            order.cargo,
+            100,
+            0
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(id);
+        assertGt(returnAt, arrivalAt);
+        vm.warp(returnAt + 1);
+        assertEq(game.shipCount(order.originPlanetId, Ship.LargeCargo), 0);
+    }
+
+    function _inventory65State(
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder[] memory orders
+    ) private view returns (bytes32 state) {
+        state = keccak256(
+            abi.encode(
+                game.nextFleetId(),
+                game.activeFleetMissionCount(player),
+                game.totalInternalResources(),
+                game.planet(target),
+                game.shipCount(target, Ship.LargeCargo),
+                metalToken.balanceOf(address(game)),
+                crystalToken.balanceOf(address(game)),
+                deuteriumToken.balanceOf(address(game)),
+                game.researchQueue(player)
+            )
+        );
+        for (uint256 i; i < orders.length; ++i) {
+            uint256 origin = orders[i].originPlanetId;
+            state = keccak256(
+                abi.encode(state, game.planet(origin), game.shipCount(origin, Ship.LargeCargo))
+            );
+        }
+    }
+
+    function _inventory65ExpectMissing() private {
+        // ABI order is ship, available, required (not required, available).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientShips.selector, Ship.LargeCargo, 0, 6
+            )
+        );
+    }
+
+    function _inventory65Overdue(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256 oldId = _inventory65DueTransport(target, orders[0]);
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(_inventory65State(target, orders), beforeState, "failed batch is atomic");
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
+        assertEq(
+            uint8(status),
+            uint8(VeydriftGameStorage.FleetMissionStatus.Outbound),
+            "arrival rolled back too"
+        );
+
+        vm.prank(player);
+        game.renamePlanet(target, "One lazy visit");
+        (status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(
+            game.shipCount(orders[0].originPlanetId, Ship.LargeCargo),
+            0,
+            "both deadlines due does not credit both legs"
+        );
+        // Positive control: the already-Returning leg is settled by the first child, then spent.
+        uint256[] memory ids = _inventory65Launch(deploy, target, orders);
+        assertEq(ids.length, 9);
+        assertEq(game.activeFleetMissionCount(player), 9);
+        (status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        for (uint256 i; i < orders.length; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+        }
+        bytes32 spent = _inventory65State(target, orders);
+        game.completeFleetMissionReturn(oldId);
+        game.resolveFleetMission(oldId);
+        assertEq(
+            _inventory65State(target, orders),
+            spent,
+            "terminal replay cannot resurrect spent ships/cargo"
+        );
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(_inventory65State(target, orders), spent);
+    }
+
+    function _inventory65Rollback(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        _setShipCount(orders[8].originPlanetId, Ship.LargeCargo, 0);
+        uint256 firstId = game.nextFleetId();
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "eight funded children and all shared accounting roll back"
+        );
+        for (uint256 i; i < 9; ++i) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(firstId + i);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.None));
+            assertEq(
+                uint256(vm.load(address(game), keccak256(abi.encode(firstId + i, uint256(86))))),
+                0,
+                "chronology registration rolled back"
+            );
+        }
+        // Prove the exact funded prefix really is executable, rather than failing an earlier guard.
+        VeydriftGameStorage.TransportBatchOrder[] memory prefix =
+            new VeydriftGameStorage.TransportBatchOrder[](8);
+        for (uint256 i; i < 8; ++i) {
+            prefix[i] = orders[i];
+        }
+        uint256[] memory ids = _inventory65Launch(deploy, target, prefix);
+        assertEq(ids.length, 8);
+        assertEq(game.nextFleetId(), firstId + 8);
+        assertEq(game.activeFleetMissionCount(player), 8);
+        for (uint256 i; i < 8; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+            assertLt(game.planet(orders[i].originPlanetId).resources.deuterium, 1_000_000);
+        }
+    }
+
+    function _inventory65Slots(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256 oldId = game.nextFleetId();
+        for (uint256 i; i < 8; ++i) {
+            vm.prank(player);
+            game.launchFleetMission(
+                orders[i].originPlanetId,
+                target,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[i].ships,
+                orders[i].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        vm.prank(player);
+        game.renamePlanet(target, "Settle outbound legs");
+        _setTechnologyLevel(player, Technology.Computer, 7); // canonical 8/8; effective 0/8
+        _setResearchQueue(player, Technology.Computer, 8, uint64(block.timestamp)); // effective 0/9
+        assertEq(game.activeFleetMissionCount(player), 8);
+        for (uint256 i; i < 8; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+        }
+        bytes32 beforeState = _inventory65State(target, orders);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetSlotLimitReached.selector, 8)
+        );
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "precheck runs before return and research settlement"
+        );
+        assertEq(game.technologyLevel(player, Technology.Computer), 7);
+        assertTrue(game.researchQueue(player).active);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        // finishResearch runs the ordinary fleet sweep and research completion, then retry.
+        vm.prank(player);
+        game.finishResearch();
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.technologyLevel(player, Technology.Computer), 8);
+        assertFalse(game.researchQueue(player).active);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
+        assertEq(_inventory65Launch(deploy, target, orders).length, 9);
+    }
+
     function testLaunchTransportBatchCreatesAtomicOwnedTransports() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -7103,11 +7512,12 @@ contract VeydriftGameTest is Test {
     }
 
     // Isolation commits setup writes and resets warmth/refunds before the actual call.
-    // Production source artifacts remain optimized via dynamic_test_linking.
+    // This file stays on the production profile, including linked libraries.
+    // Fifteen mixed orders alone fit after optimization; due settlement is the over-cap case.
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenExceedsBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         vm.prank(player);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
@@ -7121,7 +7531,7 @@ contract VeydriftGameTest is Test {
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenRevertsAtBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         uint256 nextId = game.nextFleetId();
         vm.prank(player);
         vm.expectRevert();

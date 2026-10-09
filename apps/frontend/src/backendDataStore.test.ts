@@ -1154,12 +1154,14 @@ describe("BackendDataStore", () => {
     let now = Date.now();
     const store = new BackendDataStore("https://policy.test", { now: () => now });
     store.setContext("0xabc", "7");
-    const reads = { infrastructure: 0, shipyard: 0, supply: 0, moon: 0, inactive: 0, fleet: 0, research: 0, profile: 0 };
+    const reads = { overview: 0, planets: 0, infrastructure: 0, shipyard: 0, supply: 0, moon: 0, inactive: 0, fleet: 0, research: 0, profile: 0 };
     for (const [name, kind, planetId, active, value] of [
       ["infrastructure", "infrastructure", "7", true, {}],
       ["inactive", "shipyard", "8", false, {}],
       ["shipyard", "shipyard", "7", true, {}],
       ["supply", "supply-sources", "7", true, { sources: [] }],
+      ["overview", "overview", "7", true, { planets: [] }],
+      ["planets", "planets", undefined, true, { planets: [] }],
       ["moon", "moon", "7", true, {}],
       ["fleet", "fleet-visibility", undefined, true, {}],
       ["research", "research", "7", true, { queue: { active: true } }],
@@ -1172,7 +1174,7 @@ describe("BackendDataStore", () => {
     now += 20_000;
     (store as any).refreshGameplay();
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(reads).toEqual({ infrastructure: 2, shipyard: 2, supply: 2, moon: 2, inactive: 1, fleet: 2, research: 2, profile: 1 });
+    expect(reads).toEqual({ overview: 2, planets: 2, infrastructure: 2, shipyard: 2, supply: 2, moon: 2, inactive: 1, fleet: 2, research: 2, profile: 1 });
     now += 120_000;
     (store as any).refreshGameplay();
     await new Promise(resolve => setTimeout(resolve, 0));

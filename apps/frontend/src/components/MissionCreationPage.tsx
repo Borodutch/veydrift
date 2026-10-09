@@ -3,7 +3,7 @@ import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   CONTRACT_COMBAT_MODEL_VERSION,
   contractCombatPower,
@@ -52,7 +52,7 @@ import {
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { getSizedImageSrc } from "../utils/imageSizes";
-import { missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
+import { fleetLaunchRequirementBlocker, missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { Skeleton, SkeletonRegion } from "./Skeleton";
@@ -542,15 +542,9 @@ export function MissionCreationPage({
   const effectiveTargetIsMoon = targetIsMoon;
   const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
-  // Derive before rendering/submission, then persist reductions so a later return
-  // cannot silently resurrect a quantity the player no longer sees selected.
-  const ships = useMemo(() => reconcileMissionShips(shipDraft, effectiveShipyardState), [shipDraft, effectiveShipyardState]);
-  const [inventoryAdjusted, setInventoryAdjusted] = useState(false);
-  useLayoutEffect(() => {
-    if (ships === shipDraft) return;
-    setShips(ships);
-    setInventoryAdjusted(true);
-  }, [ships, shipDraft]);
+  // A refresh changes availability, never the user's requested fleet. The
+  // stale-quantity blocker requires an explicit edit before a smaller launch.
+  const ships = shipDraft;
   const distance = originCoords
     ? action.mode === "mission"
       ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
@@ -584,7 +578,7 @@ export function MissionCreationPage({
   const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
   const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
-  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
+  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState, ships), [action, effectiveShipyardState, ships]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
@@ -752,7 +746,11 @@ export function MissionCreationPage({
     quantity,
     resources: effectiveResources,
     selectedShipCount,
-    staleShipQuantityBlocker,
+    staleShipQuantityBlocker: staleShipQuantityBlocker ?? (action.mode === "mission" ? fleetLaunchRequirementBlocker(
+      effectiveShipyardState?.fleetLaunchConstraints,
+      missionShipOptions.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })),
+      { metal: Number(normalizedCargo?.metal ?? 0), crystal: Number(normalizedCargo?.crystal ?? 0), deuterium: Number(normalizedCargo?.deuterium ?? 0) + effectiveFuelCost },
+    ) : undefined),
     submitBlocker: moonAttackNeedsUpgrade
       ? "Moon attacks are temporarily unavailable. Refresh shortly before launching."
       : effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
@@ -848,7 +846,6 @@ export function MissionCreationPage({
         {timingRows.length > 0 ? <MissionTimingGrid rows={timingRows} /> : null}
       </section>
 
-      {inventoryAdjusted ? <p role="status" className="text-sm text-amber-200">Fleet inventory changed. Unavailable ship quantities were reduced; review your fleet and cargo before confirming again.</p> : null}
       <div className="grid gap-3">
         <section className="grid gap-3">
           {bodySelectionVisibility.sectionVisible ? (
@@ -983,6 +980,7 @@ export function MissionCreationPage({
                   cargo={cargo}
                   cargoCapacity={cargoCapacity}
                   maxCargoResources={maxCargoResources}
+                  unavailable={effectiveShipyardState?.fleetLaunchAvailable === false}
                   onCargoChange={setCargo}
                 />
               </MissionFormSection>
@@ -1359,6 +1357,7 @@ export function missionCargoMaxForResource(
 }
 
 export function MissionCargoPicker({
+  unavailable,
   cargo,
   cargoCapacity,
   maxCargoResources,
@@ -1367,6 +1366,7 @@ export function MissionCargoPicker({
   cargo: MissionCargoDraft;
   cargoCapacity: number;
   maxCargoResources: MissionResourceSnapshot;
+  unavailable?: boolean;
   onCargoChange: (updater: (current: MissionCargoDraft) => MissionCargoDraft) => void;
 }) {
   const fields: Array<{ key: ResourceKey; label: string }> = [
@@ -1386,6 +1386,7 @@ export function MissionCargoPicker({
               label={label}
               max={maxCargoResources[key]}
               maxAction={{
+                disabled: unavailable,
                 value: maxValue,
                 onSelect: () => onCargoChange((current) => ({
                   ...current,
@@ -1664,20 +1665,6 @@ function cargoResourceOverdraft(
   return `Cargo exceeds available resources: ${missing.join(", ")}.`;
 }
 
-/** Reconcile only player quantities; inventory stays owned by BackendDataStore. */
-export function reconcileMissionShips(ships: MissionShips, inventory: MissionShipInventorySnapshot | null): MissionShips {
-  if (!inventory) return ships;
-  let next = ships;
-  for (const ship of missionShipOptions) {
-    const available = Math.max(0, Math.trunc(inventory.ships.find(row => row.id === ship.id)?.count ?? 0));
-    const count = Math.min(Math.max(0, Math.trunc(ships[ship.key] ?? 0)), available);
-    if (count === ships[ship.key]) continue;
-    if (next === ships) next = { ...ships };
-    next[ship.key] = count;
-  }
-  return next;
-}
-
 export function staleSelectedShipQuantityBlocker(
   action: EnabledGalaxyAction,
   ships: MissionShips,
@@ -1791,10 +1778,10 @@ export function initialMissionShips(
   return emptyMissionShips();
 }
 
-function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null): ShipOption[] {
+function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null, selected?: MissionShips): ShipOption[] {
   if (action.mode === "missile") return [];
   const allowed = allowedShipKeysForAction(action);
-  return missionShipOptions.filter((ship) => allowed.has(ship.key) && (shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0);
+  return missionShipOptions.filter((ship) => allowed.has(ship.key) && ((shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0 || (selected?.[ship.key] ?? 0) > 0));
 }
 
 export function stationedDefenderAttackWarningRows(
@@ -3426,6 +3413,7 @@ export function stationedDefenderCompositionUnits(
 
 function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
   const publicResources = target?.publicState?.resources;
+  if (publicResources === null || target?.publicState === null) return null;
   if (publicResources) {
     return {
       metal: safeResourceNumber(publicResources.metal),
@@ -3767,6 +3755,7 @@ function ResourceField({
   label: string;
   max: number;
   maxAction?: {
+    disabled?: boolean | undefined;
     onSelect: () => void;
     value: number;
   } | undefined;
@@ -3783,6 +3772,7 @@ function ResourceField({
           <button
             aria-label={`Set ${label.toLowerCase()} cargo to maximum (${maxAction.value.toLocaleString()})`}
             className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal hover:border-signal/50 hover:bg-signal/15"
+            disabled={maxAction.disabled}
             onClick={maxAction.onSelect}
             type="button"
           >

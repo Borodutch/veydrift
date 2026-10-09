@@ -1,4 +1,6 @@
 import type { Coordinates } from "./types";
+import { shipCatalog } from "./playableMvp";
+import { fleetLaunchRequirementBlocker, type FleetLaunchConstraints } from "./walletFlow";
 import { emptyMissionShips, type MissionShips } from "./galaxyActions";
 import {
   fleetMissionAvailableCargoCapacity,
@@ -23,6 +25,7 @@ export type BatchSupplySource = {
   ships: Partial<MissionShips>;
   driveLevels: FleetDriveLevels;
   unavailableReason?: string;
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
 };
 
 export type SupplyMission = "transport" | "deploy";
@@ -59,6 +62,10 @@ export const supplyShipKeys = Object.keys(emptyMissionShips()) as SupplyShipKey[
 export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
 
 export const defaultSupplyShipTypes: readonly SupplyShipKey[] = ["largeCargo", "smallCargo", "colonyShip"];
+
+function supplyShipId(key: string): number {
+  return shipCatalog.find(ship => ship.key === key)?.id ?? -1;
+}
 
 const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
   { id: 4, key: "largeCargo" },
@@ -135,7 +142,7 @@ export function maximumBatchSupplyResource(
   // Bound by what a source could carry, not its potentially enormous stock.
   // This is only an upper bound: the traced planner below remains authoritative
   // for allocation, manual cargo, mixed fleets, fuel and non-monotone feasibility.
-  const capacities = options.sources.filter(source => options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason)
+  const capacities = options.sources.map(source => supplyAllocationSource(source, options)).filter(source => options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason)
     .map(source => ({ source, capacity: supplyMaxCapacityBound(source, options) }));
   const largest = (values: number[]) => values.sort((a, b) => b - a).slice(0, missionLimit).reduce((total, value) => total + value, 0);
   let upper = Math.min(Number.MAX_SAFE_INTEGER,
@@ -160,11 +167,30 @@ export function maximumBatchSupplyResource(
         else if (slope < 0) lower = Math.max(lower, upper + Math.ceil(-deficit / slope));
         else if (deficit > 0) maximum = -1;
       }
-      if (maximum >= lower) return maximum;
+      if (maximum >= lower) {
+        const replay = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: maximum } });
+        if (!replay.blockedSources.length && !replay.sourceLimitReached && resourceTotal(replay.missing) === 0) return maximum;
+        return requested[resource];
+      }
     }
     upper = range.lower - 1;
   }
   return requested[resource];
+}
+
+/** Shared allocation inputs, not display inventory. Fixed/all fleets stay explicit. */
+function supplyAllocationSource(source: BatchSupplySource, options: Pick<BatchSupplyOptions, "shipTypesBySource" | "fleetModesBySource">): BatchSupplySource {
+  const selected = allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes);
+  const constraints = source.fleetLaunchConstraints;
+  if (constraints === undefined) return { ...source, ships: selected };
+  const fixed = allowedSupplyShips(selected, options.fleetModesBySource?.[source.planetId] === "all"
+    ? supplyShipKeys : supplyShipKeys.filter(key => !cargoShipKeys.some(ship => ship.key === key)));
+  const blocker = fleetLaunchRequirementBlocker(constraints, Object.entries(fixed).map(([key, count]) => ({ id: supplyShipId(key), count })));
+  if (blocker || !constraints?.resources) return { ...source, ships: selected, unavailableReason: source.unavailableReason ?? blocker ?? "Current launch resources are unavailable." };
+  return { ...source,
+    ships: Object.fromEntries(supplyShipKeys.map(key => [key, Math.min(selected[key], constraints.ships.find(row => row.id === supplyShipId(key))?.count ?? 0)])),
+    resources: Object.fromEntries((["metal", "crystal", "deuterium"] as const).map(key => [key, Math.min(source.resources[key], Number(constraints.resources![key]))])) as SupplyResources,
+  };
 }
 
 /** Relaxed capacity bound; never changes which fleet the actual planner chooses. */
@@ -324,7 +350,7 @@ function planBatchSupply({
   // shows every allocation and lets the player deselect any source before submitting.
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
-    .map((source) => ({ ...source, ships: allowedSupplyShips(source.ships, shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes) }))
+    .map(source => supplyAllocationSource(source, { shipTypesBySource, fleetModesBySource }))
     // Apply player-edited shipments first, then use nearby sources to automatically fill the balance.
     .sort((left, right) => {
       const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;
@@ -385,6 +411,11 @@ function planBatchSupply({
       blockedSources.push({ planetId: source.planetId, reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium." });
       continue;
     }
+
+    const constraintBlocker = fleetLaunchRequirementBlocker(source.fleetLaunchConstraints,
+      Object.entries(loadout.ships).map(([key, count]) => ({ id: supplyShipId(key), count })),
+      { ...loadout.cargo, deuterium: loadout.cargo.deuterium + loadout.fuelCost });
+    if (constraintBlocker) blockedSources.push({ planetId: source.planetId, reason: constraintBlocker });
 
     orders.push({
       originPlanetId: source.planetId,

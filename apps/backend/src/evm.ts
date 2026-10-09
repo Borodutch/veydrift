@@ -62,7 +62,7 @@ export type PlanetState = Coordinates & {
   // because the canonical settled snapshot is the load-bearing value; serializers
   // that expose a live balance populate it alongside `resources` rather than
   // overwriting the settled snapshot (VEY-KANEO-488).
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
@@ -97,15 +97,15 @@ export type ManagedPlanet = PlanetState & {
     planetId: string;
     coordinates: string;
     resources: Resources;
-    resourcesAsOfNow?: Resources;
+    resourcesAsOfNow?: Resources | null;
     ships: ShipyardState["ships"];
     defenses: DefenseState["defenses"];
     buildings?: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label" | "level">>;
     queues?: { building: QueueState | null; ship: QueueState | null; defense: QueueState | null };
   } | null;
   tactical?: {
-    raidableResources: Resources;
-    raidableResourceTotal: string;
+    raidableResources: Resources | null;
+    raidableResourceTotal: string | null;
     ships: {
       count: number;
       power: string;
@@ -845,7 +845,15 @@ export type BattleReport = {
   stagedEvidence?: StagedBattleEvidence;
 };
 
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: Resources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
 export type ShipyardState = {
+  /** Conservative requirements for this body; effective display stays separate. */
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   homePlanetId: string | null;
   planetId: string | null;
@@ -879,8 +887,7 @@ export type ShipyardState = {
     // Shipyard detail payload, omitted on count-only projections.
     durationSeconds?: number;
   }>;
-  // Inventory the next fleet-launch transaction can use after the contract's
-  // deterministic lazy production settlement prologue.
+  // Effective display inventory; fleetLaunchConstraints qualifies next-launch use.
   launchableShips?: Array<Pick<ShipyardState["ships"][number], "id" | "count">>;
   queue: QueueState | null;
 };
@@ -967,6 +974,7 @@ export type InfrastructureState = {
 };
 
 export type MoonState = {
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   bodyKind: "moon";
   homePlanetId: string | null;
@@ -974,13 +982,15 @@ export type MoonState = {
   moonAvailable: boolean;
   unavailableReason?: string;
   resources: Resources;
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships: ShipyardState["ships"];
-  // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival
-  // settlement prologue runs. This can be ahead of `ships` while an arrived Deploy is still stored
-  // as Outbound and has not emitted its MoonShipCountChanged credit yet.
+  // Same authoritative effective inventory as ships; launch eligibility is a
+  // separate guard because the deployed lazy sweep is bounded.
   launchableShips?: ShipyardState["ships"];
+  fleetSlots?: ShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;

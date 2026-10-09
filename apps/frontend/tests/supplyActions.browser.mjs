@@ -203,7 +203,7 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
 
     await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
     await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').closest("label").querySelector("button").click()');await settle();
-    for(const kind of ['unselected','irrelevant']) {
+    for(const kind of ['unselected']) {
       await evaluate('actionsFixture.stock('+JSON.stringify(kind)+')');await settle();
       assert.equal(await evaluate('Boolean(heldMax.terminated)'),false,kind+' cannot cancel reviewed Max');
       assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false);
@@ -211,6 +211,14 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     await evaluate('heldMax.onmessage({data:{maximum:12300}})');await settle();
     assert.equal(await evaluate('document.querySelector("footer button").disabled'),false,'identical reviewed plan remains launchable');
     await launch();await idle();assert.equal((await state()).sent.length,1);
+    // A selected source's resource reserve is an input to Max even when the
+    // current smaller shipment is unchanged. An old worker must not apply it.
+    await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
+    await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="metal to send"]') + ').closest("label").querySelector("button").click()');await settle();
+    await evaluate('actionsFixture.stock("irrelevant")');await settle();
+    assert.equal(await evaluate('Boolean(heldMax.terminated)'),true,'selected resource changes invalidate an old Max snapshot');
+    assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false,'unchanged reviewed shipment remains valid');
+    assert.equal((await state()).sent.length,0);
     for (const kind of ['fuel','lock','drive','fleet']) {
       await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
       await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="metal to send"]') + ').closest("label").querySelector("button").click()');await settle();
@@ -219,7 +227,7 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
       assert.equal(await evaluate('heldMax.terminated'),true,kind+': relevant feasibility change cancels worker');
       assert.equal((await state()).sent.length,0);
     }
-    console.log('PASS unrelated inventory and sufficient reserve changes preserve Max and exact plan; insufficient fuel blocks');
+    console.log('PASS unselected inventory preserves Max; selected reserves invalidate Max without resetting unchanged shipment; insufficient fuel blocks');
     await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);

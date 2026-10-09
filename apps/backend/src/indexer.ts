@@ -317,6 +317,7 @@ type ResourceProjectionContext = {
   indexedRevision: string;
   projectionRevision: string | null;
   safeToProject: boolean;
+  canonicalBaseline: boolean;
   timestamp: string | null;
 };
 
@@ -940,14 +941,14 @@ export class SettlementIndexer {
   // cost as much as a full queue projection under live polling. Cache the projection fingerprint until
   // either indexed state changes or the next queue completion boundary is reached.
   private productionQueueProjectionVersionCache:
-    | { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    | { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
     | null = null;
   // Wallet snapshot routes include that wallet's queues, not every production queue in the
   // universe. Keep their time-bound fingerprint scoped accordingly so an unrelated queue
   // completion cannot evict every player's overview cache.
   private readonly walletProductionQueueProjectionVersionCaches = new Map<
     string,
-    { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
   >();
   private technologyLevelsCache: TechnologyLevelsCache | null = null;
   private allianceIntelCache: AllianceIntelCache | null = null;
@@ -1038,6 +1039,11 @@ export class SettlementIndexer {
   private readSnapshotDepth = 0;
   private readSnapshotResourceProjectionContext: ResourceProjectionContext | null = null;
   private readSnapshotStateVersion: string | null = null;
+  private readSnapshotProductionSecond: number | null = null;
+
+  private productionReadSecond(): number {
+    return this.readSnapshotProductionSecond ?? nowSeconds();
+  }
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -1188,6 +1194,7 @@ export class SettlementIndexer {
       }
     }
     return this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       // Websocket ingestion and the HTTP safety poll intentionally overlap. If websocket delivery
       // has already applied a later block, publishing this older poll head would couple its timestamp
       // to state from the future block. Leave projections frozen until a poll catches that head.
@@ -1216,6 +1223,7 @@ export class SettlementIndexer {
 
   invalidateResourceProjectionWatermark(cause: keyof typeof projectionInvalidationReasons): void {
     this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
       if (pendingReconciliationReason === null && cause !== "removedLog") {
         const block = this.metadata(resourceProjectionBlockMetadataKey);
@@ -1262,6 +1270,10 @@ export class SettlementIndexer {
       && value("transportStaleReason") === null
       && pendingReconciliationReason === null
       && (lastReconciliationError === null || lastReconciledAt !== null);
+    const baselineStateSafe = !reconciliationInProgress
+      && value("transportStaleReason") === null
+      && (pendingReconciliationReason === null || (lastReconciledAt !== null && isPlanetHydrationPendingReason(pendingReconciliationReason)))
+      && (lastReconciliationError === null || lastReconciledAt !== null);
     const block = value(resourceProjectionBlockMetadataKey);
     const hash = value(resourceProjectionHashMetadataKey);
     const timestamp = value(resourceProjectionTimestampMetadataKey);
@@ -1270,6 +1282,9 @@ export class SettlementIndexer {
       hash,
       indexedRevision,
       projectionRevision,
+      // Only a genuinely unanchored, healthy legacy index may expose settled balances.
+      // Deleted anchors during reconciliation must never regain that privilege.
+      canonicalBaseline: baselineStateSafe && value("resourceProjectionInitialized") === null && block === null && hash === null && timestamp === null && projectionRevision === null,
       safeToProject: projectionStateSafe
         && block !== null
         && hash !== null
@@ -1289,6 +1304,7 @@ export class SettlementIndexer {
     if (outermost) {
       this.readSnapshotResourceProjectionContext = null;
       this.readSnapshotStateVersion = null;
+      this.readSnapshotProductionSecond = nowSeconds();
     }
     this.readSnapshotDepth += 1;
     try {
@@ -1298,6 +1314,7 @@ export class SettlementIndexer {
       if (outermost) {
         this.readSnapshotResourceProjectionContext = null;
         this.readSnapshotStateVersion = null;
+        this.readSnapshotProductionSecond = null;
       }
     }
   }
@@ -3878,8 +3895,16 @@ export class SettlementIndexer {
     return this.currentFleetEffects(planetId, asOfSeconds).filter((effect) => !effect.isMoon);
   }
 
-  moonResourcesAsOfNow(planetId: string): Resources {
-    return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
+  moonResourcesAsOfNow(planetId: string): Resources | null {
+    const snapshot = this.moonResourceSnapshot(planetId);
+    if (!snapshot) return null;
+    const projection = this.resourceProjectionContext();
+    if (!projection.canonicalBaseline && (!projection.safeToProject
+      || !Number.isSafeInteger(Number(projection.timestamp)) || Number(projection.timestamp) < 0)) return null;
+    return sumCurrentResources(
+      { metal: snapshot.metal, crystal: snapshot.crystal, deuterium: snapshot.deuterium },
+      this.currentFleetResourceCredits(planetId, true)
+    );
   }
 
   currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds?: number): Resources {
@@ -4071,6 +4096,24 @@ export class SettlementIndexer {
     return { ...levels };
   }
 
+  // Batch slots are checked before the first per-order lazy sweep.
+  batchFleetSlots(wallet: Address): ShipyardState["fleetSlots"] {
+    return {
+      active: this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
+        .filter(mission => mission.missionType !== "MissileAttack").length,
+      limit: 1 + (this.contractTechnologyLevels(wallet)["4"] ?? 0)
+    };
+  }
+
+  // The indexed mission graph does not prove the on-chain player/body cursors,
+  // retained inactive entries or incoming-owner roster. Never certify any fleet
+  // credit from its size. Production is settled independently of that sweep.
+  fleetLaunchShipCounts(planetId: string, isMoon = false): Array<{ id: number; count: number }> {
+    const counts = this.indexedLevelsById(isMoon ? "contract_moon_ship_counts" : "contract_ship_counts", "ship_id", "count", planetId);
+    const completed = this.completedQueueQuantities((isMoon ? "moon-ship:" : "ship:") + planetId);
+    return supportedShipIds.map(id => ({ id, count: (counts.get(id) ?? 0) + (completed.get(id) ?? 0) }));
+  }
+
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
     const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
@@ -4116,7 +4159,7 @@ export class SettlementIndexer {
     );
   }
 
-  private queueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
+  private queueSettlement(queueKeyValue: string, nowSec = this.productionReadSecond()) {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
@@ -4273,20 +4316,20 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   walletResponseCacheVersion(wallet: `0x${string}`): string {
     // Overview includes fleet visibility, so retain the mission/report generations. Its queue
     // projection is wallet-scoped: a due queue belonging to a different player must not force a
     // cold rebuild of this wallet's response.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
       this.productionQueueProjectionCacheVersion(),
-      `fleet=${this.fleetProjectionHorizon()}`,
+      `fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`,
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
@@ -4376,11 +4419,12 @@ export class SettlementIndexer {
     return version;
   }
 
-  private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+  private productionQueueProjectionCacheVersion(nowSec = this.productionReadSecond()): string {
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.productionQueueProjectionVersionCache;
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4421,6 +4465,7 @@ export class SettlementIndexer {
     const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
     this.productionQueueProjectionVersionCache = {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       // The fingerprint can change only when a queue becomes due. A subsequent indexed mutation
       // changes `indexedStateVersion` and invalidates this cache immediately.
       validThroughSecond: nextReadyAt,
@@ -4429,12 +4474,13 @@ export class SettlementIndexer {
     return value;
   }
 
-  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = nowSeconds()): string {
+  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = this.productionReadSecond()): string {
     const normalizedWallet = wallet.toLowerCase();
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.walletProductionQueueProjectionVersionCaches.get(normalizedWallet);
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4477,6 +4523,7 @@ export class SettlementIndexer {
     const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}:${global}`;
     this.walletProductionQueueProjectionVersionCaches.set(normalizedWallet, {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       validThroughSecond: nowSec + 1,
       value
     });
