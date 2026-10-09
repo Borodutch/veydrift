@@ -3885,8 +3885,16 @@ export class SettlementIndexer {
     return this.currentFleetEffects(planetId, asOfSeconds).filter((effect) => !effect.isMoon);
   }
 
-  moonResourcesAsOfNow(planetId: string): Resources {
-    return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
+  moonResourcesAsOfNow(planetId: string): Resources | null {
+    const snapshot = this.moonResourceSnapshot(planetId);
+    if (!snapshot) return null;
+    const projection = this.resourceProjectionContext();
+    if (projection.timestamp !== null && (!projection.safeToProject
+      || !Number.isSafeInteger(Number(projection.timestamp)) || Number(projection.timestamp) < 0)) return null;
+    return sumCurrentResources(
+      { metal: snapshot.metal, crystal: snapshot.crystal, deuterium: snapshot.deuterium },
+      this.currentFleetResourceCredits(planetId, true)
+    );
   }
 
   currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds?: number): Resources {

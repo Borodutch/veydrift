@@ -131,19 +131,19 @@ for (const moon of [false, true]) test("warm public resource routes follow water
   for (const stage of [1019, 1020, null]) {
     if (stage !== null) anchor(stage);
     else (indexer as any).setMetadata("transportStaleReason", "test outage");
-    const metal = stage === 1020 ? "180" : "100";
+    const metal = stage === null ? null : stage === 1020 ? "180" : "100";
     for (const route of rankings) for (let warm = 0; warm < 2; warm++) {
       const response = await get(route);
       expect(response.status).toBe(200);
       const planet = response.body.rankings.total.find((row: any) => row.wallet === owner).planets[0];
-      expect(moon ? planet.moon.resourcesAsOfNow.metal : planet.tactical.currentResources.metal).toBe(metal);
+      expect((moon ? planet.moon.resourcesAsOfNow?.metal : planet.tactical.currentResources?.metal) ?? null).toBe(metal);
     }
     for (const route of systems) for (let warm = 0; warm < 2; warm++) {
       const response = await get(route);
       expect(response.status).toBe(200);
       const system = response.body.systems?.[0] ?? response.body;
       const planet = system.planets.find((row: any) => row.occupiedBy?.planetId === "7");
-      expect((moon ? planet.publicMoonState : planet.publicState).resources.metal).toBe(metal);
+      expect((moon ? planet.publicMoonState : planet.publicState).resources?.metal ?? null).toBe(metal);
     }
   }
 });
@@ -190,13 +190,13 @@ for (const moon of [false, true]) for (const invalidation of [false, true]) {
     const metal = (response: any) => {
       expect(response.status).toBe(200);
       const planet = response.body.rankings.total.find((row: any) => row.wallet === owner).planets[0];
-      return moon ? planet.moon.resourcesAsOfNow.metal : planet.tactical.currentResources.metal;
+      return (moon ? planet.moon.resourcesAsOfNow?.metal : planet.tactical.currentResources?.metal) ?? null;
     };
     expect(metal(await get(path))).toBe(invalidation ? "180" : "100");
     expect(metal(await get(path))).toBe(invalidation ? "180" : "100");
     if (invalidation) (indexer as any).setMetadata("transportStaleReason", "test outage");
     else anchor(1020);
-    const expected = invalidation ? "100" : "180";
+    const expected = invalidation ? null : "180";
     expect(metal(await get(path))).toBe(expected);
     expect(metal(await get(path + "&fresh=1"))).toBe(expected);
   });
@@ -374,4 +374,68 @@ test("batch slot guard retains pre-sweep count without changing effective slots"
   const supply = (await wallet("supply-sources")).body;
   expect(supply.fleetSlots).toEqual({ active: 0, limit: 1 });
   expect(supply.batchFleetSlots).toEqual({ active: 1, limit: 1 });
+});
+for (const moon of [false, true]) test("unknown body balances retain canonical history and unit intel (moon=" + moon + ")", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, db, get, wallet, anchor } = fixture(moon, true);
+  const table = moon ? "contract_moon_ship_counts" : "contract_ship_counts";
+  db.query("INSERT INTO " + table + " (planet_id, ship_id, count) VALUES ('7', 0, 3)").run();
+  (indexer as any).setMetadata("lastReconciledAt", new Date().toISOString());
+  anchor(1019);
+  const assertUnknown = async () => {
+    const publicResponse = await get("/universe/galaxies/2/systems/44?detail=full");
+    expect(publicResponse.status).toBe(200);
+    const publicPlanet = publicResponse.body.planets.find((p: any) => p.occupiedBy?.planetId === "7");
+    const publicState = moon ? publicPlanet.publicMoonState : publicPlanet.publicState;
+    expect(publicState.resources).toBeNull();
+    expect(publicState.fleet.find((s: any) => s.id === 0).count).toBe(3);
+    const ranking = await get("/highscores?live=1&pageSize=10");
+    expect(ranking.status).toBe(200);
+    const planet = ranking.body.rankings.total.find((row: any) => row.wallet === owner).planets[0];
+    if (moon) expect(planet.moon.resourcesAsOfNow).toBeNull();
+    else {
+      expect(planet.tactical.currentResources).toBeNull();
+      expect(planet.tactical.raidableResources).toBeNull();
+      expect(planet.tactical.raidableResourceTotal).toBeNull();
+      expect(planet.tactical.grossResourceTotal).toBeNull();
+      expect(planet.tactical.ships.count).toBe(3);
+    }
+    const detail = await get("/mission/1");
+    expect(detail.status).toBe(200);
+    expect(detail.body.targetCombatIntel.combatShips.count).toBe(3);
+  };
+  const warm = await get("/universe/galaxies/2/systems/44?detail=full");
+  const warmPlanet = warm.body.planets.find((p: any) => p.occupiedBy?.planetId === "7");
+  expect((moon ? warmPlanet.publicMoonState : warmPlanet.publicState).resources.metal).toBe("100");
+  await get("/highscores?live=1&pageSize=10");
+  (indexer as any).setMetadata("transportStaleReason", "test outage");
+  await assertUnknown();
+  await assertUnknown();
+  // Current uncertainty never rewrites the last canonical resource snapshot.
+  expect(moon ? indexer.moonResources("7").metal : indexer.planet("7")!.resources.metal).toBe("100");
+  db.query("DELETE FROM indexer_metadata WHERE key = 'transportStaleReason'").run();
+  if (moon) {
+    db.query("DELETE FROM contract_moon_resources WHERE planet_id = '7'").run();
+  } else {
+    // Identity exists but its first resource snapshot is not indexed yet.
+    const pending = { ...indexer.planet("7")!, lastSettledAt: "0", resources: { metal: "0", crystal: "0", deuterium: "0" } };
+    db.query("UPDATE contract_planets SET event_json = ? WHERE planet_id = '7'").run(JSON.stringify(pending));
+    db.query("DELETE FROM contract_planet_resources WHERE planet_id = '7'").run();
+    expect(indexer.hasPendingPlanetResources("7")).toBe(true);
+  }
+  // Model the writer committing the body change before publishing its safe anchor.
+  (indexer as any).advanceIndexedRevision();
+  (indexer as any).touch();
+  expect(indexer.recordResourceProjectionWatermark("1020", "1019", hash)).toBe(true);
+  expect(indexer.resourceProjectionContext().safeToProject).toBe(true);
+  await assertUnknown();
+  const overview = await wallet("overview");
+  expect(overview.status).toBe(200);
+  const owned = overview.body.planetsResponse.planets.find((p: any) => p.planetId === "7");
+  expect(moon ? owned.moon.resourcesAsOfNow : owned.resourcesAsOfNow).toBeNull();
+  if (!moon) {
+    expect(overview.body.settlement.planet.resourcesAsOfNow).toBeNull();
+    expect(owned.tactical.currentResources).toBeNull();
+    expect(owned.tactical.ships.count).toBe(3);
+  }
 });

@@ -62,7 +62,7 @@ export type PlanetState = Coordinates & {
   // because the canonical settled snapshot is the load-bearing value; serializers
   // that expose a live balance populate it alongside `resources` rather than
   // overwriting the settled snapshot (VEY-KANEO-488).
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
@@ -97,15 +97,15 @@ export type ManagedPlanet = PlanetState & {
     planetId: string;
     coordinates: string;
     resources: Resources;
-    resourcesAsOfNow?: Resources;
+    resourcesAsOfNow?: Resources | null;
     ships: ShipyardState["ships"];
     defenses: DefenseState["defenses"];
     buildings?: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label" | "level">>;
     queues?: { building: QueueState | null; ship: QueueState | null; defense: QueueState | null };
   } | null;
   tactical?: {
-    raidableResources: Resources;
-    raidableResourceTotal: string;
+    raidableResources: Resources | null;
+    raidableResourceTotal: string | null;
     ships: {
       count: number;
       power: string;
@@ -974,7 +974,7 @@ export type MoonState = {
   moonAvailable: boolean;
   unavailableReason?: string;
   resources: Resources;
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships: ShipyardState["ships"];
   // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival

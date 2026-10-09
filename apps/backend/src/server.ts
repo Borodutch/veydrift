@@ -2173,7 +2173,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
         if (indexer && hasWarmPlanetIndex(indexer)) {
-        const planet = indexedCurrentPlanetState(indexer, indexer.planet(planetId.toString()), { allowPendingResources: true });
+        const planet = indexedCurrentPlanetState(indexer, indexer.planet(planetId.toString()));
         return Response.json(planet, {
           headers: corsHeaders
         });
@@ -3563,7 +3563,7 @@ function indexedMoonNotReadyResponse(
     moonAvailable: false,
     unavailableReason: detail,
     resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
-    resourcesAsOfNow: indexedState?.resourcesAsOfNow === undefined ? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" } : indexedState.resourcesAsOfNow,
+    resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? null,
     ships: indexedState?.ships ?? [],
     moon: null,
     fleet: indexedState?.fleet ?? [],
@@ -3630,10 +3630,10 @@ function indexedWalletSettlementPlanetState(
   planet: SettledPlanetEvent | null
 ): SettledPlanetEvent | null {
   if (!planet) return null;
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   return {
     ...planet,
-    resourcesAsOfNow: currentPlanet.resources,
+    resourcesAsOfNow: currentPlanet?.resources ?? null,
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet)
   };
 }
@@ -3780,7 +3780,7 @@ function indexedWalletPlanetState(
   const ships = indexer.shipRows(planet.planetId);
   const defenses = indexer.defenseRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   const moonState = indexer.moonState(planet.owner, planet.planetId);
 
   // The planet roster is a settled-snapshot surface: the external contract<->DB watchdog
@@ -3795,10 +3795,10 @@ function indexedWalletPlanetState(
   return {
     ...planet,
     bodyKind: "planet",
-    resourcesAsOfNow: currentPlanet.resources,
+    resourcesAsOfNow: currentPlanet?.resources ?? null,
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     moon: moonSummary,
-    tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels, indexer)
+    tactical: indexedPlanetTacticalSummary({ ...planet, resources: currentPlanet?.resources ?? null }, buildings, ships, defenses, technologyLevels, indexer)
   };
 }
 
@@ -3854,22 +3854,20 @@ function accruedPlanetState<T extends PlanetState | null>(
 // diverge or accidentally project an already-current balance a second time.
 function indexedCurrentResourcesForPlanet(
   indexer: SettlementIndexer,
-  planet: SettledPlanetEvent | null,
-  options: { allowPendingResources?: boolean } = {}
+  planet: SettledPlanetEvent | null
 ): Resources | null {
-  return indexedCurrentPlanetState(indexer, planet, options)?.resources ?? null;
+  return indexedCurrentPlanetState(indexer, planet)?.resources ?? null;
 }
 
 function indexedCurrentPlanetState<T extends PlanetState>(
   indexer: SettlementIndexer,
-  planet: T | null,
-  options: { allowPendingResources?: boolean } = {}
+  planet: T | null
 ): T | null {
   if (!planet) return null;
   return indexer.readConsistentSnapshot(() => {
     const canonicalPlanet = indexer.planet(planet.planetId);
     if (!canonicalPlanet) return null;
-    if (!options.allowPendingResources && indexer.hasPendingPlanetResources(planet.planetId)) return null;
+    if (indexer.hasPendingPlanetResources(planet.planetId)) return null;
     const projection = indexer.resourceProjectionContext();
     const projectionTimestamp = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
     if (projection.timestamp === null) {
@@ -4732,8 +4730,8 @@ function targetCombatIntelForMission(
   const moon = targetIsMoon ? indexer.moonState(planet.owner, planet.planetId) : null;
   if (targetIsMoon && !moon?.moon) return null;
 
-  const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
-  const targetState = moon ? { ...accrued, resources: moon.resourcesAsOfNow ?? moon.resources } : accrued;
+  const currentResources = moon ? moon.resourcesAsOfNow ?? null : indexedCurrentResourcesForPlanet(indexer, planet);
+  const targetState = { ...planet, resources: currentResources };
   const tactical = indexedPlanetTacticalSummary(
     targetState,
     targetIsMoon ? [] : indexer.infrastructureRows(planet.planetId),
@@ -4762,7 +4760,7 @@ function publicPlanetStateRef(
   planet: SettledPlanetEvent | undefined,
   indexer: SettlementIndexer | undefined
 ): {
-  resources: SettledPlanetEvent["resources"];
+  resources: SettledPlanetEvent["resources"] | null;
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
@@ -4784,13 +4782,13 @@ function publicPlanetStateRef(
   const buildings = indexer.infrastructureRows(planet.planetId);
   const ships = indexer.shipRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   const derived = buildings.length > 0
-    ? deriveInfrastructureFields(currentPlanet, buildings, ships, technologyLevels)
+    ? deriveInfrastructureFields(currentPlanet ?? planet, buildings, ships, technologyLevels)
     : null;
 
   return {
-    resources: currentPlanet.resources,
+    resources: currentPlanet?.resources ?? null,
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
@@ -4821,7 +4819,7 @@ function publicMoonStateRef(
   fields: number;
   diameterKm: number;
   createdAt: string;
-  resources: Resources;
+  resources: Resources | null;
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
@@ -4838,7 +4836,7 @@ function publicMoonStateRef(
     fields: moonState.moon.fields,
     diameterKm: moonState.moon.diameterKm,
     createdAt: moonState.moon.createdAt,
-    resources: moonState.resourcesAsOfNow ?? moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resources: moonState.resourcesAsOfNow ?? null,
     buildings: moonState.buildings.map(({ id, level }) => ({ id, level })),
     fleet: (moonState.fleet ?? []).map(({ id, count }) => ({ id, count })),
     defenses: moonState.defenses.map(({ id, count }) => ({ id, count })),
@@ -5432,15 +5430,15 @@ type RankedHighscorePlanet = {
   // targets are hydrated from the public system endpoint before an attack preview.
   stationedDefenderTimelineComplete: boolean;
   tactical: {
-    currentResources: Resources;
-    raidableResources: Resources;
-    raidableResourceTotal: string;
+    currentResources: Resources | null;
+    raidableResources: Resources | null;
+    raidableResourceTotal: string | null;
     // Full production-accrued public resources (metal + crystal + deuterium) the planet
     // currently holds — the same figure the public universe/planet surface exposes. LOOT
     // (`raidableResourceTotal`) is the ~50% on-chain plunder of this base, so surfacing the
     // gross total lets the UI show why LOOT reads lower than the planet's full stockpile and
     // stops it from being misread as missing accrual. (VEY-KANEO-454)
-    grossResourceTotal: string;
+    grossResourceTotal: string | null;
     productionPerHour: Resources | null;
     storageCaps: Resources | null;
     ships: {
@@ -6007,9 +6005,7 @@ function rankedHighscorePlanets(
     // tactical intel matches the resources the public planet read (`GET /planets/{id}`) shows.
     // Without this the snapshot's stored resources under-report LOOT versus the planet's live,
     // accrued public resources. (VEY-KANEO-454)
-    const accrued = indexer
-      ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
-      : planet;
+    const accrued = { ...planet, resources: indexer ? indexedCurrentResourcesForPlanet(indexer, planet) : null };
     const tactical = indexedPlanetTacticalSummary(
       accrued,
       buildings,
@@ -6057,18 +6053,20 @@ function rankedHighscorePlanets(
 }
 
 export function indexedPlanetTacticalSummary(
-  planet: PlanetState,
+  planet: Omit<PlanetState, "resources"> & { resources: Resources | null },
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   defenses: DefenseState["defenses"],
   technologyLevels: Record<string, number>,
   indexer?: SettlementIndexer
 ): RankedHighscorePlanet["tactical"] {
-  const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
+  const currentResources = planet.resources;
+  // Rates/caps and unit counts remain useful when balances are unknown. The zero
+  // input is only for resource-independent derivation, never a served balance.
   const derived = buildings.length > 0
-    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
+    ? deriveInfrastructureFields({ ...planet, resources: currentResources ?? zeroResources() }, buildings, ships, technologyLevels)
     : null;
-  const raidableResources = derived?.raidableResources ?? fallbackResources;
+  const raidableResources = currentResources === null ? null : derived?.raidableResources ?? currentResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
   // COMBAT is a fighting-strength figure, not a raw inventory value: stationary
@@ -6078,13 +6076,13 @@ export function indexedPlanetTacticalSummary(
   const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
-    currentResources: fallbackResources,
+    currentResources,
     raidableResources,
-    raidableResourceTotal: resourceTotal(raidableResources).toString(),
+    raidableResourceTotal: raidableResources === null ? null : resourceTotal(raidableResources).toString(),
     // `planet` here is already production-accrued (see `accruedPlanetState` at the Finder/
     // Rankings call sites), so its resources match the public universe surface. This is the
     // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
-    grossResourceTotal: resourceTotal(fallbackResources).toString(),
+    grossResourceTotal: currentResources === null ? null : resourceTotal(currentResources).toString(),
     productionPerHour: indexer
       ? effectiveProductionPerHour(indexer, planet.owner, derived?.productionPerHour ?? null)
       : derived?.productionPerHour ?? null,

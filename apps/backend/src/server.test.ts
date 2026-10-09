@@ -11396,6 +11396,7 @@ describe("Veydrift backend", () => {
     }) as SettlementIndexer["moonState"];
     indexer.hasMoon = (planetId: string) => planetId === "11";
     indexer.moonResources = () => ({ metal: "12", crystal: "34", deuterium: "56" });
+    indexer.moonResourcesAsOfNow = () => ({ metal: "12", crystal: "34", deuterium: "56" });
     indexer.stationedDefenderForecastTimelineForPlanet = (() => {
       throw new Error("highscore discovery rows must defer stationed-defender forecasts until target selection");
     }) as SettlementIndexer["stationedDefenderForecastTimelineForPlanet"];
