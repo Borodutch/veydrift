@@ -382,9 +382,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     // availability changes must neither cancel Max nor adopt a different snapshot.
     await startMax('metal');
     await evaluate('window.staleMax = maxWorkers.at(-1); supplyFixture.changeStock(); supplyFixture.changeEligibility(); supplyFixture.changeDrives()'); await settle();
-    assert.equal(await busy(), false, 'fresh inventory invalidates an obsolete Max search');
+    assert.equal(await busy(), true, 'unselected inventory cannot change the Max allocation');
+    assert.equal(await evaluate('Boolean(staleMax.terminated)'), false);
+    const unchangedRequest = await amount('metal');
+    await click('[...document.querySelectorAll("button")].find(button => button.textContent === "Cancel Max")');
     assert.equal(await evaluate('staleMax.terminated'), true);
     await evaluate('staleMax.reply({data:{maximum:999999}})'); await settle();
+    assert.equal(await amount('metal'), unchangedRequest, 'explicit cancellation still rejects a late worker result');
     await evaluate('[...document.querySelectorAll("button")].find(b => b.textContent === "Recalculate with latest stock")?.click()'); await settle();
     for (const failure of ['response', 'error', 'messageerror', 'construct', 'post']) {
       await evaluate('window.maxWorkerFailure = ' + JSON.stringify(failure));
