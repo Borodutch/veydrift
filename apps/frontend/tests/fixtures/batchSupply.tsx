@@ -58,6 +58,7 @@ declare global {
     };
   }
 }
+if (new URLSearchParams(location.search).has("longName")) target.name = "A very long destination name that wraps correctly even on the narrowest mobile screen";
 const submissions: Window["supplyFixture"]["submissions"] = [];
 function Fixture() {
   const [sources, setSources] = useState(denver ? [

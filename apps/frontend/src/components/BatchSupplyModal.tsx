@@ -1,6 +1,6 @@
 import type { LevelSupplyRequest, LevelSupplyPreview } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
-import { Check, PackagePlus, ArrowRightLeft, MapPin } from "lucide-preact";
+import { Check, PackagePlus, Package, Rocket } from "lucide-preact";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { Skeleton, SkeletonRegion, skeletonList } from "./Skeleton";
@@ -238,18 +238,9 @@ export function BatchSupplyModal({
     : undefined;
   const selectableSourceCount = sources.length;
 
-  const recalculate = () => { maximum.cancel(); setInventoryNeedsReview(false); setReviewedFailure(error); };
-  const autoPlan = () => {
-    maximum.cancel();
-    setInventoryNeedsReview(false);
-    setReviewedFailure(error);
-    setSourceCargoOverrides({});
-    setShipTypesBySource({});
-    setFleetModesBySource({});
-    setSelectedSourceIds(suggestBatchSupplySourceIds({ ...planOptions, sources,
-      sourceCargoOverrides: {}, shipTypesBySource: {}, fleetModesBySource: {} }));
-  };
+  const reviewInventory = () => { maximum.cancel(); setInventoryNeedsReview(false); setReviewedFailure(error); };
   const toggleSource = (planetId: string) => {
+    maximum.cancel();
     setSelectedSourceIds((current) => {
       const next = new Set(current);
       if (next.has(planetId)) next.delete(planetId);
@@ -286,17 +277,17 @@ export function BatchSupplyModal({
       panelClassName="flex min-w-0 max-w-3xl flex-col !overflow-hidden [touch-action:manipulation] [overflow-wrap:anywhere]"
       panelRef={dialogRef}
     >
-      <div className="shrink-0 px-4 pt-4 pb-2"><ModalHeader closeLabel="Close supply resources" icon={PackagePlus} onClose={onClose} title={
+      <div className="shrink-0 px-4 pt-4 pb-2"><ModalHeader alignment="center" closeLabel="Close supply resources" icon={PackagePlus} onClose={onClose} title={
         <span className="flex min-w-0 items-center justify-between gap-2">
           <span className="min-w-0">Supply {targetLabel}</span>
           <span className="inline-flex shrink-0 rounded-lg border border-white/15 bg-black/20 p-0.5" role="group" aria-label="Mission type">
             {(["transport", "deploy"] as const).map(kind => {
-              const Icon = kind === "transport" ? ArrowRightLeft : MapPin;
+              const Icon = kind === "transport" ? Package : Rocket;
               const label = kind === "transport" ? "Transport" : "Deploy";
               return <button key={kind} type="button" aria-label={label} title={label} aria-pressed={mission === kind}
                 disabled={loading || actionPending || transactionPending}
                 onClick={() => { maximum.cancel(); setMission(kind); }}
-                className={"grid h-8 w-8 place-items-center rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50 " + (mission === kind ? "bg-cyan-300/20 text-cyan-100" : "text-slate-400 hover:text-white")}>
+                className={"grid h-10 w-10 place-items-center rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 disabled:opacity-50 " + (mission === kind ? "bg-cyan-300/20 text-cyan-100" : "text-slate-400 hover:text-white")}>
                 <Icon aria-hidden="true" size={16} />
               </button>;
             })}
@@ -320,14 +311,10 @@ export function BatchSupplyModal({
       {goalNeedsReview ? <p role="alert" className="text-xs text-amber-100">Destination goal changed. Your draft is unchanged; refresh destination and shortfall to review it before launching.</p> : null}
       {inventoryChanged ? <div className="flex flex-wrap items-center gap-2 text-xs text-amber-100" aria-live="polite">
         <span>Source inventory changed. Your draft is unchanged.</span>
-        <button type="button" className="min-h-8 rounded border border-amber-200/30 px-2" disabled={actionPending || transactionPending || loading} onClick={recalculate}>Review latest inventory</button>
+        <button type="button" className="min-h-8 rounded border border-amber-200/30 px-2" disabled={actionPending || transactionPending || loading} onClick={reviewInventory}>Review latest inventory</button>
       </div> : null}
       {targetIsMoon && !moonBatchSupported ? <p className="text-sm text-slate-300" role="status">{MOON_SUPPLY_BATCH_UNAVAILABLE}</p> : null}
       <div data-supply-amounts>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">Resources to send</h3>
-        <button type="button" className="min-h-8 rounded border border-white/20 px-2 text-xs" disabled={loading || actionPending || transactionPending} onClick={autoPlan}>Auto-plan cargo</button>
-      </div>
       <section className="grid grid-cols-3 gap-2" aria-label="Resources to send">
         {(["metal", "crystal", "deuterium"] as const).map((resource) => (
           <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1 rounded-lg surface-inset px-2 py-1.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-2" key={resource}>
@@ -362,7 +349,6 @@ export function BatchSupplyModal({
           <h3 className="shrink-0 text-sm font-semibold text-slate-100">Sources</h3>
           <span className="flex flex-wrap items-center justify-end gap-2 text-xs text-slate-400">
             {selected.size}/{selectableSourceCount} selected
-            <button type="button" className="min-h-8 rounded border border-white/20 px-2" disabled={loading || actionPending || transactionPending} onClick={recalculate}>Recalculate with latest stock</button>
           </span>
         </div>
         <div className="grid content-start border-t border-cyan-300/[0.08] pr-1">
@@ -392,7 +378,8 @@ export function BatchSupplyModal({
             const typeUnavailableReason = hasUsableSupplyFleet(source.ships) && !hasUsableSupplyFleet(eligibleShips)
               ? "No ships of the selected types. Enable another ship type to use this source."
               : undefined;
-            const disabled = loading || actionPending || transactionPending || Boolean(source.unavailableReason) || (!checked && !hasUsableSupplyFleet(eligibleShips)) || selectionLimitReached;
+            const disabled = loading || actionPending || transactionPending || Boolean(source.unavailableReason) || (!checked && !hasUsableSupplyFleet(source.ships)) || selectionLimitReached;
+            const selectionReason = source.unavailableReason ? playerNotice(source.unavailableReason) : sourceLimitReason ?? (!hasUsableSupplyFleet(source.ships) ? "No mobile ships are available on this planet." : undefined);
             const order = orderByOrigin.get(source.planetId);
             const requestedSourceCargo = sourceCargoOverrides[source.planetId];
             const sourceCargo = requestedSourceCargo ?? order?.cargo ?? emptySupplyResources();
@@ -405,10 +392,11 @@ export function BatchSupplyModal({
             const distance = fleetMissionDistance(source.coordinates, { galaxy: target.galaxy, system: target.system, position: target.position }, { targetIsMoon });
             const eta = order?.travelSeconds ?? fleetMissionTravelSeconds(distance, eligibleShips, source.driveLevels);
             return (
-              <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-b border-cyan-300/[0.08] px-1 py-3 ${checked ? "" : "opacity-70"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId}>
-                <label className="cursor-pointer">
-                  <input checked={checked} className="mt-1" disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
+              <div className={`grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-b border-cyan-300/[0.08] px-1 py-3 ${checked ? "" : "opacity-70"} ${source.unavailableReason ? "cursor-not-allowed opacity-60" : ""}`} key={source.planetId} data-supply-source={source.planetId}>
+                <label className="cursor-pointer" title={selectionReason}>
+                  <input checked={checked} className="mt-1" aria-describedby={selectionReason ? "supply-selection-" + source.planetId : undefined} disabled={disabled} onChange={() => toggleSource(source.planetId)} type="checkbox" />
                   <span className="sr-only">Select {source.label}</span>
+                  {selectionReason ? <span className="sr-only" id={"supply-selection-" + source.planetId}>{selectionReason}</span> : null}
                 </label>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
@@ -416,8 +404,7 @@ export function BatchSupplyModal({
                     {order ? <span className="text-xs text-cyan-100">Sends {format(resourceTotal(order.cargo))} · Fuel {format(order.fuelCost)} D · {formatDuration(eta)}</span> : null}
                   </span>
                   <span className="mt-0.5 block text-xs text-slate-400">Available: M {format(source.resources.metal)} · C {format(source.resources.crystal)} · D {format(source.resources.deuterium)}</span>
-                  <button type="button" className="mt-1 min-h-7 rounded border border-white/15 px-2 text-xs text-cyan-100" aria-label={"Use only " + source.label} disabled={loading || actionPending || transactionPending || Boolean(source.unavailableReason) || maxSources < 1} onClick={() => { maximum.cancel(); setInventoryNeedsReview(false); setSelectedSourceIds(new Set([source.planetId])); }}>Use only this source</button>
-                  <span className="mt-2 block text-[11px] text-slate-400">Selected cargo</span>
+                  {checked ? <>
                   {(
                     <span className="mt-1 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-1.5" aria-label={`${source.label} shipment`}>
                       {(["metal", "crystal", "deuterium"] as const).map((resource) => (
@@ -452,7 +439,6 @@ export function BatchSupplyModal({
                         setFleetModesBySource(current => ({ ...current, [source.planetId]: "auto" }));
                         setShipTypesBySource(current => ({ ...current, [source.planetId]: defaultSupplyShipTypes }));
                       }}>Reset to automatic cargo</button> : null}
-                    <span className="text-xs text-slate-400">{fleetModesBySource[source.planetId] === "all" ? "All selected ships" : "Auto cargo · selected combat ships"}</span>
                   </span>
                   <span className="mt-2 flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Ships · planned / available</span>
@@ -480,10 +466,10 @@ export function BatchSupplyModal({
                       {!hasUsableSupplyFleet(source.ships) ? <span className="text-xs text-slate-500">No mobile ships</span> : null}
                     </span>
                   </span>
-                  {!order && hasUsableSupplyFleet(source.ships) ? <span className="mt-1 block text-xs text-slate-400">{!checked ? "Not selected. Use only this source to compare its fuel and ETA." : resourceTotal(plan.missing) === 0 ? "Not needed for this request." : "No contribution: check stock, selected ships and fuel."}</span> : null}
-                  {sourceLimitReason ? <span className="block text-xs text-slate-400">{sourceLimitReason}</span> : null}
+                  {!order && hasUsableSupplyFleet(source.ships) ? <span className="mt-1 block text-xs text-slate-400">{resourceTotal(plan.missing) === 0 ? "Not needed for this request." : "No contribution: check stock, selected ships and fuel."}</span> : null}
                   {typeUnavailableReason ? <span className="block text-xs text-amber-200">{typeUnavailableReason}</span> : null}
                   {source.unavailableReason ? <span className="block text-xs text-amber-200">{playerNotice(source.unavailableReason)}</span> : null}
+                  </> : null}
                 </span>
               </div>
             );
