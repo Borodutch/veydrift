@@ -670,6 +670,78 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     process.env.VEYDRIFT_PREWARM_RESPONSE_CACHE === "true" && isWriter && enableResponseCache
   );
 
+  const routeGalaxySystems = (request: Request, url: URL): Response => {
+    if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
+      const parts = url.pathname.split("/");
+      const galaxy = Number.parseInt(parts[3] ?? "", 10);
+      const system = Number.parseInt(parts[5] ?? "", 10);
+      const detail = galaxySystemDetail(url);
+      let payload;
+      try {
+        payload = cachedGalaxySystemPayload(
+          galaxySystemCache,
+          {
+            chainId: loaded.config.chainId,
+            settlementContractAddress: universeContractAddress(loaded.config),
+            detail,
+            galaxy,
+            system,
+            indexer
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+
+      return Response.json(payload, {
+        headers: corsHeaders
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/universe/systems") {
+      const galaxy = parseIntegerQuery(url, "galaxy", 1);
+      const center = parseIntegerQuery(url, "center", 1);
+      const requestedRadius = parseIntegerQuery(url, "radius", 1);
+      if (galaxy === null || galaxy < 1 || galaxy > maxGalaxy) return badRequest(`galaxy must be an integer from 1 to ${maxGalaxy}.`);
+      if (center === null || center < 1 || center > maxSystem) return badRequest(`center must be an integer from 1 to ${maxSystem}.`);
+      if (requestedRadius === null || requestedRadius < 0) return badRequest("radius must be a non-negative integer.");
+      const radius = Math.min(requestedRadius, 10);
+      const from = Math.max(center - radius, 1);
+      const to = Math.min(center + radius, maxSystem);
+
+      try {
+        return Response.json(
+          {
+            galaxy,
+            center,
+            radius,
+            systems: Array.from({ length: to - from + 1 }, (_, index) => {
+              const system = from + index;
+              return cachedGalaxySystemPayload(
+                galaxySystemCache,
+                {
+                  chainId: loaded.config.chainId,
+                  settlementContractAddress: universeContractAddress(loaded.config),
+                  detail: galaxySystemDetail(url),
+                  galaxy,
+                  system,
+                  indexer
+                }
+              );
+            })
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    return badRequest("Unsupported galaxy system request.");
+  };
+
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
@@ -1692,63 +1764,65 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         parseMissionId(missionId);
         if (!indexer) return indexedReadNotReadyResponse("mission", indexer, { missionId });
-        const snapshot = indexer.snapshot();
-        const mission = indexer.fleetMission(missionId);
-        if (!mission) {
+        return indexer.readConsistentSnapshot(() => {
+          const snapshot = indexer.snapshot();
+          const mission = indexer.fleetMission(missionId);
+          if (!mission) {
+            return Response.json(
+              {
+                error: "mission_not_found",
+                detail: "That mission is not available in the indexed mission read model.",
+                source: indexedSource
+              },
+              { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+            );
+          }
+          const expectsReport = expectsBattleReport(mission);
+          // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
+          // main attack mission. When this mission has no report of its own but belongs to an attack
+          // group, fall back to the group's report so a joiner's mission detail still shows the shared
+          // outcome and the per-participant loot split (VEY-KANEO-432). Non-report missions skip this
+          // entirely so a cold Transport/DefenseHold detail cannot warm the battle-report read model.
+          const battleReportMaterialization = expectsReport
+            ? battleReportMaterializationStatusForMission(indexer, mission)
+            : { status: "missing" as const };
+          const battleReport = expectsReport
+            ? (
+              indexer.battleReport(missionId, { includeRawFallback: false })
+              ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: false }) : null)
+            )
+            : null;
+          const reportedBattleReportMaterialization = battleReport
+            ? { status: "ready" as const }
+            : battleReportMaterialization.status === "ready"
+              ? {
+                  status: "failed" as const,
+                  attempts: battleReportMaterialization.attempts,
+                  durationMs: battleReportMaterialization.durationMs,
+                  error: battleReportMaterialization.error ?? "Persisted battle report read model did not match this mission.",
+                  updatedAt: battleReportMaterialization.updatedAt
+                }
+              : battleReportMaterialization;
           return Response.json(
             {
-              error: "mission_not_found",
-              detail: "That mission is not available in the indexed mission read model.",
+              mission,
+              battleReport,
+              battleReportMaterialization: reportedBattleReportMaterialization,
+              targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
+              battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
+              // Current target state remains useful alongside the persisted battle-time snapshot and
+              // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
+              // this mutable projection.
+              defenderPlanetState: defenderPlanetStateForReport(
+                indexer,
+                battleReport,
+                battleReport ? indexer.fleetMission(battleReport.missionId) : mission
+              ),
               source: indexedSource
             },
-            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
           );
-        }
-        const expectsReport = expectsBattleReport(mission);
-        // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
-        // main attack mission. When this mission has no report of its own but belongs to an attack
-        // group, fall back to the group's report so a joiner's mission detail still shows the shared
-        // outcome and the per-participant loot split (VEY-KANEO-432). Non-report missions skip this
-        // entirely so a cold Transport/DefenseHold detail cannot warm the battle-report read model.
-        const battleReportMaterialization = expectsReport
-          ? battleReportMaterializationStatusForMission(indexer, mission)
-          : { status: "missing" as const };
-        const battleReport = expectsReport
-          ? (
-            indexer.battleReport(missionId, { includeRawFallback: false })
-            ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: false }) : null)
-          )
-          : null;
-        const reportedBattleReportMaterialization = battleReport
-          ? { status: "ready" as const }
-          : battleReportMaterialization.status === "ready"
-            ? {
-                status: "failed" as const,
-                attempts: battleReportMaterialization.attempts,
-                durationMs: battleReportMaterialization.durationMs,
-                error: battleReportMaterialization.error ?? "Persisted battle report read model did not match this mission.",
-                updatedAt: battleReportMaterialization.updatedAt
-              }
-            : battleReportMaterialization;
-        return Response.json(
-          {
-            mission,
-            battleReport,
-            battleReportMaterialization: reportedBattleReportMaterialization,
-            targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
-            battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
-            // Current target state remains useful alongside the persisted battle-time snapshot and
-            // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
-            // this mutable projection.
-            defenderPlanetState: defenderPlanetStateForReport(
-              indexer,
-              battleReport,
-              battleReport ? indexer.fleetMission(battleReport.missionId) : mission
-            ),
-            source: indexedSource
-          },
-          { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
-        );
+        });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2107,72 +2181,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return indexedReadNotReadyResponse("planet detail", indexer, { planetId: planetId.toString() });
     }
 
-    if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
-      const parts = url.pathname.split("/");
-      const galaxy = Number.parseInt(parts[3] ?? "", 10);
-      const system = Number.parseInt(parts[5] ?? "", 10);
-      const detail = galaxySystemDetail(url);
-      let payload;
-      try {
-        payload = cachedGalaxySystemPayload(
-          galaxySystemCache,
-          {
-            chainId: loaded.config.chainId,
-            settlementContractAddress: universeContractAddress(loaded.config),
-            detail,
-            galaxy,
-            system,
-            indexer
-          }
-        );
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
-
-      return Response.json(payload, {
-        headers: corsHeaders
-      });
-    }
-
-    if (request.method === "GET" && url.pathname === "/universe/systems") {
-      const galaxy = parseIntegerQuery(url, "galaxy", 1);
-      const center = parseIntegerQuery(url, "center", 1);
-      const requestedRadius = parseIntegerQuery(url, "radius", 1);
-      if (galaxy === null || galaxy < 1 || galaxy > maxGalaxy) return badRequest(`galaxy must be an integer from 1 to ${maxGalaxy}.`);
-      if (center === null || center < 1 || center > maxSystem) return badRequest(`center must be an integer from 1 to ${maxSystem}.`);
-      if (requestedRadius === null || requestedRadius < 0) return badRequest("radius must be a non-negative integer.");
-      const radius = Math.min(requestedRadius, 10);
-      const from = Math.max(center - radius, 1);
-      const to = Math.min(center + radius, maxSystem);
-
-      try {
-        return Response.json(
-          {
-            galaxy,
-            center,
-            radius,
-            systems: Array.from({ length: to - from + 1 }, (_, index) => {
-              const system = from + index;
-              return cachedGalaxySystemPayload(
-                galaxySystemCache,
-                {
-                  chainId: loaded.config.chainId,
-                  settlementContractAddress: universeContractAddress(loaded.config),
-                  detail: galaxySystemDetail(url),
-                  galaxy,
-                  system,
-                  indexer
-                }
-              );
-            })
-          },
-          {
-            headers: corsHeaders
-          }
-        );
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
+    if (isGalaxySystemRequest(request, url)) {
+      return indexer
+        ? indexer.readConsistentSnapshot(() => routeGalaxySystems(request, url))
+        : routeGalaxySystems(request, url);
     }
 
     if (request.method === "GET" && url.pathname === "/universe/system") {
@@ -2274,6 +2286,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               if (!owner) return null;
             }
             try {
+              if (indexer && isGalaxySystemRequest(request, url)) {
+                // Refresh ownership can await a peer. Reselect the key together with the
+                // synchronous payload, never publish a newer snapshot under the old key.
+                const refresh = indexer.readConsistentSnapshot(() => ({
+                  key: cacheableJsonRequestKey(request, url, indexer),
+                  response: routeGalaxySystems(request, url)
+                }));
+                return await refreshCachedJsonResponse(request, url, async () => refresh.response,
+                  responseCache, sharedResponseCache, refresh.key, cacheTtlMs);
+              }
               return await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
             } finally {
               if (owner) sharedResponseCache?.releaseRefresh(cacheKey, owner);
@@ -2930,6 +2952,11 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (["/stats", "/raid-finder/debris", "/raid-finder/rifters", "/universe/systems"].includes(url.pathname)) return 30_000;
   if (/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/.test(url.pathname)) return 30_000;
   return 0;
+}
+
+function isGalaxySystemRequest(request: Request, url: URL): boolean {
+  return request.method === "GET" && (url.pathname === "/universe/systems"
+    || new RegExp("^/universe/galaxies/[0-9]+/systems/[0-9]+$").test(url.pathname));
 }
 
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
@@ -4618,10 +4645,10 @@ function migrationReservationRef(planet: MigrationReservedPlanet | undefined):
     : null;
 }
 
-// The defender side of a battle report: the target planet's current indexed ship/defense
-// composition (the surviving force right after a freshly-resolved battle). Only zero-count rows
-// are dropped so the frontend can show "None" when the planet had no fleet/defenses. Returns null
-// when the target planet is not charted in the indexed read model, in which case the composition
+// The defender side of a battle report: the target body's current indexed ship/defense
+// composition (not its immutable battle-time roster). Only zero-count rows
+// are dropped so the frontend can show "None" when the body has no fleet/defenses. Returns null
+// when the target planet or moon is no longer indexed, in which case the composition
 // genuinely cannot be derived and the frontend keeps a precise caveat instead of fabricating data.
 function defenderPlanetStateForReport(
   indexer: SettlementIndexer,
@@ -4635,9 +4662,14 @@ function defenderPlanetStateForReport(
   if (!report) return null;
   const planet = indexer.planet(report.targetPlanetId);
   if (!planet) return null;
+  const targetIsMoon = report.targetIsMoon ?? mission?.targetIsMoon ?? false;
+  const moon = targetIsMoon ? indexer.moonState(planet.owner, planet.planetId) : null;
+  if (targetIsMoon && !moon?.moon) return null;
+  const units = (rows: Array<{ id: number; count: number }>) => rows
+    .filter((row) => row.count > 0).map(({ id, count }) => ({ id, count }));
   return {
-    fleet: indexer.displayedUnitCounts(planet.planetId, "ship").filter((row) => row.count > 0),
-    defenses: indexer.displayedUnitCounts(planet.planetId, "defense").filter((row) => row.count > 0),
+    fleet: units(moon ? moon.ships : indexer.displayedUnitCounts(planet.planetId, "ship")),
+    defenses: units(moon ? moon.defenses : indexer.displayedUnitCounts(planet.planetId, "defense")),
     stationedDefenders: report.stationedDefenders ?? indexer.stationedDefendersForBattle(mission, report)
   };
 }
