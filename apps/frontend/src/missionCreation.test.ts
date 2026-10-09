@@ -711,7 +711,7 @@ describe("mission creation", () => {
     })).toBeUndefined();
     expect(playableMvpAppSource).toContain("validateShipInventory:");
     expect(playableMvpAppSource).toContain(
-      "backendData!.moon(account, options.validateShipInventory.originPlanetId, { fresh: true })",
+      "backend.moon(account, request.originPlanetId, { fresh: true })",
     );
   });
 

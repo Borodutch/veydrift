@@ -96,12 +96,14 @@ test("Supply keeps display proposals and blocks only selected requirements befor
   expect(plan().blockedSources).toEqual([]);
   const next = { ...snapshot, sources: snapshot.sources.map(source => ({ ...source, fleetLaunchConstraints: { ...constraints, ships: [{ id: 4, count: 0 }] } })) };
   const blocked = plan(next, 140000);
-  expect(blocked.orders[0]?.ships.largeCargo).toBe(6);
-  expect(blocked.blockedSources[0]?.reason).toContain("not yet ready for launch");
+  expect(blocked.orders).toEqual([]);
+  expect(blocked.missing.metal).toBe(140000);
+  expect(blocked.blockedSources).toHaveLength(1);
   const queries = { supplySources: () => ({ read: async () => next }) } as any;
-  await expect(prepareBatchSupplyConfirmation({ queries, account: "owner", target, orders: blocked.orders, shipTypesBySource: {}, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview() {}, onShortfall() {} })).rejects.toThrow("Supply inventory changed");
+  await expect(prepareBatchSupplyConfirmation({ queries, account: "owner", target, orders: plan(snapshot, 140000).orders, shipTypesBySource: {}, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview() {}, onShortfall() {} })).rejects.toThrow("Supply inventory changed");
   const noFuel = { ...snapshot, sources: snapshot.sources.map(source => ({ ...source, fleetLaunchConstraints: { ...constraints, resources: { ...resources, deuterium: "0" } } })) };
-  expect(plan(noFuel).blockedSources[0]?.reason).toContain("cargo or fuel");
+  expect(plan(noFuel).blockedSources).toHaveLength(1);
+  expect(plan(noFuel).orders).toEqual([]);
   expect(fleetLaunchRequirementBlocker({ ...constraints, resources: null }, [{ id: 4, count: 1 }], { metal: 1 })).toBeDefined();
   expect(fleetLaunchRequirementBlocker({ ...constraints, fleetSlots: { active: 16, limit: 16 } }, [{ id: 4, count: 1 }])).toContain("Fleet slots");
 });
@@ -116,4 +118,34 @@ test("Supply Max finds conservative feasible inventory rather than skipping its 
   expect(plan.orders[0]?.ships.largeCargo).toBe(1);
   expect(plan.blockedSources).toEqual([]);
   expect(source.ships.largeCargo).toBe(106);
+});
+
+test("multi-source Max replays the exact constrained allocation with effective displays intact", () => {
+  const sources = [1, 2].map(id => batchSupplySourceForPlanet({ ...planet, planetId: String(id), position: id }, {
+    resources, technologyLevels: {}, launchableShips: [{ id: 4, count: 106 }],
+    fleetLaunchConstraints: { ships: [{ id: 4, count: 1 }], resources, fleetSlots: { active: 1, limit: 16 } },
+  }));
+  const options = { sources, targetCoordinates: { galaxy: 1, system: 2, position: 1 }, selectedPlanetIds: new Set(["1", "2"]), requested: { metal: 1 } };
+  const maximum = maximumBatchSupplyResource(options, "metal");
+  expect(maximum).toBeGreaterThan(49000);
+  const replay = buildBatchSupplyPlan({ ...options, requested: { metal: maximum } });
+  expect(replay.orders.map(order => order.ships.largeCargo)).toEqual([1, 1]);
+  expect(replay.blockedSources).toEqual([]);
+  expect(replay.missing.metal).toBe(0);
+  expect(sources.map(source => source.ships.largeCargo)).toEqual([106, 106]);
+});
+
+test.each(["all", "combat"] as const)("Max does not shrink an impossible explicit %s fleet", mode => {
+  const source = batchSupplySourceForPlanet(planet, {
+    resources, technologyLevels: {}, launchableShips: [{ id: 4, count: 106 }, { id: 7, count: 5 }],
+    fleetLaunchConstraints: { ships: [{ id: 4, count: 1 }, { id: 7, count: 1 }], resources, fleetSlots: { active: 1, limit: 16 } },
+  });
+  const options = { sources: [source], targetCoordinates: { galaxy: 1, system: 2, position: 1 }, selectedPlanetIds: new Set(["1"]), requested: { metal: 123 },
+    shipTypesBySource: { "1": mode === "all" ? ["largeCargo" as const] : ["largeCargo" as const, "battleship" as const] },
+    fleetModesBySource: { "1": mode === "all" ? "all" as const : "auto" as const },
+  };
+  expect(buildBatchSupplyPlan(options).blockedSources).toHaveLength(1);
+  expect(maximumBatchSupplyResource(options, "metal")).toBe(123);
+  expect(source.ships.largeCargo).toBe(106);
+  expect(source.ships.battleship).toBe(5);
 });

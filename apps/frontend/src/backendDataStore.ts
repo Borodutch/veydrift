@@ -110,6 +110,7 @@ import {
 
 type SystemReadOptions = {
   detail?: "full";
+  fresh?: boolean;
 };
 
 export type BackendDataTag = `kind:${string}` | `wallet:${string}` | `planet:${string}` | `resource:${string}`;

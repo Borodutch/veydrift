@@ -10,7 +10,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
-import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
+import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
 import { buildBatchSupplyPlan, hasUsableSupplyFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource, type SupplyMission, type SupplyFleetModesBySource } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
@@ -62,7 +62,7 @@ import {
 import { mergePlanetWithSettlement, planetArtTypeForCoordinates, planetFromSettlementPlanet, planetImageForType, planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import { formatDurationUntil } from "./durationFormat";
 import { detectFarcasterMiniApp, farcasterMiniAppWalletSupport, hasMiniAppUrlHint, signalFarcasterReadyOnce, type FarcasterMiniAppWalletSupport } from "./farcasterReady";
-import { fleetMissionDistance, type FleetDriveLevels } from "./fleetMissionRules";
+import { acsDefendHoldingFuel, fleetMissionDistance, fleetMissionDistanceForMission, fleetMissionFuelCost, fleetMissionTravelSeconds, type FleetDriveLevels } from "./fleetMissionRules";
 import { emptyMissionShips, galaxyActionsForSlot, missionTypeId, type GalaxyAction, type MissionShipKey, type MissionShips } from "./galaxyActions";
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
 import { haptic } from "./haptics";
@@ -920,14 +920,68 @@ const missionShipInventoryRows: Array<{
   { key: "pathfinder", id: 14, label: "Pathfinder" },
 ];
 
+export type MissionLaunchInventoryRequest = {
+  originIsMoon?: boolean | undefined;
+  originPlanetId: string;
+  ships: MissionShips;
+  origin: Coordinates | undefined;
+  target: Coordinates;
+  targetIsMoon?: boolean | undefined;
+  targetPlanetId?: string | undefined;
+  mission: string;
+  speedPercent: number;
+  cargo?: Partial<OnChainResources> | undefined;
+  holdSeconds?: number | undefined;
+  hostileMissionId?: string | undefined;
+};
+
+/** The coordinated normal/ACS prepare boundary. No wallet action occurs here. */
+export async function prepareMissionLaunchInventory(
+  backend: Pick<BackendDataStore, "shipyard" | "moon" | "fleetVisibility" | "system">,
+  account: string,
+  request: MissionLaunchInventoryRequest,
+  nowMs = () => Date.now(),
+): Promise<void> {
+  if (!request.origin) throw new Error("Origin coordinates are unavailable. Refresh before launching.");
+  const [shipyard, moon, defense, targetSystem] = await Promise.all([
+    backend.shipyard(account, request.originPlanetId, { fresh: true }),
+    request.originIsMoon ? backend.moon(account, request.originPlanetId, { fresh: true }) : Promise.resolve(null),
+    request.hostileMissionId ? backend.fleetVisibility(account, { fresh: true }) : Promise.resolve(null),
+    request.holdSeconds !== undefined ? backend.system<ApiSystemResponse>(request.target.galaxy, request.target.system, { detail: "full", fresh: true }) : Promise.resolve(null),
+  ]);
+  const originState = request.originIsMoon ? missionMoonShipyardState({ moonState: moon, shipyardState: shipyard }) : shipyard;
+  const drives = driveLevelsFromTechnologyLevels(shipyard.technologyLevels);
+  const distance = fleetMissionDistanceForMission(request.origin, request.target, request.mission === "harvest" ? "harvest" : "transport", request);
+  let fuel = fleetMissionFuelCost(request.ships, distance, drives, request.speedPercent);
+  if (request.hostileMissionId) {
+    const hostile = [...(defense?.incoming ?? []), ...(defense?.joinableDefenses ?? [])].find(mission => mission.missionId === request.hostileMissionId);
+    if (!hostile || hostile.status !== "Outbound") throw new Error("The hostile mission changed. Refresh before defending.");
+    const arrival = Number(hostile.arrivalAt) * 1000;
+    const hold = Math.floor((arrival - nowMs()) / 1000) - Math.ceil(fleetMissionTravelSeconds(distance, request.ships, drives, request.speedPercent));
+    if (!Number.isFinite(hold) || hold < 0) throw new Error("This fleet cannot arrive before the hostile attack.");
+    fuel += acsDefendHoldingFuel(request.ships, hold, hostile.targetPlanet?.allianceDepotLevel ?? 0).netHoldingFuel;
+  } else if (request.holdSeconds !== undefined) {
+    const target = targetSystem?.planets.find(planet => planet.occupiedBy?.planetId === request.targetPlanetId);
+    // Missing public depot information cannot promise a subsidy.
+    fuel += acsDefendHoldingFuel(request.ships, request.holdSeconds, allianceDepotLevelFromPlanet(target)).netHoldingFuel;
+  }
+  const blocker = missionShipInventoryBlocker({
+    originBody: request.originIsMoon ? "moon" : "planet", shipyardState: originState, ships: request.ships,
+    resources: { metal: Number(request.cargo?.metal ?? 0), crystal: Number(request.cargo?.crystal ?? 0), deuterium: Number(request.cargo?.deuterium ?? 0) + fuel },
+  });
+  if (blocker) throw new Error(blocker);
+}
+
 export function missionShipInventoryBlocker({
   originBody = "planet",
   shipyardState,
   ships,
+  resources,
 }: {
   originBody?: "moon" | "planet" | undefined;
   shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "launchableShips" | "fleetLaunchConstraints" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
+  resources?: Partial<Record<keyof OnChainResources, number>>;
 }): string | undefined {
   if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
   if (shipyardState.fleetLaunchAvailable === false) {
@@ -950,7 +1004,7 @@ export function missionShipInventoryBlocker({
     })
     .filter((row): row is string => Boolean(row));
 
-  if (overSelected.length <= 0) return fleetLaunchRequirementBlocker(shipyardState.fleetLaunchConstraints, missionShipInventoryRows.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })));
+  if (overSelected.length <= 0) return fleetLaunchRequirementBlocker(shipyardState.fleetLaunchConstraints, missionShipInventoryRows.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })), resources);
   return `${overSelected.join(", ")} on the origin ${originBody}; refresh fleet state or reduce selected ships before launching.`;
 }
 
@@ -2552,7 +2606,7 @@ export function batchSupplyPlanMatchesOrders(submitted: readonly BatchSupplyOrde
 // as 0 rather than blocking.
 const ALLIANCE_DEPOT_BUILDING_ID = 13;
 
-function allianceDepotLevelFromPlanet(planet: Planet | undefined): number {
+function allianceDepotLevelFromPlanet(planet: Pick<Planet, "publicState"> | undefined): number {
   const buildings = planet?.publicState?.buildings;
   if (!buildings) return 0;
   const depot = buildings.find((building) => building.id === ALLIANCE_DEPOT_BUILDING_ID);
@@ -4370,13 +4424,7 @@ export function PlayableMvpApp({
         resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">;
         resourceChanges?: readonly Pick<ChainResourceChange, "bodyKind" | "planetId">[];
         syncMissionLaunch?: boolean;
-        validateShipInventory?:
-          | {
-              originIsMoon?: boolean | undefined;
-              originPlanetId: string;
-              ships: MissionShips;
-            }
-          | undefined;
+        validateShipInventory?: MissionLaunchInventoryRequest | undefined;
       } = {},
     ): Promise<WriteTransactionOutcome> => {
       const planetSwitchRequestId = planetSwitchGate.current;
@@ -4397,26 +4445,8 @@ export function PlayableMvpApp({
             if (!apiBaseUrl || !account) {
               throw new Error("Could not refresh your fleet. Check your wallet connection and retry.");
             }
-            const [freshShipyardState, freshMoonState] = await Promise.all([
-              backendData!.shipyard(account, options.validateShipInventory.originPlanetId, { fresh: true }),
-              options.validateShipInventory.originIsMoon ? backendData!.moon(account, options.validateShipInventory.originPlanetId, { fresh: true }) : Promise.resolve(null),
-            ]);
+            await prepareMissionLaunchInventory(backendData!, account, options.validateShipInventory);
             if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) throw new Error("Origin changed before submission. Please try again.");
-
-            const freshOriginInventoryState = options.validateShipInventory.originIsMoon
-              ? missionMoonShipyardState({
-                  moonState: freshMoonState,
-                  shipyardState: freshShipyardState,
-                })
-              : freshShipyardState;
-            const shipBlocker = missionShipInventoryBlocker({
-              originBody: options.validateShipInventory.originIsMoon ? "moon" : "planet",
-              shipyardState: freshOriginInventoryState,
-              ships: options.validateShipInventory.ships,
-            });
-            if (shipBlocker) {
-              throw new Error(shipBlocker);
-            }
             assertMissionComposerContext();
           }
           if (options.validateAttackProtection) {
@@ -5892,7 +5922,17 @@ export function PlayableMvpApp({
           planetId: originPlanetId,
         },
         syncMissionLaunch: true,
-        validateShipInventory,
+        validateShipInventory: validateShipInventory ? {
+          ...validateShipInventory,
+          origin: missionOriginPlanet,
+          target: targetCoords,
+          targetPlanetId,
+          targetIsMoon,
+          mission: action.mode === "mission" ? action.mission : "colonize",
+          speedPercent: draft.speedPercent,
+          cargo,
+          ...(action.kind === "defenseHold" ? { holdSeconds: draft.holdSeconds ?? 0 } : {}),
+        } : undefined,
       });
 
       const closeMissionCreation = () => {
@@ -6311,7 +6351,8 @@ export function PlayableMvpApp({
           {
             resourceChange: { bodyKind: "planet", planetId: originPlanetId },
             syncMissionLaunch: true,
-            validateShipInventory: { originPlanetId, ships: draft.ships },
+            validateShipInventory: { originPlanetId, ships: draft.ships, origin: selectedManagedPlanet, target: pending.coords,
+              mission: "acsDefend", speedPercent: draft.speedPercent, hostileMissionId: pending.hostileMissionId },
           },
         ),
       );
@@ -6407,6 +6448,12 @@ export function PlayableMvpApp({
             originIsMoon,
             originPlanetId,
             ships: draft.ships,
+            origin: selectedManagedPlanet,
+            target: pending.coords,
+            targetIsMoon,
+            mission: "attack",
+            // Join calldata has no speed argument and uses the default speed.
+            speedPercent: 100,
           },
         });
         if (transactionWasSubmitted(outcome.outcome)) closeJoinAttack();

@@ -5002,9 +5002,12 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   return message || "Rankings could not be loaded.";
 }
 
-export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; signal?: AbortSignal } = {}): Promise<unknown> {
-  const detail = options.detail ? `?detail=${options.detail}` : "";
-  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
+export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; fresh?: boolean; signal?: AbortSignal } = {}): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (options.detail) params.set("detail", options.detail);
+  if (options.fresh) params.set("fresh", "1");
+  const query = params.size ? `?${params}` : "";
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${query}`;
   return fetchGameApiJson<unknown>(url, "System", {
     httpErrorMessage: async () => "Galaxy could not be loaded. Please retry.",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
