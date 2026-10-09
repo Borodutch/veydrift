@@ -149,7 +149,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         }));
         return {viewport: innerWidth, viewportHeight: innerHeight, pageWidth: document.documentElement.scrollWidth, panelWidth: panel.clientWidth, panelScrollWidth: panel.scrollWidth, overflowing, labels: [...document.querySelectorAll("[role=group] button[aria-describedby]")].map(node => node.getAttribute("aria-label").split(" at ")[0])};
       })()`);
-      assert.deepEqual(result.labels, label.includes('recycler-only') ? ['Recycler'] : types, label + ': available type controls rendered');
+      assert.deepEqual(result.labels, label.includes('shortfall') ? [] : label.includes('recycler-only') ? ['Recycler'] : types, label + ': available type controls rendered');
       assert.ok(result.pageWidth <= result.viewport, label + ': page horizontal overflow');
       assert.ok(result.panelScrollWidth <= result.panelWidth, label + ': modal horizontal overflow: ' + JSON.stringify(result));
       for (const name of result.labels) assert.ok((await point(checkbox(types.indexOf(name)))).reachable, label + ": reachable " + name);
@@ -161,11 +161,48 @@ test("Supply ship eligibility persists through mounted draft interactions at des
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
+    // Compact source rows and centered header are measured in the mounted production UI.
+    for (const width of [1280, 390, 320]) {
+      for (const longName of [false, true]) {
+        await load(width, 'denver=1' + (longName ? '&longName=1' : ''), 568);
+        const layout = await evaluate(`(() => {
+          const title = document.querySelector('h2');
+          const header = title.parentElement.parentElement;
+          const rect = node => { const r = node.getBoundingClientRect(); return {cy:r.y+r.height/2,x:r.x,right:r.right,width:r.width,height:r.height}; };
+          return {icon:rect(header.firstElementChild),title:rect(title.firstElementChild.firstElementChild),modes:rect(document.querySelector('[aria-label="Mission type"]')),close:rect(header.lastElementChild),pageWidth:document.documentElement.scrollWidth};
+        })()`);
+        for (const key of ['title', 'modes', 'close']) assert.ok(Math.abs(layout.icon.cy-layout[key].cy)<1, width + ': centered ' + key + JSON.stringify(layout));
+        assert.ok(layout.pageWidth<=width, 'long title wraps without horizontal overflow');
+        assert.ok(layout.close.right<=width && layout.modes.right<=layout.close.x, 'header actions stay in one row');
+        assert.ok(layout.modes.height>=40 && layout.close.height>=32, 'usable header targets');
+        assert.equal(await evaluate(`document.querySelector('button[aria-label="Transport"] svg').classList.contains('lucide-package')`), true);
+        assert.equal(await evaluate(`document.querySelector('button[aria-label="Deploy"] svg').classList.contains('lucide-rocket')`), true);
+        for (const copy of ['Auto-plan cargo','Resources to send','Use only this source','Selected cargo','Auto cargo · selected combat ships','All selected ships']) {
+          assert.equal(await evaluate('document.querySelector("[role=dialog]").innerText.includes(' + JSON.stringify(copy) + ')'), false, 'removed visible copy: ' + copy);
+        }
+        const compact = await evaluate(`[...document.querySelectorAll('[data-supply-source]')].filter(row=>!row.querySelector('input[type=checkbox]').checked).map(row=>({text:row.lastElementChild.innerText,controls:[...row.querySelectorAll('input,button')].map(el=>el.type)}))`);
+        assert.deepEqual(compact.map(row=>row.controls), [['checkbox'],['checkbox']], 'unselected rows contain only checkbox control');
+        assert.match(compact[0].text, /^Astro\s*\[6:9:13\]\s*Available: M 0 · C 0 · D 4,825$/);
+        assert.match(compact[1].text, /^Montreal\s*\[6:9:10\]\s*Available: M 11,181 · C 5,000 · D 2,000$/);
+        const selectedCheck = `document.querySelector('[data-supply-source="1"] input[type=checkbox]')`;
+        await input('New Zion metal to send', 12300);
+        await click(selectedCheck);
+        assert.equal(await evaluate(`document.querySelector('[data-supply-source="1"]').querySelectorAll('button,input:not([type=checkbox])').length`), 0, 'deselected cargo and ships unmount');
+        assert.equal(await evaluate('document.querySelector("footer").textContent.includes("0 transports")'), true, 'no hidden contribution');
+        await evaluate(selectedCheck + '.focus()');
+        await send('Input.dispatchKeyEvent', {type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32});
+        await send('Input.dispatchKeyEvent', {type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
+        await settle();
+        assert.equal(await evaluate(`document.querySelector('input[aria-label="New Zion metal to send"]').value`), '12300', 'reselection restores explicit draft');
+        assert.equal((await submit()).orders[0].cargo.metal, 12300);
+        measurements.push({label:width+'-compact-header-'+longName,...layout});
+      }
+    }
     // Reporter-equivalent read-only fixture; production modal, never a real wallet.
     for (const width of [1280, 390, 320]) {
       await load(width, 'denver=1', 568);
       assert.equal(await evaluate('document.querySelectorAll("[role=dialog] details").length'), 0);
-      assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[inputmode=numeric]').length`), 9, 'all three source cargo rows render even when unselected');
+      assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[inputmode=numeric]').length`), 3, 'only the selected source renders cargo controls');
       if (artifacts) { const shot = await send('Page.captureScreenshot', {format:'png'}); writeFileSync(join(artifacts, 'denver-auto-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
       const first = await submit();
       assert.equal(first.orders.length, 1);
@@ -182,8 +219,6 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.deepEqual((await submit()).orders, first.orders, 'unrelated changes retain exact reviewed shipment');
       const footer = await evaluate('(() => { const r = document.querySelector("footer").getBoundingClientRect(); return {top:r.top,bottom:r.bottom}; })()');
       assert.ok(footer.top >= 0 && footer.bottom <= 568, 'persistent footer fits short viewport');
-      await click('document.querySelector(' + JSON.stringify('button[aria-label="Use only New Zion"]') + ')');
-      assert.deepEqual((await submit()).orders, first.orders, 'one-click source comparison preserves exact complete loadout');
       await input('New Zion metal to send', 12500);
       await evaluate('supplyFixture.changeStock()'); await settle();
       assert.equal(await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="New Zion metal to send"]') + ').value'), '12500', 'refresh keeps exact manual input');
@@ -604,7 +639,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('document.querySelectorAll("[role=group] button[aria-describedby]").length'), 0);
       assert.equal(await evaluate(source + '.disabled'), true);
       assert.equal(await evaluate(launch + '.disabled'), true);
-      assert.ok(await evaluate('document.body.textContent.includes("No mobile ships")'));
+      assert.ok(await evaluate('document.getElementById(' + source + '.getAttribute("aria-describedby")).textContent.includes("No usable cargo ships")'));
       assert.equal(await evaluate('document.body.textContent.includes("Enable another ship type")'), false, 'empty inventory must not suggest nonexistent type controls');
       assert.equal(await evaluate('document.body.textContent.includes("Enable more ship types")'), false, 'empty inventory shortfall must not suggest nonexistent type controls');
       assert.equal(await evaluate('supplyFixture.submissions.length'), 0);
@@ -685,6 +720,11 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await evaluate('supplyFixture.refresh()'); await settle();
       await expectTypes([false, false, false, false], 'refresh must not restore defaults');
       await record(width + '-no-types');
+      await click(source);
+      assert.equal(await evaluate(source + '.checked'), false);
+      assert.equal(await evaluate(source + '.disabled'), false, 'excluded types never strand a collapsed source');
+      await click(source);
+      await expectTypes([false, false, false, false], 'reselection retains all excluded types');
       await click(checkbox(2));
       submission = await submit();
       assert.deepEqual(submission.shipTypesBySource["188"], ['recycler']);
@@ -717,12 +757,13 @@ test("Supply ship eligibility persists through mounted draft interactions at des
 
       // A source with only Recyclers cannot supply by default, but opt-in unblocks it.
       await load(width, 'recyclerOnly=1');
-      await expectTypes([false], 'Recycler-only source still defaults off');
+      await expectTypes([], 'unselected Recycler-only source has no ship controls');
       assert.equal(await evaluate(source + '.checked'), false, 'opt-in-only source does not auto-select');
       assert.equal(await evaluate(launch + '.disabled'), true);
-      await click(checkbox(2));
-      assert.equal(await evaluate(source + '.checked'), false, 'enabling a type never silently selects the source');
+      assert.equal(await evaluate(source + '.disabled'), false, 'source can be selected before choosing ship types');
       await click(source);
+      await expectTypes([false], 'selected Recycler-only source preserves opt-in default');
+      await click(checkbox(2));
       submission = await submit();
       assert.ok(submission.orders[0].ships.recycler > 0);
       await click(checkbox(2));
@@ -789,8 +830,9 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await click(secondSource);
       await evaluate('supplyFixture.refresh()'); await settle();
       assert.deepEqual(await evaluate(sourceChecks), [false, false], 'refresh preserves explicit deselect-all');
-      assert.equal(await pressed(lunaRecycler), true);
+      assert.equal(await evaluate('Boolean(' + lunaRecycler + ')'), false, 'deselection removes ship controls');
       await click(source); await click(secondSource);
+      assert.equal(await pressed(lunaRecycler), true, 'reselection preserves ship choices');
       await evaluate('supplyFixture.changeStock()'); await settle();
       assert.equal(await evaluate(launch + '.disabled'), true, 'stock refresh requires explicit review');
       await click('[...document.querySelectorAll("button")].find(b => b.textContent === "Review latest inventory")');

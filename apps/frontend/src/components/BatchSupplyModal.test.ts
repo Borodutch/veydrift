@@ -8,16 +8,25 @@ import {
 const batchSupplyModalSource = await Bun.file(new URL("./BatchSupplyModal.tsx", import.meta.url)).text();
 
 describe("Batch Supply source row presentation", () => {
-  test("keeps source cargo and mode controls visible without duplicated shipments", () => {
+  test("keeps selected source cargo controls without duplicated shipments", () => {
     expect(batchSupplyModalSource).not.toContain("<details");
     expect(batchSupplyModalSource).not.toContain("<summary");
     expect(batchSupplyModalSource).not.toContain("Ships return after delivery");
     expect(batchSupplyModalSource).not.toContain("Proposed shipments");
     expect(batchSupplyModalSource).toContain("aria-label={label} title={label} aria-pressed={mission === kind}");
     expect(batchSupplyModalSource).toContain("Ships · planned / available");
-    expect(batchSupplyModalSource).toContain("Selected cargo");
+    expect(batchSupplyModalSource).not.toContain("Selected cargo");
+    expect(batchSupplyModalSource).not.toContain("Auto-plan cargo");
+    expect(batchSupplyModalSource).not.toContain("Use only this source");
+    expect(batchSupplyModalSource).toContain("{checked ? <>");
     expect(batchSupplyModalSource).toContain("Available: M");
     expect(batchSupplyModalSource).toContain("disabled={!checked || loading");
+  });
+  test("uses Empire mission icons without substitutes", async () => {
+    const empire = await Bun.file(new URL("./OverviewPage.tsx", import.meta.url)).text();
+    expect(empire).toContain('missionType === "Transport") return <Package');
+    expect(empire).toContain('missionType === "Deploy") return <Rocket');
+    expect(batchSupplyModalSource).toContain('kind === "transport" ? Package : Rocket');
   });
   test("Max shares all preview inputs and submission uses that same preview", () => {
     expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
