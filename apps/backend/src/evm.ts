@@ -1424,6 +1424,7 @@ export type DebrisFieldEvent = {
 
 export interface ChainReader {
   getCombatModelVersion?(): Promise<number | null>;
+  getMoonSupplyBatchVersion?(): Promise<number | null>;
   canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
   getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
@@ -2421,6 +2422,19 @@ export class VeydriftGameReader implements ChainReader {
       if (!result || result.length !== 66) return null;
       const version = BigInt(result);
       return version <= 255n ? Number(version) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async getMoonSupplyBatchVersion(): Promise<number | null> {
+    try {
+      const [result] = await this.batchCallContract(this.gameContractAddress, [{
+        selector: toFunctionSelector("moonSupplyBatchVersion()"), args: []
+      }]);
+      // One exact ABI uint256 word; unknown versions must not enable batch sends.
+      if (typeof result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(result)) return null;
+      return BigInt(result) === 1n ? 1 : null;
     } catch {
       return null;
     }

@@ -146,11 +146,9 @@ describe("production Supply confirmation and launch handlers", () => {
     expect(deployWords.slice(0, 3)).toEqual([7n, 7n, 1n]);
     expect(deployWords.slice(17)).toEqual([24999n, 0n, 0n, 100n, 0n, 1n]);
     const multiple = [preview.orders[0]!, { ...preview.orders[0]!, originPlanetId: "1" }];
-    const readsBefore = h.calls.length;
-    await expect(prepareBatchSupplyConfirmation({ ...args, orders: multiple })).rejects.toThrow("Moon Supply requires exactly one source");
-    expect(h.calls).toHaveLength(readsBefore);
+    await expect(prepareBatchSupplyConfirmation({ ...args, orders: multiple })).rejects.toThrow("inventory changed");
     const blockedWallet = mockWallet();
-    expect(() => launchBatchSupplyTransaction(blockedWallet.provider, account, contract, target, multiple, true)).toThrow("Moon Supply requires exactly one source");
+    await expect(launchBatchSupplyTransaction(blockedWallet.provider, account, contract, target, multiple, true)).rejects.toThrow("not available");
     expect(blockedWallet.sent).toHaveLength(0);
     h.setParentFuel("0");
     await expect(prepareBatchSupplyConfirmation({ ...args, mission: "deploy" })).rejects.toThrow("inventory changed");

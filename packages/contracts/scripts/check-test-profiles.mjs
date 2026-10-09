@@ -17,7 +17,7 @@ export function unoptimizedTestFiles(toml) {
 
 export function profileProblems(file, source, srcNames) {
   const problems = [];
-  if (file === "test/VeydriftGame.t.sol") {
+  if (file === "test/VeydriftGame.t.sol" || file === "test/VeydriftMoonSupplyBatch.t.sol") {
     problems.push("has production gas ceilings requiring production-profile linked libraries");
   }
   if (/Fork\.t\.sol$/.test(file)) problems.push("is a mainnet-fork test");

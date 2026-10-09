@@ -77,6 +77,32 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     };
     const launch = () => evaluate('document.querySelector("footer button").click()');
     const idle = () => waitFor('!actionsFixture.status().pending && !actionsFixture.status().loading');
+    for (const count of [2, 15]) for (const mission of ['transport', 'deploy']) {
+      await load();
+      await evaluate('actionsFixture.multiMoon(' + count + ')'); await settle();
+      await waitFor('!document.querySelector("footer button").disabled');
+      if (mission === 'deploy') { await evaluate(`document.querySelector('[aria-label="Mission type"] button:last-child').click()`); await settle(); }
+      await launch(); await idle();
+      const result = await state();
+      assert.equal(result.sent.length, 1, 'atomic moon ' + mission + ' sends once');
+      const data = result.sent[0][0].data;
+      const words = data.slice(10).match(/.{64}/g).map(x => BigInt('0x' + x));
+      assert.deepEqual(words.slice(0, 3), [831n, 64n, BigInt(count)]);
+      assert.equal(result.walletCalls.filter(method => method === 'eth_call').length, 2, 'capability + exact batch simulation');
+    }
+    for (const appRpc of [false, true]) for (const stage of ['simulation', 'gas', 'chain']) for (const change of ['account', 'body', 'close']) {
+      await load(); await evaluate('actionsFixture.multiMoon()'); await settle();
+      await evaluate('actionsFixture.coordinate(10000,' + appRpc + '); actionsFixture.holdStage(' + JSON.stringify(stage) + ')');
+      await launch(); await waitFor('actionsFixture.status().stagePending');
+      await evaluate('actionsFixture.change(' + JSON.stringify(change) + '); actionsFixture.releaseStage()');
+      await waitFor('actionsFixture.status().outcomes.length > 0');
+      assert.equal((await state()).sent.length, 0, 'moon context fence: ' + stage + '/' + change);
+    }
+    for (const failure of ['capability', 'revert']) {
+      await load(); await evaluate('actionsFixture.multiMoon()'); await settle();
+      await evaluate(failure === 'capability' ? 'actionsFixture.capability(false)' : 'actionsFixture.revert()');
+      await launch(); await idle(); assert.equal((await state()).sent.length, 0);
+    }
     // First preflight publishes increased shortfall; second identical attempt must
     // remain blocked even though the parent now has that new preview.
     await load();

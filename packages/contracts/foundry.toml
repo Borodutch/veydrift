@@ -14,8 +14,8 @@ bytecode_hash = "none"
 # optimizer running over test contracts. A test file stays optimized (unlisted) when it inherits
 # src code (harness), imports a deploy script, is a mainnet-fork test, or needs optimized code
 # to fit stack/gas (e.g. VeydriftStagedCohorts, VeydriftCombatArchitectureProxy).
-# VeydriftGame stays optimized: gas-bounded real-stack regressions require production
-# modules and linked libraries, not unoptimized .tests variants.
+# VeydriftGame also stays optimized: its gas assertions require production-profile
+# linked libraries, not just a production Game artifact (which still has link references).
 # scripts/check-test-profiles.mjs guards the list.
 dynamic_test_linking = true
 additional_compiler_profiles = [{ name = "tests", via_ir = true, optimizer = false, optimizer_runs = 0 }]

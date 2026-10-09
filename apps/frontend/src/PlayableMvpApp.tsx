@@ -11,6 +11,7 @@ import { lazy } from "preact/compat";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isActionBusy, scheduleActionNoticeAutoDismiss, type ActionStateSetter, type AutoDismissableActionState } from "./actionNoticeAutoDismiss";
 import { backendDataStoreFor, backendScopeTags, retainBackendDataStore, type BackendDataStore, type BackendDataTag, type BackendIndexingPlan } from "./backendDataStore";
+import { useVerifiedMoonSupplyBatch } from "./moonSupplyBatch";
 import { buildBatchSupplyPlan, hasUsableSupplyFleet, type BatchSupplyOrder, type BatchSupplyPlan, type BatchSupplySource, type SupplyResources, type SupplyShipTypesBySource, type SupplyMission, type SupplyFleetModesBySource } from "./batchSupplyPlanner";
 import {
   infrastructureDisplayActionNoticeFor,
@@ -183,6 +184,7 @@ import {
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchTransportBatchTransaction,
   sendLaunchDeployBatchTransaction,
+  sendLaunchBodySupplyBatchTransaction,
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
   fetchMission,
@@ -2382,7 +2384,8 @@ export async function prepareBatchSupplyConfirmation({
   onShortfall: (missing: SupplyResources) => void;
 }): Promise<void> {
   if (orders.length === 0 || orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
-  if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
+  if (new Set(orders.map(order => String(BigInt(order.originPlanetId)))).size !== orders.length) throw new Error("Supply origins must be unique.");
+  if (!targetIsMoon && orders.some(order => BigInt(order.originPlanetId) === BigInt(target.planetId))) throw new Error("The target planet cannot also be a Supply origin.");
   // Keep the single indexed snapshot read inside the shared
   // transaction deadline; never submit a late or changed plan.
   const [snapshot, parent] = await Promise.all([
@@ -2432,23 +2435,25 @@ export const launchBatchSupplyTransaction = (
   target: ManagedPlanetResponse, orders: BatchSupplyOrder[], targetIsMoon = false,
   mission: SupplyMission = "transport",
 ) => {
-  // Both planet batches are atomic. Moon launches retain the canonical body selector.
+  // Single moon missions retain the legacy body selector; multiple sources are one atomic call.
   if (orders.length === 0 || orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
-  if (targetIsMoon && orders.length !== 1) throw new Error("Moon Supply requires exactly one source per mission.");
-  return targetIsMoon
+  if (new Set(orders.map(order => String(BigInt(order.originPlanetId)))).size !== orders.length) throw new Error("Supply origins must be unique.");
+  if (!targetIsMoon && orders.some(order => BigInt(order.originPlanetId) === BigInt(target.planetId))) throw new Error("The target planet cannot also be a Supply origin.");
+  return targetIsMoon && orders.length === 1
     ? sendLaunchBodyFleetMissionTransaction(provider, signerAccount, gameContract, {
       originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId,
       originIsMoon: false, targetIsMoon: true, missionType: mission === "deploy" ? 1 : 0,
       ships: orders[0]!.ships,
       cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
     })
-    : mission === "deploy" && orders.length === 1
+    : !targetIsMoon && mission === "deploy" && orders.length === 1
       ? sendLaunchFleetMissionTransaction(provider, signerAccount, gameContract, {
         originPlanetId: orders[0]!.originPlanetId, targetPlanetId: target.planetId, missionType: 1,
         ships: orders[0]!.ships,
         cargo: { metal: String(orders[0]!.cargo.metal), crystal: String(orders[0]!.cargo.crystal), deuterium: String(orders[0]!.cargo.deuterium) }, speedPercent: 100,
       })
-    : (mission === "deploy" ? sendLaunchDeployBatchTransaction : sendLaunchTransportBatchTransaction)(provider, signerAccount, gameContract, {
+    : (targetIsMoon ? sendLaunchBodySupplyBatchTransaction
+      : mission === "deploy" ? sendLaunchDeployBatchTransaction : sendLaunchTransportBatchTransaction)(provider, signerAccount, gameContract, {
       targetPlanetId: target.planetId,
       orders: orders.map((order) => ({
         originPlanetId: order.originPlanetId,
@@ -2460,7 +2465,7 @@ export const launchBatchSupplyTransaction = (
         },
         speedPercent: 100,
       })),
-    });
+    }, mission);
 };
 
 /** Shared mounted production refresh/submit lifecycle. Only external reads and
@@ -3262,6 +3267,9 @@ export function PlayableMvpApp({
   const batchSupplyFleetSlotsKnown = Boolean(batchSupplySlots);
   const batchSupplyMaxSources = batchSupplySlots
     ? Math.max(0, batchSupplySlots.limit - batchSupplySlots.active) : 0;
+  const moonSupplyBatchSupported = useVerifiedMoonSupplyBatch(apiBaseUrl, Boolean(batchSupplyTarget && batchSupplyTargetIsMoon),
+    runtimeConfig.status === "ready" ? gameContractAddress(runtimeConfig.config) : undefined,
+    runtimeConfig.status === "ready" ? runtimeConfig.config.chainId : undefined);
   const [batchSupplySubmitting, setBatchSupplySubmitting] = useState(false);
   const [batchSupplyError, setBatchSupplyError] = useState<string | undefined>();
   const batchSupplySourceLoadIdRef = useRef(0);
@@ -7621,7 +7629,8 @@ export function PlayableMvpApp({
           error={batchSupplyError ?? batchSupplySnapshot?.error ?? (batchSupplyTargetIsMoon ? batchSupplyParentSnapshot?.error : undefined)}
           fleetSlotsKnown={batchSupplyFleetSlotsKnown}
           loading={batchSupplyLoading || levelSupplyLoading || (batchSupplyTargetIsMoon && batchSupplyParentLoading)}
-          maxSources={batchSupplyTargetIsMoon ? Math.min(1, batchSupplyMaxSources) : batchSupplyMaxSources}
+          maxSources={Math.min(15, batchSupplyMaxSources)}
+          moonBatchSupported={moonSupplyBatchSupported}
           upgrade={levelSupply}
           preview={levelPreview}
           onRefresh={levelSupply ? () => void refreshLevelSupply(levelSupply, batchSupplyTarget) : undefined}

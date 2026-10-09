@@ -125,8 +125,11 @@ describe("Supply Max preserves the actual shipment", () => {
     expect(deploy.maximum).toBe(transport.maximum);
     const many = options(Array.from({ length: 16 }, (_, i) => source(String(i), { resources: { metal: 10, crystal: 0, deuterium: 100 } })));
     const batch = maxPlan(many, "metal");
-    expect(batch.maximum).toBe(150);
-    expect(batch.plan.orders).toHaveLength(15);
+    expect(batch.maximum).toBe(0); // Never silently discard a sixteenth selected source.
+    expect(batch.plan.sourceLimitReached).toBe(true);
+    const bounded = maxPlan({ ...many, selectedPlanetIds: new Set(many.sources.slice(0, 15).map(source => source.planetId)) }, "metal");
+    expect(bounded.maximum).toBe(150);
+    expect(bounded.plan.orders).toHaveLength(15);
     const parent = source("1", { coordinates: target });
     const moon = maxPlan({ ...options([parent]), targetIsMoon: true }, "metal");
     expect(moon.plan.fuelCost).toBeGreaterThan(0);

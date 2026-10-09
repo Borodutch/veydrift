@@ -200,7 +200,8 @@ abstract contract VeydriftMoonSystemTestBase is Test {
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF), address(colonizationModule));
         game = VeydriftGame(
             payable(deployCode(
-                    "VeydriftGame.sol:VeydriftGame",
+                    // Avoid the unoptimized .tests artifact when multiple profiles are cached.
+                    "VeydriftGame.sol:VeydriftGame:0.8.28:default",
                     abi.encode(
                         admin,
                         address(firstPlanetSettlementModule),

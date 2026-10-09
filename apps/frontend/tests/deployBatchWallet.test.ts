@@ -8,6 +8,9 @@ import {
   encodeLaunchDeployBatchCall,
   encodeLaunchTransportBatchCall,
   sendLaunchDeployBatchTransaction,
+  sendLaunchBodySupplyBatchTransaction,
+  encodeLaunchBodyDeployBatchCall,
+  encodeLaunchBodyTransportBatchCall,
   type BatchTransportOrder,
 } from "../src/walletFlow";
 
@@ -81,6 +84,8 @@ describe("atomic planet Deploy wallet calls", () => {
 for (const [mission, send, encode] of [
   ["deploy", sendLaunchDeployBatchTransaction, encodeLaunchDeployBatchCall],
   ["transport", sendLaunchTransportBatchTransaction, encodeLaunchTransportBatchCall],
+  ["moon deploy", (p, a, c, args) => sendLaunchBodySupplyBatchTransaction(p, a, c, args, "deploy"), encodeLaunchBodyDeployBatchCall],
+  ["moon transport", (p, a, c, args) => sendLaunchBodySupplyBatchTransaction(p, a, c, args, "transport"), encodeLaunchBodyTransportBatchCall],
 ] as const) {
   for (const appRpc of [false, true]) for (const gas of ["0x1000000", "0x1000001", "0x1249431", "0x", "0x0", "error"] as const) {
     test(mission + " gas admission " + gas + (appRpc ? " via app RPC" : " via provider"), async () => {
@@ -89,7 +94,7 @@ for (const [mission, send, encode] of [
       const chain = appRpc ? BASE_MAINNET : defaultVeydriftChainForLocation();
       const readRpc = (call: { method: string; params?: unknown[] }) => {
         if (call.method === "eth_chainId") return chain.chainIdHex;
-        if (call.method === "eth_call") return "0x";
+        if (call.method === "eth_call") return (call.params?.[0] as { data: string }).data === toFunctionSelector("moonSupplyBatchVersion()") ? "0x" + "0".repeat(63) + "1" : "0x";
         if (call.method === "eth_estimateGas") {
           if (gas === "error") throw new Error("gas required exceeds allowance (16777216)");
           return gas;

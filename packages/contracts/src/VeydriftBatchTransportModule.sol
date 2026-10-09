@@ -42,6 +42,12 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         )
     );
 
+    bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
+        keccak256(
+            "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
+        )
+    );
+
     address private immutable _resolutionGameplay;
     address private immutable _resolutionColonization;
     address private immutable _resolutionDefenseHold;
@@ -696,20 +702,43 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         external
         returns (uint256[] memory missionIds)
     {
-        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Transport);
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Transport, false);
     }
 
     function launchDeployBatch(uint256 targetPlanetId, TransportBatchOrder[] calldata orders)
         external
         returns (uint256[] memory missionIds)
     {
-        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Deploy);
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Deploy, false);
+    }
+
+    /// @notice Runtime capability for clients to enable the additive moon Supply selectors.
+    function moonSupplyBatchVersion() external pure returns (uint256) {
+        return 1;
+    }
+
+    /// @notice Atomically transport from distinct owned planets to an owned moon.
+    /// @dev targetPlanetId identifies the moon by its parent; every origin is a planet.
+    function launchBodyTransportBatch(uint256 targetPlanetId, TransportBatchOrder[] calldata orders)
+        external
+        returns (uint256[] memory missionIds)
+    {
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Transport, true);
+    }
+
+    /// @notice Atomically deploy from distinct owned planets to an owned moon.
+    function launchBodyDeployBatch(uint256 targetPlanetId, TransportBatchOrder[] calldata orders)
+        external
+        returns (uint256[] memory missionIds)
+    {
+        return _launchFleetBatch(targetPlanetId, orders, FleetMissionType.Deploy, true);
     }
 
     function _launchFleetBatch(
         uint256 targetPlanetId,
         TransportBatchOrder[] calldata orders,
-        FleetMissionType missionType
+        FleetMissionType missionType,
+        bool targetIsMoon
     ) private returns (uint256[] memory missionIds) {
         uint256 count = orders.length;
         if (count == 0 || count > MAX_TRANSPORT_BATCH_ORDERS) revert InvalidQuantity();
@@ -718,31 +747,49 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         if (target.owner == address(0)) revert NoPlanet();
         if (target.owner != _actingPlayer()) revert NotPlanetOwner();
 
-        uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-            _technologyLevels[_actingPlayer()][Technology.Computer]
-        );
-        if (activeFleetMissionCount[_actingPlayer()] + count > fleetSlots) {
-            revert FleetSlotLimitReached(fleetSlots);
+        // Keep legacy planet prechecks unchanged. Body launches reconcile due fleets before
+        // checking each actual slot; a stale aggregate check would reject reusable returned slots.
+        if (!targetIsMoon) {
+            uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
+                _technologyLevels[_actingPlayer()][Technology.Computer]
+            );
+            if (activeFleetMissionCount[_actingPlayer()] + count > fleetSlots) {
+                revert FleetSlotLimitReached(fleetSlots);
+            }
         }
 
         missionIds = new uint256[](count);
         for (uint256 i = 0; i < count; ++i) {
             TransportBatchOrder calldata order = orders[i];
-            if (order.originPlanetId == targetPlanetId) revert SamePlanet();
+            if (!targetIsMoon && order.originPlanetId == targetPlanetId) revert SamePlanet();
             for (uint256 prior = 0; prior < i; ++prior) {
                 if (orders[prior].originPlanetId == order.originPlanetId) revert InvalidQuantity();
             }
 
-            bytes memory data = abi.encodeWithSelector(
-                LAUNCH_FLEET_MISSION_SELECTOR,
-                order.originPlanetId,
-                targetPlanetId,
-                missionType,
-                order.ships,
-                order.cargo,
-                order.speedPercent,
-                0
-            );
+            // Keep the canonical facade prologue and body identity/incarnation checks.
+            // Parent planet -> its moon is valid; the legacy branch remains planet-only.
+            bytes memory data = targetIsMoon
+                ? abi.encodeWithSelector(
+                    LAUNCH_BODY_FLEET_MISSION_SELECTOR,
+                    order.originPlanetId,
+                    targetPlanetId,
+                    missionType,
+                    order.ships,
+                    order.cargo,
+                    order.speedPercent,
+                    false,
+                    true
+                )
+                : abi.encodeWithSelector(
+                    LAUNCH_FLEET_MISSION_SELECTOR,
+                    order.originPlanetId,
+                    targetPlanetId,
+                    missionType,
+                    order.ships,
+                    order.cargo,
+                    order.speedPercent,
+                    0
+                );
             (bool ok, bytes memory result) = address(this).delegatecall(data);
             if (!ok) {
                 assembly ("memory-safe") {

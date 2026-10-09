@@ -43,6 +43,8 @@ import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {VeydriftFleetFuel} from "../src/libraries/VeydriftFleetFuel.sol";
+import {VeydriftScoreSnapshot} from "../src/libraries/VeydriftScoreSnapshot.sol";
 import {VeydriftPlanetGeneration} from "../src/libraries/VeydriftPlanetGeneration.sol";
 import {
     Building,
@@ -436,6 +438,36 @@ contract VeydriftGameTest is Test {
         randomness.setRequesterAuthorization(address(moons), true);
         vm.deal(player, 1 ether);
         vm.deal(delegate, 1 ether);
+    }
+
+    function testBatchGasUsesProductionLinkedLibraries() public view {
+        // Game bytecode selection alone cannot detect a mixed-profile library graph.
+        // Runtime lengths ignore library self-address patches but distinguish the actual
+        // optimized deployment from the unoptimized tests-profile implementation.
+        assertEq(
+            address(VeydriftFormulas).code.length,
+            vm.getDeployedCode("VeydriftFormulas.sol:VeydriftFormulas:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftFleetFuel).code.length,
+            vm.getDeployedCode("VeydriftFleetFuel.sol:VeydriftFleetFuel:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftCatalog).code.length,
+            vm.getDeployedCode("VeydriftCatalog.sol:VeydriftCatalog:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftAntiRaidPrimitives).code.length,
+            vm.getDeployedCode(
+                "VeydriftAntiRaidPrimitives.sol:VeydriftAntiRaidPrimitives:0.8.28:default"
+            )
+            .length
+        );
+        assertEq(
+            address(VeydriftScoreSnapshot).code.length,
+            vm.getDeployedCode("VeydriftScoreSnapshot.sol:VeydriftScoreSnapshot:0.8.28:default")
+            .length
+        );
     }
 
     function testDelegateAndMainCanActForMainAndEitherCanRevoke() public {
@@ -13427,7 +13459,9 @@ contract VeydriftGameTest is Test {
         );
         VeydriftGame deployedGame = VeydriftGame(
             payable(deployCode(
-                    "VeydriftGame.sol:VeydriftGame",
+                    // Explicit production artifact: the tests profile also emits an unoptimized
+                    // Game artifact, and name-only getCode can select it after other test builds.
+                    "VeydriftGame.sol:VeydriftGame:0.8.28:default",
                     abi.encode(
                         owner,
                         address(firstPlanetSettlementModule),
