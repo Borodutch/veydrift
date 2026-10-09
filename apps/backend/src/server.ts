@@ -4192,7 +4192,8 @@ function indexedProductionContext(
 }
 
 function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementIndexer) {
-  const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0];
+  const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0]
+    || indexer.fleetLaunchRequiresReconciliation(wallet);
   return {
     fleetSlots: indexer.fleetSlots(wallet),
     fleetLaunchAvailable: !slotSettlementBlocker,
@@ -4214,6 +4215,7 @@ function indexedSupplySources(
     wallet,
     technologyLevels: indexer.technologyLevels(wallet),
     ...indexedFleetLaunchContext(wallet, indexer),
+    batchFleetSlots: indexer.batchFleetSlots(wallet),
     sources: indexer.settledPlanetsForOwner(wallet)
       .filter(planet => planet.planetId !== target?.planetId)
       .map(planet => {
@@ -4224,7 +4226,7 @@ function indexedSupplySources(
           system: planet.system,
           position: planet.position,
           coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-          resources: indexedCurrentResourcesForPlanet(indexer, planet) ?? planet.resources,
+          resources: indexedCurrentResourcesForPlanet(indexer, planet),
           launchableShips: indexer.launchableShipCounts(planet.planetId)
         };
       })

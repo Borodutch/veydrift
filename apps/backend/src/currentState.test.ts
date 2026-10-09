@@ -191,3 +191,17 @@ test("historical queue replay preserves batch identity after queue removal and r
  const after=indexer.playerActivity(owner,{page:1,pageSize:20,through:1040}).items.find(i=>i.kind==="ship-completed")!;
  expect(after.id).toBe(before.id);expect(after.occurredAt).toBe("1031");expect(after.metadata.quantity).toBe(3);
 });
+
+test("large due roster keeps projected quantities but cannot certify bounded lazy launch", () => {
+  const { indexer, db } = fixture("ship");
+  db.query("DELETE FROM contract_production_queues").run();
+  setSystemTime(new Date(1030000));
+  for (let id = 1; id <= 13; id++) {
+    const mission = storedMission(indexer, String(id), 0);
+    (indexer as any).upsertCanonicalFleetMission({ ...mission, statusId: 2, status: "Returning" });
+  }
+  indexer.recordResourceProjectionWatermark("2", "1030", "0x" + "a".repeat(64));
+  expect(indexer.displayedUnitCounts("7", "ship")[0]?.count).toBe(117);
+  expect(indexer.fleetLaunchRequiresReconciliation(owner)).toBe(true);
+  expect(indexer.fleetLaunchRequiresReconciliation("0x3333333333333333333333333333333333333333")).toBe(false);
+});

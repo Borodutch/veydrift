@@ -4071,6 +4071,25 @@ export class SettlementIndexer {
     return { ...levels };
   }
 
+  // Batch slots are checked before the first per-order lazy sweep.
+  batchFleetSlots(wallet: Address): ShipyardState["fleetSlots"] {
+    return {
+      active: this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
+        .filter(mission => mission.missionType !== "MissileAttack").length,
+      limit: 1 + (this.contractTechnologyLevels(wallet)["4"] ?? 0)
+    };
+  }
+
+  fleetLaunchRequiresReconciliation(wallet: Address): boolean {
+    const missions = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true });
+    const effects = this.currentFleetEffects();
+    const ids = new Set(missions.map(mission => mission.missionId));
+    // One bounded lazy visit advances one leg, not both an arrival and return.
+    return (missions.length > 12 && effects.some(effect => ids.has(effect.missionId))) || missions.some(mission =>
+      mission.status === "Outbound" && effects.some(effect => effect.missionId === mission.missionId && effect.leg === "return")
+    );
+  }
+
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
     const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId)).filter((effect) => effect.terminal).map((effect) => effect.missionId));

@@ -272,7 +272,9 @@ for (const moon of [false, true]) for (const crossOwner of [false, true]) test(
         expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(mission => mission.missionId)).toEqual(blocked ? ["1"] : []);
         const state = await wallet("shipyard");
         expect(state.status).toBe(200);
-        expect(state.body.fleetLaunchAvailable).toBe(!blocked);
+        // Proven arrival alone remains launchable; an unmined second leg cannot
+        // supply launch inventory in the contract's one-visit lazy sweep.
+        expect(state.body.fleetLaunchAvailable).toBe(!blocked && !returned);
         const expected = [...(arrived ? ["mission:1:arrival"] : []), ...(returned ? ["mission:1:return"] : [])];
         const activity = await wallet("activity");
         expect(activity.status).toBe(200);
@@ -301,4 +303,75 @@ for (const moon of [false, true]) test("unresolved earlier combat still blocks d
   expect(indexer.currentFleetResourceCredits("7", moon).metal).toBe("0");
   expect((await wallet("shipyard")).body.fleetLaunchAvailable).toBe(false);
   expect((await wallet("activity")).body.items.filter((item: any) => item.reconciliation === "projected" && item.category === "mission")).toEqual([]);
+});
+
+// #65: a scalar refresh is not composition proof, even on a peaceful return.
+test("cached inventory retracts unproven six-cargo return across all current surfaces", async () => {
+  setSystemTime(new Date(1030000));
+  const { db, indexer, wallet, get, anchor } = fixture(false, true);
+  const row = db.query("SELECT event_json FROM contract_fleet_missions WHERE mission_id = '1'").get() as { event_json: string };
+  const snapshot = JSON.parse(row.event_json);
+  snapshot.ships = { largeCargo: "6" };
+  (indexer as any).upsertCanonicalFleetMission(snapshot);
+  anchor(1020);
+  const count = async () => {
+    const shipyard = (await wallet("shipyard")).body;
+    const detail = (await get("/universe/galaxies/2/systems/44?detail=full")).body.planets.find((p: any) => p.occupiedBy?.planetId === "7").publicState;
+    expect(detail.fleet.find((s: any) => s.id === 4).count).toBe(shipyard.launchableShips.find((s: any) => s.id === 4).count);
+    return shipyard.ships.find((s: any) => s.id === 4).count;
+  };
+  expect(await count()).toBe(6);
+  expect(await count()).toBe(6);
+  const { ships: _ships, ...scalar } = snapshot;
+  (indexer as any).upsertCanonicalFleetMission(scalar);
+  // Canonical updates normally invalidate the persisted state version. Use that
+  // production mutation boundary rather than a fresh-query cache bypass.
+  (indexer as any).touch();
+  (indexer as any).touchMissionReadModel();
+  anchor(1020);
+  expect(await count()).toBe(0);
+  expect(indexer.fleetSlots(owner).active).toBe(1);
+});
+
+test("Supply preserves unavailable current resources rather than reviving a raw balance", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, wallet, anchor } = fixture();
+  const source = indexer.planet("7")!;
+  indexer.applyEvent({ ...source, planetId: "8", position: 10, transactionHash: "0xsource8" });
+  anchor(1020);
+  indexer.hasPendingPlanetResources = id => id === "8";
+  for (let warm = 0; warm < 2; warm++) {
+    const supply = await wallet("supply-sources");
+    expect(supply.status).toBe(200);
+    expect(supply.body.sources.find((s: any) => s.planetId === "8").resources).toBeNull();
+    const shipyard = await getSource();
+    expect(shipyard.resourcesAsOfNow).toBeNull();
+  }
+  async function getSource() {
+    const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false });
+    return (await handler(new Request("http://localhost/wallet/" + owner + "/shipyard?planetId=8"))).json() as Promise<any>;
+  }
+});
+
+test("two-leg projected Transport return cannot promise first-source launch inventory", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, wallet, anchor } = fixture();
+  anchor(1020);
+  const state = (await wallet("shipyard")).body;
+  expect(state.ships[0].count).toBe(9);
+  expect(state.launchableShips[0].count).toBe(9);
+  expect(state.fleetSlots.active).toBe(0);
+  expect(state.fleetLaunchAvailable).toBe(false);
+  expect((await wallet("supply-sources")).body.fleetLaunchAvailable).toBe(false);
+});
+
+test("batch slot guard retains pre-sweep count without changing effective slots", async () => {
+  setSystemTime(new Date(1030000));
+  const { indexer, wallet, anchor } = fixture(false, true);
+  anchor(1020);
+  expect(indexer.fleetSlots(owner)).toEqual({ active: 0, limit: 1 });
+  expect(indexer.batchFleetSlots(owner)).toEqual({ active: 1, limit: 1 });
+  const supply = (await wallet("supply-sources")).body;
+  expect(supply.fleetSlots).toEqual({ active: 0, limit: 1 });
+  expect(supply.batchFleetSlots).toEqual({ active: 1, limit: 1 });
 });
