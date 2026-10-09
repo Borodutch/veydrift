@@ -204,7 +204,7 @@ describe("HTTP JSON-RPC transport", () => {
       const url = String(input); urls.push(url);
       const requests = JSON.parse(String(init?.body)) as Array<{ id: number }>;
       return Response.json(requests.map(({ id }) => url.includes("primary")
-        ? { id, error: { code: 4444, message: "pruned history unavailable" } } : { id, result: [] }));
+        ? { jsonrpc: "2.0", id, error: { code: 4444, message: "pruned history unavailable" } } : { jsonrpc: "2.0", id, result: [] }));
     }) as unknown as typeof fetch;
     try {
       const rpc = new HttpJsonRpcTransport(["https://primary.example", "https://archive.example"], { minRequestIntervalMs: 0 });

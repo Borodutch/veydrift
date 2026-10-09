@@ -246,3 +246,28 @@ service and durable coordinator with 39 candidates and two-second blocks, bounde
 50-call waves, full and deadline-limited productive packs, shared expiry retry,
 Retry-After, and expiration before signing/after persistence with restart. Synthetic
 RPC/fee/state fixtures do not replace post-deployment receipt/accounting evidence.
+
+### RPC quota and batch provenance boundary
+
+HTTP 429 always establishes a transport-wide typed cooldown: at least 60 seconds,
+or a later valid Retry-After deadline. Missing, malformed, zero or elapsed headers
+never authorize immediate retries or provider rotation. JSON-RPC rate-limit/quota
+errors establish the same cooldown; the entire response batch is scanned before
+application, batch-size or pruned-history errors are interpreted. Neither sequential
+fallback nor endpoint rotation can bypass this logical-attempt failure. Nonquota
+HTTP 503 retains its existing bounded retry/failover policy when no future
+Retry-After is supplied; a valid future header still delays new network work.
+
+Before mapping any batch results, responses must have JSON-RPC 2.0 envelopes,
+unique expected numeric IDs, exactly one result/error, and well-formed error
+objects. Complete arrays may be shuffled; duplicates, unexpected or missing IDs,
+and malformed envelopes reject the entire attempt without fallback or partial
+cache publication. A valid single error object rejecting the whole batch remains
+supported (for example the node's batch-size rejection). Truncated JSON retains
+the existing bounded parse-error policy, distinct from a parsed malformed envelope.
+
+The cooldown is local to a transport instance (not cross-process coordination).
+Already-started requests are not cancelled; future start slots are blocked. This
+conservative quota policy changes no fee freshness, gas, chronology, lease or
+signing-fence limits. Adversarial actual-reader tests live in
+`missionBatchRpcBoundary.test.ts` suite.

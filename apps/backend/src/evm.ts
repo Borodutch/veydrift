@@ -1720,6 +1720,31 @@ export class HttpJsonRpcTransport {
             body: JSON.stringify(batch ? items : items[0])
           }, rpcUrl);
           const bodies = Array.isArray(body) ? body : [body];
+          // Quota is a logical-attempt failure, even when another item reports a
+          // batch limit, application error or pruned history first.
+          if (bodies.some(entry => isRpcQuotaError(entry?.error))) {
+            throw this.quotaCooldown();
+          }
+          if (batch) {
+            const ids = new Set<number>();
+            for (const entry of bodies) {
+              if (!entry || typeof entry !== "object" || Array.isArray(entry)
+                || (entry as { jsonrpc?: unknown }).jsonrpc !== "2.0"
+                || !Number.isInteger(entry.id) || entry.id! < 1 || entry.id! > requests.length
+                || ids.has(entry.id!)
+                || Object.hasOwn(entry, "result") === Object.hasOwn(entry, "error")
+                || (Object.hasOwn(entry, "error") && (!entry.error || typeof entry.error !== "object"
+                  || !Number.isInteger(entry.error.code) || typeof entry.error.message !== "string"))) {
+                throw new Error("RPC batch response invalid envelope or identity.");
+              }
+              ids.add(entry.id!);
+            }
+            // A server may reject the entire batch with one error object.
+            // Successful arrays must be complete before any item is interpreted.
+            if (Array.isArray(body) && ids.size !== requests.length) {
+              throw new Error("RPC batch response missing item.");
+            }
+          }
           for (const entry of bodies) {
             if (!entry.error) continue;
             const error = entry.error;
@@ -1727,7 +1752,7 @@ export class HttpJsonRpcTransport {
             const pruned = error.code === 4444 && method === "eth_getLogs";
             throw new RpcEndpointError(
               "RPC " + error.code + ": " + error.message,
-              pruned ? "pruned_history" : isRetryableRpcError(error) ? "rpc_" + error.code : null,
+              pruned ? "pruned_history" : null,
               pruned
             );
           }
@@ -1803,6 +1828,13 @@ export class HttpJsonRpcTransport {
     this.metrics.callsBySource[this.requestSource] = sourceMethods;
   }
 
+  private quotaCooldown(until = 0): RpcRetryAfterError {
+    // Missing, invalid or elapsed Retry-After never authorizes a quota retry or
+    // provider rotation. One minute is a shared minimum, not a freshness extension.
+    this.retryAfterMs = Math.max(this.retryAfterMs, Date.now() + 60_000, until);
+    return new RpcRetryAfterError(this.retryAfterMs);
+  }
+
   private fetchRpc<T>(init: RequestInit, rpcUrl: string): Promise<T> {
     // Serialize start slots, never response completion. Independent reads can overlap.
     const start = this.requestQueue.then(async () => {
@@ -1847,6 +1879,9 @@ export class HttpJsonRpcTransport {
           const value = response.headers.get("retry-after");
           const until = value === null ? NaN : /^[0-9]+([.][0-9]+)?$/.test(value)
             ? Date.now() + Number(value) * 1000 : Date.parse(value);
+          if (response.status === 429) {
+            throw this.quotaCooldown(Number.isFinite(until) ? until : 0);
+          }
           if (Number.isFinite(until) && until > Date.now()) {
             this.retryAfterMs = Math.max(this.retryAfterMs, until);
             throw new RpcRetryAfterError(this.retryAfterMs);
@@ -7941,8 +7976,11 @@ function isRetryableRpcHttpStatus(status: number): boolean {
   return status === 429 || status === 503;
 }
 
-function isRetryableRpcError(error: { code: number; message: string }): boolean {
-  return /over rate limit|rate limit|too many requests/i.test(error.message);
+function isRpcQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return code === 429 || (typeof message === "string"
+    && /rate limit|too many requests|quota.*(?:exceeded|exhausted|limit)/i.test(message));
 }
 
 function retryDelay(attempt: number): Promise<void> {
