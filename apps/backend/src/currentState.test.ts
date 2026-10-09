@@ -205,3 +205,18 @@ test("large due roster keeps projected quantities but cannot certify bounded laz
   expect(indexer.fleetLaunchRequiresReconciliation(owner)).toBe(true);
   expect(indexer.fleetLaunchRequiresReconciliation("0x3333333333333333333333333333333333333333")).toBe(false);
 });
+
+test("one snapshot cannot cross a production boundary between inventory and remaining queue", () => {
+  const { indexer } = fixture("ship");
+  setSystemTime(new Date(1009000));
+  indexer.readConsistentSnapshot(() => {
+    const version = indexer.responseCacheVersion();
+    expect(indexer.shipRows("7")[0]?.count).toBe(0);
+    setSystemTime(new Date(1010000));
+    expect(indexer.planetQueue("7", "ship")?.quantity).toBe(3);
+    expect(indexer.launchableShipCounts("7")[0]?.count).toBe(0);
+    expect(indexer.responseCacheVersion()).toBe(version);
+  });
+  expect(indexer.shipRows("7")[0]?.count).toBe(1);
+  expect(indexer.planetQueue("7", "ship")?.quantity).toBe(2);
+});

@@ -1038,6 +1038,11 @@ export class SettlementIndexer {
   private readSnapshotDepth = 0;
   private readSnapshotResourceProjectionContext: ResourceProjectionContext | null = null;
   private readSnapshotStateVersion: string | null = null;
+  private readSnapshotProductionSecond: number | null = null;
+
+  private productionReadSecond(): number {
+    return this.readSnapshotProductionSecond ?? nowSeconds();
+  }
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -1289,6 +1294,7 @@ export class SettlementIndexer {
     if (outermost) {
       this.readSnapshotResourceProjectionContext = null;
       this.readSnapshotStateVersion = null;
+      this.readSnapshotProductionSecond = nowSeconds();
     }
     this.readSnapshotDepth += 1;
     try {
@@ -1298,6 +1304,7 @@ export class SettlementIndexer {
       if (outermost) {
         this.readSnapshotResourceProjectionContext = null;
         this.readSnapshotStateVersion = null;
+        this.readSnapshotProductionSecond = null;
       }
     }
   }
@@ -4135,7 +4142,7 @@ export class SettlementIndexer {
     );
   }
 
-  private queueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
+  private queueSettlement(queueKeyValue: string, nowSec = this.productionReadSecond()) {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
@@ -4395,7 +4402,7 @@ export class SettlementIndexer {
     return version;
   }
 
-  private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+  private productionQueueProjectionCacheVersion(nowSec = this.productionReadSecond()): string {
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.productionQueueProjectionVersionCache;
     if (
@@ -4448,7 +4455,7 @@ export class SettlementIndexer {
     return value;
   }
 
-  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = nowSeconds()): string {
+  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = this.productionReadSecond()): string {
     const normalizedWallet = wallet.toLowerCase();
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.walletProductionQueueProjectionVersionCaches.get(normalizedWallet);
