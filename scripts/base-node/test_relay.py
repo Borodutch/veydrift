@@ -30,6 +30,7 @@ class Upstream:
         self.calls = []
         self.rpc_errors = {}
         self.reverse = False
+        self.answer = None
         owner = self
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -40,6 +41,8 @@ class Upstream:
                 if owner.mode == 'http':
                     self.send_response(503); self.end_headers(); return
                 def answer(q):
+                    if owner.answer is not None:
+                        return owner.answer(q)
                     method = q['method']
                     value = '0x1' if method == 'eth_chainId' else '0x10'
                     if method.startswith('eth_getBlockBy'): value = dict(BLOCK)
