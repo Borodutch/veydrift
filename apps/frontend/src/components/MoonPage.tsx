@@ -558,27 +558,36 @@ function moonStructureFieldHint(fieldSummary: { capacity: number; used: number; 
   return "Build or upgrade the Lunar Base to open more structure fields.";
 }
 
-export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
-  const availableActions = actions?.filter((action) => action.kind !== "inspect" && action.onClick && !action.disabledReason) ?? [];
+export function MoonActionStrip({ actions, showUnavailable = false }: {
+  actions?: MoonOverviewAction[] | undefined;
+  showUnavailable?: boolean;
+}) {
+  const availableActions = actions?.filter((action) => action.kind !== "inspect" && (showUnavailable || (action.onClick && !action.disabledReason))) ?? [];
   if (availableActions.length === 0) return null;
 
   return (
-    <div aria-label="Moon actions" className="flex flex-wrap gap-2">
-        {availableActions.map((action) => {
-          const Icon = moonActionIcon(action.kind);
-          return (
+    <div aria-label="Moon actions" className="flex min-w-0 flex-wrap gap-2">
+      {availableActions.map((action) => {
+        const Icon = moonActionIcon(action.kind);
+        const disabled = Boolean(action.disabledReason || !action.onClick);
+        const reason = disabled ? action.disabledReason ?? "Mission actions unavailable." : undefined;
+        return (
+          <div className="flex min-w-0 max-w-xs flex-col items-start gap-1" key={action.kind}>
             <button
-              aria-label={action.label}
-              className="inline-flex h-11 w-11 items-center justify-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 xl:h-10 xl:w-10"
-              key={action.kind}
-              onClick={action.onClick}
-              title={action.label}
+              aria-label={reason ? `${action.label}: ${reason}` : action.label}
+              className={`inline-flex h-11 items-center justify-center gap-2 rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-100 transition enabled:hover:border-cyan-200/40 enabled:hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:opacity-50 xl:h-10 ${showUnavailable ? "px-3" : "w-11 xl:w-10"}`}
+              disabled={disabled}
+              onClick={disabled ? undefined : action.onClick}
+              title={reason ? `${action.label}: ${reason}` : action.label}
               type="button"
             >
               <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+              {showUnavailable ? <span className="text-xs font-semibold">{action.label}</span> : null}
             </button>
-          );
-        })}
+            {reason ? <p className="text-xs text-slate-400">{reason}</p> : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
