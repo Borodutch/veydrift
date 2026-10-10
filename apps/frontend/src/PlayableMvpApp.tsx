@@ -692,7 +692,7 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
-  return page === "overview" || page === "galaxy" || page === "planet" || page === "rankings" || page === "raid-target-finder";
+  return page === "overview" || page === "galaxy" || page === "planet" || page === "moon-inspect" || page === "rankings" || page === "raid-target-finder";
 }
 
 /** Preload only screens with direct Supply controls, never every route/planet. */

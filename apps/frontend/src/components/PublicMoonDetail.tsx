@@ -455,9 +455,14 @@ export function publicMoonActions({
   shipyardState: ChainShipyardState | null;
   transactionUnavailableReason?: string | undefined;
 }): MoonOverviewAction[] {
+  const isOwnMoon = Boolean(account && planet.occupiedBy?.owner.toLowerCase() === account.toLowerCase());
+  const protectionUnavailable = attackProtectionUnavailable || Boolean(
+    account && !isOwnMoon && attackProtection && attackProtection.targetPlanetId !== planet.occupiedBy?.planetId
+  );
+  const matchingProtection = protectionUnavailable ? null : attackProtection;
   const targetActions = galaxyActionsForSlot({
     account,
-    attackProtection,
+    attackProtection: matchingProtection,
     defenseState,
     homePlanetId,
     isOrigin: false,
@@ -477,19 +482,23 @@ export function publicMoonActions({
     moonMissionAction({
       action: actionsByKind.get("attack"),
       coords,
-      fallbackReason: account && planet.occupiedBy?.owner.toLowerCase() === account.toLowerCase()
+      fallbackReason: isOwnMoon
         ? "You cannot attack your own moon."
-        : attackMoonUnavailableReason(attackProtection),
+        : attackMoonUnavailableReason(matchingProtection),
       kind: "attack",
       label: "Attack",
       onAction,
       planet,
       unavailableReason: unavailableReason
-        ?? (attackProtectionUnavailable
+        ?? (protectionUnavailable
           ? attackProtectionLoading
             ? "Checking attack protection…"
             : "Attack protection is unavailable. Refresh before attacking."
-          : undefined),
+          // A known target denial is useful even while origin inventory loads.
+          // This only adds a blocker; all origin/launch guards remain in force.
+          : account && homePlanetId && !isOwnMoon
+            ? formatAttackBlockReason(matchingProtection ?? undefined)
+            : undefined),
     }),
     moonMissionAction({
       action: actionsByKind.get("transport"),

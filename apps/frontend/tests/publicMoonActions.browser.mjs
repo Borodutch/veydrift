@@ -92,7 +92,7 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
         ['failed', /Refresh before attacking/],
         ['mismatch', /Refresh before attacking/],
         ['same_alliance', /target belongs to your alliance/],
-        ['score_protection', /score-ratio protection/],
+        ['score_protection', /score protection/],
         ['bashing_limit', /bashing limit/],
         ['disconnected', /Connect a wallet/],
         ['no-ships', /Requires at least one movable ship/],
@@ -126,6 +126,38 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
         const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
         writeFileSync(join(artifacts, 'eligible-' + width + '.png'), Buffer.from(data, 'base64'));
       }
+      // Cold direct entry must fetch the origin without first opening another
+      // launch page. Target eligibility alone cannot enable a pending origin.
+      await send("Page.navigate", { url: url + "?mode=origin-eligible" });
+      await until(attack + ' && /Shipyard state is still loading/.test(document.body.innerText)');
+      assert.equal(await evaluate(attack + '.disabled'), true);
+      await until('fixture.requests.some(url => url.includes("/shipyard")) && fixture.requests.some(url => url.includes("/defenses"))');
+      await evaluate(attack + '.click()');
+      assert.equal(await evaluate('fixture.launches.length'), 0);
+      await evaluate('fixture.releaseOrigin()');
+      await until(attack + ' && !' + attack + '.disabled');
+      await evaluate(attack + '.click()');
+      assert.equal(await evaluate('fixture.launches[0].action.defaultTargetIsMoon'), true);
+
+      // Navigation from a page that does not preload origin data enables both
+      // subscriptions. A matching restriction wins over inventory loading and
+      // stays disabled once that inventory arrives.
+      await evaluate('fixture.show("origin-score_protection", "/research")');
+      await until('document.body.innerText.includes("Research fixture")');
+      const requestCount = await evaluate('fixture.requests.length');
+      await evaluate('fixture.navigate("/moon/2/44/9")');
+      await until(attack + ' && /score protection/.test(document.body.innerText)');
+      const newRequests = await evaluate('fixture.requests.slice(' + requestCount + ')');
+      assert.ok(newRequests.some(url => url.includes('/shipyard')));
+      assert.ok(newRequests.some(url => url.includes('/defenses')));
+      assert.equal(await evaluate('document.querySelector("[data-origin-loaded]").dataset.originLoaded'), 'false');
+      assert.equal(await evaluate(attack + '.disabled'), true);
+      await evaluate('fixture.releaseOrigin()');
+      await until('document.querySelector("[data-origin-loaded]").dataset.originLoaded === "true" && document.querySelector("[data-defense-loaded]").dataset.defenseLoaded === "true"');
+      assert.equal(await evaluate(attack + '.disabled'), true);
+      assert.match(await evaluate('document.body.innerText'), /score protection/);
+      await evaluate(attack + '.click()');
+      assert.equal(await evaluate('fixture.launches.length'), 1);
     }
     await send('Browser.close', {}, false);
   } finally {
