@@ -86,4 +86,34 @@ describe("public moon Attack discoverability", () => {
     const tree = MoonActionStrip({ actions: [action], showUnavailable: true });
     expect(nodes(tree).find(node => node.type === "button")?.props.onClick).toBeUndefined();
   });
+
+  test.each(["same_alliance", "score_protection", "bashing_limit"] as const)("matching %s denial remains visible before and after origin loads", blockedReason => {
+    const attackProtection = { ...base.attackProtection, allowed: false, blockedReason, blockedReasonLabel: "Restricted target." };
+    for (const origin of [null, shipyardState]) {
+      const action = attack({ attackProtection, shipyardState: origin });
+      expect(action.disabledReason).toBe("Restricted target.");
+      expect(action.onClick).toBeUndefined();
+    }
+  });
+
+  test("allowed protection does not bypass pending origin or other launch guards", () => {
+    expect(attack({ shipyardState: null }).disabledReason).toContain("Shipyard state is still loading");
+    expect(attack().onClick).toBeDefined();
+    expect(attack({ shipyardState: { ...shipyardState, ships: [] } }).onClick).toBeUndefined();
+    expect(attack({ shipyardState: { ...shipyardState, fleetLaunchAvailable: false } }).onClick).toBeUndefined();
+  });
+
+  test.each([
+    { attackProtectionUnavailable: true },
+    { attackProtection: { ...base.attackProtection, targetPlanetId: "999", allowed: false, blockedReason: "score_protection" as const, blockedReasonLabel: "Wrong target denial." } },
+  ])("unavailable or mismatched denial never explains or enables the current target", overrides => {
+    for (const origin of [null, shipyardState]) {
+      const action = attack({
+        attackProtection: { ...base.attackProtection, allowed: false, blockedReason: "score_protection", blockedReasonLabel: "Stale denial." },
+        ...overrides, shipyardState: origin,
+      });
+      expect(action.disabledReason).toContain("Refresh before attacking");
+      expect(action.onClick).toBeUndefined();
+    }
+  });
 });
