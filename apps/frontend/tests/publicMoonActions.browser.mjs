@@ -79,7 +79,8 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
       assert.ok(await evaluate('fixture.requests.some(url => url.includes("targetIsMoon=true"))'));
       // Keyboard activation traverses the real mounted button and callback.
       await evaluate(attack + '.focus()');
-      await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+      assert.equal(await evaluate("document.activeElement === " + attack), true);
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13 });
       await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
       await until('fixture.launches.length === 1');
       const launch = await evaluate('fixture.launches[0]');
