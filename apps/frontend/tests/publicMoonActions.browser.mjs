@@ -16,7 +16,7 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
   const pending = new Map();
   const artifacts = process.env.PUBLIC_MOON_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
-  
+
   try {
     await server.listen();
     const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/publicMoonActions.html`;
