@@ -120,6 +120,7 @@ export function PublicMoonDetail({
         account,
         actionState,
         attackProtection,
+        attackProtectionLoading: attackProtectionQuery.isInitialLoading,
         attackProtectionUnavailable: protectionRequired && (
           attackProtectionUnavailable || attackProtection?.targetPlanetId !== visibleTargetPlanetId
         ),
@@ -133,7 +134,9 @@ export function PublicMoonDetail({
         transactionUnavailableReason,
       })
     : [];
-  const visibleActions = actions.filter((action) => Boolean(action.onClick && !action.disabledReason));
+  // Keep Attack discoverable even when its guard blocks launch; omit unrelated
+  // placeholder actions (Inspect/Defend) and unavailable non-attack missions.
+  const visibleActions = actions.filter((action) => action.kind === "attack" || Boolean(action.onClick && !action.disabledReason));
 
   if (source === "loading" && !planet) {
     return <MoonDetailSkeleton />;
@@ -192,13 +195,7 @@ export function PublicMoonDetail({
 
             <div className={`${isHome ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.moonName ?? "Moon"}</h2>
-              {isActionBusy(actionState) ? (
-                <SkeletonRegion className="flex gap-2" label="Loading moon actions">
-                  {skeletonList(2, (index) => <Skeleton className="h-11 w-11 rounded" key={index} />)}
-                </SkeletonRegion>
-              ) : visibleActions.length > 0 ? (
-                <MoonActionStrip actions={visibleActions} />
-              ) : null}
+              <MoonActionStrip actions={visibleActions} showUnavailable />
             </div>
 
             <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
@@ -434,6 +431,7 @@ export function publicMoonActions({
   actionState,
   attackProtection,
   attackProtectionUnavailable,
+  attackProtectionLoading = false,
   coords,
   defenseState,
   homeCoords,
@@ -447,6 +445,7 @@ export function publicMoonActions({
   actionState: GalaxyActionState;
   attackProtection: AttackProtectionStatus | null;
   attackProtectionUnavailable: boolean;
+  attackProtectionLoading?: boolean;
   coords: Coordinates;
   defenseState: ChainDefenseState | null | undefined;
   homeCoords: Coordinates | undefined;
@@ -478,14 +477,18 @@ export function publicMoonActions({
     moonMissionAction({
       action: actionsByKind.get("attack"),
       coords,
-      fallbackReason: attackMoonUnavailableReason(attackProtection),
+      fallbackReason: account && planet.occupiedBy?.owner.toLowerCase() === account.toLowerCase()
+        ? "You cannot attack your own moon."
+        : attackMoonUnavailableReason(attackProtection),
       kind: "attack",
       label: "Attack",
       onAction,
       planet,
       unavailableReason: unavailableReason
         ?? (attackProtectionUnavailable
-          ? "Attack protection is unavailable. Refresh before attacking."
+          ? attackProtectionLoading
+            ? "Checking attack protection…"
+            : "Attack protection is unavailable. Refresh before attacking."
           : undefined),
     }),
     moonMissionAction({
