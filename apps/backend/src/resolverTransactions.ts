@@ -1729,9 +1729,10 @@ function isRevertedTransactionError(error: unknown): boolean {
   return message.includes("transaction") && message.includes("reverted");
 }
 
+// viem's `TimeoutError` is an RPC request timeout, not an inclusion timeout, so it stays "error".
 function isReceiptWaitTimeout(error: unknown): boolean {
   const name = error && typeof error === "object" ? (error as { name?: unknown }).name : undefined;
-  return name === "WaitForTransactionReceiptTimeoutError" || name === "TimeoutError";
+  return name === "WaitForTransactionReceiptTimeoutError";
 }
 
 function errorText(error: unknown): string {

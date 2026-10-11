@@ -111,7 +111,8 @@ const timeoutError = Object.assign(new Error("Timed out while waiting for transa
 test.each([
   ["included", (f: ReturnType<typeof make>) => async () => { f.mine(); }, 1],
   ["timeout", () => async () => { throw timeoutError; }, 2],
-  ["error", () => async () => { throw new Error("receipt poll failed at https://user:pass@rpc.example/v2/secret-key for " + signed); }, 2]
+  ["error", () => async () => { throw new Error("receipt poll failed at https://user:pass@rpc.example/v2/secret-key for " + signed); }, 2],
+  ["error", () => async () => { throw Object.assign(new Error("The request took too long to respond. URL: https://rpc.example/v2/secret-key"), { name: "TimeoutError" }); }, 2]
 ] as const)("inclusion wait reports outcome %s as a sanitized event", async (outcome, confirm, sends) => {
   const info = spyOn(console, "info").mockImplementation(() => {}), warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
