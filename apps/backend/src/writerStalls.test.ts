@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,11 @@ function tempDir(): string {
 
 function walBytes(path: string): number {
   try { return statSync(path + "-wal").size; } catch { return 0; }
+}
+
+/** The WAL header's checkpoint sequence number, which SQLite bumps on every WAL restart. */
+function walRestarts(path: string): number {
+  return readFileSync(path + "-wal").readUInt32BE(12);
 }
 
 describe("withoutCommitSync", () => {
@@ -150,40 +155,53 @@ function fakeWorker(): FakeWorker {
 }
 
 describe("WalCheckpointer", () => {
-  test("disables writer autocheckpoint only after a worker pass and restores it when stale", () => {
+  test("offloads each database only after its own worker pass and restores it when stale", () => {
     let now = 0;
-    const pages: number[] = [];
+    const pages: Record<string, number[]> = { index: [], store: [] };
     const warnings: string[] = [];
     const worker = fakeWorker();
     const checkpointer = new WalCheckpointer({
-      databasePath: "/data/index.sqlite",
-      setAutoCheckpoint: (value) => pages.push(value),
-      staleAfterMs: 30_000,
+      targets: [
+        { name: "index", databasePath: "/data/index.sqlite", setAutoCheckpoint: (value) => pages.index!.push(value) },
+        { name: "store", databasePath: "/data/store.sqlite", setAutoCheckpoint: (value) => pages.store!.push(value), intervalMs: 300_000 }
+      ],
       now: () => now,
       createWorker: () => worker,
       logger: { warn: (message: string) => warnings.push(message) }
     });
     try {
-      expect(worker.messages).toEqual([{ databasePath: "/data/index.sqlite", intervalMs: 1_000 }]);
-      expect(pages).toEqual([]);
-      worker.emit({ ok: false, error: "unable to open", durationMs: 1 });
-      expect(pages).toEqual([]);
-      worker.emit({ ok: true, busy: 0, log: 10, checkpointed: 10, durationMs: 3 });
-      expect(pages).toEqual([0]);
-      expect(checkpointer.snapshot()).toMatchObject({ mode: "worker", passes: 1, failures: 1, lastLogPages: 10 });
+      // A full backfill lets the writer's next commit restart the WAL with a header fsync on its
+      // thread, so passes are spaced out rather than run every second.
+      expect(worker.messages).toEqual([{ databases: [
+        { databasePath: "/data/index.sqlite", intervalMs: 30_000 },
+        { databasePath: "/data/store.sqlite", intervalMs: 300_000 }
+      ] }]);
+      worker.emit({ databasePath: "/data/index.sqlite", ok: false, error: "unable to open", durationMs: 1 });
+      expect(pages).toEqual({ index: [], store: [] });
+      worker.emit({ databasePath: "/data/index.sqlite", ok: true, busy: 0, log: 10, checkpointed: 10, durationMs: 3 });
+      expect(pages).toEqual({ index: [0], store: [] });
+      worker.emit({ databasePath: "/data/store.sqlite", ok: true, busy: 0, log: 2, checkpointed: 2, durationMs: 1 });
+      expect(pages).toEqual({ index: [0], store: [0] });
+      expect(checkpointer.snapshot().index).toMatchObject({ mode: "worker", intervalMs: 30_000, passes: 1, failures: 1, lastLogPages: 10 });
 
-      now = 31_000;
-      (checkpointer as unknown as { checkStale(): void }).checkStale();
-      expect(pages).toEqual([0, 1000]);
-      expect(checkpointer.snapshot().mode).toBe("main-thread-fallback");
+      // Staleness scales with each interval: 3 × 30 s for the index, 3 × 5 min for the store.
+      const checkStale = () => (checkpointer as unknown as { checkStale(): void }).checkStale();
+      now = 91_000;
+      checkStale();
+      expect(pages).toEqual({ index: [0, 1000], store: [0] });
+      expect(checkpointer.snapshot().index!.mode).toBe("main-thread-fallback");
+      expect(checkpointer.snapshot().store!.mode).toBe("worker");
       expect(warnings.some((warning) => warning.includes("stale"))).toBe(true);
+      now = 901_000;
+      checkStale();
+      expect(pages.store).toEqual([0, 1000]);
 
-      worker.emit({ ok: true, busy: 0, log: 0, checkpointed: 0, durationMs: 1 });
-      expect(pages).toEqual([0, 1000, 0]);
+      worker.emit({ databasePath: "/data/index.sqlite", ok: true, busy: 0, log: 0, checkpointed: 0, durationMs: 1 });
+      expect(pages.index).toEqual([0, 1000, 0]);
     } finally {
       checkpointer.stop();
     }
-    expect(pages.at(-1)).toBe(1000);
+    expect(pages).toEqual({ index: [0, 1000, 0, 1000], store: [0, 1000] });
     expect(worker.terminated).toBe(true);
   });
 
@@ -194,26 +212,27 @@ describe("WalCheckpointer", () => {
     writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 1000; PRAGMA journal_size_limit = 0; CREATE TABLE t (v BLOB);");
     const pages: number[] = [];
     const checkpointer = new WalCheckpointer({
-      databasePath: path,
-      setAutoCheckpoint: (value) => {
-        pages.push(value);
-        writer.exec(`PRAGMA wal_autocheckpoint = ${value};`);
-      },
-      intervalMs: 50
+      targets: [{
+        name: "index",
+        databasePath: path,
+        setAutoCheckpoint: (value) => {
+          pages.push(value);
+          writer.exec(`PRAGMA wal_autocheckpoint = ${value};`);
+        },
+        intervalMs: 50
+      }]
     });
     try {
       const deadline = Date.now() + 10_000;
-      while (checkpointer.snapshot().passes === 0 && Date.now() < deadline) await Bun.sleep(20);
+      const state = () => checkpointer.snapshot().index!;
+      while (state().passes === 0 && Date.now() < deadline) await Bun.sleep(20);
       expect(pages).toEqual([0]);
       const insert = writer.query("INSERT INTO t VALUES (randomblob(4000))");
       writer.transaction(() => { for (let index = 0; index < 400; index++) insert.run(); })();
       // Autocheckpoint is off on the writer, so only the worker can have backfilled these frames.
       const grown = walBytes(path);
       expect(grown).toBeGreaterThan(400 * 4000);
-      const backfilled = () => {
-        const state = checkpointer.snapshot();
-        return (state.lastLogPages ?? 0) >= 400 && state.lastCheckpointedPages === state.lastLogPages;
-      };
+      const backfilled = () => (state().lastLogPages ?? 0) >= 400 && state().lastCheckpointedPages === state().lastLogPages;
       while (!backfilled() && Date.now() < deadline) await Bun.sleep(20);
       expect(backfilled()).toBe(true);
       insert.run();
@@ -222,6 +241,62 @@ describe("WalCheckpointer", () => {
     } finally {
       checkpointer.stop();
       writer.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("between passes the writer's commits append without restarting the WAL", async () => {
+    const dir = tempDir();
+    const path = join(dir, "store.sqlite");
+    const writer = new Database(path, { create: true });
+    writer.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = 0; CREATE TABLE t (v BLOB);");
+    const insert = writer.query("INSERT INTO t VALUES (randomblob(100))");
+    insert.run();
+    const checkpointer = new WalCheckpointer({
+      targets: [{
+        name: "store",
+        databasePath: path,
+        setAutoCheckpoint: (value) => writer.exec(`PRAGMA wal_autocheckpoint = ${value};`)
+      }]
+    });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (checkpointer.snapshot().store!.passes === 0 && Date.now() < deadline) await Bun.sleep(20);
+      expect(checkpointer.snapshot().store!.passes).toBe(1);
+      const before = walRestarts(path);
+      insert.run(); // The first pass backfilled everything, so this commit restarts the WAL once.
+      expect(walRestarts(path)).toBe(before + 1);
+      for (let tick = 0; tick < 20; tick++) {
+        await Bun.sleep(10);
+        insert.run();
+      }
+      expect(walRestarts(path)).toBe(before + 1);
+      expect(checkpointer.snapshot().store!.passes).toBe(1);
+    } finally {
+      checkpointer.stop();
+      writer.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("stores expose their WAL to the checkpointer, except in-memory and read-only ones", () => {
+    const dir = tempDir();
+    try {
+      const randomness = new SqliteRandomnessCommitmentStore(join(dir, "commitments.sqlite"));
+      const target = randomness.walCheckpointTarget();
+      expect(target.databasePath).toBe(join(dir, "commitments.sqlite"));
+      target.setAutoCheckpoint(0);
+      const database = (randomness as unknown as { database: Database }).database;
+      expect((database.query("PRAGMA wal_autocheckpoint").get() as { wal_autocheckpoint: number }).wal_autocheckpoint).toBe(0);
+      expect(() => target.setAutoCheckpoint(-1)).toThrow("invalid wal_autocheckpoint page count");
+
+      expect(new ResolverTransactionCoordinator(join(dir, "transactions.sqlite")).walCheckpointTarget()?.databasePath)
+        .toBe(join(dir, "transactions.sqlite"));
+      expect(new ResolverTransactionCoordinator(":memory:").walCheckpointTarget()).toBeNull();
+      const reports = new BattleReportStore(join(dir, "referee.sqlite"));
+      expect(reports.walCheckpointTarget()?.databasePath).toBe(join(dir, "referee.sqlite"));
+      expect(new BattleReportStore(join(dir, "referee.sqlite"), true).walCheckpointTarget()).toBeNull();
+    } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });

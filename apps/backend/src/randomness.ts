@@ -4,7 +4,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, sta
 import { dirname, join } from "node:path";
 
 import { safeDiagnosticText } from "./safeDiagnostics";
-import { withoutCommitSync } from "./sqliteCommitSync";
+import { setWalAutoCheckpoint, withoutCommitSync } from "./sqliteCommitSync";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 
 export type Address = string;
 
@@ -426,6 +427,11 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
       );
     `);
     this.migrateLegacyFile(legacyFilePath);
+  }
+
+  /** This store's WAL for the writer's off-thread checkpointer (#74). */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> {
+    return { databasePath: this.databasePath, setAutoCheckpoint: (pages) => setWalAutoCheckpoint(this.database, pages) };
   }
 
   load(): RandomnessCommitmentRecord[] {

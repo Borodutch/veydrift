@@ -1,14 +1,20 @@
-export type WalCheckpointRequest = {
+export type WalCheckpointDatabase = {
   databasePath: string;
   intervalMs: number;
 };
 
-export type WalCheckpointResult =
+export type WalCheckpointRequest = {
+  databases: WalCheckpointDatabase[];
+};
+
+export type WalCheckpointResult = { databasePath: string } & (
   | { ok: true; busy: number; log: number; checkpointed: number; durationMs: number }
-  | { ok: false; error: string; durationMs: number };
+  | { ok: false; error: string; durationMs: number }
+);
 
 export type WalCheckpointerSnapshot = {
   mode: "worker" | "main-thread-fallback";
+  intervalMs: number;
   passes: number;
   failures: number;
   lastOkAt: string | null;
@@ -27,11 +33,22 @@ type WorkerLike = {
   onerror: ((event: ErrorEvent) => void) | null;
 };
 
-export type WalCheckpointerOptions = {
+export type WalCheckpointTarget = {
+  /** Key in the /health `walCheckpoint` snapshot. */
+  name: string;
   databasePath: string;
   /** Toggles SQLite's commit-time autocheckpoint on the writer's own connection. */
   setAutoCheckpoint: (pages: number) => void;
+  /**
+   * Every pass that backfills the whole WAL lets the writer's next commit restart the WAL, and
+   * that restart fsyncs the WAL header on the writer's thread even at synchronous = NORMAL. The
+   * interval therefore bounds how often the writer pays that fsync.
+   */
   intervalMs?: number;
+};
+
+export type WalCheckpointerOptions = {
+  targets: WalCheckpointTarget[];
   /** Without a successful worker pass for this long the writer checkpoints on commit again. */
   staleAfterMs?: number;
   now?: () => number;
@@ -40,97 +57,121 @@ export type WalCheckpointerOptions = {
 };
 
 const defaultAutoCheckpointPages = 1000;
+const defaultIntervalMs = 30_000;
+
+type TargetState = {
+  target: WalCheckpointTarget;
+  staleAfterMs: number;
+  offloaded: boolean;
+  lastOkAtMs: number;
+  snapshot: WalCheckpointerSnapshot;
+};
 
 /**
- * Runs index WAL checkpoints on a worker thread with its own connection (#74). The writer's
- * connection stops autocheckpointing once the worker has proved it works, so neither the frame
- * copy nor its fsync runs on the writer's event loop. If the worker stalls or dies, the writer
- * falls back to SQLite's commit-time autocheckpoint so the WAL cannot grow without bound.
+ * Runs WAL checkpoints for the writer's SQLite databases on one worker thread with its own
+ * connections (#74). A writer connection stops autocheckpointing once the worker has proved it
+ * works for that database, so neither the frame copy nor its fsync runs on the writer's event
+ * loop. If the worker stalls or dies, the writer falls back to SQLite's commit-time
+ * autocheckpoint so no WAL can grow without bound.
  */
 export class WalCheckpointer {
   private readonly worker: WorkerLike;
   private readonly watchdog: ReturnType<typeof setInterval>;
-  private readonly staleAfterMs: number;
   private readonly now: () => number;
   private readonly logger: Pick<Console, "warn">;
-  private offloaded = false;
-  private lastOkAtMs: number;
-  private state: WalCheckpointerSnapshot = {
-    mode: "main-thread-fallback",
-    passes: 0,
-    failures: 0,
-    lastOkAt: null,
-    lastError: null,
-    lastLogPages: null,
-    lastCheckpointedPages: null,
-    lastDurationMs: null,
-    maxDurationMs: 0
-  };
+  private readonly states = new Map<string, TargetState>();
 
-  constructor(private readonly options: WalCheckpointerOptions) {
-    const intervalMs = options.intervalMs ?? 1_000;
-    this.staleAfterMs = options.staleAfterMs ?? 30_000;
+  constructor(options: WalCheckpointerOptions) {
     this.now = options.now ?? Date.now;
     this.logger = options.logger ?? console;
-    this.lastOkAtMs = this.now();
+    const databases: WalCheckpointDatabase[] = [];
+    for (const target of options.targets) {
+      if (this.states.has(target.databasePath)) continue;
+      const intervalMs = target.intervalMs ?? defaultIntervalMs;
+      databases.push({ databasePath: target.databasePath, intervalMs });
+      this.states.set(target.databasePath, {
+        target,
+        staleAfterMs: options.staleAfterMs ?? Math.max(30_000, 3 * intervalMs),
+        offloaded: false,
+        lastOkAtMs: this.now(),
+        snapshot: {
+          mode: "main-thread-fallback",
+          intervalMs,
+          passes: 0,
+          failures: 0,
+          lastOkAt: null,
+          lastError: null,
+          lastLogPages: null,
+          lastCheckpointedPages: null,
+          lastDurationMs: null,
+          maxDurationMs: 0
+        }
+      });
+    }
     this.worker = (options.createWorker ?? (() => new Worker(new URL("./walCheckpointWorker.ts", import.meta.url).href)))();
     this.worker.unref?.();
     this.worker.onmessage = (event) => this.onResult(event.data as WalCheckpointResult);
     this.worker.onerror = (event) => {
-      this.onResult({ ok: false, error: event.message || "WAL checkpoint worker error", durationMs: 0 });
+      const error = event.message || "WAL checkpoint worker error";
+      for (const databasePath of this.states.keys()) this.onResult({ databasePath, ok: false, error, durationMs: 0 });
     };
-    const request: WalCheckpointRequest = { databasePath: options.databasePath, intervalMs };
+    const request: WalCheckpointRequest = { databases };
     this.worker.postMessage(request);
-    this.watchdog = setInterval(() => this.checkStale(), Math.max(intervalMs, 1_000));
+    this.watchdog = setInterval(() => this.checkStale(), 5_000);
     this.watchdog.unref?.();
   }
 
-  snapshot(): WalCheckpointerSnapshot {
-    return { ...this.state };
+  snapshot(): Record<string, WalCheckpointerSnapshot> {
+    return Object.fromEntries([...this.states.values()].map((state) => [state.target.name, { ...state.snapshot }]));
   }
 
   stop(): void {
     clearInterval(this.watchdog);
     try { this.worker.postMessage({ stop: true }); } catch {}
     this.worker.terminate();
-    this.setOffloaded(false);
+    for (const state of this.states.values()) this.setOffloaded(state, false);
   }
 
   private onResult(result: WalCheckpointResult): void {
-    this.state.lastDurationMs = result.durationMs;
-    this.state.maxDurationMs = Math.max(this.state.maxDurationMs, result.durationMs);
+    const state = this.states.get(result.databasePath);
+    if (!state) return;
+    const snapshot = state.snapshot;
+    snapshot.lastDurationMs = result.durationMs;
+    snapshot.maxDurationMs = Math.max(snapshot.maxDurationMs, result.durationMs);
     if (!result.ok) {
-      this.state.failures += 1;
-      if (this.state.lastError !== result.error) {
-        this.logger.warn("Veydrift SQLite WAL checkpoint worker failed", result.error);
+      snapshot.failures += 1;
+      if (snapshot.lastError !== result.error) {
+        this.logger.warn("Veydrift SQLite WAL checkpoint worker failed", state.target.name, result.error);
       }
-      this.state.lastError = result.error;
+      snapshot.lastError = result.error;
       return;
     }
-    this.state.passes += 1;
-    this.state.lastError = null;
-    this.state.lastLogPages = result.log;
-    this.state.lastCheckpointedPages = result.checkpointed;
-    this.lastOkAtMs = this.now();
-    this.state.lastOkAt = new Date(this.lastOkAtMs).toISOString();
-    this.setOffloaded(true);
+    snapshot.passes += 1;
+    snapshot.lastError = null;
+    snapshot.lastLogPages = result.log;
+    snapshot.lastCheckpointedPages = result.checkpointed;
+    state.lastOkAtMs = this.now();
+    snapshot.lastOkAt = new Date(state.lastOkAtMs).toISOString();
+    this.setOffloaded(state, true);
   }
 
   private checkStale(): void {
-    if (this.offloaded && this.now() - this.lastOkAtMs > this.staleAfterMs) {
-      this.logger.warn("Veydrift SQLite WAL checkpoint worker is stale; writer autocheckpoint re-enabled");
-      this.setOffloaded(false);
+    for (const state of this.states.values()) {
+      if (state.offloaded && this.now() - state.lastOkAtMs > state.staleAfterMs) {
+        this.logger.warn("Veydrift SQLite WAL checkpoint worker is stale; writer autocheckpoint re-enabled", state.target.name);
+        this.setOffloaded(state, false);
+      }
     }
   }
 
-  private setOffloaded(offloaded: boolean): void {
-    if (this.offloaded === offloaded) return;
+  private setOffloaded(state: TargetState, offloaded: boolean): void {
+    if (state.offloaded === offloaded) return;
     try {
-      this.options.setAutoCheckpoint(offloaded ? 0 : defaultAutoCheckpointPages);
-      this.offloaded = offloaded;
-      this.state.mode = offloaded ? "worker" : "main-thread-fallback";
+      state.target.setAutoCheckpoint(offloaded ? 0 : defaultAutoCheckpointPages);
+      state.offloaded = offloaded;
+      state.snapshot.mode = offloaded ? "worker" : "main-thread-fallback";
     } catch (error) {
-      this.logger.warn("Veydrift SQLite autocheckpoint toggle failed", error instanceof Error ? error.message : String(error));
+      this.logger.warn("Veydrift SQLite autocheckpoint toggle failed", state.target.name, error instanceof Error ? error.message : String(error));
     }
   }
 }

@@ -18,3 +18,9 @@ export function withoutCommitSync<T>(database: Database, write: () => T): T {
     database.exec("PRAGMA synchronous = FULL;");
   }
 }
+
+/** 0 hands checkpoints to the off-thread WalCheckpointer; 1000 restores SQLite's default (#74). */
+export function setWalAutoCheckpoint(database: Database, pages: number): void {
+  if (!Number.isSafeInteger(pages) || pages < 0) throw new Error("invalid wal_autocheckpoint page count");
+  database.exec(`PRAGMA wal_autocheckpoint = ${pages};`);
+}

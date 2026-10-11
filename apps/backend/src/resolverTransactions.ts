@@ -9,7 +9,8 @@ import { constants, hostname } from "node:os";
 import { keccak256, parseTransaction, serializeTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
-import { withoutCommitSync } from "./sqliteCommitSync";
+import { setWalAutoCheckpoint, withoutCommitSync } from "./sqliteCommitSync";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string; admissionProven?: boolean };
 
@@ -318,6 +319,12 @@ export class ResolverTransactionCoordinator {
         ON resolver_prepared_intents(chain_id, resolver_address, nonce);
     `);
   }
+  /** The journal's WAL for the writer's off-thread checkpointer (#74); none in memory. */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    if (this.databasePath === ":memory:") return null;
+    return { databasePath: this.databasePath, setAutoCheckpoint: (pages) => setWalAutoCheckpoint(this.database, pages) };
+  }
+
   private journalBytes(): number {
     // Live pages only: SQLite reuses freelist pages before growing the file, so pruned
     // audit history is real headroom even though the file never shrinks without VACUUM.

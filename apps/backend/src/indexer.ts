@@ -195,6 +195,7 @@ import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 import { emitObservabilityEvent } from "./observability";
+import { setWalAutoCheckpoint } from "./sqliteCommitSync";
 import type { EntityMedia, EntityMediaKind, YouTubeMedia } from "./entityMedia";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -4536,8 +4537,7 @@ export class SettlementIndexer {
 
   /** 0 hands checkpoints to the off-thread WalCheckpointer; 1000 restores SQLite's default. */
   setWalAutoCheckpoint(pages: number): void {
-    if (!Number.isSafeInteger(pages) || pages < 0) throw new Error("invalid wal_autocheckpoint page count");
-    this.db.exec(`PRAGMA wal_autocheckpoint = ${pages};`);
+    setWalAutoCheckpoint(this.db, pages);
   }
 
   private indexedPlanetLevelRows(

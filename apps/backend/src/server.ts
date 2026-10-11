@@ -65,7 +65,7 @@ import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { EventLoopLagMonitor } from "./eventLoopLag";
-import { WalCheckpointer } from "./walCheckpointer";
+import { WalCheckpointer, type WalCheckpointTarget } from "./walCheckpointer";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -650,11 +650,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     && typeof indexer?.setWalAutoCheckpoint === "function";
   if (offThreadWalCheckpoint && indexer) {
     // Checkpoint copies and fsyncs took the writer's event loop for 0.9 s+ at a time on the shared
-    // disk. Run them on a worker thread and stop the writer connection's commit-time checkpoint.
-    walCheckpointer = new WalCheckpointer({
+    // disk. Run them on a worker thread and stop the writer connections' commit-time checkpoints.
+    // The small lease/journal stores add a few frames per tick, so they checkpoint every 5 min.
+    const targets: WalCheckpointTarget[] = [{
+      name: "index",
       databasePath: loaded.config.indexDbPath,
       setAutoCheckpoint: (pages) => indexer.setWalAutoCheckpoint(pages)
-    });
+    }];
+    const stores = {
+      resolverTransactions: resolverTransactions?.walCheckpointTarget?.(),
+      randomnessCommitments: randomnessCommitter?.walCheckpointTarget?.(),
+      battleReports: battleReferee?.walCheckpointTarget?.()
+    };
+    for (const [name, target] of Object.entries(stores)) {
+      if (target) targets.push({ name, ...target, intervalMs: 300_000 });
+    }
+    walCheckpointer = new WalCheckpointer({ targets });
   } else if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
