@@ -85,14 +85,17 @@ export function initializeStatsStore(store: Database): void {
   `);
 }
 
-// Every refresh runs in a short-lived worker process, and nothing else keeps the store open. On
-// Linux, Bun's close() does not checkpoint and reset the WAL. The next worker therefore rebuilt
-// the WAL index from scratch and forgot which frames were already copied back. Its automatic
-// checkpoint then rewrote every page of the store on each pass, while the WAL grew without bound
-// (in production, ~0.9 GB written per pass and a 14.7 GB WAL saturated the shared disk; #75).
-// Call this after the refresh commits, so the next worker starts from an empty WAL.
-export function checkpointStatsStore(store: Database): void {
-  store.query("PRAGMA wal_checkpoint(TRUNCATE)").all();
+// Every refresh runs in a short-lived worker process, and nothing else keeps the store open.
+// Bun's transaction() caches BEGIN/COMMIT statements that close() does not finalize, so the last
+// connection never ran its close-time checkpoint or deleted the WAL. The next worker rebuilt the
+// WAL index from scratch and forgot which frames were already copied back. Its automatic checkpoint
+// then rewrote every page of the store on each pass, while the WAL grew without bound (in
+// production, ~0.9 GB written per pass and a 14.7 GB WAL saturated the shared disk; #75).
+// Call this after the refresh commits, so the next worker starts from an empty WAL. SQLITE_BUSY
+// does not throw here; it comes back as busy=1, which the caller reports.
+export function checkpointStatsStore(store: Database): { walCheckpointBusy: boolean } {
+  const [row] = store.query("PRAGMA wal_checkpoint(TRUNCATE)").all() as Array<{ busy: number }>;
+  return { walCheckpointBusy: (row?.busy ?? 0) !== 0 };
 }
 
 export function readPersistedStatsSnapshot(store: Database): PublicStatsSnapshot | null {

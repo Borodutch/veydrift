@@ -54,20 +54,23 @@ For configured event batch size **B**, a pass reads at most:
 - Constant-size source schema/reorg metadata and last-row seeks.
 
 The local audit side is bounded independently, so a large deleted source gap cannot
-cause an unbounded private reconciliation batch.
-
-Each worker ends with `PRAGMA wal_checkpoint(TRUNCATE)` on the private store, after its
-transaction commits. The worker is the only process that opens the store, and on Linux
-Bun's `close()` leaves the WAL in place. Without the explicit truncation the next worker
-rebuilt the WAL index from scratch, and its automatic checkpoint rewrote the whole store
-on every pass. In production that meant about 0.9 GB written per pass and a 14.7 GB WAL,
-which saturated the shared backend disk (#75). `INSERT OR REPLACE` canonical
+cause an unbounded private reconciliation batch. `INSERT OR REPLACE` canonical
 entities retain their unique identity even when their rowid moves. A pass publishes
 only after all append cursors catch up; marked-reorg reconciliation also holds the
 last good snapshot until the event historical audit completes. All private updates,
 progress and publication commit in one `BEGIN IMMEDIATE` transaction. Overlapping
 workers serialize or fail with a bounded busy timeout; they cannot double-advance a
 cursor. A crashed/killed worker rolls back and retries from the committed cursor.
+
+Each worker ends with `PRAGMA wal_checkpoint(TRUNCATE)` on the private store, after its
+transaction commits. The worker is the only process that opens the store. Bun 1.1.42's
+`Database.transaction()` caches BEGIN/COMMIT statements that `close()` does not finalize,
+so the last connection never ran its close-time checkpoint or deleted the WAL. Each new
+worker therefore rebuilt the WAL index from scratch, and its automatic checkpoint rewrote
+the whole store on every pass. In production that meant about 0.9 GB written per pass and
+a 14.7 GB WAL, which saturated the shared backend disk (#75). `/health` reports
+`progress.walCheckpointBusy: true` when another connection kept the truncation from
+completing.
 
 `reorgDetectedAt` accelerates the historical audit, but existing backend restorations
 and some repairs do not update that marker. Therefore:

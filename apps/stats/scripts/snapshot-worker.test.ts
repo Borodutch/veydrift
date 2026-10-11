@@ -74,12 +74,14 @@ test("independent concurrent workers serialize persisted cursors and restart wit
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 }, 15000);
 
+// Discriminates on Linux with Bun 1.1.42 (CI). macOS system SQLite leaves an empty WAL even
+// without the explicit checkpoint, so this passes there either way.
 test("each worker leaves an empty WAL so later passes do not rewrite the whole store", async () => {
   const f = fixture();
   const walBytes = () => existsSync(`${f.storePath}-wal`) ? statSync(`${f.storePath}-wal`).size : 0;
   try {
     for (let pass = 0; pass < 5; pass++) {
-      await worker(f.env);
+      expect((await worker(f.env)).walCheckpointBusy).toBe(false);
       expect(walBytes()).toBe(0);
     }
     const store = new Database(f.storePath, { readonly: true });

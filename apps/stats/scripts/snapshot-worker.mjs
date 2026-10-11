@@ -45,8 +45,7 @@ try {
     sourceId: `${sourcePath}:${sourceStat.dev}:${sourceStat.ino}`,
     batchSize: Number(process.env.VEYDRIFT_STATS_BATCH_SIZE ?? 5000)
   });
-  checkpointStatsStore(store);
-  process.stdout.write(JSON.stringify(result));
+  process.stdout.write(JSON.stringify({ ...result, ...checkpointStatsStore(store) }));
 } finally {
   store.close();
   db.close();
