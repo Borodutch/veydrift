@@ -21,6 +21,8 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { BackendConfig } from "./config";
 import { cancelResolverTransaction } from "./resolverCancellation";
+import { setWalAutoCheckpoint, withoutCommitSync } from "./sqliteCommitSync";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { safeDiagnosticText } from "./safeDiagnostics";
@@ -203,16 +205,23 @@ export async function refereeBattle(input: RefereeBattleInput): Promise<RefereeR
 export class BattleReportStore {
   private readonly database: Database;
 
-  constructor(path: string, readonly = false) {
+  constructor(private readonly path: string, private readonly readonly = false) {
     this.database = readonly ? new Database(path, { readonly: true }) : new Database(path, { create: true });
     if (!readonly) {
       this.database.exec("PRAGMA journal_mode = WAL");
+      this.database.exec("PRAGMA synchronous = FULL");
       this.database.exec(`CREATE TABLE IF NOT EXISTS battle_reports (
         report_hash TEXT PRIMARY KEY, battle_id TEXT NOT NULL, report TEXT NOT NULL, created_at TEXT NOT NULL)`);
       this.database.exec("CREATE INDEX IF NOT EXISTS battle_reports_battle ON battle_reports (battle_id)");
       this.database.exec("CREATE TABLE IF NOT EXISTS referee_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
       this.database.exec("CREATE TABLE IF NOT EXISTS referee_pending (battle_id TEXT PRIMARY KEY)");
     }
+  }
+
+  /** The writer store's WAL for the off-thread checkpointer (#74); none for readers or in memory. */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    if (this.readonly || this.path === ":memory:") return null;
+    return { databasePath: this.path, setAutoCheckpoint: (pages) => setWalAutoCheckpoint(this.database, pages) };
   }
 
   saveReport(battleId: bigint, reportHash: Hex, report: string): void {
@@ -239,12 +248,14 @@ export class BattleReportStore {
   }
 
   saveDiscovery(cursor: bigint, battleIds: bigint[]): void {
-    this.database.transaction(() => {
+    // Cursor and discoveries commit together, so losing them on power failure only rescans the
+    // same blocks; skipping the fsync keeps this 5 s tick off the writer's stall path (#74).
+    withoutCommitSync(this.database, () => this.database.transaction(() => {
       for (const id of battleIds) {
         this.database.query("INSERT OR IGNORE INTO referee_pending (battle_id) VALUES (?)").run(id.toString());
       }
       this.database.query("INSERT OR REPLACE INTO referee_state (key, value) VALUES ('cursor', ?)").run(cursor.toString());
-    })();
+    })());
   }
 
   pending(): bigint[] {
@@ -590,6 +601,10 @@ export class BattleRefereeService {
 
   private readonly intervalMs: number;
   private readonly store: BattleReportStore | undefined;
+
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    return this.store?.walCheckpointTarget() ?? null;
+  }
 
   start(): void {
     if (!this.worker || this.timer) return;

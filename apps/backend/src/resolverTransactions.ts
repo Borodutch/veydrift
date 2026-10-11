@@ -9,6 +9,8 @@ import { constants, hostname } from "node:os";
 import { keccak256, parseTransaction, serializeTransaction, recoverTransactionAddress, type Hex, type TransactionSerialized } from "viem";
 import { emitObservabilityEvent } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { setWalAutoCheckpoint, withoutCommitSync } from "./sqliteCommitSync";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 
 export type PreparedReceipt = { finalized: boolean; blockNumber: string; blockHash: Hex; outcomes: string; admissionProven?: boolean };
 
@@ -329,6 +331,12 @@ export class ResolverTransactionCoordinator {
         ON resolver_prepared_intents(chain_id, resolver_address, nonce);
     `);
   }
+  /** The journal's WAL for the writer's off-thread checkpointer (#74); none in memory. */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    if (this.databasePath === ":memory:") return null;
+    return { databasePath: this.databasePath, setAutoCheckpoint: (pages) => setWalAutoCheckpoint(this.database, pages) };
+  }
+
   private journalBytes(): number {
     // Live pages only: SQLite reuses freelist pages before growing the file, so pruned
     // audit history is real headroom even though the file never shrinks without VACUUM.
@@ -1546,10 +1554,10 @@ export class ResolverTransactionCoordinator {
       return result;
     } finally {
       clearInterval(renew);
-      this.database.query(`
+      withoutCommitSync(this.database, () => this.database.query(`
         DELETE FROM resolver_transaction_leases
         WHERE chain_id = ? AND resolver_address = ? AND holder = ?
-      `).run(chainId, normalizeAddress(address), holder);
+      `).run(chainId, normalizeAddress(address), holder));
     }
   }
 
@@ -1558,7 +1566,7 @@ export class ResolverTransactionCoordinator {
     const normalizedAddress = normalizeAddress(address);
     while (true) {
       const now = this.now();
-      const result = this.database.transaction(() => {
+      const acquire = () => this.database.transaction(() => {
         this.assertNoOutstandingSend(chainId, normalizedAddress);
         return this.database.query(`
         INSERT INTO resolver_transaction_leases (
@@ -1570,6 +1578,13 @@ export class ResolverTransactionCoordinator {
         WHERE resolver_transaction_leases.expires_at_ms <= ?
       `).run(chainId, normalizedAddress, holder, now + this.leaseDurationMs, now) as { changes: number };
       }).immediate();
+      // Taken and released on every pass. Lease rows need no commit fsync: the next FULL commit
+      // (any intent or attempt write) syncs them first, and every holder dies with the host (#74).
+      // A send fence may be cleared in this transaction; that delete keeps the FULL commit, so a
+      // power loss cannot bring back a fence that then reads as a foreign host's orphan.
+      const fenced = this.database.query("SELECT 1 FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ?")
+        .get(chainId, normalizedAddress) !== null;
+      const result = fenced ? acquire() : withoutCommitSync(this.database, acquire);
       if (result.changes > 0) return;
       if (now >= deadline) {
         throw new Error(`timed out waiting for resolver transaction lease ${chainId}:${normalizedAddress}`);
@@ -1601,7 +1616,7 @@ export class ResolverTransactionCoordinator {
   }
 
   private renewLease(chainId: number, address: `0x${string}`, holder: string): void {
-    const result = this.database.query(`
+    const result = withoutCommitSync(this.database, () => this.database.query(`
       UPDATE resolver_transaction_leases
       SET expires_at_ms = ?
       WHERE chain_id = ? AND resolver_address = ? AND holder = ?
@@ -1610,7 +1625,7 @@ export class ResolverTransactionCoordinator {
       chainId,
       normalizeAddress(address),
       holder
-    ) as { changes: number };
+    ) as { changes: number });
     if (result.changes !== 1) {
       throw new Error("resolver transaction lease was lost before confirmation");
     }

@@ -195,6 +195,41 @@ In multi-worker mode, one writer owns ingestion and serves its private loopback
 listener. Readers serve the public port, read the shared WAL database, and forward
 mutating requests and SSE to the writer. A single-worker deployment combines roles.
 
+The writer's event loop also runs chain sync, the mission tick and lease renewals,
+so it must not block on disk. Each `synchronous = FULL` commit fsyncs its WAL, and on
+the shared production disk one fsync can take over a second. For that reason the
+writer follows these rules:
+- The randomness committer ticks every second but writes only rows that changed, so
+  an idle tick commits nothing.
+- Lease acquire, renew and release (randomness committer and resolver journal) and the
+  battle referee's discovery cursor commit without fsync through `withoutCommitSync`.
+  The next FULL commit syncs those frames first, and every lease holder dies with the
+  host on power loss. A lost cursor only rescans the same blocks.
+- WAL checkpoints for the index, the resolver journal, the randomness commitments and
+  the battle reports run on one worker thread (`WalCheckpointer`) on its own
+  connections. Each writer connection's autocheckpoint stays off while the worker
+  succeeds for that database and turns back on if it goes three intervals (at least
+  30 s) without a successful pass. The worker only runs PASSIVE checkpoints, because
+  RESTART and TRUNCATE hold the write lock through their fsync and would park the
+  writer's next commit in its busy handler. After a full backfill, the writer's next
+  commit restarts the WAL, and that restart fsyncs the WAL header on the writer's
+  thread even at `synchronous = NORMAL`. Passes are therefore spaced out: every 30 s for
+  the index (whose `journal_size_limit` of 64 MB then trims the file) and every 5 min
+  for the small stores, which grow by a few frames per tick. PASSIVE never truncates, so
+  a pass that finds more than 16,384 WAL pages logs `sqlite_wal_large` (at most every
+  10 min per database). If the worker cannot start, or errors before its first
+  successful pass, the writer logs it once and checkpoints the index on its own thread
+  every 60 s, as before.
+- The writer samples its own event-loop delay every 100 ms. A late timer also counts
+  the intervals the freeze swallowed (L, L − 100 ms, … down to 100 ms), so the
+  percentiles weight each freeze by the time it covers. Every five minutes it logs a
+  `writer_event_loop_lag` line with p50, p99 and max over those intervals and the
+  number of freezes over 500 ms and 1 s, and it logs `writer_event_loop_stall` for any
+  single delay of 1 s or more.
+  `/health` is always answered by the writer. It carries the last hour as
+  `eventLoopLag`, recomputed at most every 10 s, along with `walCheckpoint` (one entry
+  per database).
+
 The default worker limit is two. Explicit sizing is bounded by configured caps,
 hardware concurrency and the hard ceiling in `workerPool.ts`; do not assume that
 adding readers increases SQLite write throughput. Configure signer services

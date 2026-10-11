@@ -195,6 +195,7 @@ import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 import { emitObservabilityEvent } from "./observability";
+import { setWalAutoCheckpoint } from "./sqliteCommitSync";
 import type { EntityMedia, EntityMediaKind, YouTubeMedia } from "./entityMedia";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -4532,6 +4533,11 @@ export class SettlementIndexer {
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
     return this.db.query(`PRAGMA wal_checkpoint(${mode})`).all() as Array<{ busy: number; log: number; checkpointed: number }>;
+  }
+
+  /** 0 hands checkpoints to the off-thread WalCheckpointer; 1000 restores SQLite's default. */
+  setWalAutoCheckpoint(pages: number): void {
+    setWalAutoCheckpoint(this.db, pages);
   }
 
   private indexedPlanetLevelRows(
