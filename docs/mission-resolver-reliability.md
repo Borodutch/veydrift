@@ -38,7 +38,7 @@ Writer mission-resolution health now includes admission active/retained counts a
 
 Targets for the existing deterministic monitor (no new model polling):
 
-- Alert on any admission block persisting across two samples; dedupe by fixed reason and send a single recovery transition.
+- Alert on any admission block persisting across two samples; dedupe by fixed reason and send a single recovery transition. The transient `canonical-reconciliation-required` and `shared-admission-block` reasons clear on the resolver's ~30s retry while missions keep settling, so they alert only after four consecutive samples (~20 minutes at the 300s cadence); real stalls are caught by the due-queue impact alerts.
 - Warn at 75% confirmed retention (3072) or 192 MiB journal+WAL, before the hard ceilings.
 - Use existing mission promptness target for oldest due arrival/return. Escalate if a nonempty eligible queue makes no canonical settlement progress for 120 seconds, excluding documented game pause/dependency holds.
 - Keep node latest/safe/finalized age and independent-reference disagreement separate from resolver health. A finality lag alone is not proof of a latest-head outage.

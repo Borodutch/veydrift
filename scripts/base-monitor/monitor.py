@@ -28,6 +28,9 @@ MAX_STATE_BYTES = 262144
 HOSTS = ('api.veydrift.com', 'api-test.veydrift.com')
 REASONS = {'confirmed-retention-full', 'journal-storage-full', 'canonical-reconciliation-required',
            'recovery-reconciliation-required', 'signing-reservation-unresolved', 'unresolved-intent', 'active-window-full'}
+# These blocks clear on the resolver's ~30s retry while missions keep settling. Alert only when one
+# persists for ~20 minutes (4 samples at 300s); real stalls are caught by the due-queue impact keys.
+TRANSIENT_ADMISSION = {'canonical-reconciliation-required', 'shared-admission-block'}
 SSH = ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'IdentityAgent=none', '-o', 'IdentitiesOnly=yes',
        '-o', 'ConnectTimeout=12', '-o', 'StrictHostKeyChecking=yes',
        '-o', 'UserKnownHostsFile=/Users/borodutch/.openclaw/agents/main/agent/codex-home/home/.ssh/known_hosts.hetzner-213.133.101.30',
@@ -280,7 +283,7 @@ def signals(sample, state, now):
             if (m.get('sharedAdmission') or {}).get('blocked') is True and reason is None:
                 reason = 'shared-admission-block'
             for known in sorted(REASONS | {'unknown-block', 'shared-admission-block'}):
-                add(prefix + 'admission-' + known, reason == known, 2)
+                add(prefix + 'admission-' + known, reason == known, 4 if known in TRANSIENT_ADMISSION else 2)
             add(prefix + 'active-capacity', number(a['active']) >= 32)
             add(prefix + 'retention-warning', number(a['retainedConfirmed']) >= 3072)
             add(prefix + 'journal-warning', number(a['journalBytes']) >= 192 * 1024 * 1024)
