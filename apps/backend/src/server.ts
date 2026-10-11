@@ -64,6 +64,8 @@ import { applyMissionEligibility, missionEligibilityPath } from "./missionEligib
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { EventLoopLagMonitor } from "./eventLoopLag";
+import { WalCheckpointer } from "./walCheckpointer";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -375,6 +377,8 @@ export type ServerDependencies = {
   walletMessageVerifier?: WalletMessageVerifier;
   // Test seam for the narrowly scoped WalletConnect read-only RPC proxy.
   walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
+  // Production default: index WAL checkpoints run on a worker thread, not the writer's event loop.
+  offThreadWalCheckpoint?: boolean;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -635,7 +639,23 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift alliance-state heal failed", safeDiagnosticText(error));
       });
   }
-  if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
+  // Writer stalls block chain sync, the mission tick and lease renewals; measure them (#74).
+  const eventLoopLag = usesProductionDependencies && isWriter && loaded.problems.length === 0 ? new EventLoopLagMonitor() : null;
+  eventLoopLag?.start();
+  let walCheckpointer: WalCheckpointer | null = null;
+  const offThreadWalCheckpoint = (dependencies.offThreadWalCheckpoint ?? usesProductionDependencies)
+    && isWriter
+    && loaded.problems.length === 0
+    && loaded.config.indexDbPath !== ":memory:"
+    && typeof indexer?.setWalAutoCheckpoint === "function";
+  if (offThreadWalCheckpoint && indexer) {
+    // Checkpoint copies and fsyncs took the writer's event loop for 0.9 s+ at a time on the shared
+    // disk. Run them on a worker thread and stop the writer connection's commit-time checkpoint.
+    walCheckpointer = new WalCheckpointer({
+      databasePath: loaded.config.indexDbPath,
+      setAutoCheckpoint: (pages) => indexer.setWalAutoCheckpoint(pages)
+    });
+  } else if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
         const result = indexer.checkpointWal("PASSIVE");
@@ -898,6 +918,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           battleReferee: battleReferee?.snapshot() ?? null,
           indexer: indexerSnapshot,
+          eventLoopLag: eventLoopLag?.snapshot() ?? null,
+          walCheckpoint: walCheckpointer?.snapshot() ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null,
           chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
           paidAllianceRpc: paidAllianceInviteReader?.rpcMetrics?.() ?? null,

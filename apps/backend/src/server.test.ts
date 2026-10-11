@@ -1029,6 +1029,8 @@ describe("Veydrift backend", () => {
       },
       chainSync: null,
       indexer: null,
+      eventLoopLag: null,
+      walCheckpoint: null,
       missionResolution: null,
       gameMaintenance: null,
       randomnessCommitter: null,

@@ -4534,6 +4534,12 @@ export class SettlementIndexer {
     return this.db.query(`PRAGMA wal_checkpoint(${mode})`).all() as Array<{ busy: number; log: number; checkpointed: number }>;
   }
 
+  /** 0 hands checkpoints to the off-thread WalCheckpointer; 1000 restores SQLite's default. */
+  setWalAutoCheckpoint(pages: number): void {
+    if (!Number.isSafeInteger(pages) || pages < 0) throw new Error("invalid wal_autocheckpoint page count");
+    this.db.exec(`PRAGMA wal_autocheckpoint = ${pages};`);
+  }
+
   private indexedPlanetLevelRows(
     table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_moon_ship_counts" | "contract_ship_counts",
     idColumn: "building_id" | "defense_id" | "moon_building_id" | "ship_id",

@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, sta
 import { dirname, join } from "node:path";
 
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { withoutCommitSync } from "./sqliteCommitSync";
 
 export type Address = string;
 
@@ -444,11 +445,28 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
   saveReveals(reveals: RandomnessPendingReveal[]): void {
     // No foreign key/cascade into the legacy table: its old DELETE+INSERT saves cannot erase
     // either retry metadata or the retained reveal word during a start-first rolling deployment.
+    // The committer saves every second. Write only changed rows: a commit with no changed page
+    // writes no WAL frame and skips the FULL fsync that stalled the writer's event loop (#74).
     this.database.exec("BEGIN IMMEDIATE;");
     try {
-      this.database.query("DELETE FROM randomness_pending_reveals").run();
+      const existing = new Map((this.database.query(
+        "SELECT request_id AS requestId, payload FROM randomness_pending_reveals"
+      ).all() as Array<{ requestId: string; payload: string }>).map((row) => [row.requestId, row.payload]));
+      const retained = new Set<string>();
       const insert = this.database.query("INSERT INTO randomness_pending_reveals (request_id, payload) VALUES (?, ?)");
-      for (const reveal of reveals) insert.run(reveal.request.requestId, JSON.stringify(reveal));
+      const update = this.database.query("UPDATE randomness_pending_reveals SET payload = ? WHERE request_id = ?");
+      for (const reveal of reveals) {
+        const requestId = reveal.request.requestId;
+        const payload = JSON.stringify(reveal);
+        // A repeated id fails on the primary key, as the former full rewrite did.
+        if (retained.has(requestId) || !existing.has(requestId)) insert.run(requestId, payload);
+        else if (existing.get(requestId) !== payload) update.run(payload, requestId);
+        retained.add(requestId);
+      }
+      const remove = this.database.query("DELETE FROM randomness_pending_reveals WHERE request_id = ?");
+      for (const requestId of existing.keys()) {
+        if (!retained.has(requestId)) remove.run(requestId);
+      }
       this.database.exec("COMMIT;");
     } catch (error) {
       this.database.exec("ROLLBACK;");
@@ -460,34 +478,51 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
     this.database.exec("BEGIN IMMEDIATE;");
     try {
       const existing = this.database.query(`
-        SELECT commitment, committed_at_block AS committedAtBlock
+        SELECT commitment, word, committed_at_block AS committedAtBlock, created_at AS createdAt
         FROM randomness_commitments
-      `).all() as Array<Pick<RandomnessCommitmentRecord, "commitment" | "committedAtBlock">>;
+      `).all() as RandomnessCommitmentRecord[];
       const existingByCommitment = new Map(existing.map((record) => [record.commitment, record]));
       const nextByCommitment = new Map(records.map((record) => [record.commitment, record]));
-      this.database.query("DELETE FROM randomness_commitments").run();
+      // Same result as the former DELETE-all + INSERT-all, but unchanged rows are not rewritten,
+      // so the per-second committer tick commits nothing (and fsyncs nothing) when idle (#74).
       const insert = this.database.query(`
         INSERT INTO randomness_commitments (commitment, word, committed_at_block, created_at)
         VALUES (?, ?, ?, ?)
       `);
-      for (const record of records) {
-        insert.run(record.commitment, record.word, record.committedAtBlock, record.createdAt);
-      }
+      const update = this.database.query(`
+        UPDATE randomness_commitments SET word = ?, committed_at_block = ?, created_at = ?
+        WHERE commitment = ?
+      `);
+      const remove = this.database.query("DELETE FROM randomness_commitments WHERE commitment = ?");
       const audit = this.database.query(`
         INSERT INTO randomness_commitment_audit (action, commitment, created_at)
         VALUES (?, ?, ?)
       `);
       const now = new Date().toISOString();
+      const written = new Set<string>();
       for (const record of records) {
         const previous = existingByCommitment.get(record.commitment);
+        const committedAtBlock = record.committedAtBlock ?? null;
+        // A repeated commitment fails on the primary key, as the former full rewrite did.
+        if (!previous || written.has(record.commitment)) {
+          insert.run(record.commitment, record.word, committedAtBlock, record.createdAt);
+        } else if (
+          previous.word !== record.word
+          || previous.committedAtBlock !== committedAtBlock
+          || previous.createdAt !== record.createdAt
+        ) {
+          update.run(record.word, committedAtBlock, record.createdAt, record.commitment);
+        }
+        written.add(record.commitment);
         if (!previous) {
           audit.run("record_added", record.commitment, now);
-        } else if (previous.committedAtBlock !== record.committedAtBlock) {
+        } else if (previous.committedAtBlock !== committedAtBlock) {
           audit.run("commitment_state_changed", record.commitment, now);
         }
       }
       for (const record of existing) {
         if (!nextByCommitment.has(record.commitment)) {
+          remove.run(record.commitment);
           audit.run("record_removed", record.commitment, now);
         }
       }
@@ -506,7 +541,9 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
       return await operation();
     } finally {
       clearInterval(renew);
-      this.database.query("DELETE FROM randomness_committer_lease WHERE lease_id = 1 AND holder = ?").run(holder);
+      withoutCommitSync(this.database, () => {
+        this.database.query("DELETE FROM randomness_committer_lease WHERE lease_id = 1 AND holder = ?").run(holder);
+      });
     }
   }
 
@@ -526,14 +563,16 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
     const deadline = Date.now() + 60_000;
     while (true) {
       const now = Date.now();
-      const result = this.database.query(`
+      // The lease is taken and released every one-second tick; its durability rides on the next
+      // FULL commit (see withoutCommitSync), and every holder dies with the host on power loss.
+      const result = withoutCommitSync(this.database, () => this.database.query(`
         INSERT INTO randomness_committer_lease (lease_id, holder, expires_at_ms)
         VALUES (1, ?, ?)
         ON CONFLICT(lease_id) DO UPDATE SET
           holder = excluded.holder,
           expires_at_ms = excluded.expires_at_ms
         WHERE randomness_committer_lease.expires_at_ms <= ?
-      `).run(holder, now + 90_000, now) as { changes: number };
+      `).run(holder, now + 90_000, now) as { changes: number });
       if (result.changes > 0) return;
       if (now >= deadline) {
         throw new Error(`timed out waiting for transactional randomness committer lease ${this.databasePath}`);
@@ -543,11 +582,11 @@ export class SqliteRandomnessCommitmentStore implements RandomnessCommitmentStor
   }
 
   private renewLease(holder: string): void {
-    const result = this.database.query(`
+    const result = withoutCommitSync(this.database, () => this.database.query(`
       UPDATE randomness_committer_lease
       SET expires_at_ms = ?
       WHERE lease_id = 1 AND holder = ?
-    `).run(Date.now() + 90_000, holder) as { changes: number };
+    `).run(Date.now() + 90_000, holder) as { changes: number });
     if (result.changes !== 1) {
       throw new Error("randomness committer lease was lost before the current cycle completed");
     }
