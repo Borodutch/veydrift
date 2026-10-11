@@ -20,8 +20,15 @@ contract UpgradeAllianceSystem is Script {
     );
 
     function run() external returns (address newImplementation) {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address broadcaster = vm.addr(privateKey);
+        // Public identity only for a keyless dry run. UPGRADE_DRY_RUN_OWNER must be the proxy
+        // owner. Never pass --broadcast for rehearsal.
+        address rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address broadcaster = rehearsalOwner;
+        if (rehearsalOwner == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(privateKey);
+        }
         address payable proxy = payable(vm.envAddress("ALLIANCE_PROXY_ADDRESS"));
 
         VeydriftAllianceSystem proxied = VeydriftAllianceSystem(proxy);
@@ -35,8 +42,11 @@ contract UpgradeAllianceSystem is Script {
         address previousPaidInviteSystem = proxied.paidInviteSystem();
         address migratedPaidInviteSystem =
             vm.envOr("MIGRATED_PAID_ALLIANCE_INVITE_ADDRESS", address(0));
+        // A plain implementation upgrade may keep the live paid-invite system when its interface is
+        // unchanged; that must be stated explicitly instead of skipping a required migration.
         require(
-            previousPaidInviteSystem == address(0) || migratedPaidInviteSystem != address(0),
+            previousPaidInviteSystem == address(0) || migratedPaidInviteSystem != address(0)
+                || vm.envOr("KEEP_PAID_ALLIANCE_INVITE_SYSTEM", false),
             "PAID_INVITE_MIGRATION_REQUIRED"
         );
         if (migratedPaidInviteSystem != address(0)) {
@@ -57,7 +67,8 @@ contract UpgradeAllianceSystem is Script {
             _requireFrozenSnapshot(proxied, migrated, previousPaidInviteSystem);
         }
 
-        vm.startBroadcast(privateKey);
+        if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
+        else vm.startBroadcast(privateKey);
         VeydriftAllianceSystem implementation = new VeydriftAllianceSystem(game);
         newImplementation = address(implementation);
         // The live proxy already activated the war minimum-duration storage in

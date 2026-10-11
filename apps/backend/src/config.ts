@@ -60,6 +60,10 @@ export type BackendConfig = {
   randomnessFulfillerPrivateKey?: `0x${string}`;
   randomnessCommitmentStorePath: string;
   randomnessCommitmentLegacyStorePath?: string;
+  // Ticket #44 trusted battle referee: owner-configured resolver key for proof-free Attack results.
+  battleRefereePrivateKey?: `0x${string}`;
+  battleRefereeStorePath?: string;
+  battleRefereeFromBlock?: bigint;
   // Referral contracts can be replaced after the database-wide index cursor has advanced. This
   // independent boundary lets startup reconcile the configured referral contract's canonical event
   // history without replaying or wiping unrelated game/alliance state.
@@ -295,6 +299,16 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       : "VEYDRIFT_RANDOMNESS_FULFILLER_PRIVATE_KEY",
     problems
   );
+  const battleRefereePrivateKey = parsePrivateKey(
+    env.VEYDRIFT_BATTLE_REFEREE_PRIVATE_KEY,
+    "VEYDRIFT_BATTLE_REFEREE_PRIVATE_KEY",
+    problems
+  );
+  const battleRefereeStorePath = env.VEYDRIFT_BATTLE_REFEREE_STORE_PATH
+    ?? (indexDbPath === ":memory:" ? ":memory:" : join(dirname(indexDbPath), "battle-referee.sqlite"));
+  const battleRefereeFromBlock = /^[0-9]+$/.test(env.VEYDRIFT_BATTLE_REFEREE_FROM_BLOCK ?? "")
+    ? BigInt(env.VEYDRIFT_BATTLE_REFEREE_FROM_BLOCK!)
+    : undefined;
   const randomnessCommitmentStorePath =
     env.VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH ?? defaultRandomnessCommitmentStorePath;
   const randomnessCommitmentLegacyStorePath = env.VEYDRIFT_RANDOMNESS_COMMITMENT_LEGACY_STORE_PATH;
@@ -448,6 +462,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
       randomnessCommitmentStorePath,
       ...(randomnessCommitmentLegacyStorePath ? { randomnessCommitmentLegacyStorePath } : {}),
+      ...(battleRefereePrivateKey ? { battleRefereePrivateKey } : {}),
+      battleRefereeStorePath,
+      ...(battleRefereeFromBlock !== undefined ? { battleRefereeFromBlock } : {}),
       referralIndexFromBlock,
       ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),

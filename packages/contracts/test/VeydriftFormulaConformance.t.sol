@@ -215,7 +215,7 @@ contract VeydriftFormulaConformanceTest is Test {
         _assertShip(Ship.SmallCargo, 2_000, 2_000, 0, 5_000);
         _assertShip(Ship.Cruiser, 20_000, 7_000, 2_000, 800);
         _assertShip(Ship.Deathstar, 5_000_000, 4_000_000, 1_000_000, 1_000_000);
-        _assertShip(Ship.Reaper, 85_000, 55_000, 20_000, 7_000);
+        _assertShip(Ship.Reaper, 85_000, 55_000, 20_000, 10_000);
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -234,7 +234,7 @@ contract VeydriftFormulaConformanceTest is Test {
 
     function testCanonicalVeydriftDefenseCostsAndRequirements() public {
         _assertDefense(Defense.RocketLauncher, 2_000, 0, 0);
-        _assertDefense(Defense.IonCannon, 2_000, 6_000, 0);
+        _assertDefense(Defense.IonCannon, 5_000, 3_000, 0);
         _assertDefense(Defense.GaussCannon, 20_000, 15_000, 2_000);
         _assertDefense(Defense.PlasmaTurret, 50_000, 50_000, 30_000);
 

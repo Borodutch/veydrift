@@ -2534,8 +2534,8 @@ contract VeydriftGameTest is Test {
 
         assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
         assertEq(game.defenseCost(Defense.RocketLauncher).metal, 2_000);
-        assertEq(game.defenseCost(Defense.IonCannon).metal, 2_000);
-        assertEq(game.defenseCost(Defense.IonCannon).crystal, 6_000);
+        assertEq(game.defenseCost(Defense.IonCannon).metal, 5_000);
+        assertEq(game.defenseCost(Defense.IonCannon).crystal, 3_000);
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(game.technologyLevel(player, Technology.Energy), 0);
@@ -7845,7 +7845,9 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
-    function testAttackResolutionBouncesWhenTargetBecomesScoreProtectedMidFlight() public {
+    function testAttackResolutionKeepsLaunchVerdictWhenTargetBecomesScoreProtectedMidFlight()
+        public
+    {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setTechnologyLevel(player, Technology.Computer, 2);
@@ -7875,32 +7877,20 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
         // While the fleet is in flight the attacker's empire balloons far past the newbie target,
-        // so the target is now score-protected and must not be raided on impact (the "attack gap").
+        // so live scores now read as score-protected...
         _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         (VeydriftGameStorage.AttackBlockReason impactReason,,) =
             _attackProtectionStatus(player, targetPlanetId);
         assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
-        uint32 defenderShipsBefore = game.shipCount(targetPlanetId, Ship.SmallCargo);
-
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
+        vm.recordLogs();
         _resolveAttackFully(missionId);
 
-        // The attack fleet bounced: it is returning with its ship intact and empty cargo (no
-        // plunder loaded), and the protected defender kept all of its ships. A real battle would
-        // have either loaded plunder into the cargo or destroyed the lone attacker (status
-        // Resolved), so this state is only reachable when no combat ran.
-        (
-            VeydriftGameStorage.FleetMissionStatus status,,,
-            VeydriftGameStorage.Resources memory cargo
-        ) = _fleetMission(missionId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(cargo.metal, 0);
-        assertEq(cargo.crystal, 0);
-        assertEq(cargo.deuterium, 0);
-        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
-        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
+        // ...but protection is the launch verdict (audit F4): no in-flight score change can flip
+        // a legally launched attack, so the battle is fought instead of bouncing.
+        assertGt(_attackBattleRoundsFromRecordedLogs(missionId), 0);
     }
 
     function testAttackRaidKeepsPreCombatPlunderWhenDefenderScoreDropsDuringBattle() public {
@@ -7992,9 +7982,11 @@ contract VeydriftGameTest is Test {
         IRiftLifecycleEntrypoints(address(game))
             .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
 
+        // Score-protected at launch: only the live Rift lock admits the attack (launch verdict).
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         (VeydriftGameStorage.AttackBlockReason launchReason,,) =
             _attackProtectionStatus(player, targetPlanetId);
-        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 10;
@@ -8009,14 +8001,10 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
-        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         // The departing attack carries the cargo; remove the original target fleet so the battle
         // settles deterministically and can demonstrate score-protected ordinary loot is skipped
         // while the Rift lock remains fully contestable.
         _setShipCount(targetPlanetId, Ship.SmallCargo, 0);
-        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
-            _attackProtectionStatus(player, targetPlanetId);
-        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
@@ -9749,6 +9737,23 @@ contract VeydriftGameTest is Test {
         assertEq(fuelCost, expectedFuelCost);
         assertEq(game.planet(allyPlanetId).resources.deuterium, 50_000 - expectedFuelCost);
         assertEq(game.planet(targetPlanetId).resources.deuterium, 50_000 - depotSupport);
+
+        // A 10-hour hold costs each ship its base fuel use: small cargo 10, bomber 700, reaper 1,100.
+        VeydriftGameStorage.MissionShips memory holders;
+        holders.smallCargo = 1;
+        (, uint128 netHolding, uint128 supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 10);
+        holders.smallCargo = 0;
+        holders.bomber = 1;
+        (, netHolding, supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 700);
+        holders.bomber = 0;
+        holders.reaper = 1;
+        (, netHolding, supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 1_100);
     }
 
     // --- OGame-style ACS Defend (DefenseHold) stationing: VEY-KANEO-441 ---
@@ -10258,6 +10263,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10358,6 +10365,12 @@ contract VeydriftGameTest is Test {
         uint256 firstAllyPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(secondAlly);
         uint256 secondAllyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        uint256 allianceId = _joinAlliance(player, firstAlly);
+        vm.prank(player);
+        allianceSystem.inviteMember(allianceId, secondAlly);
+        vm.prank(secondAlly);
+        allianceSystem.acceptInvite(allianceId);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(firstAllyPlanetId, 1, 1, 2);
@@ -10423,6 +10436,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10491,6 +10506,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10551,6 +10568,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
@@ -10598,6 +10617,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10646,6 +10667,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);

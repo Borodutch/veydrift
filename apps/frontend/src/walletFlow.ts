@@ -1973,6 +1973,8 @@ const contractRevertReasons: Record<string, string> = {
   "0xb85299a2": "This fleet action is too late because the target mission has already arrived or cannot be joined in time.",
   "0xbee20108": "The recall cutoff has passed for this mission. Wait for the mission to finish automatically.",
   "0x4ba3e176": "You cannot join an attack against your own planet.",
+  "0x2463e846": "Only the attack's owner and members of their alliance can join this attack.",
+  "0x6c5511a3": "This moon's defense queue is full. Wait for queued defenses to finish, then retry.",
   "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
   "0x1f38cd02": "Attacks are temporarily unavailable. Please try again later.",
 };

@@ -49,6 +49,32 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     uint256 private _queuedCommitmentTail;
     mapping(uint256 requestId => uint64 committedAtBlock) private _recoveryCommitmentBlocks;
 
+    // Appended policy storage: never change the legacy Request layout or reinterpret old requests.
+    struct BattleRequestPolicy {
+        bool snapshotRequired;
+        bytes32 snapshotHash;
+    }
+
+    mapping(uint256 requestId => BattleRequestPolicy policy) public battleRequestPolicy;
+    bytes32 public constant BATTLE_SNAPSHOT_PURPOSE_DOMAIN =
+        keccak256("veydrift.battle-snapshot-purpose.v1");
+
+    // Appended: every commitment ever precommitted (FIFO or recovery). A revealed word can never
+    // be bound to a later request. Commitments consumed before this upgrade are not marked.
+    mapping(bytes32 commitment => bool used) public usedCommitment;
+
+    error RandomnessCommitmentAlreadyUsed(bytes32 commitment);
+    error BattleSnapshotRequired(uint256 requestId);
+    error NotBattleRequest(uint256 requestId);
+    error ZeroBattleSnapshot();
+    error BattleSnapshotMismatch(bytes32 expected, bytes32 actual);
+    error BattleRandomnessRecoveryForbidden(uint256 requestId);
+
+    event BattleRandomnessRequested(uint256 indexed requestId);
+    event BattleSnapshotSealed(
+        uint256 indexed requestId, bytes32 indexed snapshotHash, bytes32 indexed purposeContext
+    );
+
     error UnauthorizedRequester(address requester);
     error UnauthorizedFulfiller(address account);
     error UnknownRequest(uint256 requestId);
@@ -202,6 +228,7 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         if (commitmentInventoryCount() >= MAX_COMMITMENT_INVENTORY) {
             revert RandomnessCommitmentInventoryFull(MAX_COMMITMENT_INVENTORY);
         }
+        _useCommitment(commitment);
 
         uint64 committedAtBlock = uint64(block.number);
         if (pendingCommitment == bytes32(0)) {
@@ -213,6 +240,11 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
             ++_queuedCommitmentTail;
         }
         emit RandomnessCommitted(msg.sender, commitment, committedAtBlock);
+    }
+
+    function _useCommitment(bytes32 commitment) private {
+        if (usedCommitment[commitment]) revert RandomnessCommitmentAlreadyUsed(commitment);
+        usedCommitment[commitment] = true;
     }
 
     function _containsCommitment(bytes32 commitment) private view returns (bool) {
@@ -237,9 +269,30 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         onlyAuthorizedRequester
         returns (uint256 requestId)
     {
+        return _requestRandomness(purposeHash, false);
+    }
+
+    /// @notice Reserve a FIFO precommit before flight; reveal is blocked until the requester seals.
+    /// @dev Opt-in only. Always requires a precommit and permanently forbids recovery/reseeding.
+    ///      The game, not this oracle, must qualify and freeze the complete roster before sealing.
+    function requestBattleRandomness(bytes32 purposeHash)
+        external
+        whenNotPaused
+        onlyAuthorizedRequester
+        returns (uint256 requestId)
+    {
+        requestId = _requestRandomness(purposeHash, true);
+        battleRequestPolicy[requestId].snapshotRequired = true;
+        emit BattleRandomnessRequested(requestId);
+    }
+
+    function _requestRandomness(bytes32 purposeHash, bool forcePrecommit)
+        private
+        returns (uint256 requestId)
+    {
         if (purposeHash == bytes32(0)) revert ZeroPurpose();
 
-        bytes32 commitment = _consumeRandomnessCommitment();
+        bytes32 commitment = _consumeRandomnessCommitment(forcePrecommit);
         requestId = nextRequestId++;
         _requests[requestId] = Request({
             requester: msg.sender,
@@ -253,6 +306,46 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         emit RandomnessRequested(requestId, msg.sender, purposeHash, uint64(block.timestamp));
     }
 
+    /// @notice Permanently bind a nonzero, game-qualified snapshot after enrollment closes.
+    /// @dev Only the original requester may seal, even if subsequently deauthorized. Exact retries
+    ///      are idempotent, including after fulfillment; different hashes always revert.
+    function sealBattleSnapshot(uint256 requestId, bytes32 snapshotHash) external whenNotPaused {
+        Request storage stored = _requests[requestId];
+        if (stored.requester == address(0)) revert UnknownRequest(requestId);
+        if (stored.requester != msg.sender) revert UnauthorizedRequester(msg.sender);
+        BattleRequestPolicy storage policy = battleRequestPolicy[requestId];
+        if (!policy.snapshotRequired) revert NotBattleRequest(requestId);
+        if (snapshotHash == bytes32(0)) revert ZeroBattleSnapshot();
+        if (policy.snapshotHash != bytes32(0)) {
+            if (policy.snapshotHash != snapshotHash) {
+                revert BattleSnapshotMismatch(policy.snapshotHash, snapshotHash);
+            }
+            return;
+        }
+        policy.snapshotHash = snapshotHash;
+        emit BattleSnapshotSealed(requestId, snapshotHash, battlePurposeContext(requestId));
+    }
+
+    /// @notice Authenticate the sealed context together with request(requestId) and its policy.
+    /// @dev Zero while unsealed or legacy. The original purpose remains unchanged for legacy ABI.
+    function battlePurposeContext(uint256 requestId) public view returns (bytes32) {
+        bytes32 snapshotHash = battleRequestPolicy[requestId].snapshotHash;
+        if (snapshotHash == bytes32(0)) return bytes32(0);
+        Request storage stored = _requests[requestId];
+        return keccak256(
+            abi.encode(
+                BATTLE_SNAPSHOT_PURPOSE_DOMAIN,
+                block.chainid,
+                address(this),
+                requestId,
+                stored.requester,
+                stored.purposeHash,
+                stored.randomnessCommitment,
+                snapshotHash
+            )
+        );
+    }
+
     function fulfillRandomness(uint256 requestId, uint256 randomWord)
         external
         whenNotPaused
@@ -262,6 +355,10 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         Request storage stored = _requests[requestId];
         if (stored.requester == address(0)) revert UnknownRequest(requestId);
         if (stored.fulfilledAt != 0) revert AlreadyFulfilled(requestId);
+        BattleRequestPolicy storage policy = battleRequestPolicy[requestId];
+        if (policy.snapshotRequired && policy.snapshotHash == bytes32(0)) {
+            revert BattleSnapshotRequired(requestId);
+        }
         uint64 recoveryCommitmentBlock = _recoveryCommitmentBlocks[requestId];
         if (recoveryCommitmentBlock != 0 && block.number <= recoveryCommitmentBlock) {
             revert RandomnessCommitmentNotActive(
@@ -299,12 +396,16 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
         Request storage stored = _requests[requestId];
         if (stored.requester == address(0)) revert UnknownRequest(requestId);
         if (stored.fulfilledAt != 0) revert AlreadyFulfilled(requestId);
+        if (battleRequestPolicy[requestId].snapshotRequired) {
+            revert BattleRandomnessRecoveryForbidden(requestId);
+        }
         if (_recoveryCommitmentBlocks[requestId] != 0) {
             revert RandomnessRecoveryAlreadyScheduled(requestId);
         }
         if (stored.randomnessCommitment != expectedCommitment) {
             revert UnexpectedRandomnessCommitment(expectedCommitment, stored.randomnessCommitment);
         }
+        _useCommitment(replacementCommitment);
 
         uint256 recoverableAt = uint256(stored.createdAt) + STALE_REQUEST_RECOVERY_DELAY;
         // This timestamp is intentionally a one-hour liveness delay; validator skew cannot
@@ -357,8 +458,11 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    function _consumeRandomnessCommitment() private returns (bytes32 commitment) {
-        if (!precommitRequired) return bytes32(0);
+    function _consumeRandomnessCommitment(bool forcePrecommit)
+        private
+        returns (bytes32 commitment)
+    {
+        if (!forcePrecommit && !precommitRequired) return bytes32(0);
 
         commitment = pendingCommitment;
         if (commitment == bytes32(0)) revert NoRandomnessCommitment();

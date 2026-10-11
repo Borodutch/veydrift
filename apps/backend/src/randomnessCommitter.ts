@@ -1,5 +1,8 @@
 import { cancelResolverTransaction } from "./resolverCancellation";
 import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -77,6 +80,13 @@ const randomnessEngineAbi = [
         ]
       }
     ]
+  },
+  {
+    type: "function",
+    name: "battleRequestPolicy",
+    stateMutability: "view",
+    inputs: [{ type: "uint256", name: "requestId" }],
+    outputs: [{ type: "bool", name: "gated" }, { type: "bytes32", name: "snapshot" }]
   },
   {
     type: "function",
@@ -241,6 +251,23 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       }),
       confirm: (hash) => this.confirm(hash)
     });
+  }
+
+  async isAwaitingBattleSnapshot(requestId: bigint): Promise<boolean> {
+    try {
+      const [gated, snapshot] = await this.publicClient.readContract({
+        abi: randomnessEngineAbi,
+        address: this.engineAddress,
+        functionName: "battleRequestPolicy",
+        args: [requestId]
+      });
+      return gated && /^0x0+$/.test(snapshot);
+    } catch (error) {
+      // Engines deployed before the battle gate revert (no policy) and never gate a request. Any
+      // other failure (RPC, timeout) fails closed: never reveal a word that may still be gated.
+      return !(error instanceof BaseError && error.walk((cause) =>
+        cause instanceof ContractFunctionRevertedError || cause instanceof ContractFunctionZeroDataError) !== null);
+    }
   }
 
   async getRequestFulfillment(requestId: bigint, blockTag: "latest" | "finalized") {

@@ -75,6 +75,13 @@ const veydriftGameResolutionAbi = [
   },
   {
     type: "function",
+    name: "retryMoonChanceRandomness",
+    stateMutability: "nonpayable",
+    inputs: [{ type: "uint256", name: "outcomeId" }],
+    outputs: [{ type: "uint256" }]
+  },
+  {
+    type: "function",
     name: "resolveFleetMission",
     stateMutability: "nonpayable",
     inputs: [{ type: "uint256", name: "missionId" }],
@@ -806,10 +813,13 @@ export class MissionResolutionService {
   }
 }
 
-// FleetMissionNotResolved(uint64), PendingRandomness(uint256), or chronology ordering not ready.
+// FleetMissionNotResolved(uint64), PendingRandomness(uint256), an empty randomness FIFO when a
+// referee battle reserves its gated request (NoRandomnessCommitment(),
+// RandomnessCommitmentNotActive(bytes32,uint64)), or chronology ordering not ready.
 function isOrderingOrOracleWait(error: unknown): boolean {
   const reason = reasonText(error);
-  return reason.includes("0xb3439205") || reason.includes("0x6eb4f8ed") || /ordering is not ready/i.test(reason);
+  return ["0xb3439205", "0x6eb4f8ed", "0x564417cb", "0x7421d432"].some((selector) => reason.includes(selector))
+    || /ordering is not ready|awaits the referee|NoRandomnessCommitment|RandomnessCommitmentNotActive/i.test(reason);
 }
 
 function needsCanonicalMissionReconciliation(error: unknown): boolean {
@@ -828,7 +838,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "getCanonicalFleetMissionBatch" | "isFleetChronologyOrderingReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "getCanonicalFleetMissionBatch" | "getRefereeWaitBattles" | "isFleetChronologyOrderingReady">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -986,7 +996,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.reader.listReturnableFleetMissions();
   }
 
-  resolveFleetMission(missionId: string): Promise<string> {
+  async resolveFleetMission(missionId: string): Promise<string> {
+    // Ticket #44: the referee owns staged phases 16/17; an ordinary resolve there is a paid no-op.
+    // A failed read falls through to the ordinary preflight rather than blocking resolution.
+    const waiting = this.reader.getRefereeWaitBattles && typeof this.publicClient?.getBlockNumber === "function"
+      ? await this.publicClient.getBlockNumber()
+        .then((block) => this.reader.getRefereeWaitBattles!([BigInt(missionId)], block, () => {}))
+        .catch(() => new Set<string>())
+      : new Set<string>();
+    if (waiting.has(missionId)) throw new Error("battle awaits the referee");
     return this.write("resolveFleetMission", missionId);
   }
 
@@ -1096,6 +1114,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     const snapshots = blockNumber !== undefined && this.reader.getCanonicalFleetMissionBatch
       ? await this.reader.getCanonicalFleetMissionBatch(items.map(item => BigInt(item.missionId)), blockNumber, assertActive) : undefined;
     if (snapshots && snapshots.length !== items.length) throw new Error("canonical mission batch length mismatch");
+    // Only Attack leaders can enter the referee pipeline; other legs never pay this read.
+    const attackArrivals = snapshots && blockNumber !== undefined && this.reader.getRefereeWaitBattles
+      ? items.filter((item, index) => item.leg === "arrival" && snapshots[index]!.mission?.missionType === "Attack")
+      : [];
+    const refereeWait = attackArrivals.length
+      ? await this.reader.getRefereeWaitBattles!(attackArrivals.map(item => BigInt(item.missionId)), blockNumber!, assertActive)
+      : new Set<string>();
     for (let index = 0; index < items.length; index++) {
       assertActive();
       const item = items[index]!;
@@ -1120,6 +1145,11 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       if (!orderingReady) {
         exclusions.push({ item, reason: "ordering-unavailable" });
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
+        continue;
+      }
+      if (item.leg === "arrival" && refereeWait.has(item.missionId)) {
+        // The backend referee advances these battles; an ordinary resolve would be a paid no-op.
+        exclusions.push({ item, reason: "referee-wait", unproductive: true });
         continue;
       }
       fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
@@ -1254,7 +1284,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       functionName: "moonChanceRandomness", args: [BigInt(outcomeId)]
     });
     if (finalized) return "finalized";
-    if (requestId === 0n) throw new Error(`unknown moon chance outcome ${outcomeId}`);
+    if (requestId === 0n) {
+      if (/^0x0+$/.test(purposeHash)) throw new Error(`unknown moon chance outcome ${outcomeId}`);
+      // The battle could not reserve randomness (empty FIFO): request it now, finalize later.
+      await this.write("retryMoonChanceRandomness", outcomeId);
+      return "pending";
+    }
     const request = await this.publicClient.readContract({
       abi: moonReadAbi, address: this.randomnessEngineAddress,
       functionName: "request", args: [requestId]
@@ -1277,11 +1312,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return value !== undefined && BigInt(value) !== 0n;
   }
 
-  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
-    const targetAddress = functionName === "finalizeMoonChance" ? this.moonAddress! : this.gameAddress;
+  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance" | "retryMoonChanceRandomness", missionId: string): Promise<string> {
+    const moonCall = functionName === "finalizeMoonChance" || functionName === "retryMoonChanceRandomness";
+    const targetAddress = moonCall ? this.moonAddress! : this.gameAddress;
     const operationId = functionName === "finalizeMoonChance"
       ? `moon-chance:${targetAddress.toLowerCase()}:${missionId}`
-      : `mission:${functionName}:${missionId}`;
+      : functionName === "retryMoonChanceRandomness"
+        ? `moon-chance-retry:${targetAddress.toLowerCase()}:${missionId}`
+        : `mission:${functionName}:${missionId}`;
     const data = encodeFunctionData({
       abi: veydriftGameResolutionAbi,
       functionName,
@@ -1290,7 +1328,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     const from = typeof this.sender === "string" ? this.sender : this.sender.address;
     const preflight = async (gas: bigint, nonce: number, fees: ResolverReplacementFees) => {
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
-      if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
+      if (!moonCall && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
       }
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
@@ -1384,15 +1422,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
   }
 
   private async isResolutionOperationComplete(
-    functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance",
+    functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance" | "retryMoonChanceRandomness",
     missionId: string
   ): Promise<boolean> {
-    if (functionName === "finalizeMoonChance") {
+    if (functionName === "finalizeMoonChance" || functionName === "retryMoonChanceRandomness") {
       const state = await this.publicClient!.readContract({
         abi: moonReadAbi, address: this.moonAddress!,
         functionName: "moonChanceRandomness", args: [BigInt(missionId)]
       });
-      return state[2];
+      return functionName === "finalizeMoonChance" ? state[2] : state[0] !== 0n || state[2];
     }
     const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
     if (!mission) throw new Error(`canonical mission status unavailable for ${missionId}`);

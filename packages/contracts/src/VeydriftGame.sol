@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftRefereeBattle as Referee} from "./libraries/VeydriftRefereeBattle.sol";
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
@@ -63,9 +64,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         ) revert Unauthorized(msg.sender);
     }
 
-    /// @notice Math used by newly prepared battles; existing battles retain their frozen version.
-    function combatModelVersion() external pure returns (uint8) {
-        return 2;
+    /// @notice Math used by newly launched attacks: 3 = trusted-referee individual-shot rules
+    /// (ticket #44), otherwise staged model 2. Existing battles retain their frozen version.
+    function combatModelVersion() external view returns (uint8) {
+        return Referee.layout().prospective.version != 0 ? 3 : 2;
     }
 
     constructor(
@@ -422,7 +424,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         LootRatio calldata
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function launchFleetMission(
@@ -446,7 +448,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     /// @notice Launch an Attack mission with a player-selected loot ratio.
-    /// @dev Implemented in the gameplay module, which has the EIP-170 headroom for the launch and
+    /// @dev Implemented in the planet-management module, which has the EIP-170 headroom for the
     ///      loot-ratio bookkeeping; the facade only forwards the call via delegatecall.
     function launchAttackMission(
         uint256,
@@ -458,7 +460,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         LootRatio calldata
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)

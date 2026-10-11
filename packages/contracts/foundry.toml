@@ -20,6 +20,8 @@ bytecode_hash = "none"
 dynamic_test_linking = true
 additional_compiler_profiles = [{ name = "tests", via_ir = true, optimizer = false, optimizer_runs = 0 }]
 compilation_restrictions = [
+  { paths = "test/AttackLifecycleAuditRegressions.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/BattleAuditRegressions.t.sol", max_optimizer_runs = 0 },
   { paths = "test/RandomnessEngine.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftAntiRaidPrimitives.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftBatchFixtureExport.t.sol", max_optimizer_runs = 0 },
@@ -36,6 +38,7 @@ compilation_restrictions = [
   { paths = "test/VeydriftLiveUpgradePolicy.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftMissionBatch.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftPlanetGeneration.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/VeydriftRefereeFixtureExport.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftScheduledReturns.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftSettlement.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftShipCatalog.t.sol", max_optimizer_runs = 0 },
@@ -46,6 +49,7 @@ compilation_restrictions = [
 fs_permissions = [
   { access = "read-write", path = "./manifests" },
   { access = "read", path = "./combat-preview-catalog.json" },
+  { access = "read", path = "../battle-oracle/referee-catalog.json" },
   { access = "read", path = "./combat-shot-fixtures.json" }
 ]
 

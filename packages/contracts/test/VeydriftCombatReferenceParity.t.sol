@@ -82,7 +82,7 @@ contract VeydriftCombatReferenceParityTest is Test {
     address private fulfiller = address(0xF111);
     VeydriftGame internal game;
     VeydriftAllianceSystem private allianceSystem;
-    RandomnessEngine private randomness;
+    RandomnessEngine internal randomness;
     CombatReferenceResourceToken private metalToken;
     CombatReferenceResourceToken private crystalToken;
     CombatReferenceResourceToken private deuteriumToken;
@@ -439,6 +439,8 @@ contract VeydriftCombatReferenceParityTest is Test {
         if (hasJoinedAttack) {
             vm.prank(ally);
             launched.joinedOriginPlanetId = game.startPlanet{value: 0.05 ether}();
+            // ACS joins need the attack owner's consent (same alliance).
+            _joinAlliance(player, ally);
             _setPlanetCoordinates(launched.joinedOriginPlanetId, 1, 1, 2);
             _setCombatTech(ally, fixture.joinedAttackerTech);
             _setResources(launched.joinedOriginPlanetId, 100_000_000, 100_000_000, 100_000_000);

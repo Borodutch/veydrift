@@ -5,7 +5,7 @@ import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
-  CONTRACT_COMBAT_MODEL_VERSION,
+  activeCombatModel,
   contractCombatPower,
   forecastContractBattle,
   summarizeContractBattleForecast,
@@ -2680,6 +2680,7 @@ function LazySimulatedBattleReportControl({
       setState({ status: "error", message });
     };
     try {
+      const model = activeCombatModel();
       const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
       workerRef.current = worker;
       worker.onmessage = (event: MessageEvent<
@@ -2688,7 +2689,7 @@ function LazySimulatedBattleReportControl({
       >) => {
         if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
         stopWorker();
-        if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
+        if (event.data.modelVersion !== model) {
           fail("This battle report is out of date. Please refresh.");
           return;
         }
@@ -2700,7 +2701,7 @@ function LazySimulatedBattleReportControl({
       timeoutRef.current = setTimeout(() => fail("The battle report took too long. Please retry."), ATTACK_BATTLE_PREVIEW_TIMEOUT_MS);
       worker.postMessage({
         input: reportInput,
-        modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
+        modelVersion: model,
         randomWord: reportSeed.randomWord,
         requestId,
         sampleId: reportSeed.sampleId,
@@ -2790,6 +2791,8 @@ function SimulatedBattleReportDetails({
                   <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
                   <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
                   <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
+                  <CompactFactRow label="Debris field" value={formatCompactResources({ ...report.debris, deuterium: 0 })} />
+                  <CompactFactRow label="Moon chance" value={`${report.moonChancePercent}%`} />
                 </div>
 
                 <section className="grid gap-2">

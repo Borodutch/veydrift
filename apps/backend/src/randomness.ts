@@ -581,6 +581,8 @@ export interface RandomnessCommitmentChainClient {
     randomWord: string;
   } | null>;
   fulfillRandomness(requestId: bigint, randomWord: bigint): Promise<string>;
+  /** Gated battle requests cannot be revealed until the game seals the roster snapshot. */
+  isAwaitingBattleSnapshot?(requestId: bigint): Promise<boolean>;
 }
 
 export type RandomnessCommitmentStatus = {
@@ -712,6 +714,8 @@ export class RandomnessCommitmentWorker {
     for (const request of pending) {
       try {
         if (await this.reconcileFulfilledRequest(request.requestId)) continue;
+        // Healthy wait (fleet still in flight / roster not sealed), not a failure or pending alert.
+        if (await this.chainClient.isAwaitingBattleSnapshot?.(BigInt(request.requestId))) continue;
         const word = this.resolveRevealWord(request, records);
         const txHash = await this.chainClient.fulfillRandomness(BigInt(request.requestId), word);
         if (!this.fulfilled.some((entry) => entry.requestId === request.requestId)) this.fulfilled.push({

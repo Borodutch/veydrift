@@ -717,7 +717,7 @@ export const defenseCatalog: Array<{
     id: 5,
     label: "Ion Cannon",
     group: "energy",
-    baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    baseCost: { metal: 5_000, crystal: 3_000, deuterium: 0 },
     description: "Charged ion bursts wash across hostile formations, punishing shielded ships with precise pulses from a compact surface installation.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
@@ -810,8 +810,8 @@ const shipCargoCapacityByKey: Record<ShipKey, number> = {
   destroyer: 2_000,
   deathstar: 1_000_000,
   battlecruiser: 750,
-  reaper: 7_000,
-  pathfinder: 12_000,
+  reaper: 10_000,
+  pathfinder: 10_000,
   crawler: 0,
 };
 
@@ -843,12 +843,12 @@ const shipFuelConsumptionByKey: Record<ShipKey, number> = {
   heavyFighter: 75,
   cruiser: 300,
   battleship: 500,
-  bomber: 1_000,
+  bomber: 700,
   solarSatellite: 0,
   destroyer: 1_000,
   deathstar: 1,
   battlecruiser: 250,
-  reaper: 1_000,
+  reaper: 1_100,
   pathfinder: 300,
   crawler: 0,
 };

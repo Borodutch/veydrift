@@ -20,6 +20,7 @@ import {VeydriftShipProductionModule} from "../src/VeydriftShipProductionModule.
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {IVeydriftDelegation} from "../src/interfaces/IVeydriftDelegation.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
@@ -1396,6 +1397,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _allyWithAttacker(ally);
         _setPlanetLocation(allyPlanetId, ally, 1, 100, 8);
         _fundPlanet(originPlanetId, 20_000, 20_000, 20_000);
         _fundPlanet(allyPlanetId, 20_000, 20_000, 20_000);
@@ -1445,6 +1447,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _allyWithAttacker(ally);
         _setPlanetLocation(allyPlanetId, ally, 1, 100, 8);
         _createMoon(allyPlanetId);
         _fundPlanet(originPlanetId, 20_000, 20_000, 20_000);
@@ -1500,6 +1503,7 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _allyWithAttacker(ally);
         _setPlanetLocation(allyPlanetId, ally, 1, 100, 8);
         _fundPlanet(originPlanetId, 20_000, 20_000, 20_000);
         _fundPlanet(allyPlanetId, 20_000, 20_000, 20_000);
@@ -2087,6 +2091,20 @@ abstract contract VeydriftMoonSystemTestBase is Test {
     function _startPlanet() internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    /// ACS joins need the attack owner's consent: put `member` in `player`'s alliance.
+    function _allyWithAttacker(address member) internal {
+        VeydriftAllianceSystem alliance =
+            new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        vm.prank(admin);
+        game.setAllianceSystem(address(alliance));
+        vm.prank(player);
+        uint256 allianceId = alliance.createAlliance("ATK", "Attackers", "ipfs://attackers");
+        vm.prank(player);
+        alliance.inviteMember(allianceId, member);
+        vm.prank(member);
+        alliance.acceptInvite(allianceId);
     }
 
     function _seedMoonAttackPlanets()
@@ -3247,7 +3265,11 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
             overflow[i] = ProductionOrder(1, uint8(_batchDefense(i)), uint32(i + 1));
         }
         vm.prank(player);
-        vm.expectRevert(VeydriftMoonSystem.InvalidQuantity.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMoonDefenseBacklog.MoonDefenseBacklogFull.selector, planetId
+            )
+        );
         moons.startMoonProductionBatch(planetId, overflow);
         assertEq(
             keccak256(

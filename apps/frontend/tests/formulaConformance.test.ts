@@ -18,6 +18,7 @@ import {
   researchRequirementsFor,
   shipCatalog,
   shipDurationEstimate,
+  shipSpecRows,
   solarSatelliteEnergy,
   storageCaps,
 } from "../src/playableMvp";
@@ -255,6 +256,10 @@ describe("canonical Veydrift formula conformance", () => {
         { kind: "technology", key: "shielding", label: "Shielding", level: 4 },
       ],
     });
+    const spec = (key: string, label: string) =>
+      shipSpecRows(shipCatalog.find((ship) => ship.key === key)!).find((row) => row.label === label)?.value;
+    expect([spec("reaper", "Cargo"), spec("pathfinder", "Cargo"), spec("reaper", "Fuel use"), spec("bomber", "Fuel use")])
+      .toEqual(["10,000", "10,000", "1,100", "700"]);
     expect(shipDurationEstimate(2, 0, { metal: 2_000, crystal: 2_000, deuterium: 0 })).toBe(1_920);
     expect(shipDurationEstimate(7, 2, { metal: 45_000, crystal: 15_000, deuterium: 0 })).toBe(2_700);
   });
@@ -265,7 +270,7 @@ describe("canonical Veydrift formula conformance", () => {
       requirements: [{ kind: "building", key: "shipyard", label: "Shipyard", level: 1 }],
     });
     expect(defenseCatalog.find((defense) => defense.key === "ionCannon")).toMatchObject({
-      baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+      baseCost: { metal: 5_000, crystal: 3_000, deuterium: 0 },
     });
     expect(defenseCatalog.find((defense) => defense.key === "gaussCannon")).toMatchObject({
       baseCost: { metal: 20_000, crystal: 15_000, deuterium: 2_000 },

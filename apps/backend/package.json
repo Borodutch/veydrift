@@ -20,6 +20,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@veydrift/battle-oracle": "workspace:*",
     "@veydrift/universe": "workspace:*",
     "viem": "^2.52.0"
   },

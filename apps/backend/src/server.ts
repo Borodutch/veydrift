@@ -59,6 +59,7 @@ import {
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
+import { BattleRefereeService, BattleReportStore } from "./battleReferee";
 import { applyMissionEligibility, missionEligibilityPath } from "./missionEligibility";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
@@ -349,6 +350,7 @@ export type ServerDependencies = {
   chainReader?: ChainReader;
   missionResolution?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
+  battleReferee?: BattleRefereeService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
   // ingestion, the cold-start rebuild, bounded reconciles, and the on-chain committers — those must
@@ -522,9 +524,30 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       })
       : undefined);
 
+  const battleReferee =
+    dependencies.battleReferee ??
+    (isWriter && loaded.problems.length === 0 && loaded.config.battleRefereePrivateKey
+      ? new BattleRefereeService(loaded.config, {
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
+      })
+      : undefined);
+  let battleReportReader: BattleReportStore | undefined;
+  const battleReports = (): BattleReportStore | undefined => {
+    if (battleReportReader) return battleReportReader;
+    const path = loaded.config.battleRefereeStorePath;
+    if (!path || path === ":memory:") return undefined;
+    try {
+      battleReportReader = new BattleReportStore(path, true);
+    } catch {
+      // The writer creates the store on its first referee tick.
+    }
+    return battleReportReader;
+  };
+
   chainSync?.start();
   missionResolution?.start();
   randomnessCommitter?.start();
+  battleReferee?.start();
   const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
     // Explicit operator/test rebuild only. This path performs canonical eth_call reads and therefore must
@@ -873,6 +896,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           missionResolution: missionResolutionSnapshot,
           gameMaintenance: gameMaintenanceSnapshot,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
+          battleReferee: battleReferee?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
           chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
@@ -897,6 +921,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           "cache-control": "no-store"
         },
         status: readiness.ready ? 200 : 503
+      });
+    }
+
+    // Ticket #44: referee battle reports are immutable; the hash is committed onchain with the result.
+    const battleReportMatch = request.method === "GET"
+      ? url.pathname.match(/^\/battle-reports\/(0x[0-9a-fA-F]{64})$/) ?? url.pathname.match(/^\/battles\/([0-9]{1,78})\/report$/)
+      : null;
+    if (battleReportMatch) {
+      const key = battleReportMatch[1]!;
+      const store = battleReports();
+      const found = key.startsWith("0x")
+        ? (() => { const report = store?.report(key); return report ? { reportHash: key.toLowerCase(), report } : null; })()
+        : store?.reportForBattle(key) ?? null;
+      if (!found) return Response.json({ error: "battle report not found" }, { headers: corsHeaders, status: 404 });
+      return new Response(found.report, {
+        headers: {
+          ...corsHeaders,
+          "content-type": "application/json",
+          "x-veydrift-report-hash": found.reportHash
+        }
       });
     }
 

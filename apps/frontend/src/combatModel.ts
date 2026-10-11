@@ -1,11 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
-import { CONTRACT_COMBAT_MODEL_VERSION } from "./battlePreview";
+import { isSupportedCombatModel, setActiveCombatModel } from "./battlePreview";
 import { apiBaseUrlForRuntimeConfig, playableApiUrl } from "./runtimeConfig";
 import { fetchGameApiJson } from "./walletFlow";
 
 export function combatModelMatches(value: unknown): boolean {
   return typeof value === "object" && value !== null
-    && (value as { version?: unknown }).version === CONTRACT_COMBAT_MODEL_VERSION;
+    && isSupportedCombatModel((value as { version?: unknown }).version);
 }
 
 // No persisted capability cache: old contracts, absent getters and failed reads fail closed.
@@ -47,6 +47,7 @@ export function useVerifiedCombatModel(): boolean {
           return;
         }
         clearTimeout(expiry);
+        setActiveCombatModel((value as { version: unknown }).version);
         setVerified(true);
         expiresAt = performance.now() + 20_000;
         expiry = setTimeout(() => {

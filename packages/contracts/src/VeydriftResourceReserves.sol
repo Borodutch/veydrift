@@ -487,19 +487,23 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         }
     }
 
+    /// @dev Removes only the linked fleet's own index entries for the hostile. Entries the hostile
+    ///      shares (its origin and target planets, its owner and the defender) stay until the
+    ///      hostile itself settles, so a recalled member can never un-guard the attack.
     function _untrackCounterplayMissionResolution(
         uint256 hostileMissionId,
         FleetMission storage mission
     ) internal {
-        _removeResolutionMissionForPlanet(mission.originPlanetId, hostileMissionId);
-        if (mission.targetPlanetId != mission.originPlanetId) {
-            _removeResolutionMissionForPlanet(mission.targetPlanetId, hostileMissionId);
-        }
-        _removeResolutionMissionForPlayer(mission.owner, hostileMissionId);
-
-        address targetOwner = _planets[mission.targetPlanetId].owner;
-        if (targetOwner != address(0) && targetOwner != mission.owner) {
-            _removeResolutionMissionForPlayer(targetOwner, hostileMissionId);
+        FleetMission storage hostile = _fleetMissions[hostileMissionId];
+        if (
+            mission.originPlanetId != hostile.originPlanetId
+                && mission.originPlanetId != hostile.targetPlanetId
+        ) _removeResolutionMissionForPlanet(mission.originPlanetId, hostileMissionId);
+        if (
+            mission.owner != hostile.owner
+                && mission.owner != _planets[hostile.targetPlanetId].owner
+        ) {
+            _removeResolutionMissionForPlayer(mission.owner, hostileMissionId);
         }
     }
 
@@ -585,6 +589,9 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     }
 
     function _pendingMissionResolutionForPlanet(uint256 planetId) private view returns (uint256) {
+        // A battle holding the body lock is pending regardless of index bookkeeping.
+        uint256 lockId = Store.layout().bodyLock[planetId];
+        if (lockId != 0) return lockId;
         uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
         for (uint256 index = 0; index < missionIds.length;) {
             uint256 missionId = missionIds[index];
