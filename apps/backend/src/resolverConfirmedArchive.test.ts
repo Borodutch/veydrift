@@ -123,6 +123,19 @@ test("48 real signed coordinator admissions continue with frozen finality, bound
   } finally { f.close(); }
 });
 
+test("a short archive page writes no cursor churn across steady-state passes", async () => {
+  const f = fixture();
+  try {
+    for (let n = 0; n < 3; n++) await f.submit();
+    const cursor = () => f.db.query("SELECT cursor_nonce AS c FROM resolver_archive_progress").get();
+    for (let pass = 0; pass < 3; pass++) {
+      await f.reconcile(); // all three retained rows are revisited every pass
+      expect(cursor()).toEqual({ c: -1 });
+    }
+    expect(f.client.admissionSnapshot()).toMatchObject({ retainedConfirmed: 3, blockedReason: null });
+  } finally { f.close(); }
+});
+
 test("consumed nonce contradiction fails closed despite unchanged containing hash", async () => {
   const f = fixture();
   try {

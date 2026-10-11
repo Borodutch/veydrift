@@ -64,6 +64,30 @@ test.each([1, 2, 3])("accepted response lost / transport rejection succeeds on a
   });
 });
 
+test("accepted broadcast awaits inclusion before reconciling instead of resending into cooldown", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // accepted by the node, not yet mined
+    const awaited: Hex[] = [];
+    // Inclusion lands while the post-broadcast wait is pending (Base mints every ~2s).
+    expect(await f.coordinator.submit({ ...f.request, confirm: async (h) => { awaited.push(h); f.mine(); } })).toBe(hash);
+    expect(awaited).toEqual([hash]);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.rows()).toMatchObject({ attempts: 1, status: "finalized" });
+    expect(f.coordinator.admissionSnapshot(chainId, account.address).blockedReason).toBeNull();
+  });
+});
+
+test("deterministic send rejection skips the inclusion wait and stays fail-closed", async () => {
+  await fixture(async (f) => {
+    f.send(async () => { throw new Error("execution reverted " + signed); });
+    let awaited = 0;
+    const error = await f.coordinator.submit({ ...f.request, confirm: async () => { awaited++; } }).catch((e) => e);
+    expect(error.message).toContain("deterministic send rejection");
+    expect(awaited).toBe(0);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+  });
+});
+
 test("exhaustion persists actionable cooldown; restart retries same bytes once per minute, never new nonce", async () => {
   await fixture(async (f) => {
     const error = await f.coordinator.submit(f.request).catch((e) => e);

@@ -1075,7 +1075,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: async () => false, // partial progress may require another bounded tx
-      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
+      // Post-broadcast inclusion wait; poll near Base's 2s block time, not the 4s client default.
+      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000, pollingInterval: 500 }); }
       // No replacements/cancellation: unknown receipt blocks the shared signer, never uncapped fees.
     });
     return { hash, items, exclusions, outcomes: this.batchReceiptOutcomes.get(hash) ?? [] };
