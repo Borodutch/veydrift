@@ -18,9 +18,9 @@ function fixture(now: { value: number }) {
   return { coordinator, db: new Database(path), path };
 }
 
-function blockedEvents(spy: ReturnType<typeof spyOn>) {
-  return spy.mock.calls.map(([line]) => { try { return JSON.parse(String(line)); } catch { return null; } })
-    .filter((event) => event?.kind === "resolver_reconciliation_blocked");
+function blockedEvents(spy: ReturnType<typeof spyOn>): Record<string, unknown>[] {
+  return (spy.mock.calls as unknown[][]).map(([line]): Record<string, unknown> | null => { try { return JSON.parse(String(line)); } catch { return null; } })
+    .filter((event): event is Record<string, unknown> => event?.kind === "resolver_reconciliation_blocked");
 }
 
 test("blocked event keeps the real sanitized error and stage when recovery lineage is retained", async () => {
@@ -41,7 +41,7 @@ test("blocked event keeps the real sanitized error and stage when recovery linea
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
     await expect(f.coordinator.reconcilePrepared(chainId, address, async () => undefined)).rejects.toThrow("missing signed bytes");
-    const [event] = blockedEvents(warn);
+    const event = blockedEvents(warn)[0]!;
     expect(verified).toBe(1);
     expect(event).toMatchObject({ stage: "active", recoveryGroups: 1, retainedAtLeast: 1 });
     expect(event.reason).toContain("legacy durable batch intent missing signed bytes");
