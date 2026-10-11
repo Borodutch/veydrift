@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -85,6 +85,95 @@ test("a failed inclusion wait falls through to the unchanged identical-byte repl
     expect(awaited).toBe(1);
     expect(f.counts()).toEqual({ signs: 1, sends: 2 });
     expect(new Set(f.bytes).size).toBe(1);
+  });
+});
+
+function inclusionEvents(...spies: Array<{ mock: { calls: unknown[][] } }>) {
+  return spies.flatMap((spy) => spy.mock.calls).map(([line]): Record<string, unknown> | null => { try { return JSON.parse(String(line)); } catch { return null; } })
+    .filter((event): event is Record<string, unknown> => event?.kind === "resolver_inclusion_wait");
+}
+
+test.each([
+  ["included", async () => {}, "info"],
+  ["timeout", async () => { const e = new Error("Timed out while waiting for transaction"); e.name = "WaitForTransactionReceiptTimeoutError"; throw e; }, "warn"],
+  ["error", async () => { throw new Error("receipt lookup failed https://user:pw@rpc.example.com/v2/secret-key " + signed); }, "warn"]
+] as const)("inclusion wait reports a sanitized %s outcome and waitMs", async (outcome, confirm, level) => {
+  await fixture(async (f) => {
+    f.send(async () => { f.mine(); });
+    const info = spyOn(console, "info").mockImplementation(() => {}), warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await f.coordinator.submit({ ...f.request, confirm })).toBe(hash);
+      const events = inclusionEvents(info, warn);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ outcome, nonce, timeoutMs: 30_000 });
+      expect(typeof events[0]!.waitMs).toBe("number");
+      expect(inclusionEvents(level === "info" ? info : warn)).toHaveLength(1);
+      const line = JSON.stringify(events[0]);
+      expect(line).not.toContain(signed.slice(2)); expect(line).not.toContain("secret-key"); expect(line).not.toContain("pw@");
+      if (outcome === "error") expect(events[0]!.reason).toContain("https://rpc.example.com");
+    } finally { info.mockRestore(); warn.mockRestore(); }
+  });
+});
+
+test("the coordinator bounds a caller inclusion wait that never settles", async () => {
+  await fixture(async (f) => {
+    f.send(async () => { if (f.counts().sends === 2) f.mine(); });
+    const c = new ResolverTransactionCoordinator(f.path, { inclusionWaitMs: 20, sleep: async () => {}, leaseRenewIntervalMs: 1000000 });
+    c.setPreparedReplayer(chainId, account.address, f.replay);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // viem's own default would hold the signer for 180 s.
+      expect(await c.submit({ ...f.request, confirm: () => new Promise<void>(() => {}) })).toBe(hash);
+      expect(inclusionEvents(warn)).toMatchObject([{ outcome: "timeout", timeoutMs: 20 }]);
+      expect(f.counts()).toEqual({ signs: 1, sends: 2 }); // unchanged identical-byte replay afterwards
+      expect(new Set(f.bytes).size).toBe(1);
+    } finally { warn.mockRestore(); }
+  });
+  expect(() => new ResolverTransactionCoordinator(":memory:", { inclusionWaitMs: 0 })).toThrow("invalid resolver reconciliation bounds");
+});
+
+test("lease loss during the inclusion wait fails closed: no resend, no new nonce", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // accepted, never mined in this run
+    let nonceReads = 0;
+    const error = await f.coordinator.submit({ ...f.request,
+      getTransactionCount: async () => { nonceReads++; return nonce; },
+      confirm: async () => { f.mutate("UPDATE resolver_transaction_leases SET holder = 'successor', expires_at_ms = 9999999999999"); } })
+      .catch((e) => e);
+    expect(error.message).toContain("lease");
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.rows()).toMatchObject({ attempts: 1, status: "pending", raw: signed, nonce });
+    const d = new Database(f.path);
+    try {
+      expect(d.query("SELECT nonce, status FROM resolver_transaction_attempts").all()).toEqual([{ nonce, status: "submitted" }]);
+      expect(d.query("SELECT count(*) AS n FROM resolver_signing_reservations").get()).toEqual({ n: 1 });
+      expect(d.query("SELECT holder FROM resolver_transaction_leases").get()).toEqual({ holder: "successor" });
+    } finally { d.close(); }
+    expect(nonceReads).toBe(2); // the single allocation only
+  });
+});
+
+test("a frontier contradiction found while confirming an active intent reports stage frontier", async () => {
+  await fixture(async (f) => {
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down");
+    const frontierHash = ("0x" + "f0".repeat(32)) as Hex, frontierBlock = ("0x" + "b5".repeat(32)) as Hex;
+    const d = new Database(f.path);
+    d.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,receipt_block_number,receipt_block_hash,outcomes,admission_proven) VALUES (?,?,'batch:frontier',6,?,'[]','confirmed','5',?,'[]',1)")
+      .run(chainId, account.address.toLowerCase(), frontierHash, frontierBlock);
+    d.close();
+    let frontierChecks = 0;
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(f.restart().reconcilePrepared(chainId, account.address, async (h, _m, stored) => {
+        if (h === frontierHash) return ++frontierChecks === 1 ? stored : { ...stored!, blockHash: ("0x" + "ee".repeat(32)) as Hex };
+        return { finalized: false, blockNumber: "10", blockHash: ("0x" + "aa".repeat(32)) as Hex, outcomes: "[]", admissionProven: true };
+      })).rejects.toThrow("canonical checkpoint contradiction");
+      const events = warn.mock.calls.map(([line]) => { try { return JSON.parse(String(line)); } catch { return null; } })
+        .filter((event) => event?.kind === "resolver_reconciliation_blocked");
+      expect(events).toMatchObject([{ stage: "frontier", reasonCode: "proof-rejected" }]);
+      expect(frontierChecks).toBe(2);
+      expect(f.rows()).toMatchObject({ status: "pending" }); // nothing persisted past the contradiction
+    } finally { warn.mockRestore(); }
   });
 });
 

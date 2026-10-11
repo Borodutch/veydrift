@@ -142,3 +142,144 @@ test("a lost lease during pruning deletes nothing and keeps the sweep position",
     expect(count()).toBe(0);
   } finally { warn.mockRestore(); f.db.close(); }
 });
+
+test("the unmasked blocked reason never carries signed bytes or URL secrets", async () => {
+  const f = fixture({ value: Date.now() });
+  const signedBytes = "0x02f8" + "ab".repeat(120);
+  f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,receipt_block_number,receipt_block_hash,outcomes,admission_proven) VALUES (?,?,'batch:frontier',4,?,'[]','confirmed','9',?,'[]',1)")
+    .run(chainId, resolver, hash(4), hash(9));
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const error = await f.coordinator.reconcilePrepared(chainId, address, async () => {
+      throw new Error(`HTTP request failed. URL: https://user:hunter2@base.rpc.example/v2/abcdef0123456789 Request body: {"params":["${signedBytes}"]}`);
+    }).catch((e) => e);
+    const event = blockedEvents(warn)[0]!;
+    expect(event).toMatchObject({ stage: "frontier" });
+    for (const text of [String(event.reason), error.message]) {
+      expect(text).toContain("https://base.rpc.example");
+      expect(text).not.toContain(signedBytes.slice(2, 40));
+      expect(text).not.toContain("hunter2");
+      expect(text).not.toContain("abcdef0123456789");
+    }
+  } finally { warn.mockRestore(); f.db.close(); }
+});
+
+function archiveFixture(rows: number) {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") }, f = fixture(now);
+  for (let n = 1; n <= rows; n++) f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,receipt_block_number,receipt_block_hash,outcomes,admission_proven) VALUES (?,?,?,?,?,'[]','confirmed',?,?,'[]',1)")
+    .run(chainId, resolver, "batch:" + n, n, hash(n), String(100 + n), hash(100 + n));
+  const cursor = () => (f.db.query("SELECT cursor_nonce AS c FROM resolver_archive_progress").get() as { c: number } | null)?.c ?? null;
+  return { ...f, now, cursor };
+}
+
+test("a mid-page archive failure keeps the fully reconciled prefix for the next pass", async () => {
+  const f = archiveFixture(12);
+  const seen: number[] = [];
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    // Frontier is nonce 12; the archive page is nonces 1..8 with a look-ahead row.
+    await expect(f.coordinator.reconcilePrepared(chainId, address, async (h, _m, stored) => {
+      seen.push(Number(BigInt(h)));
+      if (h === hash(4)) throw new Error("rpc unavailable");
+      return stored;
+    })).rejects.toThrow("rpc unavailable");
+    expect(blockedEvents(warn)).toMatchObject([{ stage: "archive", checked: 3 }]);
+    expect(f.cursor()).toBe(3);
+    seen.length = 0;
+    await f.coordinator.reconcilePrepared(chainId, address, async (h, _m, stored) => { seen.push(Number(BigInt(h))); return stored; });
+    // Frontier, then a full page resuming at the failed row, then the final frontier check.
+    expect(seen).toEqual([12, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(f.cursor()).toBe(11);
+  } finally { warn.mockRestore(); f.db.close(); }
+});
+
+test("a lease lost mid-archive keeps the cursor where the successor left it", async () => {
+  const f = archiveFixture(12);
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await expect(f.coordinator.reconcilePrepared(chainId, address, async (h, _m, stored) => {
+      if (h === hash(4)) f.db.query("UPDATE resolver_transaction_leases SET holder='successor', expires_at_ms=?").run(f.now.value + 600_000);
+      return stored;
+    })).rejects.toThrow("lease");
+    expect(f.cursor()).toBeNull();
+    expect(f.db.query("SELECT holder FROM resolver_transaction_leases").get()).toEqual({ holder: "successor" });
+  } finally { warn.mockRestore(); f.db.close(); }
+});
+
+function seedExpiredAudit(db: Database, count: number, created = "2026-08-01T00:00:00.000Z") {
+  const insert = db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'confirmed',?)");
+  db.transaction(() => { for (let i = 0; i < count; i++) insert.run(chainId, resolver, "batch:old" + i, i, created); })();
+}
+const auditCount = (db: Database) => (db.query("SELECT count(*) AS n FROM resolver_transaction_audit").get() as { n: number }).n;
+
+test("a lease taken over during the reconcilePrepared prune deletes nothing; the next interval prunes", async () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") }, f = fixture(now);
+  seedExpiredAudit(f.db, 10);
+  const internals = f.coordinator as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void };
+  const prune = internals.pruneAuditHistory.bind(f.coordinator);
+  let takeover = true;
+  // A successor process takes the signer lease between the reconciliation and the prune write.
+  internals.pruneAuditHistory = (c, a, assertLease) => {
+    if (takeover) f.db.query("UPDATE resolver_transaction_leases SET holder='successor', expires_at_ms=?").run(now.value + 600_000);
+    prune(c, a, assertLease);
+  };
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await f.coordinator.reconcilePrepared(chainId, address);
+    expect(auditCount(f.db)).toBe(10);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("resolver_audit_prune_failed") && String(line).includes("lease"))).toBe(true);
+    expect(f.db.query("SELECT holder FROM resolver_transaction_leases").get()).toEqual({ holder: "successor" }); // never released ours over theirs
+    f.db.exec("DELETE FROM resolver_transaction_leases");
+    takeover = false; now.value += 60_000;
+    await f.coordinator.reconcilePrepared(chainId, address);
+    expect(auditCount(f.db)).toBe(0);
+  } finally { warn.mockRestore(); f.db.close(); }
+});
+
+test("at the storage ceiling the bounded, lease-fenced prune still runs while admission stays blocked", async () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") }, f = fixture(now);
+  seedExpiredAudit(f.db, 6_000);
+  f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?,?,'batch:pending',3,?,'[]','pending')")
+    .run(chainId, resolver, hash(3));
+  // Fault-inject the measured budget, not a 240 MiB allocation in CI.
+  (f.coordinator as unknown as { journalBytes(): number }).journalBytes = () => 240 * 1024 * 1024;
+  let reads = 0, leaseWrites = 0;
+  const reconcile = async () => { reads++; return undefined; };
+  const internals = f.coordinator as unknown as { acquireLease(...args: unknown[]): Promise<void> };
+  const acquire = internals.acquireLease.bind(f.coordinator);
+  internals.acquireLease = (...args) => { leaseWrites++; return acquire(...args); };
+  try {
+    await expect(f.coordinator.reconcilePrepared(chainId, address, reconcile)).rejects.toThrow("journal-storage-full");
+    expect(auditCount(f.db)).toBe(1_001); // one 5,000-row window; evidence for nonce 3 stays
+    expect(reads).toBe(0); // no reconciliation, admission or signing work at the ceiling
+    expect(leaseWrites).toBe(1);
+    expect(f.db.query("SELECT count(*) AS n FROM resolver_transaction_leases").get()).toEqual({ n: 0 });
+    expect(f.coordinator.admissionSnapshot(chainId, address).blockedReason).toBe("journal-storage-full");
+    await expect(f.coordinator.reconcilePrepared(chainId, address, reconcile)).rejects.toThrow("journal-storage-full");
+    expect(leaseWrites).toBe(1); // throttled: no lease churn until the next interval
+    now.value += 60_000;
+    await expect(f.coordinator.reconcilePrepared(chainId, address, reconcile)).rejects.toThrow("journal-storage-full");
+    expect(f.db.query("SELECT nonce FROM resolver_transaction_audit").all()).toEqual([{ nonce: 3 }]);
+    expect(f.db.query("SELECT status FROM resolver_prepared_intents").all()).toEqual([{ status: "pending" }]);
+  } finally { f.db.close(); }
+});
+
+test("the prune sweep revisits retained evidence daily without a restart", () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") }, f = fixture(now);
+  f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?,?,'batch:pending',0,?,'[]','pending')")
+    .run(chainId, resolver, hash(1));
+  seedExpiredAudit(f.db, 5);
+  const prune = () => (f.coordinator as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void })
+    .pruneAuditHistory(chainId, address, () => {});
+  try {
+    prune();
+    expect(f.db.query("SELECT nonce FROM resolver_transaction_audit").all()).toEqual([{ nonce: 0 }]);
+    f.db.exec("UPDATE resolver_prepared_intents SET status='finalized'");
+    now.value = Date.parse("2026-10-11T23:59:00.000Z");
+    prune(); // same sweep: the cursor is already past the retained row
+    expect(auditCount(f.db)).toBe(1);
+    now.value = Date.parse("2026-10-12T00:00:00.000Z");
+    prune(); // daily revisit restarts from the head
+    expect(auditCount(f.db)).toBe(0);
+  } finally { f.db.close(); }
+});
