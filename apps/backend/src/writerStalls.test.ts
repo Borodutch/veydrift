@@ -115,7 +115,8 @@ describe("EventLoopLagMonitor", () => {
     // 990 on-time fires, 9 × 600 ms (6 intervals each) and one 2.5 s freeze (25 intervals).
     const window = monitor.window(60 * 60 * 1_000);
     expect(window).toMatchObject({ samples: 1_069, p50Ms: 2, p99Ms: 1_500, maxMs: 2_500, over500Ms: 10, over1000Ms: 1 });
-    expect(monitor.window(10_000).samples).toBe(106);
+    // The 600 ms fire at 90.1 s swallowed one tick inside the window (90.0 s) and five before it.
+    expect(monitor.window(10_000).samples).toBe(102);
     expect(lines).toEqual(['writer_event_loop_stall {"lagMs":2500}']);
   });
 
@@ -139,6 +140,22 @@ describe("EventLoopLagMonitor", () => {
     // Each sample stands for one 100 ms interval: about one hour's worth.
     expect(window.samples).toBe(240 * (135 + 15));
     expect(lines).toHaveLength(240);
+  });
+
+  test("a long pause only counts the intervals inside the window", () => {
+    let now = 0;
+    const monitor = new EventLoopLagMonitor({ now: () => now, log: () => undefined });
+    now = 24 * 60 * 60 * 1_000;
+    monitor.record(now - 100);
+    for (let tick = 0; tick < 100; tick++) {
+      now += 100;
+      monitor.record(2);
+    }
+    const window = monitor.window(60_000);
+    // 100 on-time fires over the last 10 s plus the pause's 501 intervals in the 50 s before.
+    expect(window.samples).toBe(601);
+    expect(window.maxMs).toBe(24 * 60 * 60 * 1_000 - 100);
+    expect(window.over1000Ms).toBe(1);
   });
 
   test("caches the hour snapshot that the public /health returns", () => {
@@ -258,6 +275,53 @@ describe("WalCheckpointer", () => {
     } finally {
       checkpointer.stop();
     }
+  });
+
+  test("a worker error before any pass reports the failure once and keeps its message off /health", () => {
+    const warnings: string[] = [];
+    let failures = 0;
+    const worker = fakeWorker();
+    const checkpointer = new WalCheckpointer({
+      targets: [{ name: "index", databasePath: "/data/index.sqlite", setAutoCheckpoint: () => undefined }],
+      createWorker: () => worker,
+      onWorkerFailed: () => { failures += 1; },
+      logger: { warn: (...parts: unknown[]) => warnings.push(parts.join(" ")) }
+    });
+    try {
+      const fail = () => worker.onerror?.({ message: 'ModuleNotFound resolving "/app/apps/backend/src/walCheckpointWorker.ts"' } as ErrorEvent);
+      fail();
+      fail();
+      expect(failures).toBe(1);
+      expect(checkpointer.snapshot().index).toMatchObject({ failures: 2, lastError: "WAL checkpoint worker error", mode: "main-thread-fallback" });
+      expect(warnings.some((warning) => warning.includes("ModuleNotFound"))).toBe(true);
+
+      // After a successful pass, a later error is the stale watchdog's job, not a restart.
+      const recovered = fakeWorker();
+      let recoveredFailures = 0;
+      const second = new WalCheckpointer({
+        targets: [{ name: "index", databasePath: "/data/index.sqlite", setAutoCheckpoint: () => undefined }],
+        createWorker: () => recovered,
+        onWorkerFailed: () => { recoveredFailures += 1; },
+        logger: { warn: () => undefined }
+      });
+      recovered.emit({ databasePath: "/data/index.sqlite", ok: true, busy: 0, log: 1, checkpointed: 1, durationMs: 1 });
+      recovered.onerror?.({ message: "boom" } as ErrorEvent);
+      expect(recoveredFailures).toBe(0);
+      second.stop();
+    } finally {
+      checkpointer.stop();
+    }
+  });
+
+  test("a worker whose setup throws is terminated and the error propagates", () => {
+    const worker = fakeWorker();
+    worker.postMessage = () => { throw new Error("DataCloneError"); };
+    expect(() => new WalCheckpointer({
+      targets: [{ name: "index", databasePath: "/data/index.sqlite", setAutoCheckpoint: () => undefined }],
+      createWorker: () => worker,
+      logger: { warn: () => undefined }
+    })).toThrow("DataCloneError");
+    expect(worker.terminated).toBe(true);
   });
 
   test("a real worker thread backfills the WAL so the writer's next commit restarts and trims it", async () => {

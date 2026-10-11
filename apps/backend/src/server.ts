@@ -644,6 +644,24 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const eventLoopLag = usesProductionDependencies && isWriter && loaded.problems.length === 0 ? new EventLoopLagMonitor() : null;
   eventLoopLag?.start();
   let walCheckpointer: WalCheckpointer | null = null;
+  let mainThreadWalMaintenance: ReturnType<typeof setInterval> | undefined;
+  const startMainThreadWalCheckpoints = () => {
+    if (mainThreadWalMaintenance || !isWriter || !indexer || typeof indexer.checkpointWal !== "function" || loaded.problems.length > 0) return;
+    const checkpointWal = () => {
+      try {
+        const result = indexer.checkpointWal("PASSIVE");
+        const sample = result[0];
+        if (sample && sample.log > 16_384 && sample.busy === 0) {
+          indexer.checkpointWal("TRUNCATE");
+        }
+      } catch (error) {
+        console.warn("Veydrift SQLite WAL checkpoint failed", reasonText(error));
+      }
+    };
+    checkpointWal();
+    mainThreadWalMaintenance = setInterval(checkpointWal, 60_000);
+    mainThreadWalMaintenance.unref?.();
+  };
   const offThreadWalCheckpoint = (dependencies.offThreadWalCheckpoint ?? usesProductionDependencies)
     && isWriter
     && loaded.problems.length === 0
@@ -666,33 +684,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     for (const [name, target] of Object.entries(stores)) {
       if (target) targets.push({ name, ...target, intervalMs: 300_000 });
     }
+    // If the worker cannot start, every writer connection still autocheckpoints (that is only
+    // switched off after a worker pass), so keep booting and checkpoint the index on the writer
+    // thread as before. Bun 1.1 throws synchronously for a missing worker module; newer Bun
+    // reports it through the worker's error event.
     try {
       walCheckpointer = new WalCheckpointer({
         targets,
+        onWorkerFailed: () => {
+          console.warn("Veydrift SQLite WAL checkpoint worker failed before its first pass; checkpointing on the writer thread");
+          startMainThreadWalCheckpoints();
+        },
         ...(dependencies.createWalCheckpointWorker ? { createWorker: dependencies.createWalCheckpointWorker } : {})
       });
     } catch (error) {
-      // Bun throws synchronously when the worker module cannot load. Every writer connection
-      // still autocheckpoints (it is only switched off after a worker pass), so keep booting and
-      // checkpoint the index on the main thread as before.
       console.warn("Veydrift SQLite WAL checkpoint worker failed to start; checkpointing on the writer thread", safeDiagnosticText(error));
+      startMainThreadWalCheckpoints();
     }
-  }
-  if (!walCheckpointer && isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
-    const checkpointWal = () => {
-      try {
-        const result = indexer.checkpointWal("PASSIVE");
-        const sample = result[0];
-        if (sample && sample.log > 16_384 && sample.busy === 0) {
-          indexer.checkpointWal("TRUNCATE");
-        }
-      } catch (error) {
-        console.warn("Veydrift SQLite WAL checkpoint failed", reasonText(error));
-      }
-    };
-    checkpointWal();
-    const walMaintenance = setInterval(checkpointWal, 60_000);
-    walMaintenance.unref?.();
+  } else {
+    startMainThreadWalCheckpoints();
   }
 
   const responseCache = new Map<string, CachedJsonResponse>();

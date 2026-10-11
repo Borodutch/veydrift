@@ -6,7 +6,7 @@ export type EventLoopLagWindow = {
   p50Ms: number;
   p99Ms: number;
   maxMs: number;
-  /** Timer fires (freezes) at least this late. */
+  /** Timer fires (freezes) more than this late. */
   over500Ms: number;
   over1000Ms: number;
 };
@@ -100,17 +100,20 @@ export class EventLoopLagMonitor {
     const values: number[] = [];
     let over500Ms = 0;
     let over1000Ms = 0;
+    const windowStart = at - windowMs;
     for (let index = 0; index < this.count; index += 1) {
-      if (at - this.sampledAt[index]! > windowMs) continue;
+      const sampledAt = this.sampledAt[index]!;
+      if (sampledAt < windowStart) continue;
       const lagMs = this.samples[index]!;
       if (lagMs > 500) over500Ms += 1;
       if (lagMs > 1_000) over1000Ms += 1;
       // A freeze of any length delays only one timer fire. Also record the ticks it swallowed
       // (L - interval, L - 2·interval, …), HdrHistogram-style, so each sample stands for one
-      // interval of wall time and a periodic freeze cannot hide below the p99.
-      for (let missed = lagMs; ; missed -= this.sampleIntervalMs) {
+      // interval of wall time and a periodic freeze cannot hide below the p99. Ticks swallowed
+      // before the window starts are left out, so a long pause cannot flood every later window.
+      for (let missed = lagMs, missedAt = sampledAt; ; missed -= this.sampleIntervalMs, missedAt -= this.sampleIntervalMs) {
         values.push(missed);
-        if (missed - this.sampleIntervalMs < this.sampleIntervalMs) break;
+        if (missed - this.sampleIntervalMs < this.sampleIntervalMs || missedAt - this.sampleIntervalMs < windowStart) break;
       }
     }
     values.sort((left, right) => left - right);

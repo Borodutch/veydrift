@@ -55,6 +55,11 @@ export type WalCheckpointerOptions = {
   staleAfterMs?: number;
   now?: () => number;
   createWorker?: () => WalCheckpointWorker;
+  /**
+   * Called once if the worker errors before any database had a successful pass, e.g. when its
+   * module fails to load (newer Bun reports that asynchronously rather than throwing).
+   */
+  onWorkerFailed?: () => void;
   logger?: Pick<Console, "warn">;
 };
 
@@ -86,10 +91,14 @@ export class WalCheckpointer {
   private readonly now: () => number;
   private readonly logger: Pick<Console, "warn">;
   private readonly states = new Map<string, TargetState>();
+  private readonly onWorkerFailed: (() => void) | undefined;
+  private anyPass = false;
+  private workerFailureReported = false;
 
   constructor(options: WalCheckpointerOptions) {
     this.now = options.now ?? Date.now;
     this.logger = options.logger ?? console;
+    this.onWorkerFailed = options.onWorkerFailed;
     const databases: WalCheckpointDatabase[] = [];
     for (const target of options.targets) {
       if (this.states.has(target.databasePath)) continue;
@@ -116,14 +125,16 @@ export class WalCheckpointer {
       });
     }
     this.worker = (options.createWorker ?? (() => new Worker(new URL("./walCheckpointWorker.ts", import.meta.url).href)))();
-    this.worker.unref?.();
-    this.worker.onmessage = (event) => this.onResult(event.data as WalCheckpointResult);
-    this.worker.onerror = (event) => {
-      const error = event.message || "WAL checkpoint worker error";
-      for (const databasePath of this.states.keys()) this.onResult({ databasePath, ok: false, error, durationMs: 0 });
-    };
-    const request: WalCheckpointRequest = { databases };
-    this.worker.postMessage(request);
+    try {
+      this.worker.unref?.();
+      this.worker.onmessage = (event) => this.onResult(event.data as WalCheckpointResult);
+      this.worker.onerror = (event) => this.onWorkerError(event);
+      const request: WalCheckpointRequest = { databases };
+      this.worker.postMessage(request);
+    } catch (error) {
+      try { this.worker.terminate(); } catch {}
+      throw error;
+    }
     this.watchdog = setInterval(() => this.checkStale(), 5_000);
     this.watchdog.unref?.();
   }
@@ -137,6 +148,18 @@ export class WalCheckpointer {
     try { this.worker.postMessage({ stop: true }); } catch {}
     this.worker.terminate();
     for (const state of this.states.values()) this.setOffloaded(state, false);
+  }
+
+  private onWorkerError(event: ErrorEvent): void {
+    // The message can carry the worker module's install path: log it, keep it off /health.
+    this.logger.warn("Veydrift SQLite WAL checkpoint worker error", safeDiagnosticText(event.message || "unknown error"));
+    for (const databasePath of this.states.keys()) {
+      this.onResult({ databasePath, ok: false, error: "WAL checkpoint worker error", durationMs: 0 });
+    }
+    if (!this.anyPass && !this.workerFailureReported) {
+      this.workerFailureReported = true;
+      this.onWorkerFailed?.();
+    }
   }
 
   private onResult(result: WalCheckpointResult): void {
@@ -155,6 +178,7 @@ export class WalCheckpointer {
       snapshot.lastError = error;
       return;
     }
+    this.anyPass = true;
     snapshot.passes += 1;
     snapshot.lastError = null;
     snapshot.lastLogPages = result.log;

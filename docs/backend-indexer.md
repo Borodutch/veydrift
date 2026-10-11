@@ -217,8 +217,9 @@ writer follows these rules:
   the index (whose `journal_size_limit` of 64 MB then trims the file) and every 5 min
   for the small stores, which grow by a few frames per tick. PASSIVE never truncates, so
   a pass that finds more than 16,384 WAL pages logs `sqlite_wal_large` (at most every
-  10 min per database). If the worker cannot start, the writer logs it once and
-  checkpoints the index on its own thread every 60 s, as before.
+  10 min per database). If the worker cannot start, or errors before its first
+  successful pass, the writer logs it once and checkpoints the index on its own thread
+  every 60 s, as before.
 - The writer samples its own event-loop delay every 100 ms. A late timer also counts
   the intervals the freeze swallowed (L, L − 100 ms, … down to 100 ms), so the
   percentiles weight each freeze by the time it covers. Every five minutes it logs a
