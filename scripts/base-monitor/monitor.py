@@ -284,6 +284,8 @@ def signals(sample, state, now):
                 reason = 'shared-admission-block'
             for known in sorted(REASONS | {'unknown-block', 'shared-admission-block'}):
                 add(prefix + 'admission-' + known, reason == known, 4 if known in TRANSIENT_ADMISSION else 2)
+            # A continuous block alternating between transient reasons resets each per-reason streak.
+            add(prefix + 'admission-transient-sustained', reason in TRANSIENT_ADMISSION, 4)
             add(prefix + 'active-capacity', number(a['active']) >= 32)
             add(prefix + 'retention-warning', number(a['retainedConfirmed']) >= 3072)
             add(prefix + 'journal-warning', number(a['journalBytes']) >= 192 * 1024 * 1024)
