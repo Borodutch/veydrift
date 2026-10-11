@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { BattleReportStore } from "./battleReferee";
 import { EventLoopLagMonitor } from "./eventLoopLag";
 import { SqliteRandomnessCommitmentStore, type RandomnessCommitmentRecord, type RandomnessPendingReveal } from "./randomness";
 import { withoutCommitSync } from "./sqliteCommitSync";
@@ -275,6 +276,26 @@ describe("lease writes skip the commit fsync", () => {
       await expect(internals.acquireLease(8453, address, "second")).rejects.toThrow("resolver send still outstanding");
       expect(pragmas).toEqual([]);
       expect((internals.database.query("PRAGMA synchronous").get() as { synchronous: number }).synchronous).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("battle referee discovery skips the fsync; reports keep FULL", () => {
+    const dir = tempDir();
+    try {
+      const store = new BattleReportStore(join(dir, "referee.sqlite"));
+      const database = (store as unknown as { database: Database }).database;
+      const pragmas = recordPragmas(database);
+      store.saveDiscovery(42n, [9n, 7n]);
+      expect(pragmas).toEqual(["PRAGMA synchronous = NORMAL;", "PRAGMA synchronous = FULL;"]);
+      expect(store.cursor()).toBe(42n);
+      expect(store.pending()).toEqual([7n, 9n]);
+
+      pragmas.length = 0;
+      store.saveReport(7n, `0x${"ab".repeat(32)}`, "{}");
+      expect(pragmas).toEqual([]);
+      expect((database.query("PRAGMA synchronous").get() as { synchronous: number }).synchronous).toBe(2);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
