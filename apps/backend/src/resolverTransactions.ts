@@ -51,7 +51,9 @@ export type RecoveryObserver = {
 };
 
 type ReplayIntent = { operationId: string; nonce: number; hash: Hex; membership: string;
-  raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null };
+  raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null;
+  /** When the RPC last accepted these exact bytes; null after a failed or unknown send. */
+  acceptedAt?: number | null };
 
 export type ResolverTransactionRequest = {
   chainId: number;
@@ -109,6 +111,11 @@ export type ResolverTransactionCoordinatorOptions = {
   maxRetainedConfirmedIntents?: number;
   reconciliationTimeoutMs?: number;
   reconciliationReadLimit?: number;
+  /** After the RPC accepts exact bytes, wait this long for inclusion before an identical resend. */
+  inclusionGraceMs?: number;
+  inclusionPollMs?: number;
+  auditRetentionMs?: number;
+  maxAuditRows?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -136,6 +143,14 @@ const defaultStaleTransactionMs = 5 * 60_000;
 const defaultMaxUnfinalizedIntents = 32;
 const defaultReconciliationTimeoutMs = 5_000;
 const defaultReconciliationReadLimit = 128;
+// Base produces a block every 2s; an accepted envelope normally has a receipt within one or two.
+const defaultInclusionGraceMs = 6_000;
+const defaultInclusionPollMs = 500;
+// The audit trail is local diagnostics only (never read for admission); bound it by age and rows.
+const defaultAuditRetentionMs = 14 * 24 * 60 * 60_000;
+const defaultMaxAuditRows = 200_000;
+const auditPruneBatch = 5_000;
+const auditPruneIntervalMs = 60_000;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
@@ -156,6 +171,11 @@ export class ResolverTransactionCoordinator {
   private readonly admissionBlocks = new Map<string, string>();
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
+  private readonly inclusionGraceMs: number;
+  private readonly inclusionPollMs: number;
+  private readonly auditRetentionMs: number;
+  private readonly maxAuditRows: number;
+  private lastAuditPruneMs = -Infinity;
   // A transport may not support abort. Never stack abandoned reads on the same signer.
   private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
   private readonly now: () => number;
@@ -179,9 +199,15 @@ export class ResolverTransactionCoordinator {
     this.maxRetainedConfirmedIntents = options.maxRetainedConfirmedIntents ?? 4096;
     this.reconciliationTimeoutMs = options.reconciliationTimeoutMs ?? defaultReconciliationTimeoutMs;
     this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
-    for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit]) {
+    this.inclusionGraceMs = options.inclusionGraceMs ?? defaultInclusionGraceMs;
+    this.inclusionPollMs = options.inclusionPollMs ?? defaultInclusionPollMs;
+    this.auditRetentionMs = options.auditRetentionMs ?? defaultAuditRetentionMs;
+    this.maxAuditRows = options.maxAuditRows ?? defaultMaxAuditRows;
+    for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit,
+      this.inclusionPollMs, this.auditRetentionMs, this.maxAuditRows]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
     }
+    if (!Number.isSafeInteger(this.inclusionGraceMs) || this.inclusionGraceMs < 0) throw new Error("invalid resolver reconciliation bounds");
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -277,7 +303,7 @@ export class ResolverTransactionCoordinator {
       }
       const intentColumns = this.database.query("PRAGMA table_info(resolver_prepared_intents)").all() as Array<{ name: string }>;
       for (const [name, definition] of Object.entries({ admission_proven: "INTEGER NOT NULL DEFAULT 0", serialized_transaction: "TEXT", replay_state: "TEXT NOT NULL DEFAULT 'legacy'",
-        send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT" })) {
+        send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT", accepted_send_ms: "INTEGER" })) {
         if (!intentColumns.some((column) => column.name === name)) this.database.exec(`ALTER TABLE resolver_prepared_intents ADD COLUMN ${name} ${definition}`);
       }
       const resultColumns = this.database.query("PRAGMA table_info(resolver_signing_results)").all() as Array<{ name: string }>;
@@ -306,7 +332,9 @@ export class ResolverTransactionCoordinator {
     `);
   }
   private journalBytes(): number {
-    const pages = (this.database.query("PRAGMA page_count").get() as { page_count: number }).page_count
+    // Free pages are reused before the file grows, so pruned history is reclaimed capacity.
+    const pages = ((this.database.query("PRAGMA page_count").get() as { page_count: number }).page_count
+      - (this.database.query("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count)
       * (this.database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
     let wal = 0;
     if (this.databasePath !== ":memory:") {
@@ -585,7 +613,7 @@ export class ResolverTransactionCoordinator {
     // Archive cursor pages are housekeeping, never authority for admission.
     const projection = `operation_id AS operationId, nonce, transaction_hash AS hash,
       membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry,
-      replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei,
+      replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, accepted_send_ms AS acceptedAt,
       receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven`;
     type Intent = ReplayIntent & { blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number };
     let frontier = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_confirmed_nonce
@@ -598,20 +626,25 @@ export class ResolverTransactionCoordinator {
       .all(chainId, normalizeAddress(address), cursor) as Intent[];
     // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
-      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven
+      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, accepted_send_ms AS acceptedAt, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven
       FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0
       AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)
       ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
         operationId: string; nonce: number; hash: Hex; membership: string; status: string;
-        raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null;
+        raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null; acceptedAt: number | null;
         blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number;
       }>;
     const groups = this.recoveryGroups(chainId, address);
     if (groups.length>32) throw blocked("recovery history window exceeded; explicit review required");
-    if (!intents.length && !groups.length && !frontier) { this.admissionBlocks.delete(key); return; }
+    if (!intents.length && !groups.length && !frontier) { this.admissionBlocks.delete(key); this.pruneAudit(assertLease); return; }
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // A late deadline timer means this process was stalled (event loop/disk), not that reads were slow.
+    let timerLagMs: number | undefined, slowestReadMs = 0;
     const expired = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
+      timer = setTimeout(() => {
+        timerLagMs = Math.max(0, Math.round(performance.now() - deadline));
+        active = false; reject(blocked("read deadline exceeded"));
+      }, this.reconciliationTimeoutMs);
     });
     // Recovery identity reads use bounded parallel waves; a timeout releases the lease,
     // not permission to hydrate/write late. Retain every unresolved handle so retries
@@ -638,7 +671,9 @@ export class ResolverTransactionCoordinator {
       }
       reads++;
       if(trace)trace.reads++;
+      const readStarted = performance.now();
       try { return await bounded(operation); } catch(error) { assertActive(); throw classifyRecoveryReadError(error); }
+      finally { slowestReadMs = Math.max(slowestReadMs, Math.round(performance.now() - readStarted)); }
     } };
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
@@ -668,10 +703,14 @@ export class ResolverTransactionCoordinator {
           ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes, admissionProven: Boolean(intent.admissionProven) } : undefined;
         if (intent.raw && !intent.admissionProven) await bounded(() => this.validatePreparedBinding(chainId, address, intent));
         let receipt = await bounded(() => confirm!(intent.hash, intent.membership, intent.raw && !intent.admissionProven ? undefined : stored, pass));
-        for (let retry = 0; !receipt && !stored && retry < 3; retry++) {
+        // Three identical-byte sends, plus receipt polls while an accepted send awaits inclusion.
+        // The pass deadline and read budget bound the wall-clock wait.
+        const maxSteps = 3 * (1 + Math.ceil(this.inclusionGraceMs / this.inclusionPollMs));
+        for (let step = 0; !receipt && !stored && step < maxSteps; step++) {
           if (!intent.raw) throw new Error("legacy durable batch intent missing signed bytes; canonical receipt unknown; preserve journal and obtain independently reviewed original-envelope recovery; never re-sign/reset");
-          await bounded(() => this.replayIntent(chainId, address, intent, assertActive, pass));
+          const replay = await bounded(() => this.replayIntent(chainId, address, intent, assertActive, pass));
           receipt = await bounded(() => confirm!(intent.hash, intent.membership, undefined, pass));
+          if (!receipt && replay === "included") throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
         }
         assertActive();
         if (!receipt) throw new Error("durable batch intent requires explicit canonical receipt/finality evidence");
@@ -728,12 +767,18 @@ export class ResolverTransactionCoordinator {
       // authorize a writer based on only a page of canonical evidence.
       if (intents.length > this.maxUnfinalizedIntents) throw blocked("retained window exceeded; reconciliation-only drain required");
       this.admissionBlocks.delete(key);
+      this.pruneAudit(assertActive);
     } catch (error) {
       this.admissionBlocks.set(key, "canonical-reconciliation-required");
+      // Finalized recovery groups are durable history; only unfinalized ones hold lineage.
+      const heldRecoveryGroups = groups.filter((group) => !group.finalized).length;
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
-        durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
-        reason: groups.length ? "recovery reconciliation held; inspect public lineage and prerequisites" : safeDiagnosticText(error),
+        durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs, slowestReadMs,
+        ...(timerLagMs === undefined ? {} : { timerLagMs }),
+        ...(error instanceof RecoveryReadinessError ? { category: error.reason } : {}),
+        reason: safeDiagnosticText(error), recoveryGroups: groups.length, heldRecoveryGroups,
+        ...(heldRecoveryGroups ? { recoveryNote: "recovery reconciliation held; inspect public lineage and prerequisites" } : {}),
         action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
       throw error;
     } finally {
@@ -756,7 +801,7 @@ export class ResolverTransactionCoordinator {
   }
 
   private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
-    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<void> {
+    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void, trackInclusion = false): Promise<void> {
     const sendToken = randomUUID();
     this.database.transaction(() => {
       assertLease();
@@ -765,7 +810,8 @@ export class ResolverTransactionCoordinator {
         .run(chainId, normalizeAddress(address), sendToken, sendOwnerHost(), process.pid, intent.hash);
       intent.attempts++;
       intent.nextRetry = this.now() + (intent.attempts < 3 ? 250 * 2 ** (intent.attempts - 1) : 60_000);
-      const result = this.database.query("UPDATE resolver_prepared_intents SET send_attempts = ?, next_retry_ms = ?, replay_state = 'retryable' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND operation_id = ? AND membership = ? AND nonce = ? AND status = 'pending' AND serialized_transaction = ? AND send_attempts = ?")
+      intent.acceptedAt = null;
+      const result = this.database.query("UPDATE resolver_prepared_intents SET send_attempts = ?, next_retry_ms = ?, replay_state = 'retryable', accepted_send_ms = NULL WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND operation_id = ? AND membership = ? AND nonce = ? AND status = 'pending' AND serialized_transaction = ? AND send_attempts = ?")
         .run(intent.attempts, intent.nextRetry, chainId, normalizeAddress(address), intent.hash, intent.operationId,
           intent.membership, intent.nonce, intent.raw, intent.attempts - 1);
       if (result.changes !== 1) throw this.replayError(intent, "send identity changed");
@@ -777,7 +823,7 @@ export class ResolverTransactionCoordinator {
     // before this process starts another pass, just like a late canonical read.
     const sends = this.unfinishedReconciliations.get(key) ?? new Set<Promise<unknown>>();
     let send: Promise<Hex> | undefined;
-    let invoked = false;
+    let invoked = false, accepted = false;
     try {
       assertLease();
       guard?.();
@@ -786,6 +832,7 @@ export class ResolverTransactionCoordinator {
       sends.add(send); this.unfinishedReconciliations.set(key, sends);
       const hash = await send;
       if (hash.toLowerCase() !== intent.hash.toLowerCase()) state = "invalid-response";
+      else accepted = true;
     } catch (error) {
       if (!invoked) throw error; // no RPC invoked: preserve the synchronous guard error
       // viem send errors can contain raw signed bytes. Retain only a fixed category.
@@ -800,6 +847,12 @@ export class ResolverTransactionCoordinator {
           .get(chainId, normalizeAddress(address), sendToken);
         if (fence && state !== "retryable") this.database.query("UPDATE resolver_prepared_intents SET replay_state = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND send_attempts = ? AND status = 'pending'")
           .run(state, chainId, normalizeAddress(address), intent.hash, intent.attempts);
+        // Acceptance is only a reason to await inclusion before resending, never inclusion evidence.
+        else if (fence && accepted && trackInclusion) {
+          const acceptedAt = this.now();
+          if (this.database.query("UPDATE resolver_prepared_intents SET accepted_send_ms = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND send_attempts = ? AND status = 'pending'")
+            .run(acceptedAt, chainId, normalizeAddress(address), intent.hash, intent.attempts).changes === 1) intent.acceptedAt = acceptedAt;
+        }
         this.database.query("DELETE FROM resolver_send_fences WHERE chain_id = ? AND resolver_address = ? AND token = ?")
           .run(chainId, normalizeAddress(address), sendToken);
       }).immediate();
@@ -818,10 +871,12 @@ export class ResolverTransactionCoordinator {
   }
 
   private async replayIntent(chainId: number, address: Hex, intent: ReplayIntent,
-    assertLease: () => void, pass: PreparedReconciliationPass): Promise<void> {
+    assertLease: () => void, pass: PreparedReconciliationPass): Promise<"sent" | "waiting" | "included"> {
     const replay = this.preparedReplayers.get(resolverKey(chainId, address));
     if (!replay) throw this.replayError(intent, "replay client unavailable");
     const recovery = this.getRecoveryBinding(chainId,address,intent.raw!);
+    // Ordinary batches await an accepted envelope's inclusion; recovery keeps its explicit schedule.
+    const awaitInclusion = !recovery;
     if (!(recovery && intent.replayState === "unvalidated") && intent.replayState !== "retryable" && intent.replayState !== "ready"
       && intent.replayState !== "deterministic-rejection" && intent.replayState !== "invalid-response")
       throw this.replayError(intent, "first-send validation not durably completed; explicit fenced recovery required; never auto-send");
@@ -829,10 +884,20 @@ export class ResolverTransactionCoordinator {
     assertLease();
     // Receipt has just been checked. Reconcile transaction inclusion before each resend.
     const transaction = await pass.read(() => replay.getTransaction(intent.hash));
+    // Mined between the receipt read and this read: the caller re-reads the receipt once.
+    if (awaitInclusion && transaction && transaction.hash.toLowerCase() === intent.hash.toLowerCase() && transaction.blockHash !== null)
+      return "included";
     if (transaction && (transaction.hash.toLowerCase() !== intent.hash.toLowerCase() || transaction.blockHash !== null))
       throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
     if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
+    // An accepted send is normally mined within a block or two. Resending or simulating it
+    // meanwhile only races its inclusion, so poll for the receipt until the grace elapses.
+    if (awaitInclusion && intent.acceptedAt != null && this.now() - intent.acceptedAt < this.inclusionGraceMs) {
+      await this.sleep(Math.min(this.inclusionPollMs, intent.acceptedAt + this.inclusionGraceMs - this.now()));
+      assertLease();
+      return "waiting";
+    }
     if (recovery && pass.recoveryTrace) pass.recoveryTrace.stage="retry-hold";
     if (intent.nextRetry > this.now()) {
       if (intent.attempts >= 3) throw recovery ? new RecoveryReadinessError("retry-cooldown", "recoverable pending; bounded retry cooling down") : this.replayError(intent, "recoverable pending; bounded retry cooling down");
@@ -865,7 +930,8 @@ export class ResolverTransactionCoordinator {
       intent.replayState="ready";
     }
     if(pass.recoveryTrace)pass.recoveryTrace.stage="dispatch";
-    await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
+    await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard, awaitInclusion);
+    return "sent";
   }
 
   private assertPreparedAdmission(chainId: number, address: Hex): void {
@@ -1262,7 +1328,7 @@ export class ResolverTransactionCoordinator {
             const intent: ReplayIntent = { operationId: request.operationId, nonce, hash: prepared.hash,
               membership: prepared.membership, raw: prepared.serializedTransaction, attempts: 0, nextRetry: 0,
               replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };
-            await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
+            await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast, true);
             hash = prepared.hash;
             await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
             // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
@@ -1498,6 +1564,30 @@ export class ResolverTransactionCoordinator {
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now);
     }).immediate();
+  }
+
+  /** Bounded, throttled retention for the append-only audit trail. Admission state lives in
+   * attempts/intents/recovery tables, which this never touches. Sequence order is insertion order,
+   * so each pass only examines the oldest batch through the primary key. */
+  private pruneAudit(assertActive: () => void): void {
+    if (this.now() - this.lastAuditPruneMs < auditPruneIntervalMs) return;
+    this.lastAuditPruneMs = this.now();
+    try {
+      this.database.transaction(() => {
+        assertActive();
+        const head = (this.database.query("SELECT max(sequence) AS s FROM resolver_transaction_audit").get() as { s: number | null }).s;
+        if (head === null) return;
+        const expired = (this.database.query(`SELECT max(sequence) AS s FROM (SELECT sequence, created_at FROM resolver_transaction_audit
+          ORDER BY sequence LIMIT ?) WHERE created_at < ?`)
+          .get(auditPruneBatch, new Date(this.now() - this.auditRetentionMs).toISOString()) as { s: number | null }).s ?? 0;
+        const through = Math.max(expired, head - this.maxAuditRows);
+        if (through < 1) return;
+        this.database.query(`DELETE FROM resolver_transaction_audit WHERE sequence IN (SELECT sequence FROM resolver_transaction_audit
+          WHERE sequence <= ? ORDER BY sequence LIMIT ?)`).run(through, auditPruneBatch);
+      }).immediate();
+    } catch {
+      // Retention is housekeeping: a lost lease or busy journal retries on a later pass.
+    }
   }
 }
 

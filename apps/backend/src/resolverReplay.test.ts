@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,6 +87,94 @@ test("already-known reconciles delayed canonical receipt without interpreting er
     expect(f.rows().status).toBe("pending"); expect(f.counts().sends).toBe(1);
     f.mine(); expect(await f.restart().submit(f.request)).toBe(hash);
     expect(f.counts().sends).toBe(1);
+  });
+});
+
+test("accepted send awaits its receipt in the same pass without resending or re-simulating", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // the RPC accepts the exact bytes; Base mines them a block later
+    let polls = 0;
+    f.replay.getTransaction = async () => { f.order.push("transaction"); if (++polls === 3) f.mine(); return null; };
+    expect(await f.coordinator.submit(f.request)).toBe(hash);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.order.filter((step) => step === "validate")).toEqual([]);
+    expect(f.rows().attempts).toBe(1);
+  });
+});
+
+test("receipt that appears between the receipt and transaction reads reconciles without blocking", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {});
+    f.replay.getTransaction = async () => { f.order.push("transaction"); f.mine(); return { hash, blockHash: hash }; };
+    expect(await f.coordinator.submit(f.request)).toBe(hash);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+  });
+});
+
+test("accepted but dropped envelope resends identical bytes only after the inclusion grace", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // accepted every time, never mined
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down");
+    expect(f.counts()).toEqual({ signs: 1, sends: 3 });
+    expect(new Set(f.bytes).size).toBe(1);
+    const sendIndexes = f.order.flatMap((step, i) => step === "send" ? [i] : []);
+    // Every resend is preceded by receipt polls rather than issued back-to-back.
+    for (const [n, i] of sendIndexes.entries()) if (n > 0)
+      expect(f.order.slice(sendIndexes[n - 1]! + 1, i).filter((step) => step === "receipt").length).toBeGreaterThan(2);
+  });
+});
+
+test("blocked reconciliation reports the real error, not the finalized-recovery placeholder", async () => {
+  await fixture(async (f) => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down");
+      const binding = JSON.stringify({ chainId, address: account.address.toLowerCase(), nonce: 3 });
+      f.mutate(`INSERT INTO resolver_nonce_recovery(chain_id,resolver_address,nonce,binding,original_hash,max_fee_wei,finalized)
+        VALUES (${chainId},'${account.address.toLowerCase()}',3,'${binding}','0x${"ab".repeat(32)}','1',1)`);
+      warn.mockClear();
+      await expect(f.restart().reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("observer required");
+      const events = warn.mock.calls.map(([line]) => JSON.parse(String(line))).filter((event) => event.kind === "resolver_reconciliation_blocked");
+      expect(events).toHaveLength(1);
+      expect(events[0].reason).toContain("recovery-aware mission observer required");
+      expect(events[0]).toMatchObject({ recoveryGroups: 1, heldRecoveryGroups: 0 });
+      expect(events[0].recoveryNote).toBeUndefined();
+      expect(typeof events[0].slowestReadMs).toBe("number");
+      f.mutate("UPDATE resolver_nonce_recovery SET finalized = 0");
+      warn.mockClear();
+      await expect(f.restart().reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("observer required");
+      const held = warn.mock.calls.map(([line]) => JSON.parse(String(line))).find((event) => event.kind === "resolver_reconciliation_blocked");
+      expect(held.reason).toContain("recovery-aware mission observer required");
+      expect(held).toMatchObject({ heldRecoveryGroups: 1, recoveryNote: expect.stringContaining("recovery reconciliation held") });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(signed.slice(2));
+    } finally { warn.mockRestore(); }
+  });
+});
+
+test("audit trail is pruned in bounded batches by age and row cap without touching admission state", async () => {
+  await fixture(async (f) => {
+    f.send(async () => { f.mine(); });
+    expect(await f.coordinator.submit(f.request)).toBe(hash);
+    const d = new Database(f.path);
+    const insert = d.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'confirmed',?)");
+    d.transaction(() => { for (let i = 0; i < 7000; i++) insert.run(chainId, account.address.toLowerCase(), "old:" + i, i, new Date(0).toISOString()); })();
+    const count = () => (d.query("SELECT count(*) AS n FROM resolver_transaction_audit").get() as { n: number }).n;
+    const before = count();
+    const attempts = () => d.query("SELECT * FROM resolver_transaction_attempts ORDER BY operation_id").all();
+    const keptAttempts = JSON.stringify(attempts());
+    const c = new ResolverTransactionCoordinator(f.path, { now: () => 1000 + 15 * 24 * 60 * 60_000, leaseRenewIntervalMs: 1000000, maxAuditRows: 100000 });
+    c.setPreparedReplayer(chainId, account.address, f.replay);
+    await c.reconcilePrepared(chainId, account.address, f.reconcile);
+    expect(count()).toBe(before - 5000); // one bounded batch
+    await c.reconcilePrepared(chainId, account.address, f.reconcile);
+    expect(count()).toBe(before - 5000); // throttled
+    const capped = new ResolverTransactionCoordinator(f.path, { now: () => 1000, leaseRenewIntervalMs: 1000000, maxAuditRows: 10 });
+    capped.setPreparedReplayer(chainId, account.address, f.replay);
+    await capped.reconcilePrepared(chainId, account.address, f.reconcile);
+    expect(count()).toBe(10);
+    expect(JSON.stringify(attempts())).toBe(keptAttempts);
+    expect(f.rows().status).not.toBe("pending");
+    d.close();
   });
 });
 

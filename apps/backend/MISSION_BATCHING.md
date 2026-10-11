@@ -184,7 +184,26 @@ unchecked history; cold work stops at exactly 128 units and retries reuse comple
 receipt hydration. 25 ms test deadlines release the lease, block repeated unresolved
 reads, and reject late finality/member results without journal writes or sends.
 The resolver_reconciliation_blocked event reports checked/retained lower bound,
-work count, duration, limits, reason and operator action. Window-full: wait for
+work count, duration, limits, the real sanitized reason (plus `category` for
+classified readiness errors) and operator action. `recoveryGroups` counts retained
+same-nonce recovery groups; only `heldRecoveryGroups` (unfinalized) adds the
+`recoveryNote`. `slowestReadMs` is the longest single read; `timerLagMs` appears
+when the deadline timer fired late, meaning the process itself was stalled (event
+loop or synchronous disk I/O), not that the RPC was slow.
+
+After the RPC accepts a batch's exact bytes, reconciliation polls for its receipt
+for up to 6 seconds (`inclusionGraceMs`, one or two Base blocks) instead of
+re-simulating and resending identical bytes at 250/500 ms. Resending before
+inclusion only raced the block, used up all three attempts within a second, and
+blocked admission behind the 60 s cooldown. A transaction that is mined between the
+receipt and transaction reads gets one immediate receipt re-read. Failed or unknown
+sends keep the fast identical-byte retry schedule, and recovery intents keep their
+explicit schedule.
+
+`resolver_transaction_audit` is local diagnostics that admission never reads. Each
+successful pass prunes at most 5,000 of its oldest rows per minute, keeping 14 days
+and at most 200,000 rows. `journalBytes` counts used pages plus WAL, because SQLite
+reuses freed pages before it grows the file. Window-full: wait for
 explicit finality while continuing empty-queue reconciliation. RPC/deadline/
 unresolved: repair RPC or wait for its outstanding read, then retry. Reorg/missing
 receipt: preserve the journal and perform explicit canonical operator recovery;
