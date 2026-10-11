@@ -115,11 +115,15 @@ export class EventLoopLagMonitor {
       // interval of wall time and a periodic freeze cannot hide below the p99. The tick recorded
       // with lag m was due at sampledAt - m, so a freeze that began before the window only
       // contributes the ticks that were due inside it.
+      if (lagMs < interval) {
+        values.push(lagMs);
+        continue;
+      }
       let missed = lagMs;
       const inWindowMs = sampledAt - windowStart;
       if (missed > inWindowMs) missed -= Math.ceil((missed - inWindowMs) / interval) * interval;
-      if (missed < interval && lagMs >= interval) missed = ((lagMs - interval) % interval) + interval;
-      if (missed < interval) missed = Math.min(missed, lagMs);
+      // A fire inside the window always counts once, as the smallest tick of its freeze.
+      if (missed < interval) missed = ((lagMs - interval) % interval) + interval;
       for (; ; missed -= interval) {
         values.push(missed);
         if (missed - interval < interval) break;

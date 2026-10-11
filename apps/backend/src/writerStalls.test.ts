@@ -159,6 +159,18 @@ describe("EventLoopLagMonitor", () => {
     expect(window).toMatchObject({ p50Ms: 20_100, p99Ms: 49_500, maxMs: 24 * 60 * 60 * 1_000 - 100, over1000Ms: 1 });
   });
 
+  test("a short lag at the window start is kept as measured", () => {
+    let now = 0;
+    const monitor = new EventLoopLagMonitor({ now: () => now, log: () => undefined });
+    now = 1_010;
+    monitor.record(50);
+    now = 2_000;
+    // The window starts at 1_000: the fire at 1_010 is inside, its 50 ms lag began before it.
+    expect(monitor.window(1_000)).toMatchObject({ samples: 1, p50Ms: 50, maxMs: 50 });
+    monitor.record(2);
+    expect(monitor.window(1_000)).toMatchObject({ samples: 2, p50Ms: 50, maxMs: 50 });
+  });
+
   test("caches the hour snapshot that the public /health returns", () => {
     let now = 0;
     const monitor = new EventLoopLagMonitor({ now: () => now, log: () => undefined });
