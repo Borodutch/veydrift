@@ -1175,7 +1175,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       // Retirement needs a containing-header observation AFTER finalized identity.
       // Otherwise an ordinary reorg during the finality reads can promote an old
       // branch receipt and irreversibly discard both signed envelopes.
-      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
+      if (pass.intentIdentity && pass.archive) {
+        finalized = await this.archiveFinality(pass);
+        // Retirement cannot happen until finality reaches the row, and the checked frontier
+        // already proves its ancestry. Re-reading its header every pass only adds RPC
+        // round trips (and tail-latency deadline risk) to admission; check it once it is retirable.
+        if (!stored.finalized && (finalized === null || BigInt(stored.blockNumber) > finalized)) return stored;
+      }
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
       if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();

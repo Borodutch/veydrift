@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,6 +77,32 @@ test("exhaustion persists actionable cooldown; restart retries same bytes once p
     f.advance(60000); f.send(async () => { f.mine(); });
     expect(await f.restart().submit(f.request)).toBe(hash);
     expect(f.counts()).toEqual({ signs: 1, sends: 5 });
+  });
+});
+
+test("fresh broadcast held in the mempool polls to inclusion without resending or consuming retries", async () => {
+  await fixture(async (f) => {
+    let lookups = 0;
+    f.send(async () => {});
+    f.replay.getTransaction = async () => { f.order.push("transaction"); if (++lookups === 3) f.mine(); return { hash, blockHash: null }; };
+    expect(await f.coordinator.submit(f.request)).toBe(hash);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.order.filter((step) => step === "validate")).toHaveLength(0);
+  });
+});
+
+test("mempool transaction that stays unmined blocks as awaiting inclusion with bounded polls, never a resend", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {});
+    f.replay.getTransaction = async () => { f.order.push("transaction"); return { hash, blockHash: null }; };
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("broadcast awaiting inclusion");
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.rows().attempts).toBe(1); expect(f.rows().status).toBe("pending");
+    expect(f.order.filter((step) => step === "transaction").length).toBeLessThanOrEqual(10);
+    // Dropped from the mempool: the ordinary identical-byte replay schedule still applies.
+    f.replay.getTransaction = async () => null; f.send(async () => { f.mine(); });
+    expect(await f.restart().submit(f.request)).toBe(hash);
+    expect(f.counts()).toEqual({ signs: 1, sends: 2 });
   });
 });
 
@@ -220,5 +246,41 @@ test.each(["ready", "attempt-recorded"])("restart after %s but before RPC replay
     f.send(async () => { f.mine(); });
     expect(await f.restart().submit(f.request)).toBe(hash);
     expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+  });
+});
+
+test("blocked event keeps the real cause when only finalized recovery lineage is retained", async () => {
+  await fixture(async (f) => {
+    f.mutate(`INSERT INTO resolver_nonce_recovery (chain_id,resolver_address,nonce,binding,original_hash,max_fee_wei,finalized)
+      VALUES (${chainId},'${account.address.toLowerCase()}',3,'{}','0x${"ab".repeat(32)}','1',1)`);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(f.coordinator.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("observer required");
+      const event = JSON.parse(warn.mock.calls.map((call) => String(call[0])).find((line) => line.includes("resolver_reconciliation_blocked"))!);
+      expect(event).toMatchObject({ recoveryGroups: 1, heldRecoveryGroups: 0, reason: expect.stringContaining("observer required") });
+      expect(event.recoveryNote).toBeUndefined();
+      expect(typeof event.slowestReadMs).toBe("number");
+    } finally { warn.mockRestore(); }
+  });
+});
+
+test("a synchronous process stall is credited to the read deadline; a slow read still expires it", async () => {
+  await fixture(async (f) => {
+    const proven = { finalized: false, blockNumber: "10", blockHash: hash, outcomes: "[]", admissionProven: true };
+    f.send(async () => {});
+    expect(await f.coordinator.submit({ ...f.request, reconcilePrepared: async () => proven })).toBe(hash);
+    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 200, leaseRenewIntervalMs: 1000000 });
+    const block = (ms: number) => { const until = performance.now() + ms; while (performance.now() < until) { /* frozen event loop */ } };
+    let stalls = 0;
+    await c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => { if (!stalls++) block(350); return stored; });
+    expect(stalls).toBe(3); // frontier before, archival page, frontier after
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => {
+        await new Promise((resolve) => setTimeout(resolve, 350)); return stored;
+      })).rejects.toThrow("read deadline exceeded");
+      const event = JSON.parse(String(warn.mock.calls.find((call) => String(call[0]).includes("resolver_reconciliation_blocked"))![0]));
+      expect(event.stalledMs).toBeLessThan(100);
+    } finally { warn.mockRestore(); }
   });
 });

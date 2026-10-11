@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keccak256, parseTransaction, encodeFunctionResult, type Hex, type PublicClient } from "viem";
@@ -298,5 +298,45 @@ test("lease loss after finality lookup fences retirement and retains bytes on re
     f.restart(); await expect(f.reconcile()).rejects.toThrow();
     expect(archiveEvidence(f)).toEqual(before);
     expect(f.counters().signatures).toBe(1);
+  } finally { f.close(); }
+});
+
+test("frozen finality does not re-read every retained confirmed row on each admission pass", async () => {
+  const f = fixture();
+  try {
+    for (let n = 0; n < 12; n++) await f.submit();
+    f.db.query("UPDATE resolver_archive_progress SET cursor_nonce=-1").run();
+    f.resetReads(); await f.reconcile();
+    // Frontier proof twice plus one shared finalized-tag snapshot; no per-row headers below finality.
+    expect(f.counters().reads).toBeLessThanOrEqual(8);
+    expect(f.db.query("SELECT cursor_nonce FROM resolver_archive_progress").get()).toEqual({ cursor_nonce: 7 });
+    f.finality(2000n); for (let n = 0; n < 3; n++) await f.reconcile();
+    expect(f.client.admissionSnapshot()).toMatchObject({ retainedConfirmed: 0, blockedReason: null });
+  } finally { f.close(); }
+});
+
+test("audit rows past retention move to a private archive and the journal stays bounded", async () => {
+  const f = fixture();
+  try {
+    const insert = f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (8453,'0x01',?,1,NULL,'confirmed','2026-01-01T00:00:00.000Z')");
+    f.db.transaction(() => { for (let n = 0; n < 15_000; n++) insert.run("mission:old:" + n); })();
+    const old = () => f.db.query("SELECT count(*) AS n FROM resolver_transaction_audit WHERE created_at < '2026-02-01'").get();
+    const liveBytes = () => { f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); return f.client.admissionSnapshot()!.journalBytes; };
+    const before = liveBytes();
+    await f.submit(); // a successful pass archives one bounded batch
+    expect(old()).toEqual({ n: 5_000 });
+    await f.reconcile(); expect(old()).toEqual({ n: 5_000 }); // throttled within the minute
+    // Recent evidence follows the old rows and must never move.
+    const recent = f.db.query("SELECT * FROM resolver_transaction_audit WHERE created_at > '2026-02-01' ORDER BY sequence").all();
+    expect(recent).toHaveLength(3);
+    f.restart(); await f.reconcile();
+    expect(f.db.query("SELECT * FROM resolver_transaction_audit ORDER BY sequence").all()).toEqual(recent);
+    const archive = new Database(f.path + "-audit-archive", { readonly: true });
+    try {
+      expect(archive.query("SELECT count(*) AS n, min(operation_id) AS lo FROM resolver_transaction_audit").get()).toEqual({ n: 15_000, lo: "mission:old:0" });
+    } finally { archive.close(); }
+    expect(statSync(f.path + "-audit-archive").mode & 0o777).toBe(0o600);
+    // Freed pages are reused before the file grows, so they no longer count against the budget.
+    expect(liveBytes()).toBeLessThan(before / 2);
   } finally { f.close(); }
 });
