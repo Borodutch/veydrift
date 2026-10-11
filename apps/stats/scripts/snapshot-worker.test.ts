@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initializeStatsStore, refreshPublicStats, readPersistedStatsSnapshot } from "../../backend/src/stats";
@@ -71,6 +71,19 @@ test("independent concurrent workers serialize persisted cursors and restart wit
     const source = new Database(f.sourcePath, { readonly: true });
     expect(source.query("SELECT COUNT(*) AS n FROM indexed_event_logs").get()).toEqual({ n: 12 });
     expect(source.query("SELECT name FROM sqlite_master WHERE name LIKE 'stats_%'").all()).toEqual([]); source.close();
+  } finally { rmSync(f.directory, { recursive: true, force: true }); }
+}, 15000);
+
+test("each worker leaves an empty WAL so later passes do not rewrite the whole store", async () => {
+  const f = fixture();
+  const walBytes = () => existsSync(`${f.storePath}-wal`) ? statSync(`${f.storePath}-wal`).size : 0;
+  try {
+    for (let pass = 0; pass < 5; pass++) {
+      await worker(f.env);
+      expect(walBytes()).toBe(0);
+    }
+    const store = new Database(f.storePath, { readonly: true });
+    expect(readPersistedStatsSnapshot(store)?.summary.events).toBe(12); store.close();
   } finally { rmSync(f.directory, { recursive: true, force: true }); }
 }, 15000);
 

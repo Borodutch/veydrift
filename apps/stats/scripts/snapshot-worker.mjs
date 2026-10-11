@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, realpathSync, statSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { initializeStatsStore, refreshPublicStats } from "../../backend/src/stats.ts";
+import { checkpointStatsStore, initializeStatsStore, refreshPublicStats } from "../../backend/src/stats.ts";
 
 const indexDbPath = process.env.VEYDRIFT_INDEX_DB_PATH ?? "/app/apps/backend/.data/contract-state.sqlite";
 
@@ -45,6 +45,7 @@ try {
     sourceId: `${sourcePath}:${sourceStat.dev}:${sourceStat.ino}`,
     batchSize: Number(process.env.VEYDRIFT_STATS_BATCH_SIZE ?? 5000)
   });
+  checkpointStatsStore(store);
   process.stdout.write(JSON.stringify(result));
 } finally {
   store.close();

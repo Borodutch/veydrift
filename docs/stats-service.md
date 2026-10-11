@@ -54,7 +54,14 @@ For configured event batch size **B**, a pass reads at most:
 - Constant-size source schema/reorg metadata and last-row seeks.
 
 The local audit side is bounded independently, so a large deleted source gap cannot
-cause an unbounded private reconciliation batch. `INSERT OR REPLACE` canonical
+cause an unbounded private reconciliation batch.
+
+Each worker ends with `PRAGMA wal_checkpoint(TRUNCATE)` on the private store, after its
+transaction commits. The worker is the only process that opens the store, and on Linux
+Bun's `close()` leaves the WAL in place. Without the explicit truncation the next worker
+rebuilt the WAL index from scratch, and its automatic checkpoint rewrote the whole store
+on every pass. In production that meant about 0.9 GB written per pass and a 14.7 GB WAL,
+which saturated the shared backend disk (#75). `INSERT OR REPLACE` canonical
 entities retain their unique identity even when their rowid moves. A pass publishes
 only after all append cursors catch up; marked-reorg reconciliation also holds the
 last good snapshot until the event historical audit completes. All private updates,

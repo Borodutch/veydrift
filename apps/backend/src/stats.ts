@@ -85,6 +85,16 @@ export function initializeStatsStore(store: Database): void {
   `);
 }
 
+// Every refresh runs in a short-lived worker process, and nothing else keeps the store open. On
+// Linux, Bun's close() does not checkpoint and reset the WAL. The next worker therefore rebuilt
+// the WAL index from scratch and forgot which frames were already copied back. Its automatic
+// checkpoint then rewrote every page of the store on each pass, while the WAL grew without bound
+// (in production, ~0.9 GB written per pass and a 14.7 GB WAL saturated the shared disk; #75).
+// Call this after the refresh commits, so the next worker starts from an empty WAL.
+export function checkpointStatsStore(store: Database): void {
+  store.query("PRAGMA wal_checkpoint(TRUNCATE)").all();
+}
+
 export function readPersistedStatsSnapshot(store: Database): PublicStatsSnapshot | null {
   const row = store.query("SELECT snapshot FROM stats_state WHERE id = 1").all()[0] as { snapshot: string | null } | null;
   return row?.snapshot ? JSON.parse(row.snapshot) as PublicStatsSnapshot : null;
