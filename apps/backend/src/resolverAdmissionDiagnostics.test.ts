@@ -79,3 +79,36 @@ test("audit history beyond retention is pruned in throttled, bounded batches; re
     expect(f.coordinator.admissionSnapshot(chainId, address).journalBytes).toBeLessThan(before);
   } finally { f.db.close(); }
 });
+
+test("audit pruning keeps unfinalized, unresolved and recovery evidence and steps past it", () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") };
+  const f = fixture(now), old = "2026-08-01T00:00:00.000Z", other = "0x" + "cd".repeat(20);
+  const insert = f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'confirmed',?)");
+  f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (?,?,'batch:pending',1,?,'[]','pending')")
+    .run(chainId, resolver, hash(1));
+  f.db.query("INSERT INTO resolver_nonce_recovery (chain_id,resolver_address,nonce,binding,original_hash,max_fee_wei,finalized) VALUES (?,?,2,'{}',?,'1',1)")
+    .run(chainId, resolver, hash(2));
+  f.db.query("INSERT INTO resolver_transaction_attempts (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,updated_at) VALUES (?,?,'op:unresolved',3,NULL,'submitted',?)")
+    .run(chainId, resolver, old);
+  f.db.transaction(() => {
+    // Retained evidence sits at the head of the table, so an oldest-row anchor would stall.
+    insert.run(chainId, resolver, "batch:pending", 1, old);
+    insert.run(chainId, resolver, "recovery", 2, old);
+    insert.run(chainId, resolver, "op:unresolved", 3, old);
+    insert.run(chainId, other, "batch:other", 1, old);
+    for (let i = 0; i < 6_000; i++) insert.run(chainId, resolver, "batch:old" + i, 10 + i, old);
+  })();
+  const prune = () => (f.coordinator as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void })
+    .pruneAuditHistory(chainId, address, () => {});
+  const remaining = () => (f.db.query("SELECT operation_id AS id FROM resolver_transaction_audit ORDER BY sequence").all() as { id: string }[]).map((row) => row.id);
+  try {
+    prune();
+    expect(remaining().length).toBe(4 + 1_003);
+    now.value += 60_000;
+    prune();
+    expect(remaining()).toEqual(["batch:pending", "recovery", "op:unresolved", "batch:other"]);
+    now.value += 60_000;
+    prune(); // the next cycle rescans from the oldest row and keeps the same evidence
+    expect(remaining()).toEqual(["batch:pending", "recovery", "op:unresolved", "batch:other"]);
+  } finally { f.db.close(); }
+});

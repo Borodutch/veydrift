@@ -163,7 +163,8 @@ export class ResolverTransactionCoordinator {
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
   private readonly auditRetentionMs: number;
-  private lastAuditPruneMs = -Infinity;
+  // Per resolver: last prune attempt and the audit sequence already swept this cycle.
+  private readonly auditPrune = new Map<string, { at: number; cursor: number }>();
   // A transport may not support abort. Never stack abandoned reads on the same signer.
   private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
   private readonly now: () => number;
@@ -374,29 +375,48 @@ export class ResolverTransactionCoordinator {
     return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
       async (assertLease) => {
         await this.reconcileIntents(chainId, address, confirm, assertLease);
-        this.pruneAuditHistory(assertLease);
+        this.pruneAuditHistory(chainId, address, assertLease);
       }))
       .catch(error => { throw new ResolverAdmissionBlockedError(error); });
   }
 
-  /** Throttled, rowid-bounded deletion of expired audit history (one short write per minute). */
-  private pruneAuditHistory(assertLease: () => void): void {
-    const now = this.now();
-    if (now - this.lastAuditPruneMs < auditPruneIntervalMs) return;
-    this.lastAuditPruneMs = now;
-    const cutoff = new Date(now - this.auditRetentionMs).toISOString();
-    const oldest = this.database.query("SELECT sequence, created_at AS createdAt FROM resolver_transaction_audit ORDER BY sequence LIMIT 1")
-      .get() as { sequence: number; createdAt: string } | null;
-    if (!oldest || oldest.createdAt >= cutoff) return;
+  /**
+   * Throttled, bounded deletion of this resolver's expired audit history (one short write per
+   * minute). Rows for an unfinalized intent, an unresolved attempt or any recovery lineage are
+   * evidence and stay; a sequence cursor sweeps past them so they never stall pruning, and the
+   * sweep restarts from the oldest row once it reaches unexpired history.
+   */
+  private pruneAuditHistory(chainId: number, address: Hex, assertLease: () => void): void {
+    const key = resolverKey(chainId, address), now = this.now();
+    const state = this.auditPrune.get(key) ?? { at: -Infinity, cursor: 0 };
+    if (now - state.at < auditPruneIntervalMs) return;
+    state.at = now;
+    this.auditPrune.set(key, state);
     try {
-      this.database.transaction(() => {
+      const resolver = normalizeAddress(address), cutoff = new Date(now - this.auditRetentionMs).toISOString();
+      const rows = this.database.query(`SELECT sequence, created_at AS createdAt FROM resolver_transaction_audit
+        WHERE sequence > ? AND chain_id=? AND resolver_address=? ORDER BY sequence LIMIT ?`)
+        .all(state.cursor, chainId, resolver, auditPruneBatchRows) as Array<{ sequence: number; createdAt: string }>;
+      const live = rows.findIndex((row) => row.createdAt >= cutoff);
+      const end = (live === -1 ? rows.at(-1) : rows[live - 1])?.sequence;
+      if (end !== undefined) this.database.transaction(() => {
         assertLease();
-        this.database.query("DELETE FROM resolver_transaction_audit WHERE sequence < ? AND created_at < ?")
-          .run(oldest.sequence + auditPruneBatchRows, cutoff);
+        this.database.query(`DELETE FROM resolver_transaction_audit AS a
+          WHERE a.sequence > ? AND a.sequence <= ? AND a.chain_id=? AND a.resolver_address=? AND a.created_at < ?
+            AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g
+              WHERE g.chain_id=a.chain_id AND g.resolver_address=a.resolver_address AND g.nonce=a.nonce)
+            AND NOT EXISTS (SELECT 1 FROM resolver_prepared_intents i
+              WHERE i.chain_id=a.chain_id AND i.resolver_address=a.resolver_address AND i.nonce=a.nonce AND i.status != 'finalized')
+            AND NOT EXISTS (SELECT 1 FROM resolver_transaction_attempts t
+              WHERE t.chain_id=a.chain_id AND t.resolver_address=a.resolver_address AND t.operation_id=a.operation_id
+                AND t.status IN ('allocating','ambiguous','submitted'))`)
+          .run(state.cursor, end, chainId, resolver, cutoff);
       }).immediate();
+      // Caught up (unexpired history or end of table): rescan retained rows next cycle.
+      state.cursor = live === -1 && rows.length === auditPruneBatchRows ? end! : 0;
     } catch (error) {
       // Housekeeping never blocks admission; the next interval retries.
-      emitObservabilityEvent({ kind: "resolver_audit_prune_failed", reason: safeDiagnosticText(error) }, "warn");
+      emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address, reason: safeDiagnosticText(error) }, "warn");
     }
   }
 
@@ -610,10 +630,18 @@ export class ResolverTransactionCoordinator {
     let reads = 0, checked = 0, active = true, slowestReadMs = 0;
     // Diagnostics only: where the pass stopped, and whether a slow read or an
     // event-loop/disk stall consumed the deadline (slow read vs. small slowestReadMs).
-    let stage: "recovery" | "frontier" | "active" | "archive" | "final-frontier" = "recovery";
+    let stage: "preflight" | "recovery" | "frontier" | "active" | "archive" | "final-frontier" = "preflight";
     let budgetError: Error | undefined;
-    const blocked = (reason: string) => new RecoveryReadinessError(reason === "read deadline exceeded" ? "pass-deadline" : reason === "read budget exhausted" ? "pass-budget" : "proof-rejected", "resolver reconciliation backpressure: " + reason
-      + "; no nonce allocated; check RPC/finality and retry, preserve the intent journal");
+    // Only these local blocks are genuine proof rejections; the rest keep their legacy error
+    // code but must not be reported as `reasonCode: proof-rejected` (the reason text is exact).
+    const proofReasons = ["canonical checkpoint contradiction", "unbound confirmation proof", "confirmed nonce/block order contradiction"];
+    const uncodedBlocks = new WeakSet<Error>();
+    const blocked = (reason: string) => {
+      const error = new RecoveryReadinessError(reason === "read deadline exceeded" ? "pass-deadline" : reason === "read budget exhausted" ? "pass-budget" : "proof-rejected", "resolver reconciliation backpressure: " + reason
+        + "; no nonce allocated; check RPC/finality and retry, preserve the intent journal");
+      if (error.reason === "proof-rejected" && !proofReasons.includes(reason)) uncodedBlocks.add(error);
+      return error;
+    };
     const deadline = started + this.reconciliationTimeoutMs;
     const assertActive = () => {
       if (budgetError) throw budgetError;
@@ -684,6 +712,7 @@ export class ResolverTransactionCoordinator {
     } };
     try {
       if (this.unfinishedReconciliations.has(key)) throw blocked("previous read still unresolved");
+      stage = "recovery";
       for (const group of groups) await bounded(() => this.reconcileRecoveryGroup(chainId, address, group, pass, allowPreparation));
       stage = "frontier";
       const verifyFrontier = async () => {
@@ -781,7 +810,7 @@ export class ResolverTransactionCoordinator {
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
         durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
         stage, slowestReadMs: Math.round(slowestReadMs), reason: safeDiagnosticText(error),
-        ...(error instanceof RecoveryReadinessError ? { reasonCode: error.reason } : {}),
+        ...(error instanceof RecoveryReadinessError && !uncodedBlocks.has(error) ? { reasonCode: error.reason } : {}),
         // Retained (even finalized) lineage is context, never a substitute for the real error.
         ...(groups.length ? { recoveryGroups: groups.length, recoveryNote: "recovery lineage retained; inspect public lineage and prerequisites" } : {}),
         action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
@@ -1314,10 +1343,11 @@ export class ResolverTransactionCoordinator {
               replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };
             await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
             hash = prepared.hash;
-            // A just-accepted envelope cannot have a receipt yet. Reconciling at once made the
-            // pass resend identical bytes twice within ~1s, exhaust the bounded replay budget
-            // and block admission for a healthy, soon-mined batch. Await inclusion first;
-            // reconciliation stays authoritative and replays only if inclusion never comes.
+            // A just-sent envelope (accepted, or with an ambiguous transport result) cannot have a
+            // receipt yet. Reconciling at once made the pass resend identical bytes twice within
+            // ~1s, exhaust the bounded replay budget and block admission for a healthy, soon-mined
+            // batch. Await inclusion first; reconciliation stays authoritative and replays only if
+            // inclusion never comes.
             if (intent.replayState === "retryable") await request.confirm(hash).catch(() => {});
             await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
             // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
