@@ -98,22 +98,31 @@ export class EventLoopLagMonitor {
 
   window(windowMs: number, at = this.now()): EventLoopLagWindow {
     const values: number[] = [];
+    const interval = this.sampleIntervalMs;
     let over500Ms = 0;
     let over1000Ms = 0;
+    let maxMs = 0;
     const windowStart = at - windowMs;
     for (let index = 0; index < this.count; index += 1) {
       const sampledAt = this.sampledAt[index]!;
       if (sampledAt < windowStart) continue;
       const lagMs = this.samples[index]!;
+      maxMs = Math.max(maxMs, lagMs);
       if (lagMs > 500) over500Ms += 1;
       if (lagMs > 1_000) over1000Ms += 1;
       // A freeze of any length delays only one timer fire. Also record the ticks it swallowed
       // (L - interval, L - 2·interval, …), HdrHistogram-style, so each sample stands for one
-      // interval of wall time and a periodic freeze cannot hide below the p99. Ticks swallowed
-      // before the window starts are left out, so a long pause cannot flood every later window.
-      for (let missed = lagMs, missedAt = sampledAt; ; missed -= this.sampleIntervalMs, missedAt -= this.sampleIntervalMs) {
+      // interval of wall time and a periodic freeze cannot hide below the p99. The tick recorded
+      // with lag m was due at sampledAt - m, so a freeze that began before the window only
+      // contributes the ticks that were due inside it.
+      let missed = lagMs;
+      const inWindowMs = sampledAt - windowStart;
+      if (missed > inWindowMs) missed -= Math.ceil((missed - inWindowMs) / interval) * interval;
+      if (missed < interval && lagMs >= interval) missed = ((lagMs - interval) % interval) + interval;
+      if (missed < interval) missed = Math.min(missed, lagMs);
+      for (; ; missed -= interval) {
         values.push(missed);
-        if (missed - this.sampleIntervalMs < this.sampleIntervalMs || missedAt - this.sampleIntervalMs < windowStart) break;
+        if (missed - interval < interval) break;
       }
     }
     values.sort((left, right) => left - right);
@@ -125,7 +134,7 @@ export class EventLoopLagMonitor {
       samples: values.length,
       p50Ms: Math.round(percentile(0.5)),
       p99Ms: Math.round(percentile(0.99)),
-      maxMs: Math.round(values.at(-1) ?? 0),
+      maxMs: Math.round(maxMs),
       over500Ms,
       over1000Ms
     };

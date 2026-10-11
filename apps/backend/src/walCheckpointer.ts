@@ -157,7 +157,10 @@ export class WalCheckpointer {
       this.onResult({ databasePath, ok: false, error: "WAL checkpoint worker error", durationMs: 0 });
     }
     if (!this.anyPass && !this.workerFailureReported) {
+      // The writer checkpoints on its own thread from here on; a worker that survived its error
+      // must not start offloading again behind that fallback.
       this.workerFailureReported = true;
+      try { this.worker.terminate(); } catch {}
       this.onWorkerFailed?.();
     }
   }

@@ -115,8 +115,9 @@ describe("EventLoopLagMonitor", () => {
     // 990 on-time fires, 9 × 600 ms (6 intervals each) and one 2.5 s freeze (25 intervals).
     const window = monitor.window(60 * 60 * 1_000);
     expect(window).toMatchObject({ samples: 1_069, p50Ms: 2, p99Ms: 1_500, maxMs: 2_500, over500Ms: 10, over1000Ms: 1 });
-    // The 600 ms fire at 90.1 s swallowed one tick inside the window (90.0 s) and five before it.
-    expect(monitor.window(10_000).samples).toBe(102);
+    // The 600 ms fire at 90.1 s swallowed one tick due inside the window (lag 100 ms, due 90.0 s);
+    // its other ticks were due before the window starts.
+    expect(monitor.window(10_000)).toMatchObject({ samples: 101, maxMs: 600, over500Ms: 1 });
     expect(lines).toEqual(['writer_event_loop_stall {"lagMs":2500}']);
   });
 
@@ -152,10 +153,10 @@ describe("EventLoopLagMonitor", () => {
       monitor.record(2);
     }
     const window = monitor.window(60_000);
-    // 100 on-time fires over the last 10 s plus the pause's 501 intervals in the 50 s before.
-    expect(window.samples).toBe(601);
-    expect(window.maxMs).toBe(24 * 60 * 60 * 1_000 - 100);
-    expect(window.over1000Ms).toBe(1);
+    // 100 on-time fires over the last 10 s plus the pause's 500 ticks due in the 50 s before:
+    // lags 100 ms … 50 s, never more than the window can hold.
+    expect(window.samples).toBe(600);
+    expect(window).toMatchObject({ p50Ms: 20_100, p99Ms: 49_500, maxMs: 24 * 60 * 60 * 1_000 - 100, over1000Ms: 1 });
   });
 
   test("caches the hour snapshot that the public /health returns", () => {
@@ -292,6 +293,7 @@ describe("WalCheckpointer", () => {
       fail();
       fail();
       expect(failures).toBe(1);
+      expect(worker.terminated).toBe(true);
       expect(checkpointer.snapshot().index).toMatchObject({ failures: 2, lastError: "WAL checkpoint worker error", mode: "main-thread-fallback" });
       expect(warnings.some((warning) => warning.includes("ModuleNotFound"))).toBe(true);
 
