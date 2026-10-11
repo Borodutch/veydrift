@@ -30,6 +30,7 @@ import {
 import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 
 /**
  * Minimal RandomnessEngine ABI: the commit-reveal surface the backend fulfiller drives. Keeping it
@@ -424,6 +425,7 @@ export class RandomnessCommitterService {
   private readonly fulfillerAddress: string | null;
   private readonly logger: RandomnessCommitterLogger;
   private readonly readinessSnapshotEnabled: boolean;
+  private readonly store: RandomnessCommitmentStore;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
@@ -466,6 +468,7 @@ export class RandomnessCommitterService {
     // Unit/integration callers often inject an in-memory store and run in parallel. Only the
     // production-selected durable store is allowed to publish the cross-process readiness file.
     this.readinessSnapshotEnabled = options.store === undefined;
+    this.store = store;
     this.worker = chainClient
       ? new RandomnessCommitmentWorker(
           chainClient,
@@ -474,6 +477,11 @@ export class RandomnessCommitterService {
         )
       : undefined;
     this.enabled = Boolean(this.worker);
+  }
+
+  /** The durable SQLite store's WAL for the writer's off-thread checkpointer (#74). */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    return this.store instanceof SqliteRandomnessCommitmentStore ? this.store.walCheckpointTarget() : null;
   }
 
   start(): void {

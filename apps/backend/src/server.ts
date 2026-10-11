@@ -64,6 +64,8 @@ import { applyMissionEligibility, missionEligibilityPath } from "./missionEligib
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { EventLoopLagMonitor } from "./eventLoopLag";
+import { WalCheckpointer, type WalCheckpointTarget, type WalCheckpointWorker } from "./walCheckpointer";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -375,6 +377,9 @@ export type ServerDependencies = {
   walletMessageVerifier?: WalletMessageVerifier;
   // Test seam for the narrowly scoped WalletConnect read-only RPC proxy.
   walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
+  // Production default: index WAL checkpoints run on a worker thread, not the writer's event loop.
+  offThreadWalCheckpoint?: boolean;
+  createWalCheckpointWorker?: () => WalCheckpointWorker;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -635,7 +640,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift alliance-state heal failed", safeDiagnosticText(error));
       });
   }
-  if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
+  // Writer stalls block chain sync, the mission tick and lease renewals; measure them (#74).
+  const eventLoopLag = usesProductionDependencies && isWriter && loaded.problems.length === 0 ? new EventLoopLagMonitor() : null;
+  eventLoopLag?.start();
+  let walCheckpointer: WalCheckpointer | null = null;
+  let mainThreadWalMaintenance: ReturnType<typeof setInterval> | undefined;
+  const startMainThreadWalCheckpoints = () => {
+    if (mainThreadWalMaintenance || !isWriter || !indexer || typeof indexer.checkpointWal !== "function" || loaded.problems.length > 0) return;
     const checkpointWal = () => {
       try {
         const result = indexer.checkpointWal("PASSIVE");
@@ -648,8 +659,50 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     };
     checkpointWal();
-    const walMaintenance = setInterval(checkpointWal, 60_000);
-    walMaintenance.unref?.();
+    mainThreadWalMaintenance = setInterval(checkpointWal, 60_000);
+    mainThreadWalMaintenance.unref?.();
+  };
+  const offThreadWalCheckpoint = (dependencies.offThreadWalCheckpoint ?? usesProductionDependencies)
+    && isWriter
+    && loaded.problems.length === 0
+    && loaded.config.indexDbPath !== ":memory:"
+    && typeof indexer?.setWalAutoCheckpoint === "function";
+  if (offThreadWalCheckpoint && indexer) {
+    // Checkpoint copies and fsyncs took the writer's event loop for 0.9 s+ at a time on the shared
+    // disk. Run them on a worker thread and stop the writer connections' commit-time checkpoints.
+    // The small lease/journal stores add a few frames per tick, so they checkpoint every 5 min.
+    const targets: WalCheckpointTarget[] = [{
+      name: "index",
+      databasePath: loaded.config.indexDbPath,
+      setAutoCheckpoint: (pages) => indexer.setWalAutoCheckpoint(pages)
+    }];
+    const stores = {
+      resolverTransactions: resolverTransactions?.walCheckpointTarget?.(),
+      randomnessCommitments: randomnessCommitter?.walCheckpointTarget?.(),
+      battleReports: battleReferee?.walCheckpointTarget?.()
+    };
+    for (const [name, target] of Object.entries(stores)) {
+      if (target) targets.push({ name, ...target, intervalMs: 300_000 });
+    }
+    // If the worker cannot start, every writer connection still autocheckpoints (that is only
+    // switched off after a worker pass), so keep booting and checkpoint the index on the writer
+    // thread as before. Bun 1.1 throws synchronously for a missing worker module; newer Bun
+    // reports it through the worker's error event.
+    try {
+      walCheckpointer = new WalCheckpointer({
+        targets,
+        onWorkerFailed: () => {
+          console.warn("Veydrift SQLite WAL checkpoint worker failed before its first pass; checkpointing on the writer thread");
+          startMainThreadWalCheckpoints();
+        },
+        ...(dependencies.createWalCheckpointWorker ? { createWorker: dependencies.createWalCheckpointWorker } : {})
+      });
+    } catch (error) {
+      console.warn("Veydrift SQLite WAL checkpoint worker failed to start; checkpointing on the writer thread", safeDiagnosticText(error));
+      startMainThreadWalCheckpoints();
+    }
+  } else {
+    startMainThreadWalCheckpoints();
   }
 
   const responseCache = new Map<string, CachedJsonResponse>();
@@ -898,6 +951,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           battleReferee: battleReferee?.snapshot() ?? null,
           indexer: indexerSnapshot,
+          eventLoopLag: eventLoopLag?.snapshot() ?? null,
+          walCheckpoint: walCheckpointer?.snapshot() ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null,
           chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
           paidAllianceRpc: paidAllianceInviteReader?.rpcMetrics?.() ?? null,
