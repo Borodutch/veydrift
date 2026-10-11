@@ -1,11 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { ResolverTransactionCoordinator, type ResolverTransactionRequest, type PreparedReplay } from "./resolverTransactions";
+import { ResolverTransactionCoordinator, type ResolverTransactionCoordinatorOptions, type ResolverTransactionRequest, type PreparedReplay } from "./resolverTransactions";
 
 const account = privateKeyToAccount(("0x" + "11".repeat(32)) as Hex); // fixture only
 const chainId = 8453, nonce = 7, membership = '[{"missionId":"99306","leg":"return"}]';
@@ -36,8 +36,8 @@ function make(path: string) {
     getTransaction: async () => { order.push("transaction"); return included ? { hash, blockHash: hash } : null; },
     validate: async () => { order.push("validate"); return () => {}; }, broadcast
   };
-  const restart = () => { const c = new ResolverTransactionCoordinator(path, { now: () => now,
-    sleep: async (ms) => { now += ms; }, leaseRenewIntervalMs: 1000000 });
+  const restart = (options: ResolverTransactionCoordinatorOptions = {}) => { const c = new ResolverTransactionCoordinator(path, { now: () => now,
+    sleep: async (ms) => { now += ms; }, leaseRenewIntervalMs: 1000000, ...options });
     c.setPreparedReplayer(chainId, account.address, replay); return c; };
   const coordinator = restart();
   const request: ResolverTransactionRequest = { chainId, address: account.address, operationId: "batch:fixture",
@@ -47,7 +47,7 @@ function make(path: string) {
       return { hash, membership, serializedTransaction: raw, broadcast: () => broadcast(raw) };
     }, reconcilePrepared: reconcile, confirm: async () => {}, isOperationComplete: async () => true };
   return { path, rows, mutate, restart, coordinator, request, reconcile, replay, bytes, order,
-    counts: () => ({ sends, signs }), advance: (ms: number) => { now += ms; },
+    counts: () => ({ sends, signs }), advance: (ms: number) => { now += ms; }, now: () => now,
     mine: () => { mined = true; }, include: () => { included = true; },
     send: (fn: () => Promise<void>) => { onSend = fn; } };
 }
@@ -100,6 +100,81 @@ test.each([
     expect(awaited).toBe(0);
     expect(f.counts()).toEqual({ signs: 1, sends });
   });
+});
+
+function inclusionEvents(...spies: Array<{ mock: { calls: unknown[][] } }>) {
+  return spies.flatMap((spy) => spy.mock.calls.map(([line]) => String(line)))
+    .filter((line) => line.includes('"resolver_inclusion_wait"'));
+}
+
+const timeoutError = Object.assign(new Error("Timed out while waiting for transaction"), { name: "WaitForTransactionReceiptTimeoutError" });
+test.each([
+  ["included", (f: ReturnType<typeof make>) => async () => { f.mine(); }, 1],
+  ["timeout", () => async () => { throw timeoutError; }, 2],
+  ["error", () => async () => { throw new Error("receipt poll failed at https://user:pass@rpc.example/v2/secret-key for " + signed); }, 2],
+  ["error", () => async () => { throw Object.assign(new Error("The request took too long to respond. URL: https://rpc.example/v2/secret-key"), { name: "TimeoutError" }); }, 2]
+] as const)("inclusion wait reports outcome %s as a sanitized event", async (outcome, confirm, sends) => {
+  const info = spyOn(console, "info").mockImplementation(() => {}), warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      f.send(async () => { if (f.counts().sends === 2) f.mine(); });
+      expect(await f.coordinator.submit({ ...f.request, confirm: confirm(f) })).toBe(hash);
+      expect(f.counts()).toEqual({ signs: 1, sends });
+      const events = inclusionEvents(info, warn);
+      expect(events).toHaveLength(1);
+      const event = JSON.parse(events[0]!);
+      expect(event).toMatchObject({ outcome, nonce, transactionHash: hash, timeoutMs: 30_000 });
+      expect(typeof event.waitMs).toBe("number");
+      expect(events[0]).not.toContain(signed.slice(2));
+      expect(events[0]).not.toContain("rpc.example");
+      expect((outcome === "included" ? info : warn).mock.calls.some(([line]) => String(line) === events[0])).toBe(true);
+    });
+  } finally { info.mockRestore(); warn.mockRestore(); }
+});
+
+test("the coordinator bounds the inclusion wait even when the caller's confirm never settles", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      f.send(async () => { if (f.counts().sends === 2) f.mine(); });
+      const coordinator = f.restart({ inclusionWaitMs: 25 });
+      const started = performance.now();
+      expect(await coordinator.submit({ ...f.request, confirm: () => new Promise<void>(() => {}) })).toBe(hash);
+      expect(performance.now() - started).toBeLessThan(5_000);
+      // The authoritative pass replayed the identical bytes once the bounded wait ended.
+      expect(f.counts()).toEqual({ signs: 1, sends: 2 });
+      expect(new Set(f.bytes).size).toBe(1);
+      expect(JSON.parse(inclusionEvents(warn)[0]!)).toMatchObject({ outcome: "timeout", timeoutMs: 25 });
+    });
+  } finally { warn.mockRestore(); }
+});
+
+test("a lease lost during the inclusion wait fails closed: no resend, no new nonce, intent retained", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      f.send(async () => {}); // accepted, never mined: a lease holder would replay it
+      let nonceReads = 0;
+      const confirm = async () => {
+        // A stalled process lost its lease; a successor took it over after expiry.
+        f.advance(90_001);
+        f.mutate(`UPDATE resolver_transaction_leases SET holder='successor', expires_at_ms=${f.now() + 90_000}`);
+      };
+      const error = await f.coordinator.submit({ ...f.request, confirm,
+        getTransactionCount: async () => { nonceReads++; return nonce; } }).catch((e) => e);
+      expect(String(error?.message)).toContain("lease");
+      expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+      expect(nonceReads).toBe(2); // the single allocation before the broadcast
+      expect(f.rows()).toMatchObject({ nonce, attempts: 1, status: "pending", raw: signed });
+      const d = new Database(f.path);
+      try {
+        expect(d.query("SELECT count(*) AS n FROM resolver_prepared_intents").get()).toEqual({ n: 1 });
+        expect(d.query("SELECT nonce, status FROM resolver_transaction_attempts").all()).toEqual([{ nonce, status: "submitted" }]);
+        expect(d.query("SELECT holder FROM resolver_transaction_leases").all()).toEqual([{ holder: "successor" }]);
+      } finally { d.close(); }
+      expect(warn.mock.calls.some(([line]) => String(line).includes('"reasonCode":"lease-lost"'))).toBe(true);
+    });
+  } finally { warn.mockRestore(); }
 });
 
 test("exhaustion persists actionable cooldown; restart retries same bytes once per minute, never new nonce", async () => {

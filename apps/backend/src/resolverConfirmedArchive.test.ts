@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -146,6 +146,52 @@ test("a long archive page advances by exact page and wraps without an empty pass
     await f.reconcile(); expect(cursor()).toBe(-1); // nonces 8..11 reached the end
     await f.reconcile(); expect(cursor()).toBe(7);
   } finally { f.close(); }
+});
+
+test("a pass failing mid-page keeps the archive rows it already reconciled", async () => {
+  const f = fixture();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    for (let n = 0; n < 12; n++) await f.submit();
+    f.db.query("UPDATE resolver_archive_progress SET cursor_nonce=-1").run();
+    const cursor = () => (f.db.query("SELECT cursor_nonce AS c FROM resolver_archive_progress").get() as { c: number }).c;
+    const headers: bigint[] = [];
+    f.onHeader((n) => { headers.push(n); if (n === 1003n) throw new Error("header read failed"); });
+    await expect(f.reconcile()).rejects.toThrow();
+    expect(cursor()).toBe(2); // nonces 0..2 were fully reconciled before nonce 3 failed
+    f.onHeader((n) => { headers.push(n); });
+    headers.length = 0;
+    await f.reconcile();
+    expect(headers).not.toContain(1000n); // no reads re-spent on nonces 0..2
+    expect(headers).toContain(1003n);
+    expect(cursor()).toBe(10); // nonces 3..10, look-ahead row 11 exists
+    // A failure on the first page row has no progress to keep: no cursor write.
+    await f.reconcile(); // nonce 11 alone ends the page: wraps to -1
+    expect(cursor()).toBe(-1);
+    f.onHeader((n) => { if (n === 1000n) throw new Error("header read failed"); });
+    await expect(f.reconcile()).rejects.toThrow();
+    expect(cursor()).toBe(-1);
+  } finally { warn.mockRestore(); f.close(); }
+});
+
+test("a frontier contradiction found while proving an active row reports stage frontier", async () => {
+  const f = fixture();
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await f.submit();
+    let frontierReads = 0;
+    // After the second broadcast, the frontier (block 1000) reorgs between its verification at
+    // the start of the post-broadcast pass and its re-verification for the newly proven row.
+    f.onHeader((n) => { if (f.counters().sends === 2 && n === 1000n && ++frontierReads === 3) f.reorg(1000); });
+    await expect(f.submit()).rejects.toThrow();
+    const events = warn.mock.calls.map(([line]) => { try { return JSON.parse(String(line)); } catch { return null; } })
+      .filter((event) => event?.kind === "resolver_reconciliation_blocked");
+    // Two header reads verify the frontier at the start of the pass; the third is its
+    // re-verification while the active row is proven.
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ stage: "frontier", checked: 0 });
+    expect(events[0].reason).toContain("not canonical");
+  } finally { warn.mockRestore(); f.close(); }
 });
 
 test("consumed nonce contradiction fails closed despite unchanged containing hash", async () => {
