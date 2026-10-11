@@ -57,6 +57,67 @@ class MonitorTests(unittest.TestCase):
         m.acknowledge(s, recovery['eventId'], '124', 20)
         self.assertIsNone(m.transition(s, x, 30))
 
+    def test_transient_admission_flapping_does_not_alert(self):
+        for reason, shared in (('canonical-reconciliation-required', False), (None, True)):
+            s, x = {}, healthy()
+            for i in range(24):
+                blocked = i % 4 != 3  # three blocked samples, then one clear, repeatedly
+                mission(x)['admission']['blockedReason'] = reason if blocked else None
+                mission(x)['sharedAdmission'] = {'blocked': shared and blocked}
+                self.assertIsNone(m.transition(s, x, i * 300))
+
+    def test_transient_admission_sustained_alerts_and_recovers_once(self):
+        for reason, shared, key in (('canonical-reconciliation-required', False, 'canonical-reconciliation-required'),
+                                    (None, True, 'shared-admission-block')):
+            s, x = {}, healthy()
+            mission(x)['admission']['blockedReason'] = reason
+            mission(x)['sharedAdmission'] = {'blocked': shared}
+            for i in range(3):
+                self.assertIsNone(m.transition(s, x, i * 300))
+            event = m.transition(s, x, 900)
+            self.assertEqual(event['changes'], [[m.HOSTS[0] + ':admission-' + key, True],
+                                                [m.HOSTS[0] + ':admission-transient-sustained', True]])
+            m.acknowledge(s, event['eventId'], '123', 900)
+            for t in (1200, 1500, 1800):
+                self.assertIsNone(m.transition(s, x, t))
+            mission(x)['admission']['blockedReason'] = None
+            mission(x)['sharedAdmission'] = {'blocked': False}
+            recovery = m.transition(s, x, 2100)
+            self.assertEqual(recovery['changes'], [[m.HOSTS[0] + ':admission-' + key, False],
+                                                   [m.HOSTS[0] + ':admission-transient-sustained', False]])
+            m.acknowledge(s, recovery['eventId'], '124', 2100)
+            self.assertIsNone(m.transition(s, x, 2400))
+
+    def test_transient_threshold_upgrade_preserves_notified_incident(self):
+        # State written under the old 2-sample gate: active, notified, streak capped at 2.
+        key = m.HOSTS[0] + ':admission-canonical-reconciliation-required'
+        s, x = {}, healthy()
+        s['incidents'] = {key: {'streak': 2, 'active': True, 'notified': True, 'at': 0}}
+        mission(x)['admission']['blockedReason'] = 'canonical-reconciliation-required'
+        # The block continues: no false recovery and no duplicate per-reason alert.
+        for t, active in ((300, False), (600, True), (900, True)):
+            self.assertIsNone(m.transition(s, x, t))
+            self.assertEqual(s['incidents'][key]['active'], active)
+        mission(x)['admission']['blockedReason'] = None
+        recovery = m.transition(s, x, 1200)
+        self.assertEqual(recovery['changes'], [[key, False]])
+
+    def test_transient_reasons_alternating_alert_once_sustained(self):
+        s, x = {}, healthy()
+        combined = m.HOSTS[0] + ':admission-transient-sustained'
+        for i in range(3):
+            canonical = i % 2 == 0
+            mission(x)['admission']['blockedReason'] = 'canonical-reconciliation-required' if canonical else None
+            mission(x)['sharedAdmission'] = {'blocked': not canonical}
+            self.assertIsNone(m.transition(s, x, i * 300))
+        mission(x)['admission']['blockedReason'] = None
+        mission(x)['sharedAdmission'] = {'blocked': True}
+        event = m.transition(s, x, 900)
+        self.assertEqual(event['changes'], [[combined, True]])
+        m.acknowledge(s, event['eventId'], '123', 900)
+        mission(x)['sharedAdmission'] = {'blocked': False}
+        self.assertEqual(m.transition(s, x, 1200)['changes'], [[combined, False]])
+
     def test_ack_failure_retry_hour_dedup(self):
         s, x = {}, healthy()
         x['resources']['disk_pct'] = '80'
