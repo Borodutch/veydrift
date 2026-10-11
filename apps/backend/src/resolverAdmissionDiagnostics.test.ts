@@ -123,3 +123,22 @@ test("audit pruning keeps unfinalized, unresolved and recovery evidence and step
     expect(remaining()).toEqual(["recovery", "op:unresolved", "batch:other"]);
   } finally { f.db.close(); }
 });
+
+test("a lost lease during pruning deletes nothing and keeps the sweep position", () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") };
+  const f = fixture(now);
+  const insert = f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'confirmed','2026-08-01T00:00:00.000Z')");
+  f.db.transaction(() => { for (let i = 0; i < 10; i++) insert.run(chainId, resolver, "batch:old" + i, i); })();
+  const coordinator = f.coordinator as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void; auditPrune: Map<string, { cursor: number }> };
+  const count = () => (f.db.query("SELECT count(*) AS n FROM resolver_transaction_audit").get() as { n: number }).n;
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    coordinator.pruneAuditHistory(chainId, address, () => { throw new Error("resolver transaction lease was lost"); });
+    expect(count()).toBe(10);
+    expect([...coordinator.auditPrune.values()].map((state) => state.cursor)).toEqual([0]);
+    expect(warn.mock.calls.some(([line]) => String(line).includes("resolver_audit_prune_failed"))).toBe(true);
+    now.value += 60_000; // the next interval retries from the same position under a valid lease
+    coordinator.pruneAuditHistory(chainId, address, () => {});
+    expect(count()).toBe(0);
+  } finally { warn.mockRestore(); f.db.close(); }
+});
