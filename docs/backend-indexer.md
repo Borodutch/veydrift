@@ -215,10 +215,16 @@ writer follows these rules:
   commit restarts the WAL, and that restart fsyncs the WAL header on the writer's
   thread even at `synchronous = NORMAL`. Passes are therefore spaced out: every 30 s for
   the index (whose `journal_size_limit` of 64 MB then trims the file) and every 5 min
-  for the small stores, which grow by a few frames per tick.
-- The writer samples its own event-loop delay every 100 ms. Every five minutes it
-  logs a `writer_event_loop_lag` line with p50, p99 and max and the counts over 500 ms
-  and 1 s, and it logs `writer_event_loop_stall` for any single delay of 1 s or more.
+  for the small stores, which grow by a few frames per tick. PASSIVE never truncates, so
+  a pass that finds more than 16,384 WAL pages logs `sqlite_wal_large` (at most every
+  10 min per database). If the worker cannot start, the writer logs it once and
+  checkpoints the index on its own thread every 60 s, as before.
+- The writer samples its own event-loop delay every 100 ms. A late timer also counts
+  the intervals the freeze swallowed (L, L − 100 ms, … down to 100 ms), so the
+  percentiles weight each freeze by the time it covers. Every five minutes it logs a
+  `writer_event_loop_lag` line with p50, p99 and max over those intervals and the
+  number of freezes over 500 ms and 1 s, and it logs `writer_event_loop_stall` for any
+  single delay of 1 s or more.
   `/health` is always answered by the writer. It carries the last hour as
   `eventLoopLag`, recomputed at most every 10 s, along with `walCheckpoint` (one entry
   per database).

@@ -112,10 +112,33 @@ describe("EventLoopLagMonitor", () => {
       now += 100;
       monitor.record(index === 500 ? 2_500 : index % 100 === 0 ? 600 : 2);
     }
+    // 990 on-time fires, 9 × 600 ms (6 intervals each) and one 2.5 s freeze (25 intervals).
     const window = monitor.window(60 * 60 * 1_000);
-    expect(window).toMatchObject({ samples: 1_000, p50Ms: 2, p99Ms: 600, maxMs: 2_500, over500Ms: 10, over1000Ms: 1 });
-    expect(monitor.window(10_000).samples).toBe(101);
+    expect(window).toMatchObject({ samples: 1_069, p50Ms: 2, p99Ms: 1_500, maxMs: 2_500, over500Ms: 10, over1000Ms: 1 });
+    expect(monitor.window(10_000).samples).toBe(106);
     expect(lines).toEqual(['writer_event_loop_stall {"lagMs":2500}']);
+  });
+
+  test("a periodic freeze counts for the time it covers, not as one sample", () => {
+    // A 1.5 s freeze every 15 s for an hour stalls the loop 10% of the time. One sample per freeze
+    // would put it far below the p99 (p99 ≈ 2 ms) and pass the < 500 ms acceptance.
+    let now = 0;
+    const lines: string[] = [];
+    const monitor = new EventLoopLagMonitor({ now: () => now, log: (line) => lines.push(line) });
+    while (now < 60 * 60 * 1_000) {
+      for (let tick = 0; tick < 135; tick++) {
+        now += 100;
+        monitor.record(2);
+      }
+      now += 1_500;
+      monitor.record(1_500);
+    }
+    const window = monitor.window(60 * 60 * 1_000);
+    expect(window.p99Ms).toBeGreaterThan(500);
+    expect(window).toMatchObject({ maxMs: 1_500, over500Ms: 240, over1000Ms: 240 });
+    // Each sample stands for one 100 ms interval: about one hour's worth.
+    expect(window.samples).toBe(240 * (135 + 15));
+    expect(lines).toHaveLength(240);
   });
 
   test("caches the hour snapshot that the public /health returns", () => {
@@ -203,6 +226,38 @@ describe("WalCheckpointer", () => {
     }
     expect(pages).toEqual({ index: [0, 1000, 0, 1000], store: [0, 1000] });
     expect(worker.terminated).toBe(true);
+  });
+
+  test("reports a large WAL at most every 10 min and keeps paths out of /health errors", () => {
+    let now = 0;
+    const warnings: string[] = [];
+    const worker = fakeWorker();
+    const checkpointer = new WalCheckpointer({
+      targets: [{ name: "index", databasePath: "/data/index.sqlite", setAutoCheckpoint: () => undefined }],
+      now: () => now,
+      createWorker: () => worker,
+      logger: { warn: (...parts: unknown[]) => warnings.push(parts.join(" ")) }
+    });
+    try {
+      const pass = (log: number) => worker.emit({ databasePath: "/data/index.sqlite", ok: true, busy: 1, log, checkpointed: 0, durationMs: 1 });
+      pass(16_384);
+      expect(warnings).toEqual([]);
+      pass(20_000);
+      now = 9 * 60 * 1_000;
+      pass(30_000);
+      expect(warnings).toEqual(['sqlite_wal_large {"name":"index","logPages":20000,"busy":1}']);
+      now = 10 * 60 * 1_000;
+      pass(30_000);
+      expect(warnings.at(-1)).toBe('sqlite_wal_large {"name":"index","logPages":30000,"busy":1}');
+
+      worker.emit({ databasePath: "/data/index.sqlite", ok: false, error: "unable to open database file: /data/index.sqlite token=abcdef123456", durationMs: 1 });
+      const lastError = checkpointer.snapshot().index!.lastError!;
+      expect(lastError).not.toContain("/data");
+      expect(lastError).not.toContain("abcdef123456");
+      expect(lastError).toContain("<index>");
+    } finally {
+      checkpointer.stop();
+    }
   });
 
   test("a real worker thread backfills the WAL so the writer's next commit restarts and trims it", async () => {

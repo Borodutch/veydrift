@@ -1,3 +1,5 @@
+import { safeDiagnosticText } from "./safeDiagnostics";
+
 export type WalCheckpointDatabase = {
   databasePath: string;
   intervalMs: number;
@@ -25,7 +27,7 @@ export type WalCheckpointerSnapshot = {
   maxDurationMs: number;
 };
 
-type WorkerLike = {
+export type WalCheckpointWorker = {
   postMessage(message: unknown): void;
   terminate(): void;
   unref?(): void;
@@ -52,18 +54,22 @@ export type WalCheckpointerOptions = {
   /** Without a successful worker pass for this long the writer checkpoints on commit again. */
   staleAfterMs?: number;
   now?: () => number;
-  createWorker?: () => WorkerLike;
+  createWorker?: () => WalCheckpointWorker;
   logger?: Pick<Console, "warn">;
 };
 
 const defaultAutoCheckpointPages = 1000;
 const defaultIntervalMs = 30_000;
+/** The former main-thread path ran TRUNCATE above this many WAL pages; now it is only reported. */
+export const largeWalLogPages = 16_384;
+const largeWalWarnIntervalMs = 10 * 60 * 1_000;
 
 type TargetState = {
   target: WalCheckpointTarget;
   staleAfterMs: number;
   offloaded: boolean;
   lastOkAtMs: number;
+  lastLargeWalWarnAtMs: number | null;
   snapshot: WalCheckpointerSnapshot;
 };
 
@@ -75,7 +81,7 @@ type TargetState = {
  * autocheckpoint so no WAL can grow without bound.
  */
 export class WalCheckpointer {
-  private readonly worker: WorkerLike;
+  private readonly worker: WalCheckpointWorker;
   private readonly watchdog: ReturnType<typeof setInterval>;
   private readonly now: () => number;
   private readonly logger: Pick<Console, "warn">;
@@ -94,6 +100,7 @@ export class WalCheckpointer {
         staleAfterMs: options.staleAfterMs ?? Math.max(30_000, 3 * intervalMs),
         offloaded: false,
         lastOkAtMs: this.now(),
+        lastLargeWalWarnAtMs: null,
         snapshot: {
           mode: "main-thread-fallback",
           intervalMs,
@@ -140,10 +147,12 @@ export class WalCheckpointer {
     snapshot.maxDurationMs = Math.max(snapshot.maxDurationMs, result.durationMs);
     if (!result.ok) {
       snapshot.failures += 1;
-      if (snapshot.lastError !== result.error) {
-        this.logger.warn("Veydrift SQLite WAL checkpoint worker failed", state.target.name, result.error);
+      // `lastError` is served on the public /health: keep the database path and secrets out of it.
+      const error = safeDiagnosticText(result.error.split(state.target.databasePath).join(`<${state.target.name}>`), 512);
+      if (snapshot.lastError !== error) {
+        this.logger.warn("Veydrift SQLite WAL checkpoint worker failed", state.target.name, error);
       }
-      snapshot.lastError = result.error;
+      snapshot.lastError = error;
       return;
     }
     snapshot.passes += 1;
@@ -153,6 +162,20 @@ export class WalCheckpointer {
     state.lastOkAtMs = this.now();
     snapshot.lastOkAt = new Date(state.lastOkAtMs).toISOString();
     this.setOffloaded(state, true);
+    this.warnIfLarge(state, result.log, result.busy);
+  }
+
+  /**
+   * PASSIVE never truncates, so a WAL whose readers keep missing the restart window grows
+   * silently. Report it (at most every 10 min per database) rather than block the writer on a
+   * TRUNCATE.
+   */
+  private warnIfLarge(state: TargetState, logPages: number, busy: number): void {
+    if (logPages <= largeWalLogPages) return;
+    const at = this.now();
+    if (state.lastLargeWalWarnAtMs !== null && at - state.lastLargeWalWarnAtMs < largeWalWarnIntervalMs) return;
+    state.lastLargeWalWarnAtMs = at;
+    this.logger.warn(`sqlite_wal_large ${JSON.stringify({ name: state.target.name, logPages, busy })}`);
   }
 
   private checkStale(): void {

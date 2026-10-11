@@ -65,7 +65,7 @@ import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { EventLoopLagMonitor } from "./eventLoopLag";
-import { WalCheckpointer, type WalCheckpointTarget } from "./walCheckpointer";
+import { WalCheckpointer, type WalCheckpointTarget, type WalCheckpointWorker } from "./walCheckpointer";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -379,6 +379,7 @@ export type ServerDependencies = {
   walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
   // Production default: index WAL checkpoints run on a worker thread, not the writer's event loop.
   offThreadWalCheckpoint?: boolean;
+  createWalCheckpointWorker?: () => WalCheckpointWorker;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -665,8 +666,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     for (const [name, target] of Object.entries(stores)) {
       if (target) targets.push({ name, ...target, intervalMs: 300_000 });
     }
-    walCheckpointer = new WalCheckpointer({ targets });
-  } else if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
+    try {
+      walCheckpointer = new WalCheckpointer({
+        targets,
+        ...(dependencies.createWalCheckpointWorker ? { createWorker: dependencies.createWalCheckpointWorker } : {})
+      });
+    } catch (error) {
+      // Bun throws synchronously when the worker module cannot load. Every writer connection
+      // still autocheckpoints (it is only switched off after a worker pass), so keep booting and
+      // checkpoint the index on the main thread as before.
+      console.warn("Veydrift SQLite WAL checkpoint worker failed to start; checkpointing on the writer thread", safeDiagnosticText(error));
+    }
+  }
+  if (!walCheckpointer && isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
         const result = indexer.checkpointWal("PASSIVE");

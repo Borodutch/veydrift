@@ -1192,6 +1192,41 @@ describe("Veydrift backend", () => {
     expect((await handler(new Request("http://localhost/health"))).status).toBe(503);
   });
 
+  test("boots the writer with main-thread checkpoints when the WAL checkpoint worker cannot start", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-wal-worker-start-"));
+    const checkpoints: string[] = [];
+    const autoCheckpoint: number[] = [];
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const indexer = {
+        snapshot: () => ({ indexedState: "healthy", safeToServeIndexedState: true }),
+        checkpointWal: (mode: string) => {
+          checkpoints.push(mode);
+          return [{ busy: 0, log: 0, checkpointed: 0 }];
+        },
+        setWalAutoCheckpoint: (pages: number) => autoCheckpoint.push(pages)
+      } as unknown as SettlementIndexer;
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        chainSync: { start() {}, snapshot: () => ({ connected: true, subscribedToHeads: true, subscribedToLogs: true }) } as unknown as import("./chainSync").ChainSyncService,
+        config: { ...configuredTestConfig, indexDbPath: join(dir, "index.sqlite") },
+        indexer,
+        offThreadWalCheckpoint: true,
+        createWalCheckpointWorker: () => {
+          throw new Error(`ModuleNotFound resolving "${join(dir, "walCheckpointWorker.ts")}"`);
+        }
+      });
+      expect(checkpoints).toEqual(["PASSIVE"]);
+      expect(autoCheckpoint).toEqual([]);
+      expect(warn.mock.calls.filter(([message]) => String(message).includes("checkpoint worker failed to start"))).toHaveLength(1);
+      const body = await (await handler(new Request("http://localhost/health"))).json();
+      expect(body.walCheckpoint).toBeNull();
+    } finally {
+      warn.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("returns 200 only when the backend readiness gate is satisfied", async () => {
     const chainSync = {
       start() {},

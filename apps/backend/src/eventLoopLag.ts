@@ -1,9 +1,12 @@
 export type EventLoopLagWindow = {
   windowMs: number;
+  /** Sample intervals in the window, including the ones a freeze swallowed. */
   samples: number;
+  /** Percentiles over those intervals, so p99 reflects the share of time the loop was stalled. */
   p50Ms: number;
   p99Ms: number;
   maxMs: number;
+  /** Timer fires (freezes) at least this late. */
   over500Ms: number;
   over1000Ms: number;
 };
@@ -95,8 +98,20 @@ export class EventLoopLagMonitor {
 
   window(windowMs: number, at = this.now()): EventLoopLagWindow {
     const values: number[] = [];
+    let over500Ms = 0;
+    let over1000Ms = 0;
     for (let index = 0; index < this.count; index += 1) {
-      if (at - this.sampledAt[index]! <= windowMs) values.push(this.samples[index]!);
+      if (at - this.sampledAt[index]! > windowMs) continue;
+      const lagMs = this.samples[index]!;
+      if (lagMs > 500) over500Ms += 1;
+      if (lagMs > 1_000) over1000Ms += 1;
+      // A freeze of any length delays only one timer fire. Also record the ticks it swallowed
+      // (L - interval, L - 2·interval, …), HdrHistogram-style, so each sample stands for one
+      // interval of wall time and a periodic freeze cannot hide below the p99.
+      for (let missed = lagMs; ; missed -= this.sampleIntervalMs) {
+        values.push(missed);
+        if (missed - this.sampleIntervalMs < this.sampleIntervalMs) break;
+      }
     }
     values.sort((left, right) => left - right);
     const percentile = (fraction: number) => values.length
@@ -108,8 +123,8 @@ export class EventLoopLagMonitor {
       p50Ms: Math.round(percentile(0.5)),
       p99Ms: Math.round(percentile(0.99)),
       maxMs: Math.round(values.at(-1) ?? 0),
-      over500Ms: values.filter((value) => value > 500).length,
-      over1000Ms: values.filter((value) => value > 1_000).length
+      over500Ms,
+      over1000Ms
     };
   }
 
