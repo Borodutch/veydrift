@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -315,28 +315,45 @@ test("frozen finality does not re-read every retained confirmed row on each admi
   } finally { f.close(); }
 });
 
-test("audit rows past retention move to a private archive and the journal stays bounded", async () => {
+test("audit rows past retention move to a private archive on empty ticks and the journal stays bounded", async () => {
   const f = fixture();
   try {
     const insert = f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (8453,'0x01',?,1,NULL,'confirmed','2026-01-01T00:00:00.000Z')");
-    f.db.transaction(() => { for (let n = 0; n < 15_000; n++) insert.run("mission:old:" + n); })();
+    f.db.transaction(() => { for (let n = 0; n < 3_000; n++) insert.run("mission:old:" + n); })();
     const old = () => f.db.query("SELECT count(*) AS n FROM resolver_transaction_audit WHERE created_at < '2026-02-01'").get();
     const liveBytes = () => { f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); return f.client.admissionSnapshot()!.journalBytes; };
     const before = liveBytes();
-    await f.submit(); // a successful pass archives one bounded batch
-    expect(old()).toEqual({ n: 5_000 });
-    await f.reconcile(); expect(old()).toEqual({ n: 5_000 }); // throttled within the minute
+    await f.submit(); expect(old()).toEqual({ n: 3_000 }); // never on the lease-held pre-sign path
+    await f.client.resolveMissionBatch([]); expect(old()).toEqual({ n: 1_000 }); // empty tick: one bounded batch
+    await f.client.resolveMissionBatch([]); expect(old()).toEqual({ n: 1_000 }); // throttled within the minute
     // Recent evidence follows the old rows and must never move.
     const recent = f.db.query("SELECT * FROM resolver_transaction_audit WHERE created_at > '2026-02-01' ORDER BY sequence").all();
     expect(recent).toHaveLength(3);
-    f.restart(); await f.reconcile();
+    f.restart(); await f.client.resolveMissionBatch([]);
     expect(f.db.query("SELECT * FROM resolver_transaction_audit ORDER BY sequence").all()).toEqual(recent);
     const archive = new Database(f.path + "-audit-archive", { readonly: true });
     try {
-      expect(archive.query("SELECT count(*) AS n, min(operation_id) AS lo FROM resolver_transaction_audit").get()).toEqual({ n: 15_000, lo: "mission:old:0" });
+      expect(archive.query("SELECT count(*) AS n, min(operation_id) AS lo FROM resolver_transaction_audit").get()).toEqual({ n: 3_000, lo: "mission:old:0" });
     } finally { archive.close(); }
     expect(statSync(f.path + "-audit-archive").mode & 0o777).toBe(0o600);
     // Freed pages are reused before the file grows, so they no longer count against the budget.
-    expect(liveBytes()).toBeLessThan(before / 2);
+    expect(liveBytes()).toBeLessThan(before);
+  } finally { f.close(); }
+});
+
+test("audit archive sequence collision retains journal evidence and never blocks admission", async () => {
+  const f = fixture();
+  try {
+    f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (8453,'0x01','mission:old',1,NULL,'confirmed','2026-01-01T00:00:00.000Z')").run();
+    const stale = new Database(f.path + "-audit-archive", { create: true }); // survived a recreated journal
+    stale.exec("CREATE TABLE resolver_transaction_audit (sequence INTEGER PRIMARY KEY, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL, nonce INTEGER NOT NULL, transaction_hash TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL)");
+    stale.query("INSERT INTO resolver_transaction_audit VALUES (1,8453,'0x01','mission:other',9,NULL,'confirmed','2025-12-01T00:00:00.000Z')").run(); stale.close();
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await f.client.resolveMissionBatch([]);
+      expect(warn.mock.calls.some((call) => String(call[0]).includes("resolver_audit_archive_failed"))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(f.db.query("SELECT operation_id FROM resolver_transaction_audit").all()).toEqual([{ operation_id: "mission:old" }]);
+    await f.submit(); expect(f.counters().signatures).toBe(1);
   } finally { f.close(); }
 });

@@ -1013,7 +1013,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
     const exclusions: BatchExclusion[] = [];
     // Empty ticks still reconcile above, but require no fee snapshot or candidate proof.
-    if (!candidates.length) return { hash: null, items: [], exclusions };
+    // They also carry journal retention, off the lease and the pre-sign path.
+    if (!candidates.length) { this.transactionCoordinator.maintainAuditRetention(); return { hash: null, items: [], exclusions }; }
     const initialBlock = await client.getBlock({ blockTag: "latest" });
     if (initialBlock.number === null) throw new Error("canonical batch block unavailable");
     const initialGuard = () => assertBatchQuoteFresh({ blockNumber: initialBlock.number!, blockHash: initialBlock.hash!, blockTimestamp: initialBlock.timestamp });

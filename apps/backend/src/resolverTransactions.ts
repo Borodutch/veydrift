@@ -139,6 +139,7 @@ const defaultReconciliationTimeoutMs = 5_000;
 const defaultReconciliationReadLimit = 128;
 const defaultInclusionPollMs = 500;
 const stallBeatMs = 100;
+const inMempoolGraceMs = 30_000;
 const monotonicMs = () => Number(process.hrtime.bigint()) / 1e6;
 
 /**
@@ -567,7 +568,8 @@ export class ResolverTransactionCoordinator {
       if (retry === 3) throw new Error("recovery pending; identical-byte retries exhausted this pass");
       const intent = this.database.query("SELECT operation_id AS operationId,nonce,transaction_hash AS hash,membership,serialized_transaction AS raw,send_attempts AS attempts,next_retry_ms AS nextRetry,replay_state AS replayState,status,replay_max_fee_wei AS originalMaxFeeWei FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND transaction_hash=?")
         .get(chainId, normalizeAddress(address), group.alternative_hash) as ReplayIntent;
-      await this.replayIntent(chainId, address, intent, pass.assertActive, pass);
+      if (await this.replayIntent(chainId, address, intent, pass.assertActive, pass) === "in-mempool")
+        throw new RecoveryReadinessError("retry-cooldown", "recovery candidate awaiting inclusion");
     }
   }
 
@@ -590,7 +592,8 @@ export class ResolverTransactionCoordinator {
     // disk commit, a large local query) freezes timers and read callbacks alike; that time is
     // credited back, at most one more timeout, so it cannot fail admission on a healthy chain.
     // Gaps are measured on the process monotonic clock, independent of the deadline clock.
-    let deadline = started + this.reconciliationTimeoutMs, lastBeat = monotonicMs(), stalledMs = 0;
+    const startedMonotonic = monotonicMs();
+    let deadline = started + this.reconciliationTimeoutMs, lastBeat = startedMonotonic, stalledMs = 0;
     const creditStall = () => {
       const now = monotonicMs(), gap = now - lastBeat - stallBeatMs;
       lastBeat = now;
@@ -636,10 +639,12 @@ export class ResolverTransactionCoordinator {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const heartbeat = setInterval(creditStall, stallBeatMs);
     const expired = new Promise<never>((_, reject) => {
-      let armedCredit = 0;
       const expire = () => {
         creditStall();
-        if (stalledMs > armedCredit) { timer = setTimeout(expire, stalledMs - armedCredit); armedCredit = stalledMs; return; }
+        // Without credit this fires exactly once, as before; with credit it re-arms toward
+        // the same credited deadline that assertActive enforces.
+        const remaining = stalledMs ? startedMonotonic + this.reconciliationTimeoutMs + stalledMs - monotonicMs() : 0;
+        if (remaining > 0) { timer = setTimeout(expire, remaining); return; }
         active = false; reject(blocked("read deadline exceeded"));
       };
       timer = setTimeout(expire, this.reconciliationTimeoutMs);
@@ -765,11 +770,6 @@ export class ResolverTransactionCoordinator {
       // authorize a writer based on only a page of canonical evidence.
       if (intents.length > this.maxUnfinalizedIntents) throw blocked("retained window exceeded; reconciliation-only drain required");
       this.admissionBlocks.delete(key);
-      try { this.archiveAudit(); }
-      catch (error) {
-        // Housekeeping only: evidence stays in the journal and admission is unaffected.
-        emitObservabilityEvent({ kind: "resolver_audit_archive_failed", chainId, address, reason: safeDiagnosticText(error) }, "warn");
-      }
     } catch (error) {
       this.admissionBlocks.set(key, "canonical-reconciliation-required");
       const heldRecoveryGroups = groups.filter((group) => !group.finalized).length;
@@ -882,9 +882,11 @@ export class ResolverTransactionCoordinator {
       throw this.replayError(intent, "transaction included or inconsistent; await canonical receipt");
     if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
-    // Identical bytes the node already holds cannot be helped by a resend; spending the
-    // bounded retries here only exhausts them before the next block can include the transaction.
-    if (transaction) return "in-mempool";
+    // Right after a send, identical bytes the node already holds gain nothing from a resend;
+    // spending the bounded retries here only exhausts them before the next block can include
+    // the transaction. Past the grace window the node may hold bytes the sequencer dropped,
+    // so the identical-byte schedule (which re-forwards them) applies again.
+    if (transaction && this.now() < intent.nextRetry + inMempoolGraceMs) return "in-mempool";
     if (recovery && pass.recoveryTrace) pass.recoveryTrace.stage="retry-hold";
     if (intent.nextRetry > this.now()) {
       if (intent.attempts >= 3) throw recovery ? new RecoveryReadinessError("retry-cooldown", "recoverable pending; bounded retry cooling down") : this.replayError(intent, "recoverable pending; bounded retry cooling down");
@@ -1316,7 +1318,10 @@ export class ResolverTransactionCoordinator {
               replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };
             await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
             hash = prepared.hash;
-            await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
+            // The durable intent now gates the signer; until its receipt hydrates this is a
+            // shared admission hold, not a failure of the batch's individual missions.
+            try { await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease); }
+            catch (error) { throw new ResolverAdmissionBlockedError(error); }
             // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
             // confirmed intent to submitted or enter the generic replacement/confirm path.
             return hash;
@@ -1557,9 +1562,18 @@ export class ResolverTransactionCoordinator {
    * journal. Rows past retention move (copy first, idempotently) into a private sibling archive,
    * so evidence survives while the journal's live pages stay bounded; freed pages are reused.
    */
-  private archiveAudit(): void {
+  maintainAuditRetention(): void {
     if (this.databasePath === ":memory:" || this.now() - this.lastAuditArchiveMs < auditArchiveIntervalMs) return;
     this.lastAuditArchiveMs = this.now();
+    try { this.archiveAudit(); }
+    catch (error) {
+      // Housekeeping only: evidence stays in the journal and admission is unaffected.
+      emitObservabilityEvent({ kind: "resolver_audit_archive_failed", reason: safeDiagnosticText(error),
+        action: "journal rows retained; inspect the audit archive and disk" }, "warn");
+    }
+  }
+
+  private archiveAudit(): void {
     const cutoff = new Date(this.now() - auditRetentionMs).toISOString();
     // The oldest rows are a sequence prefix: this scan is bounded even when nothing qualifies.
     const rows = this.database.query(`SELECT * FROM resolver_transaction_audit WHERE sequence IN
@@ -1569,21 +1583,30 @@ export class ResolverTransactionCoordinator {
     if (!rows.length) return;
     if (!this.auditArchive) {
       const path = this.databasePath + "-audit-archive";
-      this.auditArchive = new Database(path, { create: true });
-      chmodSync(path, 0o600);
-      this.auditArchive.exec("PRAGMA journal_mode = WAL;");
-      this.auditArchive.exec("PRAGMA synchronous = FULL;");
-      this.auditArchive.exec("PRAGMA busy_timeout = 5000;");
-      this.auditArchive.exec(`CREATE TABLE IF NOT EXISTS resolver_transaction_audit (
-        sequence INTEGER PRIMARY KEY, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
-        nonce INTEGER NOT NULL, transaction_hash TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL)`);
+      const opened = new Database(path, { create: true });
+      try {
+        chmodSync(path, 0o600);
+        opened.exec("PRAGMA journal_mode = WAL;");
+        opened.exec("PRAGMA synchronous = FULL;");
+        opened.exec("PRAGMA busy_timeout = 5000;");
+        opened.exec(`CREATE TABLE IF NOT EXISTS resolver_transaction_audit (
+          sequence INTEGER PRIMARY KEY, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, operation_id TEXT NOT NULL,
+          nonce INTEGER NOT NULL, transaction_hash TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL)`);
+      } catch (error) { opened.close(); throw error; }
+      this.auditArchive = opened;
     }
     const archive = this.auditArchive;
     const insert = archive.query(`INSERT OR IGNORE INTO resolver_transaction_audit
       (sequence,chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,?,?,?,?)`);
+    const archived = archive.query(`SELECT 1 FROM resolver_transaction_audit WHERE sequence=? AND chain_id=? AND resolver_address=?
+      AND operation_id=? AND nonce=? AND transaction_hash IS ? AND status=? AND created_at=?`);
     archive.transaction(() => {
-      for (const row of rows) insert.run(row.sequence, row.chain_id, row.resolver_address, row.operation_id,
-        row.nonce, row.transaction_hash, row.status, row.created_at);
+      for (const row of rows) {
+        const values = [row.sequence, row.chain_id, row.resolver_address, row.operation_id, row.nonce, row.transaction_hash, row.status, row.created_at] as const;
+        insert.run(...values);
+        // A recreated journal restarts sequences: an ignored collision must never delete evidence.
+        if (!archived.get(...values)) throw new Error("audit archive sequence collision; journal rows retained");
+      }
     }).immediate();
     // Every qualifying row in [first, last] belongs to the copied prefix.
     this.database.query("DELETE FROM resolver_transaction_audit WHERE sequence BETWEEN ? AND ? AND created_at < ?")
@@ -1593,7 +1616,7 @@ export class ResolverTransactionCoordinator {
 
 const auditRetentionMs = 30 * 24 * 60 * 60_000;
 const auditArchiveIntervalMs = 60_000;
-const auditArchiveBatch = 10_000;
+const auditArchiveBatch = 2_000;
 
 /** No candidate was evaluated: retry the shared admission gate, not each mission. */
 export class ResolverAdmissionBlockedError extends Error {

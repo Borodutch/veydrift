@@ -430,3 +430,14 @@ test("full fresh mission readiness/sign/send path proceeds after finalized recov
   expect(f.db.query("SELECT admission_proven FROM resolver_prepared_intents WHERE nonce=5").get()).toEqual({admission_proven:1});
  }finally{f.cleanup();}
 },10000);
+test("recovery alternative pending in the node mempool holds as retry-cooldown without resending",async()=>{
+ const f=fixture();try{await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("read budget exhausted");
+ const sent=f.bytes.length;expect(sent).toBeGreaterThan(0);const alternative=keccak256(f.bytes[0]!);
+ const real=f.publicClient.getTransaction;
+ f.publicClient.getTransaction=async args=>args.hash===alternative?{hash:alternative,blockHash:null} as never:real(args);
+ const error=await f.client.resolveMissionBatch([]).catch(e=>e);
+ expect(String(error.message)).toContain("recovery candidate awaiting inclusion");expect(f.bytes).toHaveLength(sent);expect(f.signs()).toBe(1);
+ f.publicClient.getTransaction=real;f.win(alternative);await f.client.resolveMissionBatch([]);
+ expect(f.db.query("SELECT finalized,winner_hash FROM resolver_nonce_recovery").get()).toEqual({finalized:1,winner_hash:alternative});
+ }finally{f.cleanup();}
+});

@@ -99,8 +99,9 @@ test("mempool transaction that stays unmined blocks as awaiting inclusion with b
     expect(f.counts()).toEqual({ signs: 1, sends: 1 });
     expect(f.rows().attempts).toBe(1); expect(f.rows().status).toBe("pending");
     expect(f.order.filter((step) => step === "transaction").length).toBeLessThanOrEqual(10);
-    // Dropped from the mempool: the ordinary identical-byte replay schedule still applies.
-    f.replay.getTransaction = async () => null; f.send(async () => { f.mine(); });
+    // Past the grace window a node-held tx may be one the sequencer dropped: identical bytes
+    // are re-forwarded on the ordinary schedule even though the node still reports it pending.
+    f.advance(31_000); f.send(async () => { f.mine(); });
     expect(await f.restart().submit(f.request)).toBe(hash);
     expect(f.counts()).toEqual({ signs: 1, sends: 2 });
   });
@@ -264,23 +265,28 @@ test("blocked event keeps the real cause when only finalized recovery lineage is
   });
 });
 
-test("a synchronous process stall is credited to the read deadline; a slow read still expires it", async () => {
+test("a synchronous process stall is credited to the read deadline, capped at one timeout; a slow read still expires it", async () => {
   await fixture(async (f) => {
     const proven = { finalized: false, blockNumber: "10", blockHash: hash, outcomes: "[]", admissionProven: true };
     f.send(async () => {});
     expect(await f.coordinator.submit({ ...f.request, reconcilePrepared: async () => proven })).toBe(hash);
-    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 200, leaseRenewIntervalMs: 1000000 });
+    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 300, leaseRenewIntervalMs: 1000000 });
     const block = (ms: number) => { const until = performance.now() + ms; while (performance.now() < until) { /* frozen event loop */ } };
-    let stalls = 0;
-    await c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => { if (!stalls++) block(350); return stored; });
-    expect(stalls).toBe(3); // frontier before, archival page, frontier after
     const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const blockedEvent = () => JSON.parse(String(warn.mock.calls.filter((call: unknown[]) => String(call[0]).includes("resolver_reconciliation_blocked")).at(-1)![0]));
     try {
+      let calls = 0;
+      await c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => { if (!calls++) block(450); return stored; });
+      expect(calls).toBe(3); // frontier before, archival page, frontier after
+      // A stall beyond the cap still fails closed.
+      calls = 0;
+      await expect(c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => { if (!calls++) block(800); return stored; }))
+        .rejects.toThrow("read deadline exceeded");
+      expect(blockedEvent().stalledMs).toBe(300);
       await expect(c.reconcilePrepared(chainId, account.address, async (_hash, _membership, stored) => {
-        await new Promise((resolve) => setTimeout(resolve, 350)); return stored;
+        await new Promise((resolve) => setTimeout(resolve, 450)); return stored;
       })).rejects.toThrow("read deadline exceeded");
-      const event = JSON.parse(String(warn.mock.calls.find((call) => String(call[0]).includes("resolver_reconciliation_blocked"))![0]));
-      expect(event.stalledMs).toBeLessThan(100);
+      expect(blockedEvent().stalledMs).toBeLessThan(100);
     } finally { warn.mockRestore(); }
   });
 });
