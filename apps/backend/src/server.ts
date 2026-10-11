@@ -61,7 +61,8 @@ import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } fro
 import { MissionResolutionService } from "./missionResolution";
 import { applyMissionEligibility, missionEligibilityPath } from "./missionEligibility";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
-import { createRequestLoggingFetch } from "./observability";
+import { createRequestLoggingFetch, emitObservabilityEvent } from "./observability";
+import { startEventLoopLagSampler } from "./eventLoopLag";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import {
   validatePlayerDescription,
@@ -614,20 +615,33 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
+      const startedAt = performance.now();
+      let walFrames: number | null = null;
+      let failed = false;
       try {
         const result = indexer.checkpointWal("PASSIVE");
         const sample = result[0];
+        walFrames = sample?.log ?? null;
         if (sample && sample.log > 16_384 && sample.busy === 0) {
           indexer.checkpointWal("TRUNCATE");
         }
       } catch (error) {
+        failed = true;
         console.warn("Veydrift SQLite WAL checkpoint failed", reasonText(error));
+      } finally {
+        // The checkpoint fsyncs on the writer's main thread; record it when it is slow enough to
+        // show up as event-loop lag so a stall can be attributed (#74).
+        const durationMs = Math.round(performance.now() - startedAt);
+        if (durationMs >= 250) {
+          emitObservabilityEvent({ kind: "sqlite_wal_checkpoint_slow", component: "writer", durationMs, walFrames, failed }, "warn");
+        }
       }
     };
     checkpointWal();
     const walMaintenance = setInterval(checkpointWal, 60_000);
     walMaintenance.unref?.();
   }
+  if (isWriter && usesProductionDependencies && process.env.NODE_ENV !== "test") startEventLoopLagSampler({ component: "writer" });
 
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonRefreshResult | null>>();
