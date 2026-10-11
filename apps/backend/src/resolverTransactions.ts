@@ -110,6 +110,7 @@ export type ResolverTransactionCoordinatorOptions = {
   reconciliationTimeoutMs?: number;
   reconciliationReadLimit?: number;
   auditRetentionMs?: number;
+  inclusionWaitMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -143,6 +144,12 @@ const defaultAuditRetentionMs = 30 * 24 * 60 * 60_000;
 const maxAuditRetentionMs = 10 * 365 * 24 * 60 * 60_000;
 const auditPruneIntervalMs = 60_000;
 const auditPruneBatchRows = 5_000;
+// Retained evidence rows behind the sweep cursor become prunable once their intent finalizes.
+const auditPruneRevisitMs = 24 * 60 * 60_000;
+const journalStorageCeilingBytes = 240 * 1024 * 1024;
+// Post-broadcast inclusion wait. Enforced here, not only by the caller's receipt wait
+// (viem defaults to 180 s), so an accepted batch cannot hold the signer lease indefinitely.
+const defaultInclusionWaitMs = 30_000;
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
@@ -164,8 +171,9 @@ export class ResolverTransactionCoordinator {
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
   private readonly auditRetentionMs: number;
-  // Per resolver: last prune attempt and the audit sequence already swept since startup.
-  private readonly auditPrune = new Map<string, { at: number; cursor: number }>();
+  private readonly inclusionWaitMs: number;
+  // Per resolver: last prune attempt, the audit sequence already swept and when this sweep began.
+  private readonly auditPrune = new Map<string, { at: number; cursor: number; sweepStartedAt: number }>();
   // A transport may not support abort. Never stack abandoned reads on the same signer.
   private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
   private readonly now: () => number;
@@ -191,7 +199,8 @@ export class ResolverTransactionCoordinator {
     this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
     this.auditRetentionMs = options.auditRetentionMs ?? defaultAuditRetentionMs;
     if (this.auditRetentionMs > maxAuditRetentionMs) throw new Error("invalid resolver audit retention");
-    for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit, this.auditRetentionMs]) {
+    this.inclusionWaitMs = options.inclusionWaitMs ?? defaultInclusionWaitMs;
+    for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit, this.auditRetentionMs, this.inclusionWaitMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
     }
     this.now = options.now ?? Date.now;
@@ -347,7 +356,7 @@ export class ResolverTransactionCoordinator {
     const reservation = this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1")
       .get(chainId, normalizeAddress(address));
     const capacity = retainedConfirmed >= this.maxRetainedConfirmedIntents ? "confirmed-retention-full"
-      : journalBytes >= 240 * 1024 * 1024 ? "journal-storage-full" : null;
+      : journalBytes >= journalStorageCeilingBytes ? "journal-storage-full" : null;
     return { active, retainedConfirmed, countsCapped: active > this.maxUnfinalizedIntents || retainedConfirmed > this.maxRetainedConfirmedIntents,
       activeLimit: this.maxUnfinalizedIntents, retainedLimit: this.maxRetainedConfirmedIntents, journalBytes,
       lastCanonicalSettlementAt: lastProgress == null ? null : new Date(lastProgress).toISOString(),
@@ -374,26 +383,44 @@ export class ResolverTransactionCoordinator {
 
   reconcilePrepared(chainId: number, address: Hex,
     confirm?: PreparedReconciler): Promise<void> {
-    return this.enqueueLocal(resolverKey(chainId, address), () => this.withLease(chainId, address,
-      async (assertLease) => {
-        await this.reconcileIntents(chainId, address, confirm, assertLease);
-        this.pruneAuditHistory(chainId, address, assertLease);
-      }))
-      .catch(error => { throw new ResolverAdmissionBlockedError(error); });
+    return this.enqueueLocal(resolverKey(chainId, address), async () => {
+      try {
+        await this.withLease(chainId, address, async (assertLease) => {
+          await this.reconcileIntents(chainId, address, confirm, assertLease);
+          this.pruneAuditHistory(chainId, address, assertLease);
+        });
+      } catch (error) {
+        // At the storage ceiling nothing reconciles or admits, yet retention is the only automatic
+        // way back under it. Run the same bounded, lease-fenced prune alone (one lease row write),
+        // then still report the refusal: admission stays blocked until a full pass succeeds.
+        if (error instanceof JournalStorageFullError && this.auditPruneDue(chainId, address)) {
+          await this.withLease(chainId, address, async (assertLease) => this.pruneAuditHistory(chainId, address, assertLease), true)
+            .catch((pruneError) => emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address,
+              stage: "storage-ceiling", reason: safeDiagnosticText(pruneError) }, "warn"));
+        }
+        throw error;
+      }
+    }).catch(error => { throw new ResolverAdmissionBlockedError(error); });
+  }
+
+  private auditPruneDue(chainId: number, address: Hex): boolean {
+    return this.now() - (this.auditPrune.get(resolverKey(chainId, address))?.at ?? -Infinity) >= auditPruneIntervalMs;
   }
 
   /**
    * Throttled, bounded deletion of this resolver's expired audit history (one short write per
    * minute). Rows for an unfinalized intent, an unresolved attempt or any recovery lineage are
    * evidence and stay. A monotonic sequence cursor steps past them, so they never stall pruning,
-   * and stops at this resolver's first unexpired row; retained rows are revisited after restart.
+   * and stops at this resolver's first unexpired row; the sweep restarts from the head daily (and
+   * after restart) so retained rows whose intent has since finalized become prunable.
    * Each pass reads at most one 5,000-sequence window, whoever's rows share the journal.
    */
   private pruneAuditHistory(chainId: number, address: Hex, assertLease: () => void): void {
     const key = resolverKey(chainId, address), now = this.now();
-    const state = this.auditPrune.get(key) ?? { at: -Infinity, cursor: 0 };
+    const state = this.auditPrune.get(key) ?? { at: -Infinity, cursor: 0, sweepStartedAt: now };
     if (now - state.at < auditPruneIntervalMs) return;
     state.at = now;
+    if (now - state.sweepStartedAt >= auditPruneRevisitMs) { state.cursor = 0; state.sweepStartedAt = now; }
     this.auditPrune.set(key, state);
     try {
       const resolver = normalizeAddress(address), cutoff = new Date(now - this.auditRetentionMs).toISOString();
@@ -668,6 +695,7 @@ export class ResolverTransactionCoordinator {
     const cursor = (this.database.query("SELECT cursor_nonce AS n FROM resolver_archive_progress WHERE chain_id=? AND resolver_address=?")
       .get(chainId, normalizeAddress(address)) as { n: number } | null)?.n ?? -1;
     const archivePage = 8;
+    let archived = cursor; // last archive row this pass fully reconciled
     const archive = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_archive_nonce
       WHERE chain_id=? AND resolver_address=? AND admission_proven=1 AND status != 'finalized' AND nonce > ? ORDER BY nonce LIMIT ?`)
       .all(chainId, normalizeAddress(address), cursor, archivePage + 1) as Intent[];
@@ -763,7 +791,10 @@ export class ResolverTransactionCoordinator {
             || intent.nonce === frontier.nonce)) throw blocked("confirmed nonce/block order contradiction");
           // Revalidate BEFORE persisting the successor; crashes cannot commit an
           // unchecked replacement checkpoint and forget its old ancestry anchor.
+          const resumeStage = stage;
+          stage = "frontier"; // a contradiction found here is a frontier failure, not the intent's
           await verifyFrontier();
+          stage = resumeStage;
           assertActive();
         }
         if (!stored || receipt.admissionProven !== Boolean(intent.admissionProven) || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
@@ -798,7 +829,7 @@ export class ResolverTransactionCoordinator {
       stage = "archive";
       // One look-ahead row tells a full page from the end, so the cursor never needs an empty pass.
       const page = archive.slice(0, archivePage);
-      for (const intent of page) await reconcile(intent, true);
+      for (const intent of page) { await reconcile(intent, true); archived = intent.nonce; }
       // One cursor write per pass, and none when unchanged: every synchronous FULL commit
       // can stall the whole event loop on a contended disk.
       const nextCursor = archive.length > archivePage ? page[archivePage - 1]!.nonce : -1;
@@ -815,6 +846,17 @@ export class ResolverTransactionCoordinator {
       this.admissionBlocks.delete(key);
     } catch (error) {
       this.admissionBlocks.set(key, "canonical-reconciliation-required");
+      // Keep the fully reconciled part of a failed archive page (still at most one cursor write
+      // per pass). The cursor is housekeeping, never authority, but only the lease owner moves it.
+      if (stage === "archive" && archived > cursor) {
+        try {
+          this.database.transaction(() => {
+            assertLease();
+            this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,cursor_nonce) VALUES (?,?,?) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET cursor_nonce=excluded.cursor_nonce")
+              .run(chainId, normalizeAddress(address), archived);
+          }).immediate();
+        } catch {} // the next pass simply revisits the page; never mask the pass error
+      }
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
         durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs,
@@ -1042,7 +1084,7 @@ export class ResolverTransactionCoordinator {
     try {
       await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
       if (request.prepare) this.assertPreparedAdmission(request.chainId, request.address);
-      else if (this.admissionSnapshot(request.chainId, request.address).journalBytes >= 240 * 1024 * 1024)
+      else if (this.admissionSnapshot(request.chainId, request.address).journalBytes >= journalStorageCeilingBytes)
         throw new Error("resolver admission blocked: journal-storage-full; preserve all signed evidence");
     } catch (error) { throw new ResolverAdmissionBlockedError(error); }
     let previous = this.loadAttempt(request.chainId, request.address, request.operationId);
@@ -1359,7 +1401,9 @@ export class ResolverTransactionCoordinator {
             // budget and block admission for a healthy, soon-mined batch. Await inclusion first;
             // reconciliation stays authoritative and replays only if inclusion never comes.
             // Transport errors/rejections keep the immediate replay path (no wait).
-            if (accepted) await request.confirm(hash).catch(() => {});
+            if (accepted) await this.awaitInclusion(request, nonce, hash);
+            // A successor may own the signer after a long wait: fail closed, no resend or nonce.
+            assertLease();
             await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
             // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
             // confirmed intent to submitted or enter the generic replacement/confirm path.
@@ -1399,6 +1443,30 @@ export class ResolverTransactionCoordinator {
     throw new ResolverNonceStalledError(request.chainId, request.address, nonce);
   }
 
+  /**
+   * Bounded wait for an accepted envelope's receipt. Every outcome falls through to the
+   * authoritative reconciliation; the event only shows whether inclusion beat the wait. A late
+   * caller wait is a read with no journal access, so it is left to settle on its own.
+   */
+  private async awaitInclusion(request: ResolverTransactionRequest, nonce: number, hash: Hex): Promise<void> {
+    const started = performance.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let outcome: "included" | "timeout" | "error" = "included", failure: unknown;
+    try {
+      const wait = Promise.resolve().then(() => request.confirm(hash));
+      wait.catch(() => {});
+      await Promise.race([wait, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new InclusionWaitTimeoutError()), this.inclusionWaitMs);
+      })]);
+    } catch (error) {
+      failure = error;
+      outcome = error instanceof InclusionWaitTimeoutError || isWaitTimeoutError(error) ? "timeout" : "error";
+    } finally { clearTimeout(timer); }
+    emitObservabilityEvent({ kind: "resolver_inclusion_wait", chainId: request.chainId, address: request.address, nonce,
+      outcome, waitMs: Math.round(performance.now() - started), timeoutMs: this.inclusionWaitMs,
+      ...(outcome === "error" ? { reason: safeDiagnosticText(failure, 256) } : {}) }, outcome === "included" ? "info" : "warn");
+  }
+
   private async waitForNonceAdvance(
     getTransactionCount: ResolverTransactionRequest["getTransactionCount"],
     nonce: number
@@ -1428,13 +1496,15 @@ export class ResolverTransactionCoordinator {
   private async withLease<T>(
     chainId: number,
     address: `0x${string}`,
-    operation: (assertLease: () => void) => Promise<T>
+    operation: (assertLease: () => void) => Promise<T>,
+    // Only the storage-recovering audit prune may take a lease at the ceiling.
+    auditPruneAtCeiling = false
   ): Promise<T> {
     // Leave headroom for in-flight reconciliation and late signer evidence. Do not
     // even churn lease/cursor writes once a pinned WAL reader exhausts the budget.
-    if (this.journalBytes() >= 240 * 1024 * 1024) {
+    if (!auditPruneAtCeiling && this.journalBytes() >= journalStorageCeilingBytes) {
       this.admissionBlocks.set(resolverKey(chainId, address), "journal-storage-full");
-      throw new Error("resolver admission blocked: journal-storage-full; preserve evidence and inspect WAL readers/disk");
+      throw new JournalStorageFullError();
     }
     const holder = randomUUID();
     await this.acquireLease(chainId, address, holder);
@@ -1595,6 +1665,17 @@ export class ResolverTransactionCoordinator {
       `).run(chainId, normalizedAddress, operationId, nonce, transactionHash, status, now);
     }).immediate();
   }
+}
+
+class InclusionWaitTimeoutError extends Error {}
+
+function isWaitTimeoutError(error: unknown): boolean {
+  // viem's WaitForTransactionReceiptTimeoutError, or a transport-level timeout.
+  return error instanceof Error && (/timeout/i.test(error.name) || /timed out/i.test(errorText(error)));
+}
+
+class JournalStorageFullError extends Error {
+  constructor() { super("resolver admission blocked: journal-storage-full; preserve evidence and inspect WAL readers/disk"); }
 }
 
 /** No candidate was evaluated: retry the shared admission gate, not each mission. */
