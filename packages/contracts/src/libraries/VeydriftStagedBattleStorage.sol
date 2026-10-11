@@ -73,6 +73,9 @@ library VeydriftStagedBattleStorage {
     struct Layout {
         mapping(uint256 => Battle) battles;
         mapping(uint256 => uint256) bodyLock;
+        // Attack launch protection verdict: 0 unrecorded (launched before it existed), 1 open,
+        // 2 score-protected and admitted only by the target's live Rift lock.
+        mapping(uint256 => uint8) launchVerdict;
     }
 
     function layout() internal pure returns (Layout storage state) {

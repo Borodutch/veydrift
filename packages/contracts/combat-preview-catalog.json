@@ -23,7 +23,7 @@
     { "id": 2, "key": "heavyLaser", "label": "Heavy Laser", "attack": 250, "shield": 100, "hull": 800, "metal": 6000, "crystal": 2000, "deuterium": 0 },
     { "id": 3, "key": "smallShieldDome", "label": "Small Shield Dome", "attack": 1, "shield": 2000, "hull": 2000, "metal": 10000, "crystal": 10000, "deuterium": 0 },
     { "id": 4, "key": "gaussCannon", "label": "Gauss Cannon", "attack": 1100, "shield": 200, "hull": 3500, "metal": 20000, "crystal": 15000, "deuterium": 2000 },
-    { "id": 5, "key": "ionCannon", "label": "Ion Cannon", "attack": 150, "shield": 500, "hull": 800, "metal": 2000, "crystal": 6000, "deuterium": 0 },
+    { "id": 5, "key": "ionCannon", "label": "Ion Cannon", "attack": 150, "shield": 500, "hull": 800, "metal": 5000, "crystal": 3000, "deuterium": 0 },
     { "id": 6, "key": "plasmaTurret", "label": "Plasma Turret", "attack": 3000, "shield": 300, "hull": 10000, "metal": 50000, "crystal": 50000, "deuterium": 30000 },
     { "id": 7, "key": "largeShieldDome", "label": "Large Shield Dome", "attack": 1, "shield": 10000, "hull": 10000, "metal": 50000, "crystal": 50000, "deuterium": 0 }
   ],

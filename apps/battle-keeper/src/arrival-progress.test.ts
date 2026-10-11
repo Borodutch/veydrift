@@ -128,3 +128,12 @@ for (const target of [undefined, "2"]) test("chronology counter keeps " + (targe
   work=1n; expect(guardAllows(paid,await read())).toBe(false);
   expect(tags.every(tag=>JSON.stringify(tag)===JSON.stringify({blockHash:hash,requireCanonical:true}))).toBe(true);
 });
+
+test("referee wait phases never authorize a paid ordinary attempt until settlement advances", async () => {
+  const f = fixture(), before = await f.read();
+  expect(guardAllows(undefined, { ...before, phase: 16 })).toBe(false);
+  expect(guardAllows(undefined, { ...before, phase: 17, workDone: "99" })).toBe(false);
+  // Referee leaves move the battle into ordinary phase 11 economics with more cumulative work.
+  const guard = consumeProgress(undefined, { ...before, phase: 5 }, "1", "arrival");
+  expect(guardAllows(guard, { ...before, phase: 11, workDone: "99" })).toBe(true);
+});

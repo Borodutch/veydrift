@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftRefereeSettlementModule} from "./VeydriftRefereeSettlementModule.sol";
 import {VeydriftMigrationDiscardModule} from "./VeydriftMigrationDiscardModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -121,7 +122,18 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     /// @dev The VeydriftGame facade routes the size-sensitive Rift selectors here. This module
     ///      dispatches them again under the original proxy storage context.
     fallback() external {
-        address module = msg.sig == 0x41dfa622 ? _combatRaidModule : _riftModule;
+        address module = msg.sig == 0x41dfa622
+            || msg.sig == VeydriftRefereeSettlementModule.applyBattleResultLeaves.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultProgress.selector
+            || msg.sig == VeydriftRefereeSettlementModule.submitBattleResult.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultSummary.selector
+            || msg.sig == VeydriftRefereeSettlementModule.configureBattleReferee.selector
+            || msg.sig == VeydriftRefereeSettlementModule.refereeBattleRecord.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultBinding.selector
+            || msg.sig == VeydriftRefereeSettlementModule.resetBattleResult.selector
+            || msg.sig == VeydriftRefereeSettlementModule.voidRefereeBattle.selector
+            ? _combatRaidModule
+            : _riftModule;
         (bool ok, bytes memory result) = module.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") { revert(add(result, 32), mload(result)) }

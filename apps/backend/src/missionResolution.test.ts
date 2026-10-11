@@ -1504,6 +1504,44 @@ describe("moon chance resolution", () => {
     expect(writes).toHaveLength(2);
   });
 
+  test("re-requests randomness for a battle moon chance that could not reserve it", async () => {
+    const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
+    const writes: string[] = [];
+    let requestId = 0n;
+    let outcomePurpose: string = purpose;
+    const publicClient = {
+      async call() { return { data: "0x" }; },
+      readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
+        ? [requestId, outcomePurpose, false, 0n]
+        : { requester: moon, purposeHash: purpose, createdAt: 1n, fulfilledAt: 0n, randomWord: 0n },
+      getStorageAt: async () => "0x00",
+      getTransactionCount: async () => 4,
+      waitForTransactionReceipt: async () => ({ status: "success" }),
+      getTransactionReceipt: async () => ({ status: "success" })
+    } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
+    const walletClient = {
+      writeContract: async (call: { address: string; functionName: string; nonce: number }) => {
+        writes.push(`${call.address}:${call.functionName}`);
+        requestId = 17n;
+        return `0x${call.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = () => new ViemMissionResolutionChainClient(
+      { isFleetChronologyOrderingReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      config.gameContractAddress!, account, publicClient, walletClient,
+      { id: config.chainId } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"), moon, engine
+    );
+    expect(await client().finalizeMoonChance("8")).toBe("pending");
+    expect(writes).toEqual([`${moon}:retryMoonChanceRandomness`]);
+    // Once requested, it waits for the reveal like any other moon chance.
+    expect(await client().finalizeMoonChance("8")).toBe("pending");
+    expect(writes).toHaveLength(1);
+    requestId = 0n;
+    outcomePurpose = `0x${"00".repeat(32)}`;
+    await expect(client().finalizeMoonChance("9")).rejects.toThrow("unknown moon chance outcome");
+  });
+
   test("rotates bounded indexed candidates, catches existing pending on restart, backs off failures and honors pause/disable", async () => {
     let now = 0;
     let paused = false;

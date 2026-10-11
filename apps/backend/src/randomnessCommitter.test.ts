@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PublicClient, WalletClient } from "viem";
+import { ContractFunctionExecutionError, ContractFunctionRevertedError, HttpRequestError, type PublicClient, type WalletClient } from "viem";
 
 import { loadBackendConfig, type BackendConfig } from "./config";
 import {
@@ -332,6 +332,19 @@ describe("ViemRandomnessCommitmentChainClient", () => {
     expect(await client.getRequestFulfillment(42n, "finalized")).toBeNull();
     expect(reads.map((input) => input.blockTag)).toEqual(["latest", "latest", "latest", "finalized", "finalized"]);
     expect(reads.every((input) => input.args?.[0] === 42n)).toBe(true);
+  });
+
+  test("treats a battle-gate read failure as still gated unless the engine predates the gate", async () => {
+    const account = privateKeyToAccount(`0x${"2".repeat(64)}`);
+    let fail: () => never = () => { throw new Error("unused"); };
+    const client = new ViemRandomnessCommitmentChainClient({
+      async readContract() { return fail(); }
+    } as unknown as PublicClient, {} as WalletClient, baseConfig.randomnessEngineAddress!, account,
+    { id: baseConfig.chainId } as never, new ResolverTransactionCoordinator(":memory:"));
+    fail = () => { throw new HttpRequestError({ url: "http://rpc.invalid" }); };
+    expect(await client.isAwaitingBattleSnapshot(7n)).toBe(true);
+    fail = () => { throw new ContractFunctionExecutionError(new ContractFunctionRevertedError({ abi: [], functionName: "battleRequestPolicy" }), { abi: [], functionName: "battleRequestPolicy" }); };
+    expect(await client.isAwaitingBattleSnapshot(7n)).toBe(false);
   });
 
   test("does not reuse a persisted successful receipt as proof of an unfulfilled operation", async () => {

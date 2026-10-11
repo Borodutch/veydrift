@@ -87,23 +87,26 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     }
 
     /// @dev Moon attacks cannot inherit their parent planet's Rift exception because they cannot
-    ///      loot a planet-bound Rift lock.
+    ///      loot a planet-bound Rift lock. Returns true when the target is score-protected and only
+    ///      its live Rift lock admits the attack (launches record it as the battle's verdict).
     function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
         external
         view
+        returns (bool)
     {
-        _enforceBodyAttackProtection(attacker, planetId, targetIsMoon);
+        return _enforceBodyAttackProtection(attacker, planetId, targetIsMoon);
     }
 
     function _enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
         private
         view
+        returns (bool)
     {
         if (_planets[planetId].owner == attacker) revert SelfAttack();
         (bool ok, bytes memory data) = address(this)
             .staticcall(abi.encodeWithSelector(0xdca08aaf, attacker, planetId, targetIsMoon));
         if (!ok) assembly ("memory-safe") { revert(add(data, 32), mload(data)) }
-        if (data.length < 32) return;
+        if (data.length < 32) return false;
         (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
         Resources storage locked = _riftLockedResources[planetId];
         bool hasLiveRift = locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0;
@@ -114,6 +117,7 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         if ((targetIsMoon || !hasLiveRift) && reason == AttackBlockReason.ScoreProtection) {
             revert AttackScoreProtection();
         }
+        return reason == AttackBlockReason.ScoreProtection;
     }
 
     function raidRiftExtraction(

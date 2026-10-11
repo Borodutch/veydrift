@@ -39,8 +39,10 @@ describe("independent shot conservation", () => {
   });
 
   test("missing, historical and unknown live models fail closed", () => {
-    for (const value of [null, {}, { version: null }, { version: 0 }, { version: 1 }, { version: 3 }, { version: "2" }]) expect(combatModelMatches(value)).toBe(false);
+    for (const value of [null, {}, { version: null }, { version: 0 }, { version: 1 }, { version: 4 }, { version: "2" }, { version: "3" }]) expect(combatModelMatches(value)).toBe(false);
     expect(combatModelMatches({ version: 2 })).toBe(true);
+    // Ticket #44 referee rules for attacks launched while the referee is active.
+    expect(combatModelMatches({ version: 3 })).toBe(true);
   });
 
   test("adjacent Reapers cannot receive invented first-round double hits", () => {

@@ -23,8 +23,8 @@ contract VeydriftCombatProtectionModule is VeydriftResourceReserves {
     function prepare(uint256 id) external {
         Store.Battle storage b = Store.battle(id);
         FleetMission storage m = _fleetMissions[id];
+        // An abandoned target (no defender) prepares as a blocked battle: every fleet returns.
         address defender = _planets[m.targetPlanetId].owner;
-        if (defender == address(0)) revert NoPlanet();
         if (b.phase == 0) {
             uint256 lockId = Store.layout().bodyLock[m.targetPlanetId];
             if (lockId != 0 && lockId != id) {
@@ -36,7 +36,7 @@ contract VeydriftCombatProtectionModule is VeydriftResourceReserves {
             b.stationedLength = _stationedDefenseMissions[m.targetPlanetId].length;
             (bool same,, bool exception) = _attackProtectionAllianceContext(m.owner, defender);
             bool exempt = m.owner == defender || _isAttackProtectionExempt(m.owner, defender);
-            b.blocked = (!exempt && same)
+            b.blocked = defender == address(0) || (!exempt && same)
                 || (m.targetIsMoon
                     && !_missionMoonExistsForOwner(id, m.targetPlanetId, defender, false));
             b.scoreException = exempt || exception
@@ -101,8 +101,12 @@ contract VeydriftCombatProtectionModule is VeydriftResourceReserves {
             }
         }
         if (b.scoreSide == 2) {
-            bool protected =
-                Rules.isScoreProtected(b.scores[0], b.scores[1], b.scoreException, false);
+            // Score protection is the launch verdict: no in-flight score change (fleets parked in
+            // holds/attacks, recalls, abandoned colonies) can flip it. Older flights re-score.
+            uint8 verdict = Store.layout().launchVerdict[id];
+            bool protected = verdict == 0
+                ? Rules.isScoreProtected(b.scores[0], b.scores[1], b.scoreException, false)
+                : verdict == 2;
             b.blocked = b.blocked || (protected && !b.scoreRift);
             _battleRaidPlunderBps[id] = protected ? 0 : Rules.plunderBps();
             _battleRaidProtectionSnapshotted[id] = true;

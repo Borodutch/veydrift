@@ -29,10 +29,17 @@ export function guardAllows(guard: ProgressGuard | undefined, current: MissionPr
   // Storage/getter success is not code provenance. Only a deployment-reviewed runtime can
   // bootstrap zero counters; its paid checkpoint then enforces ordinary monotonic progress.
   if (current.arrivalCapability === false || (current.arrivalOrderCursor !== undefined && current.arrivalGeneration === undefined)) return false;
+  if (refereeWait(current)) return false;
   if (!guard) return true;
   if (BigInt(current.blockNumber) < BigInt(guard.before.blockNumber)) return false;
   const previous = [guard.before, ...(guard.history ?? [])].filter(p => p.version === current.version);
   return previous.length === 0 || previous.every(p => progressAdvanced(p, current));
+}
+
+/** Ticket #44 referee battles: 16 awaits the revealed seed, 17 the referee's result/leaves. The
+ * backend referee owns both steps; ordinary resolveFleetMission would only buy no-op receipts. */
+export function refereeWait(progress: Pick<MissionProgress, "phase">): boolean {
+  return progress.phase === 16 || progress.phase === 17;
 }
 
 export function consumeProgress(guard: ProgressGuard | undefined, before: MissionProgress,

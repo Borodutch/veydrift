@@ -571,6 +571,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error PlanetHasResources();
     error PlanetHasActiveFleetMissions();
     error AttackJoinCutoffPassed(uint64 cutoffAt);
+    error AttackJoinNotAuthorized(uint256 attackMissionId);
     error CannotJoinOwnAttackTarget();
     error RandomnessEngineUnset();
     error InvalidLootRatio();

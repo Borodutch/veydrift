@@ -83,11 +83,33 @@ contract MoonPreparationRandomness {
 contract MoonPreparationHarness is VeydriftMoonSystem {
     constructor(address game_, address randomness_) VeydriftMoonSystem(game_, randomness_) {}
 
+    struct LegacyBacklog {
+        mapping(uint256 => Backlog.Entry[]) queues;
+    }
+
+    /// Live moons may hold pre-cap backlogs (direct orders were uncapped before the 16-entry
+    /// enqueue cap), so entries past the cap are written as that legacy state, same readyAt chain.
     function seedDefenses(uint256 total, uint64 firstReady) external {
+        LegacyBacklog storage legacy;
+        bytes32 slot = keccak256("veydrift.storage.MoonDefenseBacklog.v1");
+        assembly ("memory-safe") { legacy.slot := slot }
         for (uint256 i; i < total; ++i) {
-            Backlog.enqueue(
-                moonDefenseQueues, 1, Defense(i % 6), 1, 1, firstReady - 1, G.Resources(1, 2, 3)
-            );
+            if (i <= Backlog.MAX_BACKLOG) {
+                Backlog.enqueue(
+                    moonDefenseQueues, 1, Defense(i % 6), 1, 1, firstReady - 1, G.Resources(1, 2, 3)
+                );
+            } else {
+                Backlog.Entry[] storage queue = legacy.queues[1];
+                queue.push(
+                    Backlog.Entry(
+                        true,
+                        Defense(i % 6),
+                        1,
+                        queue[queue.length - 1].readyAt + 1,
+                        G.Resources(1, 2, 3)
+                    )
+                );
+            }
         }
     }
 

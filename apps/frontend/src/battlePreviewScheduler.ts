@@ -1,4 +1,4 @@
-import { CONTRACT_COMBAT_MODEL_VERSION, type ContractBattleForecastSummary, type ContractBattleInput } from "./battlePreview";
+import { activeCombatModel, type ContractBattleForecastSummary, type ContractBattleInput } from "./battlePreview";
 
 export const ATTACK_BATTLE_PREVIEW_DEBOUNCE_MS = 350;
 export const ATTACK_BATTLE_PREVIEW_TIMEOUT_MS = 4_000;
@@ -85,12 +85,13 @@ export class BattlePreviewScheduler {
       if (requestId !== this.activeRequestId) return;
 
       try {
+        const model = activeCombatModel();
         const worker = this.createWorker();
         this.worker = worker;
         worker.onmessage = (event) => {
           if (requestId !== this.activeRequestId || event.data.requestId !== requestId) return;
           this.finishWorker(worker);
-          if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
+          if (event.data.modelVersion !== model) {
             onError("This battle preview is out of date. Please refresh.");
           } else if ("forecast" in event.data) {
             onResult(event.data.forecast);
@@ -103,7 +104,7 @@ export class BattlePreviewScheduler {
           this.finishWorker(worker);
           onError("The battle preview failed. Please retry.");
         };
-        worker.postMessage({ requestId, input, modelVersion: CONTRACT_COMBAT_MODEL_VERSION });
+        worker.postMessage({ requestId, input, modelVersion: model });
         this.workerTimer = this.setTimer(() => {
           this.workerTimer = undefined;
           if (requestId !== this.activeRequestId || this.worker !== worker) return;
@@ -159,5 +160,5 @@ export class BattlePreviewScheduler {
 }
 
 export function battlePreviewInputKey(input: ContractBattleInput): string {
-  return JSON.stringify({ model: CONTRACT_COMBAT_MODEL_VERSION, input });
+  return JSON.stringify({ model: activeCombatModel(), input });
 }

@@ -7,9 +7,16 @@ import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 /// @notice Storage-compatible UUPS upgrade adding a bounded FIFO precommit inventory.
 contract UpgradeRandomnessEngine is Script {
     function run() external returns (address newImplementation) {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
+        // Public identity only for a keyless dry run. UPGRADE_DRY_RUN_OWNER must be the proxy
+        // owner. Never pass --broadcast for rehearsal.
+        address rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address broadcaster = rehearsalOwner;
+        if (rehearsalOwner == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(privateKey);
+        }
         address payable proxy = payable(vm.envAddress("RANDOMNESS_PROXY_ADDRESS"));
-        address broadcaster = vm.addr(privateKey);
 
         RandomnessEngine proxied = RandomnessEngine(proxy);
         address owner = proxied.owner();
@@ -18,7 +25,8 @@ contract UpgradeRandomnessEngine is Script {
         require(fulfiller != address(0), "RANDOMNESS_FULFILLER_NOT_CONFIGURED");
         require(broadcaster == owner, "BROADCASTER_MUST_BE_PROXY_OWNER");
 
-        vm.startBroadcast(privateKey);
+        if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
+        else vm.startBroadcast(privateKey);
         RandomnessEngine implementation = new RandomnessEngine(owner, fulfiller);
         newImplementation = address(implementation);
         proxied.upgradeToAndCall(newImplementation, "");

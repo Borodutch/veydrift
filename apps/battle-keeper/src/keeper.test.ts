@@ -775,3 +775,26 @@ describe("staged combat continuation", () => {
     expect(keeper.snapshot().submitFailureCount).toBe(1);
   });
 });
+
+describe("BattleKeeper referee battles", () => {
+  test("never pays for phase 16/17 referee waits and resumes on economics", async () => {
+    let phase = 16;
+    const warnings: string[] = [];
+    const resolver = new MockResolver(async () => "0xhash", async (missionId) => ({
+      missionId, missionType: MissionType.Attack, status: FleetMissionStatus.Outbound, arrivalAt: 800, returnAt: 900, randomnessRequestId: "5"
+    }));
+    Object.assign(resolver, {
+      missionProgress: async () => ({ blockNumber: "1", blockHash: "0x1", version: "v", phase, round: 0, workDone: String(phase) })
+    });
+    const keeper = new BattleKeeper(resolver, { now: () => 1_000, logger: { ...silentLogger, warn: (message) => warnings.push(message) } });
+    keeper.recordLaunched(launch("44", MissionType.Attack, 800, 900, "5"));
+    await keeper.tick();
+    phase = 17;
+    await keeper.tick();
+    expect(resolver.calls).toEqual([]);
+    expect(warnings.every((w) => w.includes("not resolvable yet"))).toBe(true);
+    phase = 11;
+    await keeper.tick();
+    expect(resolver.calls).toEqual(["44:arrival"]);
+  });
+});

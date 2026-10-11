@@ -1,4 +1,4 @@
-import { CONTRACT_COMBAT_MODEL_VERSION, forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
+import { forecastContractBattle, setActiveCombatModel, summarizeContractBattleForecast } from "./battlePreview";
 import type {
   BattlePreviewWorkerRequest,
   BattlePreviewWorkerResponse,
@@ -14,16 +14,16 @@ const workerScope = self as unknown as BattlePreviewWorkerScope;
 workerScope.onmessage = (event) => {
   const { input, requestId } = event.data;
   try {
-    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("This battle preview is out of date. Please refresh.");
+    setActiveCombatModel(event.data.modelVersion);
     workerScope.postMessage({
       requestId,
-      modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
+      modelVersion: event.data.modelVersion,
       forecast: summarizeContractBattleForecast(forecastContractBattle(input, undefined, false)),
     });
   } catch (error) {
     workerScope.postMessage({
       requestId,
-      modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
+      modelVersion: event.data.modelVersion,
       error: error instanceof Error ? error.message : "Battle preview simulation failed.",
     });
   }

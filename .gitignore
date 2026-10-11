@@ -36,6 +36,8 @@ packages/contracts/manifests/private-paid-invite-migration.json
 # Regenerated local-only mission batch EVM fixture state.
 packages/contracts/manifests/vey918-mixed-alloc.json
 packages/contracts/manifests/vey918-mixed-meta.json
+packages/contracts/manifests/ticket44-referee-alloc.json
+packages/contracts/manifests/ticket44-referee-meta.json
 typechain-types/
 proofs/
 !packages/circuits/proofs/

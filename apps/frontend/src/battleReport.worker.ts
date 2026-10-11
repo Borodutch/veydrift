@@ -1,4 +1,4 @@
-import { CONTRACT_COMBAT_MODEL_VERSION, runContractBattle, type ContractBattleInput, type ContractBattleResult } from "./battlePreview";
+import { runContractBattle, setActiveCombatModel, type ContractBattleInput, type ContractBattleResult } from "./battlePreview";
 
 type BattleReportWorkerRequest = {
   input: ContractBattleInput;
@@ -22,17 +22,17 @@ const workerScope = self as unknown as BattleReportWorkerScope;
 workerScope.onmessage = (event) => {
   const { input, randomWord, requestId, sampleId } = event.data;
   try {
-    if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) throw new Error("This battle report is out of date. Please refresh.");
+    setActiveCombatModel(event.data.modelVersion);
     workerScope.postMessage({
       report: runContractBattle(input, randomWord, sampleId),
       requestId,
-      modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
+      modelVersion: event.data.modelVersion,
     });
   } catch (error) {
     workerScope.postMessage({
       error: error instanceof Error ? error.message : "Battle report simulation failed.",
       requestId,
-      modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
+      modelVersion: event.data.modelVersion,
     });
   }
 };

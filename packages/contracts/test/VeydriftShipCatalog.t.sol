@@ -22,8 +22,12 @@ contract VeydriftShipCatalogTest is Test {
         _assertShip(Ship.Battleship, 45_000, 15_000, 0, 1_500);
         _assertShip(Ship.Destroyer, 60_000, 50_000, 15_000, 2_000);
         _assertShip(Ship.Deathstar, 5_000_000, 4_000_000, 1_000_000, 1_000_000);
-        _assertShip(Ship.Reaper, 85_000, 55_000, 20_000, 7_000);
-        _assertShip(Ship.Pathfinder, 8_000, 15_000, 8_000, 12_000);
+        _assertShip(Ship.Reaper, 85_000, 55_000, 20_000, 10_000);
+        _assertShip(Ship.Pathfinder, 8_000, 15_000, 8_000, 10_000);
+        (, uint256 bomberFuel,) = VeydriftCatalog.shipMovementStats(Ship.Bomber, 0, 0, 0);
+        (, uint256 reaperFuel,) = VeydriftCatalog.shipMovementStats(Ship.Reaper, 0, 0, 0);
+        assertEq(bomberFuel, 700);
+        assertEq(reaperFuel, 1_100);
     }
 
     function testCanonicalVeydriftRepresentativeShipRequirements() public {

@@ -1032,6 +1032,7 @@ describe("Veydrift backend", () => {
       missionResolution: null,
       gameMaintenance: null,
       randomnessCommitter: null,
+      battleReferee: null,
       randomnessReadiness: {
         ready: true,
         reasons: [],

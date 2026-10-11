@@ -198,12 +198,12 @@ All costs are base costs before level scaling unless noted.
 | Heavy Fighter | 6,000 metal, 4,000 crystal | Shipyard 3, Impulse 2, Armor 2 | 100 | 75 | 150 attack, 25 shield, 1,000 hull |
 | Cruiser | 20,000 metal, 7,000 crystal, 2,000 deuterium | Shipyard 5, Impulse 4, Ion 2 | 800 | 300 | 400 attack, 50 shield, 2,700 hull |
 | Battleship | 45,000 metal, 15,000 crystal | Shipyard 7, Hyperspace Drive 4 | 1,500 | 500 | 1,000 attack, 200 shield, 6,000 hull |
-| Bomber | 50,000 metal, 25,000 crystal, 15,000 deuterium | Shipyard 8, Impulse 6, Plasma 5 | 500 | 1,000 | 1,000 attack, 500 shield, 7,500 hull |
+| Bomber | 50,000 metal, 25,000 crystal, 15,000 deuterium | Shipyard 8, Impulse 6, Plasma 5 | 500 | 700 | 1,000 attack, 500 shield, 7,500 hull |
 | Solar Satellite | 2,000 crystal, 500 deuterium | Shipyard 1 | 0 | 0 | Fragile stationary energy unit |
 | Destroyer | 60,000 metal, 50,000 crystal, 15,000 deuterium | Shipyard 9, Hyperspace Drive 6, Hyperspace 5 | 2,000 | 1,000 | 2,000 attack, 500 shield, 11,000 hull |
 | Dreadstar | 5,000,000 metal, 4,000,000 crystal, 1,000,000 deuterium | Shipyard 12, Hyperspace Drive 7, Hyperspace 6, Graviton 1 | 1,000,000 | 1 | 200,000 attack, 50,000 shield, 900,000 hull |
 | Battlecruiser | 30,000 metal, 40,000 crystal, 15,000 deuterium | Shipyard 8, Hyperspace Drive 5, Hyperspace 5, Laser 12 | 750 | 250 | 700 attack, 400 shield, 7,000 hull |
-| Reaper | 85,000 metal, 55,000 crystal, 20,000 deuterium | Shipyard 10, Hyperspace Drive 7, Hyperspace 6, Shielding 6, Energy 5 | 7,000 | 1,000 | 2,800 attack, 700 shield, 14,000 hull |
+| Reaper | 85,000 metal, 55,000 crystal, 20,000 deuterium | Shipyard 10, Hyperspace Drive 7, Hyperspace 6, Shielding 6, Energy 5 | 10,000 | 1,100 | 2,800 attack, 700 shield, 14,000 hull |
 | Crawler | 2,000 metal, 2,000 crystal, 1,000 deuterium | Shipyard 5, Combustion 4, Armor 4, Laser 4 | 0 | 0 | Stationary mine booster |
 
 ### Defenses And Missiles
@@ -215,7 +215,7 @@ All costs are base costs before level scaling unless noted.
 | Heavy Laser | 6,000 metal, 2,000 crystal | Shipyard 4, Energy 3, Laser 6 | 250 attack, 100 shield, 800 hull |
 | Small Shield Dome | 10,000 metal, 10,000 crystal | Shipyard 1, Shielding 2 | One per planet or moon body |
 | Gauss Cannon | 20,000 metal, 15,000 crystal, 2,000 deuterium | Shipyard 6, Energy 6, Weapons 3, Shielding 1 | 1,100 attack, 200 shield, 3,500 hull |
-| Ion Cannon | 2,000 metal, 6,000 crystal | Shipyard 4, Ion 4 | 150 attack, 500 shield, 800 hull |
+| Ion Cannon | 5,000 metal, 3,000 crystal | Shipyard 4, Ion 4 | 150 attack, 500 shield, 800 hull |
 | Plasma Turret | 50,000 metal, 50,000 crystal, 30,000 deuterium | Shipyard 8, Plasma 7 | 3,000 attack, 300 shield, 10,000 hull |
 | Large Shield Dome | 50,000 metal, 50,000 crystal | Shipyard 6, Shielding 6 | One per planet or moon body |
 | Anti-Ballistic Missile | 8,000 metal, 2,000 deuterium | Shipyard 1, Missile Silo 2 | Intercepts incoming missiles; uses one silo slot |

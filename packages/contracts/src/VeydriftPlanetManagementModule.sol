@@ -27,9 +27,90 @@ interface IVeydriftResolvedMissionUntracker {
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     address private immutable _missileModule;
+    bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
+        keccak256(
+            "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
+        )
+    );
+    bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
+        keccak256(
+            "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
+        )
+    );
 
     constructor() VeydriftResourceReserves(address(0)) {
         _missileModule = address(new VeydriftMissileModule());
+    }
+
+    /// @notice Launch an Attack mission with a player-selected loot ratio (metal/crystal/deuterium
+    ///         bps split applied to cargo capacity, with capacity rollover for unfillable shares).
+    /// @dev The three bps shares must sum to exactly `BPS`. The mission itself is created by reusing
+    ///      the standard launch path: this call's calldata is re-dispatched as `launchFleetMission`
+    ///      (with the `Attack` mission type spliced in and the trailing loot ratio dropped) through
+    ///      the game facade, avoiding both a third inlined copy of the large launch routine and any
+    ///      costly struct re-encoding here. The loot ratio is then recorded on the created mission.
+    ///      Lives here rather than in the gameplay module for EIP-170 headroom.
+    function launchAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        uint256,
+        LootRatio calldata lootRatio
+    ) external returns (uint256) {
+        return _launchWithLootRatio(LAUNCH_FLEET_MISSION_SELECTOR, lootRatio);
+    }
+
+    /// @notice Launch a planet/moon Attack mission with the same player-selected loot ratio used
+    ///         by planet-to-planet attacks.
+    /// @dev Re-dispatches to the established body-aware launch path, then records the ratio on the
+    ///      created mission. The facade routes that nested call to VeydriftDefenseHoldModule, so
+    ///      body validation, fuel, inventory, and randomness continue to have one implementation.
+    function launchBodyAttackMission(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        bool,
+        bool,
+        LootRatio calldata lootRatio
+    ) external returns (uint256) {
+        return _launchWithLootRatio(LAUNCH_BODY_FLEET_MISSION_SELECTOR, lootRatio);
+    }
+
+    /// @dev Both loot-ratio launchers end with the same three-word ratio tail, so one splice
+    ///      re-dispatches either launch selector with the Attack type and records the ratio.
+    function _launchWithLootRatio(bytes4 selector, LootRatio calldata lootRatio)
+        private
+        returns (uint256 missionId)
+    {
+        if (uint256(lootRatio.metalBps) + lootRatio.crystalBps + lootRatio.deuteriumBps != BPS) {
+            revert InvalidLootRatio();
+        }
+        bool ok;
+        assembly ("memory-safe") {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            // origin + target (two words) copied verbatim after the selector
+            calldatacopy(add(ptr, 0x04), 0x04, 0x40)
+            // splice in the Attack mission type as the third argument
+            mstore(add(ptr, 0x44), 3)
+            // remaining launch args, dropping the loot ratio tail
+            let restLen := sub(calldatasize(), 0xA4)
+            calldatacopy(add(ptr, 0x64), 0x44, restLen)
+            ok := delegatecall(gas(), address(), ptr, add(restLen, 0x64), ptr, 0x20)
+            missionId := mload(ptr)
+            if iszero(ok) {
+                returndatacopy(ptr, 0, returndatasize())
+                revert(ptr, returndatasize())
+            }
+        }
+        _fleetMissions[missionId].lootRatio = lootRatio;
+        emit FleetMissionLootRatio(
+            missionId, lootRatio.metalBps, lootRatio.crystalBps, lootRatio.deuteriumBps
+        );
     }
 
     /// @notice Lazy fleet reconcile, direct mission leg (VEY-590). Self-only via the facade gate.

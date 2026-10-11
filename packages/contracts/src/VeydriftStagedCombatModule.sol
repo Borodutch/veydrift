@@ -88,7 +88,8 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             if (!b.blocked) b.seed = _battleSeed(id, m);
             _battleResolutionProgress[id].seed = b.seed;
             b.phase = b.blocked ? 3 : 1;
-            if (!m.targetIsMoon) {
+            // An abandoned target (blocked) has no owner whose production could be settled.
+            if (!m.targetIsMoon && _planets[m.targetPlanetId].owner != address(0)) {
                 BuildingConstruction memory construction = buildingConstructions[m.targetPlanetId];
                 if (construction.active && construction.readyAt <= m.arrivalAt) {
                     IStagedProduction(address(this))
@@ -242,7 +243,7 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
                 // Fixed-cost index removals; unlike member settlement this cannot enroll or
                 // process a fleet manifest. The explicit record bound also covers cold writes.
                 for (uint256 scanned; scanned < 32 && b.cursor < b.linkedLength; ++scanned) {
-                    _untrackStagedCounterplay(
+                    _untrackCounterplayMissionResolution(
                         id, _fleetMissions[_fleetCounterplayMissions[id][b.cursor++]]
                     );
                 }
@@ -400,18 +401,6 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _untrackStagedCounterplay(uint256 id, FleetMission storage member) private {
-        FleetMission storage leader = _fleetMissions[id];
-        if (
-            member.originPlanetId != leader.originPlanetId
-                && member.originPlanetId != leader.targetPlanetId
-        ) _removeResolutionMissionForPlanet(member.originPlanetId, id);
-        address defender = _planets[leader.targetPlanetId].owner;
-        if (member.owner != leader.owner && member.owner != defender) {
-            _removeResolutionMissionForPlayer(member.owner, id);
-        }
-    }
-
     function _returnMember(uint256 memberId, uint256 id, FleetMission storage attack) private {
         FleetMission storage m = _fleetMissions[memberId];
         if (m.status != FleetMissionStatus.Outbound) return;
@@ -501,7 +490,8 @@ contract VeydriftStagedCombatModule is VeydriftResourceReserves {
             emit CombatDebrisSignaled(id, m.targetPlanetId, debris.metal, debris.crystal);
             _requestMoonChanceFromBattle(id, m.targetPlanetId, debris);
         }
-        if (!b.blocked && m.targetIsMoon && _moonSystem != address(0)) {
+        // Blocked battles release too: a no-op unless a voided referee battle already froze it.
+        if (m.targetIsMoon && _moonSystem != address(0)) {
             (bool versioned, bytes memory version) =
                 _moonSystem.staticcall(abi.encodeWithSignature("moonShipProductionVersion()"));
             if (versioned && version.length >= 32) {

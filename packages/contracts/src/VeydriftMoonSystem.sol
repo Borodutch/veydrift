@@ -332,16 +332,14 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         onlyOwner
     {
         _requireMoonExists(planetId);
-        game.requireNoPendingMoonAttackResolution(planetId);
-        _settleMoonStateDue(planetId);
+        _settleMoonStateDue(planetId); // includes the pending-battle guard
         game.grantMoonResources(planetId, amount);
         _emitMoonResourcesSettled(planetId);
     }
 
     function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external onlyOwner {
         _requireMoonExists(planetId);
-        game.requireNoPendingMoonAttackResolution(planetId);
-        _settleMoonStateDue(planetId);
+        _settleMoonStateDue(planetId); // includes the pending-battle guard
         game.setMoonShipCount(planetId, ship, total);
     }
 
@@ -581,7 +579,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         bytes32 purposeHash = moonChancePurposeHash(
             outcomeId, battleId, targetPlanetId, metalDebris, crystalDebris, chanceBps
         );
-        requestId = randomness.requestRandomness(purposeHash);
+        // A drained or paused engine must not drop the chance: the outcome keeps requestId 0
+        // until anyone calls retryMoonChanceRandomness.
+        try randomness.requestRandomness(purposeHash) returns (uint256 id) {
+            requestId = id;
+        } catch {}
 
         _moonChanceOutcomes[outcomeId] = MoonChanceOutcome({
             active: true,
@@ -601,7 +603,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             requestedAt: _currentTimestamp(),
             finalizedAt: 0
         });
-        moonChanceOutcomeByRequestId[requestId] = outcomeId;
+        // moonChanceOutcomeByRequestId is write-only (no reader) and requestId may be 0 here.
         moonChanceOutcomeByBattle[battleKey] = outcomeId;
 
         emit MoonChanceRequested(
@@ -684,6 +686,17 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             requestId,
             purposeHash
         );
+    }
+
+    /// @notice Permissionless: requests randomness for a recorded battle moon chance whose
+    /// battle-time request failed (requestId 0). Reverts once the outcome has a request.
+    function retryMoonChanceRandomness(uint256 outcomeId) external returns (uint256 requestId) {
+        MoonChanceOutcome storage outcome = _moonChanceOutcomes[outcomeId];
+        if (!outcome.active || outcome.randomnessRequestId != 0) {
+            revert UnknownMoonChanceOutcome(outcomeId);
+        }
+        requestId = randomness.requestRandomness(outcome.purposeHash);
+        outcome.randomnessRequestId = requestId;
     }
 
     function finalizeMoonChance(uint256 outcomeId) external returns (bool moonCreated) {

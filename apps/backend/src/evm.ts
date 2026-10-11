@@ -2465,6 +2465,24 @@ export class VeydriftGameReader implements ChainReader {
     return snapshots;
   }
 
+  /** Ticket #44: attacks at staged phase 16 (awaiting seed) or 17 (awaiting referee result). */
+  async getRefereeWaitBattles(missionIds: readonly bigint[], blockNumber: bigint, assertActive: () => void): Promise<Set<string>> {
+    const waiting = new Set<string>();
+    const selector = toFunctionSelector("stagedBattleProgress(uint256)");
+    for (let offset = 0; offset < missionIds.length; offset += 50) {
+      assertActive();
+      const wave = missionIds.slice(offset, offset + 50);
+      const values = await this.batchCallContract(this.gameContractAddress,
+        wave.map(id => ({ selector, args: [encodeUint(id)] })), "0x" + blockNumber.toString(16), assertActive);
+      wave.forEach((id, index) => {
+        const staged = values[index] ?? "0x";
+        const phase = /^0x[0-9a-fA-F]{192}$/.test(staged) ? decodeUintWord(wordAt(splitWords(staged), 0)) : 0n;
+        if (phase === 16n || phase === 17n) waiting.add(id.toString());
+      });
+    }
+    return waiting;
+  }
+
   async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {
     assertActive?.();
     const [result] = await this.batchCallContract(this.gameContractAddress, [{
