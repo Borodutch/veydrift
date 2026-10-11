@@ -2,7 +2,7 @@ import { renderMissionBattleForecastPanel } from "../src/components/MissionBattl
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionDetailPage, type MissionDetailActionState } from "../src/components/MissionDetailPage";
-import type { BattleReport, DefenderPlanetState, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse } from "../src/walletFlow";
+import type { BattleReport, DefenderPlanetState, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse, RefereeBattleReport } from "../src/walletFlow";
 
 // VEY-401: the Battle Report defender block must show the defender planet's indexed fleet/defenses
 // composition (or "None") instead of the old blanket "not published in the on-chain combat log"
@@ -73,11 +73,12 @@ function visibilityFor(mission: FleetMissionSummary): FleetMissionVisibilityResp
   return empty;
 }
 
-function renderDetailPage(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): VNode {
+function renderDetailPage(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission), refereeReport: RefereeBattleReport | null = null): VNode {
   const noop = () => {};
   const actionState: MissionDetailActionState = { status: "idle" };
   return MissionDetailPage({
     actionState,
+    refereeReport,
     canTransact: false,
     detail,
     error: undefined,
@@ -134,9 +135,7 @@ describe("MissionDetailPage probable outcome", () => {
     const joinedText = renderDetailText(joined);
     for (const text of [leaderText, joinedText]) {
       expect(text).toContain("Probable outcome");
-      expect(text).toContain("Shared battle # 1 · 2 attacking fleets");
-      expect(text).toContain("Lead #1 · W 1 / S 2 / A 3");
-      expect(text).toContain("Joined #2 · W 4 / S 5 / A 6");
+      expect(text).toContain("Battle # 1 · 2 attacking fleets");
       expect(text).toContain("Uncertain");
       expect(text).toContain("Battle estimates are temporarily unavailable. Try again shortly.");
     }
@@ -144,6 +143,45 @@ describe("MissionDetailPage probable outcome", () => {
   test("actual report or inactive leader removes the preview rather than leaving stale predictions", () => {
     expect(renderDetailText({ mission: combatMission(), battleReport: battleReport() })).not.toContain("Probable outcome");
     expect(renderDetailText({ mission: combatMission({ status: "Outbound" }), battleReport: null, battleForecast: null })).not.toContain("Probable outcome");
+  });
+});
+
+describe("MissionDetailPage round-by-round combat", () => {
+  const legacyRounds = [
+    { round: 1, attackerUnits: "42", defenderUnits: "9", attackerLosses: { metal: "0", crystal: "0", deuterium: "0" }, defenderLosses: { metal: "0", crystal: "12000", deuterium: "0" } },
+    { round: 2, attackerUnits: "42", defenderUnits: "0", attackerLosses: { metal: "0", crystal: "0", deuterium: "0" }, defenderLosses: { metal: "0", crystal: "14000", deuterium: "0" } },
+  ];
+  // Battle 101165's published report, trimmed: 13 satellites, a rocket launcher and a light laser vs 2 LF + 40 LC.
+  const referee: RefereeBattleReport = {
+    format: "veydrift.referee-battle.report.v1",
+    rows: [
+      { side: 1, unit: 9, count: 13, lost: 13, survivors: 0 },
+      { side: 1, unit: 16, count: 1, lost: 1, survivors: 0 },
+      { side: 1, unit: 17, count: 1, lost: 1, survivors: 0 },
+      { side: 0, unit: 1, count: 2, lost: 0, survivors: 2 },
+      { side: 0, unit: 4, count: 40, lost: 0, survivors: 40 },
+    ],
+    rounds: [
+      { round: 1, shots: ["125", "15"], survivors: [{ side: 1, unit: 9, count: 7 }, { side: 1, unit: 16, count: 1 }, { side: 1, unit: 17, count: 1 }, { side: 0, unit: 1, count: 2 }, { side: 0, unit: 4, count: 40 }] },
+      { round: 2, shots: ["120", "9"], survivors: [{ side: 0, unit: 1, count: 2 }, { side: 0, unit: 4, count: 40 }] },
+    ],
+  };
+  const settled = (): MissionDetailResponse => ({ mission: combatMission(), battleReport: battleReport({ roundReports: legacyRounds }) });
+
+  test("old battles keep their indexed round summaries", () => {
+    const text = renderDetailText(settled());
+    expect(text).toContain("Round-by-round combat");
+    expect(text).toContain("units remaining");
+    expect(text).not.toContain("Shots");
+  });
+
+  test("referee battles show units per side after every round and the shots each side fired", () => {
+    const detail = settled();
+    const text = textParts(renderDetailPage(detail, visibilityFor(detail.mission), referee)).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("Round-by-round combat");
+    expect(text).not.toContain("units remaining");
+    expect(text).toMatch(/Attackers Start R ?1 R ?2 Light Fighter 2 2 2 Large Cargo 40 40 40 Shots 125 120/);
+    expect(text).toMatch(/Defenders Start R ?1 R ?2 Solar Satellite 13 7 0 Rocket Launcher 1 1 0 Light Laser 1 1 0 Shots 15 9/);
   });
 });
 

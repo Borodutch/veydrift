@@ -5,8 +5,8 @@ import {
   CONTRACT_COMBAT_MODEL_VERSION,
   REFEREE_COMBAT_MODEL_VERSION,
   activeCombatModel,
-  forecastContractBattle,
   runContractBattle,
+  simulateBattleStats,
   setActiveCombatModel,
   type ContractBattleInput,
 } from "./battlePreview";
@@ -81,9 +81,13 @@ test("model 3 per-round fleet losses add up exactly to the final allocation", ()
   }
 });
 
-test("model 3 forecasts are time-boxed but always return a sample", () => {
+test("model 3 simulations use fast draws: same rules and odds family, not the referee's replay", () => {
   setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
-  const forecast = forecastContractBattle(input, 128, false);
-  expect(forecast.samples.length).toBeGreaterThanOrEqual(1);
-  expect(forecast.samples.length).toBeLessThan(128);
+  const stats = simulateBattleStats(input, 64);
+  expect(stats.runs).toBe(64);
+  expect(stats.outcomes.win + stats.outcomes.draw + stats.outcomes.defeat).toBe(64);
+  // The exact (SHA-256) replay of a seed is what the referee runs; a fast run of it differs.
+  const exact = runContractBattle(input, seed);
+  const fast = runContractBattle(input, seed, 1, true, true);
+  expect(fast.rounds.map((round) => round.attackers.map((fleet) => fleet.lostShips))).not.toEqual(exact.rounds.map((round) => round.attackers.map((fleet) => fleet.lostShips)));
 });

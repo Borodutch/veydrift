@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { prepareMissionBattleForecast } from "./components/MissionBattleForecastPanel";
 import { preparePublicTargetBattleForecast, resolveVerifiedPublicTargetBattleForecast } from "./components/MissionCreationPage";
 import { emptyMissionShips } from "./galaxyActions";
+import { simulateBattleStats } from "./battlePreview";
 import type { MissionDetailResponse, MissionBattleForecast } from "./walletFlow";
 
 const now = 1_790_000_000_000;
@@ -101,18 +102,23 @@ describe("en-route whole-battle forecast", () => {
 });
 
 
-test("both launch and en-route forecasts reject unverified models and previously cached odds", () => {
+test("both launch and en-route forecasts reject unverified models and previously simulated odds", () => {
   const value = detail();
   const mission = prepareMissionBattleForecast(value, now)!;
   const launch = preparePublicTargetBattleForecast({ ...emptyMissionShips(), cruiser: 3 }, { ...value.battleForecast!.target!, occupiedBy: null }, tech, false, undefined, { projectedAttackArrivalAt: now / 1000 + 600 });
   for (const prepared of [mission, launch]) {
-    expect(prepared.status).toBe("simulate");
-    expect(resolveVerifiedPublicTargetBattleForecast(prepared, false).kind).toBe("uncertain");
-    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true).kind).not.toBe("uncertain");
-    const downgraded = resolveVerifiedPublicTargetBattleForecast(prepared, false);
+    if (prepared.status !== "simulate") throw new Error("Expected simulation inputs");
+    const simulation = { status: "done" as const, input: prepared.input, stats: simulateBattleStats(prepared.input, 8) };
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true).loading).toBe(true);
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true, simulation).kind).not.toBe("uncertain");
+    const downgraded = resolveVerifiedPublicTargetBattleForecast(prepared, false, simulation);
     expect(downgraded.kind).toBe("uncertain");
+    expect(downgraded.simulation).toBeUndefined();
     expect(downgraded.sampleReport).toBeUndefined();
     expect(downgraded.reportInput).toBeUndefined();
+    const failed = resolveVerifiedPublicTargetBattleForecast(prepared, true, { status: "error", error: "This battle is too large to estimate here." });
+    expect(failed.kind).toBe("uncertain");
+    expect(failed.detail).toContain("too large");
   }
 });
 

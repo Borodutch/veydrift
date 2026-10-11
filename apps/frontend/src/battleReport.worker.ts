@@ -1,6 +1,7 @@
 import { runContractBattle, setActiveCombatModel, type ContractBattleInput, type ContractBattleResult } from "./battlePreview";
 
 type BattleReportWorkerRequest = {
+  fast?: boolean;
   input: ContractBattleInput;
   randomWord: `0x${string}`;
   requestId: number;
@@ -24,7 +25,7 @@ workerScope.onmessage = (event) => {
   try {
     setActiveCombatModel(event.data.modelVersion);
     workerScope.postMessage({
-      report: runContractBattle(input, randomWord, sampleId),
+      report: runContractBattle(input, randomWord, sampleId, true, event.data.fast === true),
       requestId,
       modelVersion: event.data.modelVersion,
     });

@@ -242,6 +242,7 @@ const gameAppPaths = new Set([
   "/raid-target-finder",
   "/planet",
   "/battle-reports",
+  "/calculator",
 ]);
 
 export function gameAppRouteForPathname(pathname) {
