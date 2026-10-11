@@ -124,6 +124,26 @@ test("accepted but dropped envelope resends identical bytes only after the inclu
   });
 });
 
+test("real clock: inclusion wait stops before the pass deadline, resumes next pass, resends only after grace", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // accepted, not yet mined
+    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 600, inclusionGraceMs: 900, inclusionPollMs: 50, leaseRenewIntervalMs: 1000000 });
+    c.setPreparedReplayer(chainId, account.address, f.replay);
+    await expect(c.submit(f.request)).rejects.toThrow("awaiting inclusion");
+    expect(f.counts().sends).toBe(1);
+    // Still inside the grace: the next pass polls again rather than resending.
+    await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("awaiting inclusion");
+    expect(f.counts().sends).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 950));
+    await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("awaiting inclusion");
+    expect(f.counts().sends).toBe(2);
+    expect(new Set(f.bytes).size).toBe(1);
+    f.mine();
+    await c.reconcilePrepared(chainId, account.address, f.reconcile);
+    expect(f.counts()).toEqual({ signs: 1, sends: 2 });
+  });
+});
+
 test("blocked reconciliation reports the real error, not the finalized-recovery placeholder", async () => {
   await fixture(async (f) => {
     const warn = spyOn(console, "warn").mockImplementation(() => {});

@@ -16,6 +16,8 @@ export type PreparedReconciliationPass = {
   /** Every asynchronous read must pass here; late completions cannot resume hydration. */
   read: <T>(operation: () => Promise<T>) => Promise<T>;
   assertActive: () => void;
+  /** Wall-clock time left before this pass's deadline. */
+  remainingMs?: () => number;
   finalizedHead?: Promise<bigint>;
   archivalFinalizedHead?: Promise<bigint | null>;
   finalizedRecoveryIdentity?: Promise<{ chainId: number; nonce: number }>;
@@ -333,8 +335,14 @@ export class ResolverTransactionCoordinator {
   }
   private journalBytes(): number {
     // Free pages are reused before the file grows, so pruned history is reclaimed capacity.
-    const pages = ((this.database.query("PRAGMA page_count").get() as { page_count: number }).page_count
-      - (this.database.query("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count)
+    const free = (this.database.query("PRAGMA freelist_count").get() as { freelist_count: number }).freelist_count
+      * (this.database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
+    return this.journalFileBytes() - free;
+  }
+
+  /** Physical main file + WAL, including free pages awaiting reuse. */
+  private journalFileBytes(): number {
+    const pages = (this.database.query("PRAGMA page_count").get() as { page_count: number }).page_count
       * (this.database.query("PRAGMA page_size").get() as { page_size: number }).page_size;
     let wal = 0;
     if (this.databasePath !== ":memory:") {
@@ -363,6 +371,7 @@ export class ResolverTransactionCoordinator {
       : journalBytes >= 240 * 1024 * 1024 ? "journal-storage-full" : null;
     return { active, retainedConfirmed, countsCapped: active > this.maxUnfinalizedIntents || retainedConfirmed > this.maxRetainedConfirmedIntents,
       activeLimit: this.maxUnfinalizedIntents, retainedLimit: this.maxRetainedConfirmedIntents, journalBytes,
+      journalFileBytes: this.journalFileBytes(),
       lastCanonicalSettlementAt: lastProgress == null ? null : new Date(lastProgress).toISOString(),
       blockedReason: capacity ?? this.admissionBlocks.get(resolverKey(chainId, address))
         ?? (recovery ? "recovery-reconciliation-required" : reservation ? "signing-reservation-unresolved" : unresolved ? "unresolved-intent" : null) };
@@ -641,8 +650,9 @@ export class ResolverTransactionCoordinator {
     // A late deadline timer means this process was stalled (event loop/disk), not that reads were slow.
     let timerLagMs: number | undefined, slowestReadMs = 0;
     const expired = new Promise<never>((_, reject) => {
+      const armedAt = performance.now();
       timer = setTimeout(() => {
-        timerLagMs = Math.max(0, Math.round(performance.now() - deadline));
+        timerLagMs = Math.max(0, Math.round(performance.now() - armedAt - this.reconciliationTimeoutMs));
         active = false; reject(blocked("read deadline exceeded"));
       }, this.reconciliationTimeoutMs);
     });
@@ -664,7 +674,7 @@ export class ResolverTransactionCoordinator {
       assertActive();
       return result;
     };
-    const pass: PreparedReconciliationPass = { assertActive, ...(trace?{recoveryTrace:trace}:{}), read: async (operation) => {
+    const pass: PreparedReconciliationPass = { assertActive, remainingMs: () => deadline - performance.now(), ...(trace?{recoveryTrace:trace}:{}), read: async (operation) => {
       if (reads >= this.reconciliationReadLimit) {
         budgetError = blocked("read budget exhausted");
         throw budgetError;
@@ -776,7 +786,6 @@ export class ResolverTransactionCoordinator {
         retainedAtLeast: intents.length, maxRetained: this.maxUnfinalizedIntents, readLimit: this.reconciliationReadLimit,
         durationMs: Math.round(performance.now() - started), deadlineMs: this.reconciliationTimeoutMs, slowestReadMs,
         ...(timerLagMs === undefined ? {} : { timerLagMs }),
-        ...(error instanceof RecoveryReadinessError ? { category: error.reason } : {}),
         reason: safeDiagnosticText(error), recoveryGroups: groups.length, heldRecoveryGroups,
         ...(heldRecoveryGroups ? { recoveryNote: "recovery reconciliation held; inspect public lineage and prerequisites" } : {}),
         action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
@@ -893,8 +902,12 @@ export class ResolverTransactionCoordinator {
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
     // An accepted send is normally mined within a block or two. Resending or simulating it
     // meanwhile only races its inclusion, so poll for the receipt until the grace elapses.
-    if (awaitInclusion && intent.acceptedAt != null && this.now() - intent.acceptedAt < this.inclusionGraceMs) {
-      await this.sleep(Math.min(this.inclusionPollMs, intent.acceptedAt + this.inclusionGraceMs - this.now()));
+    if (awaitInclusion && intent.acceptedAt != null && intent.acceptedAt <= this.now() && this.now() - intent.acceptedAt < this.inclusionGraceMs) {
+      const wait = Math.min(this.inclusionPollMs, intent.acceptedAt + this.inclusionGraceMs - this.now());
+      // Leave room for the receipt re-read; a pass that cannot wait ends with a precise reason.
+      if ((pass.remainingMs?.() ?? Infinity) < wait + 250)
+        throw this.replayError(intent, "accepted envelope awaiting inclusion; receipt reconciliation retries next pass");
+      await this.sleep(wait);
       assertLease();
       return "waiting";
     }
@@ -1568,7 +1581,9 @@ export class ResolverTransactionCoordinator {
 
   /** Bounded, throttled retention for the append-only audit trail. Admission state lives in
    * attempts/intents/recovery tables, which this never touches. Sequence order is insertion order,
-   * so each pass only examines the oldest batch through the primary key. */
+   * so each pass only examines the oldest batch through the primary key. Age is approximate under
+   * wall-clock steps (a newer row inside an expired prefix may go early); the row cap still bounds
+   * the table, and nothing reads these diagnostics for admission. */
   private pruneAudit(assertActive: () => void): void {
     if (this.now() - this.lastAuditPruneMs < auditPruneIntervalMs) return;
     this.lastAuditPruneMs = this.now();

@@ -52,7 +52,7 @@ describe("MissionResolutionService", () => {
   test("admission blocking degrades health even with zero lastError", () => {
     const client = fakeClient({ calls: [], resolvable: [], returnable: [] });
     client.admissionSnapshot = () => ({ active: 0, retainedConfirmed: 4096, activeLimit: 32, retainedLimit: 4096,
-      countsCapped: false, journalBytes: 1024, lastCanonicalSettlementAt: "2026-10-08T00:00:00.000Z", blockedReason: "confirmed-retention-full" });
+      countsCapped: false, journalBytes: 1024, journalFileBytes: 1024, lastCanonicalSettlementAt: "2026-10-08T00:00:00.000Z", blockedReason: "confirmed-retention-full" });
     const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
     expect(service.snapshot().lastError).toBeNull();
     expect(service.snapshot().healthStatus).toBe("degraded");

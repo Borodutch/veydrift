@@ -73,6 +73,10 @@ test.each([false, true])("timed-out production replay retains cross-instance sen
     expect(sends).toBe(2); expect(peak).toBe(1);
     release(); await new Promise((r) => setTimeout(r, 5));
     expect(state(path).fences).toEqual([]);
+    // The late send was accepted: await its inclusion rather than resend at once.
+    await expect(second.resolveMissionBatch([])).rejects.toThrow("awaiting inclusion");
+    expect(sends).toBe(2);
+    clock.now += 10_000; // inclusion grace elapsed without a receipt
     expect(await second.resolveMissionBatch([])).toEqual({ hash: null, items: [], exclusions: [] });
     expect(sends).toBe(3); expect(peak).toBe(1); expect((state(path).intent as any).status).toBe("confirmed");
     await second.resolveMissionBatch([]);
