@@ -64,6 +64,44 @@ test.each([1, 2, 3])("accepted response lost / transport rejection succeeds on a
   });
 });
 
+test("accepted broadcast awaits inclusion before reconciling instead of resending into cooldown", async () => {
+  await fixture(async (f) => {
+    f.send(async () => {}); // accepted by the node, not yet mined
+    const awaited: Hex[] = [];
+    // Inclusion lands while the post-broadcast wait is pending (Base mints every ~2s).
+    expect(await f.coordinator.submit({ ...f.request, confirm: async (h) => { awaited.push(h); f.mine(); } })).toBe(hash);
+    expect(awaited).toEqual([hash]);
+    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.rows()).toMatchObject({ attempts: 1, status: "finalized" });
+    expect(f.coordinator.admissionSnapshot(chainId, account.address).blockedReason).toBeNull();
+  });
+});
+
+test("a failed inclusion wait falls through to the unchanged identical-byte replay", async () => {
+  await fixture(async (f) => {
+    f.send(async () => { if (f.counts().sends === 2) f.mine(); });
+    let awaited = 0;
+    expect(await f.coordinator.submit({ ...f.request, confirm: async () => { awaited++; throw new Error("receipt wait timed out"); } })).toBe(hash);
+    expect(awaited).toBe(1);
+    expect(f.counts()).toEqual({ signs: 1, sends: 2 });
+    expect(new Set(f.bytes).size).toBe(1);
+  });
+});
+
+test.each([
+  ["deterministic rejection", "execution reverted", "deterministic send rejection", 1],
+  ["transport failure", "connection refused", "recoverable pending", 3]
+] as const)("%s is not acceptance: no inclusion wait, existing replay semantics", async (_label, failure, expected, sends) => {
+  await fixture(async (f) => {
+    f.send(async () => { throw new Error(failure + " " + signed); });
+    let awaited = 0;
+    const error = await f.coordinator.submit({ ...f.request, confirm: async () => { awaited++; } }).catch((e) => e);
+    expect(error.message).toContain(expected);
+    expect(awaited).toBe(0);
+    expect(f.counts()).toEqual({ signs: 1, sends });
+  });
+});
+
 test("exhaustion persists actionable cooldown; restart retries same bytes once per minute, never new nonce", async () => {
   await fixture(async (f) => {
     const error = await f.coordinator.submit(f.request).catch((e) => e);
