@@ -109,12 +109,17 @@ test("audit pruning keeps unfinalized, unresolved and recovery evidence and step
   const remaining = () => (f.db.query("SELECT operation_id AS id FROM resolver_transaction_audit ORDER BY sequence").all() as { id: string }[]).map((row) => row.id);
   try {
     prune();
-    expect(remaining().length).toBe(4 + 1_003);
+    expect(remaining().length).toBe(4 + 1_004);
     now.value += 60_000;
     prune();
     expect(remaining()).toEqual(["batch:pending", "recovery", "op:unresolved", "batch:other"]);
     now.value += 60_000;
-    prune(); // the next cycle rescans from the oldest row and keeps the same evidence
+    prune();
     expect(remaining()).toEqual(["batch:pending", "recovery", "op:unresolved", "batch:other"]);
+    // Once the pending intent finalizes, a fresh sweep (after restart) prunes its expired history.
+    f.db.exec("UPDATE resolver_prepared_intents SET status='finalized'");
+    const restarted = new ResolverTransactionCoordinator(f.path, { now: () => now.value, sleep: async () => {}, leaseRenewIntervalMs: 1_000_000 });
+    (restarted as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void }).pruneAuditHistory(chainId, address, () => {});
+    expect(remaining()).toEqual(["recovery", "op:unresolved", "batch:other"]);
   } finally { f.db.close(); }
 });

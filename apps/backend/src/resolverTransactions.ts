@@ -164,7 +164,7 @@ export class ResolverTransactionCoordinator {
   private readonly reconciliationTimeoutMs: number;
   private readonly reconciliationReadLimit: number;
   private readonly auditRetentionMs: number;
-  // Per resolver: last prune attempt and the audit sequence already swept this cycle.
+  // Per resolver: last prune attempt and the audit sequence already swept since startup.
   private readonly auditPrune = new Map<string, { at: number; cursor: number }>();
   // A transport may not support abort. Never stack abandoned reads on the same signer.
   private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
@@ -385,8 +385,9 @@ export class ResolverTransactionCoordinator {
   /**
    * Throttled, bounded deletion of this resolver's expired audit history (one short write per
    * minute). Rows for an unfinalized intent, an unresolved attempt or any recovery lineage are
-   * evidence and stay; a sequence cursor sweeps past them so they never stall pruning, and the
-   * sweep restarts from the oldest row once it reaches unexpired history.
+   * evidence and stay. A monotonic sequence cursor steps past them, so they never stall pruning,
+   * and stops at this resolver's first unexpired row; retained rows are revisited after restart.
+   * Each pass reads at most one 5,000-sequence window, whoever's rows share the journal.
    */
   private pruneAuditHistory(chainId: number, address: Hex, assertLease: () => void): void {
     const key = resolverKey(chainId, address), now = this.now();
@@ -396,15 +397,20 @@ export class ResolverTransactionCoordinator {
     this.auditPrune.set(key, state);
     try {
       const resolver = normalizeAddress(address), cutoff = new Date(now - this.auditRetentionMs).toISOString();
-      const rows = this.database.query(`SELECT sequence, created_at AS createdAt FROM resolver_transaction_audit
-        WHERE sequence > ? AND chain_id=? AND resolver_address=? ORDER BY sequence LIMIT ?`)
-        .all(state.cursor, chainId, resolver, auditPruneBatchRows) as Array<{ sequence: number; createdAt: string }>;
-      const live = rows.findIndex((row) => row.createdAt >= cutoff);
-      const end = (live === -1 ? rows.at(-1) : rows[live - 1])?.sequence;
-      if (end !== undefined) this.database.transaction(() => {
+      // Jump over already-pruned sequence gaps; never move past the current tail.
+      const { start, last } = this.database.query(`SELECT (SELECT min(sequence) FROM resolver_transaction_audit WHERE sequence > ?) AS start,
+        (SELECT max(sequence) FROM resolver_transaction_audit) AS last`).get(state.cursor) as { start: number | null; last: number | null };
+      if (start === null || last === null) return;
+      const windowEnd = Math.min(start - 1 + auditPruneBatchRows, last);
+      const live = (this.database.query(`SELECT min(sequence) AS n FROM resolver_transaction_audit
+        WHERE sequence >= ? AND sequence <= ? AND chain_id=? AND resolver_address=? AND created_at >= ?`)
+        .get(start, windowEnd, chainId, resolver, cutoff) as { n: number | null }).n;
+      const end = live === null ? windowEnd : live - 1;
+      if (end < start) return;
+      this.database.transaction(() => {
         assertLease();
         this.database.query(`DELETE FROM resolver_transaction_audit AS a
-          WHERE a.sequence > ? AND a.sequence <= ? AND a.chain_id=? AND a.resolver_address=? AND a.created_at < ?
+          WHERE a.sequence >= ? AND a.sequence <= ? AND a.chain_id=? AND a.resolver_address=? AND a.created_at < ?
             AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g
               WHERE g.chain_id=a.chain_id AND g.resolver_address=a.resolver_address AND g.nonce=a.nonce)
             AND NOT EXISTS (SELECT 1 FROM resolver_prepared_intents i
@@ -412,10 +418,9 @@ export class ResolverTransactionCoordinator {
             AND NOT EXISTS (SELECT 1 FROM resolver_transaction_attempts t
               WHERE t.chain_id=a.chain_id AND t.resolver_address=a.resolver_address AND t.operation_id=a.operation_id
                 AND t.status IN ('allocating','ambiguous','submitted'))`)
-          .run(state.cursor, end, chainId, resolver, cutoff);
+          .run(start, end, chainId, resolver, cutoff);
       }).immediate();
-      // Caught up (unexpired history or end of table): rescan retained rows next cycle.
-      state.cursor = live === -1 && rows.length === auditPruneBatchRows ? end! : 0;
+      state.cursor = end;
     } catch (error) {
       // Housekeeping never blocks admission; the next interval retries.
       emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address, reason: safeDiagnosticText(error) }, "warn");
