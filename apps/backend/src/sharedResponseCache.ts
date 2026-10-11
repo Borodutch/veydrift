@@ -32,6 +32,10 @@ export class SharedResponseCache {
     this.db = new Database(databasePath);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA synchronous = NORMAL;");
+    // A WAL file is reused from its start after a full checkpoint, but it is never shrunk. One
+    // burst of cache writes left a 530 MB WAL behind in production (#75). Truncate it back to this
+    // limit whenever it is reset.
+    this.db.exec("PRAGMA journal_size_limit = 67108864;");
     // This database only contains cache rows. A reader that sees a brief writer lock should wait
     // for the cached/stale response rather than treating it as a miss and synchronously rebuilding
     // a multi-second leaderboard. Keep the wait bounded well below a visible navigation timeout.

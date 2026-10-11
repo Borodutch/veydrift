@@ -62,6 +62,16 @@ progress and publication commit in one `BEGIN IMMEDIATE` transaction. Overlappin
 workers serialize or fail with a bounded busy timeout; they cannot double-advance a
 cursor. A crashed/killed worker rolls back and retries from the committed cursor.
 
+Each worker ends with `PRAGMA wal_checkpoint(TRUNCATE)` on the private store, after its
+transaction commits. The worker is the only process that opens the store. Bun 1.1.42's
+`Database.transaction()` caches BEGIN/COMMIT statements that `close()` does not finalize,
+so the last connection never ran its close-time checkpoint or deleted the WAL. Each new
+worker therefore rebuilt the WAL index from scratch, and its automatic checkpoint rewrote
+the whole store on every pass. In production that meant about 0.9 GB written per pass and
+a 14.7 GB WAL, which saturated the shared backend disk (#75). `/health` reports
+`progress.walCheckpointBusy: true` when another connection kept the truncation from
+completing.
+
 `reorgDetectedAt` accelerates the historical audit, but existing backend restorations
 and some repairs do not update that marker. Therefore:
 
