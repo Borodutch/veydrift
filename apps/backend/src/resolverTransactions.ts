@@ -140,6 +140,7 @@ const defaultReconciliationReadLimit = 128;
 // The audit table is append-only operator history: no admission, replay or recovery
 // decision reads it. Bounded retention keeps it from growing the journal without limit.
 const defaultAuditRetentionMs = 30 * 24 * 60 * 60_000;
+const maxAuditRetentionMs = 10 * 365 * 24 * 60 * 60_000;
 const auditPruneIntervalMs = 60_000;
 const auditPruneBatchRows = 5_000;
 
@@ -189,6 +190,7 @@ export class ResolverTransactionCoordinator {
     this.reconciliationTimeoutMs = options.reconciliationTimeoutMs ?? defaultReconciliationTimeoutMs;
     this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
     this.auditRetentionMs = options.auditRetentionMs ?? defaultAuditRetentionMs;
+    if (this.auditRetentionMs > maxAuditRetentionMs) throw new Error("invalid resolver audit retention");
     for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit, this.auditRetentionMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
     }
@@ -663,7 +665,7 @@ export class ResolverTransactionCoordinator {
     const archivePage = 8;
     const archive = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_archive_nonce
       WHERE chain_id=? AND resolver_address=? AND admission_proven=1 AND status != 'finalized' AND nonce > ? ORDER BY nonce LIMIT ?`)
-      .all(chainId, normalizeAddress(address), cursor, archivePage) as Intent[];
+      .all(chainId, normalizeAddress(address), cursor, archivePage + 1) as Intent[];
     // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
       membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven
@@ -789,10 +791,12 @@ export class ResolverTransactionCoordinator {
       stage = "active";
       for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) await reconcile(intent);
       stage = "archive";
-      for (const intent of archive) await reconcile(intent, true);
+      // One look-ahead row tells a full page from the end, so the cursor never needs an empty pass.
+      const page = archive.slice(0, archivePage);
+      for (const intent of page) await reconcile(intent, true);
       // One cursor write per pass, and none when unchanged: every synchronous FULL commit
-      // can stall the whole event loop on a contended disk. A short page reached the end.
-      const nextCursor = archive.length === archivePage ? archive[archivePage - 1]!.nonce : -1;
+      // can stall the whole event loop on a contended disk.
+      const nextCursor = archive.length > archivePage ? page[archivePage - 1]!.nonce : -1;
       if (nextCursor !== cursor) {
         assertActive();
         this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,cursor_nonce) VALUES (?,?,?) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET cursor_nonce=excluded.cursor_nonce")
@@ -835,7 +839,7 @@ export class ResolverTransactionCoordinator {
   }
 
   private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
-    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<void> {
+    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<boolean> {
     const sendToken = randomUUID();
     this.database.transaction(() => {
       assertLease();
@@ -850,7 +854,7 @@ export class ResolverTransactionCoordinator {
       if (result.changes !== 1) throw this.replayError(intent, "send identity changed");
     }).immediate();
     intent.replayState = "retryable";
-    let state = "retryable";
+    let state = "retryable", accepted = false;
     const key = resolverKey(chainId, address);
     // Track the underlying RPC, not just the timed-out wrapper: a late send must settle
     // before this process starts another pass, just like a late canonical read.
@@ -865,6 +869,7 @@ export class ResolverTransactionCoordinator {
       sends.add(send); this.unfinishedReconciliations.set(key, sends);
       const hash = await send;
       if (hash.toLowerCase() !== intent.hash.toLowerCase()) state = "invalid-response";
+      else accepted = true;
     } catch (error) {
       if (!invoked) throw error; // no RPC invoked: preserve the synchronous guard error
       // viem send errors can contain raw signed bytes. Retain only a fixed category.
@@ -887,6 +892,7 @@ export class ResolverTransactionCoordinator {
     }
     assertLease();
     intent.replayState = state;
+    return accepted;
   }
 
   private async validatePreparedBinding(chainId: number, address: Hex, intent: ReplayIntent): Promise<void> {
@@ -1341,14 +1347,14 @@ export class ResolverTransactionCoordinator {
             const intent: ReplayIntent = { operationId: request.operationId, nonce, hash: prepared.hash,
               membership: prepared.membership, raw: prepared.serializedTransaction, attempts: 0, nextRetry: 0,
               replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };
-            await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
+            const accepted = await this.sendPrepared(request.chainId, request.address, intent, assertLease, prepared.broadcast, prepared.assertBeforeBroadcast);
             hash = prepared.hash;
-            // A just-sent envelope (accepted, or with an ambiguous transport result) cannot have a
-            // receipt yet. Reconciling at once made the pass resend identical bytes twice within
-            // ~1s, exhaust the bounded replay budget and block admission for a healthy, soon-mined
-            // batch. Await inclusion first; reconciliation stays authoritative and replays only if
-            // inclusion never comes.
-            if (intent.replayState === "retryable") await request.confirm(hash).catch(() => {});
+            // An envelope the node just accepted cannot have a receipt yet. Reconciling at once
+            // made the pass resend identical bytes twice within ~1s, exhaust the bounded replay
+            // budget and block admission for a healthy, soon-mined batch. Await inclusion first;
+            // reconciliation stays authoritative and replays only if inclusion never comes.
+            // Transport errors/rejections keep the immediate replay path (no wait).
+            if (accepted) await request.confirm(hash).catch(() => {});
             await this.reconcileIntents(request.chainId, request.address, request.reconcilePrepared, assertLease);
             // Canonical hydration already recorded inclusion/outcomes. Do not downgrade a
             // confirmed intent to submitted or enter the generic replacement/confirm path.

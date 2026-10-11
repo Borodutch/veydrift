@@ -136,6 +136,18 @@ test("a short archive page writes no cursor churn across steady-state passes", a
   } finally { f.close(); }
 });
 
+test("a long archive page advances by exact page and wraps without an empty pass", async () => {
+  const f = fixture();
+  try {
+    for (let n = 0; n < 12; n++) await f.submit();
+    f.db.query("UPDATE resolver_archive_progress SET cursor_nonce=-1").run();
+    const cursor = () => (f.db.query("SELECT cursor_nonce AS c FROM resolver_archive_progress").get() as { c: number }).c;
+    await f.reconcile(); expect(cursor()).toBe(7); // nonces 0..7, look-ahead row 8 exists
+    await f.reconcile(); expect(cursor()).toBe(-1); // nonces 8..11 reached the end
+    await f.reconcile(); expect(cursor()).toBe(7);
+  } finally { f.close(); }
+});
+
 test("consumed nonce contradiction fails closed despite unchanged containing hash", async () => {
   const f = fixture();
   try {

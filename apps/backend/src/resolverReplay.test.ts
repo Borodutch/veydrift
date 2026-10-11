@@ -77,14 +77,28 @@ test("accepted broadcast awaits inclusion before reconciling instead of resendin
   });
 });
 
-test("deterministic send rejection skips the inclusion wait and stays fail-closed", async () => {
+test("a failed inclusion wait falls through to the unchanged identical-byte replay", async () => {
   await fixture(async (f) => {
-    f.send(async () => { throw new Error("execution reverted " + signed); });
+    f.send(async () => { if (f.counts().sends === 2) f.mine(); });
+    let awaited = 0;
+    expect(await f.coordinator.submit({ ...f.request, confirm: async () => { awaited++; throw new Error("receipt wait timed out"); } })).toBe(hash);
+    expect(awaited).toBe(1);
+    expect(f.counts()).toEqual({ signs: 1, sends: 2 });
+    expect(new Set(f.bytes).size).toBe(1);
+  });
+});
+
+test.each([
+  ["deterministic rejection", "execution reverted", "deterministic send rejection", 1],
+  ["transport failure", "connection refused", "recoverable pending", 3]
+] as const)("%s is not acceptance: no inclusion wait, existing replay semantics", async (_label, failure, expected, sends) => {
+  await fixture(async (f) => {
+    f.send(async () => { throw new Error(failure + " " + signed); });
     let awaited = 0;
     const error = await f.coordinator.submit({ ...f.request, confirm: async () => { awaited++; } }).catch((e) => e);
-    expect(error.message).toContain("deterministic send rejection");
+    expect(error.message).toContain(expected);
     expect(awaited).toBe(0);
-    expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+    expect(f.counts()).toEqual({ signs: 1, sends });
   });
 });
 

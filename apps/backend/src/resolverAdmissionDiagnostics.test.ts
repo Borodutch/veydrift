@@ -18,8 +18,8 @@ function fixture(now: { value: number }) {
   return { coordinator, db: new Database(path), path };
 }
 
-function blockedEvents(spy: ReturnType<typeof spyOn>): Record<string, unknown>[] {
-  return (spy.mock.calls as unknown[][]).map(([line]): Record<string, unknown> | null => { try { return JSON.parse(String(line)); } catch { return null; } })
+function blockedEvents(spy: { mock: { calls: unknown[][] } }) {
+  return spy.mock.calls.map(([line]): Record<string, unknown> | null => { try { return JSON.parse(String(line)); } catch { return null; } })
     .filter((event): event is Record<string, unknown> => event?.kind === "resolver_reconciliation_blocked");
 }
 
@@ -38,10 +38,16 @@ test("blocked event keeps the real sanitized error and stage when recovery linea
   let verified = 0;
   f.coordinator.setRecoveryObserver(chainId, address, { verifyFinalized: async () => { verified++; },
     observe: async () => null, invalidate: () => {}, assertUnconsumed: async () => {} });
+  f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,'batch:ancient',1,NULL,'confirmed','2020-01-01T00:00:00.000Z')")
+    .run(chainId, resolver);
   const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
     await expect(f.coordinator.reconcilePrepared(chainId, address, async () => undefined)).rejects.toThrow("missing signed bytes");
-    const event = blockedEvents(warn)[0]!;
+    // Housekeeping only follows a successful pass.
+    expect(f.db.query("SELECT count(*) AS n FROM resolver_transaction_audit").get()).toEqual({ n: 1 });
+    const events = blockedEvents(warn);
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
     expect(verified).toBe(1);
     expect(event).toMatchObject({ stage: "active", recoveryGroups: 1, retainedAtLeast: 1 });
     expect(event.reason).toContain("legacy durable batch intent missing signed bytes");
