@@ -13,16 +13,18 @@
 # Every WINDOW ticks the budget is re-split. A writer is active if it wrote at
 # the rate of ACTIVE_BYTES per window within the last HOLD windows, or was
 # first seen within them.
-#  - dockerd and containerd split BUDGET between the active ones of them. Their
-#    container create/start writes (fsync) queue behind their build writes, so
-#    a busy daemon alone drains its queue at the full budget, as fast as under
-#    the old fixed 16 MB/s caps.
 #  - RUN steps and EasyPanel split what the daemons and gone cgroups wrote in
 #    the last window leaves of BUDGET, at least FLOOR each. Gone cgroups: a
 #    finished RUN step's dirty pages keep draining at its last cap after runc
 #    removed its cgroup, measured as the slice's writes minus its live children's.
+#    FLOOR therefore bounds how long that drain lasts (300 MB at 4 MiB/s: 75 s).
+#  - dockerd and containerd split what is left of BUDGET after FLOOR for each
+#    active other writer, at least FLOOR each. Their container create/start
+#    writes (fsync) queue behind their build writes, so a busy daemon alone
+#    gets the full budget.
 # A new writer triggers a re-split at once. Every writer, idle or not, is
-# capped at its share.
+# capped at its share. A share moves at once by BAND or more; a smaller change
+# only after it has held for HOLD splits, so noise does not rewrite io.max.
 #
 # "build-io-throttle release" (ExecStopPost) puts dockerd, containerd and the
 # EasyPanel container back to BUDGET, the systemd fallback.
@@ -31,7 +33,8 @@ SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
 DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
 DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
 BUDGET=${BUDGET:-16777216}               # bytes/s for all build writers together
-FLOOR=${FLOOR:-1048576}                  # bytes/s, lowest share of other writers
+FLOOR=${FLOOR:-$((BUDGET / 4))}          # bytes/s, lowest share of any active writer
+BAND=${BAND:-1048576}                    # bytes/s, share change applied at once
 ACTIVE_BYTES=${ACTIVE_BYTES:-262144}     # written in one window to count as active
 INTERVAL=${INTERVAL:-0.5}                # seconds per tick
 WINDOW=${WINDOW:-4}                      # ticks per re-split
@@ -64,15 +67,25 @@ find_easypanel() {
 
 split_budget() { # <writer dir>...: sets share, dshare, summary and state
   local c out
-  # State: "P <writer> <wbytes> <window last active>", "C <child> <wbytes>", "T <slice wbytes>".
+  # State: "P <writer> <wbytes> <window last active>", "C <child> <wbytes>", "T <slice wbytes>",
+  # "H <share> <daemon share> <splits share pending> <splits daemon share pending>".
   out=$({ printf '%s\n' "$state"
           for c; do echo "W $c $([[ $daemons == *" $c "* ]] && echo 1 || echo 0)"; done
           grep -H "^$DEV " "$SLICE/io.stat" "$SLICE"/*/io.stat 2>/dev/null | sed 's/^/S /'; } |
     awk -v slice="$SLICE" -v tick="$tick" -v ticks="$((tick - split_tick))" -v interval="$INTERVAL" \
-        -v window="$WINDOW" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" '
+        -v window="$WINDOW" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" \
+        -v band="$BAND" '
+      # Sets set and pend: a change of band or more applies at once, a smaller one
+      # once it has been wanted for hold splits in a row.
+      function settle(cur, want, n) {
+        if (!haveh || want <= cur - band || want >= cur + band || (want != cur && n + 1 >= hold)) { set = want; pend = 0 }
+        else { set = cur; pend = (want != cur) ? n + 1 : 0 }
+      }
+      function quantize(v) { v = int(v / 524288) * 524288; return v < floor ? floor : v }
       $1 == "P" { last[$2] = $3; seen[$2] = $4 }
       $1 == "C" { prev[$2] = $3 }
       $1 == "T" { prevt = $2; havet = 1 }
+      $1 == "H" { curs = $2; curds = $3; pends = $4; pendds = $5; haveh = 1 }
       $1 == "W" { w[++n] = $2; daemon[$2] = $3 }
       $1 == "S" {
         split($2, p, "/io.stat:")
@@ -104,11 +117,13 @@ split_budget() { # <writer dir>...: sets share, dshare, summary and state
           if (tick - seen[c] < hold * window) { if (daemon[c]) dact++; else oact++ }
           print "P", c, b, seen[c]
         }
-        ds = int(budget / (dact ? dact : 1) / 524288) * 524288
-        # Ignore idle noise (container logs, metadata) and round down to 512 KiB, so
-        # the shares do not change, and io.max is not rewritten, every window.
+        # The daemons leave FLOOR to every active other writer, so a RUN step is
+        # never squeezed to a cap at which its data would drain for minutes.
+        settle(curds, quantize((budget - oact * floor) / (dact ? dact : 1)), pendds); ds = set; pendds = pend
+        # Ignore idle noise (container logs, metadata) and round down to 512 KiB.
         avail = budget - ((drate + gone) * secs >= abr ? drate + gone : 0)
-        s = int(avail / (oact ? oact : 1) / 524288) * 524288; if (s < floor) s = floor
+        settle(curs, quantize(avail / (oact ? oact : 1)), pends); s = set; pends = pend
+        print "H", s, ds, pends, pendds
         printf "SHARE %d %d active=%d+%d daemons=%d gone=%d\n", s, ds, dact, oact, drate, gone
       }')
   summary=${out##*SHARE }

@@ -118,23 +118,34 @@ up to 85 ms.
 Every 2 s the service re-splits the budget. A writer is active if it wrote at
 least 256 KiB in one 2 s window within the last 10 s, or appeared within them.
 
-- dockerd and containerd split the budget between the active ones of them, so
-  one busy daemon gets all 16 MiB/s. Their container create and start writes
-  (fsync) queue in order behind their build writes, so they are not squeezed
-  into an even split with the build steps.
 - `RUN` steps and EasyPanel split what is left of the budget after the daemons'
   writes and the writes of cgroups that are already gone in the last window,
-  with a floor of 1 MiB/s each. A finished `RUN` step's unwritten data keeps
-  draining at its last cap after runc removes its cgroup; the service measures
-  that as the slice's writes minus those of its live children.
+  with a floor of 4 MiB/s (a quarter of the budget) each. runc removes a
+  finished `RUN` step's cgroup while its unwritten data is still in memory, and
+  that data keeps draining at the step's *last* cap, which nothing can raise
+  afterwards. The service measures it as the slice's writes minus those of its
+  live children. The floor bounds that drain: 300 MB from `bun install` takes
+  75 s at 4 MiB/s, where a 1 MiB/s floor took 5 min.
+- dockerd and containerd split what is left after the floor of every active
+  `RUN` step and EasyPanel, at least the floor each. One busy daemon alone gets
+  all 16 MiB/s, and 12 MiB/s beside one active build step. Their container
+  create and start writes (fsync) queue in order behind their build writes. An
+  idle daemon gets the same share as the busy one, so while one daemon is busy
+  the two daemon caps can add up to twice that share; the idle one's writes are
+  only json-file logs and container metadata.
 
 A new writer (a build step starting) triggers a re-split at once. Every writer,
 idle or not, is capped at its share, so an idle one that starts writing is held
 to it until the next split; until then the sum can exceed the budget, for up to
-one window, and the floors can exceed it while the daemons are busy. `BUDGET`, `FLOOR`, `ACTIVE_BYTES`, `INTERVAL`, `WINDOW` and `HOLD` in the
-script tune this (set them with `Environment=` in the unit). When the service
-stops or crashes, `ExecStopPost` puts dockerd, containerd and EasyPanel back to
-the budget; running `RUN` steps keep their caps until they exit.
+one window. With three or more active build steps the floors add up to more than
+the budget. A share changes at once when it moves by 1 MiB/s or more; a smaller
+change only after it has held for 5 splits (10 s), so idle noise and small rate
+changes do not rewrite `io.max` (every write restarts the kernel's throttling
+slice). `BUDGET`, `FLOOR`, `BAND`, `ACTIVE_BYTES`, `INTERVAL`, `WINDOW` and
+`HOLD` in the script tune this (set them with `Environment=` in the unit). When
+the service stops or crashes, `ExecStopPost` puts dockerd, containerd and
+EasyPanel back to the budget; running `RUN` steps keep their caps until they
+exit.
 
 Kernel writeback is tuned by [60-build-writeback.conf](../scripts/host-build-io/60-build-writeback.conf)
 in `/etc/sysctl.d/`: background flushing starts at 256 MiB dirty, writers are
@@ -155,12 +166,14 @@ application containers' own file writes are not capped. Limits of this approach:
 - A cap paces only how fast written data reaches the disk; a build step can
   still write hundreds of MB into memory at once. Whatever syncs the whole
   filesystem or waits on an image export (BuildKit and containerd commits, and
-  behind them `docker create`) waits until that data has drained at the
-  budget. While two test builds of 30,000 files and 400 MB each were exporting,
-  `docker create` took up to 60 s (0.3 s otherwise). Under the earlier fixed
-  16 MB/s caps the backend container took 15–18 s from create to start during
-  a deploy, and 30–63 s with no caps. That wait adds to the backend's downtime
-  on a stop-first update when it overlaps the frontend build; a larger
+  behind them `docker create`) waits until that data has drained, each part at
+  the cap of the cgroup that wrote it. For a step that has already finished,
+  that is its last cap, at least the floor, so the floor bounds the wait. While
+  two test builds of 30,000 files and 400 MB each were exporting, `docker
+  create` took up to 60 s (0.3 s otherwise). Under the earlier fixed 16 MB/s
+  caps the backend container took 15–18 s from create to start during a
+  deploy, and 30–63 s with no caps. That wait adds to the backend's downtime on
+  a stop-first update when it overlaps the frontend build; a larger `FLOOR` or
   `BUDGET` shortens it at the cost of write await.
 - When the ext4 journal fills, the writer that needs space checkpoints it at
   its own cap, which can briefly stall other writers.
@@ -177,13 +190,19 @@ Paced writes of about 17 MB/s from one build step kept `md2` write await at
 animation variants; [pinned frontend media](#pinned-frontend-media) removed that
 step, and shrinking what the build writes remains the lasting fix.
 
-Install, in a root shell (`sudo -i`): `install -m 0755
+Install or update, in a root shell (`sudo -i`): `install -m 0755
 scripts/host-build-io/build-io-throttle /usr/local/sbin/`, copy
 [build-io-throttle.service](../scripts/host-build-io/build-io-throttle.service)
 to `/etc/systemd/system/`, copy the sysctl file and run `sysctl -p` on it, run
 `systemctl set-property <unit> IOWriteBandwidthMax="/dev/md2 16777216"` for
-`docker.service` and for `containerd.service`, then `systemctl daemon-reload &&
-systemctl enable --now build-io-throttle`.
+`docker.service` and for `containerd.service`, then:
+
+```bash
+systemctl daemon-reload
+systemctl enable build-io-throttle
+systemctl restart build-io-throttle  # a running service keeps the old script
+systemctl show -p IOWriteBandwidthMax docker containerd  # expect /dev/md2 16777216 twice
+```
 
 Undo, in a root shell (`sudo -i`):
 
@@ -206,12 +225,19 @@ systemctl show -p IOWriteBandwidthMax docker containerd  # expect empty values
 
 Build steps already running keep their caps until they exit.
 
-Check during a deploy: `journalctl -u build-io-throttle` logs each newly capped
-cgroup and every change of the shares (`share wbps=<RUN steps and EasyPanel>
-daemons wbps=<dockerd and containerd> active=<daemons>+<others>` with the
-daemons' and gone cgroups' write rates), `iostat -dxy 10 md2` shows `md2` write throughput (`wkB/s`) and write
-await (`w_await`; `sar -d` only reports the combined await), and the backend logs
-show no `resolver_reconciliation_blocked` with `read deadline exceeded`.
+Check during a deploy:
+
+- `journalctl -u build-io-throttle` logs each newly capped cgroup and every
+  change of the shares (`share wbps=<RUN steps and EasyPanel> daemons
+  wbps=<dockerd and containerd> active=<daemons>+<others>` with the daemons'
+  and gone cgroups' write rates).
+- `iostat -dxy 10 md2` shows `md2` write throughput (`wkB/s`) and write await
+  (`w_await`; `sar -d` only reports the combined await).
+- The backend logs show no `resolver_reconciliation_blocked` with `read
+  deadline exceeded`.
+- `docker create` latency while the backend and frontend build in parallel,
+  and the backend's downtime: the old task's `FinishedAt` to the new task's
+  `StartedAt` (`docker inspect` on both containers).
 
 ## Pinned frontend media
 

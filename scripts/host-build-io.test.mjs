@@ -8,12 +8,15 @@ import { fileURLToPath } from "node:url";
 
 const script = fileURLToPath(new URL("./host-build-io/build-io-throttle", import.meta.url));
 const easypanelId = "0f96aa";
+const KiB = 1024;
 const MiB = 1048576;
 const BUDGET = 16 * MiB;
+const FLOOR = BUDGET / 4;
 const q = (bytes) => String(Math.floor(bytes / 524288) * 524288);
 
 // growth: cgroup name (relative to the slice; "" is the slice itself) -> bytes
-// written per budget split. onSplit: shell run on the first split.
+// written per budget split, or a shell arithmetic expression of the split number
+// n giving its wbytes counter. onSplit: shell run on the first split.
 function fixture(runSteps, { easypanel = true, daemons = true, growth = {}, onSplit = "" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-io-throttle-"));
   const slice = join(root, "system.slice");
@@ -43,7 +46,7 @@ function fixture(runSteps, { easypanel = true, daemons = true, growth = {}, onSp
   const calls = join(root, "grep-calls");
   writeFileSync(calls, "0");
   const rates = Object.entries(growth)
-    .map(([name, bytes]) => `'${name ? join(slice, name) : slice}/io.stat') w=$((n * ${bytes})) ;;`)
+    .map(([name, bytes]) => `'${name ? join(slice, name) : slice}/io.stat') w=$((${typeof bytes === "string" ? bytes : `n * ${bytes}`})) ;;`)
     .join("\n    ");
   stub("grep", `[ "$1 $2" = "-H ^9:2 " ] || { echo "unexpected grep $*" >&2; exit 2; }
 n=$(cat '${calls}'); n=$((n + 1)); echo $n > '${calls}'
@@ -80,14 +83,16 @@ function withFixture(f, body) {
 test("the daemons and the other build writers each split the budget", () => withFixture(fixture(["a", "b"]), (f) => {
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
-  // New writers count as active: 2 daemons; EasyPanel and 2 RUN steps.
-  assert.deepEqual(f.daemons.map(wbps), [q(BUDGET / 2), q(BUDGET / 2)]);
+  // New writers count as active: 2 daemons; EasyPanel and 2 RUN steps. The
+  // daemons leave FLOOR to each of the 3 others, which is all of the budget, so
+  // they get FLOOR themselves.
+  assert.deepEqual(f.daemons.map(wbps), [String(FLOOR), String(FLOOR)]);
   assert.deepEqual([f.ep, ...f.runs].map(wbps), Array(3).fill(q(BUDGET / 3)));
   assert.equal(wbps(f.service), "max", "running service containers are never capped");
   const lines = result.stdout.trim().split("\n");
   assert.equal(lines.filter((l) => l.startsWith("capped ")).length, 5);
   assert.deepEqual(lines.filter((l) => l.startsWith("share ")), [
-    `share wbps=${q(BUDGET / 3)} daemons wbps=${q(BUDGET / 2)} active=2+3 daemons=0 gone=0`,
+    `share wbps=${q(BUDGET / 3)} daemons wbps=${FLOOR} active=2+3 daemons=0 gone=0`,
   ]);
 }));
 
@@ -97,14 +102,16 @@ test("idle writers give their share to the active ones", () => {
   withFixture(fixture(["a"], { growth }), (f) => {
     const result = f.run({ TICKS: "4", HOLD: "2" });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual([...f.daemons, f.ep, ...f.runs].map(wbps), Array(4).fill(String(BUDGET)));
+    // The idle daemons keep FLOOR free for the active RUN step.
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)));
+    assert.deepEqual([f.ep, ...f.runs].map(wbps), Array(2).fill(String(BUDGET)));
     // Split while all are new, unchanged while the idle ones are held active,
     // then the whole budget once they drop out. Re-caps are not logged.
     const lines = result.stdout.trim().split("\n");
     assert.equal(lines.filter((l) => l.startsWith("capped ")).length, 4);
     assert.deepEqual(lines.filter((l) => l.startsWith("share ")).map((l) => l.split(" ").slice(1, 4).join(" ")), [
-      `wbps=${q(BUDGET / 2)} daemons wbps=${q(BUDGET / 2)}`,
-      `wbps=${BUDGET} daemons wbps=${BUDGET}`,
+      `wbps=${q(BUDGET / 2)} daemons wbps=${FLOOR}`,
+      `wbps=${BUDGET} daemons wbps=${BUDGET - FLOOR}`,
     ]);
   });
 });
@@ -118,7 +125,7 @@ test("daemon writes and drain of removed cgroups come off the other writers' bud
   withFixture(fixture(["a"], { growth }), (f) => {
     const result = f.run({ TICKS: "2", HOLD: "1" });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(f.daemons.map(wbps), [String(BUDGET), String(BUDGET)], "one busy daemon gets the whole budget");
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)), "one busy daemon leaves the RUN step FLOOR");
     assert.deepEqual([f.ep, ...f.runs].map(wbps), [q(7 * MiB), q(7 * MiB)], "idle EasyPanel gets the same share");
     assert.match(result.stdout, new RegExp(`active=1\\+1 daemons=${6 * MiB} gone=${3 * MiB}`));
   });
@@ -138,13 +145,50 @@ test("rates are taken over the time since the last split", () => {
   });
 });
 
+test("a busy daemon leaves an active RUN step the floor", () => {
+  // containerd exports at the whole budget while a RUN step dirties data: the
+  // step must not be squeezed to a cap at which that data drains for minutes
+  // after runc removes its cgroup.
+  const growth = { "": 17 * MiB, "containerd.service": 16 * MiB, "system.slice:docker:a": MiB };
+  withFixture(fixture(["a"], { growth }), (f) => {
+    const result = f.run({ TICKS: "2", HOLD: "1" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(Number(wbps(f.runs[0])) >= FLOOR, `step share ${wbps(f.runs[0])} is below ${FLOOR}`);
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)));
+  });
+});
+
 test("busy daemons leave the other writers no less than the floor", () => {
   const growth = { "": 18 * MiB, "containerd.service": 15 * MiB };
   for (const id of ["a", "b", "c"]) growth[`system.slice:docker:${id}`] = MiB;
   withFixture(fixture(["a", "b", "c"], { growth }), (f) => {
     const result = f.run({ TICKS: "2", HOLD: "1" });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(f.runs.map(wbps), Array(3).fill(String(MiB)));
+    assert.deepEqual(f.runs.map(wbps), Array(3).fill(String(FLOOR)));
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(FLOOR)), "the daemons keep the floor too");
+  });
+});
+
+test("noise in the measured rates does not rewrite io.max", () => {
+  // Idle host: removed cgroups drain 384 KiB in every other split, 0 in between,
+  // which crosses the 256 KiB activity threshold and would move the share by
+  // one 512 KiB step back and forth.
+  const noise = `(n + 1) / 2 * ${384 * KiB}`;
+  withFixture(fixture([], { easypanel: false, growth: { "": noise } }), (f) => {
+    const result = f.run({ TICKS: "12" });
+    assert.equal(result.status, 0, result.stderr);
+    // Only the change of the daemons' share when they stop counting as new.
+    assert.deepEqual(result.stdout.trim().split("\n").filter((l) => l.startsWith("share ")).map((l) => l.split(" ").slice(1, 4).join(" ")), [
+      `wbps=${BUDGET} daemons wbps=${q(BUDGET / 2)}`,
+      `wbps=${BUDGET} daemons wbps=${BUDGET}`,
+    ]);
+  });
+  // A small change that holds is applied after HOLD splits.
+  withFixture(fixture([], { easypanel: false, growth: { "": 384 * KiB } }), (f) => {
+    const result = f.run({ TICKS: "12" });
+    assert.equal(result.status, 0, result.stderr);
+    const shares = result.stdout.trim().split("\n").filter((l) => l.startsWith("share ")).map((l) => l.split(" ")[1]);
+    assert.equal(shares.at(-1), `wbps=${q(BUDGET - 384 * KiB)}`);
   });
 });
 
