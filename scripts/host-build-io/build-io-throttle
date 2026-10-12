@@ -3,21 +3,30 @@
 # deploy cannot saturate the disk the backend's SQLite databases live on.
 # See docs/deployment.md, "Build disk-write limits on the shared host".
 #
-#  - BuildKit RUN steps run in runc-created cgroups
-#    <slice>/system.slice:docker:<id>, which are not systemd units, so
-#    IOWriteBandwidthMax cannot reach them. Each step gets RUN_CAP. A cap is
-#    per step: a finished step's dirty pages keep draining at its own cap.
-#  - The EasyPanel container (source checkout/extract) gets EASYPANEL_CAP.
-#  - dockerd and containerd are capped by systemd IOWriteBandwidthMax.
+# All build writers share one budget, so parallel builds (backend and frontend
+# deploy together) cannot add their caps up:
+#  - BuildKit RUN steps, in runc-created cgroups <slice>/system.slice:docker:<id>
+#    (not systemd units, so IOWriteBandwidthMax cannot reach them),
+#  - dockerd (COPY, BuildKit file ops) and containerd (content store, export,
+#    unpack),
+#  - the EasyPanel container (source checkout and extract).
+# Every WINDOW ticks, writers that wrote at least ACTIVE_BYTES in one of the
+# last HOLD windows count as active, and BUDGET is split evenly between them.
+# Every writer, idle or not, is capped at that share, so one that starts
+# writing cannot exceed it before the next split.
 set -u
 SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
 DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
 DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
-RUN_CAP=${RUN_CAP:-16777216}             # bytes/s per RUN step
-EASYPANEL_CAP=${EASYPANEL_CAP:-10485760} # bytes/s
-INTERVAL=${INTERVAL:-0.5}
-ONCE=${ONCE:-}
-ep_scope=""; ep_checked=-60; failed=" "
+BUDGET=${BUDGET:-12582912}               # bytes/s for all build writers together
+FLOOR=${FLOOR:-1048576}                  # bytes/s, lowest share of one writer
+ACTIVE_BYTES=${ACTIVE_BYTES:-262144}     # written in one window to count as active
+INTERVAL=${INTERVAL:-0.5}                # seconds per tick
+WINDOW=${WINDOW:-4}                      # ticks per re-split
+HOLD=${HOLD:-5}                          # windows a writer stays active after writing
+TICKS=${TICKS:-0}                        # exit after this many ticks (tests); 0 = run forever
+ep_scope=""; ep_checked=-60; failed=" "; share=$BUDGET; tick=0; win=0
+state=""                                 # "P <cgroup dir> <wbytes> <last active window>" lines
 
 set_cap() { # <cgroup dir> <bytes/s>
   local cur name=${1#"$SLICE"/}
@@ -32,18 +41,47 @@ set_cap() { # <cgroup dir> <bytes/s>
   fi
 }
 
+split_budget() { # <writer dir>...: sets share and state; writers no longer listed are forgotten
+  local out
+  out=$({ printf '%s\n' "$state"; printf 'W %s\n' "$@"
+          grep -H "^$DEV " "${@/%//io.stat}" 2>/dev/null | sed 's/^/S /'; } |
+    awk -v win="$win" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" '
+      $1 == "P" { last[$2] = $3; seen[$2] = $4 }
+      $1 == "W" { w[++n] = $2 }
+      $1 == "S" { split($2, p, "/io.stat:"); for (i = 3; i <= NF; i++) if ($i ~ /^wbytes=/) now[p[1]] = substr($i, 8) }
+      END {
+        for (i = 1; i <= n; i++) {
+          c = w[i]; b = (c in now) ? now[c] : 0
+          # A writer seen for the first time counts as active: it may be a new build step.
+          if (!(c in last) || b - last[c] >= ab) seen[c] = win
+          if (win - seen[c] < hold) act++
+          print "P", c, b, seen[c]
+        }
+        s = int(budget / (act ? act : 1) / 65536) * 65536
+        printf "SHARE %d\n", (s < floor ? floor : s)
+      }')
+  share=${out##*SHARE }
+  state=${out%SHARE*}
+  win=$((win + 1))
+}
+
 [ -n "$DEV" ] || { echo "cannot resolve the root filesystem device" >&2; exit 1; }
 while :; do
-  for c in "$SLICE"/system.slice:docker:*; do
-    [ -d "$c" ] && set_cap "$c" "$RUN_CAP"
-  done
   if [ -n "$ep_scope" ] && [ ! -d "$ep_scope" ]; then ep_scope=""; ep_checked=-60; fi
   if [ -z "$ep_scope" ] && [ $((SECONDS - ep_checked)) -ge 60 ]; then
     ep_checked=$SECONDS
     id=$(timeout 5 docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel 2>/dev/null | head -1)
     [ -n "$id" ] && [ -d "$SLICE/docker-$id.scope" ] && ep_scope="$SLICE/docker-$id.scope"
   fi
-  [ -n "$ep_scope" ] && set_cap "$ep_scope" "$EASYPANEL_CAP"
-  [ -n "$ONCE" ] && exit 0
+  writers=()
+  for c in "$SLICE/docker.service" "$SLICE/containerd.service" $ep_scope "$SLICE"/system.slice:docker:*; do
+    [ -e "$c/io.max" ] && writers+=("$c")
+  done
+  if [ ${#writers[@]} -gt 0 ]; then
+    [ $((tick % WINDOW)) -eq 0 ] && split_budget "${writers[@]}"
+    for c in "${writers[@]}"; do set_cap "$c" "$share"; done
+  fi
+  tick=$((tick + 1))
+  [ "$tick" -eq "$TICKS" ] && exit 0
   sleep "$INTERVAL"
 done
