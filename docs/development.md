@@ -151,7 +151,7 @@ GitHub Actions remains the CI entry point. PRs authored by `backmeupplz` from th
 branches run on the self-hosted Mac runners (the runners' job-started hook enforces the same
 rule). Each check group has its own runner (labels `veydrift-backmeupplz-ci` plus
 `veydrift-ci-<group>`), so its persistent workspace keeps `node_modules`, Foundry artifacts and
-animation variants warm from one PR to the next. Other
+pinned frontend media warm from one PR to the next. Other
 PRs run on GitHub-hosted runners. CI runs on PRs only: branch protection requires the `check`
 status on an up-to-date branch, so the tree that lands on main is exactly the one the PR passed.
 Only the areas a change touches, plus the areas that read them, are checked (a backend-only PR

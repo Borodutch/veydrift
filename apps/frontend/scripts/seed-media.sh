@@ -12,7 +12,8 @@ rate=${SEED_MEDIA_RATE:-20M}
 mkdir -p "$root/blobs"
 base=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["baseUrl"])' "$manifest")
 pins=$(mktemp)
-trap 'rm -f "$pins"' EXIT
+tmp=
+trap 'rm -f "$pins" ${tmp:+"$tmp"}' EXIT
 # Listed to a file first so a bad pin stops the script under set -e.
 python3 -c '
 import json, re, sys
@@ -34,6 +35,7 @@ while read -r name sha bytes; do
     exit 1
   fi
   mv "$tmp" "$blob"
+  tmp=
   echo "seeded $name $bytes"
 done < "$pins"
 missing=0

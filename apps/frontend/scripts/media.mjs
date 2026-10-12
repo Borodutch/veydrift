@@ -73,7 +73,10 @@ async function download(url, entry, path, fetchImpl) {
   const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   try {
     const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(downloadTimeoutMs) });
-    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`HTTP ${response.status}`);
+    }
     const hash = createHash("sha256");
     let bytes = 0;
     const file = await open(temporary, "w");
@@ -157,6 +160,8 @@ export async function syncMedia({
         await mkdir(dirname(link), { recursive: true });
         await symlink(relative(dirname(join(view, key)), join(blobs, blobName(key, entry))), link);
       }
+      // A concurrent start of the same revision may have published it meanwhile.
+      if (await viewIsCurrent(view, entries)) return { files: entries.length, downloaded, downloadedBytes };
       await rm(view, { recursive: true, force: true });
       await rename(building, view).catch(async (error) => {
         // Another process published the same view first.
