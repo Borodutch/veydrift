@@ -10,7 +10,7 @@ const script = fileURLToPath(new URL("./host-build-io/build-io-throttle", import
 const easypanelId = "0f96aa";
 const MiB = 1048576;
 const BUDGET = 16 * MiB;
-const q = (bytes) => String(Math.round(bytes / 524288) * 524288);
+const q = (bytes) => String(Math.floor(bytes / 524288) * 524288);
 
 // growth: cgroup name (relative to the slice; "" is the slice itself) -> bytes
 // written per budget split. onSplit: shell run on the first split.
@@ -110,15 +110,31 @@ test("idle writers give their share to the active ones", () => {
 });
 
 test("daemon writes and drain of removed cgroups come off the other writers' budget", () => {
-  // containerd exports at 6 MiB/s, the RUN step writes 1 MiB/s, and a finished
-  // step (already removed) still drains 3 MiB/s: the slice grows by 10 MiB/s.
-  const growth = { "": 10 * MiB, "containerd.service": 6 * MiB, "system.slice:docker:a": MiB };
+  // containerd exports at 6 MiB/s, the RUN step writes 6 MB/s, and a finished
+  // step (already removed) still drains 3 MiB/s. Between the two splits the
+  // counters gain a digit (6291456 -> 12582912, 6000000 -> 12000000), which
+  // must not be compared as text.
+  const growth = { "": 9 * MiB + 6000000, "containerd.service": 6 * MiB, "system.slice:docker:a": 6000000 };
   withFixture(fixture(["a"], { growth }), (f) => {
-    const result = f.run({ TICKS: "3", HOLD: "1" });
+    const result = f.run({ TICKS: "2", HOLD: "1" });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(f.daemons.map(wbps), [String(BUDGET), String(BUDGET)], "one busy daemon gets the whole budget");
     assert.deepEqual([f.ep, ...f.runs].map(wbps), [q(7 * MiB), q(7 * MiB)], "idle EasyPanel gets the same share");
     assert.match(result.stdout, new RegExp(`active=1\\+1 daemons=${6 * MiB} gone=${3 * MiB}`));
+  });
+});
+
+test("rates are taken over the time since the last split", () => {
+  // A new step forces a split one 0.25 s tick after the regular one: the 1 MiB
+  // containerd wrote meanwhile is 4 MiB/s, not 1 MiB per 1 s window.
+  const added = "system.slice:docker:new";
+  const onSplit = `mkdir "$CGROUP_SLICE/${added}"; : > "$CGROUP_SLICE/${added}/io.max"`;
+  const growth = { "": MiB, "containerd.service": MiB };
+  withFixture(fixture(["a"], { easypanel: false, growth, onSplit }), (f) => {
+    const result = f.run({ TICKS: "2", WINDOW: "4", INTERVAL: "0.25" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`daemons=${4 * MiB} gone=0`));
+    assert.equal(wbps(join(f.slice, added, "io.max")), q(6 * MiB), "(16 - 4) MiB/s split between a and new");
   });
 });
 
