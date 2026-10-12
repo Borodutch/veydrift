@@ -139,9 +139,8 @@ export function planChecks(scope, group = "all") {
   }
 
   if (scope.frontend) {
-    // Image and animation derivatives that Vite, the unit tests and the browser tests all read.
-    add("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs && "
-      + "bun -e 'import(\"./scripts/animation-variants.mjs\").then((m) => m.prepareAnimationVariants())'"]);
+    // Image derivatives and pinned media that Vite, the unit tests and the browser tests all read.
+    add("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs && bun scripts/media.mjs sync"]);
     add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
     add("frontend-test", "bun", ["run", "test:frontend"]);
     add("frontend-build", "bun", ["run", "build:frontend"]);

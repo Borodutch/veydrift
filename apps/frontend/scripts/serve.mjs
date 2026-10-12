@@ -4,6 +4,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { animationConfigs, animationFilename, animationKey, animationRoot, assertAnimationVariantsReady } from "./animation-variants.mjs";
+import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
 
@@ -1101,6 +1102,8 @@ async function getSharp() {
 }
 
 function existingAssetUrl(pathname) {
+  const mediaPath = mediaFileForPathname(pathname);
+  if (mediaPath && existsSync(mediaPath)) return mediaPath;
   const distUrl = staticFileUrl(pathname, distRoot);
   if (existsSync(distUrl)) return distUrl;
   const publicUrl = staticFileUrl(pathname, publicRoot);
@@ -1179,7 +1182,9 @@ export async function frontendResponse(request) {
 
   if (route.replace(/\/+$/, "") === "/pact") return pactHtmlResponse(request, url);
 
-  const file = Bun.file(new URL(`.${route}`, distRoot));
+  // Pinned media is authoritative, even over a stale copy left in dist/.
+  const mediaPath = mediaFileForPathname(route);
+  const file = Bun.file(mediaPath ?? new URL(`.${route}`, distRoot));
 
   if (await file.exists()) {
     return route.endsWith(".mp4") ? rangeResponseFor(file, route, request.headers.get("range")) : responseFor(file, route);
@@ -1198,6 +1203,7 @@ export async function frontendResponse(request) {
 }
 
 if (import.meta.main) {
+  console.info(JSON.stringify({ event: "media_sync", ...(await syncMedia()) }));
   await assertAnimationVariantsReady();
   Bun.serve({
     hostname: "0.0.0.0",

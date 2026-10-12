@@ -17,7 +17,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
     // These fixtures render level tables/cargo controls, not animated planets.
     plugins: [{ name: "level-supply-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");
-      if (animations) { animations.buildStart = undefined; animations.configureServer = undefined; }
+      if (animations) animations.configureServer = undefined;
     } }], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();

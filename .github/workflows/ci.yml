@@ -20,7 +20,7 @@ jobs:
     # Same rule as that hook, so other PRs (forks, other authors) use GitHub-hosted runners
     # instead of being denied on the Mac.
     # Each group has its own Mac runner (label veydrift-ci-<group>), so it always lands in the
-    # workspace it warmed last time: node_modules, Foundry artifacts, animation variants.
+    # workspace it warmed last time: node_modules, Foundry artifacts, pinned frontend media.
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(format('["veydrift-backmeupplz-ci","veydrift-ci-{0}"]', matrix.group)) || 'ubuntu-latest' }}
     permissions:
       contents: read
@@ -39,7 +39,7 @@ jobs:
       HEAD_REF: ${{ github.sha }}
     steps:
       # Self-hosted workspaces persist between runs: keep ignored build outputs (node_modules,
-      # Foundry out/cache, animation variants) warm, but drop any other untracked leftovers.
+      # Foundry out/cache, pinned frontend media) warm, but drop any other untracked leftovers.
       - name: Check out repository
         uses: actions/checkout@v5
         with:
@@ -114,15 +114,15 @@ jobs:
           restore-keys: |
             foundry-${{ runner.os }}-${{ matrix.group }}-
 
-      # Generated animated-planet derivatives take minutes to encode from scratch.
-      - name: Cache frontend animation variants
+      # Pinned frontend media (~410 MiB served, apps/frontend/media.json) is downloaded once per pin set.
+      - name: Cache pinned frontend media
         if: steps.plan.outputs.frontend == 'true' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
-          path: apps/frontend/.animation-variants
-          key: animation-variants-${{ runner.os }}-${{ hashFiles('apps/frontend/planetAnimationConfig.ts', 'apps/frontend/scripts/animation-variants.mjs', 'apps/frontend/public/assets/game/planet-animations/**', 'apps/frontend/public/assets/game/moon-animations/**', 'bun.lockb') }}
+          path: apps/frontend/.media
+          key: frontend-media-${{ hashFiles('apps/frontend/media.json') }}
           restore-keys: |
-            animation-variants-${{ runner.os }}-
+            frontend-media-
 
       - name: Install dependencies
         if: steps.plan.outputs.work == 'true'

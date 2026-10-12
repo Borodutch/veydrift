@@ -23,12 +23,12 @@ async function fixture() {
   return { root, source, path, route, options: { root: output, sourceRoot, variants: [route] } };
 }
 
-describe("bounded build-time animation variants", () => {
-  test("excludes generated frontend artifacts from the final Nixpacks source copy", async () => {
+describe("bounded publish-time animation variants", () => {
+  test("keeps generated output and pinned media out of every Nixpacks source copy", async () => {
     const rules = (await readFile(new URL("../../../.dockerignore", import.meta.url), "utf8"))
       .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
     expect(rules).toContain("apps/frontend/dist/");
-    expect(rules).toContain("apps/frontend/.animation-variants/");
+    expect(rules).toContain("apps/frontend/.media/");
     // Later negations must not reintroduce cached variants or their manifest.
     expect(rules.some((line) => line.startsWith("!"))).toBe(false);
   });
