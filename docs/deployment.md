@@ -127,25 +127,27 @@ least 256 KiB in one 2 s window within the last 10 s, or appeared within them.
   live children. The floor bounds that drain: 300 MB from `bun install` takes
   75 s at 4 MiB/s, where a 1 MiB/s floor took 5 min.
 - dockerd and containerd split what is left after the floor of every active
-  `RUN` step and EasyPanel, at least the floor each. One busy daemon alone gets
-  all 16 MiB/s, and 12 MiB/s beside one active build step. Their container
-  create and start writes (fsync) queue in order behind their build writes. An
-  idle daemon gets the same share as the busy one, so while one daemon is busy
-  the two daemon caps can add up to twice that share; the idle one's writes are
-  only json-file logs and container metadata.
+  `RUN` step and EasyPanel and after the drain of removed steps, at least the
+  floor each. One busy daemon alone gets all 16 MiB/s, and 12 MiB/s beside one
+  active build step or beside the drain of one that just finished. Their
+  container create and start writes (fsync) queue in order behind their build
+  writes. An idle daemon gets the same share as the busy one, so while one
+  daemon is busy the two daemon caps can add up to twice that share; the idle
+  one's writes are only json-file logs and container metadata.
 
 A new writer (a build step starting) triggers a re-split at once. Every writer,
 idle or not, is capped at its share, so an idle one that starts writing is held
 to it until the next split; until then the sum can exceed the budget, for up to
-one window. With three or more active build steps the floors add up to more than
-the budget. A share changes at once when it moves by 1 MiB/s or more; a smaller
-change only after it has held for 5 splits (10 s), so idle noise and small rate
-changes do not rewrite `io.max` (every write restarts the kernel's throttling
-slice). `BUDGET`, `FLOOR`, `BAND`, `ACTIVE_BYTES`, `INTERVAL`, `WINDOW` and
-`HOLD` in the script tune this (set them with `Environment=` in the unit). When
-the service stops or crashes, `ExecStopPost` puts dockerd, containerd and
-EasyPanel back to the budget; running `RUN` steps keep their caps until they
-exit.
+one window. The floors also overrun it when four or more other writers are
+active, or three while both daemons are busy. A share changes at once when it
+moves by more than 1 MiB/s; a smaller change only once it has been wanted for 5
+splits in a row (about 8 s), so idle noise and small rate changes do not
+rewrite `io.max` (every write restarts the kernel's throttling slice). Until
+then a writer can be up to 1 MiB/s over its share. `BUDGET`, `FLOOR`, `BAND`,
+`SETTLE`, `ACTIVE_BYTES`, `INTERVAL`, `WINDOW` and `HOLD` in the script tune
+this (set them with `Environment=` in the unit). When the service stops or
+crashes, `ExecStopPost` puts dockerd, containerd and EasyPanel back to the
+budget; running `RUN` steps keep their caps until they exit.
 
 Kernel writeback is tuned by [60-build-writeback.conf](../scripts/host-build-io/60-build-writeback.conf)
 in `/etc/sysctl.d/`: background flushing starts at 256 MiB dirty, writers are

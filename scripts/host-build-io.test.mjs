@@ -123,9 +123,10 @@ test("daemon writes and drain of removed cgroups come off the other writers' bud
   // must not be compared as text.
   const growth = { "": 9 * MiB + 6000000, "containerd.service": 6 * MiB, "system.slice:docker:a": 6000000 };
   withFixture(fixture(["a"], { growth }), (f) => {
-    const result = f.run({ TICKS: "2", HOLD: "1" });
+    const result = f.run({ TICKS: "2", HOLD: "1", SETTLE: "1" });
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)), "one busy daemon leaves the RUN step FLOOR");
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR - 3 * MiB)),
+      "one busy daemon leaves the RUN step FLOOR and the removed step's drain");
     assert.deepEqual([f.ep, ...f.runs].map(wbps), [q(7 * MiB), q(7 * MiB)], "idle EasyPanel gets the same share");
     assert.match(result.stdout, new RegExp(`active=1\\+1 daemons=${6 * MiB} gone=${3 * MiB}`));
   });
@@ -154,6 +155,18 @@ test("a busy daemon leaves an active RUN step the floor", () => {
     const result = f.run({ TICKS: "2", HOLD: "1" });
     assert.equal(result.status, 0, result.stderr);
     assert.ok(Number(wbps(f.runs[0])) >= FLOOR, `step share ${wbps(f.runs[0])} is below ${FLOOR}`);
+    assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)));
+  });
+});
+
+test("a busy daemon leaves room for the drain of a removed step", () => {
+  // bun install finished and runc removed its cgroup, so no RUN step is active,
+  // but its data still drains at its last cap (FLOOR) while containerd exports.
+  const growth = { "": 20 * MiB, "containerd.service": 16 * MiB };
+  withFixture(fixture([], { easypanel: false, growth }), (f) => {
+    const result = f.run({ TICKS: "2", HOLD: "1" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`active=1\\+0 daemons=${16 * MiB} gone=${FLOOR}`));
     assert.deepEqual(f.daemons.map(wbps), Array(2).fill(String(BUDGET - FLOOR)));
   });
 });

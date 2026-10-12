@@ -19,12 +19,13 @@
 #    removed its cgroup, measured as the slice's writes minus its live children's.
 #    FLOOR therefore bounds how long that drain lasts (300 MB at 4 MiB/s: 75 s).
 #  - dockerd and containerd split what is left of BUDGET after FLOOR for each
-#    active other writer, at least FLOOR each. Their container create/start
-#    writes (fsync) queue behind their build writes, so a busy daemon alone
-#    gets the full budget.
+#    active other writer and after the gone cgroups' drain, at least FLOOR
+#    each. Their container create/start writes (fsync) queue behind their build
+#    writes, so a busy daemon alone gets the full budget.
 # A new writer triggers a re-split at once. Every writer, idle or not, is
-# capped at its share. A share moves at once by BAND or more; a smaller change
-# only after it has held for HOLD splits, so noise does not rewrite io.max.
+# capped at its share. A share moves at once by more than BAND; a smaller
+# change only once it has been wanted for SETTLE splits in a row, so noise does
+# not rewrite io.max.
 #
 # "build-io-throttle release" (ExecStopPost) puts dockerd, containerd and the
 # EasyPanel container back to BUDGET, the systemd fallback.
@@ -34,7 +35,8 @@ DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
 DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
 BUDGET=${BUDGET:-16777216}               # bytes/s for all build writers together
 FLOOR=${FLOOR:-$((BUDGET / 4))}          # bytes/s, lowest share of any active writer
-BAND=${BAND:-1048576}                    # bytes/s, share change applied at once
+BAND=${BAND:-1048576}                    # bytes/s, share changes above it apply at once
+SETTLE=${SETTLE:-5}                      # splits a smaller share change must be wanted
 ACTIVE_BYTES=${ACTIVE_BYTES:-262144}     # written in one window to count as active
 INTERVAL=${INTERVAL:-0.5}                # seconds per tick
 WINDOW=${WINDOW:-4}                      # ticks per re-split
@@ -74,11 +76,11 @@ split_budget() { # <writer dir>...: sets share, dshare, summary and state
           grep -H "^$DEV " "$SLICE/io.stat" "$SLICE"/*/io.stat 2>/dev/null | sed 's/^/S /'; } |
     awk -v slice="$SLICE" -v tick="$tick" -v ticks="$((tick - split_tick))" -v interval="$INTERVAL" \
         -v window="$WINDOW" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" \
-        -v band="$BAND" '
-      # Sets set and pend: a change of band or more applies at once, a smaller one
-      # once it has been wanted for hold splits in a row.
+        -v band="$BAND" -v settlen="$SETTLE" '
+      # Sets set and pend: a change of more than band applies at once, a smaller
+      # one once it has been wanted for settlen splits in a row.
       function settle(cur, want, n) {
-        if (!haveh || want <= cur - band || want >= cur + band || (want != cur && n + 1 >= hold)) { set = want; pend = 0 }
+        if (!haveh || want < cur - band || want > cur + band || (want != cur && n + 1 >= settlen)) { set = want; pend = 0 }
         else { set = cur; pend = (want != cur) ? n + 1 : 0 }
       }
       function quantize(v) { v = int(v / 524288) * 524288; return v < floor ? floor : v }
@@ -117,10 +119,12 @@ split_budget() { # <writer dir>...: sets share, dshare, summary and state
           if (tick - seen[c] < hold * window) { if (daemon[c]) dact++; else oact++ }
           print "P", c, b, seen[c]
         }
-        # The daemons leave FLOOR to every active other writer, so a RUN step is
-        # never squeezed to a cap at which its data would drain for minutes.
-        settle(curds, quantize((budget - oact * floor) / (dact ? dact : 1)), pendds); ds = set; pendds = pend
         # Ignore idle noise (container logs, metadata) and round down to 512 KiB.
+        g = gone * secs >= abr ? gone : 0
+        # The daemons leave FLOOR to every active other writer, so a RUN step is
+        # never squeezed to a cap at which its data would drain for minutes, and
+        # leave room for that drain once runc has removed the step.
+        settle(curds, quantize((budget - oact * floor - g) / (dact ? dact : 1)), pendds); ds = set; pendds = pend
         avail = budget - ((drate + gone) * secs >= abr ? drate + gone : 0)
         settle(curs, quantize(avail / (oact ? oact : 1)), pends); s = set; pends = pend
         print "H", s, ds, pends, pendds
