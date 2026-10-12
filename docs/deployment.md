@@ -142,7 +142,7 @@ rm /etc/systemd/system/build-io-throttle.service /usr/local/sbin/build-io-thrott
 rm /etc/systemd/system.control/docker.service.d/50-IOWriteBandwidthMax.conf
 rm /etc/systemd/system.control/containerd.service.d/50-IOWriteBandwidthMax.conf
 systemctl daemon-reload
-dev=$(findmnt -no MAJ:MIN /)
+dev=$(findmnt -no MAJ:MIN / | tr -d ' ')
 ep=$(docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel)
 for cg in docker.service containerd.service "docker-$ep.scope"; do
   echo "$dev wbps=max" > "/sys/fs/cgroup/system.slice/$cg/io.max"
