@@ -95,6 +95,72 @@ node scripts/veydrift-redeploy-readiness-probe.mjs --api-url <api-origin> --dura
 
 Retain its results as release evidence. Do not bypass readiness to shorten a deploy.
 
+## Build disk-write limits on the shared host
+
+EasyPanel builds the backend and frontend images on the host that also runs the
+backend, onto the same root disk (`md2`) as its SQLite databases. One deploy
+writes 15–18 GB there (source extract, `bun install`, layers, image export). Left
+unthrottled, that saturates the disk, and the resolver's `synchronous=FULL` commits
+and reads queue behind it (`resolver_reconciliation_blocked`, read deadline
+exceeded) for the whole build window, on the old container as well as the new one.
+The host therefore caps build writes rather than the backend's own I/O:
+
+| Writer | Mechanism | Cap on `md2` |
+|---|---|---|
+| dockerd (`COPY`, BuildKit file ops, container logs) | `systemctl set-property docker.service IOWriteBandwidthMax="/dev/md2 16M"` | 16 MB/s |
+| containerd (content store, export, unpack) | `systemctl set-property containerd.service IOWriteBandwidthMax="/dev/md2 16M"` | 16 MB/s |
+| BuildKit `RUN` steps (runc cgroups `system.slice:docker:<id>`, not systemd units) | [build-io-throttle](../scripts/host-build-io/build-io-throttle) service | 16 MiB/s per step |
+| EasyPanel container (source checkout and extract) | same service | 10 MiB/s |
+| Kernel writeback | [60-build-writeback.conf](../scripts/host-build-io/60-build-writeback.conf) in `/etc/sysctl.d/` | flush from 256 MiB dirty, hard limit 4 GiB |
+
+The caps apply to every EasyPanel build on that host, so builds take longer, and
+the dockerd/containerd caps also slow image pulls and unpacks. Application
+containers other than EasyPanel are not capped. Limits of this approach:
+
+- A cap is per cgroup. A finished `RUN` step's dirty pages keep draining at its
+  own cap while the next step starts, and backend and frontend build in
+  parallel, so several caps can add up.
+- Writes queue in order within a cgroup, so a dockerd or containerd fsync
+  (swarm state, container create/start) waits behind that service's build
+  backlog. That wait can be seconds while a build is running.
+- ext4 journal and metadata writeback (e.g. after `bun install` creates many
+  files) are issued by the kernel and cannot be capped. They cause short bursts.
+
+Paced writes of about 17 MB/s from one build step kept `md2` write await at
+3–10 ms. The frontend's `vite build` step used to write over 11 GB encoding
+animation variants; [pinned frontend media](#pinned-frontend-media) removed that
+step, and shrinking what the build writes remains the lasting fix.
+
+Install (as root): `install -m 0755 scripts/host-build-io/build-io-throttle
+/usr/local/sbin/`, copy [build-io-throttle.service](../scripts/host-build-io/build-io-throttle.service)
+to `/etc/systemd/system/`, copy the sysctl file and run `sysctl -p` on it, run the
+two `set-property` commands above, then `systemctl daemon-reload && systemctl enable
+--now build-io-throttle`.
+
+Undo:
+
+```bash
+systemctl disable --now build-io-throttle
+rm /etc/systemd/system/build-io-throttle.service /usr/local/sbin/build-io-throttle
+rm /etc/systemd/system.control/docker.service.d/50-IOWriteBandwidthMax.conf
+rm /etc/systemd/system.control/containerd.service.d/50-IOWriteBandwidthMax.conf
+systemctl daemon-reload
+dev=$(findmnt -no MAJ:MIN / | tr -d ' ')
+ep=$(docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel)
+for cg in docker.service containerd.service "docker-$ep.scope"; do
+  echo "$dev wbps=max" > "/sys/fs/cgroup/system.slice/$cg/io.max"
+done
+rm /etc/sysctl.d/60-build-writeback.conf
+sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10
+systemctl show -p IOWriteBandwidthMax docker containerd  # expect empty values
+```
+
+Build steps already running keep their caps until they exit.
+
+Check during a deploy: `journalctl -u build-io-throttle` lists capped build steps,
+`sar -d -p 10` shows `md2` await, and the backend logs show no
+`resolver_reconciliation_blocked` with `read deadline exceeded`.
+
 ## Pinned frontend media
 
 Large frontend media is not in git and never enters an image: the landing trailer,
