@@ -10,76 +10,139 @@
 #  - dockerd (COPY, BuildKit file ops) and containerd (content store, export,
 #    unpack),
 #  - the EasyPanel container (source checkout and extract).
-# Every WINDOW ticks, writers that wrote at least ACTIVE_BYTES in one of the
-# last HOLD windows count as active, and BUDGET is split evenly between them.
-# Every writer, idle or not, is capped at that share, so one that starts
-# writing cannot exceed it before the next split.
+# Every WINDOW ticks the budget is re-split. A writer is active if it wrote at
+# least ACTIVE_BYTES within one of the last HOLD windows, or was first seen
+# within them.
+#  - dockerd and containerd split BUDGET between the active ones of them. Their
+#    container create/start writes (fsync) queue behind their build writes, so
+#    a busy daemon alone drains its queue at the full budget, as fast as under
+#    the old fixed 16 MB/s caps.
+#  - RUN steps and EasyPanel split what the daemons and gone cgroups wrote in
+#    the last window leaves of BUDGET, at least FLOOR each. Gone cgroups: a
+#    finished RUN step's dirty pages keep draining at its last cap after runc
+#    removed its cgroup, measured as the slice's writes minus its live children's.
+# A new writer triggers a re-split at once. Every writer, idle or not, is
+# capped at its share.
+#
+# "build-io-throttle release" (ExecStopPost) puts dockerd, containerd and the
+# EasyPanel container back to BUDGET, the systemd fallback.
 set -u
 SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
 DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
 DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
-BUDGET=${BUDGET:-12582912}               # bytes/s for all build writers together
-FLOOR=${FLOOR:-1048576}                  # bytes/s, lowest share of one writer
+BUDGET=${BUDGET:-16777216}               # bytes/s for all build writers together
+FLOOR=${FLOOR:-1048576}                  # bytes/s, lowest share of other writers
 ACTIVE_BYTES=${ACTIVE_BYTES:-262144}     # written in one window to count as active
 INTERVAL=${INTERVAL:-0.5}                # seconds per tick
 WINDOW=${WINDOW:-4}                      # ticks per re-split
 HOLD=${HOLD:-5}                          # windows a writer stays active after writing
 TICKS=${TICKS:-0}                        # exit after this many ticks (tests); 0 = run forever
-ep_scope=""; ep_checked=-60; failed=" "; share=$BUDGET; tick=0; win=0
-state=""                                 # "P <cgroup dir> <wbytes> <last active window>" lines
+ep_scope=""; ep_checked=-60; failed=" "; tick=0; win=0
+share=$BUDGET; dshare=$BUDGET; summary=""; logged=""
+state=""                                 # previous counters, see split_budget
+wsecs=$(awk -v w="$WINDOW" -v i="$INTERVAL" 'BEGIN { s = w * i; print (s > 0 ? s : 1) }')
+daemons=" $SLICE/docker.service $SLICE/containerd.service "
 
-set_cap() { # <cgroup dir> <bytes/s>
+set_cap() { # <cgroup dir> <bytes/s>; logs only the first cap of a cgroup
   local cur name=${1#"$SLICE"/}
   [ -e "$1/io.max" ] || return 0
   cur=$(awk -v d="$DEV" '$1==d{for(i=2;i<=NF;i++) if($i ~ /^wbps=/) print $i}' "$1/io.max" 2>/dev/null)
   [ "$cur" = "wbps=$2" ] && return 0
   if (echo "$DEV wbps=$2" > "$1/io.max") 2>/dev/null; then
-    echo "capped $name wbps=$2"
+    [ -z "$cur" ] && echo "capped $name wbps=$2"
+    failed=${failed/ $name / }
   elif [ -d "$1" ] && [[ $failed != *" $name "* ]]; then
     failed+="$name "
     echo "failed to cap $name ($DEV wbps=$2)" >&2
   fi
 }
 
-split_budget() { # <writer dir>...: sets share and state; writers no longer listed are forgotten
-  local out
-  out=$({ printf '%s\n' "$state"; printf 'W %s\n' "$@"
-          grep -H "^$DEV " "${@/%//io.stat}" 2>/dev/null | sed 's/^/S /'; } |
-    awk -v win="$win" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" '
+find_easypanel() {
+  local id
+  id=$(timeout 5 docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel 2>/dev/null | head -1)
+  [ -n "$id" ] && [ -d "$SLICE/docker-$id.scope" ] && ep_scope="$SLICE/docker-$id.scope"
+}
+
+split_budget() { # <writer dir>...: sets share, dshare, summary and state
+  local c out
+  # State: "P <writer> <wbytes> <window last active>", "C <child> <wbytes>", "T <slice wbytes>".
+  out=$({ printf '%s\n' "$state"
+          for c; do echo "W $c $([[ $daemons == *" $c "* ]] && echo 1 || echo 0)"; done
+          grep -H "^$DEV " "$SLICE/io.stat" "$SLICE"/*/io.stat 2>/dev/null | sed 's/^/S /'; } |
+    awk -v slice="$SLICE" -v win="$win" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v secs="$wsecs" \
+        -v budget="$BUDGET" -v floor="$FLOOR" '
       $1 == "P" { last[$2] = $3; seen[$2] = $4 }
-      $1 == "W" { w[++n] = $2 }
-      $1 == "S" { split($2, p, "/io.stat:"); for (i = 3; i <= NF; i++) if ($i ~ /^wbytes=/) now[p[1]] = substr($i, 8) }
+      $1 == "C" { prev[$2] = $3 }
+      $1 == "T" { prevt = $2; havet = 1 }
+      $1 == "W" { w[++n] = $2; daemon[$2] = $3 }
+      $1 == "S" {
+        split($2, p, "/io.stat:")
+        for (i = 3; i <= NF; i++) if ($i ~ /^wbytes=/) now[p[1]] = substr($i, 8)
+        if (p[1] != slice) kid[p[1]] = 1
+      }
       END {
+        # Writes of the slice not made by a live child: cgroups removed meanwhile.
+        gone = 0
+        if (havet && (slice in now)) {
+          d = now[slice] - prevt
+          for (k in kid) d -= (k in prev && now[k] >= prev[k]) ? now[k] - prev[k] : now[k]
+          if (d > 0) gone = d / secs
+        }
+        for (k in kid) print "C", k, now[k]
+        if (slice in now) print "T", now[slice]
+        dact = oact = drate = 0
         for (i = 1; i <= n; i++) {
           c = w[i]; b = (c in now) ? now[c] : 0
+          if (daemon[c] && (c in last) && b > last[c]) drate += (b - last[c]) / secs
           # A writer seen for the first time counts as active: it may be a new build step.
           if (!(c in last) || b - last[c] >= ab) seen[c] = win
-          if (win - seen[c] < hold) act++
+          if (win - seen[c] < hold) { if (daemon[c]) dact++; else oact++ }
           print "P", c, b, seen[c]
         }
-        s = int(budget / (act ? act : 1) / 65536) * 65536
-        printf "SHARE %d\n", (s < floor ? floor : s)
+        ds = int(budget / (dact ? dact : 1) / 524288) * 524288
+        # Ignore idle noise (container logs, metadata) and round to 512 KiB, so
+        # the shares do not change, and io.max is not rewritten, every window.
+        avail = budget - (drate + gone >= ab / secs ? drate + gone : 0)
+        s = int(avail / (oact ? oact : 1) / 524288 + 0.5) * 524288; if (s < floor) s = floor
+        printf "SHARE %d %d active=%d+%d daemons=%d gone=%d\n", s, ds, dact, oact, drate, gone
       }')
-  share=${out##*SHARE }
+  summary=${out##*SHARE }
   state=${out%SHARE*}
+  share=${summary%% *}; summary=${summary#* }
+  dshare=${summary%% *}; summary=${summary#* }
   win=$((win + 1))
 }
 
 [ -n "$DEV" ] || { echo "cannot resolve the root filesystem device" >&2; exit 1; }
+if [ "${1:-}" = release ]; then
+  find_easypanel
+  for c in "$SLICE/docker.service" "$SLICE/containerd.service" $ep_scope; do set_cap "$c" "$BUDGET"; done
+  exit 0
+fi
 while :; do
   if [ -n "$ep_scope" ] && [ ! -d "$ep_scope" ]; then ep_scope=""; ep_checked=-60; fi
   if [ -z "$ep_scope" ] && [ $((SECONDS - ep_checked)) -ge 60 ]; then
     ep_checked=$SECONDS
-    id=$(timeout 5 docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel 2>/dev/null | head -1)
-    [ -n "$id" ] && [ -d "$SLICE/docker-$id.scope" ] && ep_scope="$SLICE/docker-$id.scope"
+    find_easypanel
   fi
   writers=()
   for c in "$SLICE/docker.service" "$SLICE/containerd.service" $ep_scope "$SLICE"/system.slice:docker:*; do
     [ -e "$c/io.max" ] && writers+=("$c")
   done
   if [ ${#writers[@]} -gt 0 ]; then
-    [ $((tick % WINDOW)) -eq 0 ] && split_budget "${writers[@]}"
-    for c in "${writers[@]}"; do set_cap "$c" "$share"; done
+    # Re-split every WINDOW ticks, and at once when a new writer (build step) appears.
+    resplit=$((tick % WINDOW == 0))
+    for c in "${writers[@]}"; do [[ $state == *"P $c "* ]] || resplit=1; done
+    if [ "$resplit" -eq 1 ]; then
+      split_budget "${writers[@]}"
+      if [ "$share $dshare" != "$logged" ]; then
+        echo "share wbps=$share daemons wbps=$dshare $summary"
+        logged="$share $dshare"
+      fi
+    fi
+    for c in "${writers[@]}"; do
+      if [[ $daemons == *" $c "* ]]; then set_cap "$c" "$dshare"; else set_cap "$c" "$share"; fi
+    done
   fi
   tick=$((tick + 1))
   [ "$tick" -eq "$TICKS" ] && exit 0
