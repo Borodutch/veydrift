@@ -31,6 +31,7 @@ apps/frontend/.animation-variants/
 
 # Pinned external media (apps/frontend/media.json), synced at runtime
 apps/frontend/.media/
+apps/frontend/.media-src/
 
 # Blockchain / zk generated artifacts
 broadcast/

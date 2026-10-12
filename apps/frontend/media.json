@@ -247,35 +247,43 @@
     },
     "assets/game/moon-animations/cold-tundra.webp": {
       "sha256": "e5cd5a36fb07e8dee447f34444e1b238529561d4e1338dbef83b829ef3a8ba2b",
-      "bytes": 30894208
+      "bytes": 30894208,
+      "publishOnly": true
     },
     "assets/game/moon-animations/cratered-cyan-moon.webp": {
       "sha256": "3690cd981b2986db86f01d16b6b40526ea9b9bda891d7f8518ed31aec4ae55da",
-      "bytes": 38708372
+      "bytes": 38708372,
+      "publishOnly": true
     },
     "assets/game/moon-animations/frozen-ice.webp": {
       "sha256": "fd62a962c8b234dafa501a69bc33ddf85602ed05ca88a502f536e6e475c38f76",
-      "bytes": 28243410
+      "bytes": 28243410,
+      "publishOnly": true
     },
     "assets/game/moon-animations/hot-desert.webp": {
       "sha256": "df87e91d3e0e7a7fdae4697934789d063dbdfeba26e2a1992d21b8d935bbd112",
-      "bytes": 30752918
+      "bytes": 30752918,
+      "publishOnly": true
     },
     "assets/game/moon-animations/lush-temperate.webp": {
       "sha256": "e26f0e415528be93f2b771baf3189ed8aa1e4e1240a9332a95f5582485ad1a97",
-      "bytes": 30563524
+      "bytes": 30563524,
+      "publishOnly": true
     },
     "assets/game/moon-animations/scorching-molten.webp": {
       "sha256": "5220e657cda2c0e4abc0c1e688054c4710a1831fe60225cb8734c8f876885cec",
-      "bytes": 30941086
+      "bytes": 30941086,
+      "publishOnly": true
     },
     "assets/game/moon-animations/temperate-ocean.webp": {
       "sha256": "4df50ca63a7ef3209b29c5d4c51502be8f1a1a30105a3251eb29421509516d7c",
-      "bytes": 31360972
+      "bytes": 31360972,
+      "publishOnly": true
     },
     "assets/game/moon-animations/warm-terracotta.webp": {
       "sha256": "ed9139656289f8245acbe798cdf673b99e9b051b900701f993cd3af03266a734",
-      "bytes": 32065580
+      "bytes": 32065580,
+      "publishOnly": true
     },
     "assets/game/planet-animations/cold-tundra.webp": {
       "sha256": "1487650a49fb3dbc79a940de658e2bcd27d1e9570d8a1d57ba673be93028e7b7",

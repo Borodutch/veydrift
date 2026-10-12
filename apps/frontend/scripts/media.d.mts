@@ -1,7 +1,11 @@
-export type MediaManifest = { baseUrl: string; files: Record<string, { sha256: string; bytes: number }> };
+export type MediaPin = { sha256: string; bytes: number; publishOnly?: boolean };
+export type MediaManifest = { baseUrl: string; files: Record<string, MediaPin> };
 export const mediaManifestPath: string;
 export const mediaRoot: string;
+export const mediaSourceRoot: string;
 export const mediaManifest: MediaManifest;
+export function servedMediaEntries(manifest?: MediaManifest): [string, MediaPin][];
+export function mediaViewRoot(options?: { root?: string; manifest?: MediaManifest }): string;
 export function mediaFileForPathname(pathname: string, options?: { root?: string; manifest?: MediaManifest }): string | null;
 export function hashFile(path: string): Promise<string>;
 export function syncMedia(options?: {
@@ -9,5 +13,8 @@ export function syncMedia(options?: {
   manifest?: MediaManifest;
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   log?: (line: string) => void;
+  retryDelayMs?: number;
+  all?: boolean;
 }): Promise<{ files: number; downloaded: number; downloadedBytes: number }>;
-export function publishMedia(options?: { root?: string; stage?: string }): Promise<{ files: number; stage: string }>;
+export function checkoutMedia(options?: { source?: string }): Promise<{ files: number; source: string }>;
+export function publishMedia(options?: { source?: string; stage?: string }): Promise<{ files: number; stage: string }>;

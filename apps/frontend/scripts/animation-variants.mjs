@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { mediaRoot } from "./media.mjs";
+import { mediaSourceRoot, mediaViewRoot } from "./media.mjs";
 import {
   PLANET_ANIMATION_BASE, PLANET_ANIMATION_TYPES, PLANET_ANIMATION_VERSION, PLANET_ANIMATION_WIDTHS,
   MOON_ANIMATION_BASE, MOON_ANIMATION_TYPES, MOON_ANIMATION_VERSION, MOON_ANIMATION_WIDTHS, MOON_ANIMATION_MASTER_WIDTH,
@@ -11,9 +11,10 @@ export const animationConfigs = [
   { base: PLANET_ANIMATION_BASE, types: PLANET_ANIMATION_TYPES, version: PLANET_ANIMATION_VERSION, widths: PLANET_ANIMATION_WIDTHS, masterWidth: 1024 },
   { base: MOON_ANIMATION_BASE, types: MOON_ANIMATION_TYPES, version: MOON_ANIMATION_VERSION, widths: MOON_ANIMATION_WIDTHS, masterWidth: MOON_ANIMATION_MASTER_WIDTH },
 ];
-// Masters and their precomputed variants are pinned media (see media.mjs);
-// variants are generated only when publishing media, never during a build.
-export const animationRoot = join(mediaRoot, "animation-variants");
+// Masters and their precomputed variants are pinned media (see media.mjs). The
+// server reads them from the synced view; variants are generated only in the
+// maintainer's publish working copy, never during a build.
+export const animationRoot = join(mediaViewRoot(), "animation-variants");
 // Bounded by the canonical allowlists: currently 60 derivatives, no historical versions.
 export const animationVariants = animationConfigs.flatMap((config) => config.types.flatMap((assetType) =>
   config.widths.filter((size) => size !== config.masterWidth).map((size) => ({ ...config, assetType, size }))));
@@ -25,7 +26,9 @@ const preparing = new Map();
 
 // One preparation per root; all encodes are sequential, never request-driven.
 // Rejected preparations are evicted so a corrected source can be retried.
-export function prepareAnimationVariants({ root = animationRoot, sourceRoot = mediaRoot, variants = animationVariants } = {}) {
+export function prepareAnimationVariants({
+  root = join(mediaSourceRoot, "animation-variants"), sourceRoot = mediaSourceRoot, variants = animationVariants,
+} = {}) {
   if (preparing.has(root)) return preparing.get(root);
   const work = prepare(root, sourceRoot, variants).finally(() => preparing.delete(root));
   preparing.set(root, work);

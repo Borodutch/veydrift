@@ -94,29 +94,54 @@ Retain its results as release evidence. Do not bypass readiness to shorten a dep
 
 ## Pinned frontend media
 
-Large frontend media (the landing trailer, the planet/moon animation masters and
-their 60 precomputed size variants, about 1 GB) is not in git and never enters an
-image. `apps/frontend/media.json` pins every file by sha256 and byte size; the files
-are assets of the `media-v1` GitHub release on this repository, named
-`<sha256><ext>`. Before binding its port, `bun run serve` (and Vite dev/preview)
-runs `scripts/media.mjs` sync: files already present with a matching size+mtime
-stamp are not re-read, anything missing or changed is downloaded, verified and
-atomically renamed, and a failed download fails startup. The server then validates
-the variant manifest and streams media from the media root with the same URLs,
-headers and byte ranges as before, so Cloudflare and browser caching are unchanged.
+Large frontend media is not in git and never enters an image: the landing trailer,
+the planet/moon animation masters and their 60 precomputed size variants (82 files,
+650 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size. The
+files are assets of the `media-v1` GitHub release on this repository, named
+`<sha256><ext>`. Moon masters are marked `publishOnly`: no route serves them at full
+size, so servers skip them and sync about 410 MiB.
+
+Before binding its port, `bun run serve` (and Vite dev/preview) runs
+`scripts/media.mjs` sync into the media root:
+
+- `blobs/<sha256><ext>` holds immutable files. Each one is only ever created by a
+  hash-verified atomic rename, so a present blob of the right size is trusted
+  without re-reading it.
+- `views/<id>/` is a per-pin-set tree of relative symlinks that the server reads.
+- During a start-first deploy or a rollback, the old and new containers share the
+  mount without overwriting each other's files.
+- A download that does not match its pin fails startup after backed-off retries.
+- Temporaries abandoned by a killed download are removed after 15 minutes.
+
+URLs, headers, byte ranges and responsive variants are unchanged, so Cloudflare and
+browser caching behave as before.
 
 The media root defaults to `apps/frontend/.media/` (override with
 `VEYDRIFT_MEDIA_ROOT`). In production, the frontend service bind-mounts
 `/etc/easypanel/projects/veydrift/frontend/media` there, so a deploy with unchanged
-media downloads and writes nothing. Without that mount (for example the test
-Dockerfile) every container start downloads the media once into its writable layer.
+media downloads and writes nothing. The frontend image has no readiness check, and
+Swarm moves traffic once the new container runs. So before deploying a
+`media.json` change (including the first deploy of this layout), pre-seed the
+mount on the host:
+`sudo sh apps/frontend/scripts/seed-media.sh apps/frontend/media.json /etc/easypanel/projects/veydrift/frontend/media`
+(idle I/O priority, rate-limited). The container then starts without downloading.
+Without the mount (for example the test Dockerfile), every container start downloads
+the served media into its writable layer.
 
-To change media, place the new masters under the media root, bump the matching
-animation URL version, run `cd apps/frontend && bun scripts/media.mjs publish`
-(regenerates variants, re-pins `media.json`, stages `<root>/.upload/`), upload the
-staged files with `gh release upload media-v1 <root>/.upload/* --repo Borodutch/veydrift`
-(content-addressed names never collide), then commit `media.json`. Never overwrite an
-existing release asset.
+To change media:
+
+1. Run `cd apps/frontend && bun scripts/media.mjs checkout`. This copies every
+   pinned file into `.media-src/`.
+2. Replace masters there and bump the matching animation URL version.
+3. Run `bun scripts/media.mjs publish`. This regenerates variants, re-pins
+   `media.json` and stages `.media-src/.upload/`.
+4. Upload the staged files with
+   `gh release upload media-v1 .media-src/.upload/* --repo Borodutch/veydrift`, then
+   commit `media.json`.
+
+Never overwrite or delete a release asset that a deployed `media.json` references.
+Blobs and views of old pin sets stay in the mount until removed by hand, after no
+running revision references them.
 
 After `bun scripts/media.mjs sync`, run `cd apps/frontend && bun scripts/benchmark-animation-delivery.mjs`.
 It starts two fresh local serving processes, fans out all 60 real variants with

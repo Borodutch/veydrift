@@ -3,7 +3,7 @@ import { MOON_ANIMATION_VERSION, PLANET_ANIMATION_VERSION } from "../planetAnima
 import { moonImageForType } from "../src/gameAssets";
 import type { PlanetType } from "../src/types";
 import { getImageDimensions, getSizedImageSrc, getSrcSet } from "../src/utils/imageSizes";
-import { mediaFileForPathname } from "../scripts/media.mjs";
+import { mediaManifest } from "../scripts/media.mjs";
 
 
 describe("responsive image size manifest", () => {
@@ -42,7 +42,8 @@ describe("responsive image size manifest", () => {
 
       expect(src).toBe(`/assets/game/moon-animations/${type}.webp`);
       expect(getImageDimensions(src)).toEqual({ width: 1254, height: 1254 });
-      expect(mediaFileForPathname(src), type).not.toBeNull();
+      // Moon masters are pinned variant inputs only; no route serves them at full size.
+      expect(mediaManifest.files[src.slice(1)]?.publishOnly, type).toBe(true);
 
       for (const width of [64, 256, 512]) {
         expect(getSrcSet(src), type).toContain(`${src}?size=${width}&v=${MOON_ANIMATION_VERSION} ${width}w`);
