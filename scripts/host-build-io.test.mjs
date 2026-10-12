@@ -29,9 +29,11 @@ function fixture(runSteps, { easypanel = true } = {}) {
   };
   stub("docker", easypanel ? `echo ${easypanelId}` : "true");
   stub("timeout", 'shift; exec "$@"');
+  // util-linux pads the column, as on the host.
+  stub("findmnt", "echo '  9:2'");
   const run = () => spawnSync("bash", [script], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CGROUP_SLICE: slice, DEV: "9:2", ONCE: "1" },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, CGROUP_SLICE: slice, DEV: "", ONCE: "1" },
   });
   return { root, runs, service, ep, run };
 }

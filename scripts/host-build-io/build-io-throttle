@@ -12,6 +12,7 @@
 set -u
 SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
 DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
+DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
 RUN_CAP=${RUN_CAP:-16777216}             # bytes/s per RUN step
 EASYPANEL_CAP=${EASYPANEL_CAP:-10485760} # bytes/s
 INTERVAL=${INTERVAL:-0.5}
