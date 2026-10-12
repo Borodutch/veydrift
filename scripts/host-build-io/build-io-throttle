@@ -1,0 +1,46 @@
+#!/bin/bash
+# Caps the root-disk write bandwidth of on-host EasyPanel image builds so a
+# deploy cannot saturate the disk the backend's SQLite databases live on.
+# See docs/deployment.md, "Build disk-write limits on the shared host".
+#
+#  - BuildKit RUN steps run in runc-created cgroups
+#    <slice>/system.slice:docker:<id>, which are not systemd units, so
+#    IOWriteBandwidthMax cannot reach them. They share RUN_BUDGET evenly.
+#  - The EasyPanel container (source checkout/extract) gets EASYPANEL_CAP.
+#  - dockerd and containerd are capped by systemd IOWriteBandwidthMax.
+set -u
+DEV=${DEV:-9:2}                          # md2, the root filesystem
+RUN_BUDGET=${RUN_BUDGET:-10485760}       # bytes/s shared by all RUN steps
+RUN_MIN=${RUN_MIN:-2097152}              # per-step floor
+EASYPANEL_CAP=${EASYPANEL_CAP:-10485760} # bytes/s
+INTERVAL=${INTERVAL:-0.5}
+SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
+ONCE=${ONCE:-}
+ep_scope=""; ep_checked=0
+
+set_cap() { # <cgroup dir> <bytes/s>
+  local cur
+  cur=$(awk -v d="$DEV" '$1==d{for(i=2;i<=NF;i++) if($i ~ /^wbps=/) print $i}' "$1/io.max" 2>/dev/null) || return 0
+  [ "$cur" = "wbps=$2" ] && return 0
+  if echo "$DEV wbps=$2" > "$1/io.max" 2>/dev/null; then
+    echo "capped ${1#"$SLICE"/} wbps=$2"
+  fi
+}
+
+while :; do
+  shopt -s nullglob
+  runs=("$SLICE"/system.slice:docker:*)
+  shopt -u nullglob
+  if [ ${#runs[@]} -gt 0 ]; then
+    per=$(( RUN_BUDGET / ${#runs[@]} )); [ "$per" -lt "$RUN_MIN" ] && per=$RUN_MIN
+    for c in "${runs[@]}"; do set_cap "$c" "$per"; done
+  fi
+  if [ -z "$ep_scope" ] || [ ! -d "$ep_scope" ] || [ $((SECONDS - ep_checked)) -ge 60 ]; then
+    ep_checked=$SECONDS
+    id=$(docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel 2>/dev/null | head -1)
+    ep_scope=""; [ -n "$id" ] && [ -d "$SLICE/docker-$id.scope" ] && ep_scope="$SLICE/docker-$id.scope"
+  fi
+  [ -n "$ep_scope" ] && set_cap "$ep_scope" "$EASYPANEL_CAP"
+  [ -n "$ONCE" ] && exit 0
+  sleep "$INTERVAL"
+done

@@ -1,0 +1,11 @@
+[Unit]
+Description=Cap md2 write bandwidth of on-host image builds
+After=docker.service
+
+[Service]
+ExecStart=/usr/local/sbin/build-io-throttle
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
