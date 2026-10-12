@@ -104,7 +104,7 @@ describe("pinned external media", () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
-  test("replaces a wrong-size blob and removes temporaries abandoned by killed downloads", async () => {
+  test("replaces a wrong-size blob and removes temporaries abandoned by killed downloads and view builds", async () => {
     const f = await fixture({ "assets/landing/clip.mp4": "video" });
     const blobs = join(f.root, "blobs");
     const name = f.manifest.files["assets/landing/clip.mp4"]!.sha256 + ".mp4";
@@ -113,11 +113,15 @@ describe("pinned external media", () => {
       await writeFile(join(blobs, name), "vid");
       await writeFile(join(blobs, name + ".123.abcd.tmp"), "partial");
       await writeFile(join(blobs, name + ".456.ef01.tmp"), "live");
+      const staleView = join(f.root, "views", "0123456789abcdef.9.ffff.tmp");
+      await mkdir(join(staleView, "assets"), { recursive: true });
       const old = new Date(Date.now() - 60 * 60_000);
       await utimes(join(blobs, name + ".123.abcd.tmp"), old, old);
+      await utimes(staleView, old, old);
       expect((await syncMedia(f.options)).downloaded).toBe(1);
       expect(await read(f.root, f.manifest, "assets/landing/clip.mp4")).toBe("video");
       expect((await readdir(blobs)).sort()).toEqual([name, name + ".456.ef01.tmp"]);
+      expect(existsSync(staleView)).toBe(false);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

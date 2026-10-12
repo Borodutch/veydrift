@@ -60,6 +60,9 @@ SHA in the image. The backend uses this artifact for application build identity
 in health/runtime configuration. Do not set stale custom `GIT_SHA` or
 `VEYDRIFT_BUILD_GIT_SHA` overrides in EasyPanel. Contract deployment manifest
 metadata (`VEYDRIFT_DEPLOYMENT_COMMIT`, ABI hash and timestamp) is separate.
+`.dockerignore` excludes `.git/`, so the script's local-Git fallback is unavailable
+inside image builds: backend builds require the `GIT_SHA` build argument, which
+EasyPanel injects automatically.
 
 ## Backend readiness
 
@@ -111,7 +114,8 @@ Before binding its port, `bun run serve` (and Vite dev/preview) runs
 - During a start-first deploy or a rollback, the old and new containers share the
   mount without overwriting each other's files.
 - A download that does not match its pin fails startup after backed-off retries.
-- Temporaries abandoned by a killed download are removed after 15 minutes.
+- The next sync removes temporaries that a killed download or view build left
+  behind, once they are older than 15 minutes.
 
 URLs, headers, byte ranges and responsive variants are unchanged, so Cloudflare and
 browser caching behave as before.
@@ -124,7 +128,12 @@ Swarm moves traffic once the new container runs. So before deploying a
 `media.json` change (including the first deploy of this layout), pre-seed the
 mount on the host:
 `sudo sh apps/frontend/scripts/seed-media.sh apps/frontend/media.json /etc/easypanel/projects/veydrift/frontend/media`
-(idle I/O priority, rate-limited). The container then starts without downloading.
+(idle I/O priority, rate-limited; use the script and `media.json` from the commit
+being deployed, e.g.
+`https://raw.githubusercontent.com/Borodutch/veydrift/<sha>/apps/frontend/media.json`).
+It exits non-zero unless every served blob is present. The container then starts
+without downloading. Give any other frontend service built from this repository
+(for example a test frontend) its own bind mount the same way.
 Without the mount (for example the test Dockerfile), every container start downloads
 the served media into its writable layer.
 

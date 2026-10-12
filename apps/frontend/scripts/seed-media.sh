@@ -11,6 +11,9 @@ root=$2
 rate=${SEED_MEDIA_RATE:-20M}
 mkdir -p "$root/blobs"
 base=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["baseUrl"])' "$manifest")
+pins=$(mktemp)
+trap 'rm -f "$pins"' EXIT
+# Listed to a file first so a bad pin stops the script under set -e.
 python3 -c '
 import json, re, sys
 for key, pin in json.load(open(sys.argv[1]))["files"].items():
@@ -19,7 +22,8 @@ for key, pin in json.load(open(sys.argv[1]))["files"].items():
     ext = re.search(r"\.[A-Za-z0-9]+$", key)
     assert ext and re.fullmatch(r"[0-9a-f]{64}", pin["sha256"]) and pin["bytes"] > 0, key
     print(pin["sha256"] + ext.group(0), pin["sha256"], pin["bytes"])
-' "$manifest" | while read -r name sha bytes; do
+' "$manifest" > "$pins"
+while read -r name sha bytes; do
   blob="$root/blobs/$name"
   if [ -f "$blob" ] && [ "$(stat -c %s "$blob")" = "$bytes" ]; then continue; fi
   tmp="$blob.seed.$$.tmp"
@@ -31,5 +35,10 @@ for key, pin in json.load(open(sys.argv[1]))["files"].items():
   fi
   mv "$tmp" "$blob"
   echo "seeded $name $bytes"
-done
-echo "blobs: $(find "$root/blobs" -type f ! -name '*.tmp' | wc -l)"
+done < "$pins"
+missing=0
+while read -r name sha bytes; do
+  if [ ! -f "$root/blobs/$name" ] || [ "$(stat -c %s "$root/blobs/$name")" != "$bytes" ]; then missing=$((missing + 1)); fi
+done < "$pins"
+[ "$missing" -eq 0 ] || { echo "$missing pinned blobs missing" >&2; exit 1; }
+echo "all $(wc -l < "$pins") served blobs present"

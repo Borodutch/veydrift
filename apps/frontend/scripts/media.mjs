@@ -44,8 +44,14 @@ export function servedMediaEntries(manifest = mediaManifest) {
   return Object.entries(manifest.files).filter(([, entry]) => !entry.publishOnly);
 }
 
+const viewIds = new WeakMap();
+
 export function mediaViewRoot({ root = mediaRoot, manifest = mediaManifest } = {}) {
-  const id = createHash("sha256").update(JSON.stringify(servedMediaEntries(manifest))).digest("hex").slice(0, 16);
+  let id = viewIds.get(manifest);
+  if (!id) {
+    id = createHash("sha256").update(JSON.stringify(servedMediaEntries(manifest))).digest("hex").slice(0, 16);
+    viewIds.set(manifest, id);
+  }
   return join(root, "views", id);
 }
 
@@ -88,14 +94,14 @@ async function download(url, entry, path, fetchImpl) {
   }
 }
 
-// A container killed mid-download leaves its temporary file behind; anything
-// older than one download timeout cannot belong to a live download.
-async function removeStaleTemporaries(blobs) {
-  for (const name of await readdir(blobs).catch(() => [])) {
+// A container killed mid-download or mid-view leaves its temporary behind;
+// anything older than one download timeout cannot belong to a live sync.
+async function removeStaleTemporaries(dir) {
+  for (const name of await readdir(dir).catch(() => [])) {
     if (!name.endsWith(".tmp")) continue;
-    const path = join(blobs, name);
+    const path = join(dir, name);
     const info = await stat(path).catch(() => null);
-    if (info && Date.now() - info.mtimeMs > downloadTimeoutMs) await rm(path, { force: true });
+    if (info && Date.now() - info.mtimeMs > downloadTimeoutMs) await rm(path, { recursive: true, force: true });
   }
 }
 
@@ -116,6 +122,7 @@ export async function syncMedia({
   const blobs = join(root, "blobs");
   await mkdir(blobs, { recursive: true });
   await removeStaleTemporaries(blobs);
+  await removeStaleTemporaries(join(root, "views"));
   let downloaded = 0;
   let downloadedBytes = 0;
   for (const [key, entry] of entries) {
