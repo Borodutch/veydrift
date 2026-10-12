@@ -4,6 +4,8 @@ After=docker.service
 
 [Service]
 ExecStart=/usr/local/sbin/build-io-throttle
+# Stopped or crashed: leave dockerd, containerd and EasyPanel at the systemd fallback.
+ExecStopPost=/usr/local/sbin/build-io-throttle release
 Restart=always
 RestartSec=5
 
