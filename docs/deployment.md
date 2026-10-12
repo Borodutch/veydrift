@@ -104,9 +104,9 @@ The host therefore caps build writes rather than the backend's own I/O:
 
 | Writer | Mechanism | Cap on `md2` |
 |---|---|---|
-| dockerd (`COPY`, BuildKit file ops, container logs) | `systemctl set-property docker.service IOWriteBandwidthMax="/dev/md2 10M"` | 10 MB/s |
-| containerd (content store, export, unpack) | `systemctl set-property containerd.service IOWriteBandwidthMax="/dev/md2 10M"` | 10 MB/s |
-| BuildKit `RUN` steps (runc cgroups `system.slice:docker:<id>`, not systemd units) | [build-io-throttle](../scripts/host-build-io/build-io-throttle) service | 6 MiB/s per step |
+| dockerd (`COPY`, BuildKit file ops, container logs) | `systemctl set-property docker.service IOWriteBandwidthMax="/dev/md2 16M"` | 16 MB/s |
+| containerd (content store, export, unpack) | `systemctl set-property containerd.service IOWriteBandwidthMax="/dev/md2 16M"` | 16 MB/s |
+| BuildKit `RUN` steps (runc cgroups `system.slice:docker:<id>`, not systemd units) | [build-io-throttle](../scripts/host-build-io/build-io-throttle) service | 16 MiB/s per step |
 | EasyPanel container (source checkout and extract) | same service | 10 MiB/s |
 | Kernel writeback | [60-build-writeback.conf](../scripts/host-build-io/60-build-writeback.conf) in `/etc/sysctl.d/` | flush from 256 MiB dirty, hard limit 4 GiB |
 
@@ -122,6 +122,11 @@ containers other than EasyPanel are not capped. Limits of this approach:
   backlog. That wait can be seconds while a build is running.
 - ext4 journal and metadata writeback (e.g. after `bun install` creates many
   files) are issued by the kernel and cannot be capped. They cause short bursts.
+
+Paced writes of about 17 MB/s from one build step kept `md2` write await at
+3–10 ms. The frontend's `vite build` step alone writes over 11 GB, so at
+16 MiB/s it takes at least ~12 minutes; shrinking what the build writes is the
+lasting fix.
 
 Install (as root): `install -m 0755 scripts/host-build-io/build-io-throttle
 /usr/local/sbin/`, copy [build-io-throttle.service](../scripts/host-build-io/build-io-throttle.service)

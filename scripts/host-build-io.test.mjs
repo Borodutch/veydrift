@@ -43,7 +43,7 @@ test("each RUN step and the EasyPanel container are capped", () => {
   try {
     const result = f.run();
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(f.runs.map(wbps), ["6291456", "6291456"]);
+    assert.deepEqual(f.runs.map(wbps), ["16777216", "16777216"]);
     assert.equal(wbps(f.ep), "10485760");
     assert.equal(wbps(f.service), "max", "running service containers are never capped");
     assert.equal(result.stdout.trim().split("\n").length, 3);
