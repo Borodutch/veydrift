@@ -1,5 +1,14 @@
 # Frontend builds run before Nixpacks' final source copy. Excluding these
 # generated outputs prevents stale workspace artifacts from overwriting the
-# freshly built bundle and animation variants/manifest in the runtime image.
+# freshly built bundle in the runtime image.
 apps/frontend/dist/
 apps/frontend/.animation-variants/
+# Pinned media (apps/frontend/media.json) is synced into a persistent mount at
+# runtime and must never be copied into an image.
+apps/frontend/.media/
+# Not read by any build or runtime. Nixpacks copies the source tree into each
+# image, so everything here would be rewritten on every deploy.
+**/node_modules/
+docs/
+.github/
+/*.md

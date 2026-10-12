@@ -6,3 +6,4 @@ export function animationKey(route: AnimationVariant): string;
 export function animationFilename(route: AnimationVariant): string;
 export function prepareAnimationVariants(options?: { root?: string; sourceRoot?: string; variants?: AnimationVariant[] }): Promise<{ variants: number; bytes: number }>;
 export function assertAnimationVariantsReady(root?: string, variants?: AnimationVariant[]): Promise<{ variants: number; bytes: number }>;
+export const animationConfigs: { base: string; types: readonly string[]; version: string; widths: readonly number[]; masterWidth: number }[];

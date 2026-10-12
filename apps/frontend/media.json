@@ -1,0 +1,333 @@
+{
+  "baseUrl": "https://github.com/Borodutch/veydrift/releases/download/media-v1/",
+  "files": {
+    "animation-variants/01eb4982e55eb3045709a8f20f4b7b0b5f6c5726514e3d93d43032b3c50d7fac.webp": {
+      "sha256": "12a01903dec42ebdb29b1207e4b0f7593e4d5799b1abceafe513ae5c05b94fa0",
+      "bytes": 1177778
+    },
+    "animation-variants/020d8963ba1adb0a28cc9765f81c71f78b4a93bb63f43d963d04194bfe5a348a.webp": {
+      "sha256": "9327a514b4eed7a02b9a96f375f85c46a494f00aa98d4c5b603618aa1298ab16",
+      "bytes": 88550
+    },
+    "animation-variants/03c10877abc1829b39c2c701718bda6de812a2267c6937db27b61b16250966ce.webp": {
+      "sha256": "0b3b497313250d74bf370f84f66307959428be811e05592832baca829b4ae6cd",
+      "bytes": 108266
+    },
+    "animation-variants/03d27c4995026e006c847ca3527c1903fec38dce3aa9f4e6f6bf13c6f6996076.webp": {
+      "sha256": "fd11c4317f97b64d0b436517627fcd7da7d970d115ac76ecfda3f2d0960bcb4d",
+      "bytes": 4244116
+    },
+    "animation-variants/04604aa3c30527884afad3c17b6ca0c4c0ac336e1025a37a0afb58ac8142c8f1.webp": {
+      "sha256": "baa77add348c84b326649adc761db88106961dc2f80b51a22005b1708dc76681",
+      "bytes": 4296624
+    },
+    "animation-variants/08656494de23319a6eee1b7a7366a4f7863ad37380c959e94622b8be06558506.webp": {
+      "sha256": "1d947709765057328b4f0120bde97fae3ba864ef5ed3cfa48a38b6ae2df5d9d2",
+      "bytes": 4685898
+    },
+    "animation-variants/0a47124db506eae9860c538b4cf7c8eb766bc894f25ce9fbd9f89b519f565205.webp": {
+      "sha256": "c93747378b1c6ab9c31b7333524610eee4e3497a3e1138dc15735c55e5500f6a",
+      "bytes": 80444
+    },
+    "animation-variants/0b7b6247148e5c7e0c2794426e854b7a46ede7ce111d8ceebc915f231fc34946.webp": {
+      "sha256": "7f268db0173518c7f04ff7f6e65aa06c0aa4d4883aa38962d2ea2edd7ee74d88",
+      "bytes": 4341322
+    },
+    "animation-variants/181cd8f49f0227ad287a43a5773d6fa94ea95a8aad6724d2f05b1afc8cd70078.webp": {
+      "sha256": "7077ef4df88c1d53326ed847e69adc2159bf7ef9043bed4487f50a91e8f10465",
+      "bytes": 80330
+    },
+    "animation-variants/18f2acfdaf9c9af0662363dee991281d839945f932b381c07a6d0d1b0b6b72a6.webp": {
+      "sha256": "3b39566538e59e70f6da42dae4d866720ec5d9f1fa704e5dbe3013ba1f8c9b06",
+      "bytes": 134742
+    },
+    "animation-variants/1c1970ebd5326258e7d3743ebd7536499fa7eaa29cad83f18e69e6289401d9b8.webp": {
+      "sha256": "b987b07ff546390721f8a3823ffd36ad2d7ecee5e55eee893a5f4638984a7853",
+      "bytes": 5112408
+    },
+    "animation-variants/1dd6d23291c73eebc0bf73a4c50d13270bf5271d35d4f60e263e3f30893a1574.webp": {
+      "sha256": "221923aeddebb996339e9c7239c14c6e0fac39d633844577a9dfced708b01b70",
+      "bytes": 80316
+    },
+    "animation-variants/205ac4ef9e7d10c2fe4f9923c96aaa4074b778cceabc2b546d849f16db4953c6.webp": {
+      "sha256": "c25c25734581403db269c6aa6d8d358dc40714b35fd7b445a866851736afca7d",
+      "bytes": 1445216
+    },
+    "animation-variants/23761cd36c11024fa77af706749b1288a4b5d0b3b4280f1d8c113be38efa1ad7.webp": {
+      "sha256": "8e2702698df6420efa941de681f92c9b14a86d8ab45353ec43e1a394e83abe0a",
+      "bytes": 102538
+    },
+    "animation-variants/24a956ead9d4a8a55f4b9e188086cf46e9e112ae2f0d7d6ec1e29f80ecb2408e.webp": {
+      "sha256": "f94d39f8edc37f51d34479820af6a0c8e93f62f140145a9a521df1c76b36f72a",
+      "bytes": 978320
+    },
+    "animation-variants/29539489638d500849a60b28042d301de07928768bf822ea52b16dc58c32bf4d.webp": {
+      "sha256": "1bbd79e3d376799ed4064afe7f374c4523e0e99e061739d0374dd2a245dfdbdd",
+      "bytes": 877056
+    },
+    "animation-variants/354d1de12cc3fe8f60cd103502dbc19b5781b7f67fc7eab38a5695a711a5197a.webp": {
+      "sha256": "d4ee0d7f22fe0966e23c2387ece7d2b0ed59073b833e54fe85d49279c80077ee",
+      "bytes": 4219654
+    },
+    "animation-variants/3581447c23fa95a026e79fd79669080a2ebb5f1cd40c8609dc992ec22ef4d116.webp": {
+      "sha256": "8fd5beaeb101cd3e54a2da0a3bf348d179a3434f017066f043c23dbcd0410470",
+      "bytes": 3175664
+    },
+    "animation-variants/38e1378e6a185930058f8530edcec9005488b419461b98d07f0ddd0601436a0e.webp": {
+      "sha256": "0d29d9030702deeb11da354f45f7f01f92d1a878c7b73b1fda4dfc7880a53cf8",
+      "bytes": 5913166
+    },
+    "animation-variants/3cf7f43d33798d54655a2fa515c7081315c0426ad1516880618673010b0261b2.webp": {
+      "sha256": "0e96dcbcf8e2b0bec095377b94ee7638ac438d948d85cc1b45b241cd03c22081",
+      "bytes": 4665546
+    },
+    "animation-variants/3d97ff334a57e707b6ca562d0ddc38af71fccaef32021343faef9acf198a3c44.webp": {
+      "sha256": "cbb3084a59a6d5b6b0451abe1d4a0453fd08e5153b2ce663dfee663779aebf4b",
+      "bytes": 1204178
+    },
+    "animation-variants/3ead06640a128783ea69d1c359d7e6c55c248071023fc88f67410ee027318287.webp": {
+      "sha256": "9955ecc0bb7c6a3936c4ed57d56b6133fae7c375efde2c1172e3e012bbe47c4a",
+      "bytes": 77472
+    },
+    "animation-variants/400957e5c0eb14f01b8d5e25870dbe54af1aa76a2617b5f085abc791246ea2d8.webp": {
+      "sha256": "de9102a0a909619ab0d290367416756ea8ac7fbc36574f5bc4ea5ad5c53078ed",
+      "bytes": 1054260
+    },
+    "animation-variants/45a7dd8fa644d1a8a1ac2f8a1c37749b7d5991b881066071b296a3cc3153e216.webp": {
+      "sha256": "0f7e23e4251a02db5a7292eda2cacbfd8070aa248ffba38400daa57d40ca58c2",
+      "bytes": 1235046
+    },
+    "animation-variants/47a89ef9a5a28d8470c30c3ac5c9c3f765349e137d3fd4355eee1e6906a90f3d.webp": {
+      "sha256": "ca716298cc46f7b711f08381be8544142a8abbb9b911bcdd12ab81dffc7b7a41",
+      "bytes": 98962
+    },
+    "animation-variants/4aaeb4f10373fff3c3cbf3371ba9f1773116ccdec6b76ac7f58b1faf9d14f67c.webp": {
+      "sha256": "1311aea95212b3c9878db01e2918878187af9d3ff7330fb663e0a2f706965f0b",
+      "bytes": 1042306
+    },
+    "animation-variants/4eaab26eefb045822afa1844fda92be3d72b02221072adc520d1eb882a782723.webp": {
+      "sha256": "f5b07ad70de289eb8f506c345aaef9216b4c103573d2bf2f9bbbcd6c34172830",
+      "bytes": 91964
+    },
+    "animation-variants/5291c2d79353d124921c25b05aeb1426fd216b00c3a304cfa010e46a33222484.webp": {
+      "sha256": "ca80ff9b3f6927231d055645cd62264a1ee60e947b99aca6231fe3fbadd88039",
+      "bytes": 916428
+    },
+    "animation-variants/5a2f7f482b506dbf7bb57abb51b2729a9d0ee711bb070187c340b5e933b249da.webp": {
+      "sha256": "8f9175b396cff24ca994ac4ff3617a43a8af85caef2d80c7a558d4571faec8bc",
+      "bytes": 4440808
+    },
+    "animation-variants/5bdf40ad70dac4cadf049148f18e7d3dc4f7a9fc761ea607ae7e2d48302d8083.webp": {
+      "sha256": "af7f74881a33d81ee2e80bf0cb91d7d515df91ec9f3ed669e655d9f8c23299d3",
+      "bytes": 84516
+    },
+    "animation-variants/5c4c09aaacd9987cd35f31822a997830f70351a06162e2081cace45f7b730de5.webp": {
+      "sha256": "7c3090812cc1024aeffbad43253901f1205c2bb1be281c81980a8a2473e60ee2",
+      "bytes": 4518372
+    },
+    "animation-variants/5faf85a0f7d3d50ae2d9a5a0642987df04b372e4af30e6fc80b9e10b3525de87.webp": {
+      "sha256": "308cafa4d32356b8b514428aa7663f5fa6dd948b1c594b13b7727fa80e0c2f3f",
+      "bytes": 4795648
+    },
+    "animation-variants/658c76f8ca8629ca48f03026a068311c9398345e0cf3e183d98c736b17c68808.webp": {
+      "sha256": "777e778a1f21e667e94ac49542d847938a5714efc3cad0f270b3a8833e4fa1c2",
+      "bytes": 1158618
+    },
+    "animation-variants/76732c7cc1f8dc301e46836e8e33556538717f505eabe3a8e9b769c8c07625e7.webp": {
+      "sha256": "706c0af67e966a145c0b322ac8753ac063943c30cbde7b69cf7218bcd9b46893",
+      "bytes": 1075990
+    },
+    "animation-variants/7824b4a5ec434b91fe4dff7cc2d9c33f01d85d994766b79bedaded14fe8cfc98.webp": {
+      "sha256": "aad1b64a38c1f87cc70ae3f1803113c420419991350e5d9ff929ed98dec9f1f9",
+      "bytes": 1120876
+    },
+    "animation-variants/7afb80930438b42f6bcf20b0b87df308f49c0406eb1b419d184ce589c10106e8.webp": {
+      "sha256": "3905cafcaa85c3f6abf2de57360fa36b4a9ec9c6268bad1963ac2eb71cafb218",
+      "bytes": 87970
+    },
+    "animation-variants/87dbe393c2d1ec14ade863eb189abe9b868fb0fe149bbeb62b888cd79164686e.webp": {
+      "sha256": "853177a0d1096f214b00b23ac6cd011ce646d7ab9efe0ebd8f59e9b391033943",
+      "bytes": 88438
+    },
+    "animation-variants/917ddb5472447b63c12a81ff3b69609f072d005f890ac90ee6e08311766655a6.webp": {
+      "sha256": "1aea81c1206d9a8086bec42733c5718d4048f7b87dd526ca069cbdc62df5e6a6",
+      "bytes": 1146290
+    },
+    "animation-variants/9b026fe815230fee7f62ac3a2176072e0aa5f2f4993dd4eea30b81cad70dace8.webp": {
+      "sha256": "7c190c2ce28d85b785bd8e63cb9e664ffe60ab557f145cf838586c6047e9249d",
+      "bytes": 1256336
+    },
+    "animation-variants/a38197c3bf93fec3334b065b04850fcd3869a02c2e54462d0311949777444a27.webp": {
+      "sha256": "d3ab117cfd7e2f5005ffdf30a65cfa9c97ad393803f3ad81b0048a4599ace7fb",
+      "bytes": 3221886
+    },
+    "animation-variants/a80a3f4e4ffac7cb5f25b519ad54c357aff6a9027baaf7eb5632e03574dd5d60.webp": {
+      "sha256": "4e2de4637c37da6ec3cf1b2eeb2f2c030eaf664184076cb3c480e6acd4152042",
+      "bytes": 105934
+    },
+    "animation-variants/ab9813e03af20610216a32a56b3914e0c89567a02ee167db529d959e4aaf2107.webp": {
+      "sha256": "380146e6b0384d34ba51ec23301094b59b9bb0e312fe6e0f8c2ae9420c0ede8f",
+      "bytes": 4504032
+    },
+    "animation-variants/b7aa5320788f2eb7977cf5b6f0328e8a2f35c11e326c7cd9f4e4b17f8072778b.webp": {
+      "sha256": "eb78b50af0b934d3160d292c3bf4589946d40c76a17b8bcae5d226461b1c07bb",
+      "bytes": 88550
+    },
+    "animation-variants/b995528a9081da3c3c8fb6bda74f0cb7e81fb3bb0ebe17060c5a349babec8519.webp": {
+      "sha256": "5c6bc9663520d77a0d54bf2a3a3b37cff5cb91653063c6bb834b9ffc257db4a6",
+      "bytes": 868976
+    },
+    "animation-variants/bac8fa183486b00f536ae848253fe52dd8a3d85363fa5b09fed7cd34e1520e00.webp": {
+      "sha256": "f3f520dab2ab67f86af97eabcb359f713fee08eb183210e02636244f373dd46d",
+      "bytes": 840708
+    },
+    "animation-variants/d3b21677979458c233f997a068a72d5e88357cbe3f598bae5c5ba92477c88a82.webp": {
+      "sha256": "1ca0e0eaebee4a1501889ac20595109111752b52e4e0d9531d1fb062f4119600",
+      "bytes": 1163626
+    },
+    "animation-variants/db36d7fb5d07bfbc8e6b42319b147bd2add8bf6e0def4cddbbdbcb79b3ec4174.webp": {
+      "sha256": "44f2823eed596d841a549e67b8665ca0a9417fd62cd00f6160fe6df6b34af880",
+      "bytes": 89098
+    },
+    "animation-variants/e11d321858fd9c03c0ccfb1f9c0ddcb0ab589cf091ae4eb8cebbb75f94e4597a.webp": {
+      "sha256": "93f8bc4eb3958d3c53540d4a0864001f3ba2c00e5293736e4b996e9db529f064",
+      "bytes": 4110238
+    },
+    "animation-variants/e260eabcb2e6943686c04adeba7015643fb521e71a9d2bed88a8acf77ff2e293.webp": {
+      "sha256": "53ecfb3f9aee3616a68daf0fa3353721da06a92fc6f4aa5a3dff1618fe4048cf",
+      "bytes": 3947892
+    },
+    "animation-variants/e3f8a82832773ac70b038e91c1c4386d4c6828afc173423fe90ed1a41c16877b.webp": {
+      "sha256": "080e7a471c692ac7f1411b5622593ebf98848831e69ea22e4c928179ebff7eef",
+      "bytes": 111242
+    },
+    "animation-variants/e6f5811281e72458f86a45ccd209cbc646df565183b83d2c29f76fe23c2d81e2.webp": {
+      "sha256": "480ad8b71e45b4098d0927d47e5d55ad5bc966c0c8d88451f67a9b0e0ea59c5d",
+      "bytes": 90300
+    },
+    "animation-variants/e9a51a571e9224ca4d5a4ef4ad99d1a99d0e47125660758de40357bd6eccb6b3.webp": {
+      "sha256": "df2601492d13d337e92520b3646be0e52914612451d9f42632ef18535ee23d32",
+      "bytes": 1045648
+    },
+    "animation-variants/ebbc855b4581e426bc052d6709d4526c57f31a0a0e805c73148a60926abd219a.webp": {
+      "sha256": "dc59a1e2466cba0a1f4ed6ed3e604983310f6747f26e2ca6deab811830d11a81",
+      "bytes": 1042432
+    },
+    "animation-variants/ef6a019287ff75abca8b0a39fb96ae4037e8277ffddfdcdf80ac8da0d09f3350.webp": {
+      "sha256": "4fce98ee7569f03c29a31475765f151b9f702a49200ee1f3eb1a53f081a613be",
+      "bytes": 3890062
+    },
+    "animation-variants/f3482dd3bd19f93cc0b4fec893a45c0b9dbd1770530af55b14e4736222f448b3.webp": {
+      "sha256": "5c04b1abe6ec860c38245fbf64c7e67b4f17e28cadab5169f8f81796162672b1",
+      "bytes": 4321832
+    },
+    "animation-variants/f42e3da66e68ce5d40990b4cab604b357dbf9298f15c8b7e88e84f09d342b708.webp": {
+      "sha256": "f371298e8130b133fe1a625fff077818551673bbf3924117f89721b3454fbc39",
+      "bytes": 92508
+    },
+    "animation-variants/f5117060b164ec41fec631b0fd8ccb49f5e0ec7ccb0e9291c2d4c8c4d18936c4.webp": {
+      "sha256": "37191a2a4b494cdb1e85a0903f4a82ec883474d3dfcb0067e216ed70b77aa885",
+      "bytes": 103232
+    },
+    "animation-variants/fb171d2d6723290444a59a825f2ec941aeb1c0fe8a06d24f5ffce22e9a12112e.webp": {
+      "sha256": "846996ca1fcce0c3f74260d891a67e96a67791e6fa1417e1c76953a52bba910d",
+      "bytes": 3501640
+    },
+    "animation-variants/fdb9e97548f029253f6e367335534f46556671c7747bcd51afea1474b241ff50.webp": {
+      "sha256": "e6ad2e3a7f6e8bb29ad2f7536d9c014f0e24fe69cf905d6882f09b7792945678",
+      "bytes": 3035892
+    },
+    "animation-variants/ffa3b5a7bd9ab3749185336f8d044d0c98e71f3defbd74211d7b535073530ef2.webp": {
+      "sha256": "786680884764d077caa20fb1b8d6e0b2c6c636e5d79fe4baff2827efba483cca",
+      "bytes": 1470902
+    },
+    "animation-variants/manifest.json": {
+      "sha256": "5bdea34ae27ef0427c12661359c45a43a867c70f5dfb81c4172d589a659d9625",
+      "bytes": 13958
+    },
+    "assets/game/moon-animations/cold-tundra.webp": {
+      "sha256": "e5cd5a36fb07e8dee447f34444e1b238529561d4e1338dbef83b829ef3a8ba2b",
+      "bytes": 30894208
+    },
+    "assets/game/moon-animations/cratered-cyan-moon.webp": {
+      "sha256": "3690cd981b2986db86f01d16b6b40526ea9b9bda891d7f8518ed31aec4ae55da",
+      "bytes": 38708372
+    },
+    "assets/game/moon-animations/frozen-ice.webp": {
+      "sha256": "fd62a962c8b234dafa501a69bc33ddf85602ed05ca88a502f536e6e475c38f76",
+      "bytes": 28243410
+    },
+    "assets/game/moon-animations/hot-desert.webp": {
+      "sha256": "df87e91d3e0e7a7fdae4697934789d063dbdfeba26e2a1992d21b8d935bbd112",
+      "bytes": 30752918
+    },
+    "assets/game/moon-animations/lush-temperate.webp": {
+      "sha256": "e26f0e415528be93f2b771baf3189ed8aa1e4e1240a9332a95f5582485ad1a97",
+      "bytes": 30563524
+    },
+    "assets/game/moon-animations/scorching-molten.webp": {
+      "sha256": "5220e657cda2c0e4abc0c1e688054c4710a1831fe60225cb8734c8f876885cec",
+      "bytes": 30941086
+    },
+    "assets/game/moon-animations/temperate-ocean.webp": {
+      "sha256": "4df50ca63a7ef3209b29c5d4c51502be8f1a1a30105a3251eb29421509516d7c",
+      "bytes": 31360972
+    },
+    "assets/game/moon-animations/warm-terracotta.webp": {
+      "sha256": "ed9139656289f8245acbe798cdf673b99e9b051b900701f993cd3af03266a734",
+      "bytes": 32065580
+    },
+    "assets/game/planet-animations/cold-tundra.webp": {
+      "sha256": "1487650a49fb3dbc79a940de658e2bcd27d1e9570d8a1d57ba673be93028e7b7",
+      "bytes": 22408946
+    },
+    "assets/game/planet-animations/cool-misty-blue.webp": {
+      "sha256": "aabbeebcf78db4eeb5fdc345d588fede3b94214b2cefce9c197b544cc09cedcb",
+      "bytes": 15765922
+    },
+    "assets/game/planet-animations/crystal-violet.webp": {
+      "sha256": "0f31deacd36658270564cc6ef91035370cb031ee6b49ed8fc0ba5bd9d9cf6d9e",
+      "bytes": 22983168
+    },
+    "assets/game/planet-animations/deuterium-blue.webp": {
+      "sha256": "dfd409e74e2276f833ef65191ee534db271f5f389dcabf2da80c021adad3259f",
+      "bytes": 22427896
+    },
+    "assets/game/planet-animations/frozen-ice.webp": {
+      "sha256": "f8db13515c328526db40dcfdfb4837341b61a7bee0169c0084d981489128f324",
+      "bytes": 24616590
+    },
+    "assets/game/planet-animations/hot-desert.webp": {
+      "sha256": "75bef84a67b975ea9fac5c74a70eafd9c9b19b33d352a585bf2cfca085bc3498",
+      "bytes": 16498244
+    },
+    "assets/game/planet-animations/lush-temperate.webp": {
+      "sha256": "8ede212cef974dbb1b258041532fbbbe7fffb3331675740183932fa5da2634b8",
+      "bytes": 22794142
+    },
+    "assets/game/planet-animations/metal-planetoid.webp": {
+      "sha256": "894386aa80c50ca69727c408aa057103521ed5d42efdf34126a98e0087e35949",
+      "bytes": 24409446
+    },
+    "assets/game/planet-animations/outer-cryo.webp": {
+      "sha256": "311d781f84b543c64a1fa2dac70e54f14d991b88c69375912573079d20a20844",
+      "bytes": 18304974
+    },
+    "assets/game/planet-animations/scorching-molten.webp": {
+      "sha256": "839699de51184ebc30f4f7c80048cbedc2a64db8de10d87604a62f7ec1a91872",
+      "bytes": 20216402
+    },
+    "assets/game/planet-animations/temperate-ocean.webp": {
+      "sha256": "26dce24bff4f317a242fc7cc0757f365c535889aa8c7f6f2a845cb5fd5a1c066",
+      "bytes": 21158054
+    },
+    "assets/game/planet-animations/warm-terracotta.webp": {
+      "sha256": "6c1608e989070b6759c37eacb43d006317bda688c3b037661dbfdf744285e198",
+      "bytes": 17693530
+    },
+    "assets/landing/veydrift-trailer-v1.mp4": {
+      "sha256": "3114d9eb837d1921b63018eb212d97ba38741d6275b4ce1294a46f6286bf77fd",
+      "bytes": 69991450
+    }
+  }
+}

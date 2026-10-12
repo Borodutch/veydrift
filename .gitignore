@@ -29,6 +29,9 @@ cache-sizes/
 apps/frontend/public/assets/game/sizes/
 apps/frontend/.animation-variants/
 
+# Pinned external media (apps/frontend/media.json), synced at runtime
+apps/frontend/.media/
+
 # Blockchain / zk generated artifacts
 broadcast/
 artifacts/

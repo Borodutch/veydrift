@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mediaRoot } from "./media.mjs";
 import {
   PLANET_ANIMATION_BASE, PLANET_ANIMATION_TYPES, PLANET_ANIMATION_VERSION, PLANET_ANIMATION_WIDTHS,
   MOON_ANIMATION_BASE, MOON_ANIMATION_TYPES, MOON_ANIMATION_VERSION, MOON_ANIMATION_WIDTHS, MOON_ANIMATION_MASTER_WIDTH,
@@ -11,8 +11,9 @@ export const animationConfigs = [
   { base: PLANET_ANIMATION_BASE, types: PLANET_ANIMATION_TYPES, version: PLANET_ANIMATION_VERSION, widths: PLANET_ANIMATION_WIDTHS, masterWidth: 1024 },
   { base: MOON_ANIMATION_BASE, types: MOON_ANIMATION_TYPES, version: MOON_ANIMATION_VERSION, widths: MOON_ANIMATION_WIDTHS, masterWidth: MOON_ANIMATION_MASTER_WIDTH },
 ];
-export const animationRoot = fileURLToPath(new URL("../.animation-variants/", import.meta.url));
-const publicRoot = fileURLToPath(new URL("../public/", import.meta.url));
+// Masters and their precomputed variants are pinned media (see media.mjs);
+// variants are generated only when publishing media, never during a build.
+export const animationRoot = join(mediaRoot, "animation-variants");
 // Bounded by the canonical allowlists: currently 60 derivatives, no historical versions.
 export const animationVariants = animationConfigs.flatMap((config) => config.types.flatMap((assetType) =>
   config.widths.filter((size) => size !== config.masterWidth).map((size) => ({ ...config, assetType, size }))));
@@ -24,7 +25,7 @@ const preparing = new Map();
 
 // One preparation per root; all encodes are sequential, never request-driven.
 // Rejected preparations are evicted so a corrected source can be retried.
-export function prepareAnimationVariants({ root = animationRoot, sourceRoot = publicRoot, variants = animationVariants } = {}) {
+export function prepareAnimationVariants({ root = animationRoot, sourceRoot = mediaRoot, variants = animationVariants } = {}) {
   if (preparing.has(root)) return preparing.get(root);
   const work = prepare(root, sourceRoot, variants).finally(() => preparing.delete(root));
   preparing.set(root, work);
@@ -92,7 +93,7 @@ async function prepare(root, sourceRoot, variants) {
 }
 
 // Fail closed before listening, not after a user's first request. Only metadata
-// is retained; response bodies are streamed from the image-layer files.
+// is retained; response bodies are streamed from the media-root files.
 export async function assertAnimationVariantsReady(root = animationRoot, variants = animationVariants) {
   const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8"));
   if (Object.keys(manifest).length !== variants.length) throw new Error("Incomplete animation manifest");

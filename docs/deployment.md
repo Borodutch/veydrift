@@ -92,26 +92,33 @@ node scripts/veydrift-redeploy-readiness-probe.mjs --api-url <api-origin> --dura
 
 Retain its results as release evidence. Do not bypass readiness to shorten a deploy.
 
-## Precomputed frontend animations
+## Pinned frontend media
 
-Every Vite build mode prepares the 60 canonical planet/moon derivatives in
-`apps/frontend/.animation-variants/` before bundling. Nixpacks and the test
-Dockerfile retain that directory in the application image; a dist-only copy is
-not a complete server deployment. No persistent mount or runtime resize is
-needed. Generation is sequential, keyed by artwork/version/size/source hash and
-encoder settings/versions, with failed promises evicted and obsolete outputs
-pruned. The output budget is 512 MiB; current output is about 104 MiB. Source
-artwork changes still require the normal animation URL version bump.
+Large frontend media (the landing trailer, the planet/moon animation masters and
+their 60 precomputed size variants, about 1 GB) is not in git and never enters an
+image. `apps/frontend/media.json` pins every file by sha256 and byte size; the files
+are assets of the `media-v1` GitHub release on this repository, named
+`<sha256><ext>`. Before binding its port, `bun run serve` (and Vite dev/preview)
+runs `scripts/media.mjs` sync: files already present with a matching size+mtime
+stamp are not re-read, anything missing or changed is downloaded, verified and
+atomically renamed, and a failed download fails startup. The server then validates
+the variant manifest and streams media from the media root with the same URLs,
+headers and byte ranges as before, so Cloudflare and browser caching are unchanged.
 
-The server validates the complete manifest/files before binding its port, then
-streams derivatives without decoding or caching image bodies. Missing output
-fails startup rather than exposing a cold-page resize timeout. Vite dev/preview
-also prepares outputs before accepting requests. For a standalone local server,
-run `bun run build` first (or `bun scripts/animation-variants.mjs` when
-only rebuilding derivatives). Do not run multiple builds against one output
-folder or build into a running deployment's image.
+The media root defaults to `apps/frontend/.media/` (override with
+`VEYDRIFT_MEDIA_ROOT`). In production, the frontend service bind-mounts
+`/etc/easypanel/projects/veydrift/frontend/media` there, so a deploy with unchanged
+media downloads and writes nothing. Without that mount (for example the test
+Dockerfile) every container start downloads the media once into its writable layer.
 
-After building, run `cd apps/frontend && bun scripts/benchmark-animation-delivery.mjs`.
+To change media, place the new masters under the media root, bump the matching
+animation URL version, run `cd apps/frontend && bun scripts/media.mjs publish`
+(regenerates variants, re-pins `media.json`, stages `<root>/.upload/`), upload the
+staged files with `gh release upload media-v1 <root>/.upload/* --repo Borodutch/veydrift`
+(content-addressed names never collide), then commit `media.json`. Never overwrite an
+existing release asset.
+
+After `bun scripts/media.mjs sync`, run `cd apps/frontend && bun scripts/benchmark-animation-delivery.mjs`.
 It starts two fresh local serving processes, fans out all 60 real variants with
 HTML/API-backed control requests, repeats warm, and decodes all animation frames.
 It does not replace first-deployment production timing or dedicated browser QA.

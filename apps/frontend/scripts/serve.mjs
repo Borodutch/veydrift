@@ -4,6 +4,7 @@ import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { animationConfigs, animationFilename, animationKey, animationRoot, assertAnimationVariantsReady } from "./animation-variants.mjs";
+import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
 
@@ -1105,6 +1106,8 @@ function existingAssetUrl(pathname) {
   if (existsSync(distUrl)) return distUrl;
   const publicUrl = staticFileUrl(pathname, publicRoot);
   if (existsSync(publicUrl)) return publicUrl;
+  const mediaPath = mediaFileForPathname(pathname);
+  if (mediaPath && existsSync(mediaPath)) return mediaPath;
   throw new Error(`Missing OG asset: ${pathname}`);
 }
 
@@ -1179,7 +1182,9 @@ export async function frontendResponse(request) {
 
   if (route.replace(/\/+$/, "") === "/pact") return pactHtmlResponse(request, url);
 
-  const file = Bun.file(new URL(`.${route}`, distRoot));
+  const distFile = Bun.file(new URL(`.${route}`, distRoot));
+  const mediaPath = mediaFileForPathname(route);
+  const file = mediaPath && !(await distFile.exists()) ? Bun.file(mediaPath) : distFile;
 
   if (await file.exists()) {
     return route.endsWith(".mp4") ? rangeResponseFor(file, route, request.headers.get("range")) : responseFor(file, route);
@@ -1198,6 +1203,7 @@ export async function frontendResponse(request) {
 }
 
 if (import.meta.main) {
+  console.info(JSON.stringify({ event: "media_sync", ...(await syncMedia()) }));
   await assertAnimationVariantsReady();
   Bun.serve({
     hostname: "0.0.0.0",
