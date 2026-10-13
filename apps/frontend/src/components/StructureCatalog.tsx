@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { PackagePlus } from "lucide-preact";
+import { PackagePlus, Trash2 } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { QueueTimeline } from "../playableMvp";
 import {
@@ -85,6 +85,7 @@ export function StructureDetail({
   activeLabel = "Active",
   asset,
   cacheKey,
+  demolishAction,
   description,
   effectContent,
   inactiveLabel = "Not built",
@@ -103,6 +104,8 @@ export function StructureDetail({
   activeLabel?: string | undefined;
   asset: string;
   cacheKey: string;
+  /** Secondary destructive action; `reason` explains why it is unavailable. */
+  demolishAction?: { disabled: boolean; onClick: () => void; reason?: string | undefined } | undefined;
   description: string;
   effectContent?: ComponentChildren | undefined;
   inactiveLabel?: string | undefined;
@@ -186,6 +189,25 @@ export function StructureDetail({
               <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {demolishAction ? (
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          {demolishAction.disabled && demolishAction.reason ? (
+            <span className="min-w-0 text-xs text-slate-500">{demolishAction.reason}</span>
+          ) : null}
+          <button
+            aria-label={`Demolish ${label}`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-300/25 px-2.5 text-xs font-semibold text-rose-200/90 transition hover:border-rose-300/40 hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500 disabled:hover:bg-transparent"
+            disabled={demolishAction.disabled}
+            onClick={demolishAction.onClick}
+            title={demolishAction.disabled ? demolishAction.reason : undefined}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
+            Demolish
+          </button>
         </div>
       ) : null}
 
