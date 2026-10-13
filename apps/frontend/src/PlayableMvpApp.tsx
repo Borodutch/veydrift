@@ -7125,6 +7125,7 @@ export function PlayableMvpApp({
           defenseState={defenseState}
           homeCoords={homeWorldCoords}
           originCoords={activePlanetCoords}
+          originIsMoon={activeBodyKind === "moon"}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}
@@ -7148,6 +7149,7 @@ export function PlayableMvpApp({
           coords={selectedCoords}
           defenseState={defenseState}
           homeCoords={activePlanetCoords}
+          originIsMoon={activeBodyKind === "moon"}
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}

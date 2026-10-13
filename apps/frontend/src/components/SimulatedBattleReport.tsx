@@ -19,11 +19,13 @@ type LazyBattleReportState =
   | { status: "ready"; report: ContractBattleResult }
   | { status: "error"; message: string };
 
-/** The "i" control that opens one simulated battle: an eager report, or `input` replayed with `seed`. */
-export function SimulatedBattleReportControl({ report: eagerReport = null, input: reportInput, seed: reportSeed }: {
+/** The "i" control that opens one simulated battle: an eager report, or `input` replayed with `seed`
+ * under `modelVersion` (default: the active model), which must be the model the odds were simulated with. */
+export function SimulatedBattleReportControl({ report: eagerReport = null, input: reportInput, seed: reportSeed, modelVersion = activeCombatModel() }: {
   report?: ContractBattleResult | null | undefined;
   input?: ContractBattleInput | undefined;
   seed?: ContractBattleReportSeed | undefined;
+  modelVersion?: number | undefined;
 }) {
   if (eagerReport) {
     return (
@@ -49,10 +51,11 @@ export function SimulatedBattleReportControl({ report: eagerReport = null, input
     );
   }
 
-  const sourceKey = `${battlePreviewInputKey(reportInput)}:${reportSeed.sampleId}:${reportSeed.randomWord}:${reportSeed.fast ? "fast" : "exact"}`;
+  const sourceKey = `${battlePreviewInputKey(reportInput)}:${modelVersion}:${reportSeed.sampleId}:${reportSeed.randomWord}:${reportSeed.fast ? "fast" : "exact"}`;
   return (
     <LazySimulatedBattleReportControl
       key={sourceKey}
+      modelVersion={modelVersion}
       reportInput={reportInput}
       reportSeed={reportSeed}
       sourceKey={sourceKey}
@@ -61,10 +64,12 @@ export function SimulatedBattleReportControl({ report: eagerReport = null, input
 }
 
 function LazySimulatedBattleReportControl({
+  modelVersion,
   reportInput,
   reportSeed,
   sourceKey,
 }: {
+  modelVersion: number;
   reportInput: ContractBattleInput;
   reportSeed: ContractBattleReportSeed;
   sourceKey: string;
@@ -99,7 +104,6 @@ function LazySimulatedBattleReportControl({
       setState({ status: "error", message });
     };
     try {
-      const model = activeCombatModel();
       const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
       workerRef.current = worker;
       worker.onmessage = (event: MessageEvent<
@@ -108,7 +112,7 @@ function LazySimulatedBattleReportControl({
       >) => {
         if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
         stopWorker();
-        if (event.data.modelVersion !== model) {
+        if (event.data.modelVersion !== modelVersion) {
           fail("This battle report is out of date. Please refresh.");
           return;
         }
@@ -121,7 +125,7 @@ function LazySimulatedBattleReportControl({
       worker.postMessage({
         fast: reportSeed.fast === true,
         input: reportInput,
-        modelVersion: model,
+        modelVersion,
         randomWord: reportSeed.randomWord,
         requestId,
         sampleId: reportSeed.sampleId,
@@ -129,7 +133,7 @@ function LazySimulatedBattleReportControl({
     } catch {
       fail("The battle report could not start. Please retry.");
     }
-  }, [reportInput, reportSeed, state.status, stopWorker]);
+  }, [modelVersion, reportInput, reportSeed, state.status, stopWorker]);
 
   return (
     <SimulatedBattleReportDetails

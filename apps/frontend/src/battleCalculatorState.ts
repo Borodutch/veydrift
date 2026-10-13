@@ -3,8 +3,10 @@ import { fetchSystemData } from "./walletFlow";
 import { planetsFromSystemResponse, type ApiSystemResponse } from "./data/mockUniverse";
 import { researchCatalog, shipCatalog } from "./playableMvp";
 
-/** One calculator force. `defenses` only count for the target body (defenders[0]). */
+/** One calculator force. `defenses` only count for the target body (defenders[0]).
+ * `id` is a per-page identity (never shared in links) so per-fleet UI state survives removals. */
 export type CalculatorFleet = {
+  id: number;
   coords: string;
   moon: boolean;
   tech: CombatTechnology;
@@ -25,9 +27,11 @@ export const isFleetShip = (id: number) => id !== 9 && id !== 15;
 /** Ship slot 14 exists onchain but can never be built, so the calculator never offers it. */
 export const isPlayableShip = (id: number) => id !== 14;
 
+let nextFleetId = 0;
+
 export function emptyFleet(): CalculatorFleet {
   return {
-    coords: "", moon: false, tech: { weapons: 0, shielding: 0, armor: 0 },
+    id: ++nextFleetId, coords: "", moon: false, tech: { weapons: 0, shielding: 0, armor: 0 },
     ships: Array(SHIP_TYPES).fill(0), defenses: Array(DEFENSE_TYPES).fill(0),
   };
 }
@@ -64,7 +68,7 @@ export function setupToBattleInput(setup: CalculatorSetup): ContractBattleInput 
 export function battleInputToSetup(input: ContractBattleInput): CalculatorSetup {
   const counts = (values: readonly number[], length: number) => Array.from({ length }, (_, id) => Math.max(0, Math.trunc(values[id] ?? 0)));
   const force = (ships: readonly number[], tech: CombatTechnology, defenses: readonly number[] = []): CalculatorFleet => ({
-    coords: "", moon: false, tech: { ...tech }, ships: counts(ships, SHIP_TYPES), defenses: counts(defenses, DEFENSE_TYPES),
+    ...emptyFleet(), tech: { ...tech }, ships: counts(ships, SHIP_TYPES), defenses: counts(defenses, DEFENSE_TYPES),
   });
   return {
     attackers: input.attackers.map((fleet) => force(fleet.ships, fleet.technology)),
@@ -87,7 +91,7 @@ export function encodeSetup(setup: CalculatorSetup): string {
     const tech: [number, number, number] = [force.tech.weapons, force.tech.shielding, force.tech.armor];
     const ships = sparse(force.ships), defenses = sparse(force.defenses);
     return {
-      ...(force.coords ? { c: force.coords } : {}),
+      ...(force.coords ? { c: force.coords.slice(0, MAX_COORDS_LENGTH) } : {}),
       ...(force.moon ? { m: 1 as const } : {}),
       ...(tech.some(Boolean) ? { t: tech } : {}),
       ...(ships ? { s: ships } : {}),
@@ -109,7 +113,8 @@ export function decodeSetup(encoded: string): CalculatorSetup | null {
       const wire = (value && typeof value === "object" ? value : {}) as WireFleet;
       const tech = Array.isArray(wire.t) ? wire.t : [];
       return {
-        coords: typeof wire.c === "string" ? wire.c.slice(0, 16) : "",
+        ...emptyFleet(),
+        coords: typeof wire.c === "string" ? wire.c.slice(0, MAX_COORDS_LENGTH) : "",
         moon: wire.m === 1,
         tech: { weapons: level(tech[0]), shielding: level(tech[1]), armor: level(tech[2]) },
         ships: counts(wire.s, SHIP_TYPES).map((count, id) => isPlayableShip(id) ? count : 0),
@@ -127,6 +132,7 @@ export function decodeSetup(encoded: string): CalculatorSetup | null {
 }
 
 export const MAX_FLEETS = 16;
+export const MAX_COORDS_LENGTH = 16;
 export const MAX_UNITS = 999_999_999;
 
 export function clampCount(value: unknown, max = MAX_UNITS): number {
@@ -136,6 +142,22 @@ export function clampCount(value: unknown, max = MAX_UNITS): number {
 
 export function calculatorHref(setup: CalculatorSetup): string {
   return `/calculator?b=${encodeSetup(setup)}`;
+}
+
+type CalculatorBody = { galaxy: number; system: number; position: number; moon: boolean };
+
+/** Opens the calculator on a target body and the attacker's origin body; both load their forces on open. */
+export function simulateHref(target: CalculatorBody, origin: CalculatorBody | undefined): string {
+  const body = (at: CalculatorBody): CalculatorFleet => ({ ...emptyFleet(), coords: `${at.galaxy}:${at.system}:${at.position}`, moon: at.moon });
+  return calculatorHref({ attackers: [origin ? body(origin) : emptyFleet()], defenders: [body(target)] });
+}
+
+/** Units that actually fight: the target fields every ship and defense, other fleets only mobile ships
+ * (matches setupToBattleInput, so hidden loaded defenses never count as an attacker). */
+export function fleetHasUnits(fleet: CalculatorFleet, target: boolean): boolean {
+  return target
+    ? fleet.ships.some(Boolean) || fleet.defenses.some(Boolean)
+    : fleet.ships.some((count, id) => count > 0 && isFleetShip(id));
 }
 
 /** "1:23:4" → coordinates, or null. */
@@ -169,6 +191,7 @@ export async function loadForcesAt(apiUrl: string, coords: string, moon: boolean
     return values;
   };
   const force: CalculatorFleet = {
+    ...emptyFleet(),
     coords: `${at.galaxy}:${at.system}:${at.position}`,
     moon,
     tech: { weapons: level("weapons"), shielding: level("shielding"), armor: level("armor") },
