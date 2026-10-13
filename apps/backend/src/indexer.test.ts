@@ -4609,6 +4609,67 @@ describe("SettlementIndexer", () => {
     expect(indexer.walletPlanets(player).planets[0]?.buildingLevels).toContainEqual({ id: 5, level: 2 });
   });
 
+  test("indexes building demolitions as downgrades and clears cancelled demolitions (#112)", () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xbuilddone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)],
+      data: abiWords(2n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xdemolish",
+      logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n, 9_999_999_999n, 400n, 200n, 100n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      active: true,
+      kind: "building",
+      itemId: 5,
+      targetLevel: 1,
+      action: "demolish"
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xdemolished",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n)
+    });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xdemolish2",
+      logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(0n, 9_999_999_999n, 266n, 133n, 66n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building?.action).toBe("demolish");
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xcancel",
+      logIndex: "0x0",
+      topics: [demolitionCancelledTopic, topic(7n), topic(5n)],
+      data: abiWords(0n, 266n, 133n, 66n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+  });
+
   test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
     // PlanetSettled carries the authoritative post-mutation balance. A raid/spend emits a DECREASING
     // PlanetSettled; the read model must keep that lower balance. But logs do not always arrive in block

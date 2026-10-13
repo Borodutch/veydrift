@@ -24,6 +24,7 @@ import {
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
+  decodeBuildingDemolitionCancelledLog,
   decodeProductionQueueTimingLog,
   decodeInterplanetaryMissileAttackLog,
   decodeMoonDefenseCountChangedLog,
@@ -69,6 +70,7 @@ import {
   isFirstPlanetSettledLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isBuildingDemolitionCancelledLog,
   isProductionQueueTimingLog,
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
@@ -117,6 +119,7 @@ import {
   type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedBuildingDemolitionCancelledEvent,
   type IndexedProductionQueueTimingEvent,
   type IndexedReferralClaimEvent,
   type IndexedReferralRedemptionEvent,
@@ -5357,6 +5360,10 @@ export class SettlementIndexer {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -8421,11 +8428,9 @@ export class SettlementIndexer {
   }
 
   private queueStartProvenCompleted(event: IndexedQueueStartedEvent): boolean {
-    if (event.queueKind === "building" && event.planetId && event.targetLevel !== undefined) {
-      return this.indexedLevel("contract_building_levels", "building_id", event.planetId, event.itemId) >= event.targetLevel;
-    }
-    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
-      return this.indexedLevel("contract_moon_building_levels", "moon_building_id", event.planetId, event.itemId) >= event.targetLevel;
+    if ((event.queueKind === "building" || event.queueKind === "moon-building") && event.planetId && event.targetLevel !== undefined) {
+      const level = this.buildingSlotLevel(event.queueKind, event.planetId, event.itemId);
+      return event.action === "demolish" ? level <= event.targetLevel : level >= event.targetLevel;
     }
     if (event.queueKind === "research" && event.owner && event.targetLevel !== undefined) {
       const row = this.db.query(`
@@ -10451,6 +10456,13 @@ export class SettlementIndexer {
     }
     const queue = this.queueState(queueKey(event));
     const matchesActiveQueue = queueMatchesCompletion(event, queue);
+    // A matched completion below the indexed level is a demolition (L -> L-1); it must lower the
+    // level exactly instead of going through the monotonic upgrade write.
+    const demolition = matchesActiveQueue
+      && event.level !== undefined
+      && event.planetId !== undefined
+      && (event.queueKind === "building" || event.queueKind === "moon-building")
+      && event.level < this.buildingSlotLevel(event.queueKind, event.planetId, event.itemId);
     if (event.queueKind === "building" && event.planetId && matchesActiveQueue) {
       this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
     }
@@ -10491,8 +10503,37 @@ export class SettlementIndexer {
         this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
       }
     }
-    if (options.applyEffects !== false) this.applyQueueCompletionEffects(event);
+    if (options.applyEffects !== false) this.applyQueueCompletionEffects(event, demolition);
     this.touch();
+  }
+
+  /** The refund itself arrives through the body's PlanetSettled / MoonResourcesSettled log. */
+  private applyBuildingDemolitionCancelledEvent(event: IndexedBuildingDemolitionCancelledEvent): void {
+    const key = queueKey(event);
+    const queue = this.queueState(key);
+    if (!queue?.active || queue.itemId !== event.itemId || queue.targetLevel !== event.targetLevel) return;
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+    if (event.queueKind === "moon-building") {
+      this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
+    }
+    this.touch();
+  }
+
+  /** The building slot never changes a level while queued, so a lower target means demolition. */
+  private buildingQueueAction(
+    queueKind: "building" | "moon-building",
+    planetId: string,
+    itemId: number,
+    targetLevel: number
+  ): "upgrade" | "demolish" {
+    return targetLevel < this.buildingSlotLevel(queueKind, planetId, itemId) ? "demolish" : "upgrade";
+  }
+
+  private buildingSlotLevel(queueKind: "building" | "moon-building", planetId: string, itemId: number): number {
+    return queueKind === "building"
+      ? this.indexedLevel("contract_building_levels", "building_id", planetId, itemId)
+      : this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, itemId);
   }
 
   private promoteProductionBacklogAfterCompletion(
@@ -10556,10 +10597,13 @@ export class SettlementIndexer {
     });
   }
 
-  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
+  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent, demolition = false): void {
+    const writeLevel = demolition
+      ? this.upsertIndexedLevel.bind(this)
+      : this.upsertIndexedLevelAtLeast.bind(this);
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
       if (event.itemId === 0) {
         const currentLevel = this.indexedLevel(
@@ -10571,8 +10615,8 @@ export class SettlementIndexer {
         this.incrementMoonFields(event.planetId, Math.max(0, event.level - currentLevel) * 3);
       }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
-      this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-ship" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("contract_moon_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "moon-defense" && event.planetId && event.total !== undefined) {
@@ -10939,7 +10983,8 @@ export class SettlementIndexer {
             metal: row.metal_cost,
             crystal: row.crystal_cost,
             deuterium: row.deuterium_cost
-          }
+          },
+          action: this.buildingQueueAction("moon-building", row.planet_id, row.moon_building_id, row.target_level)
         };
         cache.values.set(queueKeyValue, queue);
         return cloneQueueState(queue);
@@ -10959,6 +11004,9 @@ export class SettlementIndexer {
     }
 
     const queue = this.productionQueueFromRow(row);
+    if (row.queue_kind === "building" && queue.planetId && queue.itemId !== undefined && queue.targetLevel !== undefined) {
+      queue.action = this.buildingQueueAction("building", queue.planetId, queue.itemId, queue.targetLevel);
+    }
     this.hydrateRetainedProductionQueueTiming(queue);
     if (row.backlog_json) {
       const backlog = parseEvent<QueueState[]>(row.backlog_json);
