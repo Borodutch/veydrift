@@ -1,4 +1,4 @@
-import { likeliestOutcome, type BattleStats, type CombatResources, type ContractBattleInput, type ContractBattleResult } from "../battlePreview";
+import { activeCombatModel, likeliestOutcome, REFEREE_COMBAT_MODEL_VERSION, type BattleStats, type CombatResources, type ContractBattleInput, type ContractBattleResult } from "../battlePreview";
 import { battleInputToSetup, calculatorHref } from "../battleCalculatorState";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { SimulatedBattleReportControl } from "./SimulatedBattleReport";
@@ -86,66 +86,121 @@ export function BattleResults({ input, stats, running = false, detailed = false,
       </div>
       <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
         <Fact label="Attacker losses" value={formatResources(scale(stats.attackerLosses, runs))} />
-        <Fact label="Defender losses" value={formatResources(scale(stats.defenderLosses, runs))} />
-        <Fact label="Debris" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
+        <Fact label="Defender losses (after repair)" value={formatResources(scale(stats.defenderLosses, runs))} />
+        <Fact label="Debris (ships only)" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
         <Fact label="Moon chance" value={`${Math.round(average(stats.moonChance, runs))}%`} />
         <Fact label="Rounds" value={average(stats.rounds, runs).toFixed(1)} />
-        <Fact label="Simulations" value={runs.toLocaleString()} />
+        <Fact label="Simulations" {...simulationsFact(runs, stats.exact, modelVersion ?? activeCombatModel())} />
       </dl>
+      {stats.timeLimited && !running ? (
+        <p className="text-xs text-amber-200">
+          This battle is too large to simulate fully: the time limit allowed only {runs.toLocaleString()} run{runs === 1 ? "" : "s"}, so these averages are less certain.
+        </p>
+      ) : null}
       {detailed ? <Survivors input={input} stats={stats} /> : null}
     </div>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+/** Run count, qualified only under the model where quick and exact sampling actually differ. */
+export function simulationsFact(runs: number, exact: boolean, model: number): { value: string; title?: string } {
+  const count = runs.toLocaleString();
+  if (model !== REFEREE_COMBAT_MODEL_VERSION) return { value: count };
+  return exact
+    ? { value: `${count} · exact`, title: "Each run is an exact replay of the battle math." }
+    : { value: `${count} · quick estimate`, title: "A quicker sample of the same battle rules. The calculator replays each run exactly." };
+}
+
+function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
   return (
-    <div className="flex min-w-0 items-baseline justify-between gap-3">
+    <div className="flex min-w-0 items-baseline justify-between gap-3" title={title}>
       <dt className="text-slate-500">{label}</dt>
       <dd className="text-right tabular-nums text-slate-200">{value}</dd>
     </div>
   );
 }
 
-type SurvivorRow = { label: string; start: number; left: number };
+/** Per-battle averages. Ships are never repaired (`repaired` null), so they lose start - left. */
+export type SurvivorRow = { label: string; start: number; destroyed: number; repaired: number | null; left: number };
 
-function Survivors({ input, stats }: { input: ContractBattleInput; stats: BattleStats }) {
+export function survivorGroups(input: ContractBattleInput, stats: BattleStats): Array<{ label: string; rows: SurvivorRow[] }> {
   const ships = (start: readonly number[], left: readonly number[] | undefined): SurvivorRow[] => shipCatalog
     .filter((ship) => (start[ship.id] ?? 0) > 0)
-    .map((ship) => ({ label: ship.label, start: start[ship.id] ?? 0, left: average(left?.[ship.id] ?? 0, stats.runs) }));
+    .map((ship) => {
+      const count = start[ship.id] ?? 0, remaining = average(left?.[ship.id] ?? 0, stats.runs);
+      return { label: ship.label, start: count, destroyed: count - remaining, repaired: null, left: remaining };
+    });
   const defenses = defenseCatalog
     .filter((defense) => (input.defender.defenses[defense.id] ?? 0) > 0)
-    .map((defense) => ({ label: defense.label, start: input.defender.defenses[defense.id] ?? 0, left: average(stats.defenderDefenses[defense.id] ?? 0, stats.runs) }));
-  const groups = [
+    .map((defense) => ({
+      label: defense.label,
+      start: input.defender.defenses[defense.id] ?? 0,
+      destroyed: average(stats.defenderDefensesDestroyed[defense.id] ?? 0, stats.runs),
+      repaired: average(stats.defenderDefensesRepaired[defense.id] ?? 0, stats.runs),
+      left: average(stats.defenderDefenses[defense.id] ?? 0, stats.runs),
+    }));
+  return [
     ...input.attackers.map((fleet, index) => ({ label: fleet.label, rows: ships(fleet.ships, stats.attackers[index]) })),
     { label: input.defender.label, rows: [...ships(input.defender.ships, stats.defenderShips), ...defenses] },
     ...input.defender.counterplay.map((fleet, index) => ({ label: fleet.label, rows: ships(fleet.ships, stats.counterplay[index]) })),
   ].filter((group) => group.rows.length);
-  return (
-    <div className="grid items-start gap-x-4 gap-y-2 sm:grid-cols-2">
-      {groups.map((group) => (
-        <table className="w-full text-xs tabular-nums" key={group.label}>
-          <thead>
-            <tr className="text-slate-500">
-              <th className="py-1 text-left font-medium">{group.label}</th>
-              <th className="py-1 text-right font-medium">Start</th>
-              <th className="py-1 text-right font-medium">Left</th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.rows.map((row) => (
-              <tr className="border-t border-white/5" key={row.label}>
-                <td className="py-1 text-slate-300">{row.label}</td>
-                <td className="py-1 text-right text-slate-400">{row.start.toLocaleString()}</td>
-                <td className={`py-1 text-right ${row.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{formatAverage(row.left)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ))}
-    </div>
-  );
 }
 
-function formatAverage(value: number): string {
-  return value >= 100 || Number.isInteger(value) ? Math.round(value).toLocaleString() : value.toFixed(1);
+/** One row as shown: every value at the same precision, and Left recomputed from the rounded
+ * Destroyed and Repaired so the row always adds up (start - destroyed + repaired). */
+export function displayedSurvivorRow(row: SurvivorRow): { destroyed: number; repaired: number | null; left: number; digits: number } {
+  const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
+  const values = [row.destroyed, row.repaired ?? 0, row.left];
+  const digits = values.some((value) => value < 100 && !Number.isInteger(round(value, 6))) ? 1 : 0;
+  const destroyed = round(row.destroyed, digits);
+  const repaired = row.repaired === null ? null : round(row.repaired, digits);
+  return { destroyed, repaired, left: round(row.start - destroyed + (repaired ?? 0), digits), digits };
+}
+
+function Survivors({ input, stats }: { input: ContractBattleInput; stats: BattleStats }) {
+  const groups = survivorGroups(input, stats);
+  const defenses = input.defender.defenses.some((count) => count > 0);
+  return (
+    <div className="grid gap-2">
+      <div className="grid items-start gap-x-4 gap-y-2 sm:grid-cols-2">
+        {groups.map((group) => {
+          // Only the target's table has defenses, and so a Repaired column.
+          const repairs = group.rows.some((row) => row.repaired !== null);
+          return (
+            <table className="w-full text-xs tabular-nums" key={group.label}>
+              <thead>
+                <tr className="text-slate-500">
+                  <th className="py-1 text-left font-medium">{group.label}</th>
+                  <th className="py-1 pl-2 text-right font-medium">Start</th>
+                  <th className="py-1 pl-2 text-right font-medium">Destroyed</th>
+                  {repairs ? <th className="py-1 pl-2 text-right font-medium">Repaired</th> : null}
+                  <th className="py-1 pl-2 text-right font-medium">{repairs ? "Left after repair" : "Left"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.rows.map((row) => {
+                  const shown = displayedSurvivorRow(row);
+                  const format = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: shown.digits, maximumFractionDigits: shown.digits });
+                  return (
+                    <tr className="border-t border-white/5" key={row.label}>
+                      <td className="py-1 text-slate-300">{row.label}</td>
+                      <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString()}</td>
+                      <td className={`py-1 pl-2 text-right ${shown.destroyed > 0 ? "text-red-200" : "text-slate-500"}`}>{format(shown.destroyed)}</td>
+                      {repairs ? (
+                        <td className={`py-1 pl-2 text-right ${shown.repaired ? "text-emerald-200" : "text-slate-500"}`}>{shown.repaired === null ? "—" : format(shown.repaired)}</td>
+                      ) : null}
+                      <td className={`py-1 pl-2 text-right ${shown.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{format(shown.left)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-slate-500">
+        Averages per battle.{defenses ? " After the battle 70% of each destroyed defense type is rebuilt (a single destroyed unit has a 70% chance), so Left and defender losses count defenses after repair." : ""} Ships are never repaired, and debris comes from destroyed ships only.
+      </p>
+    </div>
+  );
 }

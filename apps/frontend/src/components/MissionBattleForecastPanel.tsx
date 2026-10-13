@@ -1,6 +1,6 @@
 import { battleForecastUnavailableNotice } from "../playerNotice";
 import { activeCombatModel } from "../battlePreview";
-import { useBattleSimulation, type BattleSimulation } from "../battleSimulation";
+import { FAST_SIMULATION, useBattleSimulation, type BattleSimulation } from "../battleSimulation";
 import { useVerifiedCombatModel } from "../combatModel";
 import { emptyMissionShips } from "../galaxyActions";
 import type { MissionDetailResponse } from "../walletFlow";
@@ -43,7 +43,7 @@ export function prepareMissionBattleForecast(detail: MissionDetailResponse, now:
 export function MissionBattleForecastPanel({ detail, now }: { detail: MissionDetailResponse; now: number }) {
   const verified = useVerifiedCombatModel();
   const prepared = prepareMissionBattleForecast(detail, now);
-  const simulation = useBattleSimulation(prepared?.status === "simulate" && verified ? prepared.input : null, activeCombatModel());
+  const simulation = useBattleSimulation(prepared?.status === "simulate" && verified ? prepared.input : null, activeCombatModel(), FAST_SIMULATION);
   return renderMissionBattleForecastPanel({ detail, now }, verified, simulation);
 }
 

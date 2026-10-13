@@ -15,7 +15,7 @@ import {
   type ContractBattleReportSeed,
   type ContractBattleResult,
 } from "../battlePreview";
-import { useBattleSimulation, type BattleSimulation } from "../battleSimulation";
+import { FAST_SIMULATION, useBattleSimulation, type BattleSimulation } from "../battleSimulation";
 import { BattleResults, outcomePercents } from "./BattleResults";
 import { CompactFactRow, formatCompactResources, SimulatedBattleReportControl } from "./SimulatedBattleReport";
 import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
@@ -1127,7 +1127,7 @@ export function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
   const verified = useVerifiedCombatModel();
-  const simulation = useBattleSimulation(prepared.status === "simulate" && verified ? prepared.input : null, activeCombatModel());
+  const simulation = useBattleSimulation(prepared.status === "simulate" && verified ? prepared.input : null, activeCombatModel(), FAST_SIMULATION);
   return resolveVerifiedPublicTargetBattleForecast(prepared, verified, simulation);
 }
 

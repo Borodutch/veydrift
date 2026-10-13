@@ -14,17 +14,20 @@ export type BattleSimulation =
   | { status: "done"; input: ContractBattleInput; modelVersion: number; stats: BattleStats }
   | { status: "error"; error: string };
 
-// Small battles finish all runs instantly; large ones stop after the time budget once MIN_RUNS are
-// done, and huge ones (where MIN_RUNS alone would take minutes) after MAX_MS regardless.
-const RUNS = 1_000;
-const MIN_RUNS = 100;
-const BUDGET_MS = 4_000;
-const MAX_MS = 8_000;
+// Small battles finish all runs quickly; large ones stop after the time budget once minRuns are
+// done, and huge ones (where minRuns alone would take minutes) after maxMs regardless.
+/** The calculator: the referee's exact draws, about 5-10x the cost of a fast run (~5 ms on a desktop
+ * for 100 ships vs 2,000 defenses), so a longer budget still gets several hundred runs. Large battles,
+ * especially on phones, can stop at maxMs below minRuns; the results then say so (timeLimited). */
+export const EXACT_SIMULATION: BattleSimulationLimits = { runs: 1_000, minRuns: 300, budgetMs: 5_000, maxMs: 15_000, fast: false };
+/** Mission forecasts: several can run at once on a phone, for rosters that may still change before
+ * the battle, so they keep the fast stream (same rules; ticket #105 measured averages within ~1-3%). */
+export const FAST_SIMULATION: BattleSimulationLimits = { runs: 1_000, minRuns: 100, budgetMs: 4_000, maxMs: 8_000, fast: true };
 const DEBOUNCE_MS = 250;
 const FAILED = "The battle simulation failed. Please retry.";
 
-export function useBattleSimulation(input: ContractBattleInput | null, modelVersion: number): BattleSimulation {
-  const key = input ? JSON.stringify([modelVersion, input]) : null;
+export function useBattleSimulation(input: ContractBattleInput | null, modelVersion: number, limits: BattleSimulationLimits): BattleSimulation {
+  const key = input ? JSON.stringify([modelVersion, limits, input]) : null;
   const [state, setState] = useState<BattleSimulation>({ status: "idle" });
   useEffect(() => {
     if (!input) {
@@ -57,7 +60,7 @@ export function useBattleSimulation(input: ContractBattleInput | null, modelVers
         worker?.terminate();
         setState({ status: "error", error: FAILED });
       };
-      const request: BattleSimulationRequest = { input, modelVersion, runs: RUNS, minRuns: MIN_RUNS, budgetMs: BUDGET_MS, maxMs: MAX_MS };
+      const request: BattleSimulationRequest = { ...limits, input, modelVersion };
       worker.postMessage(request);
     }, DEBOUNCE_MS);
     return () => {

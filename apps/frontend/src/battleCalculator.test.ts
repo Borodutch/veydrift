@@ -9,7 +9,11 @@ import {
   setActiveCombatModel,
   simulateBattleStats,
   type ContractBattleInput,
+  type ContractBattleResult,
 } from "./battlePreview";
+import { advance, initialize, result, type Group } from "../../../packages/battle-oracle/oracle";
+import { catalog as refereeCatalog, rapidfire as refereeRapidfire } from "../../../packages/battle-oracle/catalog";
+import { EXACT_SIMULATION, FAST_SIMULATION } from "./battleSimulation";
 import {
   battleInputToSetup,
   decodeSetup,
@@ -22,8 +26,8 @@ import {
   type CalculatorFleet,
   type CalculatorSetup,
 } from "./battleCalculatorState";
-import { fleetsToLoadOnOpen } from "./components/BattleCalculatorPage";
-import { outcomePercents } from "./components/BattleResults";
+import { CALCULATOR_SIMULATION, fleetsToLoadOnOpen } from "./components/BattleCalculatorPage";
+import { displayedSurvivorRow, outcomePercents, simulationsFact, survivorGroups } from "./components/BattleResults";
 import combatCatalog from "../../../packages/contracts/combat-preview-catalog.json";
 
 afterEach(() => setActiveCombatModel(CONTRACT_COMBAT_MODEL_VERSION));
@@ -181,12 +185,118 @@ test("simulations honour the time budget, and a hard ceiling even before the min
   };
   // Every run "takes" 3s on this fake clock.
   const clock = () => { let time = 0; return () => (time += 3_000) - 3_000; };
-  const limits = { runs: 1_000, minRuns: 100, budgetMs: 4_000, maxMs: 8_000 };
-  expect(runBattleSimulation(input, limits, undefined, clock()).runs).toBe(3);
-  expect(runBattleSimulation(input, { ...limits, minRuns: 2 }, undefined, clock()).runs).toBe(2);
+  const limits = { runs: 1_000, minRuns: 100, budgetMs: 4_000, maxMs: 8_000, fast: true };
+  const ceiling = runBattleSimulation(input, limits, undefined, clock());
+  expect([ceiling.runs, ceiling.timeLimited]).toEqual([3, true]);
+  const budget = runBattleSimulation(input, { ...limits, minRuns: 2 }, undefined, clock());
+  expect([budget.runs, budget.timeLimited]).toEqual([2, false]);
   const progress: number[] = [];
   const fast = runBattleSimulation(input, { ...limits, runs: 12 }, (stats) => progress.push(stats.runs), () => 0);
   expect(fast.runs).toBe(12);
   expect(fast.outcomes).toEqual(simulateBattleStats(input, 12).outcomes);
   expect(progress).toEqual([]);
+});
+
+// Nikita's screenshot (#105): 1 Dreadstar + 100 Reapers vs 2,000 Rocket Launchers + 5 Plasma Turrets, all techs 10.
+const tech10 = { weapons: 10, shielding: 10, armor: 10 };
+const screenshotBattle: ContractBattleInput = {
+  attackers: [{ id: "a", label: "Attacker", owner: "", laneGroup: 0, ships: ships({ 11: 1, 13: 100 }), technology: tech10 }],
+  defender: { id: "d", label: "Defender", owner: "", ships: ships({}), defenses: [2_000, 0, 0, 0, 0, 0, 5, 0], technology: tech10, counterplay: [] },
+};
+
+test("the calculator runs the referee's exact engine; mission forecasts keep the fast stream", () => {
+  expect(CALCULATOR_SIMULATION).toBe(EXACT_SIMULATION);
+  expect(EXACT_SIMULATION.fast).toBe(false);
+  expect(EXACT_SIMULATION.minRuns).toBeGreaterThanOrEqual(300);
+  expect(FAST_SIMULATION.fast).toBe(true);
+  setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
+  const stats = runBattleSimulation(screenshotBattle, { ...EXACT_SIMULATION, runs: 3 }, undefined, () => 0);
+  expect([stats.runs, stats.exact, stats.timeLimited]).toEqual([3, true, false]);
+  for (const sample of Object.values(stats.samples)) expect(sample.fast).toBe(false);
+  // Each run is the oracle's own replay of its seed, with the oracle's SHA-256 draws (no override).
+  const left = Array.from({ length: 8 }, () => 0);
+  for (let index = 0; index < 3; index++) {
+    const groups: Group[] = [
+      { side: 0, owner: `0x${"1".padStart(40, "0")}`, source: "1", type: 11, count: 1, technology: tech10 },
+      { side: 0, owner: `0x${"1".padStart(40, "0")}`, source: "1", type: 13, count: 100, technology: tech10 },
+      { side: 1, owner: `0x${"0".padStart(40, "0")}`, source: "0", type: 16, count: 2_000, technology: tech10 },
+      { side: 1, owner: `0x${"0".padStart(40, "0")}`, source: "0", type: 22, count: 5, technology: tech10 },
+    ];
+    const state = initialize({ seed: deterministicBattleSampleWord(index), catalog: refereeCatalog, rapidfire: refereeRapidfire, groups });
+    while (!state.done) advance(state, 100_000);
+    const lost = (type: number) => result(state).allocation.find((row) => row.type === type)!.lost;
+    const run = runContractBattle(screenshotBattle, deterministicBattleSampleWord(index), index + 1, false, false);
+    expect(run.defender.lostDefenses.find((row) => row.id === 0)?.count ?? 0).toBe(lost(16));
+    expect(run.attackers[0]!.lostShips.find((row) => row.id === 13)?.count ?? 0).toBe(lost(13));
+    for (const row of run.defender.survivingDefenses) left[row.id]! += row.count;
+  }
+  expect(stats.defenderDefenses).toEqual(left);
+  // The fast stream is a different (non-replayable) sample of the same rules.
+  const fast = runBattleSimulation(screenshotBattle, { ...FAST_SIMULATION, runs: 3 }, undefined, () => 0);
+  expect(fast.exact).toBe(false);
+  expect(fast.defenderDefenses).not.toEqual(stats.defenderDefenses);
+});
+
+test("defenses left = start - destroyed + repaired, with the contract's 70% repair and single-unit roll", () => {
+  const checkRun = (input: ContractBattleInput, run: ContractBattleResult) => {
+    const count = (rows: readonly { id: number; count: number }[], id: number) => rows.find((row) => row.id === id)?.count ?? 0;
+    for (let id = 0; id < 8; id++) {
+      const start = input.defender.defenses[id] ?? 0, destroyed = count(run.defender.lostDefenses, id), repaired = count(run.defender.repairedDefenses, id);
+      expect(count(run.defender.survivingDefenses, id)).toBe(start - destroyed + repaired);
+      // Shield domes are single units, so they always take the seeded 70% roll.
+      const expected = destroyed > 1 ? Math.floor(destroyed * 70 / 100) : destroyed === 1 ? (BigInt(run.randomWord) + BigInt(id)) % 10n < 7n ? 1 : 0 : 0;
+      expect(repaired).toBe(expected);
+    }
+  };
+  const domes: ContractBattleInput = {
+    attackers: [{ id: "a", label: "A", owner: "", laneGroup: 0, ships: ships({ 5: 60, 7: 20 }), technology: tech10 }],
+    defender: { id: "d", label: "D", owner: "", ships: ships({}), defenses: [300, 40, 1, 1, 0, 0, 0, 1], technology: { weapons: 0, shielding: 0, armor: 0 }, counterplay: [] },
+  };
+  let singles = 0;
+  for (const model of [CONTRACT_COMBAT_MODEL_VERSION, REFEREE_COMBAT_MODEL_VERSION]) {
+    setActiveCombatModel(model);
+    for (let index = 0; index < 8; index++) {
+      const run = runContractBattle(domes, deterministicBattleSampleWord(index), index + 1, false);
+      checkRun(domes, run);
+      singles += run.defender.lostDefenses.filter((row) => row.count === 1).length;
+    }
+  }
+  expect(singles).toBeGreaterThan(0);
+
+  setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
+  const runs = 40;
+  const stats = runBattleSimulation(screenshotBattle, { ...EXACT_SIMULATION, runs }, undefined, () => 0);
+  for (let index = 0; index < 2; index++) checkRun(screenshotBattle, runContractBattle(screenshotBattle, deterministicBattleSampleWord(index), index + 1, false));
+  for (let id = 0; id < 8; id++) {
+    expect(stats.defenderDefenses[id]).toBe((screenshotBattle.defender.defenses[id] ?? 0) * runs - stats.defenderDefensesDestroyed[id]! + stats.defenderDefensesRepaired[id]!);
+  }
+  // The calculator rows: ~1,190 Rocket Launchers destroyed, ~830 repaired, ~1,640 left.
+  const rocketLaunchers = survivorGroups(screenshotBattle, stats)[1]!.rows.find((row) => row.label === "Rocket Launcher")!;
+  expect(rocketLaunchers.destroyed).toBeGreaterThan(1_100);
+  expect(rocketLaunchers.destroyed).toBeLessThan(1_280);
+  expect(Math.abs(rocketLaunchers.repaired! - rocketLaunchers.destroyed * 0.7)).toBeLessThan(1);
+  expect(rocketLaunchers.left).toBeCloseTo(rocketLaunchers.start - rocketLaunchers.destroyed + rocketLaunchers.repaired!, 6);
+  const reapers = survivorGroups(screenshotBattle, stats)[0]!.rows.find((row) => row.label === "Reaper")!;
+  expect(reapers.repaired).toBeNull();
+  expect(reapers.destroyed).toBeCloseTo(reapers.start - reapers.left, 6);
+});
+
+test("shown survivor rows always add up at one precision", () => {
+  // 1,189.4 / 832.6 / 1,643.2 rounded one by one would read 1,189 / 833 / 1,643 (off by one).
+  expect(displayedSurvivorRow({ label: "Rocket Launcher", start: 2_000, destroyed: 1_189.4, repaired: 832.6, left: 1_643.2 }))
+    .toEqual({ destroyed: 1_189, repaired: 833, left: 1_644, digits: 0 });
+  expect(displayedSurvivorRow({ label: "Reaper", start: 100, destroyed: 100 - 65.7, repaired: null, left: 65.7 }))
+    .toEqual({ destroyed: 34.3, repaired: null, left: 65.7, digits: 1 });
+  expect(displayedSurvivorRow({ label: "Plasma Turret", start: 5, destroyed: 0.04, repaired: 0, left: 4.96 }))
+    .toEqual({ destroyed: 0, repaired: 0, left: 5, digits: 1 });
+  expect(displayedSurvivorRow({ label: "Cruiser", start: 40, destroyed: 0, repaired: null, left: 40 }))
+    .toEqual({ destroyed: 0, repaired: null, left: 40, digits: 0 });
+});
+
+test("the Simulations label qualifies runs only under model 3, in player wording", () => {
+  for (const exact of [true, false]) expect(simulationsFact(1_000, exact, CONTRACT_COMBAT_MODEL_VERSION)).toEqual({ value: "1,000" });
+  const exact = simulationsFact(870, true, REFEREE_COMBAT_MODEL_VERSION);
+  const quick = simulationsFact(1_000, false, REFEREE_COMBAT_MODEL_VERSION);
+  expect([exact.value, quick.value]).toEqual(["870 · exact", "1,000 · quick estimate"]);
+  for (const text of [exact.value, exact.title, quick.value, quick.title]) expect(text).not.toMatch(/referee|seeded|draws|\(fast\)/i);
 });
