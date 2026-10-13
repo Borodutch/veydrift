@@ -1,6 +1,5 @@
-# Frontend builds run before Nixpacks' final source copy. Excluding these
-# generated outputs prevents stale workspace artifacts from overwriting the
-# freshly built bundle in the runtime image.
+# Generated outputs from a local workspace must never reach the build: the
+# image's bundle is the one the build phase produces.
 apps/frontend/dist/
 apps/frontend/.animation-variants/
 # Pinned media (apps/frontend/media.json) is synced into a persistent mount at
