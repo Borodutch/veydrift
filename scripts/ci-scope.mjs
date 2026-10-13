@@ -150,6 +150,9 @@ export function changedScriptTests(files, exists = existsSync) {
   if (files.some((file) => file.startsWith("scripts/host-build-io/"))) tests.push("scripts/host-build-io.test.mjs");
   // Any app or package change may add or edit a Bun.serve call; keep them out of development mode.
   if (files.some((file) => /^(apps|packages)\//.test(file))) tests.push("scripts/bun-serve-production-mode.test.mjs");
+  if (files.some((file) => /^(nixpacks\.toml|package\.json|bun\.lockb?|tsconfig\.base\.json|(apps|packages)\/[^/]+\/package\.json)$/.test(file))) {
+    tests.push("scripts/nixpacks-config.test.mjs");
+  }
   return unique(tests).filter((test) => exists(test));
 }
 

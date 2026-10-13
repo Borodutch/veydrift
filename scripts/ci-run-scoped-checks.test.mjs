@@ -90,6 +90,15 @@ test("app and package changes select the Bun.serve production-mode guard", async
   assert.deepEqual(changedScriptTests(["docs/README.md"], exists), []);
 });
 
+test("Nixpacks config and workspace manifest changes select the Nixpacks layout test", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/nixpacks-config.test.mjs";
+  for (const file of ["nixpacks.toml", "package.json", "bun.lockb", "bun.lock", "tsconfig.base.json", "apps/frontend/package.json", "packages/universe/package.json"]) {
+    assert.deepEqual(changedScriptTests([file], exists), ["scripts/nixpacks-config.test.mjs"]);
+  }
+  assert.deepEqual(changedScriptTests(["apps/frontend/src/package.json", "nixpacks.test.toml"], exists), []);
+});
+
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
   // This child runs its own node:test process, rather than joining the parent's test context.
