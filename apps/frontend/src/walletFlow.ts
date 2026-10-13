@@ -1958,6 +1958,8 @@ const contractRevertReasons: Record<string, string> = {
   "0x6d0bee4f": "This building is in use. Wait for its production or research to finish, then try again.",
   "0x9ede1ebb": "This moon building can't be demolished.",
   "0xde2ac91b": "The moon shipyard is in use. Wait for moon production to finish, then try again.",
+  // MissileSiloCapacityExceeded: building missiles past capacity, or demolishing a silo whose missiles need the level.
+  "0x6a038940": "The Missile Silo is too full. Its stored missiles need more room than this would leave.",
   "0x2ab0f96f":
     "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and queues before retrying; your balance may still be updating after recent spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",

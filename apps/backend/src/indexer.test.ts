@@ -4730,6 +4730,68 @@ describe("SettlementIndexer", () => {
     expect(indexer.moonState(player, planet.planetId).buildings.find((building) => building.id === 1)?.level).toBe(1);
   });
 
+  test("a rebuild with an idle chain queue replays an upgrade then a demolition back down (#112)", async () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const zero = { metal: "0", crystal: "0", deuterium: "0" };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getInfrastructureState() {
+        return { wallet: player, homePlanetId: planet.planetId, infrastructureAvailable: true, resources: planet.resources,
+          buildings: [{ id: 5, level: 1, cost: zero }], queue: null, technologyLevels: {} };
+      },
+      async getCanonicalPlanetState() {
+        return { planetId: planet.planetId, resources: planet.resources, buildings: [{ id: 5, level: 1, cost: zero }],
+          defenses: [], ships: [], queues: { building: null, defense: null, ship: null } };
+      }
+    } as never, 100n, { database: new Database(":memory:") });
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x82", transactionHash: "0xbuild", logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(5n)], data: abiWords(2n, 1_000n, 1n, 1n, 1n) });
+    indexer.applyLog({ blockNumber: "0x83", transactionHash: "0xbuilddone", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(2n) });
+    indexer.applyLog({ blockNumber: "0x84", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)], data: abiWords(1n, 2_000n, 1n, 1n, 1n) });
+    indexer.applyLog({ blockNumber: "0x85", transactionHash: "0xdemolished", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(1n) });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+
+    await indexer.rebuild();
+
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+  });
+
+  test("a moon reorg repair keeps a cancelled demolition cancelled (#112)", () => {
+    const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const moonDemolitionCancelledTopic = keccak256(toHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xrobotics", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(2n) });
+    // Already past readyAt: a resurrected queue would be projected as a finished downgrade.
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 1_000n, 400n, 120n, 200n) });
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [moonDemolitionCancelledTopic, topic(7n), topic(1n)], data: abiWords(1n, 400n, 120n, 200n) });
+    const later = { blockNumber: "0x8b", transactionHash: "0xother", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(2n)], data: abiWords(1n) };
+    indexer.applyLog(later);
+
+    indexer.applyLog({ ...later, removed: true });
+
+    const moon = indexer.moonState(player, planet.planetId);
+    expect(moon.queue?.active ?? false).toBe(false);
+    expect(moon.buildings.find((building) => building.id === 1)?.level).toBe(2);
+  });
+
   test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
     // PlanetSettled carries the authoritative post-mutation balance. A raid/spend emits a DECREASING
     // PlanetSettled; the read model must keep that lower balance. But logs do not always arrive in block

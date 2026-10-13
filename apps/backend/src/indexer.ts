@@ -7383,6 +7383,9 @@ export class SettlementIndexer {
     if (isIndexedQueueCompletedLog(log)) {
       return decodeIndexedQueueCompletedLog(log).queueKind.startsWith("moon-");
     }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      return decodeBuildingDemolitionCancelledLog(log).queueKind === "moon-building";
+    }
     return false;
   }
 
@@ -7413,6 +7416,10 @@ export class SettlementIndexer {
     if (isIndexedQueueCompletedLog(log)) {
       const event = decodeIndexedQueueCompletedLog(log);
       return event.queueKind.startsWith("moon-") && event.planetId ? [event.planetId] : [];
+    }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      const event = decodeBuildingDemolitionCancelledLog(log);
+      return event.queueKind === "moon-building" ? [event.planetId] : [];
     }
     return [];
   }
@@ -7477,6 +7484,8 @@ export class SettlementIndexer {
         this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
       }
     }
     this.touch();
@@ -8400,6 +8409,9 @@ export class SettlementIndexer {
 
   private replayEventDerivedQueueStateFromEventLogs(canonicalState?: CanonicalReconciliationState): void {
     const activeEventQueues = new Set<string>();
+    // Latest started demolition per building queue, kept even when the start is skipped below, so its
+    // completion lowers the level exactly instead of going through the monotonic upgrade write.
+    const demolitionTargets = new Map<string, number>();
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
@@ -8409,6 +8421,11 @@ export class SettlementIndexer {
     for (const log of sortedEventRows(rows)) {
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
+        if (event.action === "demolish" && event.targetLevel !== undefined) {
+          demolitionTargets.set(queueKey(event), event.targetLevel);
+        } else {
+          demolitionTargets.delete(queueKey(event));
+        }
         if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
           activeEventQueues.delete(queueKey(event));
           continue;
@@ -8424,14 +8441,17 @@ export class SettlementIndexer {
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
         const key = queueKey(event);
+        const demolition = event.level !== undefined && demolitionTargets.get(key) === event.level;
+        demolitionTargets.delete(key);
         if (activeEventQueues.has(key)) {
           this.applyQueueCompletedEvent(event);
           activeEventQueues.delete(key);
         } else {
-          this.applyQueueCompletionEffects(event);
+          this.applyQueueCompletionEffects(event, demolition);
         }
       } else if (isBuildingDemolitionCancelledLog(log)) {
         const event = decodeBuildingDemolitionCancelledLog(log);
+        demolitionTargets.delete(queueKey(event));
         if (activeEventQueues.delete(queueKey(event))) this.applyBuildingDemolitionCancelledEvent(event);
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));

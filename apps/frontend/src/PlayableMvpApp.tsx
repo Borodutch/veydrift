@@ -3220,7 +3220,7 @@ export function PlayableMvpApp({
   const moonError = moonSnapshot?.error;
 
   const defenseQuery = backendData && account && activePlanetId ? backendData.queries.defenses(account, activePlanetId) : undefined;
-  const { snapshot: defenseSnapshot, isInitialLoading: defenseLoading } = useBackendDataQuery<ChainDefenseState>(defenseQuery, page === "defenses" || page === "shipyard" || shouldRefreshMissionActionStateForPage(page) || composingMission);
+  const { snapshot: defenseSnapshot, isInitialLoading: defenseLoading } = useBackendDataQuery<ChainDefenseState>(defenseQuery, page === "defenses" || page === "shipyard" || page === "infrastructure" || shouldRefreshMissionActionStateForPage(page) || composingMission);
   const defenseState = defenseSnapshot?.data ? { ...defenseSnapshot.data, resources: infrastructureChainState?.resources ?? null, resourcesAsOfNow: currentResources(infrastructureChainState) ?? null } : null;
 
   const defenseError = defenseSnapshot?.error;
