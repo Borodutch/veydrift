@@ -560,6 +560,8 @@ abstract contract VeydriftGameStorage is Initializable {
     error PlanetTemperatureMigrationCompleted();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error BuildingNotDemolishable(Building building);
+    error BuildingInUse(Building building);
     error InvalidMissileTarget(Defense defense);
     error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
@@ -615,6 +617,26 @@ abstract contract VeydriftGameStorage is Initializable {
         uint128 deuterium
     );
     event BuildingCompleted(uint256 indexed planetId, Building indexed building, uint16 level);
+    /// @notice A one-level demolition occupying the planet's building slot. It shares
+    ///         `buildingConstructions` with upgrades (`targetLevel` = current level - 1) and
+    ///         completes through the same `BuildingCompleted` event.
+    event BuildingDemolitionStarted(
+        uint256 indexed planetId,
+        Building indexed building,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event BuildingDemolitionCancelled(
+        uint256 indexed planetId,
+        Building indexed building,
+        uint16 targetLevel,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
     event DefenseQueued(
         uint256 indexed planetId,
         Defense indexed defense,

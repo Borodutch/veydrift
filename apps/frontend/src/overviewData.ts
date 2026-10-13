@@ -15,6 +15,7 @@ import {
   type Resources,
 } from "./playableMvp";
 import type { Coordinates } from "./types";
+import { demolitionQueueLabel } from "./buildingDetails";
 
 const integerFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -256,7 +257,9 @@ export function buildingQueuePreview(queue: QueueStateResponse | null | undefine
   if (building) {
     return {
       asset: building.asset,
-      label: buildingQueueLabel(building.label, queue?.targetLevel),
+      label: queue?.action === "demolish"
+        ? demolitionQueueLabel(building.label, queue.targetLevel)
+        : buildingQueueLabel(building.label, queue?.targetLevel),
     };
   }
 

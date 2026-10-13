@@ -5139,7 +5139,7 @@ function accruedResourcesWithBuildingQueue(
 
     buildings = buildings.map((building) => (
       building.id === queue.itemId && typeof queue.targetLevel === "number"
-        ? { ...building, level: Math.max(building.level, queue.targetLevel) }
+        ? { ...building, level: queue.action === "demolish" ? queue.targetLevel : Math.max(building.level, queue.targetLevel) }
         : building
     ));
   }

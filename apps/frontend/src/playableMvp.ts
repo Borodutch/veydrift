@@ -145,6 +145,8 @@ export type MainQueueItem =
       readyAt: number;
       startedAt: number;
       targetLevel: number;
+      /** The building is coming down to `targetLevel` (one below its current level). */
+      demolish?: boolean | undefined;
     }
   | {
       kind: "ship";

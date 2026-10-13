@@ -195,6 +195,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToFirstPlanetSettlementModule();
     }
 
+    function startBuildingDemolition(uint256, Building) external {
+        _delegateToColonizationModule();
+    }
+
+    function cancelBuildingDemolition(uint256) external {
+        _delegateToColonizationModule();
+    }
+
     /// @notice Back-compat wrapper (VEY-KANEO-468): building upgrades auto-settle inside
     ///         `_settleResources` like every other completion, so this no longer gates on the
     ///         construction being ready — it simply runs the lazy reconcile, which completes the

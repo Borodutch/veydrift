@@ -112,7 +112,7 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
     expect(shouldRefreshShipyardStateForPage("mission-control")).toBe(false);
     expect(shouldRefreshShipyardStateForPage("research")).toBe(false);
     expect(source).toContain('shipyardQuery, shouldRefreshShipyardStateForPage(page) || page === "defenses" || composingMission');
-    expect(source).toContain('defenseQuery, page === "defenses" || page === "shipyard" || shouldRefreshMissionActionStateForPage(page) || composingMission');
+    expect(source).toContain('defenseQuery, page === "defenses" || page === "shipyard" || page === "infrastructure" || shouldRefreshMissionActionStateForPage(page) || composingMission');
   });
 
 

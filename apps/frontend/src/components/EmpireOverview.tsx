@@ -6,6 +6,7 @@ import { currentResources } from "../currentResources";
 import { planetFromSettlementPlanet } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { moonBuildingAsset, moonImageForType } from "../gameAssets";
+import { demolitionQueueLabel } from "../buildingDetails";
 import { buildingQueuePreview } from "../overviewData";
 import { buildingCatalog, buildingContractIds, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { useBackendDataQuery } from "../useBackendDataQuery";
@@ -96,7 +97,10 @@ export function queueLine(
   if (kind === "building") {
     const moonBuilding = moonBuildings?.find((building) => building.id === queue.itemId);
     if (moonBuilding) {
-      return { kind, label: `${moonBuilding.label} ${queue.targetLevel ?? ""}`.trim(), asset: moonBuildingAsset(moonBuilding.key), ...timing };
+      const label = queue.action === "demolish"
+        ? demolitionQueueLabel(moonBuilding.label, queue.targetLevel)
+        : `${moonBuilding.label} ${queue.targetLevel ?? ""}`.trim();
+      return { kind, label, asset: moonBuildingAsset(moonBuilding.key), ...timing };
     }
     const preview = buildingQueuePreview(queue);
     const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);

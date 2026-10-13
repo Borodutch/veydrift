@@ -206,7 +206,8 @@ function resourceChangeForLog(log: RpcLog): ChainResourceChange | undefined {
 // Unknown/global events deliberately retain the broad invalidation fallback.
 const PLANET_SCOPED_EVENTS = new Set([
   "PlanetSettled", "MoonResourcesChanged", "MoonResourcesSettled",
-  "BuildingStarted", "BuildingCompleted", "DefenseQueued", "DefenseCompleted",
+  "BuildingStarted", "BuildingCompleted", "BuildingDemolitionStarted", "BuildingDemolitionCancelled",
+  "MoonBuildingDemolitionStarted", "MoonBuildingDemolitionCancelled", "DefenseQueued", "DefenseCompleted",
   "ShipQueued", "ShipCompleted", "ShipQueueTimingSet", "PlanetShipCountChanged",
   "PlanetDefenseCountChanged", "MoonShipCountChanged", "MoonBuildingStarted",
   "MoonBuildingCompleted", "MoonDefenseQueued", "MoonDefenseCompleted", "MoonShipQueued", "MoonShipCompleted", "PlanetTemperatureChanged"

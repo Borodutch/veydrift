@@ -382,16 +382,30 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         private
     {
         if (planetState.buildingQueue.active) {
-            buildingConstructions[planetId] = planetState.buildingQueue;
-            emit BuildingStarted(
-                planetId,
-                planetState.buildingQueue.building,
-                planetState.buildingQueue.targetLevel,
-                planetState.buildingQueue.readyAt,
-                planetState.buildingQueue.cost.metal,
-                planetState.buildingQueue.cost.crystal,
-                planetState.buildingQueue.cost.deuterium
-            );
+            BuildingConstruction memory queue = planetState.buildingQueue;
+            buildingConstructions[planetId] = queue;
+            // A target below the imported level is an in-flight demolition.
+            if (queue.targetLevel < _buildingLevels[planetId][queue.building]) {
+                emit BuildingDemolitionStarted(
+                    planetId,
+                    queue.building,
+                    queue.targetLevel,
+                    queue.readyAt,
+                    queue.cost.metal,
+                    queue.cost.crystal,
+                    queue.cost.deuterium
+                );
+            } else {
+                emit BuildingStarted(
+                    planetId,
+                    queue.building,
+                    queue.targetLevel,
+                    queue.readyAt,
+                    queue.cost.metal,
+                    queue.cost.crystal,
+                    queue.cost.deuterium
+                );
+            }
         }
 
         if (planetState.defenseQueue.active) {

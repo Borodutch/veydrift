@@ -95,9 +95,9 @@ export function InspectCatalogTile({
   label: string;
   onClick: () => void;
   statusText?: string | undefined;
-  statusTone?: "accent" | "warning" | undefined;
+  statusTone?: "accent" | "warning" | "danger" | undefined;
 }) {
-  const accentClass = statusTone === "warning" ? "text-amber-300" : "text-signal";
+  const accentClass = statusTone === "warning" ? "text-amber-300" : statusTone === "danger" ? "text-rose-300" : "text-signal";
   const labelClass = labelTone === "muted" ? "text-slate-500" : "text-white";
 
   return (

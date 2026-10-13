@@ -1,4 +1,5 @@
 import { isActionBusy } from "../actionNoticeAutoDismiss";
+import { demolitionQueueLabel } from "../buildingDetails";
 import { formatIntegerAmount as resourceValue } from "../numberFormat";
 import {
   Building2,
@@ -440,7 +441,9 @@ function moonQueueRow(
     ? queue.targetLevel === undefined ? "" : ` Level ${queue.targetLevel}`
     : queue.quantity === undefined ? "" : ` x${queue.quantity.toLocaleString("en-US")}`;
   const readyAt = queue.readyAt ? ` ready ${formatUserTimestamp(timestampToMs(queue.readyAt))}` : "";
-  return { label, value: `${item?.label ?? queue.kind ?? "Queue item"}${quantity}${readyAt}` };
+  const itemLabel = item?.label ?? queue.kind ?? "Queue item";
+  if (queue.action === "demolish") return { label, value: `${demolitionQueueLabel(itemLabel, queue.targetLevel)}${readyAt}` };
+  return { label, value: `${itemLabel}${quantity}${readyAt}` };
 }
 
 export function publicMoonActions({

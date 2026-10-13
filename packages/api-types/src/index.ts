@@ -33,6 +33,8 @@ export type QueueState = {
   planetId?: string;
   itemId?: number;
   targetLevel?: number;
+  /** Building-slot work only: a demolition takes the building down to `targetLevel` (current - 1). */
+  action?: "upgrade" | "demolish";
   quantity?: number;
   readyAt: string | null;
   startedAt?: string | null;

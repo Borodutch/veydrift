@@ -110,6 +110,8 @@ export interface PublicQueueState {
   kind: string | null;
   itemId?: number;
   targetLevel?: number;
+  /** Building-slot work only: a demolition takes the building down to `targetLevel`. */
+  action?: "upgrade" | "demolish";
   quantity?: number;
   readyAt: string | null;
   startedAt?: string | null;

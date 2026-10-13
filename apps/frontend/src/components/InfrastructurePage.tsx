@@ -16,6 +16,7 @@ import {
   buildingLevelInfoRows,
   type BuildingUpgradeStatus,
   buildingUpgradeStatus,
+  demolitionQueueLabel,
   formatCost,
   formatDuration,
   formatFrontendOnlyBuildingRequirement,
@@ -26,13 +27,21 @@ import {
   missingFrontendOnlyBuildingRequirementFor,
 } from "../buildingDetails";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
+import {
+  buildingDemolitionConsequences,
+  buildingDemolitionDurationSeconds,
+  buildingDemolitionPrice,
+  planetDemolitionUnavailableReason,
+} from "../demolition";
+import { formatDurationUntil } from "../durationFormat";
+import { DemolitionDialog } from "./DemolitionDialog";
 import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
-import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
+import { StructureCatalog, StructureDetail, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -48,6 +57,15 @@ const fullResourceLabels: Record<keyof Resources, string> = {
 };
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
+
+/** Planet activity that blocks demolishing the buildings it runs on. */
+export type PlanetDemolitionActivity = {
+  /** Stored plus queued missile slots. */
+  missileSlotsUsed: number;
+  /** Ship or defense production is running on this planet. */
+  productionActive: boolean;
+  researchActive: boolean;
+};
 
 const buildingDescriptions: Record<BuildingKey, string> = {
   metalMine: "Extracts metal from the planet crust. Metal is the core material for construction and early ship production.",
@@ -75,9 +93,12 @@ interface InfrastructurePageProps {
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   chainDurations?: Partial<Record<BuildingKey, number>> | undefined;
   constructionProgress?: ConstructionProgress | undefined;
+  demolitionActivity?: PlanetDemolitionActivity | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
   loading?: boolean | undefined;
   loadError?: string | undefined;
+  onCancelDemolition?: (() => void) | undefined;
+  onDemolish?: ((key: BuildingKey) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
@@ -102,9 +123,12 @@ export function InfrastructurePage({
   chainCosts,
   chainDurations,
   constructionProgress,
+  demolitionActivity,
   hasLoadedInfrastructureState = false,
   loadError,
   now = Date.now(),
+  onCancelDemolition,
+  onDemolish,
   onOpenRequirement,
   onSelectBuilding,
   onSupply,
@@ -133,6 +157,11 @@ export function InfrastructurePage({
     loadError,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
+  const transactionBlockedReason = transactionUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel;
+  const demolitionCancel = activeBuildingQueue?.demolish && onCancelDemolition ? {
+    disabled: Boolean(transactionBlockedReason) || activeBuildingQueue.readyAt <= now,
+    onClick: onCancelDemolition,
+  } : undefined;
   const handleSelectBuilding = (key: BuildingKey) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
@@ -153,7 +182,7 @@ export function InfrastructurePage({
   return (
     <div className="grid gap-4">
       {activeBuildingQueue ? (
-        <ActiveBuildingQueuePanel now={now} progressState={constructionProgress} queue={activeBuildingQueue} />
+        <ActiveBuildingQueuePanel cancel={demolitionCancel} now={now} progressState={constructionProgress} queue={activeBuildingQueue} />
       ) : null}
 
       {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
@@ -172,6 +201,18 @@ export function InfrastructurePage({
             spendableResources,
             starterPlanet,
           });
+
+          if (activeBuildingQueue?.demolish && activeBuildingQueue.key === building.key) {
+            return {
+              asset: building.asset,
+              currentText: `Level ${currentLevel} → ${activeBuildingQueue.targetLevel}`,
+              isDimmed: false,
+              key: building.key,
+              label: building.label,
+              statusText: `↓ ${constructionProgress?.remaining ?? formatDurationUntil(activeBuildingQueue.readyAt, now)}`,
+              statusTone: "danger" as const,
+            };
+          }
 
           return {
             asset: building.asset,
@@ -194,6 +235,14 @@ export function InfrastructurePage({
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
             chainDuration={chainDurations?.[selectedBuilding.key]}
+            demolition={activeBuildingQueue?.demolish && activeBuildingQueue.key === selectedBuilding.key ? {
+              cancelDisabled: demolitionCancel?.disabled,
+              label: demolitionQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel),
+              onCancel: demolitionCancel?.onClick,
+              remaining: constructionProgress?.remaining ?? formatDurationUntil(activeBuildingQueue.readyAt, now),
+            } : undefined}
+            demolitionActivity={demolitionActivity}
+            onDemolish={onDemolish ? () => onDemolish(selectedBuilding.key) : undefined}
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
             onSupplyLevel={onSupplyLevel}
@@ -283,6 +332,9 @@ function BuildingDetailPanel({
   building,
   chainCost,
   chainDuration,
+  demolition,
+  demolitionActivity,
+  onDemolish,
   onOpenRequirement,
   onSupply,
   onSupplyLevel,
@@ -300,7 +352,10 @@ function BuildingDetailPanel({
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
   chainDuration?: number | undefined;
+  demolition?: StructureDemolition | undefined;
+  demolitionActivity?: PlanetDemolitionActivity | undefined;
   now: number;
+  onDemolish?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
@@ -376,8 +431,25 @@ function BuildingDetailPanel({
   // local playable fallback is useful for disconnected previews, but must never
   // fabricate a transport request before indexed state is known.
   const supplyShortfall = supplyResourceShortfall(spendableResources, chainCost);
+  const [isDemolitionOpen, setIsDemolitionOpen] = useState(false);
+  const demolitionPrice = built ? buildingDemolitionPrice(building.key, currentLevel, state.research.ion) : undefined;
+  const demolitionReason = demolitionPrice
+    ? planetDemolitionUnavailableReason(building.key, currentLevel, demolitionPrice.cost, {
+      actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+      buildingQueueBusy: state.queue?.kind === "building",
+      missileSlotsUsed: demolitionActivity?.missileSlotsUsed ?? 0,
+      productionActive: demolitionActivity?.productionActive ?? false,
+      researchActive: demolitionActivity?.researchActive ?? false,
+      resources: displayedResources,
+    })
+    : undefined;
+
+  useEffect(() => {
+    setIsDemolitionOpen(false);
+  }, [building.key]);
 
   return (
+    <>
     <StructureDetail
       action={!isSelectedBuildingQueued && !(binary && built) ? {
         ariaLabel: binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`,
@@ -388,6 +460,12 @@ function BuildingDetailPanel({
       active={built}
       asset={building.asset}
       cacheKey={`building:${building.key}`}
+      demolishAction={demolitionPrice && onDemolish ? {
+        disabled: Boolean(demolitionReason),
+        onClick: () => setIsDemolitionOpen(true),
+        reason: demolitionReason,
+      } : undefined}
+      demolition={demolition}
       description={buildingDescriptions[building.key]}
       effectContent={<dl className="mt-4 grid gap-2">
         {effectRows.map((row) => (
@@ -431,6 +509,22 @@ function BuildingDetailPanel({
       } : undefined}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
+    {isDemolitionOpen && demolitionPrice && onDemolish ? (
+      <DemolitionDialog
+        buildingLabel={building.label}
+        consequences={buildingDemolitionConsequences(state.buildings, building.key, planetProductionProfile, energyTechnologyLevel)}
+        cost={demolitionPrice.cost}
+        currentLevel={currentLevel}
+        discountPercent={demolitionPrice.discountPercent}
+        durationSeconds={buildingDemolitionDurationSeconds(state.buildings, demolitionPrice.fullCost)}
+        onCancel={() => setIsDemolitionOpen(false)}
+        onConfirm={() => {
+          setIsDemolitionOpen(false);
+          onDemolish();
+        }}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -502,19 +596,23 @@ function normalizeInfrastructureNotice(label: string | undefined): string | unde
 }
 
 export function ActiveBuildingQueuePanel({
+  cancel,
   now,
   progressState,
   queue,
 }: {
+  /** Cancel control for a queued demolition. */
+  cancel?: { disabled: boolean; onClick: () => void } | undefined;
   now: number;
   progressState?: ConstructionProgress | undefined;
   queue: BuildingQueueItem;
 }) {
-  const queueLabel = `${queue.label} ${queue.targetLevel}`;
+  const queueLabel = queue.demolish ? demolitionQueueLabel(queue.label, queue.targetLevel) : `${queue.label} ${queue.targetLevel}`;
   const asset = buildingCatalog.find((building) => building.key === queue.key)?.asset;
 
   return (
     <QueueProgressPanel
+      action={queue.demolish && cancel ? { disabled: cancel.disabled, label: "Cancel", onClick: cancel.onClick } : undefined}
       asset={asset}
       itemText={queueLabel}
       label={queueLabel}
@@ -522,8 +620,8 @@ export function ActiveBuildingQueuePanel({
       progressState={progressState}
       readyAt={queue.readyAt}
       startedAt={queue.startedAt}
-      title="Construction"
-      tone="amber"
+      title={queue.demolish ? "Demolition" : "Construction"}
+      tone={queue.demolish ? "rose" : "amber"}
     />
   );
 }

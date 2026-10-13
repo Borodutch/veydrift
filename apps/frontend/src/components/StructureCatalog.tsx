@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { PackagePlus } from "lucide-preact";
+import { ArrowDown, PackagePlus, Trash2 } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { QueueTimeline } from "../playableMvp";
 import {
@@ -21,7 +21,15 @@ export type StructureCatalogItem<Key extends string> = {
   label: string;
   labelTone?: "normal" | "muted" | undefined;
   statusText?: string | undefined;
-  statusTone?: "accent" | "warning" | undefined;
+  statusTone?: "accent" | "warning" | "danger" | undefined;
+};
+
+/** A demolition running on the selected structure. */
+export type StructureDemolition = {
+  cancelDisabled?: boolean | undefined;
+  label: string;
+  onCancel?: (() => void) | undefined;
+  remaining: string;
 };
 
 export function StructureCatalog<Key extends string>({
@@ -85,6 +93,8 @@ export function StructureDetail({
   activeLabel = "Active",
   asset,
   cacheKey,
+  demolishAction,
+  demolition,
   description,
   effectContent,
   inactiveLabel = "Not built",
@@ -103,6 +113,10 @@ export function StructureDetail({
   activeLabel?: string | undefined;
   asset: string;
   cacheKey: string;
+  /** Secondary destructive action; `reason` explains why it is unavailable. */
+  demolishAction?: { disabled: boolean; onClick: () => void; reason?: string | undefined } | undefined;
+  /** Shown instead of the Demolish action while this structure is coming down. */
+  demolition?: StructureDemolition | undefined;
   description: string;
   effectContent?: ComponentChildren | undefined;
   inactiveLabel?: string | undefined;
@@ -186,6 +200,43 @@ export function StructureDetail({
               <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {demolition ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-rose-300/25 bg-rose-300/[0.06] px-3 py-2">
+          <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-rose-100">
+            <ArrowDown aria-hidden="true" className="shrink-0 text-rose-300" size={15} strokeWidth={2.2} />
+            <span className="min-w-0 break-words">{demolition.label}</span>
+            <span className="shrink-0 tabular-nums text-xs font-medium text-rose-200/80">{demolition.remaining}</span>
+          </span>
+          {demolition.onCancel ? (
+            <button
+              className="h-8 rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={demolition.cancelDisabled}
+              onClick={demolition.onCancel}
+              type="button"
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      ) : demolishAction ? (
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+          {demolishAction.disabled && demolishAction.reason ? (
+            <span className="min-w-0 text-xs text-slate-500">{demolishAction.reason}</span>
+          ) : null}
+          <button
+            aria-label={`Demolish ${label}`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-300/25 px-2.5 text-xs font-semibold text-rose-200/90 transition hover:border-rose-300/40 hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500 disabled:hover:bg-transparent"
+            disabled={demolishAction.disabled}
+            onClick={demolishAction.onClick}
+            title={demolishAction.disabled ? demolishAction.reason : undefined}
+            type="button"
+          >
+            <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
+            Demolish
+          </button>
         </div>
       ) : null}
 

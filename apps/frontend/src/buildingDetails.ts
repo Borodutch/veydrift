@@ -139,8 +139,18 @@ export function buildingUpgradeStatus(
   }
 
   if (state.queue?.kind === "building" && !options.ignoreActiveQueue) {
-    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
     const queueReady = state.queue.readyAt <= (options.now ?? Date.now());
+    if (state.queue.demolish) {
+      const demolitionLabel = demolitionQueueLabel(state.queue.label, state.queue.targetLevel);
+      return {
+        cost,
+        disabled: true,
+        reason: queueReady ? `${demolitionLabel} is ready to finish` : `Building queue busy: ${demolitionLabel}`,
+        targetLevel,
+        durationSeconds,
+      };
+    }
+    const queuedBuildingLabel = formatBuildingQueueLabel(state.queue.key, state.queue.label, state.queue.targetLevel);
 
     return {
       cost,
@@ -439,6 +449,12 @@ function formatTimeToAfford(
   );
 
   return ` (affordable in ${formatDuration(seconds)})`;
+}
+
+/** "Demolishing Metal Mine 16 → 15" for a queued demolition down to `targetLevel`. */
+export function demolitionQueueLabel(label: string, targetLevel: number | undefined): string {
+  const target = targetLevel ?? 0;
+  return `Demolishing ${label} ${target + 1} → ${target}`;
 }
 
 function formatBuildingQueueLabel(key: BuildingKey, label: string, targetLevel: number | undefined): string {
