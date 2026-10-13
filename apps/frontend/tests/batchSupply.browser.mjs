@@ -14,11 +14,11 @@ test("Supply ship eligibility persists through mounted draft interactions at des
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
   const server = await createServer({
-    // This fixture renders cargo controls, not planet animations. Avoid a full cold
-    // animation encode before Chrome starts (production builds still verify it).
+    // This fixture renders cargo controls, not planet animations. Skip the pinned
+    // media sync before Chrome starts (the media tests and server startup verify it).
     plugins: [{ name: "supply-fixture-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");
-      if (animations) { animations.buildStart = undefined; animations.configureServer = undefined; }
+      if (animations) animations.configureServer = undefined;
     } }],
     logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;

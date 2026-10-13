@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { mediaFileForPathname } from "../scripts/media.mjs";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -1538,7 +1539,7 @@ describe("tester universe display data", () => {
       const image = planetImageForType(type);
 
       expect(image).toBe(`/assets/game/planet-animations/${type}.webp`);
-      expect(existsSync(join(PUBLIC_DIR, image.replace("/assets/", "assets/")))).toBe(true);
+      expect(mediaFileForPathname(image)).not.toBeNull();
 
       for (const width of VARIANT_WIDTHS) {
         const variant = getSizedImageSrc(image, width);

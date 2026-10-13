@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { build, createServer, preview } from "vite";
-import { prepareAnimationVariants } from "../scripts/animation-variants.mjs";
+import { syncMedia } from "../scripts/media.mjs";
 import { freePort } from "./freePort.mjs";
 import { frontendResponse } from "../scripts/serve.mjs";
 import { SiteHeader } from "../src/components/SiteHeader";
@@ -43,9 +43,9 @@ const normalFiles = new Map<URL, Buffer | undefined>();
 let normalAsset = "";
 
 beforeAll(async () => {
-  // Cold CI must finish the same animation preparation as dev/preview startup
-  // before the 20-second request tests; otherwise timed-out servers outlive cleanup.
-  await prepareAnimationVariants();
+  // Cold CI must finish the same media sync as dev/preview startup before the
+  // 20-second request tests; otherwise timed-out servers outlive cleanup.
+  await syncMedia();
   // Emit a real frontend module without requiring a full app build before tests.
   const output = await build({
     root, configFile: false, publicDir: false, logLevel: "silent",

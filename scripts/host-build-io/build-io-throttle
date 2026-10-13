@@ -1,0 +1,174 @@
+#!/bin/bash
+# Caps the root-disk write bandwidth of on-host EasyPanel image builds so a
+# deploy cannot saturate the disk the backend's SQLite databases live on.
+# See docs/deployment.md, "Build disk-write limits on the shared host".
+#
+# All build writers share one budget, so parallel builds (backend and frontend
+# deploy together) cannot add their caps up:
+#  - BuildKit RUN steps, in runc-created cgroups <slice>/system.slice:docker:<id>
+#    (not systemd units, so IOWriteBandwidthMax cannot reach them),
+#  - dockerd (COPY, BuildKit file ops) and containerd (content store, export,
+#    unpack),
+#  - the EasyPanel container (source checkout and extract).
+# Every WINDOW ticks the budget is re-split. A writer is active if it wrote at
+# the rate of ACTIVE_BYTES per window within the last HOLD windows, or was
+# first seen within them.
+#  - RUN steps and EasyPanel split what the daemons and gone cgroups wrote in
+#    the last window leaves of BUDGET, at least FLOOR each. Gone cgroups: a
+#    finished RUN step's dirty pages keep draining at its last cap after runc
+#    removed its cgroup, measured as the slice's writes minus its live children's.
+#    FLOOR therefore bounds how long that drain lasts (300 MB at 4 MiB/s: 75 s).
+#  - dockerd and containerd split what is left of BUDGET after FLOOR for each
+#    active other writer and after the gone cgroups' drain, at least FLOOR
+#    each. Their container create/start writes (fsync) queue behind their build
+#    writes, so a busy daemon alone gets the full budget.
+# A new writer triggers a re-split at once. Every writer, idle or not, is
+# capped at its share. A share moves at once by more than BAND; a smaller
+# change only once it has been wanted for SETTLE splits in a row, so noise does
+# not rewrite io.max.
+#
+# "build-io-throttle release" (ExecStopPost) puts dockerd, containerd and the
+# EasyPanel container back to BUDGET, the systemd fallback.
+set -u
+SLICE=${CGROUP_SLICE:-/sys/fs/cgroup/system.slice}
+DEV=${DEV:-$(findmnt -no MAJ:MIN /)}     # root filesystem device (md2)
+DEV=${DEV//[[:space:]]/}                 # findmnt pads it (" 9:2"); io.max lists "9:2"
+BUDGET=${BUDGET:-16777216}               # bytes/s for all build writers together
+FLOOR=${FLOOR:-$((BUDGET / 4))}          # bytes/s, lowest share of any active writer
+BAND=${BAND:-1048576}                    # bytes/s, share changes above it apply at once
+SETTLE=${SETTLE:-5}                      # splits a smaller share change must be wanted
+ACTIVE_BYTES=${ACTIVE_BYTES:-262144}     # written in one window to count as active
+INTERVAL=${INTERVAL:-0.5}                # seconds per tick
+WINDOW=${WINDOW:-4}                      # ticks per re-split
+HOLD=${HOLD:-5}                          # windows a writer stays active after writing
+TICKS=${TICKS:-0}                        # exit after this many ticks (tests); 0 = run forever
+ep_scope=""; ep_checked=-60; failed=" "; tick=0; split_tick=0
+share=$BUDGET; dshare=$BUDGET; summary=""; logged=""
+state=""                                 # previous counters, see split_budget
+daemons=" $SLICE/docker.service $SLICE/containerd.service "
+
+set_cap() { # <cgroup dir> <bytes/s>; logs only the first cap of a cgroup
+  local cur name=${1#"$SLICE"/}
+  [ -e "$1/io.max" ] || return 0
+  cur=$(awk -v d="$DEV" '$1==d{for(i=2;i<=NF;i++) if($i ~ /^wbps=/) print $i}' "$1/io.max" 2>/dev/null)
+  [ "$cur" = "wbps=$2" ] && return 0
+  if (echo "$DEV wbps=$2" > "$1/io.max") 2>/dev/null; then
+    [ -z "$cur" ] && echo "capped $name wbps=$2"
+    failed=${failed/ $name / }
+  elif [ -d "$1" ] && [[ $failed != *" $name "* ]]; then
+    failed+="$name "
+    echo "failed to cap $name ($DEV wbps=$2)" >&2
+  fi
+}
+
+find_easypanel() {
+  local id
+  id=$(timeout 5 docker ps -q --no-trunc -f label=com.docker.swarm.service.name=easypanel 2>/dev/null | head -1)
+  [ -n "$id" ] && [ -d "$SLICE/docker-$id.scope" ] && ep_scope="$SLICE/docker-$id.scope"
+}
+
+split_budget() { # <writer dir>...: sets share, dshare, summary and state
+  local c out
+  # State: "P <writer> <wbytes> <window last active>", "C <child> <wbytes>", "T <slice wbytes>",
+  # "H <share> <daemon share> <splits share pending> <splits daemon share pending>".
+  out=$({ printf '%s\n' "$state"
+          for c; do echo "W $c $([[ $daemons == *" $c "* ]] && echo 1 || echo 0)"; done
+          grep -H "^$DEV " "$SLICE/io.stat" "$SLICE"/*/io.stat 2>/dev/null | sed 's/^/S /'; } |
+    awk -v slice="$SLICE" -v tick="$tick" -v ticks="$((tick - split_tick))" -v interval="$INTERVAL" \
+        -v window="$WINDOW" -v hold="$HOLD" -v ab="$ACTIVE_BYTES" -v budget="$BUDGET" -v floor="$FLOOR" \
+        -v band="$BAND" -v settlen="$SETTLE" '
+      # Sets set and pend: a change of more than band applies at once, a smaller
+      # one once it has been wanted for settlen splits in a row.
+      function settle(cur, want, n) {
+        if (!haveh || want < cur - band || want > cur + band || (want != cur && n + 1 >= settlen)) { set = want; pend = 0 }
+        else { set = cur; pend = (want != cur) ? n + 1 : 0 }
+      }
+      function quantize(v) { v = int(v / 524288) * 524288; return v < floor ? floor : v }
+      $1 == "P" { last[$2] = $3; seen[$2] = $4 }
+      $1 == "C" { prev[$2] = $3 }
+      $1 == "T" { prevt = $2; havet = 1 }
+      $1 == "H" { curs = $2; curds = $3; pends = $4; pendds = $5; haveh = 1 }
+      $1 == "W" { w[++n] = $2; daemon[$2] = $3 }
+      $1 == "S" {
+        split($2, p, "/io.stat:")
+        for (i = 3; i <= NF; i++) if ($i ~ /^wbytes=/) now[p[1]] = substr($i, 8)
+        if (p[1] != slice) kid[p[1]] = 1
+      }
+      END {
+        # Rates are over the time since the last split, which is shorter than a
+        # window when a new writer forced one. Counters are compared as numbers
+        # (+ 0): they are kept as strings so that large values print exactly.
+        if (ticks < 1) ticks = 1
+        secs = ticks * interval; if (secs <= 0) secs = ticks
+        abr = ab * ticks / window
+        # Writes of the slice not made by a live child: cgroups removed meanwhile.
+        gone = 0
+        if (havet && (slice in now)) {
+          d = now[slice] - prevt
+          for (k in kid) d -= (k in prev && now[k] + 0 >= prev[k] + 0) ? now[k] - prev[k] : now[k]
+          if (d > 0) gone = d / secs
+        }
+        for (k in kid) print "C", k, now[k]
+        if (slice in now) print "T", now[slice]
+        dact = oact = drate = 0
+        for (i = 1; i <= n; i++) {
+          c = w[i]; b = (c in now) ? now[c] : 0
+          if (daemon[c] && (c in last) && b + 0 > last[c] + 0) drate += (b - last[c]) / secs
+          # A writer seen for the first time counts as active: it may be a new build step.
+          if (!(c in last) || b - last[c] >= abr) seen[c] = tick
+          if (tick - seen[c] < hold * window) { if (daemon[c]) dact++; else oact++ }
+          print "P", c, b, seen[c]
+        }
+        # Ignore idle noise (container logs, metadata) and round down to 512 KiB.
+        g = gone * secs >= abr ? gone : 0
+        # The daemons leave FLOOR to every active other writer, so a RUN step is
+        # never squeezed to a cap at which its data would drain for minutes, and
+        # leave room for that drain once runc has removed the step.
+        settle(curds, quantize((budget - oact * floor - g) / (dact ? dact : 1)), pendds); ds = set; pendds = pend
+        avail = budget - ((drate + gone) * secs >= abr ? drate + gone : 0)
+        settle(curs, quantize(avail / (oact ? oact : 1)), pends); s = set; pends = pend
+        print "H", s, ds, pends, pendds
+        printf "SHARE %d %d active=%d+%d daemons=%d gone=%d\n", s, ds, dact, oact, drate, gone
+      }')
+  summary=${out##*SHARE }
+  state=${out%SHARE*}
+  share=${summary%% *}; summary=${summary#* }
+  dshare=${summary%% *}; summary=${summary#* }
+  split_tick=$tick
+}
+
+[ -n "$DEV" ] || { echo "cannot resolve the root filesystem device" >&2; exit 1; }
+if [ "${1:-}" = release ]; then
+  find_easypanel
+  for c in "$SLICE/docker.service" "$SLICE/containerd.service" $ep_scope; do set_cap "$c" "$BUDGET"; done
+  exit 0
+fi
+while :; do
+  if [ -n "$ep_scope" ] && [ ! -d "$ep_scope" ]; then ep_scope=""; ep_checked=-60; fi
+  if [ -z "$ep_scope" ] && [ $((SECONDS - ep_checked)) -ge 60 ]; then
+    ep_checked=$SECONDS
+    find_easypanel
+  fi
+  writers=()
+  for c in "$SLICE/docker.service" "$SLICE/containerd.service" $ep_scope "$SLICE"/system.slice:docker:*; do
+    [ -e "$c/io.max" ] && writers+=("$c")
+  done
+  if [ ${#writers[@]} -gt 0 ]; then
+    # Re-split every WINDOW ticks, and at once when a new writer (build step) appears.
+    resplit=$((tick % WINDOW == 0))
+    for c in "${writers[@]}"; do [[ $state == *"P $c "* ]] || resplit=1; done
+    if [ "$resplit" -eq 1 ]; then
+      split_budget "${writers[@]}"
+      if [ "$share $dshare" != "$logged" ]; then
+        echo "share wbps=$share daemons wbps=$dshare $summary"
+        logged="$share $dshare"
+      fi
+    fi
+    for c in "${writers[@]}"; do
+      if [[ $daemons == *" $c "* ]]; then set_cap "$c" "$dshare"; else set_cap "$c" "$share"; fi
+    done
+  fi
+  tick=$((tick + 1))
+  [ "$tick" -eq "$TICKS" ] && exit 0
+  sleep "$INTERVAL"
+done
