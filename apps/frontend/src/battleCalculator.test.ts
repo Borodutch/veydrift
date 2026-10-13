@@ -27,7 +27,7 @@ import {
   type CalculatorSetup,
 } from "./battleCalculatorState";
 import { CALCULATOR_SIMULATION, fleetsToLoadOnOpen } from "./components/BattleCalculatorPage";
-import { displayedSurvivorRow, outcomePercents, survivorGroups } from "./components/BattleResults";
+import { displayedSurvivorRow, outcomePercents, simulationsFact, survivorGroups } from "./components/BattleResults";
 import combatCatalog from "../../../packages/contracts/combat-preview-catalog.json";
 
 afterEach(() => setActiveCombatModel(CONTRACT_COMBAT_MODEL_VERSION));
@@ -291,4 +291,12 @@ test("shown survivor rows always add up at one precision", () => {
     .toEqual({ destroyed: 0, repaired: 0, left: 5, digits: 1 });
   expect(displayedSurvivorRow({ label: "Cruiser", start: 40, destroyed: 0, repaired: null, left: 40 }))
     .toEqual({ destroyed: 0, repaired: null, left: 40, digits: 0 });
+});
+
+test("the Simulations label qualifies runs only under model 3, in player wording", () => {
+  for (const exact of [true, false]) expect(simulationsFact(1_000, exact, CONTRACT_COMBAT_MODEL_VERSION)).toEqual({ value: "1,000" });
+  const exact = simulationsFact(870, true, REFEREE_COMBAT_MODEL_VERSION);
+  const quick = simulationsFact(1_000, false, REFEREE_COMBAT_MODEL_VERSION);
+  expect([exact.value, quick.value]).toEqual(["870 · exact", "1,000 · quick estimate"]);
+  for (const text of [exact.value, exact.title, quick.value, quick.title]) expect(text).not.toMatch(/referee|seeded|draws|\(fast\)/i);
 });

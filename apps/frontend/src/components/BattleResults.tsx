@@ -1,4 +1,4 @@
-import { likeliestOutcome, type BattleStats, type CombatResources, type ContractBattleInput, type ContractBattleResult } from "../battlePreview";
+import { activeCombatModel, likeliestOutcome, REFEREE_COMBAT_MODEL_VERSION, type BattleStats, type CombatResources, type ContractBattleInput, type ContractBattleResult } from "../battlePreview";
 import { battleInputToSetup, calculatorHref } from "../battleCalculatorState";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { SimulatedBattleReportControl } from "./SimulatedBattleReport";
@@ -90,11 +90,7 @@ export function BattleResults({ input, stats, running = false, detailed = false,
         <Fact label="Debris (ships only)" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
         <Fact label="Moon chance" value={`${Math.round(average(stats.moonChance, runs))}%`} />
         <Fact label="Rounds" value={average(stats.rounds, runs).toFixed(1)} />
-        <Fact
-          label="Simulations"
-          title={stats.exact ? "Each run replays the referee's exact combat draws." : "A fast seeded sample of the referee's combat rules; the calculator uses the exact draws."}
-          value={`${runs.toLocaleString()} ${stats.exact ? "exact" : "(fast)"}`}
-        />
+        <Fact label="Simulations" {...simulationsFact(runs, stats.exact, modelVersion ?? activeCombatModel())} />
       </dl>
       {stats.timeLimited && !running ? (
         <p className="text-xs text-amber-200">
@@ -104,6 +100,15 @@ export function BattleResults({ input, stats, running = false, detailed = false,
       {detailed ? <Survivors input={input} stats={stats} /> : null}
     </div>
   );
+}
+
+/** Run count, qualified only under the model where quick and exact sampling actually differ. */
+export function simulationsFact(runs: number, exact: boolean, model: number): { value: string; title?: string } {
+  const count = runs.toLocaleString();
+  if (model !== REFEREE_COMBAT_MODEL_VERSION) return { value: count };
+  return exact
+    ? { value: `${count} · exact`, title: "Each run is an exact replay of the battle math." }
+    : { value: `${count} · quick estimate`, title: "A quicker sample of the same battle rules; averages stay within a few percent. The calculator gives exact results." };
 }
 
 function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
