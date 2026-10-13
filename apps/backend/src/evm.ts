@@ -2644,7 +2644,7 @@ export class VeydriftGameReader implements ChainReader {
       raidableResources,
       technologyLevels,
       buildings,
-      queue
+      queue: withBuildingQueueAction(queue, buildings)
     };
   }
 
@@ -2713,7 +2713,7 @@ export class VeydriftGameReader implements ChainReader {
         moon,
         fleet: manufacturingShips,
         buildings,
-        queue,
+        queue: withBuildingQueueAction(queue, buildings),
         technologyLevels,
         defenseQueue,
         shipQueue
@@ -3704,7 +3704,7 @@ export class VeydriftGameReader implements ChainReader {
       buildings,
       defenses,
       ships,
-      queues: { building, defense, ship }
+      queues: { building: withBuildingQueueAction(building, buildings), defense, ship }
     };
   }
 
@@ -5065,7 +5065,7 @@ export class VeydriftGameReader implements ChainReader {
         terraformer: level(12)
       },
       queues: {
-        building,
+        building: withBuildingQueueAction(building, buildings),
         defense,
         ship
       },
@@ -8081,4 +8081,11 @@ function retryDelayMs(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+/** The building slot holds upgrades and demolitions alike; a target below the built level is a demolition. */
+function withBuildingQueueAction(queue: QueueState, buildings: ReadonlyArray<{ id: number; level: number }>): QueueState {
+  if (!queue.active || queue.itemId === undefined || queue.targetLevel === undefined) return queue;
+  const level = buildings.find((building) => building.id === queue.itemId)?.level ?? 0;
+  return { ...queue, action: queue.targetLevel < level ? "demolish" : "upgrade" };
 }

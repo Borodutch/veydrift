@@ -113,6 +113,7 @@ import {
   type Resources,
   type ShipKey,
 } from "./playableMvp";
+import { missileSlotsUsed } from "./demolition";
 import { activeProductionQueue } from "./productionQueueFallback";
 import type { DebrisFinderTarget, RaidTarget } from "./raidTargetFinder";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
@@ -190,8 +191,12 @@ import {
   fetchMission,
   sendRevokeDelegateTransaction,
   sendSetDelegateTransaction,
+  sendCancelBuildingDemolitionTransaction,
+  sendCancelMoonBuildingDemolitionTransaction,
+  sendStartBuildingDemolitionTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
+  sendStartMoonBuildingDemolitionTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartMoonDefenseProductionTransaction,
   sendStartMoonShipProductionTransaction,
@@ -4350,6 +4355,48 @@ export function PlayableMvpApp({
     ],
   );
 
+  // Demolition and its cancel share the planet's building slot; `key` is undefined for cancel.
+  const runBuildingDemolitionTransaction = useCallback(
+    async (key: BuildingKey | undefined) => {
+      const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+      if (!provider || !signerAccount || !account || !gameContract || !planetId || !backendData) {
+        setBuildingAction({
+          status: "error",
+          buildingKey: key,
+          label: infrastructureUnavailableReason ?? "Wallet, game connection, or active planet is unavailable.",
+        });
+        return;
+      }
+
+      await runCoordinatedWriteTransaction({
+        key: key ? `building:demolish:${key}` : "building:cancel-demolition",
+        label: key ? "Building demolition" : "Cancel demolition",
+        send: (wallet: Eip1193Provider) => key
+          ? sendStartBuildingDemolitionTransaction(wallet, signerAccount, gameContract, planetId, buildingContractIds[key])
+          : sendCancelBuildingDemolitionTransaction(wallet, signerAccount, gameContract, planetId),
+        indexing: backendData.indexing.production(account, planetId, "infrastructure"),
+        errorLabel: spendTransactionErrorMessage,
+      });
+    },
+    [
+      account,
+      activePlanetId,
+      backendData,
+      gameContract,
+      infrastructureUnavailableReason,
+      onChainSettlement?.homePlanetId,
+      provider,
+      runCoordinatedWriteTransaction,
+      setBuildingAction,
+      signerAccount,
+    ],
+  );
+  const planetDemolitionActivity = useMemo(() => ({
+    missileSlotsUsed: missileSlotsUsed(defenseState?.defenses, defenseState?.queue ?? activeDefenseProductionQueue),
+    productionActive: Boolean(activeShipyardProductionQueue || activeDefenseProductionQueue),
+    researchActive: Boolean(walletResearchQueue?.active),
+  }), [activeDefenseProductionQueue, activeShipyardProductionQueue, defenseState?.defenses, defenseState?.queue, walletResearchQueue?.active]);
+
   const runShipyardTransaction = useCallback(
     async (label: string, actionKey: string, send: (provider: Eip1193Provider) => Promise<string>, indexing?: BackendIndexingPlan) => {
       await runCoordinatedWriteTransaction({
@@ -6196,6 +6243,29 @@ export function PlayableMvpApp({
     [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction, signerAccount],
   );
 
+  // `buildingId` undefined cancels the queued moon demolition.
+  const handleMoonDemolition = useCallback(
+    (buildingId: number | undefined, label: string) => {
+      if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) {
+        setMoonAction({
+          status: "error",
+          label: "Wallet, moon connection, or home planet is unavailable.",
+        });
+        return;
+      }
+
+      const planetId = moonState.homePlanetId;
+      void runMoonTransaction(
+        buildingId === undefined ? `Cancel ${label} demolition` : `Demolish ${label}`,
+        (provider: Eip1193Provider) => buildingId === undefined
+          ? sendCancelMoonBuildingDemolitionTransaction(provider, signerAccount, moonContract, planetId)
+          : sendStartMoonBuildingDemolitionTransaction(provider, signerAccount, moonContract, planetId, buildingId),
+        { bodyKind: "moon", planetId },
+      );
+    },
+    [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction, signerAccount],
+  );
+
   const handleStartMoonDefense = useCallback(
     (defenseId: number, label: string, quantity: number) => {
       if (!provider || !signerAccount || !account || !moonContract || !moonState?.homePlanetId) {
@@ -7170,6 +7240,7 @@ export function PlayableMvpApp({
           chainCosts={chainBuildingCosts}
           chainDurations={chainBuildingDurations}
           constructionProgress={progressFor(activePlanetId, "planet", "building")}
+          demolitionActivity={planetDemolitionActivity}
           hasLoadedInfrastructureState={hasInfrastructureDisplayState({
             activeBuildingQueue,
             homePlanetId: onChainSettlement?.homePlanetId,
@@ -7184,6 +7255,8 @@ export function PlayableMvpApp({
             isWalletConnected,
           })}
           now={now}
+          onCancelDemolition={() => { void runBuildingDemolitionTransaction(undefined); }}
+          onDemolish={(key) => { void runBuildingDemolitionTransaction(key); }}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
@@ -7221,6 +7294,7 @@ export function PlayableMvpApp({
           moonState={moonState}
           now={now}
           onBurnChicken={handleBurnChickenForMoon}
+          onDemolishBuilding={handleMoonDemolition}
           onJumpGate={handleJumpGate}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshInfrastructureState}

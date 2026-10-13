@@ -21,7 +21,6 @@ export function DemolitionDialog({
   durationSeconds,
   onCancel,
   onConfirm,
-  pending,
 }: {
   buildingLabel: string;
   /** Short lines describing what drops, e.g. "Metal production −1,234/h". */
@@ -32,13 +31,11 @@ export function DemolitionDialog({
   durationSeconds: number;
   onCancel: () => void;
   onConfirm: () => void;
-  pending: boolean;
 }) {
   const priced = RESOURCE_ROWS.filter(({ key }) => cost[key] > 0);
   return (
-    <Modal dismissible={!pending} labelledBy="demolition-title" onClose={onCancel} panelClassName="max-w-md border-rose-300/30 p-4">
+    <Modal labelledBy="demolition-title" onClose={onCancel} panelClassName="max-w-md border-rose-300/30 p-4">
       <ModalHeader
-        closeDisabled={pending}
         closeLabel="Close demolition dialog"
         onClose={onCancel}
         subtitle={(
@@ -93,11 +90,11 @@ export function DemolitionDialog({
       </ul>
 
       <div className="mt-4 flex justify-end gap-2">
-        <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:opacity-50" disabled={pending} onClick={onCancel} type="button">
+        <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" onClick={onCancel} type="button">
           Keep building
         </button>
-        <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={pending} onClick={onConfirm} type="button">
-          {pending ? "Confirm in wallet…" : `Demolish to level ${currentLevel - 1}`}
+        <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20" onClick={onConfirm} type="button">
+          Demolish to level {currentLevel - 1}
         </button>
       </div>
     </Modal>
