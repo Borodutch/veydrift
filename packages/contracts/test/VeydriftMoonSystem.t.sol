@@ -3493,6 +3493,8 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         _setBuildingLevel(
             planetId,
             Building.AllianceDepot,
+            // casting to 'uint16' is safe because a planet has at most a few hundred fields
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint16(game.buildingLevel(planetId, Building.AllianceDepot) + openFields)
         );
         _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
