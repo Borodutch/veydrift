@@ -174,7 +174,7 @@ export type QueueState = Api.QueueState;
 export type PlayerQueues = Api.PlayerQueues<Address>;
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued" | "MoonShipQueued";
+  eventName: "BuildingStarted" | "BuildingDemolitionStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonBuildingDemolitionStarted" | "MoonDefenseQueued" | "MoonShipQueued";
   transactionHash: string;
   blockNumber: string;
   queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense" | "moon-ship";
@@ -182,10 +182,24 @@ export type IndexedQueueStartedEvent = {
   owner?: Address;
   itemId: number;
   targetLevel?: number;
+  /** Building-slot work only; absent means an upgrade. */
+  action?: QueueState["action"];
   quantity?: number;
   readyAt: string;
   startedAt?: string;
   productionTiming?: QueueState["productionTiming"];
+  cost: Resources;
+};
+
+/** A queued demolition withdrawn before completion; its full cost is refunded to the body. */
+export type IndexedBuildingDemolitionCancelledEvent = {
+  eventName: "BuildingDemolitionCancelled" | "MoonBuildingDemolitionCancelled";
+  transactionHash: string;
+  blockNumber: string;
+  queueKind: "building" | "moon-building";
+  planetId: string;
+  itemId: number;
+  targetLevel: number;
   cost: Resources;
 };
 
@@ -6147,6 +6161,8 @@ const planetTemperatureChangedTopic = "0x41f73695c2664b2bf09d0ffdfe2f0eae7ef9927
 const planetTemperatureGenerationMigratedTopic = "0x3803de58665f5a31a1fb4f3bcf20c64fd9ffea33d3b2725507f336c46942dfcd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const buildingDemolitionStartedTopic = keccak256(stringToHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+const buildingDemolitionCancelledTopic = keccak256(stringToHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
 export const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 export const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 export const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
@@ -6203,6 +6219,8 @@ export const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8
 export const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const moonBuildingDemolitionStartedTopic = keccak256(stringToHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+const moonBuildingDemolitionCancelledTopic = keccak256(stringToHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
 const MOON_SHIP_ACTIVE_SELECTOR = toFunctionSelector("activeMoonShipQueue(uint256)");
 const MOON_SHIP_BACKLOG_SELECTOR = toFunctionSelector("moonShipQueueBacklog(uint256)");
 const moonShipQueuedTopic = keccak256(stringToHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)"));
@@ -6253,6 +6271,8 @@ const eventNamesByTopic = new Map<string, string>([
   [planetTemperatureGenerationMigratedTopic, "PlanetTemperatureGenerationMigrated"],
   [buildingStartedTopic, "BuildingStarted"],
   [buildingCompletedTopic, "BuildingCompleted"],
+  [buildingDemolitionStartedTopic, "BuildingDemolitionStarted"],
+  [buildingDemolitionCancelledTopic, "BuildingDemolitionCancelled"],
   [defenseQueuedTopic, "DefenseQueued"],
   [defenseCompletedTopic, "DefenseCompleted"],
   [shipQueuedTopic, "ShipQueued"],
@@ -6306,6 +6326,8 @@ const eventNamesByTopic = new Map<string, string>([
   [moonCreatedTopic, "MoonCreated"],
   [moonBuildingStartedTopic, "MoonBuildingStarted"],
   [moonBuildingCompletedTopic, "MoonBuildingCompleted"],
+  [moonBuildingDemolitionStartedTopic, "MoonBuildingDemolitionStarted"],
+  [moonBuildingDemolitionCancelledTopic, "MoonBuildingDemolitionCancelled"],
   [moonDefenseQueuedTopic, "MoonDefenseQueued"],
   [moonShipQueuedTopic, "MoonShipQueued"],
   [moonShipCompletedTopic, "MoonShipCompleted"],
@@ -6525,6 +6547,8 @@ export function isReferralRewardClaimLog(log: RpcLog): boolean {
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === buildingStartedTopic
+    || topic === buildingDemolitionStartedTopic
+    || topic === moonBuildingDemolitionStartedTopic
     || topic === defenseQueuedTopic
     || topic === shipQueuedTopic
     || topic === researchQueuedTopic
@@ -6532,6 +6556,26 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
     || topic === moonBuildingStartedTopic
     || topic === moonDefenseQueuedTopic
     || topic === moonShipQueuedTopic;
+}
+
+export function isBuildingDemolitionCancelledLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === buildingDemolitionCancelledTopic || topic === moonBuildingDemolitionCancelledTopic;
+}
+
+export function decodeBuildingDemolitionCancelledLog(log: RpcLog): IndexedBuildingDemolitionCancelledEvent {
+  const moon = topicAt(log.topics, 0) === moonBuildingDemolitionCancelledTopic;
+  const words = splitWords(log.data);
+  return {
+    eventName: moon ? "MoonBuildingDemolitionCancelled" : "BuildingDemolitionCancelled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    queueKind: moon ? "moon-building" : "building",
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    itemId: Number(decodeUint(topicAt(log.topics, 2))),
+    targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+    cost: decodeResources(words.slice(1, 4))
+  };
 }
 
 export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
@@ -7018,14 +7062,16 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     };
   }
 
-  if (topic === moonBuildingStartedTopic) {
+  if (topic === moonBuildingStartedTopic || topic === moonBuildingDemolitionStartedTopic) {
+    const demolish = topic === moonBuildingDemolitionStartedTopic;
     return {
       ...base,
-      eventName: "MoonBuildingStarted",
+      eventName: demolish ? "MoonBuildingDemolitionStarted" : "MoonBuildingStarted",
       queueKind: "moon-building",
       planetId: decodeUint(topicAt(log.topics, 1)).toString(),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
-      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+      targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+      ...(demolish ? { action: "demolish" as const } : {})
     };
   }
 
@@ -7042,14 +7088,16 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
 
   const planetId = decodeUint(topicAt(log.topics, 1)).toString();
   const itemId = Number(decodeUint(topicAt(log.topics, 2)));
-  if (topic === buildingStartedTopic) {
+  if (topic === buildingStartedTopic || topic === buildingDemolitionStartedTopic) {
+    const demolish = topic === buildingDemolitionStartedTopic;
     return {
       ...base,
-      eventName: "BuildingStarted",
+      eventName: demolish ? "BuildingDemolitionStarted" : "BuildingStarted",
       queueKind: "building",
       planetId,
       itemId,
-      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+      targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+      ...(demolish ? { action: "demolish" as const } : {})
     };
   }
 

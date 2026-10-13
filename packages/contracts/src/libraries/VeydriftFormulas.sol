@@ -179,6 +179,30 @@ library VeydriftFormulas {
         return (value * (numerator ** exponent)) / (denominator ** exponent);
     }
 
+    /// @notice OGame demolition price for taking a building from `level` (>= 1) to `level - 1`: the
+    ///         build price of level `level - 1` (`base * factor^(level - 2)`, kept exact until the
+    ///         final floor, so level 1 costs `base / factor`), less 4% per Ion Technology level and
+    ///         floored at zero (free from Ion 25). `full` is the undiscounted price, which feeds the
+    ///         construction-duration formula because Ion Technology never shortens demolition.
+    function demolitionCost(
+        uint256 base,
+        uint16 level,
+        uint256 numerator,
+        uint256 denominator,
+        uint16 ionLevel
+    ) internal pure returns (uint256 discounted, uint256 full) {
+        uint256 scaledNumerator = base * denominator;
+        uint256 scaledDenominator = numerator;
+        if (level >= 2) {
+            scaledNumerator = base * (numerator ** (level - 2));
+            scaledDenominator = denominator ** (level - 2);
+        }
+        full = scaledNumerator / scaledDenominator;
+        if (ionLevel < 25) {
+            discounted = (scaledNumerator * (25 - ionLevel)) / (scaledDenominator * 25);
+        }
+    }
+
     function unitDuration(
         uint256 shipyardLevel,
         uint256 naniteLevel,

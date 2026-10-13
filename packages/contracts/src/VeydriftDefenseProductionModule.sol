@@ -391,8 +391,16 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
         uint32 usedSlots = _missileSiloSlotsUsed(planetId) + _queuedMissileSiloSlots(planetId);
         uint32 requestedSlots = uint32(slotsPerUnit) * quantity;
-        uint32 capacity =
-            VeydriftCatalog.missileSiloCapacity(_buildingLevels[planetId][Building.MissileSilo]);
+        uint16 siloLevel = _buildingLevels[planetId][Building.MissileSilo];
+        // A queued silo demolition already reserves the lower level's capacity.
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (
+            construction.active && construction.building == Building.MissileSilo
+                && construction.targetLevel < siloLevel
+        ) {
+            siloLevel = construction.targetLevel;
+        }
+        uint32 capacity = VeydriftCatalog.missileSiloCapacity(siloLevel);
         if (usedSlots + requestedSlots > capacity) {
             revert MissileSiloCapacityExceeded(usedSlots + requestedSlots, capacity);
         }
