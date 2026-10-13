@@ -38,6 +38,15 @@ test("install copies exactly the root manifests and every workspace package.json
   assert.deepEqual(files.slice(2).sort(), workspaceManifests());
 });
 
+test("every file the install and start phases copy from the repo exists", () => {
+  // A missing COPY source (for example a renamed lockfile) fails the build of every service.
+  const repoFiles = [
+    ...stringArray(section("phases.install"), "onlyIncludeFiles"),
+    ...stringArray(section("start"), "onlyIncludeFiles").filter((file) => !file.startsWith("/") && file !== "node_modules"),
+  ];
+  for (const file of repoFiles) assert.ok(existsSync(`${root}${file}`), `${file} does not exist`);
+});
+
 test("install is a single frozen bun install with dev dependencies", () => {
   const cmds = stringArray(section("phases.install"), "cmds");
   assert.deepEqual(cmds, ["NODE_ENV=development bun install --frozen-lockfile"]);

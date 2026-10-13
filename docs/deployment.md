@@ -104,8 +104,9 @@ install/build/start commands in their service settings. Its layout follows from
 how EasyPanel 2.30.1 drives Nixpacks:
 
 - EasyPanel passes the project and service environment, plus `GIT_SHA` set to
-  the deployed commit (always last, so a service variable cannot override it),
-  to `nixpacks build --env` and again as `docker build --build-arg`.
+  the deployed commit, to `nixpacks build --env` and again as
+  `docker build --build-arg`. At build time `GIT_SHA` comes last, so a service
+  variable cannot override it.
 - Nixpacks writes those variables as one `ARG …`/`ENV …` pair. Only the setup
   phase (the Nix packages and `aptPkgs`) comes before it. The install, build and
   start phases all come after it, so with a new `GIT_SHA` on every commit their
@@ -123,21 +124,27 @@ So the config caches what it can:
   Nix profile script, `etc/profile.d/veydrift-runtime.sh`, sets `FONTCONFIG_FILE`
   for the OG-card renderer (sharp) and `NIXPACKS_PATH`. The base image's login
   shell sources that script, and every start command runs in a login shell.
-- **Install (reruns, small):** only the root and workspace `package.json`
-  files and `bun.lockb` are copied, not the source tree. One frozen
-  `bun install` with dev dependencies installs every workspace. The Bun package
-  cache mount keeps it to seconds. `scripts/nixpacks-config.test.mjs` checks the
-  manifest list against the workspaces.
+- **Install (reruns):** only the root and workspace `package.json` files and
+  `bun.lockb` are copied, not the source tree. One frozen `bun install` with
+  dev dependencies installs every workspace. The Bun package cache mount keeps
+  the download to seconds, but the step still writes `node_modules` (about
+  455 MB) into a build-stage snapshot on every deploy. That snapshot is not
+  exported. `scripts/nixpacks-config.test.mjs` checks the manifest list against
+  the workspaces.
 - **Build (reruns):** the source is copied once and the service's build command runs.
 - **Start (cached by content):** `runImage` starts a second stage from the
   same Nixpacks base image and copies `/nix`, `/root/.profile`,
-  `node_modules`, the root manifests, `packages/` and `apps/` from the build
-  stage, in that order. BuildKit keys these copies by content, so `/nix` and
-  `node_modules` are reused whenever the Nix packages and lockfile are
-  unchanged. A source-only deploy then exports only the `packages/` and `apps/`
-  layers. When bumping EasyPanel's `nixpacksVersion`, set `runImage` to that
-  version's build image (the `FROM` line in the generated
-  `.nixpacks/Dockerfile`).
+  `node_modules`, `package.json`, `tsconfig.base.json`, `packages/` and `apps/`
+  from the build stage, in that order. Runtime reads must stay inside those
+  paths: repo-root files such as `scripts/` are not in the image. BuildKit
+  keys these copies by content, so `/nix` and `node_modules` are reused
+  whenever the Nix packages and lockfile are unchanged. A source-only deploy
+  then exports only the `packages/` and `apps/` layers. When bumping
+  EasyPanel's `nixpacksVersion`, set `runImage` (and the tag in
+  `scripts/nixpacks-config.test.mjs`) to that version's build image, which is
+  the first `FROM` line in the generated `.nixpacks/Dockerfile`.
+- **Routine deploys:** use `forceRebuild: false`. The first deploy after a
+  lockfile or Nix package change rebuilds those layers once.
 
 The run stage has no `ARG`/`ENV` lines, so build arguments (including private
 keys) no longer end up in the image config. Services get their environment

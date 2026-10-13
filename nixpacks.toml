@@ -9,8 +9,9 @@
 # nixPkgs entries are Nix expressions: the last one adds a login-shell profile
 # script (the base image's /root/.profile sources the Nix profile's
 # etc/profile.d/*.sh) that points fontconfig at the Nix fonts for the OG-card
-# renderer (sharp) and restores the NIXPACKS_PATH that the run image below no
-# longer gets from the build-stage ENV.
+# renderer (sharp) and sets the NIXPACKS_PATH that the run image below no
+# longer gets from the build-stage ENV (/root/.profile prepends it to PATH, and
+# unset it would leave an empty PATH entry, i.e. the working directory).
 nixPkgs = [
   "nodejs_22",
   "bun",

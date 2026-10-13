@@ -85,7 +85,7 @@ test("host build I/O throttle changes select its tests", async () => {
 test("Nixpacks config and workspace manifest changes select the Nixpacks layout test", async () => {
   const { changedScriptTests } = await import("./ci-scope.mjs");
   const exists = (path) => path === "scripts/nixpacks-config.test.mjs";
-  for (const file of ["nixpacks.toml", "package.json", "apps/frontend/package.json", "packages/universe/package.json"]) {
+  for (const file of ["nixpacks.toml", "package.json", "bun.lockb", "bun.lock", "tsconfig.base.json", "apps/frontend/package.json", "packages/universe/package.json"]) {
     assert.deepEqual(changedScriptTests([file], exists), ["scripts/nixpacks-config.test.mjs"]);
   }
   assert.deepEqual(changedScriptTests(["apps/frontend/src/package.json", "nixpacks.test.toml"], exists), []);
