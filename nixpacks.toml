@@ -1,18 +1,63 @@
+# Nixpacks config shared by every Veydrift Easypanel app: they all build from the
+# repo root and only override the install/build/start commands. The layout is
+# chosen for layer caching; docs/deployment.md#nixpacks-build-caching explains
+# the Easypanel/Nixpacks constraints behind it before you change anything here.
+
 [phases.setup]
-nixPkgs = ["nodejs_22", "bun"]
+# Only this phase runs before the ARG/ENV line Easypanel's per-commit GIT_SHA
+# build arg invalidates, so it is the one build step that stays cached.
+# nixPkgs entries are Nix expressions: the last one adds a login-shell profile
+# script (the base image's /root/.profile sources the Nix profile's
+# etc/profile.d/*.sh) that points fontconfig at the Nix fonts for the OG-card
+# renderer (sharp) and restores the NIXPACKS_PATH that the run image below no
+# longer gets from the build-stage ENV.
+nixPkgs = [
+  "nodejs_22",
+  "bun",
+  "fontconfig",
+  "dejavu_fonts",
+  "(writeTextDir \"etc/profile.d/veydrift-runtime.sh\" \"export NIXPACKS_PATH=/app/node_modules/.bin FONTCONFIG_FILE=${makeFontsConf { fontDirectories = [ dejavu_fonts ]; }}\\n\")",
+]
 nixLibs = ["gcc-unwrapped"]
 
 [phases.install]
-cmds = [
-  "sudo find /etc/apt -type f \\( -name '*.list' -o -name '*.sources' \\) -exec sed -i 's|http://|https://|g' {} + && sudo apt-get update && sudo apt-get install -y --no-install-recommends libstdc++6 fontconfig fonts-dejavu-core",
-  "NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix",
+# Copy only the manifests, not the whole source tree, so the install step does
+# not add another full source copy. Keep this list equal to the root
+# workspaces (scripts/nixpacks-config.test.mjs checks it).
+onlyIncludeFiles = [
+  "package.json",
+  "bun.lockb",
+  "apps/backend/package.json",
+  "apps/battle-keeper/package.json",
+  "apps/chicken-burn-listener/package.json",
+  "apps/frontend/package.json",
+  "apps/stats/package.json",
+  "packages/battle-oracle/package.json",
+  "packages/contracts/package.json",
+  "packages/universe/package.json",
 ]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile"]
 
 [phases.build]
 cmds = ["cd apps/frontend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
 
 [start]
 cmd = "cd apps/frontend && bun run serve"
+# Run in a second stage with no build-arg ARG/ENV lines: service env reaches the
+# container from Easypanel at runtime, so secrets are not baked into the image
+# config, and each COPY below is cached whenever its content is unchanged. Keep
+# the tag equal to the build image of the Easypanel nixpacksVersion (1.34.1).
+# Order: rarely changing layers first, the per-commit source last.
+runImage = "ghcr.io/railwayapp/nixpacks:ubuntu-1741046653"
+onlyIncludeFiles = [
+  "/nix",
+  "/root/.profile",
+  "node_modules",
+  "package.json",
+  "tsconfig.base.json",
+  "packages",
+  "apps",
+]
 
 [variables]
 NODE_ENV = "production"
