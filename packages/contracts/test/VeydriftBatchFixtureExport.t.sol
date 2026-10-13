@@ -22,6 +22,7 @@ import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldSt
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFleetFuel} from "../src/libraries/VeydriftFleetFuel.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {VeydriftMoonBuildings} from "../src/libraries/VeydriftMoonBuildings.sol";
 import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
 import {VeydriftMoonDefenseProduction} from "../src/libraries/VeydriftMoonDefenseProduction.sol";
 import {VeydriftMoonGateShips} from "../src/libraries/VeydriftMoonGateShips.sol";
@@ -78,6 +79,7 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
         vm.etch(address(VeydriftDependencies), address(VeydriftDependencies).code);
         vm.etch(address(VeydriftFleetFuel), address(VeydriftFleetFuel).code);
         vm.etch(address(VeydriftFormulas), address(VeydriftFormulas).code);
+        vm.etch(address(VeydriftMoonBuildings), address(VeydriftMoonBuildings).code);
         vm.etch(address(VeydriftMoonDefenseBacklog), address(VeydriftMoonDefenseBacklog).code);
         vm.etch(address(VeydriftMoonDefenseProduction), address(VeydriftMoonDefenseProduction).code);
         vm.etch(address(VeydriftMoonGateShips), address(VeydriftMoonGateShips).code);
