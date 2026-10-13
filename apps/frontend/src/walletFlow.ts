@@ -750,6 +750,13 @@ export type MissionDetailResponse = {
 
 export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
 
+/** Units per side and type at the start (rows) and after each round, with shots fired per side. */
+export type RefereeBattleReport = {
+  format: "veydrift.referee-battle.report.v1";
+  rows: Array<{ side: 0 | 1; unit: number; count: number; lost: number; survivors: number }>;
+  rounds: Array<{ round: number; shots: [string, string]; survivors: Array<{ side: 0 | 1; unit: number; count: number }> }>;
+};
+
 export type CombatRoundReport = {
   round: number;
   attackerUnits: string;
@@ -4871,6 +4878,17 @@ export async function fetchGlobalMissionArchive(
 
 export async function fetchMission(apiUrl: string, missionId: string, signal?: AbortSignal): Promise<MissionDetailResponse> {
   return fetchGameApiJson<MissionDetailResponse>(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`, "Mission", { cache: "no-store", signal });
+}
+
+/** The referee's published report (GET /battles/:id/report); legacy battles have none (null). */
+export async function fetchRefereeBattleReport(apiUrl: string, battleId: string, signal?: AbortSignal): Promise<RefereeBattleReport | null> {
+  try {
+    const report = await fetchGameApiJson<RefereeBattleReport>(`${apiUrl.replace(/\/+$/, "")}/battles/${encodeURIComponent(battleId)}/report`, "Battle report", { signal });
+    return report.format === "veydrift.referee-battle.report.v1" && Array.isArray(report.rows) && Array.isArray(report.rounds) ? report : null;
+  } catch (error) {
+    if (error instanceof GameApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReportSummary[]> {

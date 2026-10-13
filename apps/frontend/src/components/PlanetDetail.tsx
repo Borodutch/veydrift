@@ -34,6 +34,7 @@ import { formatScore } from "../numberFormat";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
+import { calculatorHref, emptyFleet } from "../battleCalculatorState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -355,6 +356,7 @@ export function PlanetDetail({
                   busy={isActionBusy(actionState)}
                   coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
                   onAction={onAction}
+                  originCoords={originCoords}
                   planet={planet}
                 />
               ) : null}
@@ -535,15 +537,25 @@ function PlanetMissionControls({
   busy,
   coords,
   onAction,
+  originCoords,
   planet,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  originCoords?: Coordinates | undefined;
   planet: Planet | undefined;
 }) {
   if (actions.length === 0) return null;
+  const coordText = (at: Coordinates) => `${at.galaxy}:${at.system}:${at.position}`;
+  // The calculator loads both bodies' public forces when it opens.
+  const simulateHref = planet && actions.some((action) => action.kind === "attack")
+    ? calculatorHref({
+        attackers: [{ ...emptyFleet(), coords: originCoords ? coordText(originCoords) : "" }],
+        defenders: [{ ...emptyFleet(), coords: coordText(coords) }],
+      })
+    : null;
 
   return (
     <div className="flex flex-col items-start gap-2 sm:items-end">
@@ -554,6 +566,11 @@ function PlanetMissionControls({
         onAction={onAction}
         planet={planet}
       />
+      {simulateHref ? (
+        <a className="text-xs font-medium text-slate-400 transition hover:text-white" href={simulateHref} rel="noopener" target="_blank">
+          Simulate <span aria-hidden="true">↗</span>
+        </a>
+      ) : null}
     </div>
   );
 }

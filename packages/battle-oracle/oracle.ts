@@ -39,6 +39,9 @@ export interface State {
   pools: [Int32Array, Int32Array];
   rapidfire: Map<number, number>;
   round: number; side: Side; shooter: number; shots: [bigint, bigint]; rounds: Round[]; done: boolean;
+  /** Simulation-only draw source, uniform over [0, bound). The referee never sets it, so its draws
+   * stay SHA-256 of the counter; a simulator may trade that exact replay for speed. */
+  random?: (bound: number) => number;
 }
 
 function integer(n: number, min: number, max: number, name: string) {
@@ -179,7 +182,7 @@ export function uniform(state: Pick<State, "seed" | "counter">, bound: bigint | 
     const word = BigInt("0x" + bytesToHex(digest)); if (word < U256 - U256 % b) return word % b;
   }
 }
-const draw = (s: Pick<State, "seed" | "counter">, bound: number) => Number(uniform(s, bound));
+const draw = (s: Pick<State, "seed" | "counter" | "random">, bound: number) => s.random ? s.random(bound) : Number(uniform(s, bound));
 
 const f32 = Math.fround;
 /** Explosion rolls draw from [0, 2^23): a unit explodes iff draw >= 2^23 * hull / fullHull (exact
@@ -195,7 +198,7 @@ const EXPLOSION_BOUND = 2 ** 23;
  * - shield down (broken this round, or a unit without shields): the whole shot hits the hull.
  * - a unit left at or below 70% hull then explodes with probability 1 - hull/fullHull.
  */
-export function hit(s: Pick<State, "seed" | "counter" | "groups" | "unitGroup" | "hull" | "shield" | "alive">, t: number, attack: number) {
+export function hit(s: Pick<State, "seed" | "counter" | "random" | "groups" | "unitGroup" | "hull" | "shield" | "alive">, t: number, attack: number) {
   const g = s.groups[s.unitGroup[t]!]!;
   const full = g.shield, shield = s.shield[t]!;
   let damage = attack;

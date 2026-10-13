@@ -2,10 +2,11 @@ import { ArrowRight, ExternalLink, GitFork } from "lucide-preact";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 
-type SiteSection = "home" | "pact" | "docs";
+type SiteSection = "home" | "pact" | "docs" | "calculator";
 
 const links: Array<{ key: SiteSection | "stats"; label: string; href: string; external?: boolean }> = [
   { key: "docs", label: "Docs", href: "/docs" },
+  { key: "calculator", label: "Calculator", href: "/calculator" },
   { key: "pact", label: "Pact", href: "/pact" },
   { key: "stats", label: "Stats", href: "https://stats.veydrift.com", external: true },
 ];

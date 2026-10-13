@@ -3157,6 +3157,9 @@ export function PlayableMvpApp({
   const missionDetailQuery = backendData && missionDetailId ? backendData.queries.mission(missionDetailId) : undefined;
   const { snapshot: missionDetailSnapshot, isInitialLoading: missionDetailLoading } = useBackendDataQuery<MissionDetailResponse>(missionDetailQuery);
   const missionDetail = missionDetailSnapshot?.data;
+  // Referee-settled battles publish per-unit rounds under the leading attack's mission ID.
+  const missionBattleId = missionDetail?.battleReport ? missionDetail.battleReport.attackGroupId ?? missionDetail.battleReport.missionId : null;
+  const refereeReport = useBackendDataQuery(backendData && missionBattleId ? backendData.queries.refereeBattleReport(missionBattleId) : undefined).snapshot?.data ?? null;
   const missionDetailError = missionDetailSnapshot?.error;
 
   const hasCanonicalWalletState = Boolean(settlementSnapshot?.data || walletPlanetsSnapshot?.data);
@@ -6904,6 +6907,7 @@ export function PlayableMvpApp({
       return (
         <MissionDetailPage
           actionState={missionAction}
+          refereeReport={refereeReport}
           activePlanetId={activePlanetId}
           canTransact={canSubmitMissionTransaction}
           detail={missionDetail}
