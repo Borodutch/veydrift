@@ -5014,10 +5014,12 @@ export class SettlementIndexer {
     toBlock: bigint
   ): IndexedRpcLog[] {
     if (toBlock < fromBlock) return [];
+    // `removed` is only ever 0 or 1. `!= 0` cannot seek the (removed, numeric block) index, so the
+    // writer scanned the whole ledger on the main thread every 16-block replay (~1 s freezes, #74).
     return (this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
-      WHERE removed != 0
+      WHERE removed = 1
         AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
         AND lower(json_extract(event_json, '$.address')) = ?
         AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?)
