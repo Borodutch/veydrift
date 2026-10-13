@@ -948,6 +948,32 @@ export function battlePreviewInputKey(input: ContractBattleInput): string {
   return JSON.stringify({ model: activeModel, input });
 }
 
+export type BattleSimulationLimits = { runs: number; minRuns: number; budgetMs: number; maxMs: number };
+
+/** Runs fixed seeds in order, so the first N runs are identical everywhere; only the run count can
+ * differ. Stops after `runs`, after `budgetMs` once `minRuns` are done, and after `maxMs` regardless,
+ * so huge battles never hold a (mobile) CPU for minutes just to reach `minRuns`. */
+export function runBattleSimulation(
+  input: ContractBattleInput,
+  limits: BattleSimulationLimits,
+  onProgress: (stats: BattleStats) => void = () => undefined,
+  now: () => number = () => performance.now(),
+): BattleStats {
+  const stats = emptyBattleStats(input);
+  const started = now();
+  let posted = started;
+  for (let index = 0; index < limits.runs; index++) {
+    addBattleRun(stats, runContractBattle(input, deterministicBattleSampleWord(index), index + 1, false, true), true);
+    const at = now(), elapsed = at - started;
+    if (elapsed > limits.maxMs || (stats.runs >= limits.minRuns && elapsed > limits.budgetMs)) break;
+    if (at - posted > 200) {
+      onProgress(stats);
+      posted = at;
+    }
+  }
+  return stats;
+}
+
 /** Synchronous `runs` fast simulations (tests and tiny inputs); UIs use battleSimulation.worker. */
 export function simulateBattleStats(input: ContractBattleInput, runs: number): BattleStats {
   const stats = emptyBattleStats(input);

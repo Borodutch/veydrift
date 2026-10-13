@@ -2110,7 +2110,15 @@ export function preparePublicTargetBattleForecast(
   // an unnecessary worker request during the brief zero-selection state while
   // the user is composing a fleet.
   if (input.attackers.every((attacker) => attacker.ships.every((count) => count <= 0))) {
-    return complete(resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(input, 1)));
+    // This runs during render: a target too large for the local engine throws, which must not escape.
+    try {
+      return complete(resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(input, 1)));
+    } catch (error) {
+      return complete({
+        ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false, simulation: undefined,
+        detail: `Outcome preview unavailable: ${error instanceof Error ? error.message : "the battle could not be estimated."}`,
+      });
+    }
   }
   return prepared;
 }
