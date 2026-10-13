@@ -4670,6 +4670,66 @@ describe("SettlementIndexer", () => {
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
   });
 
+  test("a cancelled demolition stays cancelled when contract logs are replayed (#112)", async () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listContractLogs() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x82", transactionHash: "0xbuilddone", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(2n) });
+    // Already past readyAt: a lingering queue would be projected as a finished downgrade.
+    indexer.applyLog({ blockNumber: "0x83", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)], data: abiWords(1n, 1_000n, 400n, 200n, 100n) });
+    indexer.applyLog({ blockNumber: "0x84", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [demolitionCancelledTopic, topic(7n), topic(5n)], data: abiWords(1n, 400n, 200n, 100n) });
+
+    await indexer.replayContractLogs();
+
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(2);
+  });
+
+  test("indexes moon building demolitions through start, cancel and completion (#112)", () => {
+    const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const moonDemolitionCancelledTopic = keccak256(toHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xrobotics", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(2n) });
+
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 9_999_999_999n, 400n, 120n, 200n) });
+    expect(indexer.moonState(player, planet.planetId).queue).toMatchObject({
+      active: true,
+      itemId: 1,
+      targetLevel: 1,
+      action: "demolish"
+    });
+
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [moonDemolitionCancelledTopic, topic(7n), topic(1n)], data: abiWords(1n, 400n, 120n, 200n) });
+    expect(indexer.moonState(player, planet.planetId).queue?.active ?? false).toBe(false);
+    expect(indexer.moonState(player, planet.planetId).buildings.find((building) => building.id === 1)?.level).toBe(2);
+
+    indexer.applyLog({ blockNumber: "0x8b", transactionHash: "0xdemolish2", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 9_999_999_999n, 400n, 120n, 200n) });
+    indexer.applyLog({ blockNumber: "0x8c", transactionHash: "0xdemolished", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(1n) });
+    expect(indexer.moonState(player, planet.planetId).queue?.active ?? false).toBe(false);
+    expect(indexer.moonState(player, planet.planetId).buildings.find((building) => building.id === 1)?.level).toBe(1);
+  });
+
   test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
     // PlanetSettled carries the authoritative post-mutation balance. A raid/spend emits a DECREASING
     // PlanetSettled; the read model must keep that lower balance. But logs do not always arrive in block

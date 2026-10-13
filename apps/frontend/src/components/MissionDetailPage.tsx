@@ -1001,7 +1001,9 @@ function queueLabel(
   const item = catalog.find((entry, index) => (entry.id ?? index) === queue.itemId);
   const itemLabel = item?.label ?? (queue.itemId == null ? queue.kind ?? "Queue" : `ID ${queue.itemId}`);
   const quantity = queue.quantity ? ` x${queue.quantity.toLocaleString()}` : "";
-  const level = queue.targetLevel ? ` L${queue.targetLevel.toLocaleString()}` : "";
+  const level = queue.action === "demolish"
+    ? ` L${((queue.targetLevel ?? 0) + 1).toLocaleString()} → L${(queue.targetLevel ?? 0).toLocaleString()} demolishing`
+    : queue.targetLevel ? ` L${queue.targetLevel.toLocaleString()}` : "";
   const readiness = queue.asOfNow?.complete
     ? "Ready"
     : queue.readyAt

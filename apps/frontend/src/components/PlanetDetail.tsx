@@ -1,4 +1,5 @@
 import { isActionBusy } from "../actionNoticeAutoDismiss";
+import { demolitionQueueLabel } from "../buildingDetails";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -1299,6 +1300,7 @@ export function publicQueueView(
     ? undefined
     : catalog.find((candidate, index) => (candidate.id ?? index) === queue.itemId);
   const label = item?.label ?? queue.kind ?? "Queue";
+  const demolish = queue.action === "demolish";
   const detail = valueKind === "level"
     ? queue.targetLevel ? `Level ${queue.targetLevel}` : null
     : queue.quantity ? `×${queue.quantity.toLocaleString()}` : null;
@@ -1321,13 +1323,13 @@ export function publicQueueView(
     ...(queue.asOfNow?.remainingQuantity !== undefined
       ? { remainingQuantity: queue.asOfNow.remainingQuantity }
       : {}),
-    itemText: detail ? `${label} · ${detail}` : label,
+    itemText: demolish ? demolitionQueueLabel(label, queue.targetLevel) : detail ? `${label} · ${detail}` : label,
     key,
     label,
     readyAt: queue.readyAt,
     startedAt: queue.startedAt ?? queue.productionTiming?.startedAt,
-    title,
-    tone,
+    title: demolish ? "Demolition" : title,
+    tone: demolish ? "rose" : tone,
   };
 }
 
@@ -1426,7 +1428,9 @@ function queueRow(
     : queue.quantity ? ` ${suffix}${queue.quantity}` : "";
   return {
     label,
-    value: `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
+    value: queue.action === "demolish"
+      ? demolitionQueueLabel(item?.label ?? queue.kind ?? "Queue", queue.targetLevel)
+      : `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
     tone: "accent",
   };
 }

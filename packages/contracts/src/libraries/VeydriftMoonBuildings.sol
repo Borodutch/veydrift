@@ -138,7 +138,7 @@ library VeydriftMoonBuildings {
 
         (uint128 metal, uint128 crystal, uint128 deuterium) =
             VeydriftCatalog.moonBuildingBaseCost(building);
-        uint16 ionLevel = game.technologyLevel(player, Technology.Ion);
+        uint16 ionLevel = _effectiveIonLevel(game, player, timestamp);
         VeydriftGameStorage.Resources memory cost;
         VeydriftGameStorage.Resources memory fullCost;
         (cost.metal, fullCost.metal) = _demolitionCost(metal, currentLevel, ionLevel);
@@ -184,6 +184,23 @@ library VeydriftMoonBuildings {
             construction.cost.crystal,
             construction.cost.deuterium
         );
+    }
+
+    /// @dev Moons don't settle the owner's research, so count an Ion level whose research is
+    ///      already due, as the planet path does after settling.
+    function _effectiveIonLevel(IVeydriftMoonGame game, address player, uint64 timestamp)
+        private
+        view
+        returns (uint16 ionLevel)
+    {
+        ionLevel = game.technologyLevel(player, Technology.Ion);
+        VeydriftGameStorage.ResearchQueue memory research = game.researchQueue(player);
+        if (
+            research.active && research.technology == Technology.Ion
+                && research.readyAt <= timestamp && research.targetLevel > ionLevel
+        ) {
+            ionLevel = research.targetLevel;
+        }
     }
 
     function _demolitionCost(uint128 base, uint16 currentLevel, uint16 ionLevel)

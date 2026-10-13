@@ -2025,7 +2025,7 @@ export class SettlementIndexer {
             category: queueActivityCategory(completion.kind ?? row.queue_kind),
             kind: `${completion.kind ?? row.queue_kind}-completed`,
             direction: "personal",
-            title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity),
+            title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity, completion.action),
             detail: completion.targetLevel !== undefined
               ? `Level ${completion.targetLevel}`
               : completion.quantity !== undefined
@@ -8266,6 +8266,8 @@ export class SettlementIndexer {
         this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       } else if (isMoonResourcesChangedLog(log)) {
@@ -8369,6 +8371,8 @@ export class SettlementIndexer {
       this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
     } else if (isIndexedQueueCompletedLog(log)) {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+    } else if (isBuildingDemolitionCancelledLog(log)) {
+      this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
     } else if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
     } else if (isMoonJumpGateLog(log)) {
@@ -8426,6 +8430,9 @@ export class SettlementIndexer {
         } else {
           this.applyQueueCompletionEffects(event);
         }
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        const event = decodeBuildingDemolitionCancelledLog(log);
+        if (activeEventQueues.delete(queueKey(event))) this.applyBuildingDemolitionCancelledEvent(event);
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -12665,7 +12672,7 @@ export class SettlementIndexer {
           category: queueActivityCategory(event.queueKind),
           kind: `${event.queueKind}-completed`,
           direction: "personal",
-          title: queueCompletedTitle(event.queueKind, label, event.quantity === undefined ? undefined : occurrence?.quantity ?? event.quantity),
+          title: queueCompletedTitle(event.queueKind, label, event.quantity === undefined ? undefined : occurrence?.quantity ?? event.quantity, queue?.itemId === event.itemId ? queue.action : undefined),
           detail: event.quantity === undefined ? queueCompletionDetail(event) : (occurrence?.quantity ?? event.quantity) + " completed",
           occurredAt: occurrence?.at ?? indexedQueueCompletionAt(queue, event, transactionAt),
           metadata: { ...queueActivityMetadata(event), quantity: event.quantity === undefined ? null : occurrence?.quantity ?? event.quantity, occurrenceId: occurrence?.id ?? null }
@@ -15227,8 +15234,8 @@ function queueStartedTitle(kind: string, label: string, action?: QueueState["act
   return `${label} production started`;
 }
 
-function queueCompletedTitle(kind: string, label: string, quantity?: number): string {
-  if (kind === "building" || kind === "moon-building") return `${label} completed`;
+function queueCompletedTitle(kind: string, label: string, quantity?: number, action?: QueueState["action"]): string {
+  if (kind === "building" || kind === "moon-building") return action === "demolish" ? `${label} demolished` : `${label} completed`;
   if (kind === "research") return `${label} research completed`;
   return `${quantity ?? 0} ${label}${quantity === 1 ? "" : "s"} built`;
 }

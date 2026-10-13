@@ -25,6 +25,10 @@ import {
 interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function technologyLevel(address player, Technology technology) external view returns (uint16);
+    function researchQueue(address player)
+        external
+        view
+        returns (VeydriftGameStorage.ResearchQueue memory);
     function moonResources(uint256 planetId)
         external
         view
@@ -488,15 +492,28 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                 readyAt: buildingQueue.readyAt,
                 cost: buildingQueue.cost
             });
-            emit MoonBuildingStarted(
-                planetId,
-                buildingQueue.building,
-                buildingQueue.targetLevel,
-                buildingQueue.readyAt,
-                buildingQueue.cost.metal,
-                buildingQueue.cost.crystal,
-                buildingQueue.cost.deuterium
-            );
+            // A target below the imported level is an in-flight demolition.
+            if (buildingQueue.targetLevel < _moonBuildingLevels[planetId][buildingQueue.building]) {
+                emit VeydriftMoonBuildings.MoonBuildingDemolitionStarted(
+                    planetId,
+                    buildingQueue.building,
+                    buildingQueue.targetLevel,
+                    buildingQueue.readyAt,
+                    buildingQueue.cost.metal,
+                    buildingQueue.cost.crystal,
+                    buildingQueue.cost.deuterium
+                );
+            } else {
+                emit MoonBuildingStarted(
+                    planetId,
+                    buildingQueue.building,
+                    buildingQueue.targetLevel,
+                    buildingQueue.readyAt,
+                    buildingQueue.cost.metal,
+                    buildingQueue.cost.crystal,
+                    buildingQueue.cost.deuterium
+                );
+            }
         }
 
         if (defenseQueue.active) {

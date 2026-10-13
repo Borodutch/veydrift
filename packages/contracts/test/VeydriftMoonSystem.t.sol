@@ -3479,6 +3479,84 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         _buildMoon(planetId, MoonBuilding.Shipyard);
     }
 
+    function _usedPlanetFields(uint256 planetId) private view returns (uint256 used) {
+        for (uint8 i = 0; i <= uint8(type(Building).max); i++) {
+            used += game.buildingLevel(planetId, Building(i));
+        }
+    }
+
+    function testPlanetDemolitionFreesAFieldOnCompletion() public {
+        uint256 planetId = _startPlanet();
+        _setBuildingLevel(planetId, Building.CrystalMine, 3);
+        // Park every remaining field in the Alliance Depot so the planet is full.
+        uint256 openFields = game.planet(planetId).fields - _usedPlanetFields(planetId);
+        _setBuildingLevel(
+            planetId,
+            Building.AllianceDepot,
+            uint16(game.buildingLevel(planetId, Building.AllianceDepot) + openFields)
+        );
+        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+        uint256 usedBefore = _usedPlanetFields(planetId);
+        assertEq(usedBefore, game.planet(planetId).fields);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.FieldCapacityReached.selector);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+
+        vm.prank(player);
+        game.startBuildingDemolition(planetId, Building.CrystalMine);
+        // The field frees only when the demolition completes.
+        assertEq(_usedPlanetFields(planetId), usedBefore);
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt);
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+        assertEq(_usedPlanetFields(planetId), usedBefore - 1);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+    }
+
+    function testMoonDemolitionFreesAFieldOnCompletion() public {
+        uint256 planetId = _readyMoon();
+        _fundMoon(planetId, 1_000_000, 1_000_000, 1_000_000);
+        // Lunar Base 1, Robotics 2 and Shipyard 1 fill the moon.
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.MoonFieldCapacityReached.selector);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
+
+        vm.prank(player);
+        moons.startMoonBuildingDemolition(planetId, MoonBuilding.Shipyard);
+        vm.warp(moons.activeMoonBuildingConstruction(planetId).readyAt);
+        vm.prank(player);
+        moons.finishMoonBuildingUpgrade(planetId);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.Shipyard), 0);
+
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
+        assertTrue(moons.activeMoonBuildingConstruction(planetId).active);
+    }
+
+    function testMoonDemolitionCountsDueIonResearch() public {
+        uint256 planetId = _readyMoon();
+        _fundMoon(planetId, 10_000, 10_000, 10_000);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _setBuildingLevel(planetId, Building.ResearchLab, 10);
+        _setTechnologyLevel(player, Technology.Energy, 10);
+        _setTechnologyLevel(player, Technology.Laser, 10);
+        _setTechnologyLevel(player, Technology.Ion, 2);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Ion);
+        vm.warp(game.researchQueue(player).readyAt);
+        // Ion 3 is due but unsettled; the moon price must already use it (-12%, not -8%).
+        assertEq(game.technologyLevel(player, Technology.Ion), 2);
+
+        vm.prank(player);
+        moons.startMoonBuildingDemolition(planetId, MoonBuilding.RoboticsFactory);
+        assertEq(moons.activeMoonBuildingConstruction(planetId).cost.metal, 352);
+    }
+
     function testDemolitionCostMatchesOgameVectors() public pure {
         // Metal mine (60/15, factor 1.5): 16 -> 15 with Ion 1 and 1 -> 0 with Ion 0.
         (uint256 metal, uint256 metalFull) = VeydriftFormulas.demolitionCost(60, 16, 15, 10, 1);
@@ -3551,8 +3629,8 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         vm.prank(player);
         game.cancelBuildingDemolition(planetId);
         VeydriftGameStorage.Resources memory refunded = _planetResources(planetId);
-        assertGe(refunded.metal, 10_000);
-        assertGe(refunded.crystal, 10_000);
+        assertEq(refunded.metal, 10_000);
+        assertEq(refunded.crystal, 10_000);
         assertFalse(game.activeBuildingConstruction(planetId).active);
         assertEq(game.buildingLevel(planetId, Building.CrystalMine), 3);
 
