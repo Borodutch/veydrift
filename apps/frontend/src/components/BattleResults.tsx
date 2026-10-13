@@ -175,11 +175,11 @@ function Survivors({ input, stats }: { input: ContractBattleInput; stats: Battle
               <tbody>
                 {group.rows.map((row) => {
                   const shown = displayedSurvivorRow(row);
-                  const format = (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: shown.digits, maximumFractionDigits: shown.digits });
+                  const format = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: shown.digits, maximumFractionDigits: shown.digits });
                   return (
                     <tr className="border-t border-white/5" key={row.label}>
                       <td className="py-1 text-slate-300">{row.label}</td>
-                      <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString("en-US")}</td>
+                      <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString()}</td>
                       <td className={`py-1 pl-2 text-right ${shown.destroyed > 0 ? "text-red-200" : "text-slate-500"}`}>{format(shown.destroyed)}</td>
                       {repairs ? (
                         <td className={`py-1 pl-2 text-right ${shown.repaired ? "text-emerald-200" : "text-slate-500"}`}>{shown.repaired === null ? "—" : format(shown.repaired)}</td>
