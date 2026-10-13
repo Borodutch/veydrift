@@ -33,6 +33,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   if (role === "writer" && writerInternalPort !== undefined) {
     const handler = createRequestHandler({ role, logRequests: false });
     Bun.serve({
+      development: false,
       idleTimeout,
       port: writerInternalPort,
       hostname: "127.0.0.1",
@@ -54,6 +55,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     const localBootstrapHandler = createReaderBootstrapHandler(role);
 
     Bun.serve({
+      development: false,
       idleTimeout,
       port,
       hostname,
@@ -77,6 +79,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
 
   const handler = createRequestLoggingFetch(createRequestHandler({ role, logRequests: false }), role);
   Bun.serve({
+    development: false,
     idleTimeout,
     port,
     hostname,

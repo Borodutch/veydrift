@@ -1207,6 +1207,7 @@ if (import.meta.main) {
   console.info(JSON.stringify({ event: "media_sync", ...(await syncMedia()) }));
   await assertAnimationVariantsReady();
   Bun.serve({
+    development: false,
     hostname: "0.0.0.0",
     port,
     fetch(request) {
