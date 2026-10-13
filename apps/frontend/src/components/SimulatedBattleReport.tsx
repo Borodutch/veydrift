@@ -219,6 +219,7 @@ function SimulatedBattleReportDetails({
                     <>
                       <CompactFactRow label="Defenses destroyed" value={formatBattleComposition(report.defender.lostDefenses)} />
                       <CompactFactRow label="Repaired after battle" value={formatBattleComposition(report.defender.repairedDefenses)} />
+                      <CompactFactRow label="Defenses left after repair" value={formatBattleComposition(report.defender.survivingDefenses)} />
                     </>
                   ) : null}
                   <CompactFactRow label="Debris field (ships only)" value={formatCompactResources({ ...report.debris, deuterium: 0 })} />

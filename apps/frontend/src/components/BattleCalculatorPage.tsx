@@ -45,6 +45,8 @@ function initialSetup(): CalculatorSetup {
 }
 
 const URL_DEBOUNCE_MS = 400;
+/** The calculator samples the referee's exact combat math (#105). */
+export const CALCULATOR_SIMULATION = EXACT_SIMULATION;
 
 /** Coordinates-only fleets in a shared link, to load on open. The target keeps the link's supports. */
 export function fleetsToLoadOnOpen(setup: CalculatorSetup): Array<{ side: keyof CalculatorSetup; fleet: CalculatorFleet; keepSupports: boolean }> {
@@ -73,7 +75,7 @@ export function BattleCalculator() {
   const input = useMemo(() => setupToBattleInput(setup), [setup]);
   const fighting = setup.attackers.some((fleet) => fleetHasUnits(fleet, false))
     && setup.defenders.some((fleet, index) => fleetHasUnits(fleet, index === 0));
-  const simulation = useBattleSimulation(fighting ? input : null, verified ? activeCombatModel() : REFEREE_COMBAT_MODEL_VERSION, EXACT_SIMULATION);
+  const simulation = useBattleSimulation(fighting ? input : null, verified ? activeCombatModel() : REFEREE_COMBAT_MODEL_VERSION, CALCULATOR_SIMULATION);
 
   // Debounced: Safari throws a SecurityError after ~100 replaceState calls in 10s (one per keystroke).
   useEffect(() => {

@@ -26,8 +26,8 @@ import {
   type CalculatorFleet,
   type CalculatorSetup,
 } from "./battleCalculatorState";
-import { fleetsToLoadOnOpen } from "./components/BattleCalculatorPage";
-import { outcomePercents, survivorGroups } from "./components/BattleResults";
+import { CALCULATOR_SIMULATION, fleetsToLoadOnOpen } from "./components/BattleCalculatorPage";
+import { displayedSurvivorRow, outcomePercents, survivorGroups } from "./components/BattleResults";
 import combatCatalog from "../../../packages/contracts/combat-preview-catalog.json";
 
 afterEach(() => setActiveCombatModel(CONTRACT_COMBAT_MODEL_VERSION));
@@ -205,7 +205,9 @@ const screenshotBattle: ContractBattleInput = {
 };
 
 test("the calculator runs the referee's exact engine; mission forecasts keep the fast stream", () => {
+  expect(CALCULATOR_SIMULATION).toBe(EXACT_SIMULATION);
   expect(EXACT_SIMULATION.fast).toBe(false);
+  expect(EXACT_SIMULATION.minRuns).toBeGreaterThanOrEqual(300);
   expect(FAST_SIMULATION.fast).toBe(true);
   setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
   const stats = runBattleSimulation(screenshotBattle, { ...EXACT_SIMULATION, runs: 3 }, undefined, () => 0);
@@ -277,4 +279,16 @@ test("defenses left = start - destroyed + repaired, with the contract's 70% repa
   const reapers = survivorGroups(screenshotBattle, stats)[0]!.rows.find((row) => row.label === "Reaper")!;
   expect(reapers.repaired).toBeNull();
   expect(reapers.destroyed).toBeCloseTo(reapers.start - reapers.left, 6);
+});
+
+test("shown survivor rows always add up at one precision", () => {
+  // 1,189.4 / 832.6 / 1,643.2 rounded one by one would read 1,189 / 833 / 1,643 (off by one).
+  expect(displayedSurvivorRow({ label: "Rocket Launcher", start: 2_000, destroyed: 1_189.4, repaired: 832.6, left: 1_643.2 }))
+    .toEqual({ destroyed: 1_189, repaired: 833, left: 1_644, digits: 0 });
+  expect(displayedSurvivorRow({ label: "Reaper", start: 100, destroyed: 100 - 65.7, repaired: null, left: 65.7 }))
+    .toEqual({ destroyed: 34.3, repaired: null, left: 65.7, digits: 1 });
+  expect(displayedSurvivorRow({ label: "Plasma Turret", start: 5, destroyed: 0.04, repaired: 0, left: 4.96 }))
+    .toEqual({ destroyed: 0, repaired: 0, left: 5, digits: 1 });
+  expect(displayedSurvivorRow({ label: "Cruiser", start: 40, destroyed: 0, repaired: null, left: 40 }))
+    .toEqual({ destroyed: 0, repaired: null, left: 40, digits: 0 });
 });

@@ -34,23 +34,30 @@ export function refereeRandom(seed: Hex, counter = 0): (bound: number) => number
       BLOCK[8] = ((low & 0xff) << 24) | 0x80_0000;
       BLOCK[15] = MESSAGE_BITS;
       compress(midstate, BLOCK, digest);
-      // A word >= 2^256 - tail (tail < 2^45) needs its top 26 bytes all 0xff.
-      if (tail !== 0n && digest[0] === -1 && digest[1] === -1 && digest[2] === -1 && digest[3] === -1
-        && digest[4] === -1 && digest[5] === -1 && digest[6]! >>> 16 === 0xffff && digestWord(digest) >= U256 - tail) continue;
-      if (bound <= 2 ** 30 && (bound & (bound - 1)) === 0) return (digest[7]! >>> 0) % bound;
-      let remainder = 0;
-      if (bound <= 2 ** 21) {
-        for (let i = 0; i < 8; i++) remainder = (remainder * 2 ** 32 + (digest[i]! >>> 0)) % bound;
-      } else {
-        for (let i = 0; i < 8; i++) {
-          const word = digest[i]! >>> 0;
-          remainder = (remainder * 65_536 + (word >>> 16)) % bound;
-          remainder = (remainder * 65_536 + (word & 0xffff)) % bound;
-        }
-      }
-      return remainder;
+      const value = digestDraw(digest, bound, tail);
+      if (value >= 0) return value;
     }
   };
+}
+
+/** One digest (eight big-endian words) as a draw in [0, bound), or -1 when rejection sampling
+ * discards it (word >= 2^256 - tail, tail = 2^256 mod bound). */
+export function digestDraw(digest: Int32Array, bound: number, tail = tailOf(bound)): number {
+  // A word >= 2^256 - tail (tail < 2^37) needs its top 26 bytes all 0xff.
+  if (tail !== 0n && digest[0] === -1 && digest[1] === -1 && digest[2] === -1 && digest[3] === -1
+    && digest[4] === -1 && digest[5] === -1 && digest[6]! >>> 16 === 0xffff && digestWord(digest) >= U256 - tail) return -1;
+  if (bound <= 2 ** 30 && (bound & (bound - 1)) === 0) return (digest[7]! >>> 0) % bound;
+  let remainder = 0;
+  if (bound <= 2 ** 21) {
+    for (let i = 0; i < 8; i++) remainder = (remainder * 2 ** 32 + (digest[i]! >>> 0)) % bound;
+  } else {
+    for (let i = 0; i < 8; i++) {
+      const word = digest[i]! >>> 0;
+      remainder = (remainder * 65_536 + (word >>> 16)) % bound;
+      remainder = (remainder * 65_536 + (word & 0xffff)) % bound;
+    }
+  }
+  return remainder;
 }
 
 const U256 = 1n << 256n;
@@ -59,7 +66,8 @@ const DOMAIN = stringToBytes(RULES + ":random:");
 // revisit the block layout.
 if (DOMAIN.length !== 33) throw new Error("referee draw domain changed");
 const MESSAGE_BITS = (DOMAIN.length + 64) * 8;
-// The oracle's largest small bound: remainders times 2^16 stay exact in double precision.
+// Narrower than the oracle's 2^45 small-bound range so remainders times 2^16 stay exact in double
+// precision; the engine never draws above its target pool (at most REFEREE_FORECAST_MAX_UNITS, 1M).
 const SMALL_BOUND = 2 ** 37;
 const BLOCK = new Int32Array(16);
 let tails = new Map<number, bigint>();

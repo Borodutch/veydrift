@@ -90,11 +90,15 @@ export function BattleResults({ input, stats, running = false, detailed = false,
         <Fact label="Debris (ships only)" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
         <Fact label="Moon chance" value={`${Math.round(average(stats.moonChance, runs))}%`} />
         <Fact label="Rounds" value={average(stats.rounds, runs).toFixed(1)} />
-        <Fact label="Simulations" value={`${runs.toLocaleString()} ${stats.exact ? "exact" : "fast"}`} />
+        <Fact
+          label="Simulations"
+          title={stats.exact ? "Each run replays the referee's exact combat draws." : "A fast seeded sample of the referee's combat rules; the calculator uses the exact draws."}
+          value={`${runs.toLocaleString()} ${stats.exact ? "exact" : "(fast)"}`}
+        />
       </dl>
       {stats.timeLimited && !running ? (
         <p className="text-xs text-amber-200">
-          This battle is too large to simulate fully: the time limit allowed only {runs.toLocaleString()} runs, so these averages are less certain.
+          This battle is too large to simulate fully: the time limit allowed only {runs.toLocaleString()} run{runs === 1 ? "" : "s"}, so these averages are less certain.
         </p>
       ) : null}
       {detailed ? <Survivors input={input} stats={stats} /> : null}
@@ -102,9 +106,9 @@ export function BattleResults({ input, stats, running = false, detailed = false,
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
   return (
-    <div className="flex min-w-0 items-baseline justify-between gap-3">
+    <div className="flex min-w-0 items-baseline justify-between gap-3" title={title}>
       <dt className="text-slate-500">{label}</dt>
       <dd className="text-right tabular-nums text-slate-200">{value}</dd>
     </div>
@@ -137,44 +141,61 @@ export function survivorGroups(input: ContractBattleInput, stats: BattleStats): 
   ].filter((group) => group.rows.length);
 }
 
+/** One row as shown: every value at the same precision, and Left recomputed from the rounded
+ * Destroyed and Repaired so the row always adds up (start - destroyed + repaired). */
+export function displayedSurvivorRow(row: SurvivorRow): { destroyed: number; repaired: number | null; left: number; digits: number } {
+  const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
+  const values = [row.destroyed, row.repaired ?? 0, row.left];
+  const digits = values.some((value) => value < 100 && !Number.isInteger(round(value, 6))) ? 1 : 0;
+  const destroyed = round(row.destroyed, digits);
+  const repaired = row.repaired === null ? null : round(row.repaired, digits);
+  return { destroyed, repaired, left: round(row.start - destroyed + (repaired ?? 0), digits), digits };
+}
+
 function Survivors({ input, stats }: { input: ContractBattleInput; stats: BattleStats }) {
   const groups = survivorGroups(input, stats);
   const defenses = input.defender.defenses.some((count) => count > 0);
   return (
     <div className="grid gap-2">
       <div className="grid items-start gap-x-4 gap-y-2 sm:grid-cols-2">
-        {groups.map((group) => (
-          <table className="w-full text-xs tabular-nums" key={group.label}>
-            <thead>
-              <tr className="text-slate-500">
-                <th className="py-1 text-left font-medium">{group.label}</th>
-                <th className="py-1 pl-2 text-right font-medium">Start</th>
-                <th className="py-1 pl-2 text-right font-medium">Destroyed</th>
-                <th className="py-1 pl-2 text-right font-medium">Repaired</th>
-                <th className="py-1 pl-2 text-right font-medium">Left</th>
-              </tr>
-            </thead>
-            <tbody>
-              {group.rows.map((row) => (
-                <tr className="border-t border-white/5" key={row.label}>
-                  <td className="py-1 text-slate-300">{row.label}</td>
-                  <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString()}</td>
-                  <td className={`py-1 pl-2 text-right ${row.destroyed > 0 ? "text-red-200" : "text-slate-500"}`}>{formatAverage(row.destroyed)}</td>
-                  <td className={`py-1 pl-2 text-right ${row.repaired ? "text-emerald-200" : "text-slate-500"}`}>{row.repaired === null ? "—" : formatAverage(row.repaired)}</td>
-                  <td className={`py-1 pl-2 text-right ${row.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{formatAverage(row.left)}</td>
+        {groups.map((group) => {
+          // Only the target's table has defenses, and so a Repaired column.
+          const repairs = group.rows.some((row) => row.repaired !== null);
+          return (
+            <table className="w-full text-xs tabular-nums" key={group.label}>
+              <thead>
+                <tr className="text-slate-500">
+                  <th className="py-1 text-left font-medium">{group.label}</th>
+                  <th className="py-1 pl-2 text-right font-medium">Start</th>
+                  <th className="py-1 pl-2 text-right font-medium">Destroyed</th>
+                  {repairs ? <th className="py-1 pl-2 text-right font-medium">Repaired</th> : null}
+                  <th className="py-1 pl-2 text-right font-medium">{repairs ? "Left after repair" : "Left"}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        ))}
+              </thead>
+              <tbody>
+                {group.rows.map((row) => {
+                  const shown = displayedSurvivorRow(row);
+                  const format = (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: shown.digits, maximumFractionDigits: shown.digits });
+                  return (
+                    <tr className="border-t border-white/5" key={row.label}>
+                      <td className="py-1 text-slate-300">{row.label}</td>
+                      <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString("en-US")}</td>
+                      <td className={`py-1 pl-2 text-right ${shown.destroyed > 0 ? "text-red-200" : "text-slate-500"}`}>{format(shown.destroyed)}</td>
+                      {repairs ? (
+                        <td className={`py-1 pl-2 text-right ${shown.repaired ? "text-emerald-200" : "text-slate-500"}`}>{shown.repaired === null ? "—" : format(shown.repaired)}</td>
+                      ) : null}
+                      <td className={`py-1 pl-2 text-right ${shown.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{format(shown.left)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          );
+        })}
       </div>
       <p className="text-[11px] text-slate-500">
         Averages per battle.{defenses ? " After the battle 70% of each destroyed defense type is rebuilt (a single destroyed unit has a 70% chance), so Left and defender losses count defenses after repair." : ""} Ships are never repaired, and debris comes from destroyed ships only.
       </p>
     </div>
   );
-}
-
-function formatAverage(value: number): string {
-  return value >= 100 || Number.isInteger(value) ? Math.round(value).toLocaleString() : value.toFixed(1);
 }

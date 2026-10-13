@@ -16,8 +16,9 @@ export type BattleSimulation =
 
 // Small battles finish all runs quickly; large ones stop after the time budget once minRuns are
 // done, and huge ones (where minRuns alone would take minutes) after maxMs regardless.
-/** The calculator: the referee's exact draws (~5x a fast run, ~6 ms for 100 ships vs 2,000 defenses),
- * so a longer budget still gets several hundred runs; battles that cannot reach minRuns by maxMs say so. */
+/** The calculator: the referee's exact draws, about 5-10x the cost of a fast run (~5 ms on a desktop
+ * for 100 ships vs 2,000 defenses), so a longer budget still gets several hundred runs. Large battles,
+ * especially on phones, can stop at maxMs below minRuns; the results then say so (timeLimited). */
 export const EXACT_SIMULATION: BattleSimulationLimits = { runs: 1_000, minRuns: 300, budgetMs: 5_000, maxMs: 15_000, fast: false };
 /** Mission forecasts: several can run at once on a phone, for rosters that may still change before
  * the battle, so they keep the fast stream (same rules; ticket #105 measured averages within ~1-3%). */
