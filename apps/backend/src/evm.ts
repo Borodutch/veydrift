@@ -4442,7 +4442,7 @@ export class VeydriftGameReader implements ChainReader {
           fromBlock: toQuantity(this.indexFromBlock),
           toBlock: "latest",
           topics: [
-            buildingStartedTopic,
+            [buildingStartedTopic, buildingDemolitionStartedTopic],
             toTopic(planetId),
             toTopic(BigInt(queue.itemId))
           ]
