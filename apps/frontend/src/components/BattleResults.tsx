@@ -35,7 +35,7 @@ export function outcomePercents(outcomes: BattleStats["outcomes"], runs: number)
 }
 
 /** Simulated odds, losses, debris and moon chance; `detailed` adds per-unit survivors. */
-export function BattleResults({ input, stats, running = false, detailed = false, calculatorLink = false, report = null }: {
+export function BattleResults({ input, stats, running = false, detailed = false, calculatorLink = false, report = null, modelVersion }: {
   input: ContractBattleInput;
   stats: BattleStats;
   running?: boolean | undefined;
@@ -43,6 +43,8 @@ export function BattleResults({ input, stats, running = false, detailed = false,
   calculatorLink?: boolean | undefined;
   /** An already simulated battle for the report control; otherwise it replays the likeliest sample. */
   report?: ContractBattleResult | null | undefined;
+  /** The model `stats` were simulated with, so the replayed sample matches the odds (default: active model). */
+  modelVersion?: number | undefined;
 }) {
   const { runs } = stats;
   const debris = { metal: average(stats.debris.metal, runs), crystal: average(stats.debris.crystal, runs) };
@@ -64,7 +66,7 @@ export function BattleResults({ input, stats, running = false, detailed = false,
             ))}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <SimulatedBattleReportControl input={input} report={report} seed={sample} />
+            <SimulatedBattleReportControl input={input} modelVersion={modelVersion} report={report} seed={sample} />
             {calculatorLink ? (
               <a
                 className="inline-flex h-6 items-center gap-1 rounded border border-white/15 px-2 text-[11px] font-medium text-slate-300 transition hover:border-signal/50 hover:text-white"

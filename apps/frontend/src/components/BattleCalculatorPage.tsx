@@ -7,9 +7,11 @@ import {
   emptyFleet,
   emptySetup,
   encodeSetup,
+  fleetHasUnits,
   isFleetShip,
   isPlayableShip,
   loadForcesAt,
+  MAX_COORDS_LENGTH,
   MAX_FLEETS,
   setupToBattleInput,
   type CalculatorFleet,
@@ -42,7 +44,15 @@ function initialSetup(): CalculatorSetup {
   return (encoded && decodeSetup(encoded)) || emptySetup();
 }
 
-const hasUnits = (fleet: CalculatorFleet) => fleet.ships.some(Boolean) || fleet.defenses.some(Boolean);
+const URL_DEBOUNCE_MS = 400;
+
+/** Coordinates-only fleets in a shared link, to load on open. The target keeps the link's supports. */
+export function fleetsToLoadOnOpen(setup: CalculatorSetup): Array<{ side: keyof CalculatorSetup; fleet: CalculatorFleet; keepSupports: boolean }> {
+  return (["attackers", "defenders"] as const).flatMap((side) => setup[side].flatMap((fleet, index) => {
+    const target = side === "defenders" && index === 0;
+    return fleet.coords && !fleetHasUnits(fleet, target) ? [{ side, fleet, keepSupports: target && setup.defenders.length > 1 }] : [];
+  }));
+}
 
 export function BattleCalculatorApp() {
   return (
@@ -56,51 +66,64 @@ export function BattleCalculatorApp() {
 
 export function BattleCalculator() {
   const [setup, setSetup] = useState(initialSetup);
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  // Per-fleet UI state is keyed by fleet id, so removing a fleet never moves it onto a neighbour.
+  const [loading, setLoading] = useState<Record<number, boolean>>({});
+  const [errors, setErrors] = useState<Record<number, string>>({});
   const verified = useVerifiedCombatModel();
   const input = useMemo(() => setupToBattleInput(setup), [setup]);
-  const fighting = setup.attackers.some(hasUnits) && setup.defenders.some(hasUnits);
+  const fighting = setup.attackers.some((fleet) => fleetHasUnits(fleet, false))
+    && setup.defenders.some((fleet, index) => fleetHasUnits(fleet, index === 0));
   const simulation = useBattleSimulation(fighting ? input : null, verified ? activeCombatModel() : REFEREE_COMBAT_MODEL_VERSION);
 
+  // Debounced: Safari throws a SecurityError after ~100 replaceState calls in 10s (one per keystroke).
   useEffect(() => {
-    const path = setup.attackers.some(hasUnits) || setup.defenders.some(hasUnits) || setup.attackers.length > 1 || setup.defenders.length > 1
-      ? `/calculator?b=${encodeSetup(setup)}` : "/calculator";
-    window.history.replaceState(null, "", path);
+    const timer = setTimeout(() => {
+      const used = setup.attackers.length > 1 || setup.defenders.length > 1
+        || [...setup.attackers, ...setup.defenders].some((fleet) => fleet.ships.some(Boolean) || fleet.defenses.some(Boolean));
+      try {
+        window.history.replaceState(null, "", used ? `/calculator?b=${encodeSetup(setup)}` : "/calculator");
+      } catch {
+        // The address bar is only a share convenience; the calculator keeps working.
+      }
+    }, URL_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [setup]);
 
-  const update = (side: keyof CalculatorSetup, index: number, change: (fleet: CalculatorFleet) => CalculatorFleet) =>
-    setSetup((current) => ({ ...current, [side]: current[side].map((fleet, at) => at === index ? change(fleet) : fleet) }));
+  const update = (side: keyof CalculatorSetup, id: number, change: (fleet: CalculatorFleet) => CalculatorFleet) =>
+    setSetup((current) => ({ ...current, [side]: current[side].map((fleet) => fleet.id === id ? change(fleet) : fleet) }));
 
-  const load = async (side: keyof CalculatorSetup, index: number, fleet: CalculatorFleet) => {
-    const key = `${side}:${index}`;
-    setLoading((current) => ({ ...current, [key]: true }));
-    setErrors((current) => ({ ...current, [key]: "" }));
+  /** `keepSupports`: fill only the target, keeping the supports already in the setup. */
+  const load = async (side: keyof CalculatorSetup, fleet: CalculatorFleet, keepSupports = false) => {
+    setLoading((current) => ({ ...current, [fleet.id]: true }));
+    setErrors((current) => ({ ...current, [fleet.id]: "" }));
     try {
       const loaded = await loadForcesAt(await resolveApiUrl(), fleet.coords, fleet.moon);
       setSetup((current) => {
-        // The fleet list may have changed while loading; only fill the fleet that asked.
-        if (current[side][index]?.coords !== fleet.coords) return current;
-        const forces = current[side].map((existing, at) => at === index ? loaded.force : existing);
+        // The fleet list may have changed while loading; only fill the fleet that asked, if still there.
+        const index = current[side].findIndex((existing) => existing.id === fleet.id);
+        const existing = current[side][index];
+        if (!existing || existing.coords !== fleet.coords || existing.moon !== fleet.moon) return current;
+        const force = { ...loaded.force, id: fleet.id };
         // The target brings the fleets stationed in its defense; they replace earlier supports.
-        if (side === "defenders" && index === 0) return { ...current, defenders: [loaded.force, ...loaded.supports].slice(0, MAX_FLEETS) };
-        return { ...current, [side]: forces };
+        if (side === "defenders" && index === 0 && !keepSupports) {
+          return { ...current, defenders: [force, ...loaded.supports].slice(0, MAX_FLEETS) };
+        }
+        return { ...current, [side]: current[side].map((other) => other.id === fleet.id ? force : other) };
       });
     } catch (error) {
-      setErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : "Could not load these coordinates." }));
+      setErrors((current) => ({ ...current, [fleet.id]: error instanceof Error ? error.message : "Could not load these coordinates." }));
     } finally {
-      setLoading((current) => ({ ...current, [key]: false }));
+      setLoading((current) => ({ ...current, [fleet.id]: false }));
     }
   };
 
-  // Shared links may carry coordinates only; fill those forces once on open.
+  // Shared links may carry coordinates only; fill those forces once on open. Fleets the link already
+  // defines are kept: a coordinates-only target never replaces the supports the link carries.
   const loadedOnOpen = useRef(false);
   useEffect(() => {
     if (loadedOnOpen.current) return;
     loadedOnOpen.current = true;
-    (["attackers", "defenders"] as const).forEach((side) => setup[side].forEach((fleet, index) => {
-      if (fleet.coords && !hasUnits(fleet)) void load(side, index, fleet);
-    }));
+    for (const { side, fleet, keepSupports } of fleetsToLoadOnOpen(setup)) void load(side, fleet, keepSupports);
   }, []);
 
   return (
@@ -109,7 +132,7 @@ export function BattleCalculator() {
         <h1 className="text-xl font-semibold text-white">Battle calculator</h1>
         <button
           className="rounded px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-white/[0.06] hover:text-white"
-          onClick={() => { setSetup(emptySetup()); setErrors({}); }}
+          onClick={() => { setSetup(emptySetup()); setErrors({}); setLoading({}); }}
           type="button"
         >
           Clear
@@ -122,7 +145,13 @@ export function BattleCalculator() {
         ) : !fighting ? (
           <p className="text-sm text-slate-400">Add ships to both sides.</p>
         ) : simulation.status !== "idle" && simulation.stats ? (
-          <BattleResults detailed input={simulation.input} running={simulation.status === "running"} stats={simulation.stats} />
+          <BattleResults
+            detailed
+            input={simulation.input}
+            modelVersion={simulation.modelVersion}
+            running={simulation.status === "running"}
+            stats={simulation.stats}
+          />
         ) : (
           <p className="text-sm text-slate-400" aria-busy="true">Simulating…</p>
         )}
@@ -136,14 +165,14 @@ export function BattleCalculator() {
             </h2>
             {setup[side].map((fleet, index) => (
               <FleetCard
-                error={errors[`${side}:${index}`]}
+                error={errors[fleet.id]}
                 fleet={fleet}
-                key={index}
-                loading={Boolean(loading[`${side}:${index}`])}
-                onChange={(change) => update(side, index, change)}
-                onLoad={() => void load(side, index, fleet)}
+                key={fleet.id}
+                loading={Boolean(loading[fleet.id])}
+                onChange={(change) => update(side, fleet.id, change)}
+                onLoad={() => void load(side, fleet)}
                 onRemove={(side === "attackers" ? setup.attackers.length > 1 : index > 0)
-                  ? () => setSetup((current) => ({ ...current, [side]: current[side].filter((_, at) => at !== index) }))
+                  ? () => setSetup((current) => ({ ...current, [side]: current[side].filter((other) => other.id !== fleet.id) }))
                   : undefined}
                 target={side === "defenders" && index === 0}
                 title={side === "attackers" ? `Attacker ${index + 1}` : index === 0 ? "Target" : `Support ${index}`}
@@ -188,8 +217,9 @@ function FleetCard({ error, fleet, loading, onChange, onLoad, onRemove, target, 
           <input
             aria-label={`${title} coordinates`}
             className="h-8 w-24 rounded surface-inset px-2 text-xs tabular-nums text-slate-100 placeholder:text-slate-600"
+            maxLength={MAX_COORDS_LENGTH}
             onInput={(event) => {
-              const coords = event.currentTarget.value;
+              const coords = event.currentTarget.value.slice(0, MAX_COORDS_LENGTH);
               onChange((current) => ({ ...current, coords }));
             }}
             placeholder="1:23:4"

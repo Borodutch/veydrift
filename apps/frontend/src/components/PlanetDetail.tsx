@@ -34,7 +34,7 @@ import { formatScore } from "../numberFormat";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
-import { calculatorHref, emptyFleet } from "../battleCalculatorState";
+import { simulateHref as calculatorSimulateHref } from "../battleCalculatorState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -57,6 +57,8 @@ interface Props {
   defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
   originCoords?: Coordinates | undefined;
+  /** The mission origin is the moon at `originCoords`. */
+  originIsMoon?: boolean | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
@@ -156,6 +158,7 @@ export function PlanetDetail({
   defenseState = null,
   homeCoords,
   originCoords = homeCoords,
+  originIsMoon = false,
   homePlanetId,
   homePlanet,
   onAction,
@@ -357,6 +360,7 @@ export function PlanetDetail({
                   coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
                   onAction={onAction}
                   originCoords={originCoords}
+                  originIsMoon={originIsMoon}
                   planet={planet}
                 />
               ) : null}
@@ -538,6 +542,7 @@ function PlanetMissionControls({
   coords,
   onAction,
   originCoords,
+  originIsMoon = false,
   planet,
 }: {
   actions: GalaxyAction[];
@@ -545,16 +550,13 @@ function PlanetMissionControls({
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   originCoords?: Coordinates | undefined;
+  originIsMoon?: boolean | undefined;
   planet: Planet | undefined;
 }) {
   if (actions.length === 0) return null;
-  const coordText = (at: Coordinates) => `${at.galaxy}:${at.system}:${at.position}`;
   // The calculator loads both bodies' public forces when it opens.
   const simulateHref = planet && actions.some((action) => action.kind === "attack")
-    ? calculatorHref({
-        attackers: [{ ...emptyFleet(), coords: originCoords ? coordText(originCoords) : "" }],
-        defenders: [{ ...emptyFleet(), coords: coordText(coords) }],
-      })
+    ? calculatorSimulateHref({ ...coords, moon: false }, originCoords && { ...originCoords, moon: originIsMoon })
     : null;
 
   return (

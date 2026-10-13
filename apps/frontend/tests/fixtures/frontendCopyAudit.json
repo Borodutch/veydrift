@@ -894,9 +894,9 @@
   },
   {
     "before": "The battle preview worker could not start.",
-    "after": "The battle preview could not start. Please retry.",
+    "after": "The battle simulation failed. Please retry.",
     "locations": [
-      "apps/frontend/src/battlePreviewScheduler.ts:110"
+      "apps/frontend/src/battleSimulation.ts:42"
     ],
     "disposition": "Replace implementation detail with player-facing state/recovery"
   },
@@ -1013,9 +1013,9 @@
   },
   {
     "before": "The battle preview worker timed out.",
-    "after": "The battle preview took too long. Please retry.",
+    "after": "No timeout copy: large battles stop at the simulation time budget and show partial results.",
     "locations": [
-      "apps/frontend/src/battlePreviewScheduler.ts:106"
+      "apps/frontend/src/battleSimulation.ts:22"
     ],
     "disposition": "Replace implementation detail with player-facing state/recovery"
   },
@@ -1084,9 +1084,9 @@
   },
   {
     "before": "The battle preview worker failed.",
-    "after": "The battle preview failed. Please retry.",
+    "after": "The battle simulation failed. Please retry.",
     "locations": [
-      "apps/frontend/src/battlePreviewScheduler.ts:99"
+      "apps/frontend/src/battleSimulation.ts:58"
     ],
     "disposition": "Replace implementation detail with player-facing state/recovery"
   },

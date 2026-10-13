@@ -13,6 +13,7 @@ import { useMemo } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
+import { simulateHref } from "../battleCalculatorState";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
 import { formatAttackBlockReason, type AttackProtectionStatus, type GalaxyActionState } from "./GalaxyView";
@@ -51,6 +52,8 @@ type PublicMoonDetailProps = {
   coords: Coordinates;
   defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
+  /** The mission origin is the moon at `homeCoords`. */
+  originIsMoon?: boolean | undefined;
   homePlanetId?: string | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
@@ -66,6 +69,7 @@ export function PublicMoonDetail({
   coords,
   defenseState = null,
   homeCoords,
+  originIsMoon = false,
   homePlanetId,
   onAction,
   onBack,
@@ -195,7 +199,20 @@ export function PublicMoonDetail({
 
             <div className={`${isHome ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.moonName ?? "Moon"}</h2>
-              <MoonActionStrip actions={visibleActions} showUnavailable />
+              <div className="flex flex-col items-start gap-2 sm:items-end">
+                <MoonActionStrip actions={visibleActions} showUnavailable />
+                {visibleActions.some((action) => action.kind === "attack") ? (
+                  // The calculator loads the moon's and the origin's public forces when it opens.
+                  <a
+                    className="text-xs font-medium text-slate-400 transition hover:text-white"
+                    href={simulateHref({ ...coords, moon: true }, homeCoords && { ...homeCoords, moon: originIsMoon })}
+                    rel="noopener"
+                    target="_blank"
+                  >
+                    Simulate <span aria-hidden="true">↗</span>
+                  </a>
+                ) : null}
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
