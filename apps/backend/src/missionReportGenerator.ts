@@ -159,6 +159,7 @@ service.start();
 
 const port = Number.parseInt(process.env.PORT ?? "4101", 10);
 Bun.serve({
+  development: false,
   port,
   fetch(request) {
     const url = new URL(request.url);
