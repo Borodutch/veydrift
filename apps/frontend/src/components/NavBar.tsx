@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createPortal, flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, ChevronDown, ChevronsUpDown, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Calculator, ChevronDown, ChevronsUpDown, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -99,6 +99,9 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
   { key: "alliance-invites", label: "Earn $10", mobileLabel: "Earn $10", icon: Mail },
 ];
+
+// The public battle calculator opens in its own tab so the game keeps its state.
+const calculatorLink = { href: "/calculator", label: "Calculator", icon: Calculator, after: "raid-target-finder" as Page };
 
 // Mobile menu order: planet screens, then fleet, then the wider universe.
 const mobilePageOrder = ([
@@ -459,7 +462,7 @@ export function NavBar({
       <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
         <div className={`flex min-h-0 flex-1 flex-col gap-2 ${sidebarCollapsed ? "p-2" : "p-2.5"}`}>
           <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-0.5 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
-            {pages.map((page) => (
+            {pages.flatMap((page) => [
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                 href={buildInspectPath({ kind: "page", page: page.key })}
@@ -468,8 +471,20 @@ export function NavBar({
                 label={page.label}
                 collapsed={sidebarCollapsed}
                 onClick={() => onNavigate(page.key)}
-              />
-            ))}
+              />,
+              page.key === calculatorLink.after ? (
+                <NavItem
+                  active={false}
+                  collapsed={sidebarCollapsed}
+                  external
+                  href={calculatorLink.href}
+                  icon={calculatorLink.icon}
+                  key={calculatorLink.href}
+                  label={calculatorLink.label}
+                  onClick={() => undefined}
+                />
+              ) : null,
+            ])}
           </div>
 
           <button
@@ -556,7 +571,7 @@ export function NavBar({
               id="mobile-navigation-menu"
             >
               <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1 min-[375px]:gap-1.5 sm:gap-2">
-                {mobilePageOrder.map((page) => (
+                {mobilePageOrder.flatMap((page) => [
                   <MobileTab
                     active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                     href={buildInspectPath({ kind: "page", page: page.key })}
@@ -565,8 +580,19 @@ export function NavBar({
                     label={page.label}
                     onClick={() => handleMobileNavigate(page.key)}
                     shortLabel={page.key === "infrastructure" ? "Infra" : undefined}
-                  />
-                ))}
+                  />,
+                  page.key === calculatorLink.after ? (
+                    <MobileTab
+                      active={false}
+                      external
+                      href={calculatorLink.href}
+                      icon={calculatorLink.icon}
+                      key={calculatorLink.href}
+                      label={calculatorLink.label}
+                      onClick={closeMobileMenu}
+                    />
+                  ) : null,
+                ])}
               </nav>
               {account ? (
                 <div className="rounded-xl border border-cyan-300/15 bg-[linear-gradient(135deg,rgba(34,211,238,0.09),rgba(13,24,41,0.9)_60%)]">
@@ -960,6 +986,19 @@ function handleSectionLinkPointerUp(
   if (view.location.href !== targetUrl) view.location.assign(targetUrl);
 }
 
+/** Section links route inside the app; an external link is a plain new-tab anchor (onClick still runs). */
+function sectionLinkHandlers(onClick: () => void, external: boolean) {
+  if (external) return { onClick, rel: "noopener", target: "_blank" };
+  return {
+    onClick: (event: JSX.TargetedMouseEvent<HTMLAnchorElement>) => handleSectionLinkClick(event, onClick),
+    onLostPointerCapture: clearSectionLinkPointerActivation,
+    onPointerCancel: clearSectionLinkPointerActivation,
+    onPointerDown: handleSectionLinkPointerDown,
+    onPointerMove: handleSectionLinkPointerMove,
+    onPointerUp: (event: JSX.TargetedPointerEvent<HTMLAnchorElement>) => handleSectionLinkPointerUp(event, onClick),
+  };
+}
+
 export function NavItem({
   active,
   href,
@@ -967,6 +1006,7 @@ export function NavItem({
   label,
   onClick,
   collapsed = false,
+  external = false,
 }: {
   active: boolean;
   href: string;
@@ -974,6 +1014,8 @@ export function NavItem({
   label: string;
   onClick: () => void;
   collapsed?: boolean;
+  /** A plain new-tab link outside the app's section routing. */
+  external?: boolean;
 }) {
   return (
     <a
@@ -984,12 +1026,7 @@ export function NavItem({
           : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
       }`}
       href={href}
-      onClick={(event) => handleSectionLinkClick(event, onClick)}
-      onLostPointerCapture={clearSectionLinkPointerActivation}
-      onPointerCancel={clearSectionLinkPointerActivation}
-      onPointerDown={handleSectionLinkPointerDown}
-      onPointerMove={handleSectionLinkPointerMove}
-      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
+      {...sectionLinkHandlers(onClick, external)}
       aria-current={active ? "page" : undefined}
     >
       <span className={active ? sidebarIconClassName.replace("text-slate-400", "text-cyan-200") : sidebarIconClassName}>
@@ -1072,6 +1109,7 @@ export function MobileTab({
   label,
   onClick,
   shortLabel,
+  external = false,
 }: {
   active: boolean;
   href: string;
@@ -1080,6 +1118,8 @@ export function MobileTab({
   onClick: () => void;
   /** Shown instead of the label on very narrow screens. */
   shortLabel?: string | undefined;
+  /** A plain new-tab link outside the app's section routing. */
+  external?: boolean;
 }) {
   return (
     <a
@@ -1089,12 +1129,7 @@ export function MobileTab({
           : "border border-cyan-300/[0.12] bg-cyan-400/[0.05] text-slate-200 hover:border-cyan-300/35 hover:bg-cyan-400/10 hover:text-white"
       }`}
       href={href}
-      onClick={(event) => handleSectionLinkClick(event, onClick)}
-      onLostPointerCapture={clearSectionLinkPointerActivation}
-      onPointerCancel={clearSectionLinkPointerActivation}
-      onPointerDown={handleSectionLinkPointerDown}
-      onPointerMove={handleSectionLinkPointerMove}
-      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
+      {...sectionLinkHandlers(onClick, external)}
       aria-current={active ? "page" : undefined}
     >
       <Icon aria-hidden="true" className={`shrink-0 ${active ? "" : "text-cyan-300"}`} size={14} strokeWidth={1.9} />

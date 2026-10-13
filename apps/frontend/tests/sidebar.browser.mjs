@@ -177,7 +177,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.querySelector("main h1").textContent'),'research');
     assert.equal(await expanded(),'false');
     assert.equal(await evaluate('document.querySelector('+JSON.stringify(research)+').getAttribute("aria-current")'),'page');
-    assert.equal(await evaluate('document.querySelectorAll('+JSON.stringify(desktop+' a[aria-label]')+').length'),13);
+    assert.equal(await evaluate('document.querySelectorAll('+JSON.stringify(desktop+' a[aria-label]')+').length'),14);
     // Hover shows the same tooltip outside the scroll container.
     const point=await evaluate('(() => {const r=document.querySelector('+JSON.stringify(desktop+' a[aria-label="Empire"]')+').getBoundingClientRect();return {x:r.x+10,y:r.y+10};})()');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
@@ -209,7 +209,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
     await assertFocusedTooltip('Empire');
     let scroll=0;
-    for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Earn $10']) {
+    for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Calculator','Earn $10']) {
       await press('Tab');
       scroll=await assertFocusedTooltip(label);
     }
@@ -265,7 +265,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       assert.equal(await evaluate('getComputedStyle(document.querySelector('+JSON.stringify(desktop)+')).display'),'none');
       await click('summary[aria-controls="mobile-navigation-menu"]');
       assert.equal(await evaluate('document.querySelector("#mobile-navigation-menu").getBoundingClientRect().width>0'),true);
-      assert.equal(await evaluate('document.querySelectorAll("#mobile-navigation-menu nav a").length'),13);
+      assert.equal(await evaluate('document.querySelectorAll("#mobile-navigation-menu nav a").length'),14);
       const mobilePage=width === 390 ? "overview" : "galaxy";
       const mobileLink = await evaluate('[...document.querySelectorAll("#mobile-navigation-menu nav a")].find(a=>a.textContent==='+JSON.stringify(mobilePage === "galaxy" ? "Galaxy" : "Empire")+').getAttribute("href")');
       await click('nav[aria-label="Mobile app sections"] a[href="'+mobileLink+'"]');

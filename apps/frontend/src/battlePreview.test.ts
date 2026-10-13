@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  CONTRACT_BATTLE_SAMPLE_COUNT,
   deterministicBattleSampleWord,
-  forecastContractBattle,
   runContractBattle,
+  simulateBattleStats,
   type BattleFleetParticipant,
   type CombatTechnology,
   type ContractBattleInput,
@@ -147,20 +146,17 @@ describe("contract battle preview parity", () => {
     expect(laneTwo.defender.counterplay[0]?.laneGroup).toBe(2);
   });
 
-  test("uses reproducible 256-bit samples and reports probability/loss ranges", () => {
+  test("uses reproducible 256-bit samples and reports outcome odds and average losses", () => {
     const input = battle(ships([0, 1]), ships([0, 27]), defenses());
-    const first = forecastContractBattle(input);
-    const second = forecastContractBattle(input);
+    const first = simulateBattleStats(input, 128);
+    const second = simulateBattleStats(input, 128);
 
-    expect(first.samples).toHaveLength(CONTRACT_BATTLE_SAMPLE_COUNT);
-    expect(first.samples.map((sample) => sample.randomWord)).toEqual(
-      second.samples.map((sample) => sample.randomWord),
-    );
-    expect(first.outcomeCounts).toEqual(second.outcomeCounts);
-    expect(first.outcomeCounts.draw).toBeGreaterThan(0);
-    expect(first.outcomeCounts.defeat).toBeGreaterThan(0);
-    expect(first.attackerLosses.best).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
-    expect(first.attackerLosses.worst).toEqual({ metal: 2_000, crystal: 2_000, deuterium: 0 });
+    expect(first).toEqual(second);
+    expect(first.runs).toBe(128);
+    expect(first.outcomes.draw).toBeGreaterThan(0);
+    expect(first.outcomes.defeat).toBeGreaterThan(0);
+    // One Small Cargo (2,000 metal / 2,000 crystal) is lost exactly in the defeats.
+    expect(first.attackerLosses).toEqual({ metal: 2_000 * first.outcomes.defeat, crystal: 2_000 * first.outcomes.defeat, deuterium: 0 });
     expect(deterministicBattleSampleWord(0)).toMatch(/^0x[0-9a-f]{64}$/);
   });
 

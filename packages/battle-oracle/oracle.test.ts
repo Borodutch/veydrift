@@ -125,6 +125,21 @@ test("rapidfire is target-dependent and uncapped; chunked replay is identical", 
   expect(finish(initialize(big)).rounds.some((round) => round.shots[0] > 64n)).toBe(true);
 });
 
+test("a simulation draw source replaces the SHA-256 stream; without one the referee stream is untouched", () => {
+  const i = input(); i.rapidfire = [{ shooter: 0, target: 1, factor: 3 }];
+  const exact = finish(initialize(i));
+  let draws = 0;
+  const simulated = initialize(i);
+  simulated.random = (bound) => { draws++; return (draws * 7919) % bound; };
+  finish(simulated);
+  expect(simulated.counter).toBe(0n);
+  expect(draws).toBeGreaterThan(0);
+  // The hook is per state: a fresh state still replays the referee's exact stream.
+  const again = finish(initialize(i));
+  expect(result(again)).toEqual(result(exact));
+  expect(again.counter).toBe(exact.counter);
+});
+
 test("zero-step and terminal advances are no-ops; pending battles have no result", () => {
   const s = initialize(input()); expect(advance(s, 0)).toBe(0); expect(() => result(s)).toThrow("incomplete");
   finish(s); const counter = s.counter; expect(advance(s, 100)).toBe(0); expect(s.counter).toBe(counter);

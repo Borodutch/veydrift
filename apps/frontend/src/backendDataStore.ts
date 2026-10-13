@@ -9,6 +9,7 @@ import {
   fetchAllianceState,
   fetchAttackProtectionStatus,
   fetchBattleReports,
+  fetchRefereeBattleReport,
   fetchBurningChickenForOwner,
   fetchDefenseState,
   fetchFleetMissionArchive,
@@ -67,6 +68,7 @@ import {
   watchPlanet,
   type AttackProtectionStatus,
   type BattleReportSummary,
+  type RefereeBattleReport,
   type BurningChickenConfig,
   type ChainAllianceState,
   type ChainDefenseState,
@@ -463,6 +465,11 @@ export class BackendDataStore {
     battleReports: (): BackendDataQueryDescriptor<BattleReportSummary[]> => {
       const key = cacheKey("battle-reports");
       return this.query(key, () => this.refresh(key, (signal) => fetchBattleReports(this.apiBaseUrl, signal), {
+      }));
+    },
+    refereeBattleReport: (battleId: string): BackendDataQueryDescriptor<RefereeBattleReport | null> => {
+      const key = cacheKey("referee-battle-report", battleId);
+      return this.query(key, () => this.refresh(key, (signal) => fetchRefereeBattleReport(this.apiBaseUrl, battleId, signal), {
       }));
     },
     burningChicken: (owner: string, tokenId: string, config: BurningChickenConfig): BackendDataQueryDescriptor<unknown> => {

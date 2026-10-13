@@ -3,6 +3,7 @@ import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { MissionBattleForecastPanel } from "./MissionBattleForecastPanel";
+import { RefereeBattleRounds } from "./RefereeBattleRounds";
 import { MissionDetailSkeleton } from "./LoadingSkeletons";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { formatDurationUntil } from "../durationFormat";
@@ -10,7 +11,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
+import { type BattleReport, type BattleReportParticipant, type RefereeBattleReport, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import {
   isFleetRecallable,
   isMissionQueued,
@@ -40,6 +41,8 @@ export type MissionDetailActionState =
 
 interface MissionDetailPageProps {
   actionState: MissionDetailActionState;
+  /** The referee's published report for a settled battle; legacy battles show indexed rounds. */
+  refereeReport?: RefereeBattleReport | null | undefined;
   activePlanetId?: string | undefined;
   canTransact: boolean;
   detail?: MissionDetailResponse | undefined;
@@ -63,6 +66,7 @@ interface MissionDetailPageProps {
 
 export function MissionDetailPage({
   actionState,
+  refereeReport,
   activePlanetId,
   canTransact,
   detail,
@@ -168,6 +172,7 @@ export function MissionDetailPage({
           {detail ? <MissionBattleForecastPanel detail={detail} now={now} /> : null}
           <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
           <MissionBattleReport
+            refereeReport={refereeReport}
             defenderState={detail?.defenderPlanetState ?? undefined}
             materialization={detail?.battleReportMaterialization}
             mission={mission}
@@ -449,12 +454,14 @@ function RouteLegTiming({
 }
 
 function MissionBattleReport({
+  refereeReport,
   defenderState,
   materialization,
   mission,
   now,
   report,
 }: {
+  refereeReport?: RefereeBattleReport | null | undefined;
   defenderState?: DefenderPlanetState | undefined;
   materialization?: MissionDetailResponse["battleReportMaterialization"] | undefined;
   mission: FleetMissionSummary;
@@ -679,8 +686,13 @@ function MissionBattleReport({
         </Panel>
       </div>
 
-      {/* Only render the round-by-round block when the indexed log actually exposes snapshots. */}
-      {report.roundReports.length > 0 ? (
+      {/* Referee-settled battles publish per-unit rounds; legacy battles keep their indexed summaries. */}
+      {refereeReport && refereeReport.rounds.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round-by-round combat</p>
+          <RefereeBattleRounds report={refereeReport} />
+        </div>
+      ) : report.roundReports.length > 0 ? (
         <div className="mt-4">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round-by-round combat</p>
           <div className="grid gap-2">
