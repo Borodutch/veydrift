@@ -108,7 +108,7 @@ export function simulationsFact(runs: number, exact: boolean, model: number): { 
   if (model !== REFEREE_COMBAT_MODEL_VERSION) return { value: count };
   return exact
     ? { value: `${count} · exact`, title: "Each run is an exact replay of the battle math." }
-    : { value: `${count} · quick estimate`, title: "A quicker sample of the same battle rules; averages stay within a few percent. The calculator gives exact results." };
+    : { value: `${count} · quick estimate`, title: "A quicker sample of the same battle rules. The calculator replays each run exactly." };
 }
 
 function Fact({ label, value, title }: { label: string; value: string; title?: string | undefined }) {
