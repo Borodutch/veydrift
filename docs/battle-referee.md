@@ -136,6 +136,11 @@ referee battles still need it to finish.
 - Forecasts use the currently active model; joining a battle launched under the other model shows
   that model's estimate. Model-3 forecasts are time-boxed (fewer samples on slow devices) and are
   unavailable above 200,000 expanded units.
+- The battle calculator samples with the referee's exact SHA-256 draws (each run is the referee's
+  replay of its seed; at least 300 runs, or a visible note when a huge battle hits the time limit).
+  Mission forecasts keep a fast seeded draw source with the same rules, because several can run at
+  once on a phone; their averages stay within about 1–3% of exact sampling. Defense counts left
+  after a battle include the 70% repair; debris comes from destroyed ships only.
 
 ## Rules verification
 

@@ -214,8 +214,14 @@ function SimulatedBattleReportDetails({
                 <div className="grid gap-1 rounded surface-inset p-3 text-xs">
                   <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
                   <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
-                  <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
-                  <CompactFactRow label="Debris field" value={formatCompactResources({ ...report.debris, deuterium: 0 })} />
+                  <CompactFactRow label="Defender ship losses" value={formatCompactResources(report.defenderLosses)} />
+                  {report.defender.lostDefenses.length ? (
+                    <>
+                      <CompactFactRow label="Defenses destroyed" value={formatBattleComposition(report.defender.lostDefenses)} />
+                      <CompactFactRow label="Repaired after battle" value={formatBattleComposition(report.defender.repairedDefenses)} />
+                    </>
+                  ) : null}
+                  <CompactFactRow label="Debris field (ships only)" value={formatCompactResources({ ...report.debris, deuterium: 0 })} />
                   <CompactFactRow label="Moon chance" value={`${report.moonChancePercent}%`} />
                 </div>
 

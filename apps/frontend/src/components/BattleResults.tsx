@@ -86,12 +86,17 @@ export function BattleResults({ input, stats, running = false, detailed = false,
       </div>
       <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
         <Fact label="Attacker losses" value={formatResources(scale(stats.attackerLosses, runs))} />
-        <Fact label="Defender losses" value={formatResources(scale(stats.defenderLosses, runs))} />
-        <Fact label="Debris" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
+        <Fact label="Defender losses (after repair)" value={formatResources(scale(stats.defenderLosses, runs))} />
+        <Fact label="Debris (ships only)" value={`${formatResources(debris)}${recyclers ? ` · ${recyclers.toLocaleString()} recycler${recyclers === 1 ? "" : "s"}` : ""}`} />
         <Fact label="Moon chance" value={`${Math.round(average(stats.moonChance, runs))}%`} />
         <Fact label="Rounds" value={average(stats.rounds, runs).toFixed(1)} />
-        <Fact label="Simulations" value={runs.toLocaleString()} />
+        <Fact label="Simulations" value={`${runs.toLocaleString()} ${stats.exact ? "exact" : "fast"}`} />
       </dl>
+      {stats.timeLimited && !running ? (
+        <p className="text-xs text-amber-200">
+          This battle is too large to simulate fully: the time limit allowed only {runs.toLocaleString()} runs, so these averages are less certain.
+        </p>
+      ) : null}
       {detailed ? <Survivors input={input} stats={stats} /> : null}
     </div>
   );
@@ -106,42 +111,66 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-type SurvivorRow = { label: string; start: number; left: number };
+/** Per-battle averages. Ships are never repaired (`repaired` null), so they lose start - left. */
+export type SurvivorRow = { label: string; start: number; destroyed: number; repaired: number | null; left: number };
 
-function Survivors({ input, stats }: { input: ContractBattleInput; stats: BattleStats }) {
+export function survivorGroups(input: ContractBattleInput, stats: BattleStats): Array<{ label: string; rows: SurvivorRow[] }> {
   const ships = (start: readonly number[], left: readonly number[] | undefined): SurvivorRow[] => shipCatalog
     .filter((ship) => (start[ship.id] ?? 0) > 0)
-    .map((ship) => ({ label: ship.label, start: start[ship.id] ?? 0, left: average(left?.[ship.id] ?? 0, stats.runs) }));
+    .map((ship) => {
+      const count = start[ship.id] ?? 0, remaining = average(left?.[ship.id] ?? 0, stats.runs);
+      return { label: ship.label, start: count, destroyed: count - remaining, repaired: null, left: remaining };
+    });
   const defenses = defenseCatalog
     .filter((defense) => (input.defender.defenses[defense.id] ?? 0) > 0)
-    .map((defense) => ({ label: defense.label, start: input.defender.defenses[defense.id] ?? 0, left: average(stats.defenderDefenses[defense.id] ?? 0, stats.runs) }));
-  const groups = [
+    .map((defense) => ({
+      label: defense.label,
+      start: input.defender.defenses[defense.id] ?? 0,
+      destroyed: average(stats.defenderDefensesDestroyed[defense.id] ?? 0, stats.runs),
+      repaired: average(stats.defenderDefensesRepaired[defense.id] ?? 0, stats.runs),
+      left: average(stats.defenderDefenses[defense.id] ?? 0, stats.runs),
+    }));
+  return [
     ...input.attackers.map((fleet, index) => ({ label: fleet.label, rows: ships(fleet.ships, stats.attackers[index]) })),
     { label: input.defender.label, rows: [...ships(input.defender.ships, stats.defenderShips), ...defenses] },
     ...input.defender.counterplay.map((fleet, index) => ({ label: fleet.label, rows: ships(fleet.ships, stats.counterplay[index]) })),
   ].filter((group) => group.rows.length);
+}
+
+function Survivors({ input, stats }: { input: ContractBattleInput; stats: BattleStats }) {
+  const groups = survivorGroups(input, stats);
+  const defenses = input.defender.defenses.some((count) => count > 0);
   return (
-    <div className="grid items-start gap-x-4 gap-y-2 sm:grid-cols-2">
-      {groups.map((group) => (
-        <table className="w-full text-xs tabular-nums" key={group.label}>
-          <thead>
-            <tr className="text-slate-500">
-              <th className="py-1 text-left font-medium">{group.label}</th>
-              <th className="py-1 text-right font-medium">Start</th>
-              <th className="py-1 text-right font-medium">Left</th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.rows.map((row) => (
-              <tr className="border-t border-white/5" key={row.label}>
-                <td className="py-1 text-slate-300">{row.label}</td>
-                <td className="py-1 text-right text-slate-400">{row.start.toLocaleString()}</td>
-                <td className={`py-1 text-right ${row.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{formatAverage(row.left)}</td>
+    <div className="grid gap-2">
+      <div className="grid items-start gap-x-4 gap-y-2 sm:grid-cols-2">
+        {groups.map((group) => (
+          <table className="w-full text-xs tabular-nums" key={group.label}>
+            <thead>
+              <tr className="text-slate-500">
+                <th className="py-1 text-left font-medium">{group.label}</th>
+                <th className="py-1 pl-2 text-right font-medium">Start</th>
+                <th className="py-1 pl-2 text-right font-medium">Destroyed</th>
+                <th className="py-1 pl-2 text-right font-medium">Repaired</th>
+                <th className="py-1 pl-2 text-right font-medium">Left</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      ))}
+            </thead>
+            <tbody>
+              {group.rows.map((row) => (
+                <tr className="border-t border-white/5" key={row.label}>
+                  <td className="py-1 text-slate-300">{row.label}</td>
+                  <td className="py-1 pl-2 text-right text-slate-400">{row.start.toLocaleString()}</td>
+                  <td className={`py-1 pl-2 text-right ${row.destroyed > 0 ? "text-red-200" : "text-slate-500"}`}>{formatAverage(row.destroyed)}</td>
+                  <td className={`py-1 pl-2 text-right ${row.repaired ? "text-emerald-200" : "text-slate-500"}`}>{row.repaired === null ? "—" : formatAverage(row.repaired)}</td>
+                  <td className={`py-1 pl-2 text-right ${row.left < row.start ? "text-slate-100" : "text-slate-400"}`}>{formatAverage(row.left)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+      </div>
+      <p className="text-[11px] text-slate-500">
+        Averages per battle.{defenses ? " After the battle 70% of each destroyed defense type is rebuilt (a single destroyed unit has a 70% chance), so Left and defender losses count defenses after repair." : ""} Ships are never repaired, and debris comes from destroyed ships only.
+      </p>
     </div>
   );
 }

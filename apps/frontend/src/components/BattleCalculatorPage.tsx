@@ -17,7 +17,7 @@ import {
   type CalculatorFleet,
   type CalculatorSetup,
 } from "../battleCalculatorState";
-import { useBattleSimulation } from "../battleSimulation";
+import { EXACT_SIMULATION, useBattleSimulation } from "../battleSimulation";
 import { useVerifiedCombatModel } from "../combatModel";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
@@ -73,7 +73,7 @@ export function BattleCalculator() {
   const input = useMemo(() => setupToBattleInput(setup), [setup]);
   const fighting = setup.attackers.some((fleet) => fleetHasUnits(fleet, false))
     && setup.defenders.some((fleet, index) => fleetHasUnits(fleet, index === 0));
-  const simulation = useBattleSimulation(fighting ? input : null, verified ? activeCombatModel() : REFEREE_COMBAT_MODEL_VERSION);
+  const simulation = useBattleSimulation(fighting ? input : null, verified ? activeCombatModel() : REFEREE_COMBAT_MODEL_VERSION, EXACT_SIMULATION);
 
   // Debounced: Safari throws a SecurityError after ~100 replaceState calls in 10s (one per keystroke).
   useEffect(() => {
