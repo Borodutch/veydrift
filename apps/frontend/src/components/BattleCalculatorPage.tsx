@@ -79,7 +79,7 @@ export function BattleCalculator() {
   useEffect(() => {
     const timer = setTimeout(() => {
       const used = setup.attackers.length > 1 || setup.defenders.length > 1
-        || [...setup.attackers, ...setup.defenders].some((fleet) => fleet.ships.some(Boolean) || fleet.defenses.some(Boolean));
+        || [...setup.attackers, ...setup.defenders].some((fleet) => fleet.coords || fleet.ships.some(Boolean) || fleet.defenses.some(Boolean));
       try {
         window.history.replaceState(null, "", used ? `/calculator?b=${encodeSetup(setup)}` : "/calculator");
       } catch {
