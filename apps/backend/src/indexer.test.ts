@@ -1986,6 +1986,37 @@ describe("SettlementIndexer", () => {
     database.close();
   });
 
+  test("removed timed-missile completion replay seeks the numeric block index instead of scanning the ledger", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const removedLog = {
+      address: player, blockNumber: "0x81", transactionHash: "0xremoved-completion", logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)], data: abiWords(4n, 4n)
+    };
+    const canonicalLog = { ...removedLog, transactionHash: "0xcanonical-completion" };
+    indexer.applyEvent(planet);
+    indexer.applyLog(removedLog);
+    indexer.applyLog(canonicalLog);
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE transaction_hash = ?").run(removedLog.transactionHash);
+    const query = spyOn(database, "query");
+    const removed = indexer.removedTimedMissileCompletionLogs(player, 129n, 129n);
+    const sql = query.mock.calls.map(([text]) => String(text)).find(text => text.includes("FROM indexed_event_logs"));
+    query.mockRestore();
+    expect(removed.map(log => log.transactionHash)).toEqual([removedLog.transactionHash]);
+    expect(indexer.removedTimedMissileCompletionLogs(player, 130n, 140n)).toEqual([]);
+    expect(sql).toBeDefined();
+    const plan = database.query(`EXPLAIN QUERY PLAN ${sql}`).all(
+      "129", "129", player, shipCompletedTopic, shipCompletedTopic, shipCompletedTopic
+    ) as Array<{ detail: string }>;
+    expect(plan.some(row => row.detail.includes("indexed_event_logs_numeric_block_idx"))).toBe(true);
+    expect(plan.some(row => row.detail.startsWith("SCAN"))).toBe(false);
+    database.close();
+  });
+
   test("canonical replay range uses the numeric block index instead of scanning the ledger", () => {
     const database = new Database(":memory:");
     const indexer = new SettlementIndexer({
