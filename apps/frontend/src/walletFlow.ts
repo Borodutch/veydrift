@@ -1953,6 +1953,11 @@ type FleetMissionRevertContext = {
 };
 
 const contractRevertReasons: Record<string, string> = {
+  // Building demolition: BuildingNotDemolishable / BuildingInUse and the moon equivalents.
+  "0xfc5dcf51": "This building can't be demolished.",
+  "0x6d0bee4f": "This building is in use. Wait for its production or research to finish, then try again.",
+  "0x9ede1ebb": "This moon building can't be demolished.",
+  "0xde2ac91b": "The moon shipyard is in use. Wait for moon production to finish, then try again.",
   "0x2ab0f96f":
     "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and queues before retrying; your balance may still be updating after recent spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
@@ -4001,6 +4006,38 @@ export async function sendStartBuildingUpgradeTransaction(provider: Eip1193Provi
 
   return sendWalletTransaction(provider, account, transaction, {
     accountProbeReadyChecked,
+  });
+}
+
+export async function sendStartBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("startBuildingDemolition(uint256,uint8)"), [planetId, buildingId]),
+  });
+}
+
+export async function sendCancelBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("cancelBuildingDemolition(uint256)"), [planetId]),
+  });
+}
+
+export async function sendStartMoonBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("startMoonBuildingDemolition(uint256,uint8)"), [planetId, buildingId]),
+  });
+}
+
+export async function sendCancelMoonBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("cancelMoonBuildingDemolition(uint256)"), [planetId]),
   });
 }
 
