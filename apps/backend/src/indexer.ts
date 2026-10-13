@@ -3759,14 +3759,17 @@ export class SettlementIndexer {
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     const completedLevels = new Map<number, number>();
+    // A due demolition lowers the level; upgrades keep the monotonic projection.
+    const demolishedLevels = new Map<number, number>();
     for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
       if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
-        completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
+        if (queue.action === "demolish") demolishedLevels.set(queue.itemId, queue.targetLevel);
+        else completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
       }
     }
     const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
 
-    return deriveBuildingRows((id) => Math.max(
+    return deriveBuildingRows((id) => demolishedLevels.get(id) ?? Math.max(
       levels.get(id) ?? 0,
       completedLevels.get(id) ?? 0
     ));
@@ -4195,7 +4198,9 @@ export class SettlementIndexer {
     let projectedLevel = canonicalLevel;
     for (const queue of this.queueSettlement(`moon-building:${planetId}`).completed) {
       if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
-        projectedLevel = Math.max(projectedLevel, queue.targetLevel);
+        projectedLevel = queue.action === "demolish"
+          ? queue.targetLevel
+          : Math.max(projectedLevel, queue.targetLevel);
       }
     }
     return projectedLevel;
@@ -12644,7 +12649,7 @@ export class SettlementIndexer {
           category: queueActivityCategory(event.queueKind),
           kind: `${event.queueKind}-started`,
           direction: "personal",
-          title: queueStartedTitle(event.queueKind, label),
+          title: queueStartedTitle(event.queueKind, label, event.action),
           detail: queueActivityDetail(event),
           occurredAt: event.startedAt ?? transactionAt,
           metadata: queueActivityMetadata(event)
@@ -14766,7 +14771,7 @@ export class SettlementIndexer {
     let level = this.indexedLevel("contract_building_levels", "building_id", planetId, buildingId);
     for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
       if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
-        level = Math.max(level, queue.targetLevel);
+        level = queue.action === "demolish" ? queue.targetLevel : Math.max(level, queue.targetLevel);
       }
     }
     return level;
@@ -15214,8 +15219,10 @@ function queueActivityLabel(kind: string, itemId: number): string {
   return contractName ? humanizeContractName(contractName) : `Item #${itemId}`;
 }
 
-function queueStartedTitle(kind: string, label: string): string {
-  if (kind === "building" || kind === "moon-building") return `${label} upgrade started`;
+function queueStartedTitle(kind: string, label: string, action?: QueueState["action"]): string {
+  if (kind === "building" || kind === "moon-building") {
+    return action === "demolish" ? `${label} demolition started` : `${label} upgrade started`;
+  }
   if (kind === "research") return `${label} research started`;
   return `${label} production started`;
 }
