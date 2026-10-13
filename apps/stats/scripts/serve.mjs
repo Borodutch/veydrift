@@ -99,6 +99,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
 }
 
 export const server = Bun.serve({
+  development: false,
   port,
   fetch(request) {
     const url = new URL(request.url);

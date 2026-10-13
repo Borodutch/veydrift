@@ -70,7 +70,7 @@ function main(): void {
     rpc: transport,
     sweep
   });
-  const server = Bun.serve({ port: config.port, fetch: handler });
+  const server = Bun.serve({ development: false, port: config.port, fetch: handler });
   consoleLogger.info("[battle-keeper] health server listening", { port: server.port });
 
   const shutdown = (signal: string): void => {
