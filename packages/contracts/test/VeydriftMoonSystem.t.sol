@@ -3564,6 +3564,39 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         game.cancelBuildingDemolition(planetId);
     }
 
+    function testPlanetDemolitionCancelAfterReadyRevertsAndKeepsDowngrade() public {
+        uint256 planetId = _startPlanet();
+        _setBuildingLevel(planetId, Building.CrystalMine, 3);
+        _fundPlanet(planetId, 10_000, 10_000, 0);
+
+        vm.prank(player);
+        game.startBuildingDemolition(planetId, Building.CrystalMine);
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.ConstructionInactive.selector);
+        game.cancelBuildingDemolition(planetId);
+
+        vm.prank(player);
+        game.finishBuildingUpgrade(planetId);
+        assertEq(game.buildingLevel(planetId, Building.CrystalMine), 2);
+    }
+
+    function testDelegateCanDemolishAndCancelForTheirMainWallet() public {
+        uint256 planetId = _startPlanet();
+        _setBuildingLevel(planetId, Building.CrystalMine, 3);
+        _fundPlanet(planetId, 10_000, 10_000, 0);
+        vm.prank(player);
+        IVeydriftDelegation(address(game)).setDelegate(delegate);
+
+        vm.prank(delegate);
+        game.startBuildingDemolition(planetId, Building.CrystalMine);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        vm.prank(delegate);
+        game.cancelBuildingDemolition(planetId);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+        assertEq(_planetResources(planetId).metal, 10_000);
+    }
+
     function testPlanetDemolitionIsFreeFromIon25() public {
         uint256 planetId = _startPlanet();
         _setBuildingLevel(planetId, Building.SolarPlant, 10);
