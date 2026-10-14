@@ -37,6 +37,8 @@ describe("inline Demolish icon (#120)", () => {
     expect(props["aria-disabled"]).toBe("true");
     expect(props["aria-expanded"]).toBe(true);
     expect(props["aria-controls"]).toBe("reason-1");
+    // Screen readers hear the reason without activating the button.
+    expect(props["aria-describedby"]).toBe("reason-1");
     expect(props.title).toBe(reason);
     props.onClick();
     expect(calls).toEqual({ demolish: 0, toggle: 1 });

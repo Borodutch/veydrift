@@ -154,6 +154,47 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
           }
           console.log("PASS demolish icon", where);
         }
+
+        // A running demolition shows on the card, the detail and the queue panel
+        // from one progress source; the Upgrade + Demolish row gives way to it.
+        for (const state of ["demolishing", "finished"]) {
+          const where = `${view} ${state} ${width}`;
+          await send("Page.navigate", { url: `${url}?view=${view}&state=${state}` });
+          const deadline = Date.now() + 20_000;
+          const tile = `Array.from(document.querySelectorAll("button[aria-pressed]")).find(b => b.textContent.includes(${JSON.stringify(label)}))`;
+          while (!(await evaluate(`Boolean(window.demolishFixture && ${tile})`))) {
+            assert.ok(Date.now() < deadline, `demolition fixture did not render: ${where}`);
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          await evaluate(`${tile}.click()`);
+          await settle();
+          const detailUpgrade = `Boolean(document.querySelector('button[aria-label^="Upgrade ${label}"]'))`;
+          if (state === "finished") {
+            // Once the backend reports it complete the stale Demolishing state is gone everywhere.
+            assert.equal(await evaluate("document.body.textContent.match(/.{0,80}Demolishing.{0,40}/)?.[0] ?? null"), null, where);
+            assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(demolish)}))`), true, where);
+            assert.equal(await evaluate(detailUpgrade), true, where);
+            console.log("PASS demolition progress", where);
+            continue;
+          }
+          const levels = view === "planet" ? "6 → 5" : "3 → 2";
+          const bars = await evaluate(`Array.from(document.querySelectorAll('[role="progressbar"]')).filter(b => b.getAttribute("aria-label") === ${JSON.stringify(`Demolishing ${label} ${levels} progress`)}).map(b => ({ inTile: ${tile}.contains(b), value: b.getAttribute("aria-valuenow") }))`);
+          // One bar on the card and one in the detail, both at the shared 1/3 projection.
+          assert.deepEqual(bars, [{ inTile: true, value: "33" }, { inTile: false, value: "33" }], `${where}: ${JSON.stringify(bars)}`);
+          assert.match(await evaluate(`${tile}.textContent`), new RegExp(`Demolishing ${levels}.*2m`), where);
+          assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(demolish)}))`), false, `${where}: Demolish icon should give way to the running demolition`);
+          assert.equal(await evaluate(detailUpgrade), false, `${where}: Upgrade should give way to the running demolition`);
+          const cancels = await evaluate("Array.from(document.querySelectorAll('button')).filter(b => b.textContent.trim() === 'Cancel' && !b.disabled).length");
+          assert.equal(cancels, 2, `${where}: Cancel in the queue panel and the detail`);
+          assert.equal(await evaluate("document.documentElement.scrollWidth > innerWidth"), false, where);
+          if (artifacts) {
+            await evaluate(`${tile}.scrollIntoView({ block: "center" })`);
+            await settle();
+            const shot = await send("Page.captureScreenshot", { format: "png" });
+            writeFileSync(join(artifacts, `demolish-${view}-running-${width}.png`), Buffer.from(shot.data, "base64"));
+          }
+          console.log("PASS demolition progress", where);
+        }
       }
     }
     await send("Browser.close", {}, false);

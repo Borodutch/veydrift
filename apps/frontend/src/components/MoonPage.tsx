@@ -12,7 +12,7 @@ import type { ChainMoonState } from "../walletFlow";
 import type { PlanetType } from "../types";
 import { demolitionQueueLabel, formatCost, MAX_BUILDING_LEVEL } from "../buildingDetails";
 import { demolitionShortfallReason, moonDemolitionDurationSeconds, moonDemolitionPrice } from "../demolition";
-import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { formatDuration } from "../durationFormat";
 import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
@@ -36,7 +36,7 @@ import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from
 import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { DemolitionDialog } from "./DemolitionDialog";
-import { StructureCatalog, StructureDetail, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
+import { StructureCatalog, StructureDetail, structureDemolitionProgress, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
@@ -651,8 +651,8 @@ function MoonStructuresSection({
       ? demolitionQueueLabel(moonBuildingLabel(constructionQueue.itemId), constructionQueue.targetLevel)
       : `${moonBuildingLabel(constructionQueue.itemId)}${constructionQueue.targetLevel ? ` Level ${constructionQueue.targetLevel}` : ""}`
     : undefined;
-  const demolitionRemaining = constructionQueue && demolishing
-    ? constructionProgress?.remaining ?? formatDurationUntil(timestampToMs(constructionQueue.readyAt) ?? now, now)
+  const demolitionProgress = constructionQueue && demolishing && constructionLabel
+    ? structureDemolitionProgress(constructionLabel, constructionProgress, moonStructureQueueProgress(constructionQueue), now)
     : undefined;
   const demolitionCancel = constructionQueue && demolishing && onDemolishBuilding ? {
     disabled: !canTransact || pending || queueReady(constructionQueue),
@@ -686,15 +686,14 @@ function MoonStructuresSection({
               transactionUnavailableReason,
             });
 
-            if (demolishing && demolitionRemaining && constructionQueue?.itemId === building.id) {
+            if (demolitionProgress && constructionQueue?.itemId === building.id) {
               return {
                 asset: moonBuildingAsset(building.key),
-                currentText: `Level ${building.level} → ${building.level - 1}`,
+                currentText: `Demolishing ${building.level} → ${building.level - 1}`,
+                demolition: demolitionProgress,
                 isDimmed: false,
                 key: building.key,
                 label: building.label,
-                statusText: `↓ ${demolitionRemaining}`,
-                statusTone: "danger" as const,
               };
             }
 
@@ -717,11 +716,10 @@ function MoonStructuresSection({
                 action={action}
                 building={selectedBuilding}
                 canTransact={canTransact}
-                demolition={demolishing && constructionLabel && demolitionRemaining && constructionQueue?.itemId === selectedBuilding.id ? {
+                demolition={demolitionProgress && constructionQueue?.itemId === selectedBuilding.id ? {
+                  ...demolitionProgress,
                   cancelDisabled: demolitionCancel?.disabled,
-                  label: constructionLabel,
                   onCancel: demolitionCancel?.onClick,
-                  remaining: demolitionRemaining,
                 } : undefined}
                 moon={moon}
                 moonState={moonState}
