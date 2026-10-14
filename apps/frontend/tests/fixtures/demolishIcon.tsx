@@ -23,12 +23,16 @@ function PlanetView() {
   state.resources = blocked ? { metal: 0, crystal: 0, deuterium: 0 } : { metal: 1e8, crystal: 1e8, deuterium: 1e8 };
   return (
     <InfrastructurePage
+      // Blocked planets also show the Supply shortfall button, so the row carries three controls.
+      chainCosts={{ metalMine: { metal: 683, crystal: 170, deuterium: 0 } }}
       hasLoadedInfrastructureState
       now={now}
       onDemolish={() => { calls.demolish++; }}
+      onSupply={() => undefined}
       onUpgrade={() => { calls.upgrade++; }}
       selectedBuildingKey="metalMine"
       settledState={state}
+      spendableResources={state.resources}
       state={state}
     />
   );

@@ -111,10 +111,18 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
           assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).textContent.trim()`), "", where);
           assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(demolish)} + " svg"))`), true, where);
 
-          // Inline with Upgrade: same row, immediately to its right, same height, comfortable tap target.
+          // Inline with Upgrade: one row of Upgrade [+ Supply] + Demolish, the destructive icon last.
           const up = await rect(upgrade), icon = await rect(demolish);
-          assert.ok(Math.abs(up.top - icon.top) < 1 && Math.abs(up.bottom - icon.bottom) < 1, `${where}: not on the Upgrade row ${JSON.stringify({ up, icon })}`);
-          assert.ok(icon.left >= up.right && icon.left - up.right <= 12, `${where}: not next to Upgrade ${JSON.stringify({ up, icon })}`);
+          const row = await evaluate(`Array.from(document.querySelector(${JSON.stringify(demolish)}).parentElement.children).map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute("aria-label"), left: r.left, right: r.right, top: r.top, bottom: r.bottom }; })`);
+          const expectedRow = view === "planet" && state === "blocked"
+            ? [await evaluate(`document.querySelector(${JSON.stringify(upgrade)}).getAttribute("aria-label")`), "Supply missing resources for Metal Mine", `Demolish ${label}`]
+            : [await evaluate(`document.querySelector(${JSON.stringify(upgrade)}).getAttribute("aria-label")`), `Demolish ${label}`];
+          assert.deepEqual(row.map(b => b.label), expectedRow, where);
+          for (const [index, button] of row.entries()) {
+            assert.ok(Math.abs(button.top - up.top) < 1 && Math.abs(button.bottom - up.bottom) < 1, `${where}: ${button.label} not on the Upgrade row ${JSON.stringify(row)}`);
+            if (index > 0) assert.ok(button.left >= row[index - 1].right && button.left - row[index - 1].right <= 12, `${where}: gap before ${button.label} ${JSON.stringify(row)}`);
+          }
+          assert.ok(icon.right <= await evaluate("innerWidth"), `${where}: icon overflows`);
           assert.ok(icon.width >= 40 && icon.height >= 40, `${where}: tap target ${icon.width}x${icon.height}`);
           assert.ok(icon.width < up.width / 2, `${where}: icon should stay small next to Upgrade`);
           assert.equal(await evaluate("document.documentElement.scrollWidth > innerWidth"), false, where);
@@ -132,15 +140,17 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
             const reason = await evaluate(`document.querySelector(${JSON.stringify(demolish)}).title`);
             assert.match(reason, /^Not enough /, `${where}: tooltip should carry the exact unavailability reason`);
             assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).getAttribute("aria-disabled")`), "true", where);
-            assert.equal(await evaluate("document.querySelector('[role=status]#' + CSS.escape(document.querySelector(" + JSON.stringify(demolish) + ").getAttribute('aria-controls')))"), null, `${where}: reason should start collapsed`);
+            const reasonRow = "document.getElementById(document.querySelector(" + JSON.stringify(demolish) + ").getAttribute('aria-controls'))";
+            assert.equal(await evaluate(reasonRow + ".getAttribute('role')"), "status", where);
+            assert.equal(await evaluate(reasonRow + ".hidden"), true, `${where}: reason should start collapsed`);
             await tap(demolish, mobile);
             assert.equal(await evaluate("document.querySelector('#demolition-title') !== null"), false, `${where}: blocked Demolish opened the dialog`);
-            const shown = await evaluate("document.getElementById(document.querySelector(" + JSON.stringify(demolish) + ").getAttribute('aria-controls'))?.textContent ?? null");
-            assert.equal(shown, reason, `${where}: tapping should reveal the same reason`);
+            assert.equal(await evaluate(reasonRow + ".hidden"), false, `${where}: tapping should reveal the reason`);
+            assert.equal(await evaluate(reasonRow + ".textContent"), reason, `${where}: revealed reason should match the tooltip`);
             assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).getAttribute("aria-expanded")`), "true", where);
             if (artifacts) { const shot = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(join(artifacts, `demolish-${view}-reason-${width}.png`), Buffer.from(shot.data, "base64")); }
             await tap(demolish, mobile);
-            assert.equal(await evaluate("document.getElementById(document.querySelector(" + JSON.stringify(demolish) + ").getAttribute('aria-controls'))"), null, `${where}: second tap should hide the reason`);
+            assert.equal(await evaluate(reasonRow + ".hidden"), true, `${where}: second tap should hide the reason`);
           }
           console.log("PASS demolish icon", where);
         }

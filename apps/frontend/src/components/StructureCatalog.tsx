@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { ArrowDown, Bomb, PackagePlus } from "lucide-preact";
-import { useEffect, useId, useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import type { QueueTimeline } from "../playableMvp";
 import {
   InspectCatalogTile,
@@ -131,15 +131,12 @@ export function StructureDetail({
   summary: string;
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const [isDemolishReasonOpen, setIsDemolishReasonOpen] = useState(false);
+  // Keyed by structure so a reason opened on one building never shows on the next.
+  const [demolishReasonFor, setDemolishReasonFor] = useState<string | undefined>();
+  const isDemolishReasonOpen = demolishReasonFor === cacheKey;
   const demolishReasonId = useId();
   // A running demolition replaces the Demolish control with its own status row.
   const inlineDemolishAction = demolition ? undefined : demolishAction;
-
-  useEffect(() => {
-    setIsDemolishReasonOpen(false);
-  }, [cacheKey]);
-
   return (
     <InspectDetailShell>
       <InspectDetailHero
@@ -211,20 +208,21 @@ export function StructureDetail({
               <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
             </button>
           ) : null}
+          {/* The destructive control goes last, after Upgrade's own Supply helper. */}
           {inlineDemolishAction ? (
             <DemolishIconButton
               {...inlineDemolishAction}
               isReasonOpen={isDemolishReasonOpen}
               label={label}
-              onToggleReason={() => setIsDemolishReasonOpen((open) => !open)}
+              onToggleReason={() => setDemolishReasonFor(isDemolishReasonOpen ? undefined : cacheKey)}
               reasonId={demolishReasonId}
             />
           ) : null}
         </div>
       ) : null}
 
-      {inlineDemolishAction?.disabled && inlineDemolishAction.reason && isDemolishReasonOpen ? (
-        <p className="mt-1.5 text-right text-xs text-slate-500" id={demolishReasonId} role="status">
+      {inlineDemolishAction?.disabled && inlineDemolishAction.reason ? (
+        <p className="mt-1.5 text-right text-xs text-slate-500" hidden={!isDemolishReasonOpen} id={demolishReasonId} role="status">
           {inlineDemolishAction.reason}
         </p>
       ) : null}
