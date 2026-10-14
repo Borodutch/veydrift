@@ -51,7 +51,7 @@ fs_permissions = [
   { access = "read", path = "./combat-preview-catalog.json" },
   { access = "read", path = "../battle-oracle/referee-catalog.json" },
   { access = "read", path = "./combat-shot-fixtures.json" },
-  { access = "read", path = "./demolition-parity-fixture.json" }
+  { access = "read-write", path = "./demolition-parity-fixture.json" }
 ]
 
 [rpc_endpoints]

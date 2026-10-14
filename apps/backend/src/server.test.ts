@@ -12218,11 +12218,15 @@ describe("building demolition lens (#121)", () => {
   };
   // Produced by the contract itself: packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture.
   const fixture = JSON.parse(readFileSync(new URL("../../../packages/contracts/demolition-parity-fixture.json", import.meta.url), "utf8")) as {
-    levels: Record<"metalMine" | "crystalMine" | "deuteriumSynthesizer" | "solarPlant" | "roboticsFactory" | "metalStorage" | "crystalStorage" | "deuteriumTank", number>;
+    levels: Record<"metalMine" | "crystalMine" | "deuteriumSynthesizer" | "solarPlant" | "roboticsFactory" | "metalStorage" | "crystalStorage" | "deuteriumTank" | "fusionReactor" | "shipyard" | "researchLab", number>;
+    technologies: { energy: number; combustionDrive: number };
     planet: { fields: number; temperatureOffset: number; metalMultiplierBps: number; crystalMultiplierBps: number; deuteriumMultiplierBps: number };
     solar: FixtureCase;
     storage: FixtureCase;
+    fusion: FixtureCase;
     followedByUpgrade: FixtureCase & { upgrade: FixtureStart & { crystalMineLevel: number } };
+    shipyard: { demolition: FixtureStart; ship: { startedAt: number; readyAt: number; shipyardLevel: number } };
+    researchLab: { demolition: FixtureStart; research: { startedAt: number; readyAt: number; targetLevel: number; labLevel: number } };
     moon: { fields: number; demolition: Omit<FixtureStart, "resources">; upgrade: Omit<FixtureStart, "resources"> & { roboticsLevel: number }; settled: { roboticsLevel: number } };
   };
   const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
@@ -12308,8 +12312,22 @@ describe("building demolition lens (#121)", () => {
       completed(4, levels.roboticsFactory),
       completed(7, levels.metalStorage),
       completed(8, levels.crystalStorage),
-      completed(9, levels.deuteriumTank)
+      completed(9, levels.deuteriumTank),
+      completed(10, levels.fusionReactor),
+      completed(5, levels.shipyard),
+      completed(6, levels.researchLab),
+      { topics: [researchCompletedTopic, addressTopic(player), topic(0n)], data: abiWords(BigInt(fixture.technologies.energy)) },
+      { topics: [researchCompletedTopic, addressTopic(player), topic(3n)], data: abiWords(BigInt(fixture.technologies.combustionDrive)) }
     );
+  }
+
+  // Replays each fixture case through its demolition start and on-chain settlement.
+  function replaySettledCases(harness: ReturnType<typeof lensHarness>, cases: FixtureCase[]) {
+    const { transaction, settled, completed, demolitionStarted } = harness;
+    for (const step of cases) {
+      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
+    }
   }
 
   function level(body: { buildings: Array<{ id: number; level: number }> }, id: number): number | undefined {
@@ -12321,7 +12339,7 @@ describe("building demolition lens (#121)", () => {
     const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
     seedFixturePlanet(harness);
 
-    for (const step of [fixture.solar, fixture.storage]) {
+    for (const step of [fixture.solar, fixture.storage, fixture.fusion]) {
       transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
 
       // Due but unsettled: the lens already shows what the contract's next settlement writes.
@@ -12356,10 +12374,7 @@ describe("building demolition lens (#121)", () => {
     const harness = lensHarness();
     const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
     seedFixturePlanet(harness);
-    for (const step of [fixture.solar, fixture.storage]) {
-      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
-      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
-    }
+    replaySettledCases(harness, [fixture.solar, fixture.storage, fixture.fusion]);
     const { demolition, upgrade } = fixture.followedByUpgrade;
     transaction(settled(demolition.resources, demolition.startedAt), demolitionStarted(demolition));
 
@@ -12395,6 +12410,35 @@ describe("building demolition lens (#121)", () => {
     });
     expect((await projectAt(fixture.followedByUpgrade.settledAt, "planets")).planets[0].fieldsUsed).toBe(fixture.followedByUpgrade.fieldsUsed);
     expect(indexer.highscoreForWallet(player).totalUserScore).toBe(fixture.followedByUpgrade.scoreBeforeSettle.toString());
+  });
+
+  test("demolition parity fixture: lazily demolished Shipyard and Research Lab time the next order as the contract does", async () => {
+    const harness = lensHarness();
+    const { transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    replaySettledCases(harness, [fixture.solar, fixture.storage, fixture.fusion]);
+    const { demolition, upgrade } = fixture.followedByUpgrade;
+    transaction(settled(demolition.resources, demolition.startedAt), demolitionStarted(demolition));
+    transaction(completed(demolition.building, demolition.targetLevel), settled(upgrade.resources, upgrade.startedAt), {
+      topics: [buildingStartedTopic, topic(7n), topic(BigInt(upgrade.building))],
+      data: abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)),
+      at: upgrade.startedAt
+    });
+    transaction(completed(upgrade.building, upgrade.targetLevel), settled(fixture.followedByUpgrade.settled, fixture.followedByUpgrade.settledAt));
+
+    const { shipyard, researchLab } = fixture;
+    transaction(settled(shipyard.demolition.resources, shipyard.demolition.startedAt), demolitionStarted(shipyard.demolition));
+    const ships = await projectAt(shipyard.ship.startedAt, "shipyard");
+    expect(ships.shipyardLevel).toBe(shipyard.ship.shipyardLevel);
+    // Light Fighter: the contract timed this one-unit order by the lowered Shipyard.
+    expect(ships.ships.find((ship: { id: number }) => ship.id === 1)?.durationSeconds).toBe(shipyard.ship.readyAt - shipyard.ship.startedAt);
+
+    transaction(completed(shipyard.demolition.building, shipyard.demolition.targetLevel));
+    transaction(settled(researchLab.demolition.resources, researchLab.demolition.startedAt), demolitionStarted(researchLab.demolition));
+    const research = await projectAt(researchLab.research.startedAt, "research");
+    expect(level(await projectAt(researchLab.research.startedAt), 6)).toBe(researchLab.research.labLevel);
+    // Energy Technology: the contract timed this research by the lowered Research Lab.
+    expect(research.technologies.find((technology: { id: number }) => technology.id === 0)?.durationSeconds).toBe(researchLab.research.readyAt - researchLab.research.startedAt);
   });
 
   test("demolition parity fixture: moon demolition lowers the level, frees a field and drives the next build time", () => {
@@ -12464,10 +12508,17 @@ describe("building demolition lens (#121)", () => {
     const now = Math.floor(Date.now() / 1_000);
     indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
     transaction(completed(5, 1), completed(14, 3));
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
     transaction(demolitionStarted({ startedAt: now - 60, building: 14, targetLevel: 2, readyAt: now + 3_600, cost: { metal: 0, crystal: 0, deuterium: 0 } }));
     const defenses = await projectAt(now, "defenses");
     expect(defenses.missileSiloLevel).toBe(3);
     expect(defenses.missileSiloCapacity).toBe(20);
+
+    // Cancelled, then a queued silo upgrade: capacity grows only once that upgrade completes.
+    transaction({ topics: [demolitionCancelledTopic, topic(7n), topic(14n)], data: abiWords(2n, 0n, 0n, 0n) });
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
+    transaction({ topics: [buildingStartedTopic, topic(7n), topic(14n)], data: abiWords(4n, BigInt(now + 3_600), 0n, 0n, 0n) });
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
   });
 });
 

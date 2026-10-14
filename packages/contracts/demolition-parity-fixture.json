@@ -1,5 +1,5 @@
 {
-  "_comment": "#121 demolition parity: values the contract computes (packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); the backend lens replays them in apps/backend/src/server.test.ts. Regenerate with DEMOLITION_PARITY_PRINT=true forge test --mt testDemolitionParityFixture -vv.",
+  "_comment": "#121 demolition parity: values the contract computes (packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); the backend lens replays them in apps/backend/src/server.test.ts. Rewrite the values in place with DEMOLITION_PARITY_WRITE=true forge test --mt testDemolitionParityFixture.",
   "levels": {
     "metalMine": 12,
     "crystalMine": 10,
@@ -8,7 +8,14 @@
     "roboticsFactory": 2,
     "metalStorage": 2,
     "crystalStorage": 3,
-    "deuteriumTank": 2
+    "deuteriumTank": 2,
+    "fusionReactor": 1,
+    "shipyard": 2,
+    "researchLab": 2
+  },
+  "technologies": {
+    "energy": 3,
+    "combustionDrive": 1
   },
   "planet": {
     "fields": 184,
@@ -31,22 +38,22 @@
       "resources": {
         "metal": 20458,
         "crystal": 26194,
-        "deuterium": 10031
+        "deuterium": 10029
       }
     },
-    "scoreBeforeSettle": 2850,
+    "scoreBeforeSettle": 3325,
     "settledAt": 1769710738,
     "settled": {
-      "metal": 23544,
-      "crystal": 27609,
-      "deuterium": 10550
+      "metal": 23581,
+      "crystal": 27626,
+      "deuterium": 10524
     },
-    "scoreAfterSettle": 2810,
-    "fieldsUsed": 52,
+    "scoreAfterSettle": 3285,
+    "fieldsUsed": 57,
     "energy": {
-      "produced": 897,
+      "produced": 929,
       "required": 977,
-      "scaleBps": 9181
+      "scaleBps": 9508
     }
   },
   "storage": {
@@ -61,20 +68,52 @@
         "deuterium": 0
       },
       "resources": {
-        "metal": 22544,
-        "crystal": 27609,
-        "deuterium": 10550
+        "metal": 22581,
+        "crystal": 27626,
+        "deuterium": 10524
       }
     },
-    "scoreBeforeSettle": 2810,
+    "scoreBeforeSettle": 3285,
     "settledAt": 1769718418,
     "settled": {
-      "metal": 22682,
-      "crystal": 28622,
-      "deuterium": 10921
+      "metal": 22724,
+      "crystal": 28675,
+      "deuterium": 10886
     },
-    "scoreAfterSettle": 2730,
-    "fieldsUsed": 51,
+    "scoreAfterSettle": 3205,
+    "fieldsUsed": 56,
+    "energy": {
+      "produced": 929,
+      "required": 977,
+      "scaleBps": 9508
+    }
+  },
+  "fusion": {
+    "demolition": {
+      "startedAt": 1769718418,
+      "building": 10,
+      "targetLevel": 0,
+      "readyAt": 1769718754,
+      "cost": {
+        "metal": 500,
+        "crystal": 200,
+        "deuterium": 100
+      },
+      "resources": {
+        "metal": 22224,
+        "crystal": 28475,
+        "deuterium": 10786
+      }
+    },
+    "scoreBeforeSettle": 3205,
+    "settledAt": 1769722354,
+    "settled": {
+      "metal": 22224,
+      "crystal": 28995,
+      "deuterium": 10975
+    },
+    "scoreAfterSettle": 3095,
+    "fieldsUsed": 55,
     "energy": {
       "produced": 897,
       "required": 977,
@@ -83,60 +122,107 @@
   },
   "followedByUpgrade": {
     "demolition": {
-      "startedAt": 1769718418,
+      "startedAt": 1769722354,
       "building": 1,
       "targetLevel": 9,
-      "readyAt": 1769719901,
+      "readyAt": 1769723837,
       "cost": {
         "metal": 2061,
         "crystal": 1030,
         "deuterium": 0
       },
       "resources": {
-        "metal": 20621,
-        "crystal": 27592,
-        "deuterium": 10921
+        "metal": 20163,
+        "crystal": 27965,
+        "deuterium": 10975
       }
     },
     "upgrade": {
-      "startedAt": 1769720501,
+      "startedAt": 1769724437,
       "building": 0,
       "targetLevel": 13,
-      "readyAt": 1769725171,
+      "readyAt": 1769729107,
       "cost": {
         "metal": 7784,
         "crystal": 1946,
         "deuterium": 0
       },
       "resources": {
-        "metal": 12837,
-        "crystal": 25909,
-        "deuterium": 11022
+        "metal": 12379,
+        "crystal": 26282,
+        "deuterium": 11076
       },
       "crystalMineLevel": 9
     },
-    "scoreBeforeSettle": 2710,
-    "settledAt": 1769728771,
+    "scoreBeforeSettle": 3075,
+    "settledAt": 1769732707,
     "settled": {
-      "metal": 15452,
-      "crystal": 26817,
-      "deuterium": 11429
+      "metal": 14994,
+      "crystal": 27190,
+      "deuterium": 11483
     },
-    "scoreAfterSettle": 2720,
-    "fieldsUsed": 51,
+    "scoreAfterSettle": 3085,
+    "fieldsUsed": 55,
     "energy": {
       "produced": 897,
       "required": 1002,
       "scaleBps": 8952
     }
   },
+  "shipyard": {
+    "demolition": {
+      "startedAt": 1769732707,
+      "building": 5,
+      "targetLevel": 1,
+      "readyAt": 1769732995,
+      "cost": {
+        "metal": 400,
+        "crystal": 200,
+        "deuterium": 100
+      },
+      "resources": {
+        "metal": 14594,
+        "crystal": 26990,
+        "deuterium": 11383
+      }
+    },
+    "ship": {
+      "startedAt": 1769733595,
+      "readyAt": 1769736475,
+      "shipyardLevel": 1
+    }
+  },
+  "researchLab": {
+    "demolition": {
+      "startedAt": 1769733595,
+      "building": 6,
+      "targetLevel": 1,
+      "readyAt": 1769733883,
+      "cost": {
+        "metal": 200,
+        "crystal": 400,
+        "deuterium": 200
+      },
+      "resources": {
+        "metal": 11690,
+        "crystal": 25683,
+        "deuterium": 11224
+      }
+    },
+    "research": {
+      "startedAt": 1769734483,
+      "readyAt": 1769746003,
+      "targetLevel": 4,
+      "labLevel": 1
+    }
+  },
   "moon": {
     "fields": 4,
     "demolition": {
-      "startedAt": 1769816955,
+      "startedAt": 1769822667,
       "building": 1,
       "targetLevel": 1,
-      "readyAt": 1769817204,
+      "readyAt": 1769822916,
       "cost": {
         "metal": 400,
         "crystal": 120,
@@ -145,10 +231,10 @@
     },
     "upgrade": {
       "roboticsLevel": 1,
-      "startedAt": 1769817264,
+      "startedAt": 1769822976,
       "building": 1,
       "targetLevel": 2,
-      "readyAt": 1769818012,
+      "readyAt": 1769823724,
       "cost": {
         "metal": 800,
         "crystal": 240,
