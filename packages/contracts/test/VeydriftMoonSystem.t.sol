@@ -3859,11 +3859,23 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
 
     /// @notice #121: the backend replays this fixture through its lazy demolition lens
     ///         (apps/backend/src/server.test.ts, "demolition parity fixture"), so both sides must
-    ///         reproduce the same settled numbers. After an intended formula change, rewrite the
-    ///         fixture's values in place with
+    ///         reproduce the same settled numbers. After an intended formula change, regenerate
+    ///         the fixture with
     ///         `DEMOLITION_PARITY_WRITE=true forge test --mt testDemolitionParityFixture`.
     function testDemolitionParityFixture() public {
         _parityWrite = vm.envOr("DEMOLITION_PARITY_WRITE", false);
+        if (_parityWrite) {
+            // Start fresh so a dropped or renamed key cannot linger for the backend to read.
+            vm.writeFile(
+                DEMOLITION_PARITY_FIXTURE,
+                string.concat(
+                    "{\"_comment\":\"#121 demolition parity: values the contract computes ",
+                    "(packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); ",
+                    "the backend lens replays them in apps/backend/src/server.test.ts. Rewrite with ",
+                    "DEMOLITION_PARITY_WRITE=true forge test --mt testDemolitionParityFixture.\"}"
+                )
+            );
+        }
         _parityFixture = vm.readFile(DEMOLITION_PARITY_FIXTURE);
         // Keep every timestamp below the backend tests' fixed clock so its queues read as due.
         vm.warp(1_769_700_000);

@@ -1,5 +1,12 @@
 {
-  "_comment": "#121 demolition parity: values the contract computes (packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); the backend lens replays them in apps/backend/src/server.test.ts. Rewrite the values in place with DEMOLITION_PARITY_WRITE=true forge test --mt testDemolitionParityFixture.",
+  "_comment": "#121 demolition parity: values the contract computes (packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); the backend lens replays them in apps/backend/src/server.test.ts. Rewrite with DEMOLITION_PARITY_WRITE=true forge test --mt testDemolitionParityFixture.",
+  "planet": {
+    "fields": 184,
+    "temperatureOffset": 1084,
+    "metalMultiplierBps": 10000,
+    "crystalMultiplierBps": 10000,
+    "deuteriumMultiplierBps": 11120
+  },
   "levels": {
     "metalMine": 12,
     "crystalMine": 10,
@@ -16,13 +23,6 @@
   "technologies": {
     "energy": 3,
     "combustionDrive": 1
-  },
-  "planet": {
-    "fields": 184,
-    "temperatureOffset": 1084,
-    "metalMultiplierBps": 10000,
-    "crystalMultiplierBps": 10000,
-    "deuteriumMultiplierBps": 11120
   },
   "solar": {
     "demolition": {
