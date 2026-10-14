@@ -378,7 +378,7 @@ function getDefenseLimitReason(
     defenseCount(defenseState, "antiBallisticMissile")
     + queuedDefenseCountByKey("antiBallisticMissile", queue)
     + (defenseCount(defenseState, "interplanetaryMissile") + queuedDefenseCountByKey("interplanetaryMissile", queue)) * 2;
-  const capacity = (defenseState.missileSiloLevel ?? 0) * 10;
+  const capacity = missileCapacity(defenseState);
   return usedSlots + slotsPerUnit * quantity > capacity ? "Missile Silo capacity full" : undefined;
 }
 
@@ -443,6 +443,11 @@ function queuedDefenseCountByKey(key: DefenseKey, queue?: ChainDefenseState["que
   return defense ? queuedDefenseCount(defense.id, queue) : 0;
 }
 
+// Prefer the backend capacity: a queued silo demolition already reserves its lower level on-chain.
+function missileCapacity(defenseState: ChainDefenseState): number {
+  return defenseState.missileSiloCapacity ?? (defenseState.missileSiloLevel ?? 0) * 10;
+}
+
 function defenseCount(defenseState: ChainDefenseState, key: DefenseKey): number {
   const defense = defenseCatalog.find((item) => item.key === key);
   if (!defense) return 0;
@@ -468,7 +473,7 @@ function boundedDefenseMaxQuantity(
       + queuedDefenseCountByKey("antiBallisticMissile", queue)
       + (defenseCount(defenseState, "interplanetaryMissile") + queuedDefenseCountByKey("interplanetaryMissile", queue)) * 2;
     const slotsPerUnit = key === "antiBallisticMissile" ? 1 : 2;
-    rulesMaximum = Math.max(0, Math.floor(((defenseState.missileSiloLevel ?? 0) * 10 - usedSlots) / slotsPerUnit));
+    rulesMaximum = Math.max(0, Math.floor((missileCapacity(defenseState) - usedSlots) / slotsPerUnit));
   }
 
   if (rulesMaximum === undefined) return affordableMaximum;

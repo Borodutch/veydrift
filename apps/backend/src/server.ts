@@ -4471,13 +4471,15 @@ function indexedDefenseState(
 ): DefenseState {
   const { state, buildings, levels } = indexedProductionContext(wallet, settlement, planet, indexer);
   const inventory = planet ? indexer.productionInventory(planet.planetId, "defense", levels) : { rows: [], launchable: [] };
+  const missileSiloLevel = buildings.find((building) => building.id === 14)?.level ?? 0;
 
   return {
     ...state,
     productionAvailable: true,
     unavailableReason,
     ...levels,
-    missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
+    missileSiloLevel,
+    missileSiloCapacity: missileSiloCapacityWithQueue(missileSiloLevel, planet ? indexer.planetQueue(planet.planetId, "building") : null),
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
     // Retain raw queue provenance for compatibility; effective counts above
@@ -4485,6 +4487,14 @@ function indexedDefenseState(
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null,
     unsettledQueue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
+}
+
+// Contract parity: missile production already counts a queued (not yet due) silo demolition's lower level.
+function missileSiloCapacityWithQueue(level: number, buildingQueue: QueueState | null): number {
+  const target = buildingQueue?.active && buildingQueue.itemId === 14 && buildingQueue.action === "demolish"
+    ? buildingQueue.targetLevel
+    : undefined;
+  return (target === undefined ? level : Math.min(level, target)) * 10;
 }
 
 function indexedResearchState(

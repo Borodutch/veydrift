@@ -46,6 +46,8 @@ export type ProductionPlanContext = {
   defenseShipyardLevel?: number;
   defenseNaniteLevel?: number;
   missileSiloLevel?: number | undefined;
+  /** Backend capacity; lower than the level allows while a silo demolition is queued (#121). */
+  missileSiloCapacity?: number | undefined;
   available: boolean;
 };
 
@@ -74,7 +76,7 @@ function capacityBlocker(context: ProductionPlanContext, rows: readonly Producti
   if (quantity("smallShieldDome") > 1 || quantity("largeShieldDome") > 1) return "One shield dome of each type per body";
   if (context.body === "moon") return rows.some(row => row.kind === "defense" && defenseCatalog.find(item => item.id === row.id)?.group === "missile")
     ? "Missiles cannot be built on a moon" : undefined;
-  if (quantity("antiBallisticMissile") + 2 * quantity("interplanetaryMissile") > (context.missileSiloLevel ?? 0) * 10) return "Missile Silo capacity full";
+  if (quantity("antiBallisticMissile") + 2 * quantity("interplanetaryMissile") > (context.missileSiloCapacity ?? (context.missileSiloLevel ?? 0) * 10)) return "Missile Silo capacity full";
   return undefined;
 }
 
