@@ -96,12 +96,14 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
           const deadline = Date.now() + 20_000;
           // Moon detail opens on the Lunar Base; pick the demolishable structure like a player would.
           const tile = `Array.from(document.querySelectorAll("button[aria-pressed]")).find(b => b.textContent.includes(${JSON.stringify(label)}))`;
-          while (view === "moon" && !(await evaluate(`Boolean(${tile})`))) {
+          // Tie every assertion to this state's own page load.
+          const loaded = `location.search === ${JSON.stringify(`?view=${view}&state=${state}`)}`;
+          while (view === "moon" && !(await evaluate(`${loaded} && Boolean(${tile})`))) {
             assert.ok(Date.now() < deadline, `moon catalog did not render: ${state} ${width}`);
             await new Promise(resolve => setTimeout(resolve, 50));
           }
           if (view === "moon") await evaluate(`${tile}.click()`);
-          while (!(await evaluate(`Boolean(window.demolishFixture && document.querySelector(${JSON.stringify(upgrade)}))`))) {
+          while (!(await evaluate(`${loaded} && Boolean(window.demolishFixture && document.querySelector(${JSON.stringify(upgrade)}))`))) {
             assert.ok(Date.now() < deadline, `demolish fixture did not render: ${view} ${state} ${width}\n` + await evaluate("document.body.textContent.slice(0, 800)"));
             await new Promise(resolve => setTimeout(resolve, 50));
           }
