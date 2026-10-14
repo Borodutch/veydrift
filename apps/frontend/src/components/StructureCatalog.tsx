@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { ArrowDown, PackagePlus, Trash2 } from "lucide-preact";
-import { useState } from "preact/hooks";
+import { ArrowDown, Bomb, PackagePlus } from "lucide-preact";
+import { useEffect, useId, useState } from "preact/hooks";
 import type { QueueTimeline } from "../playableMvp";
 import {
   InspectCatalogTile,
@@ -131,6 +131,15 @@ export function StructureDetail({
   summary: string;
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [isDemolishReasonOpen, setIsDemolishReasonOpen] = useState(false);
+  const demolishReasonId = useId();
+  // A running demolition replaces the Demolish control with its own status row.
+  const inlineDemolishAction = demolition ? undefined : demolishAction;
+
+  useEffect(() => {
+    setIsDemolishReasonOpen(false);
+  }, [cacheKey]);
+
   return (
     <InspectDetailShell>
       <InspectDetailHero
@@ -178,18 +187,20 @@ export function StructureDetail({
         </div>
       ) : null}
 
-      {action ? (
-        <div className="mt-3 flex gap-2">
-          <button
-            aria-label={action.ariaLabel}
-            className="h-10 min-w-0 flex-1 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-            disabled={action.disabled}
-            onClick={action.onClick}
-            type="button"
-          >
-            {action.label}
-          </button>
-          {secondaryAction ? (
+      {action || inlineDemolishAction ? (
+        <div className={action ? "mt-3 flex gap-2" : "mt-3 flex justify-end gap-2"}>
+          {action ? (
+            <button
+              aria-label={action.ariaLabel}
+              className="h-10 min-w-0 flex-1 rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={action.disabled}
+              onClick={action.onClick}
+              type="button"
+            >
+              {action.label}
+            </button>
+          ) : null}
+          {action && secondaryAction ? (
             <button
               aria-label={secondaryAction.ariaLabel}
               className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 text-cyan-200 transition hover:bg-cyan-300/20"
@@ -200,7 +211,22 @@ export function StructureDetail({
               <PackagePlus aria-hidden="true" size={16} strokeWidth={1.9} />
             </button>
           ) : null}
+          {inlineDemolishAction ? (
+            <DemolishIconButton
+              {...inlineDemolishAction}
+              isReasonOpen={isDemolishReasonOpen}
+              label={label}
+              onToggleReason={() => setIsDemolishReasonOpen((open) => !open)}
+              reasonId={demolishReasonId}
+            />
+          ) : null}
         </div>
+      ) : null}
+
+      {inlineDemolishAction?.disabled && inlineDemolishAction.reason && isDemolishReasonOpen ? (
+        <p className="mt-1.5 text-right text-xs text-slate-500" id={demolishReasonId} role="status">
+          {inlineDemolishAction.reason}
+        </p>
       ) : null}
 
       {demolition ? (
@@ -221,23 +247,6 @@ export function StructureDetail({
             </button>
           ) : null}
         </div>
-      ) : demolishAction ? (
-        <div className="mt-2 flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-          {demolishAction.disabled && demolishAction.reason ? (
-            <span className="min-w-0 text-xs text-slate-500">{demolishAction.reason}</span>
-          ) : null}
-          <button
-            aria-label={`Demolish ${label}`}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-rose-300/25 px-2.5 text-xs font-semibold text-rose-200/90 transition hover:border-rose-300/40 hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500 disabled:hover:bg-transparent"
-            disabled={demolishAction.disabled}
-            onClick={demolishAction.onClick}
-            title={demolishAction.disabled ? demolishAction.reason : undefined}
-            type="button"
-          >
-            <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
-            Demolish
-          </button>
-        </div>
       ) : null}
 
       {isInfoOpen && levelInfo ? (
@@ -250,6 +259,46 @@ export function StructureDetail({
         />
       ) : null}
     </InspectDetailShell>
+  );
+}
+
+/**
+ * Icon-only Demolish control that sits beside Upgrade. An unavailable control
+ * stays focusable (`aria-disabled`, not `disabled`) so its reason is reachable
+ * as a hover tooltip and, on touch, by tapping it to reveal the reason row.
+ */
+export function DemolishIconButton({
+  disabled,
+  isReasonOpen,
+  label,
+  onClick,
+  onToggleReason,
+  reason,
+  reasonId,
+}: {
+  disabled: boolean;
+  isReasonOpen: boolean;
+  label: string;
+  onClick: () => void;
+  onToggleReason: () => void;
+  reason?: string | undefined;
+  reasonId: string;
+}) {
+  const explainable = disabled && Boolean(reason);
+  return (
+    <button
+      aria-controls={explainable ? reasonId : undefined}
+      aria-disabled={explainable ? "true" : undefined}
+      aria-expanded={explainable ? isReasonOpen : undefined}
+      aria-label={`Demolish ${label}`}
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-rose-300/20 text-rose-300/70 transition hover:border-rose-300/40 hover:bg-rose-300/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500 disabled:hover:bg-transparent aria-disabled:cursor-not-allowed aria-disabled:border-white/10 aria-disabled:text-slate-500 aria-disabled:hover:bg-transparent"
+      disabled={disabled && !explainable}
+      onClick={explainable ? onToggleReason : onClick}
+      title={explainable ? reason : "Demolish"}
+      type="button"
+    >
+      <Bomb aria-hidden="true" size={16} strokeWidth={1.9} />
+    </button>
   );
 }
 
