@@ -8,6 +8,8 @@ import {
 } from "../src/VeydriftLegacyCombatModule.sol";
 
 import {Test} from "forge-std/Test.sol";
+import {console2} from "forge-std/console2.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ProductionBatchTransactionProbe} from "./ProductionBatchTransactionProbe.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -3850,5 +3852,175 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         vm.prank(player);
         vm.expectRevert(VeydriftMoonSystem.ConstructionInactive.selector);
         moons.cancelMoonBuildingDemolition(planetId);
+    }
+
+    string private constant DEMOLITION_PARITY_FIXTURE = "./demolition-parity-fixture.json";
+    string private _parityFixture;
+    bool private _parityPrint;
+
+    /// @notice #121: the backend replays this fixture through its lazy demolition lens
+    ///         (apps/backend/src/server.test.ts, "demolition parity fixture"), so both sides must
+    ///         reproduce the same settled numbers. Regenerate with
+    ///         `DEMOLITION_PARITY_PRINT=true forge test --mt testDemolitionParityFixture -vv`.
+    function testDemolitionParityFixture() public {
+        _parityPrint = vm.envOr("DEMOLITION_PARITY_PRINT", false);
+        if (!_parityPrint) _parityFixture = vm.readFile(DEMOLITION_PARITY_FIXTURE);
+        // Keep every timestamp below the backend tests' fixed clock so its queues read as due.
+        vm.warp(1_769_700_000);
+        uint256 planetId = _startPlanet();
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        _parity(".planet.fields", planet.fields);
+        _parity(".planet.temperatureOffset", uint256(int256(planet.temperature) + 1_000));
+        _parity(".planet.metalMultiplierBps", planet.metalMultiplierBps);
+        _parity(".planet.crystalMultiplierBps", planet.crystalMultiplierBps);
+        _parity(".planet.deuteriumMultiplierBps", planet.deuteriumMultiplierBps);
+
+        _setBuildingLevel(planetId, Building.MetalMine, 12);
+        _setBuildingLevel(planetId, Building.CrystalMine, 10);
+        _setBuildingLevel(planetId, Building.DeuteriumSynthesizer, 8);
+        _setBuildingLevel(planetId, Building.SolarPlant, 14);
+        _setBuildingLevel(planetId, Building.RoboticsFactory, 2);
+        _setBuildingLevel(planetId, Building.MetalStorage, 2);
+        _setBuildingLevel(planetId, Building.CrystalStorage, 3);
+        _setBuildingLevel(planetId, Building.DeuteriumTank, 2);
+        _parity(".levels.metalMine", game.buildingLevel(planetId, Building.MetalMine));
+        _parity(".levels.crystalMine", game.buildingLevel(planetId, Building.CrystalMine));
+        _parity(
+            ".levels.deuteriumSynthesizer",
+            game.buildingLevel(planetId, Building.DeuteriumSynthesizer)
+        );
+        _parity(".levels.solarPlant", game.buildingLevel(planetId, Building.SolarPlant));
+        _parity(".levels.roboticsFactory", game.buildingLevel(planetId, Building.RoboticsFactory));
+        _parity(".levels.metalStorage", game.buildingLevel(planetId, Building.MetalStorage));
+        _parity(".levels.crystalStorage", game.buildingLevel(planetId, Building.CrystalStorage));
+        _parity(".levels.deuteriumTank", game.buildingLevel(planetId, Building.DeuteriumTank));
+        _fundPlanet(planetId, 30_000, 30_000, 10_000);
+        vm.warp(block.timestamp + 600);
+
+        // Solar Plant 14 -> 13 drops the energy factor below 100% at its finish time.
+        _parityStep(planetId, ".solar", Building.SolarPlant, 3_600);
+        // Metal Storage 2 -> 1 leaves metal above the new cap: kept, but it stops accumulating.
+        _parityStep(planetId, ".storage", Building.MetalStorage, 7_200);
+
+        // Crystal Mine 10 -> 9 finishes lazily; the next upgrade start settles it on-chain first.
+        vm.prank(player);
+        game.startBuildingDemolition(planetId, Building.CrystalMine);
+        _parityStart(planetId, ".followedByUpgrade.demolition");
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt + 600);
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        _parityStart(planetId, ".followedByUpgrade.upgrade");
+        _parity(
+            ".followedByUpgrade.upgrade.crystalMineLevel",
+            game.buildingLevel(planetId, Building.CrystalMine)
+        );
+        _paritySettle(planetId, ".followedByUpgrade", 3_600);
+
+        // Moon Robotics 2 -> 1; rebuilding it settles the lowered level first.
+        _createMoon(planetId);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        _fundMoon(planetId, 100_000, 100_000, 100_000);
+        _parity(".moon.fields", moons.moon(planetId).fields);
+        vm.prank(player);
+        moons.startMoonBuildingDemolition(planetId, MoonBuilding.RoboticsFactory);
+        _parityMoonStart(planetId, ".moon.demolition");
+        vm.warp(moons.activeMoonBuildingConstruction(planetId).readyAt + 60);
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
+        _parity(
+            ".moon.upgrade.roboticsLevel",
+            moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory)
+        );
+        _parityMoonStart(planetId, ".moon.upgrade");
+        vm.warp(moons.activeMoonBuildingConstruction(planetId).readyAt + 60);
+        vm.prank(player);
+        moons.finishMoonBuildingUpgrade(planetId);
+        _parity(
+            ".moon.settled.roboticsLevel",
+            moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory)
+        );
+    }
+
+    function _parityStep(
+        uint256 planetId,
+        string memory key,
+        Building building,
+        uint256 lazySeconds
+    ) private {
+        vm.prank(player);
+        game.startBuildingDemolition(planetId, building);
+        _parityStart(planetId, string.concat(key, ".demolition"));
+        _paritySettle(planetId, key, lazySeconds);
+    }
+
+    function _parityStart(uint256 planetId, string memory key) private view {
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        _parity(string.concat(key, ".startedAt"), block.timestamp);
+        _parity(string.concat(key, ".building"), uint8(construction.building));
+        _parity(string.concat(key, ".targetLevel"), construction.targetLevel);
+        _parity(string.concat(key, ".readyAt"), construction.readyAt);
+        _parityResources(string.concat(key, ".cost"), construction.cost);
+        _parityResources(string.concat(key, ".resources"), _planetResources(planetId));
+    }
+
+    /// @dev Settles `lazySeconds` after the active construction's finish and records what the
+    ///      backend lens must already show at that instant without the settlement transaction.
+    function _paritySettle(uint256 planetId, string memory key, uint256 lazySeconds) private {
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt + lazySeconds);
+        _parity(string.concat(key, ".scoreBeforeSettle"), game.playerScore(player));
+        vm.prank(player);
+        game.settlePlanet(planetId);
+        _parity(string.concat(key, ".settledAt"), block.timestamp);
+        _parityResources(string.concat(key, ".settled"), _planetResources(planetId));
+        _parity(string.concat(key, ".scoreAfterSettle"), game.playerScore(player));
+        uint256 usedFields;
+        for (uint8 i = 0; i <= uint8(type(Building).max); i++) {
+            usedFields += game.buildingLevel(planetId, Building(i));
+        }
+        _parity(string.concat(key, ".fieldsUsed"), usedFields);
+        (uint256 produced, uint256 required, uint256 scaleBps) = VeydriftFormulas.energyBalance(
+            game.buildingLevel(planetId, Building.MetalMine),
+            game.buildingLevel(planetId, Building.CrystalMine),
+            game.buildingLevel(planetId, Building.DeuteriumSynthesizer),
+            game.buildingLevel(planetId, Building.SolarPlant),
+            0,
+            0,
+            game.planet(planetId).temperature,
+            0
+        );
+        _parity(string.concat(key, ".energy.produced"), produced);
+        _parity(string.concat(key, ".energy.required"), required);
+        _parity(string.concat(key, ".energy.scaleBps"), scaleBps);
+    }
+
+    function _parityMoonStart(uint256 planetId, string memory key) private view {
+        VeydriftMoonSystem.MoonBuildingConstruction memory construction =
+            moons.activeMoonBuildingConstruction(planetId);
+        _parity(string.concat(key, ".startedAt"), block.timestamp);
+        _parity(string.concat(key, ".building"), uint8(construction.building));
+        _parity(string.concat(key, ".targetLevel"), construction.targetLevel);
+        _parity(string.concat(key, ".readyAt"), construction.readyAt);
+        _parityResources(string.concat(key, ".cost"), construction.cost);
+    }
+
+    function _parityResources(string memory key, VeydriftGameStorage.Resources memory resources)
+        private
+        view
+    {
+        _parity(string.concat(key, ".metal"), resources.metal);
+        _parity(string.concat(key, ".crystal"), resources.crystal);
+        _parity(string.concat(key, ".deuterium"), resources.deuterium);
+    }
+
+    function _parity(string memory key, uint256 actual) private view {
+        if (_parityPrint) {
+            console2.log(key, actual);
+        } else {
+            assertEq(actual, stdJson.readUint(_parityFixture, key), key);
+        }
     }
 }

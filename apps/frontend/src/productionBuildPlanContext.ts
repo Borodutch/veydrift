@@ -40,6 +40,7 @@ export function productionPlanContext(body: ProductionBody, states: {
     : shipyard?.shipyardLevel ?? 0;
   const naniteLevel = moon ? 0 : shipyard?.naniteLevel ?? 0;
   const missileSiloLevel = defense?.missileSiloLevel ?? 0;
+  const missileSiloCapacity = defense?.missileSiloCapacity;
   const technology = technologyLevelsByKey(moon?.technologyLevels ?? shipyard?.technologyLevels ?? defense?.technologyLevels);
   const shipQueue = moon?.shipQueue ?? shipyard?.queue;
   const defenseQueue = moon?.defenseQueue ?? defense?.queue;
@@ -48,7 +49,7 @@ export function productionPlanContext(body: ProductionBody, states: {
     : shipyard && defense && shipyard.productionAvailable !== false && defense.productionAvailable !== false));
 
   return {
-    body, resources, available, missileSiloLevel, shipyardLevel, naniteLevel,
+    body, resources, available, missileSiloLevel, missileSiloCapacity, shipyardLevel, naniteLevel,
     defenseShipyardLevel: moon ? shipyardLevel : defense?.shipyardLevel ?? shipyardLevel,
     defenseNaniteLevel: moon ? 0 : defense?.naniteLevel ?? naniteLevel,
     ships: shipyardCatalog.filter(ship => body === "planet" || (ship.key !== "solarSatellite" && ship.key !== "crawler")).map(ship => {

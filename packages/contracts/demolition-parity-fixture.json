@@ -1,0 +1,162 @@
+{
+  "_comment": "#121 demolition parity: values the contract computes (packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture); the backend lens replays them in apps/backend/src/server.test.ts. Regenerate with DEMOLITION_PARITY_PRINT=true forge test --mt testDemolitionParityFixture -vv.",
+  "levels": {
+    "metalMine": 12,
+    "crystalMine": 10,
+    "deuteriumSynthesizer": 8,
+    "solarPlant": 14,
+    "roboticsFactory": 2,
+    "metalStorage": 2,
+    "crystalStorage": 3,
+    "deuteriumTank": 2
+  },
+  "planet": {
+    "fields": 184,
+    "temperatureOffset": 1084,
+    "metalMultiplierBps": 10000,
+    "crystalMultiplierBps": 10000,
+    "deuteriumMultiplierBps": 11120
+  },
+  "solar": {
+    "demolition": {
+      "startedAt": 1769700600,
+      "building": 3,
+      "targetLevel": 13,
+      "readyAt": 1769707138,
+      "cost": {
+        "metal": 9730,
+        "crystal": 3892,
+        "deuterium": 0
+      },
+      "resources": {
+        "metal": 20458,
+        "crystal": 26194,
+        "deuterium": 10031
+      }
+    },
+    "scoreBeforeSettle": 2850,
+    "settledAt": 1769710738,
+    "settled": {
+      "metal": 23544,
+      "crystal": 27609,
+      "deuterium": 10550
+    },
+    "scoreAfterSettle": 2810,
+    "fieldsUsed": 52,
+    "energy": {
+      "produced": 897,
+      "required": 977,
+      "scaleBps": 9181
+    }
+  },
+  "storage": {
+    "demolition": {
+      "startedAt": 1769710738,
+      "building": 7,
+      "targetLevel": 1,
+      "readyAt": 1769711218,
+      "cost": {
+        "metal": 1000,
+        "crystal": 0,
+        "deuterium": 0
+      },
+      "resources": {
+        "metal": 22544,
+        "crystal": 27609,
+        "deuterium": 10550
+      }
+    },
+    "scoreBeforeSettle": 2810,
+    "settledAt": 1769718418,
+    "settled": {
+      "metal": 22682,
+      "crystal": 28622,
+      "deuterium": 10921
+    },
+    "scoreAfterSettle": 2730,
+    "fieldsUsed": 51,
+    "energy": {
+      "produced": 897,
+      "required": 977,
+      "scaleBps": 9181
+    }
+  },
+  "followedByUpgrade": {
+    "demolition": {
+      "startedAt": 1769718418,
+      "building": 1,
+      "targetLevel": 9,
+      "readyAt": 1769719901,
+      "cost": {
+        "metal": 2061,
+        "crystal": 1030,
+        "deuterium": 0
+      },
+      "resources": {
+        "metal": 20621,
+        "crystal": 27592,
+        "deuterium": 10921
+      }
+    },
+    "upgrade": {
+      "startedAt": 1769720501,
+      "building": 0,
+      "targetLevel": 13,
+      "readyAt": 1769725171,
+      "cost": {
+        "metal": 7784,
+        "crystal": 1946,
+        "deuterium": 0
+      },
+      "resources": {
+        "metal": 12837,
+        "crystal": 25909,
+        "deuterium": 11022
+      },
+      "crystalMineLevel": 9
+    },
+    "scoreBeforeSettle": 2710,
+    "settledAt": 1769728771,
+    "settled": {
+      "metal": 15452,
+      "crystal": 26817,
+      "deuterium": 11429
+    },
+    "scoreAfterSettle": 2720,
+    "fieldsUsed": 51,
+    "energy": {
+      "produced": 897,
+      "required": 1002,
+      "scaleBps": 8952
+    }
+  },
+  "moon": {
+    "fields": 4,
+    "demolition": {
+      "startedAt": 1769816955,
+      "building": 1,
+      "targetLevel": 1,
+      "readyAt": 1769817204,
+      "cost": {
+        "metal": 400,
+        "crystal": 120,
+        "deuterium": 200
+      }
+    },
+    "upgrade": {
+      "roboticsLevel": 1,
+      "startedAt": 1769817264,
+      "building": 1,
+      "targetLevel": 2,
+      "readyAt": 1769818012,
+      "cost": {
+        "metal": 800,
+        "crystal": 240,
+        "deuterium": 400
+      }
+    },
+    "settled": {
+      "roboticsLevel": 2
+    }
+  }
+}

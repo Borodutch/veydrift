@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { defenseQueueTimingSetTopic } from "./evm";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { toFunctionSelector } from "viem";
+import { keccak256, toFunctionSelector, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -12201,6 +12201,273 @@ describe("Veydrift backend", () => {
       ]
     });
     expect(response.status).toBe(400);
+  });
+});
+
+describe("building demolition lens (#121)", () => {
+  type FixtureResources = { metal: number; crystal: number; deuterium: number };
+  type FixtureStart = { startedAt: number; building: number; targetLevel: number; readyAt: number; cost: FixtureResources; resources: FixtureResources };
+  type FixtureCase = {
+    demolition: FixtureStart;
+    scoreBeforeSettle: number;
+    settledAt: number;
+    settled: FixtureResources;
+    scoreAfterSettle: number;
+    fieldsUsed: number;
+    energy: { produced: number; required: number; scaleBps: number };
+  };
+  // Produced by the contract itself: packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture.
+  const fixture = JSON.parse(readFileSync(new URL("../../../packages/contracts/demolition-parity-fixture.json", import.meta.url), "utf8")) as {
+    levels: Record<"metalMine" | "crystalMine" | "deuteriumSynthesizer" | "solarPlant" | "roboticsFactory" | "metalStorage" | "crystalStorage" | "deuteriumTank", number>;
+    planet: { fields: number; temperatureOffset: number; metalMultiplierBps: number; crystalMultiplierBps: number; deuteriumMultiplierBps: number };
+    solar: FixtureCase;
+    storage: FixtureCase;
+    followedByUpgrade: FixtureCase & { upgrade: FixtureStart & { crystalMineLevel: number } };
+    moon: { fields: number; demolition: Omit<FixtureStart, "resources">; upgrade: Omit<FixtureStart, "resources"> & { roboticsLevel: number }; settled: { roboticsLevel: number } };
+  };
+  const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+  const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const moonBuildingStartedTopic = keccak256(toHex("MoonBuildingStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const moonBuildingCompletedTopic = keccak256(toHex("MoonBuildingCompleted(uint256,uint8,uint16)"));
+  const strings = (resources: FixtureResources) => ({
+    metal: resources.metal.toString(),
+    crystal: resources.crystal.toString(),
+    deuterium: resources.deuterium.toString()
+  });
+  const words = (resources: FixtureResources) => [BigInt(resources.metal), BigInt(resources.crystal), BigInt(resources.deuterium)];
+
+  function lensHarness() {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("the demolition lens must not read live infrastructure state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("the demolition lens must not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    let block = 0x100;
+    let tx = 0;
+    // One transaction's logs, in emission order.
+    const transaction = (...logs: Array<{ topics: string[]; data: string; at?: number }>) => {
+      const blockNumber = `0x${(block++).toString(16)}`;
+      const transactionHash = `0x${(++tx).toString(16).padStart(64, "0")}`;
+      logs.forEach((log, index) => indexer.applyLog({
+        blockNumber,
+        ...(log.at === undefined ? {} : { blockTimestamp: `0x${log.at.toString(16)}` }),
+        transactionHash,
+        logIndex: `0x${index.toString(16)}`,
+        topics: log.topics,
+        data: log.data
+      }));
+    };
+    const settled = (resources: FixtureResources, at: number) => ({
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(...words(resources), BigInt(at)),
+      at
+    });
+    const completed = (building: number, level: number) => ({
+      topics: [buildingCompletedTopic, topic(7n), topic(BigInt(building))],
+      data: abiWords(BigInt(level))
+    });
+    const demolitionStarted = (start: Omit<FixtureStart, "resources">) => ({
+      topics: [demolitionStartedTopic, topic(7n), topic(BigInt(start.building))],
+      data: abiWords(BigInt(start.targetLevel), BigInt(start.readyAt), ...words(start.cost)),
+      at: start.startedAt
+    });
+    const projectAt = async (at: number, path = "infrastructure") => {
+      indexer.recordResourceProjectionWatermark(`0x${(block++).toString(16)}`, at.toString(), resourceProjectionTestHash);
+      return (await handler(new Request(`http://localhost/wallet/${player}/${path}`))).json();
+    };
+    return { indexer, transaction, settled, completed, demolitionStarted, projectAt };
+  }
+
+  function seedFixturePlanet(harness: ReturnType<typeof lensHarness>) {
+    const { indexer, transaction, completed } = harness;
+    const start = fixture.solar.demolition;
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      fields: fixture.planet.fields,
+      temperature: fixture.planet.temperatureOffset - 1_000,
+      metalMultiplierBps: fixture.planet.metalMultiplierBps,
+      crystalMultiplierBps: fixture.planet.crystalMultiplierBps,
+      deuteriumMultiplierBps: fixture.planet.deuteriumMultiplierBps,
+      lastSettledAt: start.startedAt.toString(),
+      resources: strings(start.resources)
+    });
+    const { levels } = fixture;
+    transaction(
+      completed(0, levels.metalMine),
+      completed(1, levels.crystalMine),
+      completed(2, levels.deuteriumSynthesizer),
+      completed(3, levels.solarPlant),
+      completed(4, levels.roboticsFactory),
+      completed(7, levels.metalStorage),
+      completed(8, levels.crystalStorage),
+      completed(9, levels.deuteriumTank)
+    );
+  }
+
+  function level(body: { buildings: Array<{ id: number; level: number }> }, id: number): number | undefined {
+    return body.buildings.find((building) => building.id === id)?.level;
+  }
+
+  test("demolition parity fixture: the lazy lens reproduces the contract's next settlement", async () => {
+    const harness = lensHarness();
+    const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+
+    for (const step of [fixture.solar, fixture.storage]) {
+      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+
+      // Due but unsettled: the lens already shows what the contract's next settlement writes.
+      const lazy = await projectAt(step.settledAt);
+      expect(lazy.queue).toBeNull();
+      expect(level(lazy, step.demolition.building)).toBe(step.demolition.targetLevel);
+      expect(lazy.resourcesAsOfNow).toEqual(strings(step.settled));
+      expect(lazy.energyBalance).toMatchObject({
+        produced: step.energy.produced.toString(),
+        required: step.energy.required.toString(),
+        scaleBps: step.energy.scaleBps.toString()
+      });
+      const planets = await projectAt(step.settledAt, "planets");
+      expect(planets.planets[0].fieldsUsed).toBe(step.fieldsUsed);
+      // Score mirrors the contract's canonical playerScore: the level's points go at settlement.
+      expect(indexer.highscoreForWallet(player).totalUserScore).toBe(step.scoreBeforeSettle.toString());
+
+      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
+      const after = await projectAt(step.settledAt);
+      expect(after.resourcesAsOfNow).toEqual(strings(step.settled));
+      expect(level(after, step.demolition.building)).toBe(step.demolition.targetLevel);
+      expect(indexer.highscoreForWallet(player).totalUserScore).toBe(step.scoreAfterSettle.toString());
+    }
+
+    // Metal sits above the lowered Metal Storage cap: kept, with accrual stopped at the finish time.
+    const storageCap = (await projectAt(fixture.storage.settledAt)).storageCaps;
+    expect(Number(fixture.storage.settled.metal)).toBeGreaterThan(Number(storageCap.metal));
+    expect(fixture.storage.settled.metal).toBeGreaterThan(fixture.storage.demolition.resources.metal);
+  });
+
+  test("demolition parity fixture: a demolition settled by the next upgrade start, then that upgrade, both lazily", async () => {
+    const harness = lensHarness();
+    const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    for (const step of [fixture.solar, fixture.storage]) {
+      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
+    }
+    const { demolition, upgrade } = fixture.followedByUpgrade;
+    transaction(settled(demolition.resources, demolition.startedAt), demolitionStarted(demolition));
+
+    // Just before the upgrade transaction the lens holds the lowered Crystal Mine and the
+    // balance the contract settles in that transaction (its post-spend balance plus the price).
+    const beforeUpgrade = await projectAt(upgrade.startedAt);
+    expect(level(beforeUpgrade, 1)).toBe(upgrade.crystalMineLevel);
+    expect(beforeUpgrade.queue).toBeNull();
+    expect(beforeUpgrade.resourcesAsOfNow).toEqual(strings({
+      metal: upgrade.resources.metal + upgrade.cost.metal,
+      crystal: upgrade.resources.crystal + upgrade.cost.crystal,
+      deuterium: upgrade.resources.deuterium + upgrade.cost.deuterium
+    }));
+    expect(beforeUpgrade.buildings.find((building: { id: number }) => building.id === 0)?.durationSeconds).toBe(upgrade.readyAt - upgrade.startedAt);
+
+    transaction(
+      completed(demolition.building, demolition.targetLevel),
+      settled(upgrade.resources, upgrade.startedAt),
+      {
+        topics: [buildingStartedTopic, topic(7n), topic(BigInt(upgrade.building))],
+        data: abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)),
+        at: upgrade.startedAt
+      }
+    );
+    const lazy = await projectAt(fixture.followedByUpgrade.settledAt);
+    expect(lazy.queue).toBeNull();
+    expect(level(lazy, 0)).toBe(upgrade.targetLevel);
+    expect(level(lazy, 1)).toBe(demolition.targetLevel);
+    expect(lazy.resourcesAsOfNow).toEqual(strings(fixture.followedByUpgrade.settled));
+    expect(lazy.energyBalance).toMatchObject({
+      required: fixture.followedByUpgrade.energy.required.toString(),
+      scaleBps: fixture.followedByUpgrade.energy.scaleBps.toString()
+    });
+    expect((await projectAt(fixture.followedByUpgrade.settledAt, "planets")).planets[0].fieldsUsed).toBe(fixture.followedByUpgrade.fieldsUsed);
+    expect(indexer.highscoreForWallet(player).totalUserScore).toBe(fixture.followedByUpgrade.scoreBeforeSettle.toString());
+  });
+
+  test("demolition parity fixture: moon demolition lowers the level, frees a field and drives the next build time", () => {
+    const { indexer, transaction } = lensHarness();
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    const moonLog = (topic0: string, building: number, data: string) => ({ topics: [topic0, topic(7n), topic(BigInt(building))], data });
+    transaction({ topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 1n, 8777n) });
+    transaction(
+      moonLog(moonBuildingCompletedTopic, 0, abiWords(1n)),
+      moonLog(moonBuildingCompletedTopic, 1, abiWords(2n)),
+      moonLog(moonBuildingCompletedTopic, 3, abiWords(1n))
+    );
+    const { demolition, upgrade } = fixture.moon;
+    const usedFields = () => indexer.moonState(player, planet.planetId).buildings.reduce((sum, building) => sum + building.level, 0);
+    expect(indexer.moonState(player, planet.planetId).moon?.fields).toBe(fixture.moon.fields);
+    expect(usedFields()).toBe(fixture.moon.fields);
+
+    // Both readyAt values are before the test clock, so each queue is already due.
+    transaction(moonLog(moonDemolitionStartedTopic, demolition.building, abiWords(BigInt(demolition.targetLevel), BigInt(demolition.readyAt), ...words(demolition.cost))));
+    const lazy = indexer.moonState(player, planet.planetId);
+    expect(lazy.queue?.active ?? false).toBe(false);
+    expect(lazy.completionQueue).toMatchObject({ action: "demolish", targetLevel: demolition.targetLevel });
+    expect(lazy.buildings.find((building) => building.id === 1)?.level).toBe(upgrade.roboticsLevel);
+    expect(usedFields()).toBe(fixture.moon.fields - 1);
+    expect(lazy.moon?.fields).toBe(fixture.moon.fields);
+    // The rebuild's duration follows the lowered Robotics Factory, as the contract computed it.
+    expect(lazy.buildings.find((building) => building.id === 1)?.durationSeconds).toBe(upgrade.readyAt - upgrade.startedAt);
+
+    transaction(
+      moonLog(moonBuildingCompletedTopic, demolition.building, abiWords(BigInt(demolition.targetLevel))),
+      moonLog(moonBuildingStartedTopic, upgrade.building, abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)))
+    );
+    const rebuilt = indexer.moonState(player, planet.planetId);
+    expect(rebuilt.buildings.find((building) => building.id === 1)?.level).toBe(fixture.moon.settled.roboticsLevel);
+    expect(usedFields()).toBe(fixture.moon.fields);
+  });
+
+  test("a cancelled demolition is never applied by the lens, even after its finish time", async () => {
+    const harness = lensHarness();
+    const { transaction, settled, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    const step = fixture.solar;
+    const baseline = await projectAt(step.settledAt);
+    transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+    const cancelAt = step.demolition.startedAt + 60;
+    const refunded = await projectAt(cancelAt);
+    const balance = {
+      metal: Number(refunded.resourcesAsOfNow.metal) + step.demolition.cost.metal,
+      crystal: Number(refunded.resourcesAsOfNow.crystal) + step.demolition.cost.crystal,
+      deuterium: Number(refunded.resourcesAsOfNow.deuterium) + step.demolition.cost.deuterium
+    };
+    transaction(settled(balance, cancelAt), {
+      topics: [demolitionCancelledTopic, topic(7n), topic(BigInt(step.demolition.building))],
+      data: abiWords(BigInt(step.demolition.targetLevel), ...words(step.demolition.cost))
+    });
+
+    const later = await projectAt(step.settledAt);
+    expect(later.queue).toBeNull();
+    expect(level(later, step.demolition.building)).toBe(step.demolition.targetLevel + 1);
+    expect(later.energyBalance.scaleBps).toBe(baseline.energyBalance.scaleBps);
+    expect(later.productionPerHour).toEqual(baseline.productionPerHour);
+    expect(Number(later.resourcesAsOfNow.metal)).toBeGreaterThan(step.settled.metal);
+  });
+
+  test("a queued Missile Silo demolition already lowers the missile capacity it reports", async () => {
+    const { indexer, transaction, completed, demolitionStarted, projectAt } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    transaction(completed(5, 1), completed(14, 3));
+    transaction(demolitionStarted({ startedAt: now - 60, building: 14, targetLevel: 2, readyAt: now + 3_600, cost: { metal: 0, crystal: 0, deuterium: 0 } }));
+    const defenses = await projectAt(now, "defenses");
+    expect(defenses.missileSiloLevel).toBe(3);
+    expect(defenses.missileSiloCapacity).toBe(20);
   });
 });
 

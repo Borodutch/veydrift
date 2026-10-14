@@ -933,6 +933,8 @@ export type DefenseState = {
   shipyardLevel: number;
   naniteLevel: number;
   missileSiloLevel: number;
+  /** Missile slots open to new production; a queued silo demolition already reserves its lower level (#121). */
+  missileSiloCapacity?: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;

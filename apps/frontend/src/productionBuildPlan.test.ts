@@ -80,6 +80,11 @@ describe("production build plan", () => {
     ctx.missileSiloLevel = 1;
     expect(maxAddableProduction(ctx, [], "defense", anti.id)).toBe(10);
     expect(maxAddableProduction(ctx, [{ kind: "defense", id: anti.id, quantity: 7 }], "defense", anti.id)).toBe(3);
+    // A queued silo demolition (#121): the backend capacity already reflects the lower level.
+    ctx.missileSiloLevel = 2;
+    expect(maxAddableProduction(ctx, [], "defense", anti.id)).toBe(20);
+    ctx.missileSiloCapacity = 10;
+    expect(maxAddableProduction(ctx, [], "defense", anti.id)).toBe(10);
   });
   test.each(["planet", "moon"] as const)("%s accepts 15 rows, counts shared lanes and rejects row 16", body => {
     const ctx = context("1000000000000000000", body);
