@@ -609,7 +609,7 @@ function moonActionIcon(kind: MoonOverviewAction["kind"]): LucideIcon {
   return Shield;
 }
 
-function MoonStructuresSection({
+export function MoonStructuresSection({
   action,
   canTransact,
   constructionProgress,
@@ -661,7 +661,7 @@ function MoonStructuresSection({
     )
     : undefined;
   const demolitionCancel = constructionQueue && demolishing && onDemolishBuilding ? {
-    disabled: !canTransact || pending || queueReady(constructionQueue),
+    disabled: moonDemolitionCancelDisabled(constructionQueue, now, { canTransact, pending }),
     onClick: () => onDemolishBuilding(undefined, moonBuildingLabel(constructionQueue.itemId)),
   } : undefined;
   return (
@@ -1458,6 +1458,17 @@ export function moonFieldSummary(
 
 export function queueReady(queue: ChainMoonState["queue"] | undefined): boolean {
   return Boolean(queue?.active && queue.asOfNow?.complete === true);
+}
+
+/** Matches the planet: the contract rejects a cancel once `readyAt` passes, even before the backend reports completion. */
+export function moonDemolitionCancelDisabled(
+  queue: ChainMoonState["queue"] | undefined,
+  now: number,
+  { canTransact, pending }: { canTransact?: boolean | undefined; pending: boolean },
+): boolean {
+  if (!canTransact || pending || queueReady(queue)) return true;
+  const readyAt = timestampToMs(queue?.readyAt);
+  return readyAt !== undefined && readyAt <= now;
 }
 
 export function moonStructureQueueProgress(
