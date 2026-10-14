@@ -14,7 +14,7 @@ const views = {
   moon: { label: "Robotics Factory", upgrade: 'button[aria-label="Upgrade Robotics Factory to Level 4"]' },
 };
 
-test("Demolish is an icon-only button inline with Upgrade on planet and moon buildings (#120)", { timeout: 180_000 }, async () => {
+test("Demolish is an icon-only button inline with Upgrade on planet and moon buildings, hidden while unavailable (#120, #125)", { timeout: 180_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered demolish layout regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-demolish-icon-"));
@@ -88,7 +88,10 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
       await send("Emulation.setTouchEmulationEnabled", { enabled: mobile, maxTouchPoints: 1 });
       for (const [view, { label, upgrade }] of Object.entries(views)) {
         const demolish = `button[aria-label="Demolish ${label}"]`;
-        for (const state of ["ready", "blocked"]) {
+        // Demolish renders only while it is available (#125): no greyed-out icon
+        // for a resource shortfall or a busy building queue.
+        for (const state of ["ready", "blocked", "upgrading"]) {
+          const available = state === "ready";
           await send("Page.navigate", { url: `${url}?view=${view}&state=${state}` });
           const deadline = Date.now() + 20_000;
           // Moon detail opens on the Lunar Base; pick the demolishable structure like a player would.
@@ -98,7 +101,7 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
             await new Promise(resolve => setTimeout(resolve, 50));
           }
           if (view === "moon") await evaluate(`${tile}.click()`);
-          while (!(await evaluate(`Boolean(window.demolishFixture && document.querySelector(${JSON.stringify(demolish)}) && document.querySelector(${JSON.stringify(upgrade)}))`))) {
+          while (!(await evaluate(`Boolean(window.demolishFixture && document.querySelector(${JSON.stringify(upgrade)}))`))) {
             assert.ok(Date.now() < deadline, `demolish fixture did not render: ${view} ${state} ${width}\n` + await evaluate("document.body.textContent.slice(0, 800)"));
             await new Promise(resolve => setTimeout(resolve, 50));
           }
@@ -106,29 +109,36 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
           await settle();
           const where = `${view} ${state} ${width}`;
 
-          // Exactly one Demolish control: an icon (svg) with no visible text, labelled and titled.
-          assert.equal(await evaluate("Array.from(document.querySelectorAll('button')).filter(b => (b.getAttribute('aria-label') || '').startsWith('Demolish')).length"), 1, where);
-          assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).textContent.trim()`), "", where);
-          assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(demolish)} + " svg"))`), true, where);
+          // At most one Demolish control, and none at all while demolition is unavailable.
+          assert.equal(await evaluate("Array.from(document.querySelectorAll('button')).filter(b => (b.getAttribute('aria-label') || '').startsWith('Demolish')).length"), available ? 1 : 0, where);
+          // The #112 reason row is gone with the disabled icon.
+          assert.equal(await evaluate("/Building queue busy|Not enough /.test(Array.from(document.querySelectorAll('[role=\"status\"]')).map(n => n.textContent).join(' '))"), false, `${where}: stale demolish reason row`);
 
-          // Inline with Upgrade: one row of Upgrade [+ Supply] + Demolish, the destructive icon last.
-          const up = await rect(upgrade), icon = await rect(demolish);
-          const row = await evaluate(`Array.from(document.querySelector(${JSON.stringify(demolish)}).parentElement.children).map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute("aria-label"), left: r.left, right: r.right, top: r.top, bottom: r.bottom }; })`);
-          const expectedRow = view === "planet" && state === "blocked"
-            ? [await evaluate(`document.querySelector(${JSON.stringify(upgrade)}).getAttribute("aria-label")`), "Supply missing resources for Metal Mine", `Demolish ${label}`]
-            : [await evaluate(`document.querySelector(${JSON.stringify(upgrade)}).getAttribute("aria-label")`), `Demolish ${label}`];
+          // One row of Upgrade [+ Supply] [+ Demolish], the destructive icon last; the
+          // row's last control ends flush with the row whether or not the icon is there.
+          const up = await rect(upgrade);
+          const rowParent = `document.querySelector(${JSON.stringify(upgrade)}).parentElement`;
+          const row = await evaluate(`Array.from(${rowParent}.children).map(b => { const r = b.getBoundingClientRect(); return { label: b.getAttribute("aria-label"), left: r.left, right: r.right, top: r.top, bottom: r.bottom }; })`);
+          const upgradeLabel = await evaluate(`document.querySelector(${JSON.stringify(upgrade)}).getAttribute("aria-label")`);
+          const expectedRow = [upgradeLabel, ...(view === "planet" && state === "blocked" ? ["Supply missing resources for Metal Mine"] : []), ...(available ? [`Demolish ${label}`] : [])];
           assert.deepEqual(row.map(b => b.label), expectedRow, where);
           for (const [index, button] of row.entries()) {
             assert.ok(Math.abs(button.top - up.top) < 1 && Math.abs(button.bottom - up.bottom) < 1, `${where}: ${button.label} not on the Upgrade row ${JSON.stringify(row)}`);
             if (index > 0) assert.ok(button.left >= row[index - 1].right && button.left - row[index - 1].right <= 12, `${where}: gap before ${button.label} ${JSON.stringify(row)}`);
           }
-          assert.ok(icon.right <= await evaluate("innerWidth"), `${where}: icon overflows`);
-          assert.ok(icon.width >= 40 && icon.height >= 40, `${where}: tap target ${icon.width}x${icon.height}`);
-          assert.ok(icon.width < up.width / 2, `${where}: icon should stay small next to Upgrade`);
+          const rowRight = await evaluate(`${rowParent}.getBoundingClientRect().right`);
+          assert.ok(Math.abs(row.at(-1).right - rowRight) < 1, `${where}: row leaves a gap where the icon was ${JSON.stringify(row)} ${rowRight}`);
           assert.equal(await evaluate("document.documentElement.scrollWidth > innerWidth"), false, where);
           if (artifacts) { const shot = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(join(artifacts, `demolish-${view}-${state}-${width}.png`), Buffer.from(shot.data, "base64")); }
 
-          if (state === "ready") {
+          if (available) {
+            const icon = await rect(demolish);
+            // An icon (svg) with no visible text, labelled and titled.
+            assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).textContent.trim()`), "", where);
+            assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(demolish)} + " svg"))`), true, where);
+            assert.ok(icon.right <= await evaluate("innerWidth"), `${where}: icon overflows`);
+            assert.ok(icon.width >= 40 && icon.height >= 40, `${where}: tap target ${icon.width}x${icon.height}`);
+            assert.ok(icon.width < up.width / 2, `${where}: icon should stay small next to Upgrade`);
             assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).title`), "Demolish", where);
             assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).getAttribute("aria-disabled")`), null, where);
             await tap(demolish, mobile);
@@ -136,21 +146,6 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
             assert.equal(await evaluate("document.querySelector('#demolition-title') !== null"), true, `${where}: demolition dialog did not open`);
             assert.equal(await evaluate("window.demolishFixture.calls.demolish"), 0, where);
             if (artifacts) { const shot = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(join(artifacts, `demolish-${view}-dialog-${width}.png`), Buffer.from(shot.data, "base64")); }
-          } else {
-            const reason = await evaluate(`document.querySelector(${JSON.stringify(demolish)}).title`);
-            assert.match(reason, /^Not enough /, `${where}: tooltip should carry the exact unavailability reason`);
-            assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).getAttribute("aria-disabled")`), "true", where);
-            const reasonRow = "document.getElementById(document.querySelector(" + JSON.stringify(demolish) + ").getAttribute('aria-controls'))";
-            assert.equal(await evaluate(reasonRow + ".getAttribute('role')"), "status", where);
-            assert.equal(await evaluate(reasonRow + ".hidden"), true, `${where}: reason should start collapsed`);
-            await tap(demolish, mobile);
-            assert.equal(await evaluate("document.querySelector('#demolition-title') !== null"), false, `${where}: blocked Demolish opened the dialog`);
-            assert.equal(await evaluate(reasonRow + ".hidden"), false, `${where}: tapping should reveal the reason`);
-            assert.equal(await evaluate(reasonRow + ".textContent"), reason, `${where}: revealed reason should match the tooltip`);
-            assert.equal(await evaluate(`document.querySelector(${JSON.stringify(demolish)}).getAttribute("aria-expanded")`), "true", where);
-            if (artifacts) { const shot = await send("Page.captureScreenshot", { format: "png" }); writeFileSync(join(artifacts, `demolish-${view}-reason-${width}.png`), Buffer.from(shot.data, "base64")); }
-            await tap(demolish, mobile);
-            assert.equal(await evaluate(reasonRow + ".hidden"), true, `${where}: second tap should hide the reason`);
           }
           console.log("PASS demolish icon", where);
         }

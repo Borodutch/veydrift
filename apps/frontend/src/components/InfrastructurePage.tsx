@@ -470,10 +470,8 @@ function BuildingDetailPanel({
       active={built}
       asset={building.asset}
       cacheKey={`building:${building.key}`}
-      demolishAction={demolitionPrice && onDemolish ? {
-        disabled: Boolean(demolitionReason),
+      demolishAction={demolitionPrice && onDemolish && !demolitionReason ? {
         onClick: () => setIsDemolitionOpen(true),
-        reason: demolitionReason,
       } : undefined}
       demolition={demolition}
       description={buildingDescriptions[building.key]}

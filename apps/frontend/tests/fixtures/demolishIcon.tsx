@@ -9,8 +9,11 @@ import "../../src/styles.css";
 
 const params = new URLSearchParams(location.search);
 const view = params.get("view") ?? "planet";
-// "blocked" leaves no resources, so Demolish is unavailable with a shortfall reason.
+// "blocked" leaves no resources, so Demolish is unavailable and hidden (#125).
 const blocked = params.get("state") === "blocked";
+// "upgrading" keeps another structure's upgrade in the building queue, which
+// also makes Demolish unavailable for the selected structure (#125).
+const upgrading = params.get("state") === "upgrading";
 // "demolishing" runs a demolition one third of the way through; "finished" is
 // that demolition after the backend reported it complete (#121 reconciliation).
 const demolitionState = params.get("state") === "demolishing" || params.get("state") === "finished"
@@ -28,8 +31,16 @@ function demolitionQueue(itemId: number, targetLevel: number): QueueStateRespons
   const finished = demolitionState === "finished";
   const startedAt = finished ? now - 240_000 : now - 60_000;
   const readyAt = finished ? now - 60_000 : now + 120_000;
+  return queueRead("demolish", itemId, targetLevel, startedAt, readyAt, finished);
+}
+
+function upgradeQueue(itemId: number, targetLevel: number): QueueStateResponse | null {
+  return upgrading ? queueRead("upgrade", itemId, targetLevel, now - 60_000, now + 120_000, false) : null;
+}
+
+function queueRead(action: "demolish" | "upgrade", itemId: number, targetLevel: number, startedAt: number, readyAt: number, finished: boolean): QueueStateResponse {
   return {
-    action: "demolish",
+    action,
     active: true,
     asOfNow: { complete: finished, secondsRemaining: Math.max(0, (readyAt - now) / 1_000) },
     cost: { metal: "0", crystal: "0", deuterium: "0" },
@@ -47,11 +58,13 @@ function PlanetView() {
   state.buildings.solarPlant = 6;
   state.buildings.roboticsFactory = 2;
   state.resources = blocked ? { metal: 0, crystal: 0, deuterium: 0 } : { metal: 1e8, crystal: 1e8, deuterium: 1e8 };
-  const queue = demolitionQueue(buildingContractIds.metalMine, 5);
+  const queue = demolitionQueue(buildingContractIds.metalMine, 5) ?? upgradeQueue(buildingContractIds.solarPlant, 7);
   // The raw page snapshot can still carry a demolition the backend already
   // reports complete; the page must drop it everywhere.
-  if (queue) {
+  if (queue?.action === "demolish") {
     state.queue = { demolish: true, key: "metalMine", kind: "building", label: "Metal Mine", readyAt: Number(queue.readyAt) * 1_000, startedAt: Number(queue.startedAt) * 1_000, targetLevel: 5 };
+  } else if (queue) {
+    state.queue = { key: "solarPlant", kind: "building", label: "Solar Plant", readyAt: Number(queue.readyAt) * 1_000, startedAt: Number(queue.startedAt) * 1_000, targetLevel: 7 };
   }
   return (
     <InfrastructurePage
@@ -85,7 +98,7 @@ function MoonView() {
     ],
     resources: { metal: plenty, crystal: plenty, deuterium: plenty },
     resourcesAsOfNow: { metal: plenty, crystal: plenty, deuterium: plenty },
-    queue: demolitionQueue(1, 2),
+    queue: demolitionQueue(1, 2) ?? upgradeQueue(0, 2),
     defenses: [],
     defenseQueue: null,
   } as ChainMoonState;
