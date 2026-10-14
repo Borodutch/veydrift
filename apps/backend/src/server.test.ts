@@ -12503,6 +12503,93 @@ describe("building demolition lens (#121)", () => {
     expect(Number(later.resourcesAsOfNow.metal)).toBeGreaterThan(step.settled.metal);
   });
 
+  test("a running planet demolition exposes its timing like an upgrade, then completes at readyAt with no transaction", async () => {
+    const { indexer, transaction, completed, demolitionStarted, projectAt } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    transaction(completed(3, 5));
+    const fieldsBefore = (await projectAt(now, "planets")).planets[0].fieldsUsed;
+    const start = { startedAt: now - 900, building: 3, targetLevel: 4, readyAt: now + 300, cost: { metal: 0, crystal: 0, deuterium: 0 } };
+    transaction(demolitionStarted(start));
+
+    const running = await projectAt(now);
+    expect(running.queue).toMatchObject({
+      active: true,
+      kind: "building",
+      itemId: 3,
+      targetLevel: 4,
+      action: "demolish",
+      startedAt: start.startedAt.toString(),
+      readyAt: start.readyAt.toString(),
+      asOfNow: { secondsRemaining: 300, complete: false }
+    });
+    // 900 of 1,200 seconds elapsed, derived from the exposed timeline exactly as for an upgrade.
+    expect((now - Number(running.queue.startedAt)) / (Number(running.queue.readyAt) - Number(running.queue.startedAt))).toBe(0.75);
+    expect(level(running, 3)).toBe(5);
+    expect((await projectAt(now, "queues")).building).toMatchObject({ action: "demolish", startedAt: start.startedAt.toString(), asOfNow: { complete: false } });
+
+    setSystemTime(new Date(start.readyAt * 1_000));
+    try {
+      const done = await projectAt(start.readyAt);
+      expect(done.queue).toBeNull();
+      expect(level(done, 3)).toBe(4);
+      expect((await projectAt(start.readyAt, "planets")).planets[0].fieldsUsed).toBe(fieldsBefore - 1);
+      expect((await projectAt(start.readyAt, "queues")).building).toBeNull();
+
+      // The next upgrade's queue carries the same fields, only with the other action.
+      transaction({
+        topics: [buildingStartedTopic, topic(7n), topic(3n)],
+        data: abiWords(5n, BigInt(start.readyAt + 1_200), 0n, 0n, 0n),
+        at: start.readyAt
+      });
+      const upgrade = (await projectAt(start.readyAt)).queue;
+      expect(upgrade).toMatchObject({ action: "upgrade", startedAt: start.readyAt.toString(), asOfNow: { secondsRemaining: 1_200, complete: false } });
+      expect(Object.keys(upgrade).sort()).toEqual(Object.keys(running.queue).sort());
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+    }
+  });
+
+  test("a running moon demolition exposes its start time and progress, then completes at readyAt with no transaction", () => {
+    const { indexer, transaction } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    const moonLog = (topic0: string, building: number, data: string, at?: number) => ({ topics: [topic0, topic(7n), topic(BigInt(building))], data, ...(at === undefined ? {} : { at }) });
+    transaction({ topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 1n, 8777n) });
+    transaction(moonLog(moonBuildingCompletedTopic, 0, abiWords(1n)), moonLog(moonBuildingCompletedTopic, 1, abiWords(2n)));
+    const usedFields = () => indexer.moonState(player, planet.planetId).buildings.reduce((sum, building) => sum + building.level, 0);
+    expect(usedFields()).toBe(3);
+
+    const startedAt = now - 600;
+    const readyAt = now + 1_800;
+    transaction(moonLog(moonDemolitionStartedTopic, 1, abiWords(1n, BigInt(readyAt), 200n, 60n, 100n), startedAt));
+    const running = indexer.moonState(player, planet.planetId);
+    expect(running.queue).toMatchObject({
+      active: true,
+      kind: "moon-building",
+      itemId: 1,
+      targetLevel: 1,
+      action: "demolish",
+      startedAt: startedAt.toString(),
+      readyAt: readyAt.toString(),
+      asOfNow: { secondsRemaining: 1_800, complete: false }
+    });
+    expect(running.completionQueue).toBeUndefined();
+    expect(running.buildings.find((building) => building.id === 1)?.level).toBe(2);
+    expect(usedFields()).toBe(3);
+
+    setSystemTime(new Date(readyAt * 1_000));
+    try {
+      const done = indexer.moonState(player, planet.planetId);
+      expect(done.queue).toBeNull();
+      expect(done.completionQueue).toMatchObject({ action: "demolish", startedAt: startedAt.toString(), asOfNow: { secondsRemaining: 0, complete: true } });
+      expect(done.buildings.find((building) => building.id === 1)?.level).toBe(1);
+      expect(usedFields()).toBe(2);
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+    }
+  });
+
   test("a queued Missile Silo demolition already lowers the missile capacity it reports", async () => {
     const { indexer, transaction, completed, demolitionStarted, projectAt } = lensHarness();
     const now = Math.floor(Date.now() / 1_000);

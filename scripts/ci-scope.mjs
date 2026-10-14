@@ -98,8 +98,9 @@ export function filesRequireUniverseChecks(files) {
 
 export function filesRequireBackendChecks(files) {
   return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types|battle-oracle))\//)
-    // Backend tests read contract sources and storage layouts.
+    // Backend tests read contract sources, storage layouts and the demolition parity fixture.
     || anyMatch(files, /^packages\/contracts\/(src|storage-layout)\//)
+    || anyMatch(files, /^packages\/contracts\/demolition-parity-fixture\.json$/)
     || anyMatch(
       files,
       /^scripts\/(veydrift-api-(latency-report|route-benchmark)|veydrift-(redeploy-preflight|redeploy-readiness-probe|safe-diagnostics))(\.test)?\.mjs$/,
@@ -108,7 +109,7 @@ export function filesRequireBackendChecks(files) {
 
 export function filesRequireFrontendChecks(files) {
   return anyMatch(files, /^(apps\/frontend|packages\/(universe|api-types|battle-oracle))\//)
-    || anyMatch(files, /^packages\/contracts\/combat-preview-catalog\.json$/)
+    || anyMatch(files, /^packages\/contracts\/(combat-preview-catalog|demolition-parity-fixture)\.json$/)
     || anyMatch(files, /^scripts\/veydrift-test-frontend-config-check\.mjs$/);
 }
 

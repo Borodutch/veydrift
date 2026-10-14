@@ -3994,6 +3994,59 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
             ".moon.settled.roboticsLevel",
             moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory)
         );
+
+        _parityPrices(planetId);
+    }
+
+    /// @dev Demolition price and duration at Ion 0, 5 and 25 for the frontend estimates
+    ///      (apps/frontend/src/demolition.test.ts): Ion lowers the price, never the duration.
+    function _parityPrices(uint256 planetId) private {
+        _setBuildingLevel(planetId, Building.NaniteFactory, 1);
+        _parity(".prices.roboticsFactory", game.buildingLevel(planetId, Building.RoboticsFactory));
+        _parity(".prices.naniteFactory", game.buildingLevel(planetId, Building.NaniteFactory));
+        _parity(
+            ".prices.moonRoboticsFactory",
+            moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory)
+        );
+        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+        _fundMoon(planetId, 1_000_000, 1_000_000, 1_000_000);
+        uint16[3] memory ionLevels = [uint16(0), 5, 25];
+        Building[3] memory buildings =
+            [Building.MetalMine, Building.SolarPlant, Building.CrystalStorage];
+        MoonBuilding[2] memory moonBuildings = [MoonBuilding.RoboticsFactory, MoonBuilding.Shipyard];
+        for (uint256 i = 0; i < ionLevels.length; i++) {
+            _setTechnologyLevel(player, Technology.Ion, ionLevels[i]);
+            string memory ion = string.concat(".prices.ion", vm.toString(ionLevels[i]));
+            for (uint256 j = 0; j < buildings.length; j++) {
+                string memory key = string.concat(ion, ".planet", vm.toString(j));
+                _parity(string.concat(key, ".building"), uint8(buildings[j]));
+                _parity(string.concat(key, ".level"), game.buildingLevel(planetId, buildings[j]));
+                vm.prank(player);
+                game.startBuildingDemolition(planetId, buildings[j]);
+                VeydriftGameStorage.BuildingConstruction memory construction =
+                    game.activeBuildingConstruction(planetId);
+                _parityResources(string.concat(key, ".cost"), construction.cost);
+                _parity(string.concat(key, ".duration"), construction.readyAt - block.timestamp);
+                vm.prank(player);
+                game.cancelBuildingDemolition(planetId);
+            }
+            for (uint256 j = 0; j < moonBuildings.length; j++) {
+                string memory key = string.concat(ion, ".moon", vm.toString(j));
+                _parity(string.concat(key, ".building"), uint8(moonBuildings[j]));
+                _parity(
+                    string.concat(key, ".level"),
+                    moons.moonBuildingLevel(planetId, moonBuildings[j])
+                );
+                vm.prank(player);
+                moons.startMoonBuildingDemolition(planetId, moonBuildings[j]);
+                VeydriftMoonSystem.MoonBuildingConstruction memory construction =
+                    moons.activeMoonBuildingConstruction(planetId);
+                _parityResources(string.concat(key, ".cost"), construction.cost);
+                _parity(string.concat(key, ".duration"), construction.readyAt - block.timestamp);
+                vm.prank(player);
+                moons.cancelMoonBuildingDemolition(planetId);
+            }
+        }
     }
 
     function _parityStep(

@@ -129,6 +129,14 @@ test("shared JSON contracts require both frontend and backend validation", () =>
   assert.equal(filesRequireContractChecks(files), false);
 });
 
+test("the contract-generated demolition parity fixture requires backend, frontend and contract validation", () => {
+  const files = ["packages/contracts/demolition-parity-fixture.json"];
+  assert.equal(filesRequireBackendChecks(files), true);
+  assert.equal(filesRequireFrontendChecks(files), true);
+  assert.equal(filesRequireContractChecks(files), true);
+  assert.equal(filesRequireBackendChecks(["packages/contracts/README.md"]), false);
+});
+
 test("flushes a large failure log to a pipe before exiting", () => {
   const moduleUrl = new URL("./ci-run-scoped-checks.mjs", import.meta.url).href;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", `

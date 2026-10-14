@@ -244,5 +244,166 @@
     "settled": {
       "roboticsLevel": 2
     }
+  },
+  "prices": {
+    "roboticsFactory": 2,
+    "naniteFactory": 1,
+    "moonRoboticsFactory": 2,
+    "ion0": {
+      "planet0": {
+        "building": 0,
+        "level": 13,
+        "cost": {
+          "metal": 5189,
+          "crystal": 1297,
+          "deuterium": 0
+        },
+        "duration": 1556
+      },
+      "planet1": {
+        "building": 3,
+        "level": 13,
+        "cost": {
+          "metal": 6487,
+          "crystal": 2594,
+          "deuterium": 0
+        },
+        "duration": 2179
+      },
+      "planet2": {
+        "building": 8,
+        "level": 3,
+        "cost": {
+          "metal": 2000,
+          "crystal": 1000,
+          "deuterium": 0
+        },
+        "duration": 720
+      },
+      "moon0": {
+        "building": 1,
+        "level": 2,
+        "cost": {
+          "metal": 400,
+          "crystal": 120,
+          "deuterium": 200
+        },
+        "duration": 249
+      },
+      "moon1": {
+        "building": 3,
+        "level": 1,
+        "cost": {
+          "metal": 200,
+          "crystal": 100,
+          "deuterium": 50
+        },
+        "duration": 144
+      }
+    },
+    "ion5": {
+      "planet0": {
+        "building": 0,
+        "level": 13,
+        "cost": {
+          "metal": 4151,
+          "crystal": 1037,
+          "deuterium": 0
+        },
+        "duration": 1556
+      },
+      "planet1": {
+        "building": 3,
+        "level": 13,
+        "cost": {
+          "metal": 5189,
+          "crystal": 2075,
+          "deuterium": 0
+        },
+        "duration": 2179
+      },
+      "planet2": {
+        "building": 8,
+        "level": 3,
+        "cost": {
+          "metal": 1600,
+          "crystal": 800,
+          "deuterium": 0
+        },
+        "duration": 720
+      },
+      "moon0": {
+        "building": 1,
+        "level": 2,
+        "cost": {
+          "metal": 320,
+          "crystal": 96,
+          "deuterium": 160
+        },
+        "duration": 249
+      },
+      "moon1": {
+        "building": 3,
+        "level": 1,
+        "cost": {
+          "metal": 160,
+          "crystal": 80,
+          "deuterium": 40
+        },
+        "duration": 144
+      }
+    },
+    "ion25": {
+      "planet0": {
+        "building": 0,
+        "level": 13,
+        "cost": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0
+        },
+        "duration": 1556
+      },
+      "planet1": {
+        "building": 3,
+        "level": 13,
+        "cost": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0
+        },
+        "duration": 2179
+      },
+      "planet2": {
+        "building": 8,
+        "level": 3,
+        "cost": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0
+        },
+        "duration": 720
+      },
+      "moon0": {
+        "building": 1,
+        "level": 2,
+        "cost": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0
+        },
+        "duration": 249
+      },
+      "moon1": {
+        "building": 3,
+        "level": 1,
+        "cost": {
+          "metal": 0,
+          "crystal": 0,
+          "deuterium": 0
+        },
+        "duration": 144
+      }
+    }
   }
 }
