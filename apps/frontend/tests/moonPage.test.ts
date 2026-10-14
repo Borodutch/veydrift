@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, MoonStructureLevelInfoModal, MoonStructuresSection, moonDemolitionCancelDisabled, moonBuildingRequirementRows, moonDefenseProductionItems, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonShipProductionItems, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureQueueProgress, moonStructureStatus, queueReady } from "../src/components/MoonPage";
+import { MoonPage, MoonStructureLevelInfoModal, MoonStructuresSection, moonDemolitionCancelDisabled, moonDemolitionUnavailableReason, moonBuildingRequirementRows, moonDefenseProductionItems, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonShipProductionItems, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureQueueProgress, moonStructureStatus, queueReady } from "../src/components/MoonPage";
 import { defenseProductionItems } from "../src/components/DefensePage";
 import { shipProductionItems } from "../src/components/ShipyardPage";
 import type { ChainMoonState } from "../src/walletFlow";
@@ -1056,6 +1056,25 @@ describe("Moon page helpers", () => {
       cost: { metal: "2000", crystal: "0", deuterium: "0" },
       asOfNow: { secondsRemaining: 12, complete: false },
     })).toBe(false);
+  });
+
+  test("treats a moon queue item the backend reports complete as free for demolition, like Upgrade (#125)", () => {
+    const building = { id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } } as Parameters<typeof moonDemolitionUnavailableReason>[0];
+    const queue: NonNullable<ChainMoonState["queue"]> = {
+      active: true,
+      kind: "moon-building",
+      action: "upgrade",
+      itemId: 0,
+      targetLevel: 2,
+      startedAt: "1770000000",
+      readyAt: "1770000300",
+      cost: { metal: "0", crystal: "0", deuterium: "0" },
+      asOfNow: { secondsRemaining: 12, complete: false },
+    };
+    const reason = (q: typeof queue) => moonDemolitionUnavailableReason(building, { metal: 0, crystal: 0, deuterium: 0 }, loadedMoonState({ queue: q }), { canTransact: true, pending: false });
+    expect(reason(queue)).toBe("Building queue busy");
+    // The contract settles the due item before starting the demolition.
+    expect(reason({ ...queue, asOfNow: { secondsRemaining: 0, complete: true } })).toBeUndefined();
   });
 
   test("disables moon demolition Cancel once readyAt passes, before the backend reports completion", () => {

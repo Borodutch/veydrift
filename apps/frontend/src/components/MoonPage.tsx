@@ -815,10 +815,8 @@ function MoonStructureDetailPanel({
       active={built}
       asset={moonBuildingAsset(building.key)}
       cacheKey={`moon-building:${building.key}`}
-      demolishAction={demolitionPrice && onDemolishBuilding ? {
-        disabled: Boolean(demolitionReason),
+      demolishAction={demolitionPrice && onDemolishBuilding && !demolitionReason ? {
         onClick: () => setIsDemolitionOpen(true),
-        reason: demolitionReason,
       } : undefined}
       demolition={demolition}
       description={moonBuildingEffect(building.key)}
@@ -875,7 +873,8 @@ export function moonDemolitionUnavailableReason(
 ): string | undefined {
   if (building.key === "lunarBase") return `${building.label} can't be demolished`;
   if (building.level <= 0) return `${building.label} isn't built`;
-  if (moonState?.queue?.active) return "Building queue busy";
+  // The contract settles a finished queue item before demolishing, like Upgrade.
+  if (moonState?.queue?.active && !queueReady(moonState.queue)) return "Building queue busy";
   if (building.key === "shipyard" && (moonState?.shipQueue?.active || moonState?.defenseQueue?.active)) return `${building.label} in use`;
   if (!options.canTransact) return options.transactionUnavailableReason ?? "Wallet or moon connection unavailable.";
   if (options.pending) return "A moon transaction is already pending.";

@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { ArrowDown, Bomb, PackagePlus } from "lucide-preact";
-import { useId, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { ConstructionProgress } from "../constructionProgress";
 import { formatDurationUntil } from "../durationFormat";
 import { queueProgress, type QueueTimeline } from "../playableMvp";
@@ -142,8 +142,8 @@ export function StructureDetail({
   activeLabel?: string | undefined;
   asset: string;
   cacheKey: string;
-  /** Secondary destructive action; `reason` explains why it is unavailable. */
-  demolishAction?: { disabled: boolean; onClick: () => void; reason?: string | undefined } | undefined;
+  /** Secondary destructive action; pass it only while demolition is actually available. */
+  demolishAction?: { onClick: () => void } | undefined;
   /** Shown instead of the Demolish action while this structure is coming down. */
   demolition?: StructureDemolition | undefined;
   description: string;
@@ -160,10 +160,6 @@ export function StructureDetail({
   summary: string;
 }) {
   const [isInfoOpen, setIsInfoOpen] = useState(false);
-  // Keyed by structure so a reason opened on one building never shows on the next.
-  const [demolishReasonFor, setDemolishReasonFor] = useState<string | undefined>();
-  const isDemolishReasonOpen = demolishReasonFor === cacheKey;
-  const demolishReasonId = useId();
   // A running demolition replaces the Upgrade + Demolish row with its own status
   // row, so no second action looks available while the structure comes down.
   const inlineAction = demolition ? undefined : action;
@@ -240,22 +236,8 @@ export function StructureDetail({
             </button>
           ) : null}
           {/* The destructive control goes last, after Upgrade's own Supply helper. */}
-          {inlineDemolishAction ? (
-            <DemolishIconButton
-              {...inlineDemolishAction}
-              isReasonOpen={isDemolishReasonOpen}
-              label={label}
-              onToggleReason={() => setDemolishReasonFor(isDemolishReasonOpen ? undefined : cacheKey)}
-              reasonId={demolishReasonId}
-            />
-          ) : null}
+          {inlineDemolishAction ? <DemolishIconButton label={label} onClick={inlineDemolishAction.onClick} /> : null}
         </div>
-      ) : null}
-
-      {inlineDemolishAction?.disabled && inlineDemolishAction.reason ? (
-        <p className="mt-1.5 text-right text-xs text-slate-500" hidden={!isDemolishReasonOpen} id={demolishReasonId} role="status">
-          {inlineDemolishAction.reason}
-        </p>
       ) : null}
 
       {demolition ? (
@@ -301,39 +283,16 @@ export function StructureDetail({
 }
 
 /**
- * Icon-only Demolish control that sits beside Upgrade. An unavailable control
- * stays focusable (`aria-disabled`, not `disabled`) so its reason is reachable
- * as a hover tooltip and, on touch, by tapping it to reveal the reason row.
+ * Icon-only Demolish control that sits beside Upgrade. It is rendered only
+ * while demolition is available, so it has no disabled state (#125).
  */
-export function DemolishIconButton({
-  disabled,
-  isReasonOpen,
-  label,
-  onClick,
-  onToggleReason,
-  reason,
-  reasonId,
-}: {
-  disabled: boolean;
-  isReasonOpen: boolean;
-  label: string;
-  onClick: () => void;
-  onToggleReason: () => void;
-  reason?: string | undefined;
-  reasonId: string;
-}) {
-  const explainable = disabled && Boolean(reason);
+export function DemolishIconButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
-      aria-controls={explainable ? reasonId : undefined}
-      aria-describedby={explainable ? reasonId : undefined}
-      aria-disabled={explainable ? "true" : undefined}
-      aria-expanded={explainable ? isReasonOpen : undefined}
       aria-label={`Demolish ${label}`}
-      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-rose-300/20 text-rose-300/70 transition hover:border-rose-300/40 hover:bg-rose-300/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500 disabled:hover:bg-transparent aria-disabled:cursor-not-allowed aria-disabled:border-white/10 aria-disabled:text-slate-500 aria-disabled:hover:bg-transparent"
-      disabled={disabled && !explainable}
-      onClick={explainable ? onToggleReason : onClick}
-      title={explainable ? reason : "Demolish"}
+      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-rose-300/20 text-rose-300/70 transition hover:border-rose-300/40 hover:bg-rose-300/10 hover:text-rose-200"
+      onClick={onClick}
+      title="Demolish"
       type="button"
     >
       <Bomb aria-hidden="true" size={16} strokeWidth={1.9} />
