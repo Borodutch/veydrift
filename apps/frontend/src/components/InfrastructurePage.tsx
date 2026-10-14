@@ -33,7 +33,6 @@ import {
   buildingDemolitionPrice,
   planetDemolitionUnavailableReason,
 } from "../demolition";
-import { formatDurationUntil } from "../durationFormat";
 import { DemolitionDialog } from "./DemolitionDialog";
 import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
@@ -41,7 +40,7 @@ import { QueueProgressPanel } from "./QueueProgressPanel";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
-import { StructureCatalog, StructureDetail, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
+import { StructureCatalog, StructureDetail, structureDemolitionProgress, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -162,6 +161,19 @@ export function InfrastructurePage({
     disabled: Boolean(transactionBlockedReason) || activeBuildingQueue.readyAt <= now,
     onClick: onCancelDemolition,
   } : undefined;
+  const demolitionProgress = activeBuildingQueue?.demolish
+    ? structureDemolitionProgress(
+      demolitionQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel),
+      constructionProgress,
+      activeBuildingQueue,
+      now,
+    )
+    : undefined;
+  // The detail reads the same display queue as the panel and card, so a queue the
+  // backend already reports complete can't linger in its status line.
+  const detailState = settledState.queue?.kind === "building" && !activeBuildingQueue
+    ? { ...settledState, queue: undefined }
+    : settledState;
   const handleSelectBuilding = (key: BuildingKey) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
@@ -202,15 +214,14 @@ export function InfrastructurePage({
             starterPlanet,
           });
 
-          if (activeBuildingQueue?.demolish && activeBuildingQueue.key === building.key) {
+          if (demolitionProgress && activeBuildingQueue?.key === building.key) {
             return {
               asset: building.asset,
-              currentText: `Level ${currentLevel} → ${activeBuildingQueue.targetLevel}`,
+              currentText: `Demolishing ${currentLevel} → ${activeBuildingQueue.targetLevel}`,
+              demolition: demolitionProgress,
               isDimmed: false,
               key: building.key,
               label: building.label,
-              statusText: `↓ ${constructionProgress?.remaining ?? formatDurationUntil(activeBuildingQueue.readyAt, now)}`,
-              statusTone: "danger" as const,
             };
           }
 
@@ -235,11 +246,10 @@ export function InfrastructurePage({
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
             chainDuration={chainDurations?.[selectedBuilding.key]}
-            demolition={activeBuildingQueue?.demolish && activeBuildingQueue.key === selectedBuilding.key ? {
+            demolition={demolitionProgress && activeBuildingQueue?.key === selectedBuilding.key ? {
+              ...demolitionProgress,
               cancelDisabled: demolitionCancel?.disabled,
-              label: demolitionQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel),
               onCancel: demolitionCancel?.onClick,
-              remaining: constructionProgress?.remaining ?? formatDurationUntil(activeBuildingQueue.readyAt, now),
             } : undefined}
             demolitionActivity={demolitionActivity}
             onDemolish={onDemolish ? () => onDemolish(selectedBuilding.key) : undefined}
@@ -252,7 +262,7 @@ export function InfrastructurePage({
             productionRates={productionRates}
             spendableResources={spendableResources}
             starterPlanet={starterPlanet}
-            state={settledState}
+            state={detailState}
           />
         )}
       />
