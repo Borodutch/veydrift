@@ -48,9 +48,9 @@ function PlanetView() {
   state.buildings.roboticsFactory = 2;
   state.resources = blocked ? { metal: 0, crystal: 0, deuterium: 0 } : { metal: 1e8, crystal: 1e8, deuterium: 1e8 };
   const queue = demolitionQueue(buildingContractIds.metalMine, 5);
-  // Like PlayableMvpApp, the page's building queue is the projected one, which a
-  // backend-complete demolition no longer carries.
-  if (queue && demolitionState === "demolishing") {
+  // The raw page snapshot can still carry a demolition the backend already
+  // reports complete; the page must drop it everywhere.
+  if (queue) {
     state.queue = { demolish: true, key: "metalMine", kind: "building", label: "Metal Mine", readyAt: Number(queue.readyAt) * 1_000, startedAt: Number(queue.startedAt) * 1_000, targetLevel: 5 };
   }
   return (

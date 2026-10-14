@@ -169,6 +169,11 @@ export function InfrastructurePage({
       now,
     )
     : undefined;
+  // The detail reads the same display queue as the panel and card, so a queue the
+  // backend already reports complete can't linger in its status line.
+  const detailState = settledState.queue?.kind === "building" && !activeBuildingQueue
+    ? { ...settledState, queue: undefined }
+    : settledState;
   const handleSelectBuilding = (key: BuildingKey) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
@@ -257,7 +262,7 @@ export function InfrastructurePage({
             productionRates={productionRates}
             spendableResources={spendableResources}
             starterPlanet={starterPlanet}
-            state={settledState}
+            state={detailState}
           />
         )}
       />

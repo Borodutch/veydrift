@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DemolishIconButton } from "../src/components/StructureCatalog";
+import { DemolishIconButton, structureDemolitionProgress } from "../src/components/StructureCatalog";
 
 function button(overrides: Partial<Parameters<typeof DemolishIconButton>[0]> = {}) {
   const calls = { demolish: 0, toggle: 0 };
@@ -48,5 +48,21 @@ describe("inline Demolish icon (#120)", () => {
     const { props } = button({ disabled: true });
     expect(props.disabled).toBe(true);
     expect(props["aria-disabled"]).toBeUndefined();
+  });
+});
+
+describe("demolition progress (#120)", () => {
+  const now = 1_800_000_000_000;
+
+  test("falls back to the queue timeline when no shared projection is available", () => {
+    expect(structureDemolitionProgress("Demolishing Metal Mine 6 → 5", undefined, { readyAt: now + 120_000, startedAt: now - 60_000 }, now))
+      .toEqual({ indeterminate: false, label: "Demolishing Metal Mine 6 → 5", progress: 1 / 3, remaining: "2m" });
+  });
+
+  test("is indeterminate without a start time but still counts down to readyAt", () => {
+    const progress = structureDemolitionProgress("Demolishing Jump Gate 1 → 0", undefined, { readyAt: now + 90_000 }, now);
+    expect(progress.indeterminate).toBe(true);
+    expect(progress.remaining).toBe("1m 30s");
+    expect(structureDemolitionProgress("x", undefined, undefined, now)).toMatchObject({ indeterminate: true, remaining: "syncing" });
   });
 });

@@ -53,7 +53,7 @@ export function structureDemolitionProgress(
   now: number,
 ): StructureDemolitionProgress {
   return {
-    indeterminate: progressState?.indeterminate ?? false,
+    indeterminate: progressState?.indeterminate ?? timeline?.startedAt === undefined,
     label,
     progress: progressState?.progress ?? queueProgress(timeline, now),
     remaining: progressState?.remaining ?? (timeline ? formatDurationUntil(timeline.readyAt, now) : "syncing"),

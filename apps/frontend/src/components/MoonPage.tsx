@@ -651,8 +651,14 @@ function MoonStructuresSection({
       ? demolitionQueueLabel(moonBuildingLabel(constructionQueue.itemId), constructionQueue.targetLevel)
       : `${moonBuildingLabel(constructionQueue.itemId)}${constructionQueue.targetLevel ? ` Level ${constructionQueue.targetLevel}` : ""}`
     : undefined;
+  const demolitionReadyAt = demolishing ? timestampToMs(constructionQueue?.readyAt) : undefined;
   const demolitionProgress = constructionQueue && demolishing && constructionLabel
-    ? structureDemolitionProgress(constructionLabel, constructionProgress, moonStructureQueueProgress(constructionQueue), now)
+    ? structureDemolitionProgress(
+      constructionLabel,
+      constructionProgress,
+      demolitionReadyAt === undefined ? undefined : { readyAt: demolitionReadyAt, startedAt: timestampToMs(constructionQueue.startedAt) },
+      now,
+    )
     : undefined;
   const demolitionCancel = constructionQueue && demolishing && onDemolishBuilding ? {
     disabled: !canTransact || pending || queueReady(constructionQueue),
