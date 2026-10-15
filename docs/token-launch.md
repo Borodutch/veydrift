@@ -6,6 +6,29 @@ Any execution requires a newly approved schedule, fresh block bounds and every o
 Do not reuse an expired auction window. Supply, vesting and launch safeguards are maintained here;
 alternative-venue scripts are excluded from this bundle.
 
+## Launch plan (owner decision, 2026-10-15)
+
+The auction is created from the Uniswap web app's CCA flow (<https://cca.uniswap.org/>), not with
+`VeydriftUniswapCCALauncher` and the fork-proof bundle below, which still describe the earlier
+48-hour scripted path and its $0.0026 floor. The public page is `/cca`.
+
+| Parameter | Value |
+| --- | --- |
+| Chain / currency | Base / WETH |
+| Auction supply | 250,000,000 VEYDRIFT (25%), plus 250,000,000 reserved for the v4 pool |
+| Start | 2026-10-22 13:00 PDT (20:00 UTC), first block at or after it: 52,954,927 |
+| End | 2026-11-05 12:00 PST (20:00 UTC), 604,800 blocks later: 53,559,727 |
+| Floor | $0.00075 per VEYDRIFT ($750K FDV); 3.0582e-7 WETH, Q96 `24229586239591201015800` |
+| Tick spacing | 1% of the floor, Q96 `242295862395912010158` |
+| Minimum raise | $50K, 20.39 WETH |
+| Issuance | Even: 16 mps for 281,600 blocks, then 17 mps for 323,200 blocks |
+| Proceeds to liquidity | 100% into the VEYDRIFT/WETH v4 pool at the clearing price |
+
+WETH figures use ETH at $2,452.42 (2026-10-15); recompute them and the block numbers right before
+creating the auction. At the floor a full sale raises about $187.5K; there is no cap. Resource pools
+are not created by the Uniswap flow; `VeydriftUniswapResourcePools` requires a launcher-recorded main
+position, so the resource pools need their own plan.
+
 ## Token foundation
 
 ### Resource supply and reserve release
