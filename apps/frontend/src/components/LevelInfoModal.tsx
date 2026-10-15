@@ -42,17 +42,20 @@ export function levelResourceGlyph(resource: keyof Resources | "energy"): JSX.El
   return <span aria-hidden="true" className={`text-[0.65rem] font-bold ${glyph.className}`}>{glyph.abbr}</span>;
 }
 
-/** A level stat with an optional subtle delta (e.g. 5,277/h +1,980). */
+/** A level stat with an optional subtle delta (e.g. 5,277/h +2K). */
 export function levelInfoValue(value: string, options: { delta?: number | undefined; note?: string | undefined; resource?: keyof Resources | "energy" | undefined; suffix?: string | undefined; tone?: "positive" | "warning" | undefined } = {}): JSX.Element {
   const { delta, note, resource, suffix = "", tone = "positive" } = options;
-  const deltaText = delta !== undefined && Math.floor(delta) !== 0 ? `${delta > 0 ? "+" : ""}${formatLevelAmount(delta, 1_000)}` : note;
-  // Plain inline text (not inline-flex) so a too-narrow cell shows an ellipsis instead of cutting a number.
+  const deltaText = delta !== undefined && Math.trunc(delta) !== 0 ? `${delta > 0 ? "+" : ""}${formatLevelAmount(delta, 1_000)}` : note;
+  // The value and its delta share a one-line wrapping box (.level-info-value): when the cell is too
+  // narrow the delta wraps onto the hidden second line and disappears whole, never as "+10…".
   return (
-    <span className="whitespace-nowrap">
-      {resource ? <span className="mr-1">{levelResourceGlyph(resource)}</span> : null}
-      <span className="tabular-nums text-slate-200">{value}{suffix}</span>
+    <span className="level-info-value">
+      <span className="min-w-0 truncate">
+        {resource ? <span className="mr-1">{levelResourceGlyph(resource)}</span> : null}
+        <span className="tabular-nums text-slate-200">{value}{suffix}</span>
+      </span>
       {deltaText ? (
-        <span className={`level-info-delta ml-1 text-[0.68rem] tabular-nums ${tone === "warning" ? "text-amber-200/70" : "text-emerald-300/70"}`}>
+        <span className={`level-info-delta text-[0.68rem] tabular-nums ${tone === "warning" ? "text-amber-200/70" : "text-emerald-300/70"}`}>
           {deltaText}
         </span>
       ) : null}
@@ -83,6 +86,20 @@ export function LevelInfoButton({
 // Ref callback (not a hook) so the modal stays callable as a plain function in tests. Opening a
 // long table scrolls once so the current level sits near the top with two earlier levels for context.
 const scrolledLevelTables = new WeakSet<Element>();
+
+// Same limit as the Supply planner (levelSupply.ts): a range whose summed cost exceeds it always
+// fails closed, so it gets no Supply icon.
+const SUPPLY_COST_LIMIT = Math.floor(Number.MAX_SAFE_INTEGER / 3);
+function supplyableLevels(rows: readonly LevelInfoRow[], currentLevel: number): Set<number> {
+  const total = { metal: 0, crystal: 0, deuterium: 0 };
+  const levels = new Set<number>();
+  for (const row of [...rows].sort((a, b) => a.level - b.level)) {
+    if (row.level <= currentLevel) continue;
+    for (const key of resourceKeys) total[key] += row.cost[key];
+    if (row.onSupply && resourceKeys.every((key) => total[key] <= SUPPLY_COST_LIMIT)) levels.add(row.level);
+  }
+  return levels;
+}
 function scrollToCurrentLevel(container: HTMLDivElement | null) {
   if (!container || scrolledLevelTables.has(container)) return;
   scrolledLevelTables.add(container);
@@ -108,7 +125,8 @@ export function LevelInfoModal({
   rows: readonly LevelInfoRow[];
 }) {
   const titleId = "level-info-title";
-  const hasSupply = rows.some((row) => row.onSupply && row.level > currentLevel);
+  const supplyable = supplyableLevels(rows, currentLevel);
+  const hasSupply = supplyable.size > 0;
   const desktopColumns = [
     "5.5rem",
     "minmax(12.5rem,2fr)",
@@ -139,11 +157,11 @@ export function LevelInfoModal({
             <div className="level-info-row py-2 text-[0.65rem] font-semibold uppercase tracking-normal text-cyan-300/70" role="row">
               <span className="level-info-level" role="columnheader">Level</span>
               <span className="level-info-cost truncate" role="columnheader">{costLabel}</span>
-              <div className="level-info-meta">
+              <div className="level-info-meta flex-wrap">
                 {columns.map((column) => (
                   <span className="inline-flex min-w-0 items-center gap-1 truncate" key={column.key} role="columnheader" title={column.label}>
                     {column.icon ? <column.icon aria-hidden="true" className="shrink-0 lg:hidden" size={11} strokeWidth={2.2} /> : null}
-                    <span className="truncate">{column.label}</span>
+                    <span className="truncate" data-level-fit="header">{column.label}</span>
                   </span>
                 ))}
               </div>
@@ -151,7 +169,7 @@ export function LevelInfoModal({
             </div>
           </div>
           <div role="rowgroup">
-            {rows.map((row) => levelInfoRow(row, columns, currentLevel, hasSupply))}
+            {rows.map((row) => levelInfoRow(row, columns, currentLevel, hasSupply, supplyable.has(row.level)))}
           </div>
         </div>
       </div>
@@ -159,7 +177,7 @@ export function LevelInfoModal({
   );
 }
 
-function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], currentLevel: number, hasSupply: boolean) {
+function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], currentLevel: number, hasSupply: boolean, supplyable: boolean) {
   const past = row.level < currentLevel;
   const tone = row.status === "current"
     ? "bg-emerald-300/[0.08] shadow-[inset_3px_0_0_rgba(110,231,183,0.75)]"
@@ -183,7 +201,7 @@ function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], cu
         {row.status === "next" ? levelPill("Next", "next") : null}
       </span>
       <span className="level-info-cost min-w-0" role="cell">{levelCost(row.cost)}</span>
-      <div className={`level-info-meta text-xs text-slate-400 lg:text-sm ${columns.some((column) => column.wrap) ? "flex-wrap" : ""}`} data-level-fit>
+      <div className={`level-info-meta text-xs text-slate-400 lg:text-sm ${columns.some((column) => column.wrap) ? "flex-wrap" : ""}`} data-level-fit="box">
         {columns.map((column) => {
           const value = row.cells[column.key];
           return (
@@ -201,10 +219,10 @@ function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], cu
       </div>
       {hasSupply ? (
         <span className="level-info-supply flex justify-end" role="cell">
-          {row.onSupply && row.level > currentLevel ? (
+          {supplyable ? (
             <button
               aria-label={supplyLabel}
-              className="relative inline-flex h-8 w-8 items-center justify-center rounded border border-sky-300/25 before:absolute before:-inset-1 before:content-[''] bg-sky-300/[0.06] text-sky-200 transition hover:border-sky-300/50 hover:bg-sky-300/15 hover:text-sky-100"
+              className="relative inline-flex h-8 w-8 items-center justify-center rounded border border-sky-300/25 before:absolute before:-inset-[5px] before:content-[''] bg-sky-300/[0.06] text-sky-200 transition hover:border-sky-300/50 hover:bg-sky-300/15 hover:text-sky-100"
               onClick={row.onSupply}
               title={supplyLabel}
               type="button"

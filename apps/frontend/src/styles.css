@@ -4231,10 +4231,28 @@ h4 {
   grid-row: 1;
 }
 
+/* A stat and its delta on one line: the delta wraps onto the clipped second line (vanishing whole)
+   before the stat itself ellipsizes. */
+.level-info-value {
+  display: inline-flex;
+  max-width: 100%;
+  max-height: 1lh;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.25rem;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
 /* The smallest phones drop the per-level deltas so the stats still fit on one line. */
 @media (max-width: 359px) {
   .level-info-delta {
     display: none;
+  }
+
+  .level-info-row {
+    padding-inline: 0.5rem;
   }
 
   .level-info-row > .level-info-cost {

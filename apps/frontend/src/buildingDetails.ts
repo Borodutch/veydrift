@@ -399,21 +399,23 @@ const amountUnits = [[1e3, "K"], [1e6, "M"], [1e9, "B"], [1e12, "T"], [1e15, "Qa
 
 /** Exact below `exactBelow` so early levels stay precise; compact (10.6K, 410K, 5.6Qa) above, where width matters. */
 export function formatLevelAmount(value: number, exactBelow = 10_000): string {
-  const rounded = Math.floor(value);
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.trunc(value);
   const magnitude = Math.abs(rounded);
   if (magnitude < exactBelow) return formatter.format(rounded);
+  const sign = rounded < 0 ? "-" : "";
   let unit = 0;
   while (unit + 1 < amountUnits.length && magnitude >= amountUnits[unit + 1]![0]) unit++;
   // At most three significant digits (409.6K -> 410K, 12.84K -> 12.8K) so three costs fit a phone row.
   const scale = (index: number) => {
-    const raw = rounded / amountUnits[index]![0];
-    return Math.abs(raw) >= 99.95 ? Math.round(raw) : Math.round(raw * 10) / 10;
+    const raw = magnitude / amountUnits[index]![0];
+    return raw >= 99.95 ? Math.round(raw) : Math.round(raw * 10) / 10;
   };
   let scaled = scale(unit);
   // 999,960 rounds to 1,000K; promote it to the next unit (1M).
-  if (Math.abs(scaled) >= 1000 && unit + 1 < amountUnits.length) scaled = scale(++unit);
-  if (Math.abs(scaled) >= 1000) return rounded.toExponential(1).replace("e+", "e");
-  return `${oneDecimalFormatter.format(scaled)}${amountUnits[unit]![1]}`;
+  if (scaled >= 1000 && unit + 1 < amountUnits.length) scaled = scale(++unit);
+  if (scaled >= 1000) return rounded.toExponential(1).replace("e+", "e");
+  return `${sign}${oneDecimalFormatter.format(scaled)}${amountUnits[unit]![1]}`;
 }
 
 export function formatNumber(value: number): string {

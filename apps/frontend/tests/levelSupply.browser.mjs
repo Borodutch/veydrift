@@ -90,7 +90,8 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         assert.equal(layout.buttonText, '');
         assert.equal(layout.title, 'Supply resources up to Level ' + level);
         if (kind !== 'research') assert.ok(layout.maxHeight - layout.minHeight <= 1, kind + ' rows have uneven heights ' + JSON.stringify(layout));
-        if (kind === 'building') assert.equal(layout.buttons, 50 - 8);
+        // Robotics Factory 8: levels 9–42. Beyond 42 the summed cost passes the planner's safe limit, so no icon.
+        if (kind === 'building') assert.equal(layout.buttons, 42 - 8);
         await evaluate('document.querySelector(' + JSON.stringify(selector) + ').scrollIntoView({block:"center"}); document.querySelector(' + JSON.stringify(selector) + ').focus()');
         if (kind === 'building' && artifacts) { const shot = await send('Page.captureScreenshot', { format: 'png' }); writeFileSync(join(artifacts, 'level-table-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
         await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });

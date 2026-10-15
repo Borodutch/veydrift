@@ -10,8 +10,11 @@ import "../../src/styles.css";
 
 const CURRENT = 8;
 const state = createInitialPlayableState();
-const cases = [
+type Case = { body: string; key: string; label: string; level?: number; energy?: number };
+const cases: Case[] = [
   ...buildingCatalog.map((building) => ({ body: "planet", key: building.key as string, label: building.label })),
+  // Late game: long energy/deuterium figures with deltas.
+  { body: "planet", key: "fusionReactor", label: "Fusion Reactor (late)", level: 40, energy: 25 },
   ...(["lunarBase", "roboticsFactory", "shipyard", "jumpGate"] as const).map((key) => ({ body: "moon", key: key as string, label: `Moon ${key}` })),
   ...(["energy", "astrophysics"] as const).map((key) => ({ body: "research", key: key as string, label: key })),
 ];
@@ -21,8 +24,8 @@ function view(index: number) {
   if (item.body === "planet") {
     const key = item.key as BuildingKey;
     const binary = isBinaryBuilding(key);
-    const buildings = { ...state.buildings, [key]: binary ? 0 : CURRENT };
-    const rows = buildingLevelInfoRows(buildings, key, undefined, undefined, 3);
+    const buildings = { ...state.buildings, [key]: binary ? 0 : item.level ?? CURRENT };
+    const rows = buildingLevelInfoRows(buildings, key, undefined, undefined, item.energy ?? 3);
     const table = buildingLevelInfoTable(buildings[key], binary ? rows.slice(0, 1) : rows, () => {}, binary ? "Build cost" : undefined);
     return <LevelInfoModal {...table} itemLabel={item.label} onClose={() => {}} />;
   }

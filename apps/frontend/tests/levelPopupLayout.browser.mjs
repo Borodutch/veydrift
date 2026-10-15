@@ -1,6 +1,6 @@
 // Run from apps/frontend: node --test tests/levelPopupLayout.browser.mjs
 // Every structure's level popup at phone, landscape and desktop widths: no sideways scrolling, no
-// clipped numbers, and equal-height rows. Long effect text may ellipsize only on <=360px phones.
+// clipped numbers, and equal-height rows. Long effect text may ellipsize only on phones under 390px.
 // Optional LEVEL_POPUP_ARTIFACTS writes the measurements.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-const WIDTHS = [320, 360, 390, 640, 700, 768, 1024, 1280];
+const WIDTHS = [320, 360, 375, 390, 412, 640, 700, 768, 1024, 1280];
 
 test("level popups fit every structure at every width", { timeout: 180_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
@@ -64,7 +64,7 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
       assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
       return result.result.value;
     }
-    const settle = () => evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+    const settle = () => evaluate("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
     const failures = [];
     for (const width of WIDTHS) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
@@ -83,13 +83,25 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
           const scroller = table.parentElement;
           const rows = Array.from(table.querySelectorAll('[role=row][data-level-status]'));
           const heights = rows.map(row => row.offsetHeight);
-          const clipped = Array.from(table.querySelectorAll('[data-level-fit]')).filter(el => el.scrollWidth > el.clientWidth + 1 && !(el.dataset.levelFit === 'text' && innerWidth <= 360));
+          // Chrome draws an ellipsis for any sub-pixel overflow, so compare the laid-out text width
+          // (a Range) with the box instead of the rounded scrollWidth/clientWidth.
+          const overflows = el => {
+            const display = getComputedStyle(el).display;
+            if (display === 'contents') return false;
+            // A stat line holds boxes that truncate on their own: it only fails if those boxes spill out.
+            if (el.dataset.levelFit === 'box') return el.scrollWidth > el.clientWidth;
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return range.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.05;
+          };
+          const clipped = Array.from(table.querySelectorAll('[data-level-fit]')).filter(el => overflows(el) && !(el.dataset.levelFit === 'text' && innerWidth < 390));
           return { tableWidth: table.clientWidth, rows: rows.length, overflow: scroller.scrollWidth - scroller.clientWidth, minHeight: Math.min(...heights), maxHeight: Math.max(...heights),
             clipped: clipped.length, clippedSample: clipped.slice(0, 2).map(el => el.closest('[role=row]').querySelector('[role=rowheader]').textContent + ': ' + el.textContent) };
         })()`);
         const { body, key } = cases[index];
+        assert.ok(measured.rows > 0, `${body} ${key} rendered no level rows`);
         measurements.push({ width, body, key, ...measured });
-        const label = `${body} ${key} @${width}`;
+        const label = `${body} ${cases[index].label} @${width}`;
         if (measured.overflow > 1) failures.push(`${label} scrolls sideways by ${measured.overflow}px`);
         if (measured.clipped > 0) failures.push(`${label} clips ${measured.clipped} values, e.g. ${measured.clippedSample.join(" | ")}`);
         // Research requirement/effect text wraps by design; every structure row is one fixed height.
