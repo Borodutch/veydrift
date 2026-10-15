@@ -4190,44 +4190,64 @@ h4 {
   line-height: 1.35;
 }
 
-/* Level tables pivot from wide grids to per-level stacked cards on phones. */
-@media (max-width: 640px) {
-  .level-info-table,
-  .level-info-table tbody {
-    display: block;
+/* Level popups: one equal-height row per level. Phones put the cost (and the Supply icon) on the
+   first line and the secondary stats on a second line; from sm up it is one single-line grid whose
+   tracks come from --level-info-columns. */
+.level-info-row {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
+  align-items: center;
+  padding: 0.375rem 0.75rem;
+}
+
+.level-info-grid--supply .level-info-row {
+  grid-template-columns: 3.5rem minmax(0, 1fr) 2.25rem;
+}
+
+.level-info-row > .level-info-level {
+  grid-row: 1 / span 2;
+}
+
+.level-info-row > .level-info-cost {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.level-info-row > .level-info-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.125rem 0.75rem;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* Spans both lines so the touch-sized button never makes its row taller than rows without one. */
+.level-info-row > .level-info-supply {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+}
+
+@media (min-width: 640px) {
+  .level-info-row,
+  .level-info-grid--supply .level-info-row {
+    grid-template-columns: var(--level-info-columns);
+    row-gap: 0;
+    padding: 0.25rem 1rem;
   }
 
-  .level-info-table thead {
-    display: none;
+  .level-info-row > .level-info-level,
+  .level-info-row > .level-info-cost,
+  .level-info-row > .level-info-supply {
+    grid-column: auto;
+    grid-row: auto;
   }
 
-  .level-info-table tr {
-    display: grid;
-    gap: 2px;
-    padding: 10px 0;
-  }
-
-  .level-info-table td {
-    display: flex;
-    min-width: 0;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    border-bottom: 0;
-    padding: 2px 12px;
-  }
-
-  .level-info-table td::before {
-    content: attr(data-label);
-    flex: none;
-    color: #64748b;
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .level-info-table td:empty::before {
-    content: none;
+  .level-info-row > .level-info-meta {
+    display: contents;
   }
 }
 
