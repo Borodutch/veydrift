@@ -1051,11 +1051,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
     }
 
-    if (request.method === "GET" && url.pathname === "/cca/interest") {
-      ccaInterestStore ??= new CcaInterestStore(ccaInterestStorePath(loaded.config.indexDbPath));
-      return Response.json(ccaInterestStore.totals(), { headers: { ...corsHeaders, "cache-control": "no-store" } });
-    }
-
     if (request.method === "POST" && url.pathname === "/cca/interest") {
       const now = Date.now();
       if (ccaInterestRateLimits.size > 2_048) ccaInterestRateLimits.clear();

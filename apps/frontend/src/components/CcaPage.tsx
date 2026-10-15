@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ArrowRight, Bot, Check, Coins, ExternalLink, Gavel, Lock, Repeat, Rocket, Scale, Swords, Timer, Undo2, Users } from "lucide-preact";
-import { type CcaInterestTotals, fetchCcaInterestTotals, submitCcaInterest } from "../ccaInterest";
+import { submitCcaInterest } from "../ccaInterest";
 import { SiteHeader } from "./SiteHeader";
 import { TelegramIcon } from "./TelegramIcon";
 import { TrailerPlayer } from "./TrailerPlayer";
@@ -74,15 +74,9 @@ const allocations = [
   { label: "Ecosystem", share: 10, color: "bg-rose-400", note: "100M — 6-year linear vesting" },
 ] as const;
 
-const usd = (value: number) => `$${value.toLocaleString("en-US")}`;
-
 export function CcaApp() {
-  const [interest, setInterest] = useState<CcaInterestTotals | null>(null);
-  const refreshInterest = () => fetchCcaInterestTotals().then(setInterest).catch(() => undefined);
-
   useEffect(() => {
     document.title = "$VEYDRIFT continuous clearing auction";
-    void refreshInterest();
   }, []);
 
   return (
@@ -282,13 +276,6 @@ export function CcaApp() {
               bid, add it too; it isn't a commitment, and it helps me size the launch.
             </p>
             <div className="surface-inset mt-6 rounded-xl p-5">
-              <p className="text-sm text-slate-400">Interest registered so far</p>
-              <p className="mt-1 text-4xl font-semibold text-signal">{usd(interest?.amountUsd ?? 0)}</p>
-              <p className="mt-1 text-sm text-slate-400">
-                from {(interest?.people ?? 0).toLocaleString("en-US")} {interest?.people === 1 ? "person" : "people"}
-              </p>
-            </div>
-            <div className="surface-inset mt-4 rounded-xl p-5">
               <p className="flex items-center gap-2 font-semibold">
                 <Users className="h-4 w-4 text-signal" />
                 Rather talk first?
@@ -300,7 +287,7 @@ export function CcaApp() {
               </a>
             </div>
           </div>
-          <InterestForm onSent={refreshInterest} />
+          <InterestForm />
         </div>
       </section>
 
@@ -315,7 +302,7 @@ export function CcaApp() {
   );
 }
 
-function InterestForm({ onSent }: { onSent: () => void }) {
+function InterestForm() {
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState("");
 
@@ -327,7 +314,6 @@ function InterestForm({ onSent }: { onSent: () => void }) {
     try {
       await submitCcaInterest({ amountUsd: form.get("amountUsd"), email: form.get("email"), telegram: form.get("telegram") });
       setStatus("sent");
-      onSent();
     } catch (caught) {
       setStatus("idle");
       setError(caught instanceof Error && caught.message ? caught.message : "Something went wrong. Message me on Telegram instead.");
@@ -353,7 +339,7 @@ function InterestForm({ onSent }: { onSent: () => void }) {
       </label>
       <label className="text-sm font-semibold text-slate-200">
         How much might you bid? <span className="font-normal text-slate-500">(USD, optional)</span>
-        <input className={input} inputMode="numeric" max={10_000_000} min={0} name="amountUsd" placeholder="0" step={1} type="number" />
+        <input className={input} inputMode="numeric" max={10_000_000} min={0} name="amountUsd" defaultValue={1000} step={1} type="number" />
       </label>
       <label className="text-sm font-semibold text-slate-200">
         Telegram <span className="font-normal text-slate-500">(optional)</span>
