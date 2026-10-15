@@ -2087,8 +2087,10 @@ export function fusionReactorDeuteriumConsumption(level: number): number {
 
 export const solarSatelliteEnergy = universeSolarSatelliteEnergy;
 
+// Integer arithmetic like the contract: float powers drift by one at high levels (Fusion Reactor 50),
+// and the level table must match the Supply amounts exactly.
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
-  return Math.floor((value * (numerator ** exponent)) / (denominator ** exponent));
+  return Number((BigInt(value) * BigInt(numerator) ** BigInt(exponent)) / BigInt(denominator) ** BigInt(exponent));
 }
 
 function roundToNearestHundred(value: number): number {

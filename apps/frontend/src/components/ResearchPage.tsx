@@ -615,9 +615,9 @@ export function ResearchLevelInfoModal({ currentLevel, onClose, researchLabel, r
 }) {
   return <LevelInfoModal costLabel="Research cost" currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
     columns={[
-      { key: "time", label: "Research time", icon: Clock, width: "minmax(5.5rem,0.8fr)", wrap: true },
-      { key: "requirements", label: "Requirements", icon: ListChecks, width: "minmax(7rem,1.2fr)", wrap: true },
-      { key: "effect", label: "Effect", icon: Gauge, width: "minmax(9rem,2fr)", wrap: true },
+      { key: "time", label: "Research time", icon: Clock, width: "minmax(5rem,0.8fr)", wrap: true },
+      { key: "requirements", label: "Requirements", icon: ListChecks, width: "minmax(6.5rem,1.2fr)", wrap: true },
+      { key: "effect", label: "Effect", icon: Gauge, width: "minmax(8rem,2fr)", wrap: true },
     ]}
     rows={rows.map(row => ({ key: row.level, level: row.level, cost: row.cost,
       status: row.current ? "current" : row.next ? "next" : "future",

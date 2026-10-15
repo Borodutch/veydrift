@@ -969,7 +969,7 @@ export function moonStructureHasLevelInfo(key: MoonBuilding["key"]): boolean {
 export function moonStructureLevelInfoColumns(_key: MoonBuilding["key"]): LevelInfoColumn[] {
   return [
     { key: "duration", label: "Build time", icon: Clock, width: "minmax(4.75rem,0.8fr)" },
-    { key: "effect", label: "Effect", icon: Gauge, width: "minmax(8rem,1.6fr)" },
+    { key: "effect", label: "Effect", icon: Gauge, shrink: true, width: "minmax(11rem,2.4fr)" },
   ];
 }
 

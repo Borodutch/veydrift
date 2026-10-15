@@ -4190,20 +4190,20 @@ h4 {
   line-height: 1.35;
 }
 
-/* Level popups: one equal-height row per level. Phones put the cost (and the Supply icon) on the
-   first line and the secondary stats on a second line; from sm up it is one single-line grid whose
-   tracks come from --level-info-columns. */
+/* Level popups: one equal-height row per level. Below lg each row has two lines: the level, cost and
+   Supply icon on a fixed-height first line, and the secondary stats across the full width of the
+   second. From lg up it is one single-line grid whose tracks come from --level-info-columns. */
 .level-info-row {
   display: grid;
-  grid-template-columns: 3.5rem minmax(0, 1fr);
-  column-gap: 0.75rem;
-  row-gap: 0.125rem;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  grid-template-rows: 2rem auto;
+  column-gap: 0.625rem;
   align-items: center;
-  padding: 0.375rem 0.75rem;
+  padding: 0.25rem 0.75rem 0.375rem;
 }
 
 .level-info-grid--supply .level-info-row {
-  grid-template-columns: 3.5rem minmax(0, 1fr) 2.25rem;
+  grid-template-columns: 3rem minmax(0, 1fr) 2rem;
 }
 
 .level-info-row > .level-info-level {
@@ -4211,6 +4211,7 @@ h4 {
 }
 
 .level-info-row > .level-info-cost {
+  overflow: hidden;
   grid-column: 2;
   grid-row: 1;
 }
@@ -4218,24 +4219,43 @@ h4 {
 .level-info-row > .level-info-meta {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  overflow: hidden;
   align-items: center;
-  gap: 0.125rem 0.75rem;
-  grid-column: 2;
+  gap: 0.125rem 0.625rem;
+  grid-column: 2 / -1;
   grid-row: 2;
 }
 
-/* Spans both lines so the touch-sized button never makes its row taller than rows without one. */
 .level-info-row > .level-info-supply {
   grid-column: 3;
-  grid-row: 1 / span 2;
+  grid-row: 1;
 }
 
-@media (min-width: 640px) {
+/* The smallest phones drop the per-level deltas so the stats still fit on one line. */
+@media (max-width: 359px) {
+  .level-info-delta {
+    display: none;
+  }
+
+  .level-info-row > .level-info-cost {
+    font-size: 0.75rem;
+  }
+
+  .level-info-row > .level-info-cost [data-level-fit] {
+    column-gap: 0.375rem;
+  }
+
+  .level-info-row > .level-info-cost [data-level-fit] > span {
+    gap: 0.125rem;
+  }
+}
+
+@media (min-width: 1024px) {
   .level-info-row,
   .level-info-grid--supply .level-info-row {
     grid-template-columns: var(--level-info-columns);
-    row-gap: 0;
+    grid-template-rows: none;
+    column-gap: 0.75rem;
     padding: 0.25rem 1rem;
   }
 

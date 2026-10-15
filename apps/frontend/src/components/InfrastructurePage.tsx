@@ -1,5 +1,5 @@
 import type { LevelSupplyRequest } from "../levelSupply";
-import { Clock, Flame, Gauge, Pickaxe, Warehouse, Zap } from "lucide-preact";
+import { Clock, Gauge } from "lucide-preact";
 import { useEffect, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
@@ -664,6 +664,12 @@ export function BuildingLevelInfoModal({
   });
 }
 
+// "x4 construction speed (+100% faster)" keeps the gain as a subtle "+100%" delta.
+function levelEffectCell(effect: string) {
+  const match = /^(.*) \((\+[\d,]+%) faster\)$/.exec(effect);
+  return match ? levelInfoValue(match[1]!, { note: match[2] }) : effect;
+}
+
 export function buildingLevelInfoTable(
   currentLevel: number,
   rows: ReturnType<typeof buildingLevelInfoRows>,
@@ -673,12 +679,13 @@ export function buildingLevelInfoTable(
   const columns = buildingLevelInfoColumns(rows);
   const modalColumns: LevelInfoColumn[] = [
     ...(columns.constructionTime ? [{ key: "constructionTime", label: "Build time", icon: Clock, width: "minmax(4.75rem,0.8fr)" }] : []),
-    ...(columns.storage ? [{ key: "storage", label: "Storage", icon: Warehouse }] : []),
-    ...(columns.effect ? [{ key: "effect", label: "Effect", icon: Gauge, width: "minmax(7rem,1.4fr)" }] : []),
-    ...(columns.production ? [{ key: "production", label: "Production", icon: Pickaxe }] : []),
-    ...(columns.energyRequired ? [{ key: "energyRequired", label: "Energy use", icon: Zap }] : []),
-    ...(columns.energyProduced ? [{ key: "energyProduced", label: "Energy output", icon: Zap }] : []),
-    ...(columns.deuteriumConsumed ? [{ key: "deuteriumConsumed", label: "Deuterium use", icon: Flame }] : []),
+    // Resource stats carry their own M/C/D/E glyph, so only time and effect need an icon on phones.
+    ...(columns.storage ? [{ key: "storage", label: "Storage" }] : []),
+    ...(columns.effect ? [{ key: "effect", label: "Effect", icon: Gauge, shrink: true, width: "minmax(11rem,2fr)" }] : []),
+    ...(columns.production ? [{ key: "production", label: "Production", shrink: true }] : []),
+    ...(columns.energyRequired ? [{ key: "energyRequired", label: "Energy use", shrink: true }] : []),
+    ...(columns.energyProduced ? [{ key: "energyProduced", label: "Energy output", shrink: true }] : []),
+    ...(columns.deuteriumConsumed ? [{ key: "deuteriumConsumed", label: "Deuterium use", shrink: true }] : []),
   ];
   const modalRows: LevelInfoRow[] = rows.map((row, index) => {
     const previous = rows[index - 1];
@@ -686,7 +693,7 @@ export function buildingLevelInfoTable(
       cells: {
         constructionTime: formatDuration(row.durationSeconds),
         storage: row.storage ? levelInfoValue(formatLevelAmount(row.storage.capacity), { resource: row.storage.resource }) : undefined,
-        effect: row.effect,
+        effect: row.effect === undefined ? undefined : levelEffectCell(row.effect),
         production: row.production
           ? levelInfoValue(formatLevelAmount(row.production.value), { delta: row.production.deltaFromPrevious, resource: row.production.resource, suffix: "/h" })
           : undefined,

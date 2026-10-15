@@ -78,7 +78,7 @@ export function levelSupplyPreview(request: LevelSupplyRequest, snapshot: Snapsh
   const requirement = {} as SupplyResources, missing = {} as SupplyResources;
   for (const key of keys) {
     if (!/^\d+$/.test(String(resources[key]))) throw new Error("Live destination resources are unavailable.");
-    if (exact[key] > BigInt(Number.MAX_SAFE_INTEGER) / 3n) throw new Error("This level's cost is too large to prepare a safe Supply shipment.");
+    if (exact[key] > BigInt(Number.MAX_SAFE_INTEGER) / 3n) throw new Error("The cost up to this level is too large to prepare a safe Supply shipment.");
     requirement[key] = Number(exact[key]);
     const deficit = exact[key] - BigInt(resources[key]);
     missing[key] = !inProgress && deficit > 0n ? Number(deficit) : 0;

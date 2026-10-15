@@ -1,6 +1,8 @@
 import { Info, PackagePlus, type LucideIcon } from "lucide-preact";
 import type { ComponentChildren, JSX } from "preact";
-import { formatCost } from "../buildingDetails";
+import { formatCost, formatLevelAmount } from "../buildingDetails";
+
+export { formatLevelAmount };
 import type { Resources } from "../playableMvp";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
@@ -14,6 +16,8 @@ export type LevelInfoColumn = {
   width?: string | undefined;
   /** Let long text wrap (research requirements) instead of truncating to one line. */
   wrap?: boolean | undefined;
+  /** On phones this stat may shrink (with an ellipsis) to keep the stat line on one line. */
+  shrink?: boolean | undefined;
 };
 
 export type LevelInfoRow = {
@@ -32,15 +36,6 @@ const resourceGlyphs: Record<keyof Resources | "energy", { abbr: string; classNa
   deuterium: { abbr: "D", className: "text-emerald-300" },
   energy: { abbr: "E", className: "text-lime-300" },
 };
-const groupedFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
-
-/** Exact below 10,000 so early levels stay precise; compact (10.6K, 1.2M) above, where width matters. */
-export function formatLevelAmount(value: number): string {
-  const rounded = Math.floor(value);
-  return Math.abs(rounded) < 10_000 ? groupedFormatter.format(rounded) : compactFormatter.format(rounded);
-}
-
 /** Colored resource letter matching the top bar (M/C/D/E). */
 export function levelResourceGlyph(resource: keyof Resources | "energy"): JSX.Element {
   const glyph = resourceGlyphs[resource];
@@ -48,16 +43,17 @@ export function levelResourceGlyph(resource: keyof Resources | "energy"): JSX.El
 }
 
 /** A level stat with an optional subtle delta (e.g. 5,277/h +1,980). */
-export function levelInfoValue(value: string, options: { delta?: number | undefined; resource?: keyof Resources | "energy" | undefined; suffix?: string | undefined; tone?: "positive" | "warning" | undefined } = {}): JSX.Element {
-  const { delta, resource, suffix = "", tone = "positive" } = options;
-  const showDelta = delta !== undefined && Math.floor(delta) !== 0;
+export function levelInfoValue(value: string, options: { delta?: number | undefined; note?: string | undefined; resource?: keyof Resources | "energy" | undefined; suffix?: string | undefined; tone?: "positive" | "warning" | undefined } = {}): JSX.Element {
+  const { delta, note, resource, suffix = "", tone = "positive" } = options;
+  const deltaText = delta !== undefined && Math.floor(delta) !== 0 ? `${delta > 0 ? "+" : ""}${formatLevelAmount(delta, 1_000)}` : note;
+  // Plain inline text (not inline-flex) so a too-narrow cell shows an ellipsis instead of cutting a number.
   return (
-    <span className="inline-flex min-w-0 items-baseline gap-1">
-      {resource ? levelResourceGlyph(resource) : null}
+    <span className="whitespace-nowrap">
+      {resource ? <span className="mr-1">{levelResourceGlyph(resource)}</span> : null}
       <span className="tabular-nums text-slate-200">{value}{suffix}</span>
-      {showDelta ? (
-        <span className={`text-[0.68rem] tabular-nums ${tone === "warning" ? "text-amber-200/70" : "text-emerald-300/70"}`}>
-          {delta > 0 ? "+" : ""}{formatLevelAmount(delta)}
+      {deltaText ? (
+        <span className={`level-info-delta ml-1 text-[0.68rem] tabular-nums ${tone === "warning" ? "text-amber-200/70" : "text-emerald-300/70"}`}>
+          {deltaText}
         </span>
       ) : null}
     </span>
@@ -114,9 +110,9 @@ export function LevelInfoModal({
   const titleId = "level-info-title";
   const hasSupply = rows.some((row) => row.onSupply && row.level > currentLevel);
   const desktopColumns = [
-    "6.25rem",
-    "minmax(9rem,1.6fr)",
-    ...columns.map((column) => column.width ?? "minmax(5rem,1fr)"),
+    "5.5rem",
+    "minmax(12.5rem,2fr)",
+    ...columns.map((column) => column.width ?? "minmax(6.5rem,1fr)"),
     ...(hasSupply ? ["2rem"] : []),
   ].join(" ");
 
@@ -126,7 +122,7 @@ export function LevelInfoModal({
       labelledBy={titleId}
       layerAttributes={{ "data-level-info-layer": "viewport" }}
       onClose={onClose}
-      panelClassName="grid max-w-3xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-h-[min(44rem,calc(100dvh-3rem))]"
+      panelClassName="grid max-w-4xl grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-h-[min(44rem,calc(100dvh-3rem))]"
     >
       <div className="border-b border-cyan-300/10 px-4 py-3">
         <ModalHeader closeLabel="Close level table" onClose={onClose} subtitle={`Current Level ${currentLevel}`} title={`${itemLabel} levels`} titleId={titleId} />
@@ -146,7 +142,7 @@ export function LevelInfoModal({
               <div className="level-info-meta">
                 {columns.map((column) => (
                   <span className="inline-flex min-w-0 items-center gap-1 truncate" key={column.key} role="columnheader" title={column.label}>
-                    {column.icon ? <column.icon aria-hidden="true" className="shrink-0 sm:hidden" size={11} strokeWidth={2.2} /> : null}
+                    {column.icon ? <column.icon aria-hidden="true" className="shrink-0 lg:hidden" size={11} strokeWidth={2.2} /> : null}
                     <span className="truncate">{column.label}</span>
                   </span>
                 ))}
@@ -176,29 +172,29 @@ function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], cu
 
   return (
     <div
-      className={`level-info-row min-h-[3.25rem] border-b border-white/[0.06] sm:min-h-11 ${tone}`}
+      className={`level-info-row border-b border-white/[0.06] lg:min-h-11 ${tone}`}
       data-level-status={past ? "past" : row.status}
       key={row.key}
       role="row"
     >
-      <span className="level-info-level flex min-w-0 flex-col items-start gap-0.5 sm:flex-row sm:items-center sm:gap-2" role="rowheader">
+      <span className="level-info-level flex min-w-0 flex-col items-start gap-0.5 lg:flex-row lg:items-center lg:gap-2" role="rowheader">
         <span className="whitespace-nowrap font-mono text-sm font-semibold tabular-nums text-white"><span className="sr-only">Level </span>{row.level}</span>
         {row.status === "current" ? levelPill("Current", "current") : null}
         {row.status === "next" ? levelPill("Next", "next") : null}
       </span>
       <span className="level-info-cost min-w-0" role="cell">{levelCost(row.cost)}</span>
-      <div className="level-info-meta text-xs text-slate-400 sm:text-sm">
+      <div className={`level-info-meta text-xs text-slate-400 lg:text-sm ${columns.some((column) => column.wrap) ? "flex-wrap" : ""}`} data-level-fit>
         {columns.map((column) => {
           const value = row.cells[column.key];
           return (
             <span
-              className={`inline-flex min-w-0 items-center gap-1 ${column.wrap ? "basis-full sm:basis-auto" : "whitespace-nowrap"}`}
+              className={`inline-flex min-w-0 items-center gap-1 ${column.wrap ? "basis-full lg:basis-auto" : column.shrink ? "whitespace-nowrap" : "shrink-0 whitespace-nowrap"}`}
               key={column.key}
               role="cell"
               title={typeof value === "string" ? `${column.label}: ${value}` : column.label}
             >
-              {column.icon ? <column.icon aria-hidden="true" className="shrink-0 text-slate-500 sm:hidden" size={11} strokeWidth={2.2} /> : null}
-              <span className={column.wrap ? "min-w-0 break-words" : "min-w-0 truncate"}>{value ?? <span className="text-slate-600">—</span>}</span>
+              {column.icon ? <column.icon aria-hidden="true" className="shrink-0 text-slate-500 lg:hidden" size={11} strokeWidth={2.2} /> : null}
+              <span className={column.wrap ? "min-w-0 break-words" : "min-w-0 truncate"} data-level-fit={column.key === "effect" ? "text" : "value"}>{value ?? <span className="text-slate-600">—</span>}</span>
             </span>
           );
         })}
@@ -208,7 +204,7 @@ function levelInfoRow(row: LevelInfoRow, columns: readonly LevelInfoColumn[], cu
           {row.onSupply && row.level > currentLevel ? (
             <button
               aria-label={supplyLabel}
-              className="inline-flex h-9 w-9 items-center justify-center rounded border sm:h-8 sm:w-8 border-sky-300/25 bg-sky-300/[0.06] text-sky-200 transition hover:border-sky-300/50 hover:bg-sky-300/15 hover:text-sky-100"
+              className="relative inline-flex h-8 w-8 items-center justify-center rounded border border-sky-300/25 before:absolute before:-inset-1 before:content-[''] bg-sky-300/[0.06] text-sky-200 transition hover:border-sky-300/50 hover:bg-sky-300/15 hover:text-sky-100"
               onClick={row.onSupply}
               title={supplyLabel}
               type="button"
@@ -229,7 +225,7 @@ function levelCost(cost: Resources) {
   return (
     <>
       <span className="sr-only">{exact}</span>
-      <span aria-hidden="true" className="flex min-w-0 items-baseline gap-x-2.5 whitespace-nowrap" title={exact}>
+      <span aria-hidden="true" className="flex min-w-0 items-baseline gap-x-2 overflow-hidden whitespace-nowrap lg:gap-x-2.5" data-level-fit title={exact}>
         {entries.map((key) => (
           <span className="inline-flex items-baseline gap-1" key={key}>
             {levelResourceGlyph(key)}

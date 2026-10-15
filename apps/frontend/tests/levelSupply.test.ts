@@ -125,11 +125,11 @@ describe("cumulative level Supply", () => {
     expect(rows.reduce((sum, row) => ({ metal: sum.metal + row.cost.metal, crystal: sum.crystal + row.cost.crystal, deuterium: sum.deuterium + row.cost.deuterium }), { metal: 0, crystal: 0, deuterium: 0 })).toEqual(preview.requirement);
   });
 
-  test("popup row costs equal the Supply catalogue for every building's first 25 levels", () => {
+  test("popup row costs equal the Supply catalogue for every building at every level", () => {
     const state = createInitialPlayableState();
     for (const key of Object.keys(buildingContractIds) as Array<keyof typeof buildingContractIds>) {
       if (key === "interdimensionalRiftStabilizer") continue;
-      for (const row of buildingLevelInfoRows(state.buildings, key, undefined, 25)) {
+      for (const row of buildingLevelInfoRows(state.buildings, key)) {
         const exact = levelSupplyCost({ kind: "building", key, label: key, level: row.level });
         expect({ key, level: row.level, cost: row.cost }).toEqual({ key, level: row.level, cost: { metal: Number(exact.metal), crystal: Number(exact.crystal), deuterium: Number(exact.deuterium) } });
       }
@@ -145,6 +145,28 @@ describe("cumulative level Supply", () => {
     for (const queue of [{ active: true, itemId: buildingContractIds.metalMine, targetLevel: 9 }, { active: true, itemId: buildingContractIds.crystalMine, targetLevel: 7, action: "demolish" }, { active: false, itemId: buildingContractIds.crystalMine, targetLevel: 9 }]) {
       expect(levelSupplyPreview(crystalMine, mineSnapshot(queue), "7")).toMatchObject({ fromLevel: 9, inProgress: false, requirement: { metal: 10636, crystal: 5317, deuterium: 0 } });
     }
+  });
+
+  test("the live chain cost replaces only the first unpaid level, never a queued one", () => {
+    const live = { metal: "2100", crystal: "1000", deuterium: "0" };
+    const withLive = (queue: unknown) => ({ ...mineSnapshot(queue), buildings: [{ id: buildingContractIds.crystalMine, level: 8, cost: live }] } as unknown as ChainInfrastructureState);
+    expect(levelSupplyPreview(crystalMine, withLive(null), "7").requirement).toEqual({ metal: 2100 + 3298 + 5277, crystal: 1000 + 1649 + 2638, deuterium: 0 });
+    const queued = { active: true, itemId: buildingContractIds.crystalMine, targetLevel: 9, action: "upgrade" };
+    expect(levelSupplyPreview(crystalMine, withLive(queued), "7").requirement).toEqual({ metal: 3298 + 5277, crystal: 1649 + 2638, deuterium: 0 });
+  });
+
+  test("moon and research queues also move the starting point", () => {
+    const moonRobotics: LevelSupplyRequest = { kind: "moon", key: "roboticsFactory", label: "Robotics Factory", level: 4 };
+    const moon = (queue: unknown) => ({ wallet: "wallet", homePlanetId: "1", parentPlanetId: "7", moon: { exists: true, planetId: "7" }, resourcesAsOfNow: empty, queue,
+      buildings: [{ id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 2, cost: { metal: "1600", crystal: "480", deuterium: "800" } }] } as unknown as ChainMoonState);
+    expect(levelSupplyPreview(moonRobotics, moon(null), "7")).toMatchObject({ fromLevel: 3, requirement: { metal: 1600 + 3200, crystal: 480 + 960, deuterium: 800 + 1600 } });
+    expect(levelSupplyPreview(moonRobotics, moon({ active: true, kind: "moonBuilding", itemId: 1, targetLevel: 3 }), "7")).toMatchObject({ fromLevel: 4, requirement: { metal: 3200, crystal: 960, deuterium: 1600 } });
+    const energyId = researchCatalog.find(r => r.key === "energy")!.id;
+    const energy: LevelSupplyRequest = { kind: "research", key: "energy", label: "Energy Technology", level: 6 };
+    const research = (queue: unknown) => ({ wallet: "wallet", homePlanetId: "1", planetId: "7", resourcesAsOfNow: empty, resources: null, researchAvailable: true, researchLabLevel: 1, queue,
+      technologies: [{ id: energyId, level: 4, cost: { metal: "0", crystal: "12800", deuterium: "6400" } }] } as unknown as ChainResearchState);
+    expect(levelSupplyPreview(energy, research(null), "7")).toMatchObject({ fromLevel: 5, requirement: { metal: 0, crystal: 12800 + 25600, deuterium: 6400 + 12800 } });
+    expect(levelSupplyPreview(energy, research({ active: true, kind: "research", itemId: energyId, targetLevel: 5 }), "7")).toMatchObject({ fromLevel: 6, requirement: { metal: 0, crystal: 25600, deuterium: 12800 } });
   });
 
   test("resource types with zero cost stay zero across the whole range", () => {
