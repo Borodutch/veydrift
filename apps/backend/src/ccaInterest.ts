@@ -85,8 +85,4 @@ export class CcaInterestStore {
   list(): Array<{ email: string; amount_usd: number; telegram: string | null; updated_at: string }> {
     return this.database.query("SELECT * FROM cca_interest ORDER BY updated_at DESC").all() as never;
   }
-
-  totals(): { people: number; amountUsd: number } {
-    return this.database.query("SELECT COUNT(*) AS people, COALESCE(SUM(amount_usd), 0) AS amountUsd FROM cca_interest").get() as never;
-  }
 }

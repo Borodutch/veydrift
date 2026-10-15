@@ -15,20 +15,18 @@ describe("CCA interest", () => {
     expect(validateCcaInterest(null)).toBeString();
   });
 
-  test("upserts by email and totals from $0", () => {
+  test("upserts by email", () => {
     const store = new CcaInterestStore(":memory:");
-    expect(store.totals()).toEqual({ people: 0, amountUsd: 0 });
     store.save({ email: "a@b.co", amountUsd: 1000, telegram: null });
     store.save({ email: "a@b.co", amountUsd: 5000, telegram: "ann" });
     store.save({ email: "c@d.co", amountUsd: 0, telegram: null });
     expect(store.list().sort((a, b) => a.email.localeCompare(b.email)))
       .toMatchObject([{ email: "a@b.co", amount_usd: 5000, telegram: "ann" }, { email: "c@d.co", amount_usd: 0 }]);
-    expect(store.totals()).toEqual({ people: 2, amountUsd: 5000 });
   });
 });
 
 describe("/cca/interest", () => {
-  test("stores a valid submission, rejects an invalid one and reports totals", async () => {
+  test("stores a valid submission and rejects an invalid one", async () => {
     const { createRequestHandler } = await import("./server");
     const ccaInterestStore = new CcaInterestStore(":memory:");
     const handler = createRequestHandler({ ccaInterestStore, enableResponseCache: false, logRequests: false } as never);
@@ -37,11 +35,10 @@ describe("/cca/interest", () => {
       headers: { "content-type": "application/json" },
       method: "POST",
     }));
-    expect(await (await handler(new Request("http://localhost/cca/interest"))).json()).toEqual({ people: 0, amountUsd: 0 });
     expect((await post({ email: "a@b.co", amountUsd: 2000 })).status).toBe(200);
     expect((await post({ email: "e@f.co" })).status).toBe(200);
     expect((await post({ email: "bad", amountUsd: 2000 })).status).toBe(400);
-    expect(await (await handler(new Request("http://localhost/cca/interest"))).json()).toEqual({ people: 2, amountUsd: 2000 });
+    expect(ccaInterestStore.list()).toHaveLength(2);
     expect((await handler(new Request("http://localhost/pact/interest", { body: "{}", method: "POST" }))).status).toBe(404);
   });
 });
