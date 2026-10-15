@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { ArrowRight, Check, Coins, ExternalLink, Handshake, Repeat, Rocket, Swords, Users } from "lucide-preact";
-import { submitPactInterest } from "../pactInterest";
+import { ArrowRight, Bot, Check, Coins, ExternalLink, Gavel, Lock, Repeat, Rocket, Scale, Swords, Timer, Undo2, Users } from "lucide-preact";
+import { type CcaInterestTotals, fetchCcaInterestTotals, submitCcaInterest } from "../ccaInterest";
 import { SiteHeader } from "./SiteHeader";
 import { TelegramIcon } from "./TelegramIcon";
 import { TrailerPlayer } from "./TrailerPlayer";
@@ -37,63 +37,74 @@ const game = [
   { icon: Repeat, title: "$VEYDRIFT routes the economy", body: "Every resource pool pairs with $VEYDRIFT, and $VEYDRIFT pairs with WETH. Anyone buying or selling game resources goes through it." },
 ] as const;
 
-const steps = [
-  { tag: "Now", title: "The Pact", body: "5% of supply at $0.002 per $VEYDRIFT, $50K–$100K. First in line, before any public price exists." },
-  { tag: "Next", title: "Grow the game", body: "Pact money goes into improving Veydrift and marketing to bring in more players. The auction comes after the player base has grown." },
-  { tag: "Then", title: "Continuous clearing auction", body: "250M $VEYDRIFT sold through Uniswap's onchain CCA, with a floor 30% above the Pact price. Price discovery happens over time, not in the first block, so snipers don't win by default." },
-  { tag: "Finally", title: "Open liquidity", body: "Auction proceeds plus 250M reserved $VEYDRIFT migrate automatically into a Uniswap v4 $VEYDRIFT/WETH pool, alongside three $VEYDRIFT/resource pools. Positions sit in a time lock with no owner and no early-unlock path." },
+const mechanics = [
+  { icon: Gavel, title: "You bid a budget and a maximum price", body: "A bid says how much WETH you want to spend and the highest price per $VEYDRIFT you are willing to pay. You can bid at any point while the auction runs." },
+  { icon: Timer, title: "Tokens are sold block by block for 48 hours", body: "The 250M $VEYDRIFT are released gradually over 86,400 Base blocks instead of all at once. Your budget is spread across the blocks left in the auction, so bidding earlier lets you buy in more of them." },
+  { icon: Scale, title: "Everyone in a block pays the same price", body: "Each block clears at a single price: the highest price at which bids cover that block's supply. A bid with a higher maximum fills at the clearing price, never at its own maximum." },
+  { icon: Undo2, title: "If you are outbid, you get your WETH back", body: "When the clearing price rises above your maximum, your bid stops buying and the unspent part is refunded. You never pay more than the maximum you set." },
+  { icon: Bot, title: "Snipers don't win by default", body: "Because the price is discovered over two days at one price per block, there is no first-block rush for bots to win and no reason to race a launch transaction." },
+  { icon: Lock, title: "It needs real demand to graduate", body: "The auction only completes if it raises its minimum amount of WETH. If it falls short, no pool is created and every bidder can withdraw their WETH in full." },
 ] as const;
 
-const pactPriceUsd = 0.002;
-const pactTokens = 50_000_000;
-const totalSupply = 1_000_000_000;
-const pactTerms = [
-  { label: "Allocation", value: "5% of supply", note: "50,000,000 $VEYDRIFT, carved out of the contributor allocation; unsold tokens stay with contributors" },
-  { label: "Price", value: "$0.002", note: "per $VEYDRIFT — a $2M fully diluted valuation" },
-  { label: "Round size", value: "$50K–$100K", note: "$50K buys 2.5% of supply, $100K buys the full 5%" },
-  { label: "Minimum", value: "$1,000", note: "500,000 $VEYDRIFT" },
-  { label: "Auction floor", value: "$0.0026", note: "30% above the Pact price — the public auction can't sell below it" },
-  { label: "Vesting", value: "6-month cliff", note: "12.5% unlocks 6 months after the auction ends, the rest vests linearly over the next 3.5 years" },
+const steps = [
+  { tag: "Now", title: "Grow the game", body: "Veydrift keeps shipping and marketing to bring in more players. The auction opens once the player base has grown, and everyone who registers interest hears about the date first." },
+  { tag: "Next", title: "Continuous clearing auction", body: "250M $VEYDRIFT are sold over 48 hours through Uniswap's onchain CCA on Base, with a floor of $0.0026 per token." },
+  { tag: "Then", title: "Automatic migration", body: "When the auction ends, its WETH plus 250M reserved $VEYDRIFT go into a Uniswap v4 $VEYDRIFT/WETH pool at the final clearing price, with no manual step in between." },
+  { tag: "Finally", title: "Locked liquidity", body: "Three $VEYDRIFT/resource pools open alongside it, and all four positions sit in a time lock with no owner, no rescue method and no early-unlock path." },
+] as const;
+
+const auctionTerms = [
+  { label: "For sale", value: "250M", note: "$VEYDRIFT, 25% of the total supply" },
+  { label: "Duration", value: "48 hours", note: "86,400 Base blocks at two seconds each" },
+  { label: "Floor price", value: "$0.0026", note: "per $VEYDRIFT, a $2.6M fully diluted valuation; no token sells below it" },
+  { label: "Paid in", value: "WETH", note: "on Base, with refunds for every part of a bid that doesn't fill" },
+  { label: "Contracts", value: "CCA v2.1.0", note: "Uniswap's audited continuous clearing auction, deployed from the official factory" },
+  { label: "Date", value: "TBA", note: "after the player base grows; register your interest below to hear first" },
 ] as const;
 
 const allocations = [
-  { label: "Continuous clearing auction", share: 25, color: "bg-signal", note: "250M — public price discovery" },
-  { label: "$VEYDRIFT/WETH liquidity", share: 25, color: "bg-cyan-600", note: "250M — paired with auction proceeds, time-locked" },
-  { label: "Resource liquidity", share: 15, color: "bg-ember", note: "150M — 50M each vs vMETAL, vCRYSTAL, vDEUT" },
+  { label: "Continuous clearing auction", share: 25, color: "bg-signal", note: "250M — public price discovery over 48 hours" },
+  { label: "$VEYDRIFT/WETH liquidity", share: 25, color: "bg-cyan-600", note: "250M — paired with auction proceeds and time-locked" },
+  { label: "Resource liquidity", share: 15, color: "bg-ember", note: "150M — 50M each against vMETAL, vCRYSTAL and vDEUT, time-locked" },
   { label: "Development", share: 15, color: "bg-violet-400", note: "150M — 5-year linear vesting" },
-  { label: "Contributors", share: 5, color: "bg-emerald-400", note: "50M — 4-year vesting, 1-year cliff; unsold Pact tokens return here" },
-  { label: "The Pact", share: 5, color: "bg-white", note: "50M — $0.002 each; 6-month cliff after the auction, then 3.5-year vesting" },
-  { label: "Ecosystem & strategic", share: 10, color: "bg-rose-400", note: "100M — 6-year linear vesting; unsold auction tokens also go here" },
+  { label: "Contributors", share: 10, color: "bg-emerald-400", note: "100M — 4-year vesting with a 1-year cliff" },
+  { label: "Ecosystem", share: 10, color: "bg-rose-400", note: "100M — 6-year linear vesting" },
 ] as const;
 
-export function PactApp() {
+const usd = (value: number) => `$${value.toLocaleString("en-US")}`;
+
+export function CcaApp() {
+  const [interest, setInterest] = useState<CcaInterestTotals | null>(null);
+  const refreshInterest = () => fetchCcaInterestTotals().then(setInterest).catch(() => undefined);
+
   useEffect(() => {
-    document.title = "The Veydrift Pact";
+    document.title = "$VEYDRIFT continuous clearing auction";
+    void refreshInterest();
   }, []);
 
   return (
     <main className="playable-starfield relative isolate min-h-dvh overflow-x-hidden bg-[#060b16] text-white [&>*]:relative [&>*]:z-10">
-      <SiteHeader current="pact" />
+      <SiteHeader current="cca" />
 
       {/* Hero copy and trailer share one row so the first screen carries the whole pitch. */}
       <section className="relative px-5 pb-6 pt-10 sm:px-8 sm:pt-14">
         <div className="mx-auto grid max-w-6xl gap-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-center lg:gap-10">
           <div>
             <p className="landing-eyebrow rounded-full border border-cyan-300/20 bg-cyan-400/[0.08] px-3 py-1.5">
-              <Handshake className="h-3.5 w-3.5" />
-              Friends & family round · 5% of supply at $0.002
+              <Gavel className="h-3.5 w-3.5" />
+              Uniswap continuous clearing auction · 25% of supply
             </p>
             <h1 className="mt-5 text-4xl font-semibold leading-[1.08] sm:text-5xl">
-              The Veydrift Pact: get $VEYDRIFT before the auction.
+              $VEYDRIFT launches through a fair, onchain auction.
             </h1>
             <p className="mt-5 text-base leading-7 text-slate-300">
               Veydrift is an onchain space strategy game on Base. Players have been playing it every day for four months, before there
-              was any token to hold. The Pact offers 5% of the supply at $0.002 per token to people who want in before the public auction
-              sets a price. Pact money goes into the game and into marketing to bring in more players before the auction.
+              was any token to hold. A quarter of the $VEYDRIFT supply will be sold through Uniswap's continuous clearing auction, where
+              the price is discovered over 48 hours and everyone who buys in the same block pays the same price.
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
-              <a className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-signal px-5 py-2.5 text-sm font-bold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.22)] transition hover:bg-cyan-100" href="#join">
-                Join the Pact
+              <a className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-signal px-5 py-2.5 text-sm font-bold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.22)] transition hover:bg-cyan-100" href="#interest">
+                Register interest
                 <ArrowRight className="h-4 w-4" />
               </a>
               <a className="surface-inset inline-flex min-h-11 items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition hover:text-cyan-100" href="https://veydrift.com" rel="noopener noreferrer" target="_blank">
@@ -176,7 +187,39 @@ export function PactApp() {
         </div>
       </Section>
 
-      <Section eyebrow="Launch path" title="The Pact comes first, then the game grows before the auction opens liquidity.">
+      <Section eyebrow="How the auction works" title="A continuous clearing auction discovers the price over time instead of in the first block.">
+        <p className="max-w-3xl text-slate-300">
+          Most token launches set a price in a single moment, and whoever gets the first transaction in wins. Uniswap's
+          continuous clearing auction spreads the sale over two days and clears every block at one fair price, so what you pay
+          depends on demand rather than on how fast your bot is.
+        </p>
+        <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          {mechanics.map((item) => (
+            <article className="landing-feature" key={item.title}>
+              <item.icon className="h-5 w-5 text-signal" />
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </div>
+        <div className="mt-6 flex flex-wrap gap-4 text-sm">
+          <ExternalLinkText href="https://github.com/Uniswap/continuous-clearing-auction">Uniswap CCA source and audits</ExternalLinkText>
+        </div>
+      </Section>
+
+      <Section eyebrow="Auction terms" title="250M $VEYDRIFT go up for auction with a floor of $0.0026 per token.">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {auctionTerms.map((term) => (
+            <div className="landing-feature" key={term.label}>
+              <h3 className="!mt-0 !text-[10px] !font-semibold uppercase tracking-[0.14em] !text-cyan-300/70">{term.label}</h3>
+              <div className="mt-2 text-3xl font-semibold text-signal">{term.value}</div>
+              <p>{term.note}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section eyebrow="Launch path" title="The game grows first, then the auction opens liquidity that nobody can pull.">
         <ol className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {steps.map((step, index) => (
             <li className={`landing-feature ${index === 0 ? "!border-cyan-300/40 ring-1 ring-cyan-300/20" : ""}`} key={step.title}>
@@ -190,23 +233,10 @@ export function PactApp() {
         </ol>
       </Section>
 
-      <Section eyebrow="Pact terms" title="The Pact sells 5% of supply at $0.002 per token, and the auction floor sits 30% higher.">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {pactTerms.map((term) => (
-            <div className="landing-feature" key={term.label}>
-              <h3 className="!mt-0 !text-[10px] !font-semibold uppercase tracking-[0.14em] !text-cyan-300/70">{term.label}</h3>
-              <div className="mt-2 text-3xl font-semibold text-signal">{term.value}</div>
-              <p>{term.note}</p>
-            </div>
-          ))}
-        </div>
-        <p className="mt-6 text-sm text-slate-400">Allocations are first come, first served until the $100K cap is reached.</p>
-      </Section>
-
       <Section eyebrow="Tokenomics" title="The supply is fixed forever at 1,000,000,000 $VEYDRIFT.">
         <p className="max-w-3xl text-slate-300">
-          The token has no owner, no minter, no proxy and no pause switch. The entire supply is allocated once at genesis, and
-          team tokens vest for years.
+          The token has no owner, no minter, no proxy, no tax and no pause switch. The entire supply is allocated once at genesis:
+          65% goes to the auction and to locked liquidity, and every team allocation vests for years.
         </p>
         <div className="mt-6 flex h-3 overflow-hidden rounded-full" aria-hidden="true">
           {allocations.map((item) => (
@@ -228,46 +258,52 @@ export function PactApp() {
         </ul>
       </Section>
 
-      <section className="scroll-mt-16 px-5 py-10 sm:px-8 sm:py-14" id="join">
+      <section className="scroll-mt-16 px-5 py-10 sm:px-8 sm:py-14" id="interest">
         <div className="landing-panel mx-auto grid max-w-6xl gap-8 bg-[linear-gradient(135deg,rgba(34,211,238,0.1),rgba(13,24,41,0.96)_55%)] p-6 sm:p-8 lg:grid-cols-[1fr_1fr]">
           <div>
-            <p className="landing-eyebrow">Join the Pact</p>
-            <h2 className="mt-2 text-2xl font-semibold leading-tight sm:text-[2rem]">Tell me how much $VEYDRIFT you want.</h2>
+            <p className="landing-eyebrow">Register interest</p>
+            <h2 className="mt-2 text-2xl font-semibold leading-tight sm:text-[2rem]">Get an email when the auction is about to open.</h2>
             <p className="mt-4 text-slate-300">
-              $0.002 per $VEYDRIFT, capped at $100K for the full 5%. Allocations go to the people who reach out first. Leave
-              your details and I'll follow up personally to confirm your allocation.
+              Leave your email and I'll let you know the date before anyone else. If you already have a rough idea of how much you'd
+              bid, add it too; it isn't a commitment, and it helps me size the launch.
             </p>
-            <div className="surface-inset mt-8 rounded-xl p-5">
+            <div className="surface-inset mt-6 rounded-xl p-5">
+              <p className="text-sm text-slate-400">Interest registered so far</p>
+              <p className="mt-1 text-4xl font-semibold text-signal">{usd(interest?.amountUsd ?? 0)}</p>
+              <p className="mt-1 text-sm text-slate-400">
+                from {(interest?.people ?? 0).toLocaleString("en-US")} {interest?.people === 1 ? "person" : "people"}
+              </p>
+            </div>
+            <div className="surface-inset mt-4 rounded-xl p-5">
               <p className="flex items-center gap-2 font-semibold">
                 <Users className="h-4 w-4 text-signal" />
                 Rather talk first?
               </p>
-              <p className="mt-2 text-sm text-slate-300">Message me directly and ask anything — the game, the numbers, the terms.</p>
+              <p className="mt-2 text-sm text-slate-300">Message me directly and ask anything — the game, the auction, the numbers.</p>
               <a className="mt-4 inline-flex items-center gap-2 rounded-lg border border-cyan-300/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20" href={telegramUrl} rel="noopener noreferrer" target="_blank">
                 <TelegramIcon className="h-4 w-4" />
                 t.me/borodutch
               </a>
             </div>
           </div>
-          <PactForm />
+          <InterestForm onSent={refreshInterest} />
         </div>
       </section>
 
       <footer className="px-5 pb-12 text-center text-xs leading-5 text-slate-500 sm:px-8">
         <p className="mx-auto max-w-3xl">
-          This page is not an offer to sell or a solicitation to buy any token. Details can change before launch. Crypto assets are
-          volatile and you can lose everything you put in; only participate with money you can afford to lose.
+          This page is not an offer to sell or a solicitation to buy any token. Registering interest is not a commitment, and details
+          can change before launch. Crypto assets are volatile and you can lose everything you put in; only participate with money you
+          can afford to lose.
         </p>
       </footer>
     </main>
   );
 }
 
-function PactForm() {
+function InterestForm({ onSent }: { onSent: () => void }) {
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = useState("");
-  const [amountUsd, setAmountUsd] = useState(0);
-  const tokens = Math.floor(amountUsd / pactPriceUsd);
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -275,8 +311,9 @@ function PactForm() {
     setStatus("sending");
     setError("");
     try {
-      await submitPactInterest({ amountUsd: form.get("amountUsd"), email: form.get("email"), telegram: form.get("telegram") });
+      await submitCcaInterest({ amountUsd: form.get("amountUsd"), email: form.get("email"), telegram: form.get("telegram") });
       setStatus("sent");
+      onSent();
     } catch (caught) {
       setStatus("idle");
       setError(caught instanceof Error && caught.message ? caught.message : "Something went wrong. Message me on Telegram instead.");
@@ -288,7 +325,7 @@ function PactForm() {
       <div className="surface-inset flex flex-col items-start justify-center rounded-xl p-6">
         <Check className="h-8 w-8 text-signal" />
         <h3 className="mt-4 text-2xl font-semibold">You're on the list.</h3>
-        <p className="mt-2 text-slate-300">I'll reach out to confirm your allocation. Want to move faster? Ping me on Telegram.</p>
+        <p className="mt-2 text-slate-300">I'll email you before the auction opens. Questions in the meantime? Ping me on Telegram.</p>
       </div>
     );
   }
@@ -297,17 +334,12 @@ function PactForm() {
   return (
     <form className="surface-inset grid content-start gap-4 rounded-xl p-6" onSubmit={submit}>
       <label className="text-sm font-semibold text-slate-200">
-        How much do you want to put in? (USD, $1,000–$100,000)
-        <input className={input} inputMode="numeric" max={100_000} min={1_000} name="amountUsd" onInput={(event) => setAmountUsd(Number(event.currentTarget.value) || 0)} placeholder="5000" required step={100} type="number" />
-        {tokens > 0 && tokens <= pactTokens ? (
-          <span className="mt-2 block font-normal text-signal">
-            = {tokens.toLocaleString("en-US")} $VEYDRIFT · {((tokens / totalSupply) * 100).toLocaleString("en-US", { maximumFractionDigits: 3 })}% of supply
-          </span>
-        ) : null}
-      </label>
-      <label className="text-sm font-semibold text-slate-200">
         Email
         <input autoComplete="email" className={input} name="email" placeholder="you@example.com" required type="email" />
+      </label>
+      <label className="text-sm font-semibold text-slate-200">
+        How much might you bid? <span className="font-normal text-slate-500">(USD, optional)</span>
+        <input className={input} inputMode="numeric" max={10_000_000} min={0} name="amountUsd" placeholder="0" step={1} type="number" />
       </label>
       <label className="text-sm font-semibold text-slate-200">
         Telegram <span className="font-normal text-slate-500">(optional)</span>
@@ -315,7 +347,7 @@ function PactForm() {
       </label>
       {error ? <p className="text-sm text-rose-300" role="alert">{error}</p> : null}
       <button className="mt-2 inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-signal px-6 py-3 text-sm font-bold text-[#031014] transition hover:bg-cyan-100 disabled:opacity-60" disabled={status === "sending"} type="submit">
-        {status === "sending" ? "Sending…" : "Request my allocation"}
+        {status === "sending" ? "Sending…" : "Notify me"}
         <ArrowRight className="h-4 w-4" />
       </button>
     </form>

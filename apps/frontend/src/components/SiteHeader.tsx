@@ -2,16 +2,16 @@ import { ArrowRight, ExternalLink, GitFork } from "lucide-preact";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 
-type SiteSection = "home" | "pact" | "docs" | "calculator";
+type SiteSection = "home" | "cca" | "docs" | "calculator";
 
 const links: Array<{ key: SiteSection | "stats"; label: string; href: string; external?: boolean }> = [
   { key: "docs", label: "Docs", href: "/docs" },
   { key: "calculator", label: "Calculator", href: "/calculator" },
-  { key: "pact", label: "Pact", href: "/pact" },
+  { key: "cca", label: "Auction", href: "/cca" },
   { key: "stats", label: "Stats", href: "https://stats.veydrift.com", external: true },
 ];
 
-/** Shared header for the public pages: landing (over the hero art), Pact and Docs (sticky bar). */
+/** Shared header for the public pages: landing (over the hero art), CCA and Docs (sticky bar). */
 export function SiteHeader({ current, overlay = false, wide = false }: { current?: SiteSection | undefined; overlay?: boolean; wide?: boolean }) {
   return (
     <header

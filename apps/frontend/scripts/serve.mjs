@@ -1138,20 +1138,20 @@ export function hiddenWhitepaperPath(pathname) {
   return /(?:^|\/)whitepaper(?:\.pdf)?(?:[/?#]|$)/i.test(pathname);
 }
 
-export const pactMeta = {
-  title: "The Veydrift Pact — get $VEYDRIFT before the auction",
-  description: "Friends & family round: 5% of $VEYDRIFT supply at $0.002 per token. Veydrift is the onchain space strategy game on Base with 75% weekly player retention. Pact → grow the player base → continuous clearing auction → open liquidity.",
-  imagePath: "/assets/landing/pact-og-v2.jpg",
+export const ccaMeta = {
+  title: "$VEYDRIFT continuous clearing auction — Veydrift",
+  description: "25% of $VEYDRIFT sold over 48 hours through Uniswap's continuous clearing auction on Base, with a $0.0026 floor and liquidity that migrates into a locked v4 pool. Veydrift is the onchain space strategy game with 75% weekly player retention. Register your interest.",
+  imagePath: "/assets/landing/cca-og-v1.jpg",
 };
 
-async function pactHtmlResponse(request, url) {
+async function ccaHtmlResponse(request, url) {
   const origin = publicOrigin(request, url);
   const html = injectShareMeta(await readFile(staticFileUrl("/index.html"), "utf8"), {
-    canonicalUrl: `${origin}/pact`,
-    description: pactMeta.description,
+    canonicalUrl: `${origin}/cca`,
+    description: ccaMeta.description,
     imageType: "image/jpeg",
-    imageUrl: `${origin}${pactMeta.imagePath}`,
-    title: pactMeta.title,
+    imageUrl: `${origin}${ccaMeta.imagePath}`,
+    title: ccaMeta.title,
   });
   return new Response(html, { headers: { "cache-control": "public, max-age=60", "content-type": "text/html; charset=utf-8" } });
 }
@@ -1181,7 +1181,7 @@ export async function frontendResponse(request) {
     return shareHtmlResponse(request, shareRoute);
   }
 
-  if (route.replace(/\/+$/, "") === "/pact") return pactHtmlResponse(request, url);
+  if (route.replace(/\/+$/, "") === "/cca") return ccaHtmlResponse(request, url);
 
   // Pinned media is authoritative, even over a stale copy left in dist/.
   const mediaPath = mediaFileForPathname(route);
