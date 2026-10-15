@@ -98,6 +98,7 @@ export function StructureCatalog<Key extends string>({
 
 export type StructureLevelInfo = {
   columns: readonly LevelInfoColumn[];
+  costLabel?: string | undefined;
   currentLevel: number;
   rows: readonly LevelInfoRow[];
 };
@@ -272,6 +273,7 @@ export function StructureDetail({
       {isInfoOpen && levelInfo ? (
         <LevelInfoModal
           columns={levelInfo.columns}
+          costLabel={levelInfo.costLabel}
           currentLevel={levelInfo.currentLevel}
           itemLabel={label}
           onClose={() => setIsInfoOpen(false)}

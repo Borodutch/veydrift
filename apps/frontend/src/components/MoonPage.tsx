@@ -3,7 +3,7 @@ import { currentResources, RESOURCES_UNAVAILABLE } from "../currentResources";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
-import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
+import { ArrowLeftRight, Clock, Crosshair, ExternalLink, Eye, Flame, Gauge, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useEffect, useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
@@ -947,12 +947,13 @@ export function moonStructureLevelInfoTable(
   return {
     columns: moonStructureLevelInfoColumns(buildingKey),
     currentLevel,
+    costLabel: isBinaryMoonStructure(buildingKey) ? "Build cost" : undefined,
     rows: rows.map((row) => ({
     cells: {
-      cost: formatCost(row.cost),
       duration: formatDuration(row.durationSeconds),
       effect: row.effect,
     },
+    cost: row.cost,
     onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
     key: row.level,
     level: row.level,
@@ -967,9 +968,8 @@ export function moonStructureHasLevelInfo(key: MoonBuilding["key"]): boolean {
 
 export function moonStructureLevelInfoColumns(_key: MoonBuilding["key"]): LevelInfoColumn[] {
   return [
-    { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
-    { key: "duration", label: "Build time", headerClassName: "min-w-32" },
-    { key: "effect", label: "Effect", headerClassName: "min-w-60" },
+    { key: "duration", label: "Build time", icon: Clock, width: "minmax(4.75rem,0.8fr)" },
+    { key: "effect", label: "Effect", icon: Gauge, shrink: true, width: "minmax(11rem,2.4fr)" },
   ];
 }
 

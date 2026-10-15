@@ -3,7 +3,7 @@ import { LevelInfoModal } from "./LevelInfoModal";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
-import { Info, PackagePlus } from "lucide-preact";
+import { Clock, Gauge, Info, ListChecks, PackagePlus } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
@@ -613,15 +613,16 @@ export function ResearchLevelInfoModal({ currentLevel, onClose, researchLabel, r
   rows: ResearchLevelInfoRow[];
   onSupply?: ((level: number) => void) | undefined;
 }) {
-  return <LevelInfoModal currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
+  return <LevelInfoModal costLabel="Research cost" currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
     columns={[
-      { key: "cost", label: "Research cost" }, { key: "time", label: "Research time" },
-      { key: "requirements", label: "Requirements" }, { key: "effect", label: "Effect" },
+      { key: "time", label: "Research time", icon: Clock, width: "minmax(5rem,0.8fr)", wrap: true },
+      { key: "requirements", label: "Requirements", icon: ListChecks, width: "minmax(6.5rem,1.2fr)", wrap: true },
+      { key: "effect", label: "Effect", icon: Gauge, width: "minmax(8rem,2fr)", wrap: true },
     ]}
-    rows={rows.map(row => ({ key: row.level, level: row.level,
+    rows={rows.map(row => ({ key: row.level, level: row.level, cost: row.cost,
       status: row.current ? "current" : row.next ? "next" : "future",
       onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
-      cells: { cost: formatCost(row.cost), time: row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds), requirements: row.requirementStatus, effect: row.effect },
+      cells: { time: row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds), requirements: row.requirementStatus, effect: row.effect },
     }))} />;
 }
 

@@ -393,6 +393,31 @@ export function buildingEnergyDetail(
   };
 }
 
+const oneDecimalFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+// Late building levels reach 1e20+, past Intl's "T"; keep every amount at most ~7 characters wide.
+const amountUnits = [[1e3, "K"], [1e6, "M"], [1e9, "B"], [1e12, "T"], [1e15, "Qa"], [1e18, "Qi"]] as const;
+
+/** Exact below `exactBelow` so early levels stay precise; compact (10.6K, 410K, 5.6Qa) above, where width matters. */
+export function formatLevelAmount(value: number, exactBelow = 10_000): string {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.trunc(value);
+  const magnitude = Math.abs(rounded);
+  if (magnitude < exactBelow) return formatter.format(rounded);
+  const sign = rounded < 0 ? "-" : "";
+  let unit = 0;
+  while (unit + 1 < amountUnits.length && magnitude >= amountUnits[unit + 1]![0]) unit++;
+  // At most three significant digits (409.6K -> 410K, 12.84K -> 12.8K) so three costs fit a phone row.
+  const scale = (index: number) => {
+    const raw = magnitude / amountUnits[index]![0];
+    return raw >= 99.95 ? Math.round(raw) : Math.round(raw * 10) / 10;
+  };
+  let scaled = scale(unit);
+  // 999,960 rounds to 1,000K; promote it to the next unit (1M).
+  if (scaled >= 1000 && unit + 1 < amountUnits.length) scaled = scale(++unit);
+  if (scaled >= 1000) return rounded.toExponential(1).replace("e+", "e");
+  return `${sign}${oneDecimalFormatter.format(scaled)}${amountUnits[unit]![1]}`;
+}
+
 export function formatNumber(value: number): string {
   return formatter.format(Math.floor(value));
 }
@@ -517,7 +542,7 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
     const previousFactor = 2 ** Math.max(0, level - 1);
     const factor = 2 ** level;
     const improvementPercent = Math.round(((factor / previousFactor) - 1) * 100);
-    return `x${formatNumber(factor)} construction speed (+${formatNumber(improvementPercent)}% faster)`;
+    return `x${formatLevelAmount(factor)} construction speed (+${formatNumber(improvementPercent)}% faster)`;
   }
 
   if (key === "researchLab") {

@@ -482,7 +482,9 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Level 2");
     expect(text).toContain("Current");
     expect(text).toContain("Next");
-    expect(text).toContain("Crystal 800, Deut. 400");
+    // Exact cost for screen readers; the visible cost is the compact resource-glyph line.
+    expect(text).toContain("Crystal 800, Deuterium 400");
+    expect(text).toContain("C 800 D 400");
   });
 
   test("keeps selected queued research disabled before the authoritative ready time", () => {

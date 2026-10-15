@@ -723,11 +723,12 @@ describe("Moon page helpers", () => {
     }) as VNode;
     const closeButton = componentNodes(modal).find((node) => node.props?.closeLabel === "Close level table");
 
+    // The cost is the popup's fixed primary column; these are the secondary stats.
     expect(moonStructureLevelInfoColumns("lunarBase").map((column) => column.label)).toEqual([
-      "Upgrade cost",
       "Build time",
       "Effect",
     ]);
+    expect(visibleText(modal)).toContain("Upgrade cost");
     expect(visibleText(modal)).not.toContain("Requirements");
     expect(modal.props?.layerAttributes?.["data-level-info-layer"]).toBe("viewport");
     expect(closeButton).toBeDefined();

@@ -203,6 +203,8 @@ export function BatchSupplyModal({
     || Boolean(preview.inProgress) !== Boolean(reviewedGoal.inProgress)));
   const needed = Object.fromEntries(keys.map(key => [key, Math.max(requestedNumbers[key], upgrade && preview ? preview.missing[key] : 0)])) as SupplyResources;
   const remaining = Object.fromEntries(keys.map(key => [key, Math.max(0, needed[key] - plan.delivered[key])])) as SupplyResources;
+  // Cumulative level Supply funds every level from the current (or queued) level up to the selected one.
+  const levelRange = upgrade && preview?.fromLevel !== undefined && preview.fromLevel < upgrade.level ? `${preview.fromLevel}–${upgrade.level}` : undefined;
   // Inventory always comes from the newest server snapshot. Keep consent to a
   // shipment separately: never freeze inventory to preserve a user's draft.
   const draftKey = JSON.stringify([mission, requestedNumbers, [...selected].sort(), sourceCargoOverrides,
@@ -296,9 +298,9 @@ export function BatchSupplyModal({
       } /></div>
       <div className="grid min-h-0 content-start gap-3 overflow-y-auto overscroll-contain px-4 pb-3 [overflow-anchor:none]" data-supply-scroll>
       {upgrade ? <section aria-label="Upgrade requirement" className="grid gap-1 text-xs text-slate-300">
-        <strong className="text-sm text-white">{upgrade.label} · Level {upgrade.level} · {targetIsMoon ? "Moon" : "Planet"} {target.coordinates}</strong>
-        {preview ? <p>Level cost: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p> : null}
-        {preview && resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : "Fully funded: no resources need to be sent for this level."}</p> : null}
+        <strong className="text-sm text-white">{upgrade.label} · {levelRange ? `Levels ${levelRange}` : `Level ${upgrade.level}`} · {targetIsMoon ? "Moon" : "Planet"} {target.coordinates}</strong>
+        {preview ? <p>{levelRange ? `Total cost for levels ${levelRange}` : "Level cost"}: M {format(preview.requirement.metal)} · C {format(preview.requirement.crystal)} · D {format(preview.requirement.deuterium)}</p> : null}
+        {preview && resourceTotal(preview.missing) === 0 ? <p role="status">{preview.inProgress ? "Already funded: this level is in progress. No resources need to be sent." : preview.energyOnly ? "This research requires energy, not shippable resources." : `Fully funded: no resources need to be sent for ${levelRange ? "these levels" : "this level"}.`}</p> : null}
         {preview && (["metal", "crystal", "deuterium"] as const).some(key => preview.missing[key] !== requestedNumbers[key]) ? <p className="text-amber-100">Current shortfall: M {format(preview.missing.metal)} · C {format(preview.missing.crystal)} · D {format(preview.missing.deuterium)}. Refresh to replace your reviewed totals.</p> : null}
         {!preview ? <p role="status">{loading ? "Refreshing destination resources…" : "Live destination resources are unavailable. Refresh to retry."}</p> : null}
         {onRefresh ? <button className="min-h-8 justify-self-start rounded border border-white/20 px-2" disabled={loading || actionPending || transactionPending} onClick={() => { refreshRequested.current = true; onRefresh(); }} type="button">Refresh destination and shortfall</button> : null}

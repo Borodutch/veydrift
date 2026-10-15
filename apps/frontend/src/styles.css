@@ -4190,44 +4190,102 @@ h4 {
   line-height: 1.35;
 }
 
-/* Level tables pivot from wide grids to per-level stacked cards on phones. */
-@media (max-width: 640px) {
-  .level-info-table,
-  .level-info-table tbody {
-    display: block;
-  }
+/* Level popups: one equal-height row per level. Below lg each row has two lines: the level, cost and
+   Supply icon on a fixed-height first line, and the secondary stats across the full width of the
+   second. From lg up it is one single-line grid whose tracks come from --level-info-columns. */
+.level-info-row {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  grid-template-rows: 2rem auto;
+  column-gap: 0.625rem;
+  align-items: center;
+  padding: 0.25rem 0.75rem 0.375rem;
+}
 
-  .level-info-table thead {
+.level-info-grid--supply .level-info-row {
+  grid-template-columns: 3rem minmax(0, 1fr) 2rem;
+}
+
+.level-info-row > .level-info-level {
+  grid-row: 1 / span 2;
+}
+
+.level-info-row > .level-info-cost {
+  overflow: hidden;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.level-info-row > .level-info-meta {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  align-items: center;
+  gap: 0.125rem 0.625rem;
+  grid-column: 2 / -1;
+  grid-row: 2;
+}
+
+.level-info-row > .level-info-supply {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+/* A stat and its delta on one line: the delta wraps onto the clipped second line (vanishing whole)
+   before the stat itself ellipsizes. */
+.level-info-value {
+  display: inline-flex;
+  max-width: 100%;
+  max-height: 1lh;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.25rem;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+/* The smallest phones drop the per-level deltas so the stats still fit on one line. */
+@media (max-width: 359px) {
+  .level-info-delta {
     display: none;
   }
 
-  .level-info-table tr {
-    display: grid;
-    gap: 2px;
-    padding: 10px 0;
+  .level-info-row {
+    padding-inline: 0.5rem;
   }
 
-  .level-info-table td {
-    display: flex;
-    min-width: 0;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    border-bottom: 0;
-    padding: 2px 12px;
+  .level-info-row > .level-info-cost {
+    font-size: 0.75rem;
   }
 
-  .level-info-table td::before {
-    content: attr(data-label);
-    flex: none;
-    color: #64748b;
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-transform: uppercase;
+  .level-info-row > .level-info-cost [data-level-fit] {
+    column-gap: 0.375rem;
   }
 
-  .level-info-table td:empty::before {
-    content: none;
+  .level-info-row > .level-info-cost [data-level-fit] > span {
+    gap: 0.125rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .level-info-row,
+  .level-info-grid--supply .level-info-row {
+    grid-template-columns: var(--level-info-columns);
+    grid-template-rows: none;
+    column-gap: 0.75rem;
+    padding: 0.25rem 1rem;
+  }
+
+  .level-info-row > .level-info-level,
+  .level-info-row > .level-info-cost,
+  .level-info-row > .level-info-supply {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .level-info-row > .level-info-meta {
+    display: contents;
   }
 }
 
