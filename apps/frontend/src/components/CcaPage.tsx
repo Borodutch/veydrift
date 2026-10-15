@@ -7,6 +7,7 @@ import { TelegramIcon } from "./TelegramIcon";
 import { TrailerPlayer } from "./TrailerPlayer";
 
 const telegramUrl = "https://t.me/borodutch";
+const uniswapCcaUrl = "https://cca.uniswap.org/";
 
 // Snapshot of https://stats.veydrift.com (the stats API has no CORS, so these are not fetched live).
 const tractionAsOf = "Sep 30, 2026";
@@ -39,33 +40,35 @@ const game = [
 
 const mechanics = [
   { icon: Gavel, title: "You bid a budget and a maximum price", body: "A bid says how much WETH you want to spend and the highest price per $VEYDRIFT you are willing to pay. You can bid at any point while the auction runs." },
-  { icon: Timer, title: "Tokens are sold block by block for 48 hours", body: "The 250M $VEYDRIFT are released gradually over 86,400 Base blocks instead of all at once. Your budget is spread across the blocks left in the auction, so bidding earlier lets you buy in more of them." },
+  { icon: Timer, title: "Tokens are sold block by block for two weeks", body: "The 250M $VEYDRIFT are released gradually over 604,800 Base blocks instead of all at once. Your budget is spread across the blocks left in the auction, so bidding earlier lets you buy in more of them." },
   { icon: Scale, title: "Everyone in a block pays the same price", body: "Each block clears at a single price: the highest price at which bids cover that block's supply. A bid with a higher maximum fills at the clearing price, never at its own maximum." },
   { icon: Undo2, title: "If you are outbid, you get your WETH back", body: "When the clearing price rises above your maximum, your bid stops buying and the unspent part is refunded. You never pay more than the maximum you set." },
-  { icon: Bot, title: "Snipers don't win by default", body: "Because the price is discovered over two days at one price per block, there is no first-block rush for bots to win and no reason to race a launch transaction." },
-  { icon: Lock, title: "It needs real demand to graduate", body: "The auction only completes if it raises its minimum amount of WETH. If it falls short, no pool is created and every bidder can withdraw their WETH in full." },
+  { icon: Bot, title: "Snipers don't win by default", body: "Because the price is discovered over two weeks at one price per block, there is no first-block rush for bots to win and no reason to race a launch transaction." },
+  { icon: Lock, title: "It needs real demand to graduate", body: "The auction only completes if it raises at least $50K in WETH. If it falls short, no pool is created and every bidder can withdraw their WETH in full." },
 ] as const;
 
+const auctionStart = "October 22 at 1 PM Pacific";
+
 const steps = [
-  { tag: "Now", title: "Grow the game", body: "Veydrift keeps shipping and marketing to bring in more players. The auction opens once the player base has grown, and everyone who registers interest hears about the date first." },
-  { tag: "Next", title: "Continuous clearing auction", body: "250M $VEYDRIFT are sold over 48 hours through Uniswap's onchain CCA on Base, with a floor of $0.0026 per token." },
-  { tag: "Then", title: "Automatic migration", body: "When the auction ends, its WETH plus 250M reserved $VEYDRIFT go into a Uniswap v4 $VEYDRIFT/WETH pool at the final clearing price, with no manual step in between." },
-  { tag: "Finally", title: "Locked liquidity", body: "Three $VEYDRIFT/resource pools open alongside it, and all four positions sit in a time lock with no owner, no rescue method and no early-unlock path." },
+  { tag: "Now", title: "Register interest", body: `Leave your email below and you'll hear from me before the auction opens on ${auctionStart}.` },
+  { tag: "Oct 22 – Nov 5", title: "Continuous clearing auction", body: "250M $VEYDRIFT are sold over two weeks on Base through Uniswap's CCA, with a $0.00075 floor and a $50K minimum raise. You bid from the Uniswap web app." },
+  { tag: "Nov 5", title: "Liquidity on Uniswap v4", body: "100% of the WETH the auction raises goes into a Uniswap v4 $VEYDRIFT/WETH pool together with 250M reserved $VEYDRIFT, at the final clearing price. None of the raise goes to the team." },
+  { tag: "Then", title: "Resource pools", body: "$VEYDRIFT pools against vMETAL, vCRYSTAL and vDEUT open next, so every game resource trades through $VEYDRIFT." },
 ] as const;
 
 const auctionTerms = [
-  { label: "For sale", value: "250M", note: "$VEYDRIFT, 25% of the total supply" },
-  { label: "Duration", value: "48 hours", note: "86,400 Base blocks at two seconds each" },
-  { label: "Floor price", value: "$0.0026", note: "per $VEYDRIFT, a $2.6M fully diluted valuation; no token sells below it" },
-  { label: "Paid in", value: "WETH", note: "on Base, with refunds for every part of a bid that doesn't fill" },
-  { label: "Contracts", value: "CCA v2.1.0", note: "Uniswap's audited continuous clearing auction, deployed from the official factory" },
-  { label: "Date", value: "TBA", note: "after the player base grows; register your interest below to hear first" },
+  { label: "For sale", value: "250M", note: "$VEYDRIFT, 25% of the total supply, sold for WETH on Base" },
+  { label: "Starts", value: "Oct 22", note: "1 PM Pacific (20:00 UTC), and runs until November 5 at 12 PM Pacific" },
+  { label: "Duration", value: "2 weeks", note: "604,800 Base blocks at two seconds each" },
+  { label: "Floor price", value: "$0.00075", note: "per $VEYDRIFT, a $750K fully diluted valuation; no token sells below it" },
+  { label: "Minimum raise", value: "$50K", note: "in WETH; if the auction raises less, it doesn't complete and every bidder is refunded" },
+  { label: "To liquidity", value: "100%", note: "of the WETH raised goes into the $VEYDRIFT/WETH pool on Uniswap v4" },
 ] as const;
 
 const allocations = [
-  { label: "Continuous clearing auction", share: 25, color: "bg-signal", note: "250M — public price discovery over 48 hours" },
-  { label: "$VEYDRIFT/WETH liquidity", share: 25, color: "bg-cyan-600", note: "250M — paired with auction proceeds and time-locked" },
-  { label: "Resource liquidity", share: 15, color: "bg-ember", note: "150M — 50M each against vMETAL, vCRYSTAL and vDEUT, time-locked" },
+  { label: "Continuous clearing auction", share: 25, color: "bg-signal", note: "250M — public price discovery over two weeks" },
+  { label: "$VEYDRIFT/WETH liquidity", share: 25, color: "bg-cyan-600", note: "250M — paired with 100% of the auction proceeds" },
+  { label: "Resource liquidity", share: 15, color: "bg-ember", note: "150M — 50M each against vMETAL, vCRYSTAL and vDEUT" },
   { label: "Development", share: 15, color: "bg-violet-400", note: "150M — 5-year linear vesting" },
   { label: "Contributors", share: 10, color: "bg-emerald-400", note: "100M — 4-year vesting with a 1-year cliff" },
   { label: "Ecosystem", share: 10, color: "bg-rose-400", note: "100M — 6-year linear vesting" },
@@ -92,7 +95,7 @@ export function CcaApp() {
           <div>
             <p className="landing-eyebrow rounded-full border border-cyan-300/20 bg-cyan-400/[0.08] px-3 py-1.5">
               <Gavel className="h-3.5 w-3.5" />
-              Uniswap continuous clearing auction · 25% of supply
+              Uniswap continuous clearing auction · Oct 22, 1 PM PT
             </p>
             <h1 className="mt-5 text-4xl font-semibold leading-[1.08] sm:text-5xl">
               $VEYDRIFT launches through a fair, onchain auction.
@@ -100,7 +103,8 @@ export function CcaApp() {
             <p className="mt-5 text-base leading-7 text-slate-300">
               Veydrift is an onchain space strategy game on Base. Players have been playing it every day for four months, before there
               was any token to hold. A quarter of the $VEYDRIFT supply will be sold through Uniswap's continuous clearing auction, where
-              the price is discovered over 48 hours and everyone who buys in the same block pays the same price.
+              the price is discovered over two weeks and everyone who buys in the same block pays the same price. It opens on {auctionStart},
+              and every dollar it raises goes into liquidity.
             </p>
             <div className="mt-6 flex flex-wrap gap-2.5">
               <a className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-signal px-5 py-2.5 text-sm font-bold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.22)] transition hover:bg-cyan-100" href="#interest">
@@ -109,6 +113,10 @@ export function CcaApp() {
               </a>
               <a className="surface-inset inline-flex min-h-11 items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition hover:text-cyan-100" href="https://veydrift.com" rel="noopener noreferrer" target="_blank">
                 Play Veydrift
+                <ExternalLink className="h-4 w-4" />
+              </a>
+              <a className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/[0.06] hover:text-white" href={uniswapCcaUrl} rel="noopener noreferrer" target="_blank">
+                About Uniswap CCA
                 <ExternalLink className="h-4 w-4" />
               </a>
               <a className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/[0.06] hover:text-white" href={telegramUrl} rel="noopener noreferrer" target="_blank">
@@ -190,7 +198,7 @@ export function CcaApp() {
       <Section eyebrow="How the auction works" title="A continuous clearing auction discovers the price over time instead of in the first block.">
         <p className="max-w-3xl text-slate-300">
           Most token launches set a price in a single moment, and whoever gets the first transaction in wins. Uniswap's
-          continuous clearing auction spreads the sale over two days and clears every block at one fair price, so what you pay
+          continuous clearing auction spreads the sale over two weeks and clears every block at one fair price, so what you pay
           depends on demand rather than on how fast your bot is.
         </p>
         <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -203,11 +211,12 @@ export function CcaApp() {
           ))}
         </div>
         <div className="mt-6 flex flex-wrap gap-4 text-sm">
-          <ExternalLinkText href="https://github.com/Uniswap/continuous-clearing-auction">Uniswap CCA source and audits</ExternalLinkText>
+          <ExternalLinkText href={uniswapCcaUrl}>Uniswap's CCA page</ExternalLinkText>
+          <ExternalLinkText href="https://github.com/Uniswap/continuous-clearing-auction">CCA source and audits</ExternalLinkText>
         </div>
       </Section>
 
-      <Section eyebrow="Auction terms" title="250M $VEYDRIFT go up for auction with a floor of $0.0026 per token.">
+      <Section eyebrow="Auction terms" title="250M $VEYDRIFT go up for auction on October 22 with a floor of $0.00075 per token.">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {auctionTerms.map((term) => (
             <div className="landing-feature" key={term.label}>
@@ -217,9 +226,14 @@ export function CcaApp() {
             </div>
           ))}
         </div>
+        <p className="mt-6 max-w-3xl text-sm text-slate-400">
+          If all 250M tokens sell at the floor, the auction raises about $187.5K. A higher clearing price raises more, and there is
+          no cap. Either way, all of it goes into liquidity. Dollar figures assume today's ETH price; the floor and the minimum are
+          set in WETH when the auction is created.
+        </p>
       </Section>
 
-      <Section eyebrow="Launch path" title="The game grows first, then the auction opens liquidity that nobody can pull.">
+      <Section eyebrow="Launch path" title="The auction opens on October 22, and every dollar it raises becomes liquidity.">
         <ol className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {steps.map((step, index) => (
             <li className={`landing-feature ${index === 0 ? "!border-cyan-300/40 ring-1 ring-cyan-300/20" : ""}`} key={step.title}>
@@ -236,7 +250,7 @@ export function CcaApp() {
       <Section eyebrow="Tokenomics" title="The supply is fixed forever at 1,000,000,000 $VEYDRIFT.">
         <p className="max-w-3xl text-slate-300">
           The token has no owner, no minter, no proxy, no tax and no pause switch. The entire supply is allocated once at genesis:
-          65% goes to the auction and to locked liquidity, and every team allocation vests for years.
+          65% goes to the auction and to liquidity, and every team allocation vests for years.
         </p>
         <div className="mt-6 flex h-3 overflow-hidden rounded-full" aria-hidden="true">
           {allocations.map((item) => (
@@ -262,9 +276,9 @@ export function CcaApp() {
         <div className="landing-panel mx-auto grid max-w-6xl gap-8 bg-[linear-gradient(135deg,rgba(34,211,238,0.1),rgba(13,24,41,0.96)_55%)] p-6 sm:p-8 lg:grid-cols-[1fr_1fr]">
           <div>
             <p className="landing-eyebrow">Register interest</p>
-            <h2 className="mt-2 text-2xl font-semibold leading-tight sm:text-[2rem]">Get an email when the auction is about to open.</h2>
+            <h2 className="mt-2 text-2xl font-semibold leading-tight sm:text-[2rem]">Get an email before the auction opens on October 22.</h2>
             <p className="mt-4 text-slate-300">
-              Leave your email and I'll let you know the date before anyone else. If you already have a rough idea of how much you'd
+              Leave your email and I'll remind you before bidding opens, with a link straight to the auction. If you already have a rough idea of how much you'd
               bid, add it too; it isn't a commitment, and it helps me size the launch.
             </p>
             <div className="surface-inset mt-6 rounded-xl p-5">
