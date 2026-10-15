@@ -5,7 +5,7 @@ import { frontendResponse, responseHeadersFor } from "../scripts/serve.mjs";
 
 const landingSource = new URL("../src/ComingSoonApp.tsx", import.meta.url);
 const playerSource = new URL("../src/components/TrailerPlayer.tsx", import.meta.url);
-const pactSource = new URL("../src/components/PactPage.tsx", import.meta.url);
+const ccaSource = new URL("../src/components/CcaPage.tsx", import.meta.url);
 const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}`, import.meta.url);
 const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
 
@@ -29,8 +29,8 @@ describe("landing trailer", () => {
     expect(await Bun.file(landingAsset("veydrift-trailer-v1.vtt")).text()).toStartWith("WEBVTT\n");
   });
 
-  test("Pact shares the player below its hero and links to it without leaving the page", async () => {
-    const source = await Bun.file(pactSource).text();
+  test("CCA shares the player below its hero and links to it without leaving the page", async () => {
+    const source = await Bun.file(ccaSource).text();
     expect(source).toContain('import { TrailerPlayer } from "./TrailerPlayer"');
     expect(source).toContain('<TrailerPlayer />');
     expect(source.indexOf('<TrailerPlayer />')).toBeLessThan(source.indexOf('<Section eyebrow="Traction"'));

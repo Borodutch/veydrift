@@ -75,7 +75,7 @@ test("Landing and Pact share lazy, responsive, user-initiated trailer playback",
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     }
     const playButton = 'button[aria-label="Play the two-minute Veydrift trailer"]';
-    for (const route of ['pact', 'landing']) {
+    for (const route of ['cca', 'landing']) {
       mediaRequests.length = 0;
       await send('Page.navigate', { url: url + '?' + route });
       await until('Boolean(document.querySelector("video"))', route + ': mounted');
@@ -96,13 +96,13 @@ test("Landing and Pact share lazy, responsive, user-initiated trailer playback",
           writeFileSync(join(artifacts, route + '-' + width + '.png'), Buffer.from(shot.data, 'base64'));
         }
       }
-      if (route === 'pact') {
+      if (route === 'cca') {
         await click('a[href="#trailer"]');
         await until('location.hash === "#trailer"', 'in-page CTA');
-        assert.equal(await evaluate('location.pathname + location.search'), '/tests/fixtures/trailerPlayer.html?pact');
+        assert.equal(await evaluate('location.pathname + location.search'), '/tests/fixtures/trailerPlayer.html?cca');
         assert.equal(await evaluate('document.activeElement.id'), 'trailer', 'keyboard focus reaches the trailer');
         assert.equal(mediaRequests.length, 0, 'anchor does not autoplay or fetch movie');
-        assert.equal(await evaluate(`Boolean(document.querySelector('a[href="#join"]'))`), true);
+        assert.equal(await evaluate(`Boolean(document.querySelector('a[href="#interest"]'))`), true);
       }
       // Deterministic rejected play: retry must restore the labeled overlay.
       await evaluate('window.realPlay = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function() { return Promise.reject(new DOMException("Blocked", "NotAllowedError")); }');

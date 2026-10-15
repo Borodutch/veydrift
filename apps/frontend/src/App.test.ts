@@ -9,9 +9,9 @@ describe("app routing", () => {
     ]);
 
     expect(source).toContain('pathname.startsWith("/docs")');
-    expect(source).toContain("return <PactApp />");
+    expect(source).toContain("return <CcaApp />");
+    expect(source).not.toContain("Pact");
     expect(source).toContain("return <FirstPlanetSettlementApp />");
-    expect(source).not.toMatch(/cca/i);
     expect(game).not.toContain("auctionBanner");
     expect(topBar).not.toContain("auctionBanner");
     expect(topBar).toContain('key="crystal"');
