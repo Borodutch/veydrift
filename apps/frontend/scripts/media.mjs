@@ -82,11 +82,18 @@ async function download(url, entry, path, fetchImpl) {
     let bytes = 0;
     const file = await open(temporary, "w");
     try {
-      for await (const chunk of response.body) {
-        hash.update(chunk);
-        bytes += chunk.length;
-        if (bytes > entry.bytes) throw new Error("Media download larger than pinned size");
-        await file.write(chunk);
+      // An explicit reader: async iteration of a fetch body is not available in every Bun release.
+      const reader = response.body.getReader();
+      try {
+        for (let read = await reader.read(); !read.done; read = await reader.read()) {
+          const chunk = read.value;
+          hash.update(chunk);
+          bytes += chunk.length;
+          if (bytes > entry.bytes) throw new Error("Media download larger than pinned size");
+          await file.write(chunk);
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
       }
     } finally {
       await file.close();

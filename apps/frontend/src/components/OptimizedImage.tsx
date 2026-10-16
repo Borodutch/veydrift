@@ -198,11 +198,19 @@ function LoopVideo({
       setVisible(near);
     }, { rootMargin: "128px" });
     observer.observe(video);
-    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    // Settle a growing box (e.g. a width transition) before reloading at a larger size.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const resize = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => { clearTimeout(settle); settle = setTimeout(measure, 150); })
+      : undefined;
     resize?.observe(video);
     return () => {
       observer.disconnect();
       resize?.disconnect();
+      clearTimeout(settle);
+      // While the still shows nothing tracks visibility: start over when the video returns.
+      attachedSize.current = null;
+      setVisible(false);
     };
   }, [loop, showStill]);
 
@@ -228,8 +236,10 @@ function LoopVideo({
     if (!poster || !onLoad) return;
     const image = new Image();
     image.onload = () => onLoad({ currentTarget: image } as never);
+    // A missing poster variant falls back to the still, which has its own error fallback.
+    image.onerror = () => setFailed(true);
     image.src = poster;
-    return () => { image.onload = null; };
+    return () => { image.onload = null; image.onerror = null; };
   }, [poster]);
 
   if (showStill) return still();
