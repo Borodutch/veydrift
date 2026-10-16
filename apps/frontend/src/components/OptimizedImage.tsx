@@ -37,7 +37,8 @@ interface OptimizedImageProps {
 export function OptimizedImage(props: OptimizedImageProps): JSX.Element {
   const loop = loopAnimationNameForStill(props.src);
   const still = () => <StillImage {...props} />;
-  if (!loop) return still();
+  // Mounted under reduced motion too: LoopVideo follows the preference live.
+  if (!loop || !loopsSupported()) return still();
   const dimensions = getImageDimensions(props.src);
   return (
     // Keyed by asset: a <source> swapped in place would keep playing the old loop.
@@ -70,7 +71,7 @@ export function AssetImage(props: {
 }): JSX.Element {
   const loop = loopAnimationNameForStill(props.src);
   const still = () => <img {...props} />;
-  if (!loop) return still();
+  if (!loop || !loopsSupported()) return still();
   return (
     <LoopVideo
       alt={props.alt}
@@ -139,9 +140,13 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null, onlyIf?: T): voi
   else if (ref && (onlyIf === undefined || ref.current === onlyIf)) ref.current = value;
 }
 
-// False outside a browser too, where the still is all that can render.
+// Outside a browser the still is all that can render.
+function loopsSupported(): boolean {
+  return typeof window !== "undefined" && typeof window.IntersectionObserver === "function" && typeof window.matchMedia === "function";
+}
+
 export function loopMotionAllowed(): boolean {
-  if (typeof window === "undefined" || typeof window.IntersectionObserver !== "function" || typeof window.matchMedia !== "function") return false;
+  if (!loopsSupported()) return false;
   reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
   return !reducedMotion.matches;
 }

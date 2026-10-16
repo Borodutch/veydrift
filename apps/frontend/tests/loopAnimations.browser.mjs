@@ -110,7 +110,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     // imageRef points at the loop's poster probe, the same image onLoad reports (#134).
     await until("Boolean(window.loopFixture.refLoad)", "imageRef loop never reported its poster");
     assert.deepEqual(await evaluate("window.loopFixture.refLoad"), { complete: true, sameAsRef: true });
-    assert.equal(await evaluate("document.querySelector('[data-ref-probe] video').tagName"), "VIDEO");
+    assert.equal(await evaluate("document.querySelector('[data-ref-probe]').firstElementChild.tagName"), "VIDEO");
 
     // The inspect panel's "already cached" fast path holds for a loop as for a still: a fresh
     // panel whose poster is cached is loaded by its first frame, with no skeleton (#134).
