@@ -1,5 +1,5 @@
 import type { JSX, Ref } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { loopAnimationNameForStill, loopAnimationUrl, loopAnimationWidthFor } from "../../loopAnimationConfig";
 import { getImageDimensions, getSizedImageSrc, getSrcSet, getStillVariantSrc, Sizes, type SizePreset } from "../utils/imageSizes";
 
@@ -37,7 +37,7 @@ interface OptimizedImageProps {
 export function OptimizedImage(props: OptimizedImageProps): JSX.Element {
   const loop = loopAnimationNameForStill(props.src);
   const still = () => <StillImage {...props} />;
-  if (!loop || !loopMotionAllowed()) return still();
+  if (!loop) return still();
   const dimensions = getImageDimensions(props.src);
   return (
     // Keyed by asset: a <source> swapped in place would keep playing the old loop.
@@ -45,6 +45,7 @@ export function OptimizedImage(props: OptimizedImageProps): JSX.Element {
       alt={props.alt}
       className={props.className}
       height={props.height ?? dimensions?.height ?? 1024}
+      imageRef={props.imageRef}
       key={props.src}
       loop={loop}
       onLoad={props.onLoad}
@@ -69,7 +70,7 @@ export function AssetImage(props: {
 }): JSX.Element {
   const loop = loopAnimationNameForStill(props.src);
   const still = () => <img {...props} />;
-  if (!loop || !loopMotionAllowed()) return still();
+  if (!loop) return still();
   return (
     <LoopVideo
       alt={props.alt}
@@ -129,6 +130,14 @@ function StillImage({
 }
 
 let reducedMotion: MediaQueryList | undefined;
+// Loops within this many CSS px of the viewport are sized and fetched.
+const NEAR_VIEWPORT = 128;
+
+// Sets a ref as Preact would; with `onlyIf`, an object ref that already points elsewhere is left alone.
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null, onlyIf?: T): void {
+  if (typeof ref === "function") ref(value);
+  else if (ref && (onlyIf === undefined || ref.current === onlyIf)) ref.current = value;
+}
 
 // False outside a browser too, where the still is all that can render.
 export function loopMotionAllowed(): boolean {
@@ -141,13 +150,14 @@ export function loopMotionAllowed(): boolean {
  * Muted inline loop with the existing still as its poster, in the same box as
  * the still. Nothing is fetched until it nears the viewport; the size variant
  * is then picked from its rendered width (and only ever grows), and its
- * decoder is released again when it leaves. Reduced motion, refused autoplay
- * or a failing source/decode keep the still.
+ * decoder is released again when it leaves. Reduced motion (followed live, in
+ * both directions), refused autoplay or a failing source/decode keep the still.
  */
 function LoopVideo({
   alt,
   className,
   height,
+  imageRef,
   loop,
   onLoad,
   src,
@@ -158,6 +168,7 @@ function LoopVideo({
   alt: string;
   className?: string | undefined;
   height?: number | undefined;
+  imageRef?: Ref<HTMLImageElement> | undefined;
   loop: string;
   onLoad?: JSX.GenericEventHandler<HTMLImageElement> | undefined;
   src: string;
@@ -167,6 +178,7 @@ function LoopVideo({
 }): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
   const attachedSize = useRef<number | null>(null);
+  const probe = useRef<{ image: HTMLImageElement; url: string } | null>(null);
   const [reduced, setReduced] = useState(() => !loopMotionAllowed());
   const [failed, setFailed] = useState(false);
   const [size, setSize] = useState<number | null>(null);
@@ -174,11 +186,57 @@ function LoopVideo({
   const showStill = reduced || failed;
   const activeSize = visible ? size : null;
   const poster = size === null ? undefined : getStillVariantSrc(src, size);
+  const latest = useRef({ imageRef, onLoad, showStill });
+  latest.current = { imageRef, onLoad, showStill };
 
   useEffect(() => {
     const onMotionChange = () => setReduced(!loopMotionAllowed());
+    // Catch up on a change between the first render and this subscription.
+    onMotionChange();
     reducedMotion?.addEventListener?.("change", onMotionChange);
     return () => reducedMotion?.removeEventListener?.("change", onMotionChange);
+  }, []);
+
+  // The poster is the still: probe it as the still's own <img>, so an imageRef
+  // reader (e.g. an "already cached" check) and onLoad (e.g. ending a loading
+  // skeleton) work without waiting for the first decoded frame.
+  const probePoster = (url: string) => {
+    if (!imageRef && !onLoad) return;
+    if (probe.current?.url !== url) {
+      if (probe.current) probe.current.image.onload = probe.current.image.onerror = null;
+      const image = new Image();
+      image.onload = () => latest.current.onLoad?.({ currentTarget: image } as never);
+      // A missing poster variant falls back to the still, which has its own error fallback.
+      image.onerror = () => setFailed(true);
+      image.src = url;
+      probe.current = { image, url };
+    }
+    assignRef(imageRef, probe.current.image);
+  };
+
+  // An imageRef reader checks for a cached image as it mounts, before the
+  // observer below first reports: size a loop already near the viewport now.
+  useLayoutEffect(() => {
+    const video = videoRef.current;
+    if (!imageRef || showStill || !video) return;
+    const box = video.getBoundingClientRect();
+    if (box.width <= 0 || box.bottom < -NEAR_VIEWPORT || box.right < -NEAR_VIEWPORT
+      || box.top > window.innerHeight + NEAR_VIEWPORT || box.left > window.innerWidth + NEAR_VIEWPORT) return;
+    const next = Math.max(size ?? 0, loopAnimationWidthFor(loop, box.width * (window.devicePixelRatio || 1)));
+    setSize(next);
+    probePoster(getStillVariantSrc(src, next));
+  }, [loop, showStill]);
+
+  useLayoutEffect(() => {
+    if (poster && !showStill) probePoster(poster);
+  }, [poster, showStill]);
+
+  useLayoutEffect(() => () => {
+    const current = probe.current;
+    if (!current) return;
+    current.image.onload = current.image.onerror = null;
+    // A shown still owns the ref (and releases it itself); otherwise release it as an unmounted <img> would.
+    if (!latest.current.showStill) assignRef(latest.current.imageRef, null, current.image);
   }, []);
 
   useEffect(() => {
@@ -196,7 +254,7 @@ function LoopVideo({
       near = entry.isIntersecting;
       measure();
       setVisible(near);
-    }, { rootMargin: "128px" });
+    }, { rootMargin: `${NEAR_VIEWPORT}px` });
     observer.observe(video);
     // Settle a growing box (e.g. a width transition) before reloading at a larger size.
     let settle: ReturnType<typeof setTimeout> | undefined;
@@ -230,17 +288,6 @@ function LoopVideo({
     });
   }, [activeSize, showStill]);
 
-  // The poster is the still: report it loaded (e.g. to end a loading skeleton)
-  // without waiting for the first decoded frame.
-  useEffect(() => {
-    if (!poster || !onLoad) return;
-    const image = new Image();
-    image.onload = () => onLoad({ currentTarget: image } as never);
-    // A missing poster variant falls back to the still, which has its own error fallback.
-    image.onerror = () => setFailed(true);
-    image.src = poster;
-    return () => { image.onload = null; image.onerror = null; };
-  }, [poster]);
 
   if (showStill) return still();
   return (
