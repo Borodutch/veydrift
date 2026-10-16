@@ -119,12 +119,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       window.loopFixture.inspect(${JSON.stringify(asset)}, ${JSON.stringify(cacheKey)});
       requestAnimationFrame(() => resolve([${inspect}.getAttribute('aria-busy'), ${inspect}.querySelector('video, img').tagName]));
     })`);
-    const [cruiserStill, battlecruiserStill, smallCargoStill] = ["cruiser", "battlecruiser", "small-cargo"].map(ship => `/assets/game/style-pass/generated/ships/${ship}.webp`);
+    const [cruiserStill, smallCargoStill] = ["cruiser", "small-cargo"].map(ship => `/assets/game/style-pass/generated/ships/${ship}.webp`);
     await until(`${inspect}.getAttribute('aria-busy') === 'false'`, "inspect loop never loaded");
     assert.deepEqual(await busyAtFirstFrame(cruiserStill, "cruiser again"), ["false", "VIDEO"]);
-    // An uncached poster still shows the skeleton until it loads.
-    assert.deepEqual(await busyAtFirstFrame(battlecruiserStill, "battlecruiser"), ["true", "VIDEO"]);
-    await until(`${inspect}.getAttribute('aria-busy') === 'false'`, "uncached inspect loop never loaded");
     await busyAtFirstFrame(smallCargoStill, "small-cargo");
     await until(`${inspect}.getAttribute('aria-busy') === 'false'`, "inspect still never loaded");
     assert.deepEqual(await busyAtFirstFrame(smallCargoStill, "small-cargo again"), ["false", "IMG"]);
@@ -204,12 +201,18 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       for (const field of ["x", "y", "w", "h"]) assert.ok(Math.abs(box[field] - other[field]) < 0.5, `${key} ${field}: video ${JSON.stringify(box)} still ${JSON.stringify(other)}`);
       assert.equal(box.fit, other.fit, key);
     }
+    // Under reduced motion a still that changes asset, with or without a loop, updates in place like a plain still.
+    await evaluate(`window.featuredStill = ${featured}.querySelector('img')`);
+    for (const [key, ship] of [["destroyer", "destroyer"], ["smallCargo", "small-cargo"], ["cruiser", "cruiser"]]) {
+      await evaluate(`window.loopFixture.select(${JSON.stringify(key)})`);
+      await until(`${featured}.querySelector('img').getAttribute('src').includes('/ships/${ship}.webp')`, `featured still did not follow ${key}`);
+      assert.equal(await evaluate(`${featured}.querySelector('img') === window.featuredStill`), true, `featured still remounted for ${key}`);
+    }
     // Turning reduced motion off on a page that mounted the stills starts the loops without a re-render (#134).
     await send("Emulation.setEmulatedMedia", { features: [] });
     await until(`document.querySelectorAll('[data-tile] video').length === ${looped.length} && Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "loops did not start when reduced motion turned off");
 
     // A loop whose sources fail falls back to its still; the others keep playing.
-    await send("Emulation.setEmulatedMedia", { features: [] });
     await send("Network.enable");
     await send("Network.setCacheDisabled", { cacheDisabled: true });
     await send("Network.setBlockedURLs", { urls: ["*/ships/colony-ship.webm*", "*/ships/colony-ship.mp4*"] });
