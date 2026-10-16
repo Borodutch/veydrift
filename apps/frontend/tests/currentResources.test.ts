@@ -27,7 +27,7 @@ test("unknown current resources disable infrastructure/research despite a stale 
  expect(infrastructureUnavailableReasonFor({ buildingAction: { status: "idle" }, gameContract: "0xabc", homePlanetId: "7", infrastructureChainState: infrastructure, infrastructureLoading: false, isWalletConnected: true, onChainResources: spendable, onChainStatus: "ready", runtimeConfigStatus: "ready" })).toBe(RESOURCES_UNAVAILABLE);
  const state = createInitialPlayableState(); state.buildings.researchLab = 12;
  const research = { homePlanetId: "7", resources: raw, resourcesAsOfNow: null, queue: null } as ChainResearchState;
- expect(researchActionStatus({ actionPending: false, canTransact: true, chainCost: { metal: 0, crystal: 800, deuterium: 400 }, error: undefined, key: "energy", loading: false, now: Date.now(), researchState: research, spendableResources: spendable, state })).toMatchObject({ disabled: true, reason: RESOURCES_UNAVAILABLE });
+ expect(researchActionStatus({ planetProductionProfile: undefined, actionPending: false, canTransact: true, chainCost: { metal: 0, crystal: 800, deuterium: 400 }, error: undefined, key: "energy", loading: false, now: Date.now(), researchState: research, spendableResources: spendable, state })).toMatchObject({ disabled: true, reason: RESOURCES_UNAVAILABLE });
  expect(productionPlanContext("planet", { infrastructure, defense: null, shipyard: null, moon: null })).toMatchObject({ available: false, resources: null });
 });
 

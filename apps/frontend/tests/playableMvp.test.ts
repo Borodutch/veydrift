@@ -26,6 +26,8 @@ import {
   shipSpecRows,
   storageCaps,
   unmetResearchRequirement,
+  researchEnergyProduced,
+  researchEnergyRequirement,
 } from "../src/playableMvp";
 import { infrastructurePlayableState } from "../src/chainState";
 import { shouldShowTopBarEnergy } from "../src/overviewData";
@@ -332,7 +334,9 @@ describe("playable MVP contract display helpers", () => {
       },
     };
 
-    expect(unmetResearchRequirement(unlockedLab, "graviton")).toEqual({
+    const profile = { maxTemperature: -12, metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_000 };
+
+    expect(unmetResearchRequirement(unlockedLab, "graviton", profile)).toEqual({
       type: "energy",
       produced: 300_000,
     });
@@ -342,7 +346,58 @@ describe("playable MVP contract display helpers", () => {
         ...unlockedLab.buildings,
         solarPlant: 10_000,
       },
-    }, "graviton")).toBeUndefined();
+    }, "graviton", profile)).toBeUndefined();
+  });
+
+  test("counts Solar Satellite energy at the planet's max temperature for Graviton", () => {
+    const state = createInitialPlayableState(1_000);
+    // Planet Andy (#135): 5,047 satellites give 21 energy each at -12°C but 60 at 223°C.
+    const andy = {
+      ...state,
+      buildings: { ...state.buildings, researchLab: 12, solarPlant: 0 },
+      ships: { ...state.ships, solarSatellite: 5_047 },
+    };
+    const profileAt = (maxTemperature: number) => ({
+      maxTemperature,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+    });
+
+    expect(researchEnergyProduced(andy, profileAt(-12))).toBe(105_987);
+    expect(unmetResearchRequirement(andy, "graviton", profileAt(-12))).toEqual({ type: "energy", produced: 300_000 });
+    expect(researchEnergyProduced(andy, profileAt(223))).toBe(302_820);
+    expect(unmetResearchRequirement(andy, "graviton", profileAt(223))).toBeUndefined();
+    // Matches the energy breakdown the Overview shows for the same planet.
+    expect(researchEnergyProduced(andy, profileAt(223))).toBe(
+      energyBalance(andy.buildings, andy.research.energy, andy.ships.solarSatellite, profileAt(223)).produced,
+    );
+  });
+
+  test("does not assume a default planet when the production profile is unknown", () => {
+    const state = createInitialPlayableState(1_000);
+    const unlockedLab = { ...state, buildings: { ...state.buildings, researchLab: 12, solarPlant: 10_000 } };
+
+    expect(researchEnergyProduced(unlockedLab, undefined)).toBeUndefined();
+    expect(researchEnergyProduced(unlockedLab, { metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_000 })).toBeUndefined();
+    expect(unmetResearchRequirement(unlockedLab, "graviton", undefined)).toEqual({ type: "energy", produced: 300_000 });
+  });
+
+  test("triples Graviton's energy requirement per researched level like the contract", () => {
+    expect(researchEnergyRequirement("graviton", 0, 300_000)).toBe(300_000);
+    expect(researchEnergyRequirement("graviton", 1, 300_000)).toBe(900_000);
+    expect(researchEnergyRequirement("graviton", 2, 300_000)).toBe(2_700_000);
+
+    const state = createInitialPlayableState(1_000);
+    const profile = { maxTemperature: 223, metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_000 };
+    const levelOne = {
+      ...state,
+      buildings: { ...state.buildings, researchLab: 12, solarPlant: 0 },
+      research: { ...state.research, graviton: 1 },
+      ships: { ...state.ships, solarSatellite: 5_047 },
+    };
+
+    expect(unmetResearchRequirement(levelOne, "graviton", profile)).toEqual({ type: "energy", produced: 300_000 });
   });
 
   test("mirrors the contract research catalog and prerequisites", () => {
