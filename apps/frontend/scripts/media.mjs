@@ -17,6 +17,7 @@ import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const mediaManifestPath = fileURLToPath(new URL("../media.json", import.meta.url));
+export const loopAnimationManifestPath = fileURLToPath(new URL("../loopAnimations.json", import.meta.url));
 export const mediaRoot = resolve(process.env.VEYDRIFT_MEDIA_ROOT || fileURLToPath(new URL("../.media/", import.meta.url)));
 // Maintainer working copy for `publish`; never read by the server.
 export const mediaSourceRoot = fileURLToPath(new URL("../.media-src/", import.meta.url));
@@ -81,11 +82,18 @@ async function download(url, entry, path, fetchImpl) {
     let bytes = 0;
     const file = await open(temporary, "w");
     try {
-      for await (const chunk of response.body) {
-        hash.update(chunk);
-        bytes += chunk.length;
-        if (bytes > entry.bytes) throw new Error("Media download larger than pinned size");
-        await file.write(chunk);
+      // An explicit reader: async iteration of a fetch body is not available in every Bun release.
+      const reader = response.body.getReader();
+      try {
+        for (let read = await reader.read(); !read.done; read = await reader.read()) {
+          const chunk = read.value;
+          hash.update(chunk);
+          bytes += chunk.length;
+          if (bytes > entry.bytes) throw new Error("Media download larger than pinned size");
+          await file.write(chunk);
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
       }
     } finally {
       await file.close();
@@ -185,8 +193,9 @@ async function* walk(dir) {
 
 // Maintainer flow for new or changed media: `checkout` copies every pinned
 // file (including publish-only masters) into .media-src/, edit masters there,
-// then `publish` regenerates the animation variants, re-pins media.json and
-// stages the content-addressed upload set in .media-src/.upload/.
+// then `publish` regenerates the animation variants, re-pins media.json (and
+// loopAnimations.json) and stages the content-addressed upload set in
+// .media-src/.upload/.
 export async function checkoutMedia({ source = mediaSourceRoot } = {}) {
   await syncMedia({ all: true });
   for (const [key, entry] of Object.entries(mediaManifest.files)) {
@@ -198,11 +207,19 @@ export async function checkoutMedia({ source = mediaSourceRoot } = {}) {
 }
 
 export async function publishMedia({ source = mediaSourceRoot, stage = join(source, ".upload") } = {}) {
-  const { animationConfigs, prepareAnimationVariants } = await import("./animation-variants.mjs");
-  await prepareAnimationVariants({ root: join(source, "animation-variants"), sourceRoot: source });
+  const {
+    animationConfigs, describeLoopMasters, imageAnimationVariants, loopAnimationVariants, prepareAnimationVariants,
+  } = await import("./animation-variants.mjs");
+  const { LOOP_ANIMATION_MASTER_BASE } = await import("../loopAnimationConfig.ts");
+  // The loop set and versions come from the masters present in the working copy.
+  const loops = await describeLoopMasters(source);
+  await prepareAnimationVariants({
+    root: join(source, "animation-variants"), sourceRoot: source, variants: [...imageAnimationVariants, ...loopAnimationVariants(loops)],
+  });
   // Masters whose width is not a served size are only variant inputs.
   const publishOnly = new Set(animationConfigs.filter((config) => !config.widths.includes(config.masterWidth))
     .flatMap((config) => config.types.map((type) => `${config.base.slice(1)}/${type}.webp`)));
+  for (const name of Object.keys(loops)) publishOnly.add(`${LOOP_ANIMATION_MASTER_BASE}/${name}.mp4`);
   const files = {};
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
@@ -215,8 +232,24 @@ export async function publishMedia({ source = mediaSourceRoot, stage = join(sour
     await copyFile(path, join(stage, sha256 + extname(key)));
   }
   const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)));
-  await writeFile(mediaManifestPath, JSON.stringify({ ...mediaManifest, files: sorted }, null, 2) + "\n");
+  assertPinnedVariantsUnchanged(mediaManifest.files, sorted);
+  // Written side by side, then renamed back to back: a failed publish leaves both unchanged.
+  await writeFile(loopAnimationManifestPath + ".tmp", JSON.stringify(loops, null, 2) + "\n");
+  await writeFile(mediaManifestPath + ".tmp", JSON.stringify({ ...mediaManifest, files: sorted }, null, 2) + "\n");
+  await rename(loopAnimationManifestPath + ".tmp", loopAnimationManifestPath);
+  await rename(mediaManifestPath + ".tmp", mediaManifestPath);
   return { files: Object.keys(sorted).length, stage };
+}
+
+// A variant's file name is derived from its versioned URL, so a pinned name
+// whose bytes change would change content behind an immutable URL.
+export function assertPinnedVariantsUnchanged(previous, next) {
+  for (const [key, entry] of Object.entries(next)) {
+    if (!key.startsWith("animation-variants/") || key === "animation-variants/manifest.json") continue;
+    if (previous[key] && previous[key].sha256 !== entry.sha256) {
+      throw new Error("Variant bytes changed under an existing versioned URL (bump the version): " + key);
+    }
+  }
 }
 
 if (import.meta.main) {

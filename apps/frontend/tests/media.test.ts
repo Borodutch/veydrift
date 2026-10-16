@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { animationConfigs, animationFilename, animationVariants } from "../scripts/animation-variants.mjs";
+import { LOOP_ANIMATIONS } from "../loopAnimationConfig";
 import { mediaFileForPathname, mediaManifest, mediaViewRoot, syncMedia } from "../scripts/media.mjs";
 
 type Pin = { sha256: string; bytes: number; publishOnly?: boolean };
@@ -43,7 +44,9 @@ describe("pinned external media", () => {
       for (const type of types) expect(files[`${base.slice(1)}/${type}.webp`]?.publishOnly).toBe(widths.includes(masterWidth) ? undefined : true);
     }
     for (const route of animationVariants) expect(files[`animation-variants/${animationFilename(route)}`]?.publishOnly).toBeUndefined();
-    expect(Object.keys(files).length).toBe(2 + animationVariants.length + animationConfigs.reduce((sum, config) => sum + config.types.length, 0));
+    // Plus one publish-only master per building/ship loop.
+    expect(Object.keys(files).length).toBe(2 + animationVariants.length + animationConfigs.reduce((sum, config) => sum + config.types.length, 0)
+      + Object.keys(LOOP_ANIMATIONS).length);
     for (const [key, entry] of Object.entries(files)) {
       expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(entry.bytes).toBeGreaterThan(0);

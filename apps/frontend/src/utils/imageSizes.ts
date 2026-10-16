@@ -83,6 +83,17 @@ export function getSrcSet(originalSrc: string): string {
   return [...variants, `${originalSrc} ${entry.width}w`].join(", ");
 }
 
+/** Smallest static variant at least `width` px wide (the original otherwise). */
+export function getStillVariantSrc(originalSrc: string, width: number): string {
+  const entry = manifest[originalSrc];
+  if (!entry) return originalSrc;
+  const variant = Object.entries(entry.variants)
+    .map(([variantWidth, src]) => ({ src, width: Number(variantWidth) }))
+    .filter((candidate) => candidate.width >= width && candidate.width < entry.width)
+    .sort((a, b) => a.width - b.width)[0];
+  return variant?.src ?? originalSrc;
+}
+
 export function getImageDimensions(originalSrc: string): Pick<ImageSizeManifestEntry, "width" | "height"> | undefined {
   const animation = animationConfig(originalSrc);
   if (animation) return { width: animation.intrinsicSize, height: animation.intrinsicSize };

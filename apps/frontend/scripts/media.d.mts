@@ -1,6 +1,7 @@
 export type MediaPin = { sha256: string; bytes: number; publishOnly?: boolean };
 export type MediaManifest = { baseUrl: string; files: Record<string, MediaPin> };
 export const mediaManifestPath: string;
+export const loopAnimationManifestPath: string;
 export const mediaRoot: string;
 export const mediaSourceRoot: string;
 export const mediaManifest: MediaManifest;
@@ -17,4 +18,5 @@ export function syncMedia(options?: {
   all?: boolean;
 }): Promise<{ files: number; downloaded: number; downloadedBytes: number }>;
 export function checkoutMedia(options?: { source?: string }): Promise<{ files: number; source: string }>;
+export function assertPinnedVariantsUnchanged(previous: Record<string, MediaPin>, next: Record<string, MediaPin>): void;
 export function publishMedia(options?: { source?: string; stage?: string }): Promise<{ files: number; stage: string }>;

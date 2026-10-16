@@ -42,6 +42,7 @@ import {
   shortAddress,
 } from "./missionRoute";
 import { refreshButtonState } from "./PageHeader";
+import { AssetImage } from "./OptimizedImage";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -1970,7 +1971,7 @@ function FleetIcons({ ships }: { ships: Record<string, string> }) {
         const label = `${name} x${formatResource(count)}`;
         return (
           <span className="inline-flex items-center gap-1 rounded surface-inset px-1 py-0.5" key={key} title={label}>
-            {asset ? <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} /> : null}
+            {asset ? <AssetImage alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={asset} /> : null}
             <span className="text-[10px] text-slate-300">{name}</span>
             <span className="text-[11px] font-medium tabular-nums text-slate-200">{`x${formatResource(count)}`}</span>
           </span>

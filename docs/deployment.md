@@ -304,11 +304,12 @@ Check during a deploy:
 ## Pinned frontend media
 
 Large frontend media is not in git and never enters an image: the landing trailer,
-the planet/moon animation masters and their 60 precomputed size variants (82 files,
-650 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size. The
-files are assets of the `media-v1` GitHub release on this repository, named
-`<sha256><ext>`. Moon masters are marked `publishOnly`: no route serves them at full
-size, so servers skip them and sync about 410 MiB.
+the planet/moon animation masters and their 60 precomputed size variants, and the
+building/ship loop masters with their 176 precomputed WebM/MP4 variants (280 files,
+about 685 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size.
+The files are assets of the `media-v1` GitHub release on this repository, named
+`<sha256><ext>`. Moon and loop masters are marked `publishOnly`: no route serves them
+at full size, so servers skip them and sync about 420 MiB.
 
 Before binding its port, `bun run serve` (and Vite dev/preview) runs
 `scripts/media.mjs` sync into the media root:
@@ -325,6 +326,17 @@ Before binding its port, `bun run serve` (and Vite dev/preview) runs
 
 URLs, headers, byte ranges and responsive variants are unchanged, so Cloudflare and
 browser caching behave as before.
+
+Building and ship stills that have a seamless loop play it as a muted inline
+`<video>` with the still as its poster, in the still's box. The browser requests
+`/assets/game/loops/<category>/<still>.webm?size=<64|128|256|512>&v=<version>`
+(VP9), falling back to the same URL with `.mp4` (H.264). The size is picked from the
+rendered width and device pixel ratio when the video nears the viewport. Reduced
+motion, refused autoplay and unplayable sources keep the still. The server validates
+the name, size and version before any file lookup, and serves the precomputed variant
+with `Cache-Control: public, max-age=31536000, immutable` and byte ranges.
+`apps/frontend/loopAnimations.json` lists each loop's version, which is derived from
+its master and the encoder settings, so a changed master or encode gets a new URL.
 
 The media root defaults to `apps/frontend/.media/` (override with
 `VEYDRIFT_MEDIA_ROOT`). In production, the frontend service bind-mounts
@@ -347,20 +359,34 @@ To change media:
 
 1. Run `cd apps/frontend && bun scripts/media.mjs checkout`. This copies every
    pinned file into `.media-src/`.
-2. Replace masters there and bump the matching animation URL version.
-3. Run `bun scripts/media.mjs publish`. This regenerates variants, re-pins
-   `media.json` and stages `.media-src/.upload/`.
-4. Upload the staged files with
-   `gh release upload media-v1 .media-src/.upload/* --repo Borodutch/veydrift`, then
-   commit `media.json`.
+2. Replace planet/moon masters there and bump the matching animation URL version.
+   To add or redo a building/ship loop, put its master (square, constant frame rate,
+   seamless) at `.media-src/assets/game/loop-masters/<category>/<still>.mp4`, where
+   `<category>/<still>` is the still's path under
+   `public/assets/game/style-pass/generated/` without `.webp` (for example
+   `ships/cruiser` or `defenses/rocket-launcher`). No code change or manual version
+   bump is needed. Stills the app renders with byte-identical art share a loop via
+   `LOOP_ANIMATION_ALIASES` in `loopAnimationConfig.ts`.
+3. Run `bun scripts/media.mjs publish` (needs `ffmpeg` and `ffprobe` once any loop
+   master is present). This regenerates variants, checks every loop variant's size,
+   frame count, frame rate and duration against its master, re-pins `media.json`,
+   rewrites `loopAnimations.json` and stages `.media-src/.upload/`. It refuses to
+   publish when a loop master has no matching still or is smaller than 512 px, and
+   when a variant's bytes would change under an already pinned versioned URL.
+4. Upload only the staged files that the release does not have yet (asset names are
+   content hashes, so existing ones are identical), then commit `media.json` and
+   `loopAnimations.json`:
+   `gh release view media-v1 --repo Borodutch/veydrift --json assets --jq '.assets[].name' | sort > /tmp/have`,
+   `ls .media-src/.upload | sort | comm -23 - /tmp/have | (cd .media-src/.upload && xargs -r gh release upload media-v1 --repo Borodutch/veydrift)`.
 
 Never overwrite or delete a release asset that a deployed `media.json` references.
 Blobs and views of old pin sets stay in the mount until removed by hand, after no
 running revision references them.
 
 After `bun scripts/media.mjs sync`, run `cd apps/frontend && bun scripts/benchmark-animation-delivery.mjs`.
-It starts two fresh local serving processes, fans out all 60 real variants with
-HTML/API-backed control requests, repeats warm, and decodes all animation frames.
+It starts two fresh local serving processes, fans out all real planet/moon and loop
+variants with HTML/API-backed control requests, repeats warm, and decodes all
+animation frames.
 It does not replace first-deployment production timing or dedicated browser QA.
 
 ## Frontend metadata and optional wallet integration
