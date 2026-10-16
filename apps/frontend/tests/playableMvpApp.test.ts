@@ -75,7 +75,8 @@ import {
 import { infrastructureUpgradeButtonLabel } from "../src/components/InfrastructurePage";
 import { AttackIntelPanel, missionTargetCompositionUnits, publicTargetBattleForecast, targetResourceIntel } from "../src/components/MissionCreationPage";
 import { emptyMissionShips } from "../src/galaxyActions";
-import { createInitialPlayableState } from "../src/playableMvp";
+import { infrastructurePlayableState } from "../src/chainState";
+import { buildingContractIds, createInitialPlayableState, unmetResearchRequirement } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
 import type { Planet } from "../src/types";
 import type {
@@ -1660,6 +1661,35 @@ describe("Playable MVP app display helpers", () => {
       required: 40,
       scaleBps: 10000,
     });
+  });
+
+  test("gates Graviton on the backend energy the top bar shows, satellites included (#135)", () => {
+    // Planet Andy: 5,047 Solar Satellites at 223°C produce 302,820 energy on-chain. The
+    // infrastructure projection carries no ship counts, so only the backend value is right.
+    const infrastructureChainState = infrastructureState({
+      buildings: [{ id: buildingContractIds.researchLab, level: 12, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      energyBalance: {
+        produced: "302820",
+        required: "0",
+        scaleBps: "10000",
+        sources: {
+          solarPlant: "0",
+          fusionReactor: "0",
+          fusionReactorDeuteriumConsumed: "0",
+          solarSatellites: "302820",
+          solarSatelliteCount: 5_047,
+          solarSatelliteEnergy: "60",
+        },
+      },
+    });
+    const state = infrastructurePlayableState(infrastructureChainState);
+    const producedEnergy = topBarEnergyFor({ infrastructureChainState, isWalletConnected: true })?.produced;
+
+    expect(state.buildings.researchLab).toBe(12);
+    expect(state.ships.solarSatellite).toBe(0);
+    expect(producedEnergy).toBe(302_820);
+    expect(unmetResearchRequirement(state, "graviton", producedEnergy)).toBeUndefined();
+    expect(playableMvpSource).toContain("producedEnergy={topBarEnergy?.produced}");
   });
 
   test("keeps loaded top bar energy independent from background refresh errors", () => {

@@ -11,7 +11,7 @@ import { formatMissingResources } from "../buildingDetails";
 import { researchQueueForDisplay as chainResearchQueueForDisplay, resourcesFromChain } from "../chainState";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { formatDuration, } from "../durationFormat";
-import type { PlanetProductionProfile, PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
+import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from "../playableMvp";
 import {
   buildingCatalog,
   canAfford,
@@ -19,7 +19,6 @@ import {
   researchCost,
   researchDurationEstimate,
   researchEffectRows,
-  researchEnergyProduced,
   researchEnergyRequirement,
   researchLabRequirementFor,
   researchRequirementsFor,
@@ -82,9 +81,10 @@ interface ResearchPageProps {
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
-  // Selected planet's production profile: its max temperature drives Solar
-  // Satellite energy, which the contract counts toward Graviton's requirement.
-  planetProductionProfile: PlanetProductionProfile | undefined;
+  // Selected planet's chain-derived energy production (backend energyBalance),
+  // including Solar Satellites at the planet's max temperature. Graviton's
+  // requirement is checked against it; undefined until the backend reports it.
+  producedEnergy: number | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
   researchState: ChainResearchState | null;
@@ -107,7 +107,7 @@ export function ResearchPage({
   onSelectResearch,
   onSupply,
   onSupplyLevel,
-  planetProductionProfile,
+  producedEnergy,
   productionRates,
   progressState,
   researchState,
@@ -178,7 +178,7 @@ export function ResearchPage({
                     key: research.key,
                     loading,
                     now,
-                    planetProductionProfile,
+                    producedEnergy,
                     productionRates,
                     researchState,
                     spendableResources,
@@ -217,7 +217,7 @@ export function ResearchPage({
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
             onSupplyLevel={onSupplyLevel}
-            planetProductionProfile={planetProductionProfile}
+            producedEnergy={producedEnergy}
             research={selectedResearch}
             researchState={researchState}
             productionRates={productionRates}
@@ -384,7 +384,7 @@ function ResearchDetailPanel({
   onOpenRequirement,
   onSupply,
   onSupplyLevel,
-  planetProductionProfile,
+  producedEnergy,
   research,
   researchState,
   productionRates,
@@ -402,7 +402,7 @@ function ResearchDetailPanel({
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
-  planetProductionProfile: PlanetProductionProfile | undefined;
+  producedEnergy: number | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   productionRates?: Resources | undefined;
@@ -421,19 +421,19 @@ function ResearchDetailPanel({
     key: research.key,
     loading,
     now,
-    planetProductionProfile,
+    producedEnergy,
     productionRates,
     researchState,
     spendableResources,
     state,
     transactionUnavailableReason,
   });
-  const requirementStates = getResearchRequirementStates(state, research.key, planetProductionProfile);
+  const requirementStates = getResearchRequirementStates(state, research.key, producedEnergy);
   const effectRows = researchEffectRows(state, research.key, {
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const unlockRows = researchUnlockRows(research.key);
-  const levelInfoRows = researchLevelInfoRows(state, research.key, planetProductionProfile, {
+  const levelInfoRows = researchLevelInfoRows(state, research.key, producedEnergy, {
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -556,7 +556,7 @@ const MAX_RESEARCH_INFO_LEVEL = 12;
 export function researchLevelInfoRows(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
-  profile: PlanetProductionProfile | undefined,
+  producedEnergy: number | undefined,
   options: {
     maxLevel?: number | undefined;
     researchNetworkLabLevels?: readonly number[] | undefined;
@@ -576,7 +576,7 @@ export function researchLevelInfoRows(
       research: preResearch,
     };
     const cost = researchCost(preResearch, key);
-    const requirementStatus = researchLevelRequirementStatus(targetState, key, profile);
+    const requirementStatus = researchLevelRequirementStatus(targetState, key, producedEnergy);
     const durationSeconds = requirementStatus !== "Met"
       ? undefined
       : researchDurationEstimate(state.buildings, cost, {
@@ -640,7 +640,7 @@ export function ResearchLevelInfoModal({ currentLevel, onClose, researchLabel, r
 function researchLevelRequirementStatus(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
-  profile: PlanetProductionProfile | undefined,
+  producedEnergy: number | undefined,
 ): string {
   const missing = researchRequirementsFor(key).flatMap((requirement) => {
     if (requirement.type === "building") {
@@ -650,9 +650,8 @@ function researchLevelRequirementStatus(
     }
 
     if (requirement.type === "energy") {
-      const produced = researchEnergyProduced(state, profile);
       const required = researchEnergyRequirement(key, state.research[key], requirement.produced);
-      return produced !== undefined && produced >= required
+      return producedEnergy !== undefined && producedEnergy >= required
         ? []
         : [`Requires Energy production ${required.toLocaleString()}`];
     }
@@ -822,7 +821,7 @@ export function researchActionStatus({
   key,
   loading,
   now,
-  planetProductionProfile,
+  producedEnergy,
   productionRates,
   researchState,
   spendableResources,
@@ -839,7 +838,7 @@ export function researchActionStatus({
   key: ResearchKey;
   loading: boolean;
   now: number;
-  planetProductionProfile: PlanetProductionProfile | undefined;
+  producedEnergy: number | undefined;
   productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   spendableResources?: Resources | undefined;
@@ -854,7 +853,7 @@ export function researchActionStatus({
   const activeQueueResearch = activeQueue?.itemId === undefined
     ? undefined
     : researchCatalog.find((research) => research.id === activeQueue.itemId);
-  const missingRequirement = unmetResearchRequirement(state, key, planetProductionProfile);
+  const missingRequirement = unmetResearchRequirement(state, key, producedEnergy);
   const resourcesAvailable = Boolean(currentResources(researchState));
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
@@ -1017,10 +1016,10 @@ export function formatResearchRequirements(requirements: ResearchRequirement[]):
 export function getResearchRequirementStates(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
-  profile: PlanetProductionProfile | undefined,
+  producedEnergy: number | undefined,
 ): RequirementFlair[] {
   return researchRequirementsFor(key).map((requirement) => ({
-    ...researchRequirementState(state, key, requirement, profile),
+    ...researchRequirementState(state, key, requirement, producedEnergy),
     target: requirement.type === "building"
       ? { kind: "building", key: requirement.key }
       : requirement.type === "research"
@@ -1063,17 +1062,16 @@ function researchRequirementState(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
   requirement: ResearchRequirement,
-  profile: PlanetProductionProfile | undefined,
+  producedEnergy: number | undefined,
 ): { label: string; met: boolean } {
   if (requirement.type === "building") {
     return { label: formatRequirement(requirement), met: state.buildings[requirement.key] >= requirement.level };
   }
 
   if (requirement.type === "energy") {
-    const produced = researchEnergyProduced(state, profile);
     const required = researchEnergyRequirement(key, state.research[key], requirement.produced);
-    const met = produced !== undefined && produced >= required;
-    const current = produced === undefined || met ? "" : ` (current ${produced.toLocaleString()})`;
+    const met = producedEnergy !== undefined && producedEnergy >= required;
+    const current = producedEnergy === undefined || met ? "" : ` (current ${producedEnergy.toLocaleString()})`;
     return { label: `Energy production ${required.toLocaleString()}${current}`, met };
   }
 

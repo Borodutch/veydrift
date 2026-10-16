@@ -1866,26 +1866,15 @@ export function researchEnergyRequirement(
   return Math.floor(baseRequirement * (3 ** Math.max(0, currentLevel)));
 }
 
-// Produced energy as the contract's research gate sees it: Solar Satellite output
-// depends on the planet's max temperature, so there is no default planet here.
-// Undefined until the selected planet's profile (with its temperature) is known.
-export function researchEnergyProduced(
-  state: Pick<PlayableState, "buildings" | "research" | "ships">,
-  profile: PlanetProductionProfile | undefined,
-): number | undefined {
-  if (profile?.maxTemperature === undefined) return undefined;
-  return energyBalance(
-    state.buildings,
-    state.research.energy,
-    state.ships.solarSatellite,
-    profile,
-  ).produced;
-}
-
+// `producedEnergy` is the selected planet's chain-derived energy production
+// (backend `energyBalance.produced`, the value the top bar shows). It includes
+// Solar Satellites at the planet's max temperature, exactly as the contract's
+// research gate counts them, so it is never recomputed here from local state.
+// Undefined until the backend has reported it: the requirement stays unmet.
 export function unmetResearchRequirement(
-  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  state: Pick<PlayableState, "buildings" | "research">,
   key: ResearchKey,
-  profile: PlanetProductionProfile | undefined,
+  producedEnergy: number | undefined,
 ): ResearchRequirement | undefined {
   return researchRequirementsFor(key).find((requirement) => {
     if (requirement.type === "building") {
@@ -1893,9 +1882,8 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      const produced = researchEnergyProduced(state, profile);
-      return produced === undefined
-        || produced < researchEnergyRequirement(key, state.research[key], requirement.produced);
+      return producedEnergy === undefined
+        || producedEnergy < researchEnergyRequirement(key, state.research[key], requirement.produced);
     }
 
     return state.research[requirement.key] < requirement.level;
