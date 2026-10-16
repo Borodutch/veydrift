@@ -30,6 +30,7 @@ import {
 } from "./missionRoute";
 import { PageHeader } from "./PageHeader";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { AssetImage } from "./OptimizedImage";
 
 type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
 
@@ -1080,7 +1081,7 @@ function UnitIcons({ units }: { units: UnitItem[] }) {
         return (
           <span className="inline-flex items-center gap-1 rounded surface-inset px-1 py-0.5" key={unit.key} title={label}>
             {unit.asset ? (
-              <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
+              <AssetImage alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
             ) : (
               <span className="text-[10px] text-slate-300">{unit.label}</span>
             )}

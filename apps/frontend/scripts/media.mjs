@@ -17,6 +17,7 @@ import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const mediaManifestPath = fileURLToPath(new URL("../media.json", import.meta.url));
+export const loopAnimationManifestPath = fileURLToPath(new URL("../loopAnimations.json", import.meta.url));
 export const mediaRoot = resolve(process.env.VEYDRIFT_MEDIA_ROOT || fileURLToPath(new URL("../.media/", import.meta.url)));
 // Maintainer working copy for `publish`; never read by the server.
 export const mediaSourceRoot = fileURLToPath(new URL("../.media-src/", import.meta.url));
@@ -185,8 +186,9 @@ async function* walk(dir) {
 
 // Maintainer flow for new or changed media: `checkout` copies every pinned
 // file (including publish-only masters) into .media-src/, edit masters there,
-// then `publish` regenerates the animation variants, re-pins media.json and
-// stages the content-addressed upload set in .media-src/.upload/.
+// then `publish` regenerates the animation variants, re-pins media.json (and
+// loopAnimations.json) and stages the content-addressed upload set in
+// .media-src/.upload/.
 export async function checkoutMedia({ source = mediaSourceRoot } = {}) {
   await syncMedia({ all: true });
   for (const [key, entry] of Object.entries(mediaManifest.files)) {
@@ -198,11 +200,19 @@ export async function checkoutMedia({ source = mediaSourceRoot } = {}) {
 }
 
 export async function publishMedia({ source = mediaSourceRoot, stage = join(source, ".upload") } = {}) {
-  const { animationConfigs, prepareAnimationVariants } = await import("./animation-variants.mjs");
-  await prepareAnimationVariants({ root: join(source, "animation-variants"), sourceRoot: source });
+  const {
+    animationConfigs, describeLoopMasters, imageAnimationVariants, loopAnimationVariants, prepareAnimationVariants,
+  } = await import("./animation-variants.mjs");
+  const { LOOP_ANIMATION_MASTER_BASE } = await import("../loopAnimationConfig.ts");
+  // The loop set and versions come from the masters present in the working copy.
+  const loops = await describeLoopMasters(source);
+  await prepareAnimationVariants({
+    root: join(source, "animation-variants"), sourceRoot: source, variants: [...imageAnimationVariants, ...loopAnimationVariants(loops)],
+  });
   // Masters whose width is not a served size are only variant inputs.
   const publishOnly = new Set(animationConfigs.filter((config) => !config.widths.includes(config.masterWidth))
     .flatMap((config) => config.types.map((type) => `${config.base.slice(1)}/${type}.webp`)));
+  for (const name of Object.keys(loops)) publishOnly.add(`${LOOP_ANIMATION_MASTER_BASE}/${name}.mp4`);
   const files = {};
   await rm(stage, { recursive: true, force: true });
   await mkdir(stage, { recursive: true });
@@ -215,6 +225,7 @@ export async function publishMedia({ source = mediaSourceRoot, stage = join(sour
     await copyFile(path, join(stage, sha256 + extname(key)));
   }
   const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)));
+  await writeFile(loopAnimationManifestPath, JSON.stringify(loops, null, 2) + "\n");
   await writeFile(mediaManifestPath, JSON.stringify({ ...mediaManifest, files: sorted }, null, 2) + "\n");
   return { files: Object.keys(sorted).length, stage };
 }

@@ -6,7 +6,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
 import { defineConfig, type Plugin, type ResolvedConfig, type ViteDevServer } from "vite";
-import { hiddenWhitepaperPath, planetAnimationResponse, rangeResponseFor } from "./scripts/serve.mjs";
+import { hiddenWhitepaperPath, loopAnimationResponse, planetAnimationResponse, rangeResponseFor } from "./scripts/serve.mjs";
 import {
   assertAccountAssociationDomain,
   buildMiniAppEmbed,
@@ -122,8 +122,10 @@ function hideWhitepaper(): Plugin {
 }
 
 // Pinned media is not in public/: sync it into the media root and serve it
-// (animation sizes and the byte-ranged trailer) like the production server.
+// (animation sizes, byte-ranged loops and the trailer) like the production server.
 async function mediaResponse(url: URL, range: string | undefined) {
+  const loop = await loopAnimationResponse(url, range);
+  if (loop) return loop;
   const animation = await planetAnimationResponse(url);
   if (animation) return animation;
   let pathname = url.pathname;

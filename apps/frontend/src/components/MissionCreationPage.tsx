@@ -55,6 +55,7 @@ import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { emptyMissionCargoDraft, normalizeMissionCargoDraft, resourceDraftNumber, type MissionCargoDraft } from "./missionCargoModel";
 import { MissionRouteCell, type MissionEndpoint } from "./missionRoute";
+import { AssetImage } from "./OptimizedImage";
 export { emptyMissionCargoDraft, normalizeMissionCargoDraft, type MissionCargoDraft } from "./missionCargoModel";
 
 export type CombatTechLevels = {
@@ -2195,7 +2196,7 @@ export function ShipQuantityRow({
   return (
     <label className="grid gap-2 rounded surface-inset px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <span className="flex min-w-0 items-center gap-2">
-        <img alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
+        <AssetImage alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
         <span className="min-w-0">
           <span className="block truncate text-sm font-medium text-slate-200">{ship.label}</span>
           <span className="block text-xs text-slate-500">Fleet unit</span>
@@ -2856,7 +2857,7 @@ function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[
           key={unit.key}
           title={`${unit.label} x${unit.count.toLocaleString()}`}
         >
-          {unit.asset ? <img alt="" className="h-6 w-6 rounded object-contain" loading="lazy" src={unit.asset} /> : null}
+          {unit.asset ? <AssetImage alt="" className="h-6 w-6 rounded object-contain" loading="lazy" src={unit.asset} /> : null}
           <span className="text-[11px] text-slate-300">{unit.label}</span>
           <span className="text-[11px] font-semibold tabular-nums text-slate-100">x{unit.count.toLocaleString()}</span>
         </span>

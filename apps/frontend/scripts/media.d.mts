@@ -1,6 +1,7 @@
 export type MediaPin = { sha256: string; bytes: number; publishOnly?: boolean };
 export type MediaManifest = { baseUrl: string; files: Record<string, MediaPin> };
 export const mediaManifestPath: string;
+export const loopAnimationManifestPath: string;
 export const mediaRoot: string;
 export const mediaSourceRoot: string;
 export const mediaManifest: MediaManifest;

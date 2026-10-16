@@ -26,6 +26,7 @@ import { getSrcSet } from "../utils/imageSizes";
 import { fetchGameApiJson } from "../walletFlow";
 import { BattleResults } from "./BattleResults";
 import { SiteHeader } from "./SiteHeader";
+import { AssetImage } from "./OptimizedImage";
 
 let apiUrl: Promise<string> | undefined;
 function resolveApiUrl(): Promise<string> {
@@ -300,7 +301,7 @@ function UnitGrid({ items, onValue, title, values }: {
     <div className="grid gap-x-3 gap-y-1.5 min-[420px]:grid-cols-2">
       {items.map((item) => (
         <label className="flex min-w-0 items-center gap-2 text-xs text-slate-300" key={item.id}>
-          {item.asset ? <img alt="" className="h-6 w-6 shrink-0 rounded object-cover" height={24} loading="lazy" sizes="24px" src={item.asset} srcSet={getSrcSet(item.asset)} width={24} /> : null}
+          {item.asset ? <AssetImage alt="" className="h-6 w-6 shrink-0 rounded object-cover" height={24} loading="lazy" sizes="24px" src={item.asset} srcSet={getSrcSet(item.asset)} width={24} /> : null}
           <span className="min-w-0 flex-1 truncate">{item.label}</span>
           <CountInput label={`${title} ${item.label}`} onValue={(value) => onValue(item.id, clampCount(value))} value={values[item.id] ?? 0} />
         </label>

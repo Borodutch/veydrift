@@ -64,8 +64,9 @@ async function* walkGameImages(dir) {
     const relPath = relative(PUBLIC_GAME_DIR, fullPath);
 
     if (entry.isDirectory()) {
-      // Skip the output directory to avoid infinite recursion
-      if (entry.name === "sizes" || entry.name === "planet-animations" || entry.name === "moon-animations") continue;
+      // Skip the output directory (avoids infinite recursion) and animation/loop
+      // media, which has its own precomputed variants and must not be flattened.
+      if (entry.name === "sizes" || entry.name === "planet-animations" || entry.name === "moon-animations" || entry.name === "loops" || entry.name === "loop-masters") continue;
       // Skip concept/reference directories entirely
       if (entry.name === "concepts") continue;
       // Recurse into everything else (buildings, ships, planets, style-pass, etc.)

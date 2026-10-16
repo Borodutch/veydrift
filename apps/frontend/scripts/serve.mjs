@@ -1,9 +1,10 @@
 import { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
 export { planetTypeFromCoordinates } from "../src/planetArtwork.ts";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, openAsBlob } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { animationConfigs, animationFilename, animationKey, animationRoot, assertAnimationVariantsReady } from "./animation-variants.mjs";
+import { LOOP_ANIMATION_BASE, LOOP_ANIMATIONS, loopAnimationWidths } from "../loopAnimationConfig.ts";
 import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
@@ -138,8 +139,8 @@ function responseFor(file, pathname) {
 }
 
 // Video needs byte ranges: Safari/iOS will not play a <video> without 206 responses.
-export function rangeResponseFor(file, pathname, rangeHeader) {
-  const headers = { ...responseHeadersFor(pathname), "accept-ranges": "bytes" };
+export function rangeResponseFor(file, pathname, rangeHeader, baseHeaders = responseHeadersFor(pathname)) {
+  const headers = { ...baseHeaders, "accept-ranges": "bytes" };
   const size = file.size;
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader?.trim() ?? "");
   if (!match || (match[1] === "" && match[2] === "")) {
@@ -179,25 +180,15 @@ export function planetAnimationRoute(url) {
   return { ...config, assetType, size };
 }
 
-export async function planetAnimationResponse(url) {
-  const route = planetAnimationRoute(url);
-  if (!route) return null;
-  if (route.error) return new Response(route.error, { status: route.status });
+const immutableCacheControl = "public, max-age=31536000, immutable";
+const loopContentTypes = { mp4: "video/mp4", webm: "video/webm" };
 
-  const headers = {
-    "cache-control": "public, max-age=31536000, immutable",
-    "content-type": "image/webp",
-  };
-  if (route.size === route.masterWidth) {
-    const sourcePath = `${route.base}/${route.assetType}.webp`;
-    const asset = existingAssetUrl(sourcePath);
-    return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset)) : Bun.file(asset), { headers });
-  }
-
+// Precomputed variants are validated at startup; only bounded file metadata
+// (one entry per allowlisted variant) is cached, never bodies.
+function precomputedAnimation(route) {
   const key = animationKey(route);
   let pending = planetAnimationCache.get(key);
-  headers["x-veydrift-animation-cache"] = pending ? "hit" : "miss";
-  headers["x-veydrift-animation-source"] = "precomputed";
+  const cache = pending ? "hit" : "miss";
   if (!pending) {
     const path = join(animationRoot, animationFilename(route));
     pending = stat(path).then((file) => {
@@ -207,7 +198,53 @@ export async function planetAnimationResponse(url) {
     planetAnimationCache.set(key, pending);
     pending.catch(() => { if (planetAnimationCache.get(key) === pending) planetAnimationCache.delete(key); });
   }
-  const asset = await pending;
+  return pending.then((asset) => ({ ...asset, cache }));
+}
+
+// Loop name, size and version are checked against the allowlist before any file lookup.
+export function loopAnimationRoute(url) {
+  if (!url.pathname.startsWith(`${LOOP_ANIMATION_BASE}/`)) return null;
+  const match = /^([a-z0-9-]+\/[a-z0-9-]+)\.(webm|mp4)$/.exec(url.pathname.slice(LOOP_ANIMATION_BASE.length + 1));
+  const loop = match && Object.hasOwn(LOOP_ANIMATIONS, match[1]) ? LOOP_ANIMATIONS[match[1]] : undefined;
+  if (!loop) return { error: "Unknown animation asset", status: 404 };
+  const size = Number(url.searchParams.get("size"));
+  if (!loopAnimationWidths(loop).includes(size)) return { error: "Unsupported animation size", status: 400 };
+  if (url.searchParams.get("v") !== loop.version) return { error: "Unsupported animation version", status: 400 };
+  return { base: LOOP_ANIMATION_BASE, assetType: match[1], version: loop.version, size, format: match[2], masterWidth: loop.width };
+}
+
+export async function loopAnimationResponse(url, rangeHeader) {
+  const route = loopAnimationRoute(url);
+  if (!route) return null;
+  if (route.error) return new Response(route.error, { status: route.status });
+  const asset = await precomputedAnimation(route);
+  const file = typeof Bun === "undefined" ? await openAsBlob(asset.path) : Bun.file(asset.path);
+  return rangeResponseFor(file, url.pathname, rangeHeader, {
+    "cache-control": immutableCacheControl,
+    "content-type": loopContentTypes[route.format],
+    "x-veydrift-animation-cache": asset.cache,
+    "x-veydrift-animation-source": "precomputed",
+  });
+}
+
+export async function planetAnimationResponse(url) {
+  const route = planetAnimationRoute(url);
+  if (!route) return null;
+  if (route.error) return new Response(route.error, { status: route.status });
+
+  const headers = {
+    "cache-control": immutableCacheControl,
+    "content-type": "image/webp",
+  };
+  if (route.size === route.masterWidth) {
+    const sourcePath = `${route.base}/${route.assetType}.webp`;
+    const asset = existingAssetUrl(sourcePath);
+    return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset)) : Bun.file(asset), { headers });
+  }
+
+  const asset = await precomputedAnimation(route);
+  headers["x-veydrift-animation-cache"] = asset.cache;
+  headers["x-veydrift-animation-source"] = "precomputed";
   headers["content-length"] = String(asset.bytes);
   return new Response(typeof Bun === "undefined" ? Readable.toWeb(createReadStream(asset.path)) : Bun.file(asset.path), { headers });
 }
@@ -1168,6 +1205,8 @@ export async function frontendResponse(request) {
   if (hiddenWhitepaperPath(pathname)) return new Response("Not found", { status: 404 });
 
   const route = pathname === "/" ? "/index.html" : pathname;
+  const loopResponse = await loopAnimationResponse(url, request.headers.get("range"));
+  if (loopResponse) return loopResponse;
   const animationResponse = await planetAnimationResponse(url);
   if (animationResponse) return animationResponse;
 

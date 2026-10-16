@@ -30,6 +30,7 @@ import { shipAssetByKey } from "../gameAssets";
 import { MOON_SUPPLY_BATCH_UNAVAILABLE } from "../walletFlow";
 import type { ManagedPlanetResponse } from "../walletFlow";
 import { transactionIsBusy, transactionStateOutcome, type WriteTransactionState } from "../transactionActionGate";
+import { AssetImage } from "./OptimizedImage";
 
 const supplyShips: Array<{ key: SupplyShipKey; label: string }> = [
   { key: "largeCargo", label: "Large Cargo" },
@@ -459,7 +460,7 @@ export function BatchSupplyModal({
                               return { ...current, [source.planetId]: types.includes(key) ? types.filter((type) => type !== key) : [...types, key] };
                             })}>
                             <span className={"inline-flex items-center gap-0.5 rounded border p-0.5 text-[10px] group-hover:border-cyan-300/60 " + (included ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100" : "border-white/15 bg-black/20 text-slate-400")}>
-                              <img alt="" className={"h-5 w-5 rounded object-contain " + (included ? "" : "opacity-50")} loading="lazy" src={shipAssetByKey[key]} />
+                              <AssetImage alt="" className={"h-5 w-5 rounded object-contain " + (included ? "" : "opacity-50")} loading="lazy" src={shipAssetByKey[key]} />
                               <span id={`supply-planned-${source.planetId}-${key}`}>×{format(order?.ships[key] ?? 0)}<span className="sr-only"> planned</span> / {format(source.ships[key] ?? 0)}<span className="sr-only"> available</span></span>
                             </span>
                           </button>
