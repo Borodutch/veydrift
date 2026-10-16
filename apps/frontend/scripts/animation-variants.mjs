@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -9,7 +10,8 @@ import {
   MOON_ANIMATION_BASE, MOON_ANIMATION_TYPES, MOON_ANIMATION_VERSION, MOON_ANIMATION_WIDTHS, MOON_ANIMATION_MASTER_WIDTH,
 } from "../planetAnimationConfig.ts";
 import {
-  LOOP_ANIMATION_BASE, LOOP_ANIMATION_FORMATS, LOOP_ANIMATION_MASTER_BASE, LOOP_ANIMATIONS, loopAnimationWidths,
+  LOOP_ANIMATION_BASE, LOOP_ANIMATION_FORMATS, LOOP_ANIMATION_MASTER_BASE, LOOP_ANIMATION_STILL_BASE, LOOP_ANIMATION_WIDTHS,
+  LOOP_ANIMATIONS, loopAnimationWidths,
 } from "../loopAnimationConfig.ts";
 
 export const animationConfigs = [
@@ -17,12 +19,17 @@ export const animationConfigs = [
   { base: MOON_ANIMATION_BASE, types: MOON_ANIMATION_TYPES, version: MOON_ANIMATION_VERSION, widths: MOON_ANIMATION_WIDTHS, masterWidth: MOON_ANIMATION_MASTER_WIDTH },
 ];
 
-// Loop video encodes. Part of every loop version, so changing a setting
-// re-versions every loop URL instead of changing bytes behind an immutable URL.
+// Every ffmpeg argument of a loop encode except the input/output paths; {size}
+// and {frames} are filled per variant. The whole template (and the ffmpeg
+// build) is part of every loop version, so changing any of it re-versions the
+// loop URLs instead of changing bytes behind an immutable URL. A fixed thread
+// count keeps the output independent of the machine's CPU count.
+const loopCommon = ["-vf", "scale={size}:{size}:flags=lanczos", "-an", "-g", "{frames}", "-threads", "4", "-pix_fmt", "yuv420p"];
 export const loopEncoding = {
-  webm: ["-c:v", "libvpx-vp9", "-crf", "34", "-b:v", "0", "-deadline", "good", "-cpu-used", "1", "-row-mt", "1", "-pix_fmt", "yuv420p", "-f", "webm"],
-  mp4: ["-c:v", "libx264", "-crf", "26", "-preset", "slow", "-profile:v", "high", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-f", "mp4"],
+  webm: [...loopCommon, "-c:v", "libvpx-vp9", "-crf", "34", "-b:v", "0", "-deadline", "good", "-cpu-used", "1", "-row-mt", "1", "-f", "webm"],
+  mp4: [...loopCommon, "-c:v", "libx264", "-crf", "26", "-preset", "slow", "-profile:v", "high", "-movflags", "+faststart", "-f", "mp4"],
 };
+const loopArgs = (route) => loopEncoding[route.format].map((arg) => arg.replaceAll("{size}", String(route.size)).replaceAll("{frames}", String(route.frames)));
 
 // Each served loop size in both formats, never larger than its master.
 export function loopAnimationVariants(loops = LOOP_ANIMATIONS) {
@@ -53,6 +60,8 @@ const run = promisify(execFile);
 const ffmpeg = () => process.env.FFMPEG || "ffmpeg";
 const ffprobe = () => process.env.FFPROBE || "ffprobe";
 const preparing = new Map();
+// The full -version output: release, configuration and library versions.
+const ffmpegBuild = async () => hash((await run(ffmpeg(), ["-version"])).stdout);
 
 export async function probeVideo(path) {
   const { stdout } = await run(ffprobe(), [
@@ -69,20 +78,22 @@ export async function probeVideo(path) {
 
 // Masters dropped into <source>/<LOOP_ANIMATION_MASTER_BASE>/<category>/<still>.mp4
 // define the loop set (publish only).
-export async function describeLoopMasters(source = mediaSourceRoot) {
+export async function describeLoopMasters(source = mediaSourceRoot, stillRoot = new URL(`../public${LOOP_ANIMATION_STILL_BASE}/`, import.meta.url)) {
   const root = join(source, LOOP_ANIMATION_MASTER_BASE);
-  const { stdout } = await run(ffmpeg(), ["-version"]);
-  const encoder = stdout.split("\n")[0];
+  let encoder;
   const loops = {};
   for (const category of (await readdir(root, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory())) {
     for (const file of (await readdir(join(root, category.name))).filter((name) => name.endsWith(".mp4")).sort()) {
       const name = `${category.name}/${file.slice(0, -".mp4".length)}`;
       if (!/^[a-z0-9-]+\/[a-z0-9-]+$/.test(name)) throw new Error("Invalid loop master name: " + name);
+      if (!existsSync(new URL(`${name}.webp`, stillRoot))) throw new Error("Loop master has no still to replace: " + name);
       const path = join(root, category.name, file);
       const master = await probeVideo(path);
-      if (master.width !== master.height || !master.width || !(master.frames > 0) || !Number.isInteger(master.fps)) {
-        throw new Error("Loop master must be square with whole-number fps: " + name);
+      if (master.width !== master.height || master.width < Math.max(...LOOP_ANIMATION_WIDTHS) || !(master.frames > 0)
+        || !Number.isInteger(master.fps) || Math.abs(master.duration - master.frames / master.fps) > 1 / master.fps) {
+        throw new Error(`Loop master must be square, at least ${Math.max(...LOOP_ANIMATION_WIDTHS)} px, whole-number fps, constant frame rate: ${name}`);
       }
+      encoder ??= await ffmpegBuild();
       const version = hash(JSON.stringify({ master: hash(await readFile(path)), encoder, loopEncoding })).slice(0, 12);
       loops[name] = { version, width: master.width, frames: master.frames, fps: master.fps };
     }
@@ -115,10 +126,7 @@ async function encodeImage(sharp, source, route, key) {
 }
 
 async function encodeLoop(sourcePath, master, route, key, temporary) {
-  await run(ffmpeg(), [
-    "-v", "error", "-y", "-i", sourcePath, "-vf", `scale=${route.size}:${route.size}:flags=lanczos`,
-    "-an", "-g", String(master.frames), ...loopEncoding[route.format], temporary,
-  ]);
+  await run(ffmpeg(), ["-v", "error", "-y", "-i", sourcePath, ...loopArgs(route), temporary]);
   const variant = await probeVideo(temporary);
   if (variant.width !== route.size || variant.height !== route.size || variant.frames !== master.frames
     || variant.frames !== route.frames || variant.fps !== master.fps || variant.fps !== route.fps
@@ -155,12 +163,12 @@ async function prepare(root, sourceRoot, variants) {
       sourceHash = hash(source);
       master = undefined;
     }
-    if (route.format && !encoder) encoder = (await run(ffmpeg(), ["-version"])).stdout.split("\n")[0];
+    if (route.format) encoder ??= await ffmpegBuild();
     const key = animationKey(route);
     const filename = animationFilename(route);
     const path = join(root, filename);
     const identity = route.format
-      ? hash(JSON.stringify({ key, sourceHash, encoder, args: loopEncoding[route.format], scale: "lanczos" }))
+      ? hash(JSON.stringify({ key, sourceHash, encoder, args: loopArgs(route) }))
       : hash(JSON.stringify({ key, sourceHash, encoder: sharp.versions, resize: "fill", quality: 82, effort: 4 }));
     let output;
     if (previous[key]?.identity === identity) {

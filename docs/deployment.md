@@ -367,15 +367,17 @@ To change media:
    `ships/cruiser` or `defenses/rocket-launcher`). No code change or manual version
    bump is needed. Stills the app renders with byte-identical art share a loop via
    `LOOP_ANIMATION_ALIASES` in `loopAnimationConfig.ts`.
-3. Run `bun scripts/media.mjs publish` (needs `ffmpeg` and `ffprobe` for loops). This
-   regenerates variants, checks every loop variant's size, frame count, frame rate
-   and duration against its master, re-pins `media.json`, rewrites
-   `loopAnimations.json` and stages `.media-src/.upload/`.
+3. Run `bun scripts/media.mjs publish` (needs `ffmpeg` and `ffprobe` once any loop
+   master is present). This regenerates variants, checks every loop variant's size,
+   frame count, frame rate and duration against its master, re-pins `media.json`,
+   rewrites `loopAnimations.json` and stages `.media-src/.upload/`. It refuses to
+   publish when a loop master has no matching still or is smaller than 512 px, and
+   when a variant's bytes would change under an already pinned versioned URL.
 4. Upload only the staged files that the release does not have yet (asset names are
    content hashes, so existing ones are identical), then commit `media.json` and
    `loopAnimations.json`:
    `gh release view media-v1 --repo Borodutch/veydrift --json assets --jq '.assets[].name' | sort > /tmp/have`,
-   `ls .media-src/.upload | sort | comm -23 - /tmp/have | (cd .media-src/.upload && xargs gh release upload media-v1 --repo Borodutch/veydrift)`.
+   `ls .media-src/.upload | sort | comm -23 - /tmp/have | (cd .media-src/.upload && xargs -r gh release upload media-v1 --repo Borodutch/veydrift)`.
 
 Never overwrite or delete a release asset that a deployed `media.json` references.
 Blobs and views of old pin sets stay in the mount until removed by hand, after no

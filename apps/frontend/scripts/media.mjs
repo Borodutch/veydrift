@@ -225,9 +225,24 @@ export async function publishMedia({ source = mediaSourceRoot, stage = join(sour
     await copyFile(path, join(stage, sha256 + extname(key)));
   }
   const sorted = Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)));
-  await writeFile(loopAnimationManifestPath, JSON.stringify(loops, null, 2) + "\n");
-  await writeFile(mediaManifestPath, JSON.stringify({ ...mediaManifest, files: sorted }, null, 2) + "\n");
+  assertPinnedVariantsUnchanged(mediaManifest.files, sorted);
+  // Written side by side, then renamed back to back: a failed publish leaves both unchanged.
+  await writeFile(loopAnimationManifestPath + ".tmp", JSON.stringify(loops, null, 2) + "\n");
+  await writeFile(mediaManifestPath + ".tmp", JSON.stringify({ ...mediaManifest, files: sorted }, null, 2) + "\n");
+  await rename(loopAnimationManifestPath + ".tmp", loopAnimationManifestPath);
+  await rename(mediaManifestPath + ".tmp", mediaManifestPath);
   return { files: Object.keys(sorted).length, stage };
+}
+
+// A variant's file name is derived from its versioned URL, so a pinned name
+// whose bytes change would change content behind an immutable URL.
+export function assertPinnedVariantsUnchanged(previous, next) {
+  for (const [key, entry] of Object.entries(next)) {
+    if (!key.startsWith("animation-variants/") || key === "animation-variants/manifest.json") continue;
+    if (previous[key] && previous[key].sha256 !== entry.sha256) {
+      throw new Error("Variant bytes changed under an existing versioned URL (bump the version): " + key);
+    }
+  }
 }
 
 if (import.meta.main) {

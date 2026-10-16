@@ -1,132 +1,132 @@
 {
   "buildings/crystal-mine-mid": {
-    "version": "ce3ae0fcff34",
+    "version": "4a80e04ad260",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/crystal-storage-mid": {
-    "version": "45421c67b3a4",
+    "version": "8046c547ddc1",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/deuterium-synthesizer-mid": {
-    "version": "c96833d2666d",
+    "version": "2783ec7ce595",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/deuterium-tank-mid": {
-    "version": "0c7f67ef0219",
+    "version": "956317dd5d96",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/fusion-reactor-mid": {
-    "version": "e9fec43c6633",
+    "version": "635d59e5a6aa",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/interdimensional-rift-stabilizer-mid": {
-    "version": "54eee63b0239",
+    "version": "e06c80dcfa71",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/jump-gate": {
-    "version": "660f027da007",
+    "version": "1d489554568b",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/lunar-base": {
-    "version": "14e78968e9ae",
+    "version": "0a52a4533667",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/metal-mine-mid": {
-    "version": "7b0a07e86434",
+    "version": "d4d37e12c138",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/metal-storage-mid": {
-    "version": "c385320bd2fa",
+    "version": "ccab9e1657cb",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/missile-silo-mid": {
-    "version": "273de76968fa",
+    "version": "fcd047ee91cb",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/moon-robotics-factory": {
-    "version": "7b0d8c385eb7",
+    "version": "98f98245c239",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/moon-shipyard": {
-    "version": "9b53a61bafcf",
+    "version": "7f553bb41bf9",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/research-lab-mid": {
-    "version": "20c7e5757dc8",
+    "version": "0f23aed84925",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/robotics-factory-mid": {
-    "version": "781af9b59fbc",
+    "version": "ef3e4405c467",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/shipyard-mid": {
-    "version": "23466f8238ab",
+    "version": "45b47c8d5711",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "buildings/solar-plant-mid": {
-    "version": "9aa4c978cedb",
+    "version": "415124667c2a",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "ships/battlecruiser": {
-    "version": "5120c6a133a3",
+    "version": "2748c7ab9c34",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "ships/colony-ship": {
-    "version": "5d2e6d2cd003",
+    "version": "0e8a75364604",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "ships/cruiser": {
-    "version": "d55e04ab10a8",
+    "version": "93449b43731c",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "ships/destroyer": {
-    "version": "b20576149dfe",
+    "version": "3615e6fbfcf2",
     "width": 720,
     "frames": 84,
     "fps": 24
   },
   "ships/heavy-fighter": {
-    "version": "f93f4fe4496f",
+    "version": "2173207580a1",
     "width": 720,
     "frames": 84,
     "fps": 24

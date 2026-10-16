@@ -11,7 +11,7 @@ export const maxAnimationBytes: number;
 export const loopEncoding: Record<LoopAnimationFormat, string[]>;
 export function loopAnimationVariants(loops?: Readonly<Record<string, LoopAnimation>>): AnimationVariant[];
 export function probeVideo(path: string): Promise<{ width: number; height: number; frames: number; fps: number; duration: number }>;
-export function describeLoopMasters(source?: string): Promise<Record<string, LoopAnimation>>;
+export function describeLoopMasters(source?: string, stillRoot?: URL): Promise<Record<string, LoopAnimation>>;
 export function animationKey(route: AnimationVariant): string;
 export function animationFilename(route: AnimationVariant): string;
 export function prepareAnimationVariants(options?: { root?: string; sourceRoot?: string; variants?: AnimationVariant[] }): Promise<{ variants: number; bytes: number }>;

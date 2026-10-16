@@ -40,10 +40,12 @@ export function OptimizedImage(props: OptimizedImageProps): JSX.Element {
   if (!loop || !loopMotionAllowed()) return still();
   const dimensions = getImageDimensions(props.src);
   return (
+    // Keyed by asset: a <source> swapped in place would keep playing the old loop.
     <LoopVideo
       alt={props.alt}
       className={props.className}
       height={props.height ?? dimensions?.height ?? 1024}
+      key={props.src}
       loop={loop}
       onLoad={props.onLoad}
       src={props.src}
@@ -73,6 +75,7 @@ export function AssetImage(props: {
       alt={props.alt}
       className={props.className}
       height={props.height}
+      key={props.src}
       loop={loop}
       src={props.src}
       still={still}
@@ -137,8 +140,9 @@ export function loopMotionAllowed(): boolean {
 /**
  * Muted inline loop with the existing still as its poster, in the same box as
  * the still. Nothing is fetched until it nears the viewport; the size variant
- * is then picked from its rendered width, and it plays only while visible.
- * Reduced motion, refused autoplay or an unplayable source keep the still.
+ * is then picked from its rendered width (and only ever grows), and its
+ * decoder is released again when it leaves. Reduced motion, refused autoplay
+ * or a failing source/decode keep the still.
  */
 function LoopVideo({
   alt,
@@ -162,43 +166,71 @@ function LoopVideo({
   width?: number | undefined;
 }): JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [showStill, setShowStill] = useState(() => !loopMotionAllowed());
+  const attachedSize = useRef<number | null>(null);
+  const [reduced, setReduced] = useState(() => !loopMotionAllowed());
+  const [failed, setFailed] = useState(false);
   const [size, setSize] = useState<number | null>(null);
   const [visible, setVisible] = useState(false);
+  const showStill = reduced || failed;
+  const activeSize = visible ? size : null;
+  const poster = size === null ? undefined : getStillVariantSrc(src, size);
+
+  useEffect(() => {
+    const onMotionChange = () => setReduced(!loopMotionAllowed());
+    reducedMotion?.addEventListener?.("change", onMotionChange);
+    return () => reducedMotion?.removeEventListener?.("change", onMotionChange);
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
     if (showStill || !video) return;
-    const onMotionChange = () => {
-      if (!loopMotionAllowed()) setShowStill(true);
+    let near = false;
+    // Measured only near the viewport, so off-screen loops fetch nothing (not even the poster).
+    const measure = () => {
+      if (!near) return;
+      const pixels = video.getBoundingClientRect().width * (window.devicePixelRatio || 1);
+      if (pixels > 0) setSize((current) => Math.max(current ?? 0, loopAnimationWidthFor(loop, pixels)));
     };
-    reducedMotion?.addEventListener?.("change", onMotionChange);
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry) return;
-      const pixels = entry.boundingClientRect.width * (window.devicePixelRatio || 1);
-      if (entry.isIntersecting && pixels > 0) setSize((current) => current ?? loopAnimationWidthFor(loop, pixels));
-      setVisible(entry.isIntersecting);
+      near = entry.isIntersecting;
+      measure();
+      setVisible(near);
     }, { rootMargin: "128px" });
     observer.observe(video);
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : undefined;
+    resize?.observe(video);
     return () => {
       observer.disconnect();
-      reducedMotion?.removeEventListener?.("change", onMotionChange);
+      resize?.disconnect();
     };
   }, [loop, showStill]);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (showStill || !video || size === null) return;
-    if (!visible) {
-      video.pause();
-      return;
+    if (showStill || !video) return;
+    // <source> changes only apply on load(); without sources it releases the decoder.
+    if (attachedSize.current !== activeSize) {
+      attachedSize.current = activeSize;
+      video.load();
     }
-    // Autoplay can be refused (e.g. iOS Low Power Mode). A pause() racing a
-    // pending play() rejects with AbortError, which is not a refusal.
+    if (activeSize === null) return;
+    // Autoplay can be refused (e.g. iOS Low Power Mode). A pause() or load()
+    // interrupting a pending play() rejects with AbortError, which is not a refusal.
     video.play()?.catch((error: unknown) => {
-      if ((error as { name?: unknown } | null)?.name !== "AbortError") setShowStill(true);
+      if ((error as { name?: unknown } | null)?.name !== "AbortError") setFailed(true);
     });
-  }, [showStill, size, visible]);
+  }, [activeSize, showStill]);
+
+  // The poster is the still: report it loaded (e.g. to end a loading skeleton)
+  // without waiting for the first decoded frame.
+  useEffect(() => {
+    if (!poster || !onLoad) return;
+    const image = new Image();
+    image.onload = () => onLoad({ currentTarget: image } as never);
+    image.src = poster;
+    return () => { image.onload = null; };
+  }, [poster]);
 
   if (showStill) return still();
   return (
@@ -211,19 +243,19 @@ function LoopVideo({
       height={height}
       loop
       muted
-      onLoadedData={onLoad ? (event) => onLoad(event as never) : undefined}
+      onError={() => setFailed(true)}
       playsInline
-      poster={size === null ? undefined : getStillVariantSrc(src, size)}
+      poster={poster}
       preload="none"
       ref={videoRef}
       role={alt ? "img" : undefined}
       style={style}
       width={width}
     >
-      {size === null ? null : (
+      {activeSize === null ? null : (
         <>
-          <source src={loopAnimationUrl(loop, "webm", size)} type='video/webm; codecs="vp9"' />
-          <source onError={() => setShowStill(true)} src={loopAnimationUrl(loop, "mp4", size)} type="video/mp4" />
+          <source src={loopAnimationUrl(loop, "webm", activeSize)} type='video/webm; codecs="vp9"' />
+          <source onError={() => setFailed(true)} src={loopAnimationUrl(loop, "mp4", activeSize)} type="video/mp4" />
         </>
       )}
     </video>

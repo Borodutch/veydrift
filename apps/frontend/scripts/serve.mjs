@@ -150,7 +150,8 @@ export function rangeResponseFor(file, pathname, rangeHeader, baseHeaders = resp
   const start = match[1] === "" ? Math.max(0, size - Number(match[2])) : Number(match[1]);
   const end = match[1] === "" || match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
   if (start >= size || start > end) {
-    return new Response(null, { status: 416, headers: { ...headers, "content-range": `bytes */${size}` } });
+    const { "cache-control": _cache, ...uncached } = headers;
+    return new Response(null, { status: 416, headers: { ...uncached, "content-range": `bytes */${size}` } });
   }
 
   return new Response(file.slice(start, end + 1), {
@@ -207,8 +208,11 @@ export function loopAnimationRoute(url) {
   const match = /^([a-z0-9-]+\/[a-z0-9-]+)\.(webm|mp4)$/.exec(url.pathname.slice(LOOP_ANIMATION_BASE.length + 1));
   const loop = match && Object.hasOwn(LOOP_ANIMATIONS, match[1]) ? LOOP_ANIMATIONS[match[1]] : undefined;
   if (!loop) return { error: "Unknown animation asset", status: 404 };
+  // One spelling per size (no "64.0", "0x40"), so each variant has a single cache key.
   const size = Number(url.searchParams.get("size"));
-  if (!loopAnimationWidths(loop).includes(size)) return { error: "Unsupported animation size", status: 400 };
+  if (!loopAnimationWidths(loop).includes(size) || url.searchParams.get("size") !== String(size)) {
+    return { error: "Unsupported animation size", status: 400 };
+  }
   if (url.searchParams.get("v") !== loop.version) return { error: "Unsupported animation version", status: 400 };
   return { base: LOOP_ANIMATION_BASE, assetType: match[1], version: loop.version, size, format: match[2], masterWidth: loop.width };
 }

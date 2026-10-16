@@ -18,4 +18,5 @@ export function syncMedia(options?: {
   all?: boolean;
 }): Promise<{ files: number; downloaded: number; downloadedBytes: number }>;
 export function checkoutMedia(options?: { source?: string }): Promise<{ files: number; source: string }>;
+export function assertPinnedVariantsUnchanged(previous: Record<string, MediaPin>, next: Record<string, MediaPin>): void;
 export function publishMedia(options?: { source?: string; stage?: string }): Promise<{ files: number; stage: string }>;

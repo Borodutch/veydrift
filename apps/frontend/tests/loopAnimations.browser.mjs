@@ -73,6 +73,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       ...Array.from(document.querySelectorAll('[data-tile]')).map(t => ['tile ' + t.dataset.tile, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-icon]')).map(t => ['icon ' + t.dataset.icon, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-catalog] img, [data-catalog] video')).map((m, i) => ['catalog ' + i, m]),
+      ['responsive', document.querySelector('[data-responsive]').firstElementChild],
       ['offscreen', document.querySelector('#offscreen').firstElementChild],
     ].map(([key, m]) => { const r = m.getBoundingClientRect(); return [key, { tag: m.tagName, x: r.x, y: r.y, w: r.width, h: r.height, fit: getComputedStyle(m).objectFit }]; }))`;
     const loopRequests = "performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/assets/game/loop'))";
@@ -117,6 +118,16 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     }
     assert.ok(await evaluate("document.querySelectorAll('[data-catalog] img').length") > 0, "catalog ships without a loop keep their still");
 
+    // Selecting another ship swaps the featured loop (not just its poster); one without a loop shows its still.
+    const featured = `document.querySelector('[data-selected-production-layout="featured"]')`;
+    for (const [key, name] of [["destroyer", "destroyer"], ["heavyFighter", "heavy-fighter"]]) {
+      await evaluate(`window.loopFixture.select(${JSON.stringify(key)})`);
+      await until(`(() => { const v = ${featured}.querySelector('video'); return Boolean(v && v.currentSrc.includes('/ships/${name}.webm?size=') && v.readyState >= 2 && !v.paused); })()`, `featured loop did not follow ${key}`);
+    }
+    await evaluate("window.loopFixture.select('smallCargo')");
+    await until(`!${featured}.querySelector('video') && Boolean(${featured}.querySelector('img[src*="small-cargo"]'))`, "featured still for a ship without a loop");
+    await evaluate("window.loopFixture.select('cruiser')");
+
     // Off-screen: nothing fetched, nothing decoding until it nears the viewport.
     assert.deepEqual(await evaluate("(() => { const v = document.querySelector('#offscreen video'); return [v.children.length, v.networkState, v.poster]; })()"), [0, 0, ""]);
     assert.equal((await evaluate(loopRequests)).filter(name => name.includes("size=256")).length, 0);
@@ -124,9 +135,17 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await until("(() => { const v = document.querySelector('#offscreen video'); return v.readyState >= 2 && !v.paused; })()", "scrolled-in loop did not start");
     assert.match(await evaluate("document.querySelector('#offscreen video').currentSrc"), /\/ships\/cruiser\.webm\?size=256&v=/);
     assert.equal(await evaluate("document.querySelector('#offscreen video').getAttribute('aria-label')"), "Cruiser");
-    await until("Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.paused)", "off-screen loops kept playing");
+    // Leaving the viewport releases the decoder (no sources, nothing buffered), not just pauses.
+    const released = "(v => v.paused && v.children.length === 0 && v.readyState === 0)";
+    await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(${released})`, "off-screen loops kept their decoders");
     await evaluate("scrollTo(0, 0)");
-    await until("document.querySelector('#offscreen video').paused && Array.from(document.querySelectorAll('[data-tile] video')).every(v => !v.paused)", "loops did not resume/pause with visibility");
+    await until(`${released}(document.querySelector('#offscreen video')) && Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "loops did not resume/release with visibility");
+
+    // Reduced motion switched on at runtime shows the stills, and switching it off restores the loops.
+    await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    await until("document.querySelectorAll('[data-tile] video').length === 0", "runtime reduced motion kept the loops");
+    await send("Emulation.setEmulatedMedia", { features: [] });
+    await until(`document.querySelectorAll('[data-tile] video').length === ${looped.length} && Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "loops did not return after reduced motion");
 
     // The browser only ever asked for bounded, versioned variants; never a master.
     const requested = await evaluate(loopRequests);
@@ -139,6 +158,15 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     }
     await evaluate("scrollTo(0, 0)");
     const animated = await evaluate(boxes);
+
+    // A box that grows (e.g. a narrow to xl layout) upgrades to a sharper variant; it never downgrades.
+    const responsive = "document.querySelector('[data-responsive] video')";
+    await until(`${responsive}.currentSrc.includes('/ships/battlecruiser.webm?size=128&') && ${responsive}.readyState >= 2`, "small responsive loop");
+    await evaluate("Object.assign(document.querySelector('[data-responsive]').style, { width: '256px', height: '256px' })");
+    await until(`${responsive}.currentSrc.includes('/ships/battlecruiser.webm?size=512&') && ${responsive}.readyState >= 2 && !${responsive}.paused`, "grown loop did not upgrade");
+    await evaluate("Object.assign(document.querySelector('[data-responsive]').style, { width: '64px', height: '64px' })");
+    await sleep(300);
+    assert.match(await evaluate(`${responsive}.currentSrc`), /\/ships\/battlecruiser\.webm\?size=512&/);
 
     // Reduced motion renders exactly the still, in exactly the same boxes, with no loop fetches.
     await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
@@ -154,8 +182,24 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       assert.equal(box.fit, other.fit, key);
     }
 
-    // Refused autoplay (e.g. iOS Low Power Mode) falls back to the still.
+    // A loop whose sources fail falls back to its still; the others keep playing.
     await send("Emulation.setEmulatedMedia", { features: [] });
+    await send("Network.enable");
+    await send("Network.setCacheDisabled", { cacheDisabled: true });
+    await send("Network.setBlockedURLs", { urls: ["*/ships/colony-ship.webm*", "*/ships/colony-ship.mp4*"] });
+    await open();
+    const colony = `document.querySelector('[data-tile="/assets/game/style-pass/generated/ships/colony-ship.webp"]')`;
+    await until(`Boolean(${colony}.querySelector('img'))`, "failing loop sources did not fall back to the still");
+    assert.equal(await evaluate("document.querySelectorAll('[data-tile] video').length"), looped.length - 1);
+    await send("Network.setBlockedURLs", { urls: [] });
+
+    // A pause()/load() interrupting play() rejects with AbortError: that is not a refusal.
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: "HTMLMediaElement.prototype.play = function () { return Promise.reject(new DOMException('interrupted', 'AbortError')); };" });
+    await open();
+    await sleep(1_000);
+    assert.equal(await evaluate("document.querySelectorAll('[data-tile] video').length"), looped.length);
+
+    // Refused autoplay (e.g. iOS Low Power Mode) falls back to the still.
     await send("Page.addScriptToEvaluateOnNewDocument", { source: "HTMLMediaElement.prototype.play = function () { return Promise.reject(new DOMException('refused', 'NotAllowedError')); };" });
     await open();
     await until("document.querySelectorAll('[data-tile] video').length === 0", "refused autoplay kept the video");

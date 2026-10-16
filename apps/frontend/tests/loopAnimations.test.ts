@@ -9,10 +9,10 @@ import {
   LOOP_ANIMATIONS, loopAnimationNameForStill, loopAnimationUrl, loopAnimationWidthFor, loopAnimationWidths,
 } from "../loopAnimationConfig";
 import {
-  animationFilename, animationKey, animationRoot, animationVariants, assertAnimationVariantsReady, imageAnimationVariants,
-  loopAnimationVariants, prepareAnimationVariants,
+  animationFilename, animationKey, animationRoot, animationVariants, assertAnimationVariantsReady, describeLoopMasters,
+  imageAnimationVariants, loopAnimationVariants, prepareAnimationVariants,
 } from "../scripts/animation-variants.mjs";
-import { mediaManifest, syncMedia } from "../scripts/media.mjs";
+import { assertPinnedVariantsUnchanged, mediaManifest, syncMedia } from "../scripts/media.mjs";
 import { clearPlanetAnimationCache, frontendResponse, loopAnimationRoute, planetAnimationCacheSize } from "../scripts/serve.mjs";
 import { moonBuildingAsset, shipAssetByKey } from "../src/gameAssets";
 import { buildingCatalog, shipCatalog } from "../src/playableMvp";
@@ -114,6 +114,11 @@ describe("loop variant route", () => {
       [`/assets/game/loops/ships/cruiser.webm?size=720&v=${cruiser.version}`, 400],
       [`/assets/game/loops/ships/cruiser.mp4?size=1024&v=${cruiser.version}`, 400],
       [`/assets/game/loops/ships/cruiser.webm?size=100&v=${cruiser.version}`, 400],
+      // One spelling per size, so a variant has a single CDN cache key.
+      [`/assets/game/loops/ships/cruiser.webm?size=64.0&v=${cruiser.version}`, 400],
+      [`/assets/game/loops/ships/cruiser.webm?size=0x40&v=${cruiser.version}`, 400],
+      [`/assets/game/loops/ships/cruiser.webm?size=%2B64&v=${cruiser.version}`, 400],
+      [`/assets/game/loops/ships/cruiser.webm?size=%2064&v=${cruiser.version}`, 400],
       ["/assets/game/loops/ships/cruiser.webm?size=64", 400],
       ["/assets/game/loops/ships/cruiser.webm?size=64&v=stale", 400],
       [`/assets/game/loop-masters/ships/cruiser.mp4`, 404],
@@ -154,7 +159,9 @@ describe("loop variant route", () => {
       const tail = await request(path, { range: "bytes=-100" });
       expect(tail.status).toBe(206);
       expect(new Uint8Array(await tail.arrayBuffer())).toEqual(bytes.subarray(bytes.length - 100));
-      expect((await request(path, { range: `bytes=${pinned.bytes}-` })).status).toBe(416);
+      const unsatisfiable = await request(path, { range: `bytes=${pinned.bytes}-` });
+      expect(unsatisfiable.status).toBe(416);
+      expect(unsatisfiable.headers.get("cache-control")).toBeNull();
     }
     // Only bounded file metadata is cached, one entry per variant.
     expect(planetAnimationCacheSize()).toBe(2);
@@ -201,6 +208,37 @@ describe("publish-time loop encoding and readiness", () => {
       expect(serve.indexOf("await assertAnimationVariantsReady();")).toBeLessThan(serve.indexOf("Bun.serve({"));
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  test("publish refuses new bytes under an already pinned versioned variant URL", () => {
+    const pin = (sha: string) => ({ sha256: sha.repeat(64), bytes: 1 });
+    const previous = { "animation-variants/a.webm": pin("a"), "animation-variants/manifest.json": pin("m"), "assets/x.webp": pin("x") };
+    expect(() => assertPinnedVariantsUnchanged(previous, { ...previous, "animation-variants/b.webm": pin("b") })).not.toThrow();
+    expect(() => assertPinnedVariantsUnchanged(previous, { ...previous, "animation-variants/manifest.json": pin("n"), "assets/x.webp": pin("y") })).not.toThrow();
+    expect(() => assertPinnedVariantsUnchanged(previous, { ...previous, "animation-variants/a.webm": pin("c") })).toThrow("Variant bytes changed");
+  });
+
+  test.skipIf(!hasTool("ffmpeg") || !hasTool("ffprobe"))("derives the loop set from the masters and rejects unusable ones", async () => {
+    const f = await fixture();
+    const stills = join(f.root, "stills");
+    const encode = (size: number, path: string, color = "red") => execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i",
+      `color=c=${color}:size=${size}x${size}:rate=24:duration=0.5`, "-c:v", "libx264", "-pix_fmt", "yuv420p", path]);
+    try {
+      await mkdir(join(stills, "ships"), { recursive: true });
+      await writeFile(join(stills, "ships", "fixture.webp"), "still");
+      const stillRoot = new URL(`file://${stills}/`);
+      encode(512, f.master);
+      const described = await describeLoopMasters(f.sourceRoot, stillRoot);
+      expect(described).toEqual({ "ships/fixture": { version: expect.stringMatching(/^[0-9a-f]{12}$/), width: 512, frames: 12, fps: 24 } });
+      // A redone master gets a new version automatically.
+      encode(512, f.master, "blue");
+      expect((await describeLoopMasters(f.sourceRoot, stillRoot))["ships/fixture"]!.version).not.toBe(described["ships/fixture"]!.version);
+      encode(256, f.master);
+      await expect(describeLoopMasters(f.sourceRoot, stillRoot)).rejects.toThrow("at least 512 px");
+      encode(512, f.master);
+      await rm(join(stills, "ships", "fixture.webp"));
+      await expect(describeLoopMasters(f.sourceRoot, stillRoot)).rejects.toThrow("no still");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }, 60_000);
 
   test.skipIf(!hasTool("ffmpeg") || !hasTool("ffprobe"))("encodes every frame at the master cadence and rejects a mismatch", async () => {
     const f = await fixture();
