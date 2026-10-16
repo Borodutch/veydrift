@@ -22,7 +22,7 @@ describe("Veydrift prerequisite gating", () => {
       },
     };
 
-    expect(unmetResearchRequirement(state, "laser")).toEqual({
+    expect(unmetResearchRequirement(state, "laser", undefined)).toEqual({
       type: "research",
       key: "energy",
       level: 2,

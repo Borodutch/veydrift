@@ -1375,8 +1375,8 @@ export function researchEffectRows(
   };
 
   if (key === "energy") {
-    const current = energyBalance(state.buildings, state.research.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
-    const next = energyBalance(state.buildings, nextResearch.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
+    const current = fusionReactorEnergyProduction(state.buildings.fusionReactor, state.research.energy);
+    const next = fusionReactorEnergyProduction(state.buildings.fusionReactor, nextResearch.energy);
     return [numberEffectRow("Fusion Reactor output", current, next, " produced")];
   }
 
@@ -1855,9 +1855,26 @@ export function unmetBuildingRequirement(
   });
 }
 
-export function unmetResearchRequirement(
-  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+// Mirrors VeydriftCatalog.researchEnergyRequirement: Graviton's produced-energy
+// requirement triples with every level already researched.
+export function researchEnergyRequirement(
   key: ResearchKey,
+  currentLevel: number,
+  baseRequirement: number,
+): number {
+  if (key !== "graviton") return baseRequirement;
+  return Math.floor(baseRequirement * (3 ** Math.max(0, currentLevel)));
+}
+
+// `producedEnergy` is the selected planet's chain-derived energy production
+// (backend `energyBalance.produced`, the value the top bar shows). It includes
+// Solar Satellites at the planet's max temperature, exactly as the contract's
+// research gate counts them, so it is never recomputed here from local state.
+// Undefined until the backend has reported it: the requirement stays unmet.
+export function unmetResearchRequirement(
+  state: Pick<PlayableState, "buildings" | "research">,
+  key: ResearchKey,
+  producedEnergy: number | undefined,
 ): ResearchRequirement | undefined {
   return researchRequirementsFor(key).find((requirement) => {
     if (requirement.type === "building") {
@@ -1865,11 +1882,8 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      return energyBalance(
-        state.buildings,
-        state.research.energy,
-        state.ships.solarSatellite,
-      ).produced < requirement.produced;
+      return producedEnergy === undefined
+        || producedEnergy < researchEnergyRequirement(key, state.research[key], requirement.produced);
     }
 
     return state.research[requirement.key] < requirement.level;

@@ -7377,6 +7377,7 @@ export function PlayableMvpApp({
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
           onSupply={handleSupplyCurrentPlanet}
+          producedEnergy={topBarEnergy?.produced}
           productionRates={productionRatesForEta}
           progressState={walletResearchProgress}
           researchState={effectiveResearchState}

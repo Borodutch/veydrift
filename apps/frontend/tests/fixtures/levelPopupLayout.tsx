@@ -38,7 +38,7 @@ function view(index: number) {
   }
   const key = item.key as ResearchKey;
   const researched = { ...state, research: { ...state.research, [key]: CURRENT } };
-  return <ResearchLevelInfoModal currentLevel={CURRENT} onClose={() => {}} onSupply={() => {}} researchLabel={item.label} rows={researchLevelInfoRows(researched, key)} />;
+  return <ResearchLevelInfoModal currentLevel={CURRENT} onClose={() => {}} onSupply={() => {}} researchLabel={item.label} rows={researchLevelInfoRows(researched, key, undefined)} />;
 }
 
 const root = document.getElementById("app")!;
