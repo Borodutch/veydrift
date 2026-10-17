@@ -55,6 +55,11 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
     await send("Page.enable");
     await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 2, mobile: false });
+    // Records why a loop fell back to its still (media/source errors, refused play()) for failure messages.
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: `window.loopErrors = [];
+      document.addEventListener('error', event => { const target = event.target; if (target instanceof HTMLVideoElement || target instanceof HTMLSourceElement) { const video = target instanceof HTMLVideoElement ? target : target.parentElement; window.loopErrors.push([target.tagName, target.getAttribute('src') || video?.currentSrc, video?.error?.code ?? null, video?.error?.message ?? null]); } }, true);
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () { const result = play.call(this); result?.catch?.(error => window.loopErrors.push(['play', this.currentSrc, error?.name, error?.message])); return result; };` });
     async function evaluate(expression) {
       const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
       assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
@@ -64,7 +69,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     async function until(expression, message, timeoutMs = 30_000) {
       const deadline = Date.now() + timeoutMs;
       while (!(await evaluate(expression))) {
-        assert.ok(Date.now() < deadline, message + "\n" + await evaluate("JSON.stringify(Array.from(document.querySelectorAll('video')).map(v => [v.parentElement.dataset.tile, v.readyState, v.paused, v.networkState, v.currentSrc]).slice(0, 8))"));
+        assert.ok(Date.now() < deadline, message + "\n" + await evaluate("JSON.stringify({ videos: document.querySelectorAll('video').length, tileStills: document.querySelectorAll('[data-tile] img').length, first: Array.from(document.querySelectorAll('video')).map(v => [v.parentElement.dataset.tile, v.readyState, v.paused, v.networkState, v.currentSrc]).slice(0, 8), errors: (window.loopErrors || []).length, lastErrors: (window.loopErrors || []).slice(-8) })"));
         await sleep(100);
       }
     }
