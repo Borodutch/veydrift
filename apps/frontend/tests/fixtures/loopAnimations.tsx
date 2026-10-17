@@ -6,16 +6,24 @@ import { InspectDetailImage } from "../../src/components/InspectProgressLayout";
 import { AssetImage, OptimizedImage } from "../../src/components/OptimizedImage";
 import { ProductionCatalog, type ProductionCatalogItem } from "../../src/components/ProductionCatalog";
 import { moonBuildingAsset, shipAssetByKey } from "../../src/gameAssets";
-import { buildingCatalog, shipyardCatalog } from "../../src/playableMvp";
+import { buildingCatalog, defenseCatalog, shipCatalog, shipyardCatalog } from "../../src/playableMvp";
 import "../../src/styles.css";
 
+// Every ship and defense has a loop, so this real game still stands in for an asset without one.
+const noLoopStill = "/assets/game/style-pass/generated/rift-under-construction.webp";
 const stills = [
   ...buildingCatalog.map((building) => building.asset),
   ...(["lunarBase", "roboticsFactory", "jumpGate", "shipyard"] as const).map(moonBuildingAsset),
-  ...shipyardCatalog.map((ship) => ship.asset),
+  ...shipCatalog.map((ship) => ship.asset),
+  ...defenseCatalog.map((defense) => defense.asset),
 ];
-const items: ProductionCatalogItem[] = shipyardCatalog.map((item) => ({
-  ...item, groupLabel: "Ships", countLabel: "Owned", countValue: 3,
+// The shipyard and defense catalogs, plus one entry whose art has no loop.
+const items: ProductionCatalogItem[] = [
+  ...shipyardCatalog.map((item) => ({ ...item, groupLabel: "Ships" })),
+  ...defenseCatalog.map((item) => ({ ...item, groupLabel: "Defenses" })),
+  { ...shipyardCatalog[0]!, key: "noLoop", label: "No loop", asset: noLoopStill, groupLabel: "Ships" },
+].map((item) => ({
+  ...item, countLabel: "Owned", countValue: 3,
   status: "ready", cost: { metal: 2000, crystal: 500, deuterium: 100 },
   unitCost: { metal: 2000, crystal: 500, deuterium: 100 },
   unitCostRaw: { metal: "2000", crystal: "500", deuterium: "100" },
@@ -26,6 +34,7 @@ const noop = () => undefined;
 const fixture = {
   inspect: (_asset: string, _cacheKey: string) => undefined as void,
   loops: LOOP_ANIMATIONS,
+  noLoopStill,
   refLoad: null as null | { complete: boolean; sameAsRef: boolean },
   select: (_key: string) => undefined as void,
   stills: Object.fromEntries(stills.map((src) => [src, loopAnimationNameForStill(src) ?? null])),
@@ -62,7 +71,7 @@ render(<main style={{ maxWidth: "1200px", margin: "0 auto", padding: "8px" }}>
   <div className="mt-2 flex gap-2">
     <span data-icon="cruiser"><AssetImage alt="" className="h-6 w-6 rounded object-cover" height={24} loading="lazy" src={shipAssetByKey.cruiser} width={24} /></span>
     <span data-responsive style={{ display: "block", height: "64px", width: "64px" }}><OptimizedImage alt="" className="h-full w-full object-cover" sizes="64px" src={shipAssetByKey.battlecruiser} /></span>
-    <span data-icon="small-cargo"><AssetImage alt="" className="h-6 w-6 rounded object-cover" height={24} loading="lazy" src={shipAssetByKey.smallCargo} width={24} /></span>
+    <span data-icon="no-loop"><AssetImage alt="" className="h-6 w-6 rounded object-cover" height={24} loading="lazy" src={noLoopStill} width={24} /></span>
     <span data-ref-probe style={{ display: "block", height: "64px", width: "64px" }}><RefProbe /></span>
     <span className="block w-36" data-inspect><Inspect /></span>
   </div>

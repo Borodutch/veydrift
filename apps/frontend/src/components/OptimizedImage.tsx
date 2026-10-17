@@ -108,10 +108,10 @@ function LoopOrStill({ loop, still, video }: {
   useEffect(() => {
     if (!loop) return;
     const onMotionChange = () => setAllowed(loopMotionAllowed());
+    motionSubscribers.add(onMotionChange);
     // Catch up on a change between this render and the subscription.
     onMotionChange();
-    reducedMotion?.addEventListener?.("change", onMotionChange);
-    return () => reducedMotion?.removeEventListener?.("change", onMotionChange);
+    return () => { motionSubscribers.delete(onMotionChange); };
   }, [loop]);
   return loop && allowed ? video(loop) : still();
 }
@@ -161,6 +161,8 @@ function StillImage({
 }
 
 let reducedMotion: MediaQueryList | undefined;
+let lastMotionAllowed: boolean | undefined;
+const motionSubscribers = new Set<() => void>();
 // Loops within this many CSS px of the viewport are sized and fetched.
 const NEAR_VIEWPORT = 128;
 
@@ -177,8 +179,18 @@ function loopsSupported(): boolean {
 
 export function loopMotionAllowed(): boolean {
   if (!loopsSupported()) return false;
-  reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
-  return !reducedMotion.matches;
+  if (!reducedMotion) {
+    reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotion.addEventListener?.("change", loopMotionAllowed);
+  }
+  // Chrome can skip the "change" event for a preference flip (seen under load), leaving loops that
+  // never re-render stuck. So whichever read sees a change first, event or render, tells every subscriber.
+  const allowed = !reducedMotion.matches;
+  if (lastMotionAllowed !== undefined && allowed !== lastMotionAllowed) {
+    queueMicrotask(() => motionSubscribers.forEach(notify => notify()));
+  }
+  lastMotionAllowed = allowed;
+  return allowed;
 }
 
 /**

@@ -585,7 +585,8 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(await evaluate('document.body.textContent.includes("Available cargo fleet")'), false);
       assert.equal(await evaluate('[...document.querySelectorAll("span")].filter(node => node.textContent === "Ships · planned / available").length'), 1, 'one heading per source');
       assert.equal(await evaluate(fleet + '.querySelectorAll("button").length'), 2);
-      assert.equal(await evaluate('document.querySelectorAll("[role=dialog] img").length'), 2, 'no duplicate noninteractive fleet icons');
+      // Ship icons play their loop (#137), so count the <video> or <img> that renders each one.
+      assert.equal(await evaluate('document.querySelectorAll("[role=dialog] img, [role=dialog] video").length'), 2, 'no duplicate noninteractive fleet icons');
       assert.equal(await evaluate(large + '.textContent'), '×2 planned / 5 available');
       assert.equal(await evaluate(recycler + '.textContent'), '×0 planned / 3 available');
       const accessibleButton = async expression => {
@@ -599,7 +600,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.equal(largeAX.properties.find(property => property.name === 'pressed').value.value, 'true');
       assert.equal(recyclerAX.properties.find(property => property.name === 'pressed').value.value, 'false');
       assert.equal(largeAX.description.value, '×2 planned / 5 available', 'planned amount is exposed to assistive technology');
-      const chipStyle = expression => evaluate('(() => { const button = ' + expression + '; const chip = button.firstElementChild; const target = button.getBoundingClientRect(), visual = chip.getBoundingClientRect(); return {width: target.width, height: target.height, visualWidth: visual.width, visualHeight: visual.height, background: getComputedStyle(chip).backgroundColor, imageOpacity: getComputedStyle(button.querySelector("img")).opacity}; })()');
+      const chipStyle = expression => evaluate('(() => { const button = ' + expression + '; const chip = button.firstElementChild; const target = button.getBoundingClientRect(), visual = chip.getBoundingClientRect(); return {width: target.width, height: target.height, visualWidth: visual.width, visualHeight: visual.height, background: getComputedStyle(chip).backgroundColor, imageOpacity: getComputedStyle(button.querySelector("img, video")).opacity}; })()');
       const on = await chipStyle(large), off = await chipStyle(recycler);
       for (const style of [on, off]) {
         assert.ok(style.width >= 24 && style.height >= 24, 'usable minimum pointer target');
