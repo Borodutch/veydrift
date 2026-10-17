@@ -83,6 +83,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       ...Array.from(document.querySelectorAll('[data-tile]')).map(t => ['tile ' + t.dataset.tile, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-icon]')).map(t => ['icon ' + t.dataset.icon, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-catalog] img, [data-catalog] video')).map((m, i) => ['catalog ' + i, m]),
+      ...Array.from(document.querySelectorAll('[data-research] img, [data-research] video, [data-research-queue] img, [data-research-queue] video')).map((m, i) => ['research ' + i, m]),
       ['responsive', document.querySelector('[data-responsive]').firstElementChild],
       ['offscreen', document.querySelector('#offscreen').firstElementChild],
     ].map(([key, m]) => { const r = m.getBoundingClientRect(); return [key, { tag: m.tagName, x: r.x, y: r.y, w: r.width, h: r.height, fit: getComputedStyle(m).objectFit }]; }))`;
@@ -91,9 +92,12 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await open();
     const { loops, noLoopStill, stills } = await evaluate("window.loopFixture");
     const looped = Object.entries(stills).filter(([, name]) => name);
-    assert.equal(new Set(looped.map(([, name]) => name)).size, 43);
-    assert.equal(looped.length, 46, "43 loops plus 3 shared-art aliases");
-    assert.equal(looped.length, Object.keys(stills).length, "every building, ship and defense still has a loop");
+    const researchLoops = ["armor", "astrophysics"];
+    assert.equal(new Set(looped.map(([, name]) => name)).size, 45);
+    assert.equal(looped.length, 48, "45 loops plus 3 shared-art aliases");
+    const unlooped = Object.keys(stills).filter(src => !stills[src]);
+    assert.ok(unlooped.length > 0 && unlooped.every(src => /^\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/.test(src) && !researchLoops.some(name => src.endsWith(`/${name}.webp`))),
+      "every building, ship and defense still has a loop; only research without one keeps its still");
 
     // On-screen loops: 64 CSS px at 2x picks the 128 variant, WebM first, poster from the still's sizes.
     await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "on-screen loops did not start");
@@ -184,6 +188,26 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(${released})`, "off-screen loops kept their decoders");
     await evaluate("scrollTo(0, 0)");
     await until(`${released}(document.querySelector('#offscreen video')) && Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "loops did not resume/release with visibility");
+
+    // The research page's tiles, queue panel and inspect detail play the research loops at a bounded size (#139).
+    await evaluate("document.querySelector('[data-research]').scrollIntoView({ block: 'start' })");
+    const researchPlaying = `Array.from(document.querySelectorAll('[data-research] video, [data-research-queue] video')).every(v => v.readyState >= 2 && !v.paused)`;
+    await until(`document.querySelectorAll('[data-research] video').length === ${researchLoops.length} && ${researchPlaying}`, "research loops did not start");
+    const researchTiles = await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('[data-research-tile]')).map(t => {
+      const m = t.querySelector('video, img'); return [t.dataset.researchTile, m.tagName === 'VIDEO' ? m.currentSrc : m.getAttribute('src')];
+    }))`);
+    for (const [key, src] of Object.entries(researchTiles)) {
+      const name = researchLoops.find(loop => key === loop);
+      if (name) assert.match(src, new RegExp(`/assets/game/loops/research/${name}\\.webm\\?size=512&v=${loops[`research/${name}`].version}$`), key);
+      else assert.match(src, /\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/, `${key} has no loop and keeps its still`);
+    }
+    assert.match(await evaluate("document.querySelector('[data-research-queue] video').currentSrc"), /\/research\/armor\.webm\?size=(64|128)&v=/);
+    const armorStill = "/assets/game/style-pass/generated/research/armor.webp";
+    await evaluate(`window.loopFixture.inspect(${JSON.stringify(armorStill)}, "research:armor")`);
+    await evaluate("document.querySelector('[data-inspect]').scrollIntoView({ block: 'center' })");
+    await until(`(() => { const v = ${inspect}.querySelector('video'); return Boolean(v && v.currentSrc.includes('/research/armor.webm?size=') && v.readyState >= 2 && !v.paused); })()`, "research inspect loop did not play");
+    await evaluate(`window.loopFixture.inspect(${JSON.stringify(cruiserStill)}, "initial")`);
+    await evaluate("scrollTo(0, 0)");
 
     // Reduced motion switched on at runtime shows the stills, and switching it off restores the loops.
     await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
