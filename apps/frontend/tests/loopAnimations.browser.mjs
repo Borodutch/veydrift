@@ -81,8 +81,8 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await open();
     const { loops, stills } = await evaluate("window.loopFixture");
     const looped = Object.entries(stills).filter(([, name]) => name);
-    assert.equal(new Set(looped.map(([, name]) => name)).size, 22);
-    assert.equal(looped.length, 25, "22 loops plus 3 shared-art aliases");
+    assert.equal(new Set(looped.map(([, name]) => name)).size, 24);
+    assert.equal(looped.length, 27, "24 loops plus 3 shared-art aliases");
 
     // On-screen loops: 64 CSS px at 2x picks the 128 variant, WebM first, poster from the still's sizes.
     await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "on-screen loops did not start");
@@ -131,9 +131,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     assert.match(await evaluate("document.querySelector('[data-icon=cruiser] video').currentSrc"), /\/ships\/cruiser\.webm\?size=64&v=/);
     assert.equal(await evaluate("document.querySelector('[data-icon=small-cargo]').innerHTML"), '<img alt="" class="h-6 w-6 rounded object-cover" height="24" loading="lazy" src="/assets/game/style-pass/generated/ships/small-cargo.webp" width="24">');
 
-    // The real production catalog plays the five ship loops and keeps the other stills.
+    // The real production catalog plays the seven ship loops and keeps the other stills.
     const catalog = await evaluate("Array.from(document.querySelectorAll('[data-catalog] video')).map(v => v.querySelector('source').getAttribute('src'))");
-    for (const ship of ["battlecruiser", "colony-ship", "cruiser", "destroyer", "heavy-fighter"]) {
+    for (const ship of ["battlecruiser", "battleship", "bomber", "colony-ship", "cruiser", "destroyer", "heavy-fighter"]) {
       assert.ok(catalog.some(src => src.startsWith(`/assets/game/loops/ships/${ship}.webm?size=`)), `catalog ${ship}: ${catalog}`);
     }
     assert.ok(await evaluate("document.querySelectorAll('[data-catalog] img').length") > 0, "catalog ships without a loop keep their still");
