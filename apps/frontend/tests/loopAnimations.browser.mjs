@@ -153,9 +153,8 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       ...["anti-ballistic-missile", "gauss-cannon", "heavy-laser", "interplanetary-missile", "ion-cannon", "large-shield-dome", "light-laser",
         "plasma-turret", "rocket-launcher", "small-shield-dome"].map(defense => `defenses/${defense}`),
     ];
-    for (const name of catalogLoops) {
-      assert.ok(catalog.some(src => src.startsWith(`/assets/game/loops/${name}.webm?size=`)), `catalog ${name}: ${catalog}`);
-    }
+    const catalogNames = new Set(catalog.map(src => /^\/assets\/game\/loops\/([a-z]+\/[a-z0-9-]+)\.webm\?size=/.exec(src)?.[1] ?? src));
+    assert.deepEqual([...catalogNames].sort(), catalogLoops.sort(), "catalog loops");
     assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('[data-catalog] img')).map(i => i.getAttribute('src'))"), [noLoopStill], "only art without a loop keeps its still");
 
     // Selecting another ship swaps the featured loop (not just its poster); one without a loop shows its still.

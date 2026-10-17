@@ -305,11 +305,11 @@ Check during a deploy:
 
 Large frontend media is not in git and never enters an image: the landing trailer,
 the planet/moon animation masters and their 60 precomputed size variants, and the
-building/ship loop masters with their 176 precomputed WebM/MP4 variants (280 files,
-about 685 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size.
+building/ship/defense loop masters with their 344 precomputed WebM/MP4 variants (469 files,
+about 713 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size.
 The files are assets of the `media-v1` GitHub release on this repository, named
 `<sha256><ext>`. Moon and loop masters are marked `publishOnly`: no route serves them
-at full size, so servers skip them and sync about 420 MiB.
+at full size, so servers skip them and sync about 425 MiB.
 
 Before binding its port, `bun run serve` (and Vite dev/preview) runs
 `scripts/media.mjs` sync into the media root:
@@ -327,7 +327,7 @@ Before binding its port, `bun run serve` (and Vite dev/preview) runs
 URLs, headers, byte ranges and responsive variants are unchanged, so Cloudflare and
 browser caching behave as before.
 
-Building and ship stills that have a seamless loop play it as a muted inline
+Building, ship and defense stills that have a seamless loop play it as a muted inline
 `<video>` with the still as its poster, in the still's box. The browser requests
 `/assets/game/loops/<category>/<still>.webm?size=<64|128|256|512>&v=<version>`
 (VP9), falling back to the same URL with `.mp4` (H.264). The size is picked from the
