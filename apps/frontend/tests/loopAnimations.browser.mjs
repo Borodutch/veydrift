@@ -1,17 +1,22 @@
 // Run from apps/frontend: node --test tests/loopAnimations.browser.mjs
 // Real components, the real dev media route (synced pinned media) and local disposable Chrome only.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
 test("building/ship loops play lazily at a bounded size, in the still's exact box, and fall back to the still (#133)", { timeout: 300_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered loop regression");
+  // Loop posters are the stills' build-time size variants (gitignored, made by prebuild/precheck).
+  // In a fresh checkout the dev server would answer a poster with index.html, so an imageRef
+  // loop's poster probe errors and correctly falls back to the still (#138): generate them first.
+  execFileSync(process.execPath, [fileURLToPath(new URL("../scripts/generate-image-variants.mjs", import.meta.url))]);
   const profile = mkdtempSync(join(tmpdir(), "veydrift-loops-"));
   const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
