@@ -14,8 +14,8 @@ import {
 } from "../scripts/animation-variants.mjs";
 import { assertPinnedVariantsUnchanged, mediaManifest, syncMedia } from "../scripts/media.mjs";
 import { clearPlanetAnimationCache, frontendResponse, loopAnimationRoute, planetAnimationCacheSize } from "../scripts/serve.mjs";
-import { moonBuildingAsset, researchAssetByKey, shipAssetByKey } from "../src/gameAssets";
-import { buildingCatalog, researchCatalog, shipCatalog } from "../src/playableMvp";
+import { moonBuildingAsset, researchAssetByKey } from "../src/gameAssets";
+import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../src/playableMvp";
 import { readMp4, readWebm } from "./videoContainer";
 
 // Same pinned media as the production server; no request may perform an encode.
@@ -26,28 +26,36 @@ const appStills = [
   ...buildingCatalog.map((building) => building.asset),
   ...(["lunarBase", "roboticsFactory", "jumpGate", "shipyard"] as const).map(moonBuildingAsset),
   ...shipCatalog.map((ship) => ship.asset),
+  ...defenseCatalog.map((defense) => defense.asset),
   ...researchCatalog.map((research) => research.asset),
 ];
 const request = (path: string, headers: Record<string, string> = {}) => frontendResponse(new Request(`http://localhost${path}`, { headers }));
 const hasTool = (name: string) => { try { execFileSync(name, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
 
 describe("building/ship loop configuration", () => {
-  test("ships the 26 approved loops, each resolved from the still the app actually renders", () => {
+  test("ships the 45 approved loops, each resolved from the still the app actually renders", () => {
     expect(loopNames.sort()).toEqual([
       "buildings/crystal-mine-mid", "buildings/crystal-storage-mid", "buildings/deuterium-synthesizer-mid", "buildings/deuterium-tank-mid",
       "buildings/fusion-reactor-mid", "buildings/interdimensional-rift-stabilizer-mid", "buildings/jump-gate", "buildings/lunar-base",
       "buildings/metal-mine-mid", "buildings/metal-storage-mid", "buildings/missile-silo-mid", "buildings/moon-robotics-factory",
       "buildings/moon-shipyard", "buildings/research-lab-mid", "buildings/robotics-factory-mid", "buildings/shipyard-mid",
-      "buildings/solar-plant-mid", "research/armor", "research/astrophysics", "ships/battlecruiser", "ships/battleship", "ships/bomber",
-      "ships/colony-ship", "ships/cruiser", "ships/destroyer", "ships/heavy-fighter",
+      "buildings/solar-plant-mid", "defenses/anti-ballistic-missile", "defenses/gauss-cannon", "defenses/heavy-laser",
+      "defenses/interplanetary-missile", "defenses/ion-cannon", "defenses/large-shield-dome", "defenses/light-laser",
+      "defenses/plasma-turret", "defenses/rocket-launcher", "defenses/small-shield-dome", "research/armor", "research/astrophysics",
+      "ships/battlecruiser", "ships/battleship",
+      "ships/bomber", "ships/colony-ship", "ships/crawler-approved", "ships/cruiser", "ships/deathstar", "ships/destroyer",
+      "ships/heavy-fighter", "ships/large-cargo", "ships/light-fighter", "ships/pathfinder", "ships/reaper-symmetric", "ships/recycler",
+      "ships/small-cargo", "ships/solar-satellite",
     ]);
+    // Every ship and defense the app renders now plays a loop.
+    for (const unit of [...shipCatalog, ...defenseCatalog]) expect([unit.key, loopAnimationNameForStill(unit.asset)]).toEqual([unit.key, expect.any(String)]);
     const resolved = new Map(appStills.flatMap((src) => {
       const name = loopAnimationNameForStill(src);
       return name ? [[src, name] as const] : [];
     }));
     // Every loop is reachable from the app, plus the three shared-art aliases.
     expect(new Set(resolved.values())).toEqual(new Set(loopNames));
-    expect(resolved.size).toBe(29);
+    expect(resolved.size).toBe(48);
     expect(loopAnimationNameForStill(buildingCatalog.find((building) => building.key === "shipyard")!.asset)).toBe("buildings/shipyard-mid");
     // Research surfaces (tiles, detail, queues, planet/empire rows) all render the catalog asset.
     for (const key of ["armor", "astrophysics"] as const) {
@@ -67,7 +75,7 @@ describe("building/ship loop configuration", () => {
 
   test("keeps the still for assets without a loop", () => {
     for (const src of [
-      shipAssetByKey.smallCargo, shipAssetByKey.deathstar, "/assets/game/style-pass/generated/defenses/rocket-launcher.webp",
+      `${LOOP_ANIMATION_STILL_BASE}/rift-under-construction.webp`, `${LOOP_ANIMATION_STILL_BASE}/ships/crawler.webp`,
       researchAssetByKey.plasma, researchAssetByKey.weapons,
       "/assets/game/style-pass/generated/planets/lush-temperate.webp", "/assets/game/planet-animations/frozen-ice.webp",
       `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser.png`, `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser`, "/assets/game/buildings/metal-mine-mid.webp",
@@ -84,7 +92,7 @@ describe("building/ship loop configuration", () => {
       for (const size of [0, 100, 720, 1024]) expect(() => loopAnimationUrl(name, "webm", size)).toThrow();
     }
     expect(loopAnimationWidths({ width: 200 })).toEqual([64, 128]);
-    expect(() => loopAnimationUrl("ships/small-cargo", "webm", 64)).toThrow();
+    expect(() => loopAnimationUrl("ships/crawler", "webm", 64)).toThrow();
     expect(() => loopAnimationUrl("toString", "webm", 64)).toThrow();
     // Rendered px x device pixel ratio picks the smallest covering size.
     expect([20, 64, 65, 88, 128, 200, 256, 300, 696, 2000].map((px) => loopAnimationWidthFor("ships/cruiser", px)))
@@ -109,7 +117,7 @@ describe("loop variant route", () => {
   test("rejects an unknown name, extension, size or version before any file lookup", async () => {
     clearPlanetAnimationCache();
     const cases: Array<[string, number]> = [
-      [`/assets/game/loops/ships/small-cargo.webm?size=64&v=${cruiser.version}`, 404],
+      [`/assets/game/loops/ships/crawler.webm?size=64&v=${cruiser.version}`, 404],
       [`/assets/game/loops/ships/cruiser.webp?size=64&v=${cruiser.version}`, 404],
       [`/assets/game/loops/ships/cruiser.mkv?size=64&v=${cruiser.version}`, 404],
       [`/assets/game/loops/ships/cruiser?size=64&v=${cruiser.version}`, 404],

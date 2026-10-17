@@ -101,6 +101,66 @@
     "frames": 84,
     "fps": 24
   },
+  "defenses/anti-ballistic-missile": {
+    "version": "388e95383951",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/gauss-cannon": {
+    "version": "e1c3166210e7",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/heavy-laser": {
+    "version": "eb2eb07ada58",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/interplanetary-missile": {
+    "version": "374c8bf6de87",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/ion-cannon": {
+    "version": "ce12f28439f0",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/large-shield-dome": {
+    "version": "0177c3c4200f",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/light-laser": {
+    "version": "6441553aef0a",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/plasma-turret": {
+    "version": "ebf0f17c9166",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/rocket-launcher": {
+    "version": "8f97251e2399",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/small-shield-dome": {
+    "version": "a0f254821258",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "research/armor": {
     "version": "442852eaba88",
     "width": 720,
@@ -137,8 +197,20 @@
     "frames": 84,
     "fps": 24
   },
+  "ships/crawler-approved": {
+    "version": "a9027349b361",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "ships/cruiser": {
     "version": "93449b43731c",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/deathstar": {
+    "version": "45b613f3f2bc",
     "width": 720,
     "frames": 84,
     "fps": 24
@@ -151,6 +223,48 @@
   },
   "ships/heavy-fighter": {
     "version": "2173207580a1",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/large-cargo": {
+    "version": "95d9f7400c97",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/light-fighter": {
+    "version": "6e176974091f",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/pathfinder": {
+    "version": "7888998ad8b6",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/reaper-symmetric": {
+    "version": "4d1816801b0d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/recycler": {
+    "version": "92e93f8ba623",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/small-cargo": {
+    "version": "c26530468618",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/solar-satellite": {
+    "version": "46c36decea47",
     "width": 720,
     "frames": 84,
     "fps": 24

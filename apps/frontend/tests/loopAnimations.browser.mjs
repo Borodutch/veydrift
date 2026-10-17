@@ -55,6 +55,11 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
     await send("Page.enable");
     await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 2, mobile: false });
+    // Records why a loop fell back to its still (media/source errors, refused play()) for failure messages.
+    await send("Page.addScriptToEvaluateOnNewDocument", { source: `window.loopErrors = [];
+      document.addEventListener('error', event => { const target = event.target; if (target instanceof HTMLVideoElement || target instanceof HTMLSourceElement) { const video = target instanceof HTMLVideoElement ? target : target.parentElement; window.loopErrors.push([target.tagName, target.getAttribute('src') || video?.currentSrc, video?.error?.code ?? null, video?.error?.message ?? null]); } }, true);
+      const play = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function () { const result = play.call(this); result?.catch?.(error => window.loopErrors.push(['play', this.currentSrc, error?.name, error?.message])); return result; };` });
     async function evaluate(expression) {
       const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
       assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
@@ -64,7 +69,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     async function until(expression, message, timeoutMs = 30_000) {
       const deadline = Date.now() + timeoutMs;
       while (!(await evaluate(expression))) {
-        assert.ok(Date.now() < deadline, message + "\n" + await evaluate("JSON.stringify(Array.from(document.querySelectorAll('video')).map(v => [v.parentElement.dataset.tile, v.readyState, v.paused, v.networkState, v.currentSrc]).slice(0, 8))"));
+        assert.ok(Date.now() < deadline, message + "\n" + await evaluate("JSON.stringify({ videos: document.querySelectorAll('video').length, tileStills: document.querySelectorAll('[data-tile] img').length, first: Array.from(document.querySelectorAll('video')).map(v => [v.parentElement.dataset.tile, v.readyState, v.paused, v.networkState, v.currentSrc]).slice(0, 8), errors: (window.loopErrors || []).length, lastErrors: (window.loopErrors || []).slice(-8) })"));
         await sleep(100);
       }
     }
@@ -85,10 +90,14 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     const loopRequests = "performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/assets/game/loop'))";
 
     await open();
-    const { loops, stills } = await evaluate("window.loopFixture");
+    const { loops, noLoopStill, stills } = await evaluate("window.loopFixture");
     const looped = Object.entries(stills).filter(([, name]) => name);
-    assert.equal(new Set(looped.map(([, name]) => name)).size, 26);
-    assert.equal(looped.length, 29, "26 loops plus 3 shared-art aliases");
+    const researchLoops = ["armor", "astrophysics"];
+    assert.equal(new Set(looped.map(([, name]) => name)).size, 45);
+    assert.equal(looped.length, 48, "45 loops plus 3 shared-art aliases");
+    const unlooped = Object.keys(stills).filter(src => !stills[src]);
+    assert.ok(unlooped.length > 0 && unlooped.every(src => /^\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/.test(src) && !researchLoops.some(name => src.endsWith(`/${name}.webp`))),
+      "every building, ship and defense still has a loop; only research without one keeps its still");
 
     // On-screen loops: 64 CSS px at 2x picks the 128 variant, WebM first, poster from the still's sizes.
     await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "on-screen loops did not start");
@@ -125,33 +134,46 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       window.loopFixture.inspect(${JSON.stringify(asset)}, ${JSON.stringify(cacheKey)});
       requestAnimationFrame(() => resolve([${inspect}.getAttribute('aria-busy'), ${inspect}.querySelector('video, img').tagName]));
     })`);
-    const [cruiserStill, smallCargoStill] = ["cruiser", "small-cargo"].map(ship => `/assets/game/style-pass/generated/ships/${ship}.webp`);
+    const cruiserStill = "/assets/game/style-pass/generated/ships/cruiser.webp";
     await until(`${inspect}.getAttribute('aria-busy') === 'false'`, "inspect loop never loaded");
     assert.deepEqual(await busyAtFirstFrame(cruiserStill, "cruiser again"), ["false", "VIDEO"]);
-    await busyAtFirstFrame(smallCargoStill, "small-cargo");
+    await busyAtFirstFrame(noLoopStill, "no-loop");
     await until(`${inspect}.getAttribute('aria-busy') === 'false'`, "inspect still never loaded");
-    assert.deepEqual(await busyAtFirstFrame(smallCargoStill, "small-cargo again"), ["false", "IMG"]);
+    assert.deepEqual(await busyAtFirstFrame(noLoopStill, "no-loop again"), ["false", "IMG"]);
     await evaluate(`window.loopFixture.inspect(${JSON.stringify(cruiserStill)}, "initial")`);
 
     // A 24 px icon gets the 64 variant; an icon without a loop stays the plain <img>.
     assert.match(await evaluate("document.querySelector('[data-icon=cruiser] video').currentSrc"), /\/ships\/cruiser\.webm\?size=64&v=/);
-    assert.equal(await evaluate("document.querySelector('[data-icon=small-cargo]').innerHTML"), '<img alt="" class="h-6 w-6 rounded object-cover" height="24" loading="lazy" src="/assets/game/style-pass/generated/ships/small-cargo.webp" width="24">');
+    assert.equal(await evaluate("document.querySelector('[data-icon=no-loop]').innerHTML"), `<img alt="" class="h-6 w-6 rounded object-cover" height="24" loading="lazy" src="${noLoopStill}" width="24">`);
 
-    // The real production catalog plays the seven ship loops and keeps the other stills.
-    const catalog = await evaluate("Array.from(document.querySelectorAll('[data-catalog] video')).map(v => v.querySelector('source').getAttribute('src'))");
-    for (const ship of ["battlecruiser", "battleship", "bomber", "colony-ship", "cruiser", "destroyer", "heavy-fighter"]) {
-      assert.ok(catalog.some(src => src.startsWith(`/assets/game/loops/ships/${ship}.webm?size=`)), `catalog ${ship}: ${catalog}`);
+    // The real production catalog plays every shipyard and defense loop and keeps the still for art without one.
+    // The catalog is taller than the viewport and off-screen loops have no sources yet: bring each one near it first.
+    const catalogVideo = index => `document.querySelectorAll('[data-catalog] video')[${index}]`;
+    const catalog = [];
+    for (let index = 0; index < await evaluate("document.querySelectorAll('[data-catalog] video').length"); index++) {
+      await evaluate(`${catalogVideo(index)}.scrollIntoView({ block: 'center' })`);
+      await until(`Boolean(${catalogVideo(index)}.querySelector('source'))`, `catalog loop ${index} never got its sources`);
+      catalog.push(await evaluate(`${catalogVideo(index)}.querySelector('source').getAttribute('src')`));
     }
-    assert.ok(await evaluate("document.querySelectorAll('[data-catalog] img').length") > 0, "catalog ships without a loop keep their still");
+    await evaluate("scrollTo(0, 0)");
+    const catalogLoops = [
+      ...["battlecruiser", "battleship", "bomber", "colony-ship", "crawler-approved", "cruiser", "deathstar", "destroyer", "heavy-fighter",
+        "large-cargo", "light-fighter", "reaper-symmetric", "recycler", "small-cargo", "solar-satellite"].map(ship => `ships/${ship}`),
+      ...["anti-ballistic-missile", "gauss-cannon", "heavy-laser", "interplanetary-missile", "ion-cannon", "large-shield-dome", "light-laser",
+        "plasma-turret", "rocket-launcher", "small-shield-dome"].map(defense => `defenses/${defense}`),
+    ];
+    const catalogNames = new Set(catalog.map(src => /^\/assets\/game\/loops\/([a-z]+\/[a-z0-9-]+)\.webm\?size=/.exec(src)?.[1] ?? src));
+    assert.deepEqual([...catalogNames].sort(), catalogLoops.sort(), "catalog loops");
+    assert.deepEqual(await evaluate("Array.from(document.querySelectorAll('[data-catalog] img')).map(i => i.getAttribute('src'))"), [noLoopStill], "only art without a loop keeps its still");
 
     // Selecting another ship swaps the featured loop (not just its poster); one without a loop shows its still.
     const featured = `document.querySelector('[data-selected-production-layout="featured"]')`;
-    for (const [key, name] of [["destroyer", "destroyer"], ["heavyFighter", "heavy-fighter"]]) {
+    for (const [key, name] of [["destroyer", "ships/destroyer"], ["heavyFighter", "ships/heavy-fighter"], ["plasmaTurret", "defenses/plasma-turret"]]) {
       await evaluate(`window.loopFixture.select(${JSON.stringify(key)})`);
-      await until(`(() => { const v = ${featured}.querySelector('video'); return Boolean(v && v.currentSrc.includes('/ships/${name}.webm?size=') && v.readyState >= 2 && !v.paused); })()`, `featured loop did not follow ${key}`);
+      await until(`(() => { const v = ${featured}.querySelector('video'); return Boolean(v && v.currentSrc.includes('/${name}.webm?size=') && v.readyState >= 2 && !v.paused); })()`, `featured loop did not follow ${key}`);
     }
-    await evaluate("window.loopFixture.select('smallCargo')");
-    await until(`!${featured}.querySelector('video') && Boolean(${featured}.querySelector('img[src*="small-cargo"]'))`, "featured still for a ship without a loop");
+    await evaluate("window.loopFixture.select('noLoop')");
+    await until(`!${featured}.querySelector('video') && Boolean(${featured}.querySelector('img[src="${noLoopStill}"]'))`, "featured still for art without a loop");
     await evaluate("window.loopFixture.select('cruiser')");
 
     // Off-screen: nothing fetched, nothing decoding until it nears the viewport.
@@ -168,7 +190,6 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await until(`${released}(document.querySelector('#offscreen video')) && Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "loops did not resume/release with visibility");
 
     // The research page's tiles, queue panel and inspect detail play the research loops at a bounded size (#139).
-    const researchLoops = ["armor", "astrophysics"];
     await evaluate("document.querySelector('[data-research]').scrollIntoView({ block: 'start' })");
     const researchPlaying = `Array.from(document.querySelectorAll('[data-research] video, [data-research-queue] video')).every(v => v.readyState >= 2 && !v.paused)`;
     await until(`document.querySelectorAll('[data-research] video').length === ${researchLoops.length} && ${researchPlaying}`, "research loops did not start");
@@ -230,9 +251,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     }
     // Under reduced motion a still that changes asset, with or without a loop, updates in place like a plain still.
     await evaluate(`window.featuredStill = ${featured}.querySelector('img')`);
-    for (const [key, ship] of [["destroyer", "destroyer"], ["smallCargo", "small-cargo"], ["cruiser", "cruiser"]]) {
+    for (const [key, still] of [["destroyer", "/ships/destroyer.webp"], ["noLoop", noLoopStill], ["cruiser", "/ships/cruiser.webp"]]) {
       await evaluate(`window.loopFixture.select(${JSON.stringify(key)})`);
-      await until(`${featured}.querySelector('img').getAttribute('src').includes('/ships/${ship}.webp')`, `featured still did not follow ${key}`);
+      await until(`${featured}.querySelector('img').getAttribute('src').includes(${JSON.stringify(still)})`, `featured still did not follow ${key}`);
       assert.equal(await evaluate(`${featured}.querySelector('img') === window.featuredStill`), true, `featured still remounted for ${key}`);
     }
     // Turning reduced motion off on a page that mounted the stills starts the loops without a re-render (#134).

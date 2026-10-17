@@ -87,7 +87,8 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
         heading: pair(queue.firstElementChild, plan.querySelector('h3'), typography),
         quantity: pair(queueItem.lastElementChild.firstElementChild, planItem.lastElementChild.firstElementChild, typography),
         eta: pair(queueItem.lastElementChild.lastElementChild, planItem.lastElementChild.lastElementChild, typography),
-        thumbnail: pair(queue.querySelector('img'), plan.querySelector('img'), ['width', 'height', 'objectFit']),
+        // Ship and defense art plays its loop (#137): the thumbnail is the <video> in the still's box.
+        thumbnail: pair(queue.querySelector('img, video'), plan.querySelector('img, video'), ['width', 'height', 'objectFit']),
         panel: pair(queue, plan, panel), row: pair(queue.children[1], plan.children[1], row),
         item: pair(queueItem, planItem, ['columnGap', 'height']),
         queue: rect(queue), plan: rect(plan), buttons, children,
