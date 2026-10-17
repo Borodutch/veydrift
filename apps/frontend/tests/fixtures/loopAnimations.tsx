@@ -2,17 +2,19 @@
 import { render } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { LOOP_ANIMATIONS, loopAnimationNameForStill } from "../../loopAnimationConfig";
-import { InspectDetailImage } from "../../src/components/InspectProgressLayout";
+import { InspectCatalogTile, InspectDetailImage } from "../../src/components/InspectProgressLayout";
 import { AssetImage, OptimizedImage } from "../../src/components/OptimizedImage";
 import { ProductionCatalog, type ProductionCatalogItem } from "../../src/components/ProductionCatalog";
-import { moonBuildingAsset, shipAssetByKey } from "../../src/gameAssets";
-import { buildingCatalog, shipyardCatalog } from "../../src/playableMvp";
+import { QueueProgressPanel } from "../../src/components/QueueProgressPanel";
+import { moonBuildingAsset, researchAssetByKey, shipAssetByKey } from "../../src/gameAssets";
+import { buildingCatalog, researchCatalog, shipyardCatalog } from "../../src/playableMvp";
 import "../../src/styles.css";
 
 const stills = [
   ...buildingCatalog.map((building) => building.asset),
   ...(["lunarBase", "roboticsFactory", "jumpGate", "shipyard"] as const).map(moonBuildingAsset),
   ...shipyardCatalog.map((ship) => ship.asset),
+  ...researchCatalog.map((research) => research.asset),
 ];
 const items: ProductionCatalogItem[] = shipyardCatalog.map((item) => ({
   ...item, groupLabel: "Ships", countLabel: "Owned", countValue: 3,
@@ -68,6 +70,16 @@ render(<main style={{ maxWidth: "1200px", margin: "0 auto", padding: "8px" }}>
   </div>
   <section className="mt-2" data-catalog>
     <Catalog />
+  </section>
+  {/* The research page's real tile grid and research queue panel. */}
+  <section className="mt-2" data-research style={{ display: "grid", gap: "4px", gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
+    {researchCatalog.map((research) => <span data-research-tile={research.key} key={research.key}>
+      <InspectCatalogTile asset={research.asset} currentText="Level 1" isDimmed={false} isSelected={false} label={research.label} onClick={noop} />
+    </span>)}
+  </section>
+  <section className="mt-2 w-80" data-research-queue>
+    <QueueProgressPanel asset={researchAssetByKey.armor} itemText="Armor Technology 3" label="Armor Technology 3" now={1_790_279_000_000}
+      readyAt={1_790_279_600_000} startedAt={1_790_278_400_000} title="Research" tone="violet" />
   </section>
   <div style={{ height: "4000px" }} />
   <div className="h-32 w-32" id="offscreen">

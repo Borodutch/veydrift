@@ -327,8 +327,8 @@ Before binding its port, `bun run serve` (and Vite dev/preview) runs
 URLs, headers, byte ranges and responsive variants are unchanged, so Cloudflare and
 browser caching behave as before.
 
-Building and ship stills that have a seamless loop play it as a muted inline
-`<video>` with the still as its poster, in the still's box. The browser requests
+Building, ship and research stills that have a seamless loop play it as a muted
+inline `<video>` with the still as its poster, in the still's box. The browser requests
 `/assets/game/loops/<category>/<still>.webm?size=<64|128|256|512>&v=<version>`
 (VP9), falling back to the same URL with `.mp4` (H.264). The size is picked from the
 rendered width and device pixel ratio when the video nears the viewport. Reduced

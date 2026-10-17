@@ -101,6 +101,18 @@
     "frames": 84,
     "fps": 24
   },
+  "research/armor": {
+    "version": "442852eaba88",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/astrophysics": {
+    "version": "7f427a73e08d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "ships/battlecruiser": {
     "version": "2748c7ab9c34",
     "width": 720,

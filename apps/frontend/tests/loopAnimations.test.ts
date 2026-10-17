@@ -14,8 +14,8 @@ import {
 } from "../scripts/animation-variants.mjs";
 import { assertPinnedVariantsUnchanged, mediaManifest, syncMedia } from "../scripts/media.mjs";
 import { clearPlanetAnimationCache, frontendResponse, loopAnimationRoute, planetAnimationCacheSize } from "../scripts/serve.mjs";
-import { moonBuildingAsset, shipAssetByKey } from "../src/gameAssets";
-import { buildingCatalog, shipCatalog } from "../src/playableMvp";
+import { moonBuildingAsset, researchAssetByKey, shipAssetByKey } from "../src/gameAssets";
+import { buildingCatalog, researchCatalog, shipCatalog } from "../src/playableMvp";
 import { readMp4, readWebm } from "./videoContainer";
 
 // Same pinned media as the production server; no request may perform an encode.
@@ -26,19 +26,20 @@ const appStills = [
   ...buildingCatalog.map((building) => building.asset),
   ...(["lunarBase", "roboticsFactory", "jumpGate", "shipyard"] as const).map(moonBuildingAsset),
   ...shipCatalog.map((ship) => ship.asset),
+  ...researchCatalog.map((research) => research.asset),
 ];
 const request = (path: string, headers: Record<string, string> = {}) => frontendResponse(new Request(`http://localhost${path}`, { headers }));
 const hasTool = (name: string) => { try { execFileSync(name, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
 
 describe("building/ship loop configuration", () => {
-  test("ships the 24 approved loops, each resolved from the still the app actually renders", () => {
+  test("ships the 26 approved loops, each resolved from the still the app actually renders", () => {
     expect(loopNames.sort()).toEqual([
       "buildings/crystal-mine-mid", "buildings/crystal-storage-mid", "buildings/deuterium-synthesizer-mid", "buildings/deuterium-tank-mid",
       "buildings/fusion-reactor-mid", "buildings/interdimensional-rift-stabilizer-mid", "buildings/jump-gate", "buildings/lunar-base",
       "buildings/metal-mine-mid", "buildings/metal-storage-mid", "buildings/missile-silo-mid", "buildings/moon-robotics-factory",
       "buildings/moon-shipyard", "buildings/research-lab-mid", "buildings/robotics-factory-mid", "buildings/shipyard-mid",
-      "buildings/solar-plant-mid", "ships/battlecruiser", "ships/battleship", "ships/bomber", "ships/colony-ship", "ships/cruiser",
-      "ships/destroyer", "ships/heavy-fighter",
+      "buildings/solar-plant-mid", "research/armor", "research/astrophysics", "ships/battlecruiser", "ships/battleship", "ships/bomber",
+      "ships/colony-ship", "ships/cruiser", "ships/destroyer", "ships/heavy-fighter",
     ]);
     const resolved = new Map(appStills.flatMap((src) => {
       const name = loopAnimationNameForStill(src);
@@ -46,8 +47,12 @@ describe("building/ship loop configuration", () => {
     }));
     // Every loop is reachable from the app, plus the three shared-art aliases.
     expect(new Set(resolved.values())).toEqual(new Set(loopNames));
-    expect(resolved.size).toBe(27);
+    expect(resolved.size).toBe(29);
     expect(loopAnimationNameForStill(buildingCatalog.find((building) => building.key === "shipyard")!.asset)).toBe("buildings/shipyard-mid");
+    // Research surfaces (tiles, detail, queues, planet/empire rows) all render the catalog asset.
+    for (const key of ["armor", "astrophysics"] as const) {
+      expect(loopAnimationNameForStill(researchCatalog.find((research) => research.key === key)!.asset)).toBe(`research/${key}`);
+    }
     for (const [alias, target] of Object.entries(LOOP_ANIMATION_ALIASES)) {
       const still = (name: string) => readFileSync(new URL(`../public${LOOP_ANIMATION_STILL_BASE}/${name}.webp`, import.meta.url));
       // Aliases are only valid while production renders byte-identical art.
@@ -63,6 +68,7 @@ describe("building/ship loop configuration", () => {
   test("keeps the still for assets without a loop", () => {
     for (const src of [
       shipAssetByKey.smallCargo, shipAssetByKey.deathstar, "/assets/game/style-pass/generated/defenses/rocket-launcher.webp",
+      researchAssetByKey.plasma, researchAssetByKey.weapons,
       "/assets/game/style-pass/generated/planets/lush-temperate.webp", "/assets/game/planet-animations/frozen-ice.webp",
       `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser.png`, `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser`, "/assets/game/buildings/metal-mine-mid.webp",
     ]) expect(loopAnimationNameForStill(src)).toBeUndefined();
