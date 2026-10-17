@@ -31,13 +31,14 @@ const request = (path: string, headers: Record<string, string> = {}) => frontend
 const hasTool = (name: string) => { try { execFileSync(name, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
 
 describe("building/ship loop configuration", () => {
-  test("ships the 22 approved loops, each resolved from the still the app actually renders", () => {
+  test("ships the 24 approved loops, each resolved from the still the app actually renders", () => {
     expect(loopNames.sort()).toEqual([
       "buildings/crystal-mine-mid", "buildings/crystal-storage-mid", "buildings/deuterium-synthesizer-mid", "buildings/deuterium-tank-mid",
       "buildings/fusion-reactor-mid", "buildings/interdimensional-rift-stabilizer-mid", "buildings/jump-gate", "buildings/lunar-base",
       "buildings/metal-mine-mid", "buildings/metal-storage-mid", "buildings/missile-silo-mid", "buildings/moon-robotics-factory",
       "buildings/moon-shipyard", "buildings/research-lab-mid", "buildings/robotics-factory-mid", "buildings/shipyard-mid",
-      "buildings/solar-plant-mid", "ships/battlecruiser", "ships/colony-ship", "ships/cruiser", "ships/destroyer", "ships/heavy-fighter",
+      "buildings/solar-plant-mid", "ships/battlecruiser", "ships/battleship", "ships/bomber", "ships/colony-ship", "ships/cruiser",
+      "ships/destroyer", "ships/heavy-fighter",
     ]);
     const resolved = new Map(appStills.flatMap((src) => {
       const name = loopAnimationNameForStill(src);
@@ -45,7 +46,7 @@ describe("building/ship loop configuration", () => {
     }));
     // Every loop is reachable from the app, plus the three shared-art aliases.
     expect(new Set(resolved.values())).toEqual(new Set(loopNames));
-    expect(resolved.size).toBe(25);
+    expect(resolved.size).toBe(27);
     expect(loopAnimationNameForStill(buildingCatalog.find((building) => building.key === "shipyard")!.asset)).toBe("buildings/shipyard-mid");
     for (const [alias, target] of Object.entries(LOOP_ANIMATION_ALIASES)) {
       const still = (name: string) => readFileSync(new URL(`../public${LOOP_ANIMATION_STILL_BASE}/${name}.webp`, import.meta.url));

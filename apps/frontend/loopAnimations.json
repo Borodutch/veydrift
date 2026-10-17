@@ -107,6 +107,18 @@
     "frames": 84,
     "fps": 24
   },
+  "ships/battleship": {
+    "version": "49b9e131fb1b",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/bomber": {
+    "version": "21621009fb89",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "ships/colony-ship": {
     "version": "0e8a75364604",
     "width": 720,

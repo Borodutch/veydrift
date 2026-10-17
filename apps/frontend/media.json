@@ -29,6 +29,10 @@
       "sha256": "baa77add348c84b326649adc761db88106961dc2f80b51a22005b1708dc76681",
       "bytes": 4296624
     },
+    "animation-variants/05c86e5d6c39e9fe1d41a8b531905239a279cb2f1a1849cf1590441e79e26c72.mp4": {
+      "sha256": "a9e2523e01dc147d3d48c1cc0fe5a2e9d5a0351f7460bdf15a6f0ebf5d8572cc",
+      "bytes": 140804
+    },
     "animation-variants/0659d312d48a48de4a9dbaf195dd4d9335ebd617b8950f72c37d6710512b7452.mp4": {
       "sha256": "562b0c631717cb2bffc7f3ade90e5a5109e4c65f07a6e308467f8a958d42c699",
       "bytes": 216828
@@ -133,6 +137,10 @@
       "sha256": "b0cac6dc2e552a679f79ab0dc15cd35d9f70420d2f7b31efc8b407d71a8fbe95",
       "bytes": 6707
     },
+    "animation-variants/1f8584a4c49fc6ccc0684cdc7abbda3db7c1337fff118fac44ed78e8059d0f73.webm": {
+      "sha256": "cd9812618a6a53f677187200e6713f3de37867bce5bf5c533ae0d52f33d50223",
+      "bytes": 96118
+    },
     "animation-variants/202a010fe8adc34e7b366929b0dfcd0e518a779ef5b025039fcbf13ed0c1b182.webm": {
       "sha256": "04a1c54d997e90881031d0a2b8a307186a037fe68657d25d6efc499b452d7098",
       "bytes": 52897
@@ -145,9 +153,17 @@
       "sha256": "670180ebd5faa4b246c16c0942f7ae1a60e75a916f0e299181a14720dce13e77",
       "bytes": 8793
     },
+    "animation-variants/22fd4c1850c51e762d311b859335183c66069fb0d5cdd17cb6ef4385ba2e4166.webm": {
+      "sha256": "a4221b4fff43185462f95870b22f678378307e52075e8dc1282ba9d779442717",
+      "bytes": 8958
+    },
     "animation-variants/23761cd36c11024fa77af706749b1288a4b5d0b3b4280f1d8c113be38efa1ad7.webp": {
       "sha256": "8e2702698df6420efa941de681f92c9b14a86d8ab45353ec43e1a394e83abe0a",
       "bytes": 102538
+    },
+    "animation-variants/23b092509b36228169eac4efb81d0a4cf2079e5ba1cc4928d1dd26e514bc3767.mp4": {
+      "sha256": "12ec98c4355385842c9e051a34082807ca72ee94e9dc3f166f71301853ca57c3",
+      "bytes": 10823
     },
     "animation-variants/23bcd83aee48d66dbf5e91b50bd49c9f2b18549e861e542b710e97f59520f0dd.mp4": {
       "sha256": "efe5b9f88fd2c933aa4a87e2da31beffb2557992efa65ebb0b0ed4718bab66f4",
@@ -273,6 +289,10 @@
       "sha256": "673a128995df8aa66966415359e3cd54f6377dd504a5732d947d9946742738bd",
       "bytes": 6012
     },
+    "animation-variants/49d38e269c5b72789288d36ff34e0af2a610a2cadceaf9990cd9f7f30de55fb4.mp4": {
+      "sha256": "bffffe376277351b2a039b0be3f35d2cce7ed655f46633073dfa0462ab17384b",
+      "bytes": 26726
+    },
     "animation-variants/4aaeb4f10373fff3c3cbf3371ba9f1773116ccdec6b76ac7f58b1faf9d14f67c.webp": {
       "sha256": "1311aea95212b3c9878db01e2918878187af9d3ff7330fb663e0a2f706965f0b",
       "bytes": 1042306
@@ -301,6 +321,10 @@
       "sha256": "ca80ff9b3f6927231d055645cd62264a1ee60e947b99aca6231fe3fbadd88039",
       "bytes": 916428
     },
+    "animation-variants/52b4a545fd895c5e5fc4c98338ae0349f75509f7fb28ac689f3499bacb09e97f.mp4": {
+      "sha256": "4ef4d415dacda8d52356ae6b43fb19b005452482c6aaac6d66cdc48c0294958a",
+      "bytes": 5388
+    },
     "animation-variants/5388b78dd768bab49bcaee379560bf97fe57465ed31982b8f5f686d3827117e3.webm": {
       "sha256": "a5ed6c84d76c13b191c8f3b4fce4cb7ca3ee6e9822c0c8e373111182daddb6dd",
       "bytes": 5165
@@ -328,6 +352,10 @@
     "animation-variants/5aee24de6f19dd9597b25e2a289ea54fc2c014098dd564cbc62308817429e84b.webm": {
       "sha256": "0ce4942d6424fd52ffb2ada31e1e434ee4805a49161bb5571e188a12925ef768",
       "bytes": 166297
+    },
+    "animation-variants/5b930a72ed40483e8076d2b46de1019b24f348dea394c9c6f58d870613eb730c.mp4": {
+      "sha256": "c6d20a9e154d7a003745ce92c3db444bc28284f84a10677ba3b6877f7790e3c7",
+      "bytes": 37291
     },
     "animation-variants/5b993a5b73382116161d48e297d4d4574a341d3fa702dd6bb287d23c6cb13c4d.webm": {
       "sha256": "4fed41ef87fa1939a0611d742356696e408f93cdf92698aa707f62ace48c6230",
@@ -361,6 +389,10 @@
       "sha256": "308cafa4d32356b8b514428aa7663f5fa6dd948b1c594b13b7727fa80e0c2f3f",
       "bytes": 4795648
     },
+    "animation-variants/5ffeb2425740c4b2c1e593c171f03bd16ee22f1237ca974ee904475ab3d47262.mp4": {
+      "sha256": "463f40f6618416e9cf9cdc0579f61b45b665465386c3d288bd1371bcccd34464",
+      "bytes": 4659
+    },
     "animation-variants/6019ee8b6a5a7e04d613547bcaf2ee083834bba5df335c96fa75291a27335297.mp4": {
       "sha256": "9c93b67bda9062a62ef25fa60c81a4c7800fa5599530c6f22889cc902be22446",
       "bytes": 8196
@@ -368,6 +400,10 @@
     "animation-variants/605692e2fdd687903dd0844e24577cf7525643766eba609fd0b5c5f28b30ab54.mp4": {
       "sha256": "7332f5464473fe8c1876d1b1f4b53e183f32e4946bf2ec2271e6e01ff9e9d552",
       "bytes": 10415
+    },
+    "animation-variants/609ddeafcf7b474950edf04a812eaf3b8f3c95c82dc14da8bac0dbc8a2ca47cf.webm": {
+      "sha256": "d2e0be6c3218c73e7af2a83da28a111b1b8082925aaf3527d546066aebd07edc",
+      "bytes": 148303
     },
     "animation-variants/6125544ee2fac90699eb5c68b4bb9e49045e6b0dd8a5dd2227fe92aaf611fb30.webm": {
       "sha256": "2c98038824bacd26c6d50d2fdacdd5e59877d9bc968f206fa29d6bca06b6dd54",
@@ -508,6 +544,10 @@
     "animation-variants/85bda26416b037646a040381ede9847c85fd4948e3e550a072e4205369edbc81.mp4": {
       "sha256": "cd2aecd7fc275461abbc3a9fb9d5ff84fb4b23890d6a9a993dfe3b7e4913ccca",
       "bytes": 8023
+    },
+    "animation-variants/85db59b34cd4d07d31760845e062f7f0ddbc55a6032ea0e576035ad1439e92ad.webm": {
+      "sha256": "1827075c3405a10a9170c24d0a4aa7dcc5ed5a41528a5036c438b2284d2d4432",
+      "bytes": 30770
     },
     "animation-variants/87dbe393c2d1ec14ade863eb189abe9b868fb0fe149bbeb62b888cd79164686e.webp": {
       "sha256": "853177a0d1096f214b00b23ac6cd011ce646d7ab9efe0ebd8f59e9b391033943",
@@ -713,6 +753,10 @@
       "sha256": "1e533d558698f2cd2b38b6fddaac38e7e8e4eaf23d5ad9076b4d8d895e06c762",
       "bytes": 9901
     },
+    "animation-variants/bfbcc8fa2ec044df8b19706d7c8c651b5a84ccb631ea96749ea0e2368bee2887.webm": {
+      "sha256": "2b82af5e1b6812bf1f6a113cc646deeb7f3d1e77017a7748c01fc2b056956b88",
+      "bytes": 19264
+    },
     "animation-variants/bfea9561347bd04a7680437d8dd83c6d56aefafc08555412b38aeab9f978bc78.mp4": {
       "sha256": "aa41fce10d01d6611542993f53d1c247838ebcf21a7239783759cd45e2f14632",
       "bytes": 12896
@@ -757,6 +801,10 @@
       "sha256": "ce50c272fc3e46b360a219e219a5f2254dbd5a8fcce00843d1befbf8ce476e7c",
       "bytes": 13380
     },
+    "animation-variants/cde2e0b532f56ac48789650325f0b944d1cd60b00bf8eb545a680cdfab9c3f7e.webm": {
+      "sha256": "f5044630e15bec2048748ec5e89998aed72d36d0de131c7864cc86e1e4602ed7",
+      "bytes": 5830
+    },
     "animation-variants/cf43981746f942a5a3d578bc0dd6383274a92b0a4c938c9937f13314883f2c25.webm": {
       "sha256": "930b4df95b0938cc118d5df98ca54eafb2af60cdae1f2f0cc7320641fbb29de0",
       "bytes": 6101
@@ -773,6 +821,10 @@
       "sha256": "616004441a0e2e9635efdb7ee1a48fe26aaf4b0f13ba28d5e518b49f1e3d8464",
       "bytes": 8302
     },
+    "animation-variants/d32fcc97ec1f75002f57bf2fa2c450eaf28167e68ea6ca775c2b747073742ae3.webm": {
+      "sha256": "f299819625783eb89c5d3d418fbe1f2a901866f196bf2d1fa9486778fcc7b405",
+      "bytes": 3199
+    },
     "animation-variants/d39e84d8e8d0945553f907f1de3886b0567d0e607832ca8bd4a316bbf5357740.webm": {
       "sha256": "361b7a17fdc313aa221d120bf247960adc666093c0bfa9b8a7901927cadfbfd3",
       "bytes": 11997
@@ -784,6 +836,10 @@
     "animation-variants/d4fcecfdb3b73c96efa4f197bd6ad88823bc85a046e07e183550cffb52ccccc9.mp4": {
       "sha256": "7b847f211da29740ad6d671b9cf24898de54eb466945bd1c1525d510c58dd63d",
       "bytes": 15841
+    },
+    "animation-variants/d5b290ced40065ff9f5c183d40d3887bbda48cdd53f9d7789e1810d6abd1b69b.mp4": {
+      "sha256": "6ea1e143e4300dbe08a90f90b6e75447d51ef53b2df8f2059948f89d3ef7419c",
+      "bytes": 104547
     },
     "animation-variants/d60491ea37012f480c0e71166e97503e801ee6dab58fe9adec7f97fb7c4d2d01.mp4": {
       "sha256": "f10170231184fa6a398f7bbcf5e2df7c83de3d857a1e247b587de61961dccc5e",
@@ -905,6 +961,10 @@
       "sha256": "a010a010c1fc03c911f61abd62e2b3ea357988b946b31c719c99687e49862d42",
       "bytes": 172228
     },
+    "animation-variants/f3d4b1f59c50b8f24cfd7b28d112c5185757b55277c47ed819b8e64588cd90e7.mp4": {
+      "sha256": "f532a060d129ef6ff20b32163fe23d509c500e8669fe2872a946fa62fdf4d381",
+      "bytes": 8077
+    },
     "animation-variants/f42e3da66e68ce5d40990b4cab604b357dbf9298f15c8b7e88e84f09d342b708.webp": {
       "sha256": "f371298e8130b133fe1a625fff077818551673bbf3924117f89721b3454fbc39",
       "bytes": 92508
@@ -920,6 +980,10 @@
     "animation-variants/f9ec23cbc75bc5bc0e6719578bdc35077e32823c771dd5a26f9980d6dcb5649b.mp4": {
       "sha256": "97781a6712dee74220605d8f1de525f08aa6c8b55ecfcaf070ccaba3423cf9a2",
       "bytes": 7567
+    },
+    "animation-variants/f9fd99b95a54955d4450a63f7247d19380e56d692cf589e5b141c62730006034.webm": {
+      "sha256": "b104f8251b3e642c0c02540f6da7390275a11a24282a103d6b7c9556cdee75de",
+      "bytes": 4212
     },
     "animation-variants/fb171d2d6723290444a59a825f2ec941aeb1c0fe8a06d24f5ffce22e9a12112e.webp": {
       "sha256": "846996ca1fcce0c3f74260d891a67e96a67791e6fa1417e1c76953a52bba910d",
@@ -946,8 +1010,8 @@
       "bytes": 39767
     },
     "animation-variants/manifest.json": {
-      "sha256": "0d87335e4eece0bab79970d5ec6aa94c5b26738b77e002ab549874ae3a5f42a8",
-      "bytes": 55864
+      "sha256": "c976a3d002b9e8863aaf6e159f063b5a77fb01c773a038fbaae53acbc06c0a74",
+      "bytes": 59496
     },
     "assets/game/loop-masters/buildings/crystal-mine-mid.mp4": {
       "sha256": "5c57f74d6ed6527218f053e2f591df6d16c51916583b3dd2e33607066726487c",
@@ -1037,6 +1101,16 @@
     "assets/game/loop-masters/ships/battlecruiser.mp4": {
       "sha256": "ebee0b7ea9946a1bf7c84685c15a325eff1524fd1fafd952ed6e9625e91c6be6",
       "bytes": 758851,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/ships/battleship.mp4": {
+      "sha256": "63f3ea91cc49ae16321bbf407f0245fd9c181fc382378ad139013a6047481cab",
+      "bytes": 938643,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/ships/bomber.mp4": {
+      "sha256": "a1f2ca5408df3663f7559bf5dfece5b86ff4902278577a22877c9d7b0a51e845",
+      "bytes": 1178806,
       "publishOnly": true
     },
     "assets/game/loop-masters/ships/colony-ship.mp4": {
