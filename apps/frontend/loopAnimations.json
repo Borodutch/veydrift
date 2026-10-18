@@ -173,6 +173,18 @@
     "frames": 84,
     "fps": 24
   },
+  "research/combustion-drive": {
+    "version": "b3e0fdc0091e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/energy": {
+    "version": "e6d4a13406e3",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "ships/battlecruiser": {
     "version": "2748c7ab9c34",
     "width": 720,
