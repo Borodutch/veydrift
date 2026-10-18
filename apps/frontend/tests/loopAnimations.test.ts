@@ -33,7 +33,7 @@ const request = (path: string, headers: Record<string, string> = {}) => frontend
 const hasTool = (name: string) => { try { execFileSync(name, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
 
 describe("building/ship loop configuration", () => {
-  test("ships the 45 approved loops, each resolved from the still the app actually renders", () => {
+  test("ships the 47 approved loops, each resolved from the still the app actually renders", () => {
     expect(loopNames.sort()).toEqual([
       "buildings/crystal-mine-mid", "buildings/crystal-storage-mid", "buildings/deuterium-synthesizer-mid", "buildings/deuterium-tank-mid",
       "buildings/fusion-reactor-mid", "buildings/interdimensional-rift-stabilizer-mid", "buildings/jump-gate", "buildings/lunar-base",
@@ -42,7 +42,7 @@ describe("building/ship loop configuration", () => {
       "buildings/solar-plant-mid", "defenses/anti-ballistic-missile", "defenses/gauss-cannon", "defenses/heavy-laser",
       "defenses/interplanetary-missile", "defenses/ion-cannon", "defenses/large-shield-dome", "defenses/light-laser",
       "defenses/plasma-turret", "defenses/rocket-launcher", "defenses/small-shield-dome", "research/armor", "research/astrophysics",
-      "ships/battlecruiser", "ships/battleship",
+      "research/combustion-drive", "research/energy", "ships/battlecruiser", "ships/battleship",
       "ships/bomber", "ships/colony-ship", "ships/crawler-approved", "ships/cruiser", "ships/deathstar", "ships/destroyer",
       "ships/heavy-fighter", "ships/large-cargo", "ships/light-fighter", "ships/pathfinder", "ships/reaper-symmetric", "ships/recycler",
       "ships/small-cargo", "ships/solar-satellite",
@@ -55,11 +55,11 @@ describe("building/ship loop configuration", () => {
     }));
     // Every loop is reachable from the app, plus the three shared-art aliases.
     expect(new Set(resolved.values())).toEqual(new Set(loopNames));
-    expect(resolved.size).toBe(48);
+    expect(resolved.size).toBe(50);
     expect(loopAnimationNameForStill(buildingCatalog.find((building) => building.key === "shipyard")!.asset)).toBe("buildings/shipyard-mid");
     // Research surfaces (tiles, detail, queues, planet/empire rows) all render the catalog asset.
-    for (const key of ["armor", "astrophysics"] as const) {
-      expect(loopAnimationNameForStill(researchCatalog.find((research) => research.key === key)!.asset)).toBe(`research/${key}`);
+    for (const [key, name] of [["armor", "armor"], ["astrophysics", "astrophysics"], ["combustionDrive", "combustion-drive"], ["energy", "energy"]]) {
+      expect(loopAnimationNameForStill(researchCatalog.find((research) => research.key === key)!.asset)).toBe(`research/${name}`);
     }
     for (const [alias, target] of Object.entries(LOOP_ANIMATION_ALIASES)) {
       const still = (name: string) => readFileSync(new URL(`../public${LOOP_ANIMATION_STILL_BASE}/${name}.webp`, import.meta.url));

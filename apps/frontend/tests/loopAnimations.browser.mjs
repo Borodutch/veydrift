@@ -92,9 +92,11 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await open();
     const { loops, noLoopStill, stills } = await evaluate("window.loopFixture");
     const looped = Object.entries(stills).filter(([, name]) => name);
-    const researchLoops = ["armor", "astrophysics"];
-    assert.equal(new Set(looped.map(([, name]) => name)).size, 45);
-    assert.equal(looped.length, 48, "45 loops plus 3 shared-art aliases");
+    // Research catalog key -> loop name (the still's file stem).
+    const researchLoopByKey = { armor: "armor", astrophysics: "astrophysics", combustionDrive: "combustion-drive", energy: "energy" };
+    const researchLoops = Object.values(researchLoopByKey);
+    assert.equal(new Set(looped.map(([, name]) => name)).size, 47);
+    assert.equal(looped.length, 50, "47 loops plus 3 shared-art aliases");
     const unlooped = Object.keys(stills).filter(src => !stills[src]);
     assert.ok(unlooped.length > 0 && unlooped.every(src => /^\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/.test(src) && !researchLoops.some(name => src.endsWith(`/${name}.webp`))),
       "every building, ship and defense still has a loop; only research without one keeps its still");
@@ -197,7 +199,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       const m = t.querySelector('video, img'); return [t.dataset.researchTile, m.tagName === 'VIDEO' ? m.currentSrc : m.getAttribute('src')];
     }))`);
     for (const [key, src] of Object.entries(researchTiles)) {
-      const name = researchLoops.find(loop => key === loop);
+      const name = researchLoopByKey[key];
       if (name) assert.match(src, new RegExp(`/assets/game/loops/research/${name}\\.webm\\?size=512&v=${loops[`research/${name}`].version}$`), key);
       else assert.match(src, /\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/, `${key} has no loop and keeps its still`);
     }
