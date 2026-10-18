@@ -179,8 +179,74 @@
     "frames": 84,
     "fps": 24
   },
+  "research/computer": {
+    "version": "b041ecddcd4e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
   "research/energy": {
     "version": "e6d4a13406e3",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/graviton": {
+    "version": "90885b1792fa",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/hyperspace": {
+    "version": "7b68408576b8",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/hyperspace-drive": {
+    "version": "cf9f87d495a1",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/impulse-drive": {
+    "version": "33731da6b00d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/intergalactic-research-network": {
+    "version": "cb4a5d014b6b",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/ion": {
+    "version": "9c398493039e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/laser": {
+    "version": "1a5328217db5",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/plasma": {
+    "version": "d00f3f615c5c",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/shielding": {
+    "version": "a4e8fb0d452a",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/weapons": {
+    "version": "bb36d17d00d4",
     "width": 720,
     "frames": 84,
     "fps": 24

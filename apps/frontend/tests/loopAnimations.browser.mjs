@@ -93,13 +93,16 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     const { loops, noLoopStill, stills } = await evaluate("window.loopFixture");
     const looped = Object.entries(stills).filter(([, name]) => name);
     // Research catalog key -> loop name (the still's file stem).
-    const researchLoopByKey = { armor: "armor", astrophysics: "astrophysics", combustionDrive: "combustion-drive", energy: "energy" };
+    const researchLoopByKey = {
+      armor: "armor", astrophysics: "astrophysics", combustionDrive: "combustion-drive", computer: "computer", energy: "energy",
+      graviton: "graviton", hyperspace: "hyperspace", hyperspaceDrive: "hyperspace-drive", impulseDrive: "impulse-drive",
+      intergalacticResearchNetwork: "intergalactic-research-network", ion: "ion", laser: "laser", plasma: "plasma",
+      shielding: "shielding", weapons: "weapons",
+    };
     const researchLoops = Object.values(researchLoopByKey);
-    assert.equal(new Set(looped.map(([, name]) => name)).size, 47);
-    assert.equal(looped.length, 50, "47 loops plus 3 shared-art aliases");
-    const unlooped = Object.keys(stills).filter(src => !stills[src]);
-    assert.ok(unlooped.length > 0 && unlooped.every(src => /^\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/.test(src) && !researchLoops.some(name => src.endsWith(`/${name}.webp`))),
-      "every building, ship and defense still has a loop; only research without one keeps its still");
+    assert.equal(new Set(looped.map(([, name]) => name)).size, 58);
+    assert.equal(looped.length, 61, "58 loops plus 3 shared-art aliases");
+    assert.deepEqual(Object.keys(stills).filter(src => !stills[src]), [], "every building, ship, defense and research still has a loop");
 
     // On-screen loops: 64 CSS px at 2x picks the 128 variant, WebM first, poster from the still's sizes.
     await until(`Array.from(document.querySelectorAll('[data-tile] video')).every(v => v.readyState >= 2 && !v.paused)`, "on-screen loops did not start");
@@ -198,10 +201,10 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     const researchTiles = await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('[data-research-tile]')).map(t => {
       const m = t.querySelector('video, img'); return [t.dataset.researchTile, m.tagName === 'VIDEO' ? m.currentSrc : m.getAttribute('src')];
     }))`);
+    assert.deepEqual(Object.keys(researchTiles).sort(), Object.keys(researchLoopByKey).sort(), "one tile per research");
     for (const [key, src] of Object.entries(researchTiles)) {
       const name = researchLoopByKey[key];
-      if (name) assert.match(src, new RegExp(`/assets/game/loops/research/${name}\\.webm\\?size=512&v=${loops[`research/${name}`].version}$`), key);
-      else assert.match(src, /\/assets\/game\/style-pass\/generated\/research\/[a-z-]+\.webp$/, `${key} has no loop and keeps its still`);
+      assert.match(src, new RegExp(`/assets/game/loops/research/${name}\\.webm\\?size=512&v=${loops[`research/${name}`].version}$`), key);
     }
     assert.match(await evaluate("document.querySelector('[data-research-queue] video').currentSrc"), /\/research\/armor\.webm\?size=(64|128)&v=/);
     const armorStill = "/assets/game/style-pass/generated/research/armor.webp";

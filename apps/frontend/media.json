@@ -1,6 +1,14 @@
 {
   "baseUrl": "https://github.com/Borodutch/veydrift/releases/download/media-v1/",
   "files": {
+    "animation-variants/00da00c19b25343e09016ffbfe20b6548f97a835b20edc4f7cf1a9ebb6b413ce.webm": {
+      "sha256": "7777b4ddd40a76d7af6befa076953009fa2917b7cd4ed9fb9ee6fdbe9ebf2923",
+      "bytes": 75366
+    },
+    "animation-variants/01a75d5dc66c322c5ea2606ce2b78452934339b19e8bc52e3207341b9dd8da2f.webm": {
+      "sha256": "6dbe578933de3e41c19fae727ad335bad11a5974bc26d9d522e7d8f19e0d61ad",
+      "bytes": 89662
+    },
     "animation-variants/01eb4982e55eb3045709a8f20f4b7b0b5f6c5726514e3d93d43032b3c50d7fac.webp": {
       "sha256": "12a01903dec42ebdb29b1207e4b0f7593e4d5799b1abceafe513ae5c05b94fa0",
       "bytes": 1177778
@@ -44,6 +52,10 @@
     "animation-variants/0538f7a27ba283bd70dc36f44e6dd9a8e3ebad297b9d877fa10e7ee7e949dee4.webm": {
       "sha256": "e4c405c2b62b153f9eee36e2d38067c8c8cfe0399f5384dece9b1c0d3333c833",
       "bytes": 67461
+    },
+    "animation-variants/05c1747339b48a23c00ad470dd14b01203741b57e189fdcc8825eab8285194a5.mp4": {
+      "sha256": "de22a450d3b1a7cb6369c08c14a656b9e80c10f37783bc8397676cee4726e912",
+      "bytes": 43034
     },
     "animation-variants/05c86e5d6c39e9fe1d41a8b531905239a279cb2f1a1849cf1590441e79e26c72.mp4": {
       "sha256": "a9e2523e01dc147d3d48c1cc0fe5a2e9d5a0351f7460bdf15a6f0ebf5d8572cc",
@@ -245,6 +257,10 @@
       "sha256": "c25c25734581403db269c6aa6d8d358dc40714b35fd7b445a866851736afca7d",
       "bytes": 1445216
     },
+    "animation-variants/21114e48ede47e00bac7080d147fdb4209cb618961961ee40d411b16b906adf6.webm": {
+      "sha256": "ff94249d9dfc58e798a81369249b985f6134bcba36eb3b365c938f3fe86721f8",
+      "bytes": 33895
+    },
     "animation-variants/219aaebc5281448987318ae9073f8f5fbe47268f075556e5f7b528c5af37851e.webm": {
       "sha256": "670180ebd5faa4b246c16c0942f7ae1a60e75a916f0e299181a14720dce13e77",
       "bytes": 8793
@@ -273,6 +289,18 @@
       "sha256": "efe5b9f88fd2c933aa4a87e2da31beffb2557992efa65ebb0b0ed4718bab66f4",
       "bytes": 6035
     },
+    "animation-variants/23d025b7456f3ec05fe8b0f092dff495a06ced665f11c407e5fac0de21c83ed8.mp4": {
+      "sha256": "7f6f0922db53441a41afe90be943163b2f6e9e110ece4258003d1e75235b9cda",
+      "bytes": 66526
+    },
+    "animation-variants/244d1aab830a1c10e4e45e0715b78de3aee61e3076862fb94c318289b7d5c5a2.webm": {
+      "sha256": "2c18c52931cc0a68e25163ceded1e5efbb8f6d67c9a488bf08f4582ff8927874",
+      "bytes": 267719
+    },
+    "animation-variants/24933b95ab5b3c89642151601b2b7c22af2d75275fe20e9af15853d6a1dcd535.mp4": {
+      "sha256": "529cb1af0e507aa736f1544b36f8d9764cb829114928694bcb7d9fa29b6f82b1",
+      "bytes": 22909
+    },
     "animation-variants/24a956ead9d4a8a55f4b9e188086cf46e9e112ae2f0d7d6ec1e29f80ecb2408e.webp": {
       "sha256": "f94d39f8edc37f51d34479820af6a0c8e93f62f140145a9a521df1c76b36f72a",
       "bytes": 978320
@@ -281,9 +309,21 @@
       "sha256": "4711fbeec1b233252deb75526cdf53c5dddb134b317211dc439cb9770567b670",
       "bytes": 8532
     },
+    "animation-variants/25256b429681e210c091a37b890eec371f3f9bddf2bc03087b5c324cd783f852.mp4": {
+      "sha256": "fc56d84bb1515f0116f2d845b2e9c5010e486fa9b8ea5232354463d82716d557",
+      "bytes": 46203
+    },
     "animation-variants/258d9e9ec1e893ebfa8f465e0d5b1077adc4c2ea6d43184bfa805354989dc3bd.webm": {
       "sha256": "6c448d0101e3c75459f0bd2f79e9bf78eef23f6f2941f370c7dcf8e0e955c995",
       "bytes": 307625
+    },
+    "animation-variants/26a81e787b44dc0d7b13a3dca3c9966683e8c9e187a89563f409c260d2713a77.mp4": {
+      "sha256": "e313bce3fa781611e94e8d249f4b6b2284e34ef3328c46fab4b4f1cf3700d774",
+      "bytes": 52059
+    },
+    "animation-variants/26ea6ea37003ca0f7d51a0697d3d19f6d34bd804c3e2ff6895d9e866897df0f8.mp4": {
+      "sha256": "322ac838ac3b15ea72b86701535e531574fb785097ff88f1c52e6e9275e522d4",
+      "bytes": 189686
     },
     "animation-variants/2729305b4a0b77300639df4f3a48c05a8e8f0a3cc7bebcd23ad340111c8b5bc7.webm": {
       "sha256": "02d205ff880febcb43fab4130e0aa39113de739acfd64907ae4fe95a0700b808",
@@ -313,9 +353,21 @@
       "sha256": "7f055d2073216b361fb5911b674207776164d2c69079629e62219942177d5ef6",
       "bytes": 11500
     },
+    "animation-variants/29a3bcdb286e6f41397226c3e704c1a6bcb79ef8547b77a6d23751707815ce90.webm": {
+      "sha256": "ad693c42d31476f85d3fa870876030c8888ac3e0b4d67e6341fbc85876d9413c",
+      "bytes": 241942
+    },
+    "animation-variants/2adff4f87045751a52aaf596b0eddda194e1f7062cbc0d429c117e3d959cc475.mp4": {
+      "sha256": "b7501dd9389412f4764a52e482911847804366624edfed4e21800fa39c0d9934",
+      "bytes": 13608
+    },
     "animation-variants/2af28bd89ff74a341062dc659aebfd971e18352e2f81ede955f293b051aab8b4.webm": {
       "sha256": "def0c4d982c280d2ced92191355b5bae2f17ab273eb9e386af4112596415a33d",
       "bytes": 15718
+    },
+    "animation-variants/2b17e1c399efec1d388cd2d2f76c4eaadf828dce391cdabd0751b66f7933f1d8.webm": {
+      "sha256": "455bcf1c521ddd0ca0f53b0ed4907e31a41b9dce52d9079de30cb7015cc91e0a",
+      "bytes": 11106
     },
     "animation-variants/2b2074af3d364300efc95a11d18049ff39546a800c34c910294e6cac7b028bb1.mp4": {
       "sha256": "7061f6d106413c377290e1f4e1b5f3a60466b05177c0d20eb52606a534c46956",
@@ -324,6 +376,10 @@
     "animation-variants/2b2da68236bf21a07c5f3bfc3c6e3001acef8c3852d3b2284a9a6fa21cfaf4a1.webm": {
       "sha256": "9ddec89b3109c10ca69ac756f9afcb766c7f104f3418a646d54d321525771b9c",
       "bytes": 194723
+    },
+    "animation-variants/2ce3f71488119b031b99282e1e072fc5d1b0d72b98490f430fa75ffffe16ab0e.webm": {
+      "sha256": "1fed5e710f2251b228ca539651fe3fab6838f928baaf921cbf30f7648dbd1e87",
+      "bytes": 32879
     },
     "animation-variants/2d3c4a4a6b5dd7e9d0229a90b1403869356a0ef3122c64e454f33be141a6c626.webm": {
       "sha256": "d12804b979bf96fb8f9c70fa46c738b07768d5f5aa3ddb91cca4a43bd7cf9c4b",
@@ -345,6 +401,10 @@
       "sha256": "70305db4c9968522f290f9a9c18f01ae15dc4070488cfc447e613efa7bec3e52",
       "bytes": 51862
     },
+    "animation-variants/2e4bbdbd80890870595c6e71323cc246517db4bd66099da8d1105054b6dfbf39.webm": {
+      "sha256": "2051e684879d5f3d955f30540066bb1a4334a9af05ac0c228c68f0bf789a9860",
+      "bytes": 77616
+    },
     "animation-variants/2e9dc729c24b70e5c3879d826b6ebac7dece435220cc40a423255666261f1851.webm": {
       "sha256": "47e94ac930a56f620cf777accd767083bce40729988f27fd2a58f05bd323ab16",
       "bytes": 3958
@@ -353,9 +413,21 @@
       "sha256": "5b5ef27154fd8cb3ed5081acfd0e0daddf936dfa7c6e49d49e663161fe2003f5",
       "bytes": 18731
     },
+    "animation-variants/3065c6f26b8ca00f5a5e087eb2fff86936688874cafbb6ef7ceb4ce2ee31e14f.webm": {
+      "sha256": "4b6989522485d92236dcb71a5d04bdfd4c0a91553ef5f4bdf728bd75896cbeb5",
+      "bytes": 121915
+    },
+    "animation-variants/314669c8c4afe783af9476c38f8abfcb0808990d07ba7b1bee3738a5e2abd58a.mp4": {
+      "sha256": "f241b17984f37ad078f71227419650e8d878a5e9040e5b99578dde9a4b4482ac",
+      "bytes": 57247
+    },
     "animation-variants/31d5c3974c5a9e5659c8ca1f347f0e12bbd3c387549d0954ddbc85ad27c2aa61.mp4": {
       "sha256": "2b7bdc714beab5442c5a52a573610b33b5870de576dcc49d00fb1ca64bff7441",
       "bytes": 114834
+    },
+    "animation-variants/31e5d04d0f693102839e724a89bdf1a829a270c9ede5701c52777b51f5a9d6e3.webm": {
+      "sha256": "f687739899340894c96edb8bcf33eb087245e2f4c4c080f707ec2b22eb5215c2",
+      "bytes": 67394
     },
     "animation-variants/3252728963a7709cb53c6c27f4abefe86375931e07f45898e2ebb1c3a0b28247.mp4": {
       "sha256": "81a0638ad676e3f35b272d1010e7b7c7fc1e7089055e47e6a2318d412ff5c39a",
@@ -364,6 +436,10 @@
     "animation-variants/327b671c4e79391dee90ed3eb80a079929c8a8be1979ed3fb8308b423fbc7d6e.mp4": {
       "sha256": "78e7771275733a3d0dc839582eca100942a9a606e9bbf52bd3cb75f2eb1815ce",
       "bytes": 9651
+    },
+    "animation-variants/33d437c187beae4ed7af72525eba4101269093b6f3a1e07b011e2ba83222bd56.mp4": {
+      "sha256": "c503e30e291b55443fcd53f8f407851c088043aba4e4ab17fa964d947dc4d721",
+      "bytes": 112858
     },
     "animation-variants/349404f58d95966027755be470816d41c55a15f525b789b5293d9f45feb4c8e5.mp4": {
       "sha256": "660f149b545b0957bf9177cb3cb0654f1e2f30ec227ab803b43e96f87f54456e",
@@ -405,6 +481,10 @@
       "sha256": "fd3b7d686819ad81331f674e62196e4a3f2355798c9242d785d656a58497c7de",
       "bytes": 170996
     },
+    "animation-variants/3878e9355a9bb7448f0269ac5eab7b7e005fa78f27b4ec197531f3b87b97800b.mp4": {
+      "sha256": "408dcb79fdd75e9a4ecc909bcf32e7aa91e433da12841af64253ffbd7966b179",
+      "bytes": 14655
+    },
     "animation-variants/38e1378e6a185930058f8530edcec9005488b419461b98d07f0ddd0601436a0e.webp": {
       "sha256": "0d29d9030702deeb11da354f45f7f01f92d1a878c7b73b1fda4dfc7880a53cf8",
       "bytes": 5913166
@@ -421,6 +501,10 @@
       "sha256": "fa708095b371ee588bd6f8b7fa62a252fe49c18d5ae85a504a76c3b8b8fc4625",
       "bytes": 4067
     },
+    "animation-variants/3c18f0a5460a4aa82938f10e52acf2d851f5940687a1edf12be5cf2113f499a1.webm": {
+      "sha256": "396f2d0c12112aa07555aa9834c27644b63421188743f912a1a06847772174e9",
+      "bytes": 227253
+    },
     "animation-variants/3c46eda750bafe5dd19766515647a50018a96b2c1ff101b9a144fccdcce2f556.webm": {
       "sha256": "2fb21ae0cbfe7872e4b1b4f749c62cf0ed605123191bde4407de16b531b99233",
       "bytes": 16132
@@ -432,6 +516,14 @@
     "animation-variants/3d37c3d7c97a0af17baeecff74fe00ec9d8aa4230d0bd3cbcc1719c56b2a6428.webm": {
       "sha256": "2143a45fc5bb0ef1becd089ca3e62e8226624735fad3608d255ee58d2742f24b",
       "bytes": 12316
+    },
+    "animation-variants/3d3ae8539c44407bf7be3fed6f1221a72c9f3a841b34e1574d2fa4a608b5b2d6.mp4": {
+      "sha256": "ad6aa3ae467343ae318bdb5b64b2e85ec7ac80f83be846173911753a39b94afb",
+      "bytes": 168407
+    },
+    "animation-variants/3d8c8044a29166648703bfb698c180a51910d02bbf31c3af04d58bce295fa389.webm": {
+      "sha256": "e4ca76cc9a525902899e2755cab7d6fd11fe4d9f816dfcd9a1efde293970afff",
+      "bytes": 229793
     },
     "animation-variants/3d94bf6cbc6e534470b9a1f09bb57101909a6aa11b56b9b0bd06e1d721b8d269.webm": {
       "sha256": "4d663bf86b29d7eafe6f8e3efd9386268255085a8652b2b524fba9fe60ba9f81",
@@ -461,9 +553,17 @@
       "sha256": "ef7315909d2c261504264e7d6e41f84d683ede32da1518baa9679307845bd3cb",
       "bytes": 142500
     },
+    "animation-variants/40edd8d3555ab5e217021933af91d9d9884016ebded0f003c86962bc8b9d891f.mp4": {
+      "sha256": "4993e6aeeea3f691ff589a081294c1f2adb499146e598a8838871775a04a94f1",
+      "bytes": 227892
+    },
     "animation-variants/412b3e72d30aa22c06cd70d64d15c95df10a164171d2cc89863f6da7e898086e.mp4": {
       "sha256": "01c0cbc60cf249ed1059e77b272246c1f8513f306827b83ff95274c6f2209758",
       "bytes": 9187
+    },
+    "animation-variants/41b3f8ac02da572b92e75ad1021cefda69e4c4dbf04c44ee7cc19426f8af7e82.webm": {
+      "sha256": "e9c77e390f4ef47f433800541ef1c3d94cf2b459e3d9a0761c2ac0136b2dfb84",
+      "bytes": 57178
     },
     "animation-variants/41c656bf47cf530f9d7f5eb098a400a4d9c17929855e4dc540eefc826b443bda.webm": {
       "sha256": "5801683e4762dcf18d6e1f8a98a7adb7841110bb257b9b2c9c719a10c2a0369f",
@@ -488,6 +588,10 @@
     "animation-variants/4521cdbdc971e38c139ce9f3472f32e8fb38992046b01b19adf558e3311b1ff8.mp4": {
       "sha256": "7a1324ece3654a66f7bbb5986fc1d25b961f20f653aa67aba1a3a99d700618ee",
       "bytes": 66674
+    },
+    "animation-variants/452f29b5c583ff4b98b5ff99c2912b1c92ed56852621f58537b0dc656e77d4ed.mp4": {
+      "sha256": "a7c1742c59384c1af4f7cb8c61d5e59ef597c1885eb9548e0e7f93f7b8f4a321",
+      "bytes": 61836
     },
     "animation-variants/4594542929eab0067cdcf4c6d8ceb9701acc74238570c7ae6a6860cfe87f7eec.webm": {
       "sha256": "926f79c6b2c413ff2d34866e4ca9062e128d65110d57e4f53630fffc41964036",
@@ -520,6 +624,14 @@
     "animation-variants/466925fdd08f00c7c49d3725b72f6a74d46f64d6a7573c39f28909fa35058b42.webm": {
       "sha256": "c73e3cfbcabef4d92de1892f31fc7e8bf2b47bbab02236002609a6bb412368d6",
       "bytes": 29936
+    },
+    "animation-variants/466a94f835fe07ab749bdda3fbe89bc6363e0642eb826671857af72df7e244ad.webm": {
+      "sha256": "7008d86954228e197c8dfa62dc8a202944f1cd24ad107e55bb89c6d5dc03c57a",
+      "bytes": 15294
+    },
+    "animation-variants/46f8e5bf68af1d2dc7204f392411642953012b54b63c56ca6feb6e5ff90b9df6.webm": {
+      "sha256": "55a0e2d566c2257f0b8d570298d72f01b60487299e110237a70820d5ae352389",
+      "bytes": 186602
     },
     "animation-variants/47a89ef9a5a28d8470c30c3ac5c9c3f765349e137d3fd4355eee1e6906a90f3d.webp": {
       "sha256": "ca716298cc46f7b711f08381be8544142a8abbb9b911bcdd12ab81dffc7b7a41",
@@ -577,9 +689,17 @@
       "sha256": "0bdbbd44366f49fe59f32941f187d180e0c1723fc93e171489883dd6386dd89c",
       "bytes": 12785
     },
+    "animation-variants/4de8c9578091f280bdfa291cc0cc113fdea41fd286093d162bc5e233e31521a5.webm": {
+      "sha256": "354ea9da0eaa47f5291ea383d3755d278365b6a908eaa83832a27c1cfcb0affd",
+      "bytes": 21028
+    },
     "animation-variants/4dfc5b1eee0da5f2ec50bd577a218e7d9a7890e247be3cfe16b62b3bb8d97f93.mp4": {
       "sha256": "cfd848bbd7ee278e5230f010c41f4d9f35c56a7bdfafb94f88f080bff8b4ffe3",
       "bytes": 35374
+    },
+    "animation-variants/4e340f27201361f397afabf8508f65a3eb12ce4b0e03a1e7bc93a3fc43d4196e.webm": {
+      "sha256": "1f4d59f48e84ebc47c0eec29677a80ed35f730161f08542edf761dd6773f2272",
+      "bytes": 11290
     },
     "animation-variants/4eaab26eefb045822afa1844fda92be3d72b02221072adc520d1eb882a782723.webp": {
       "sha256": "f5b07ad70de289eb8f506c345aaef9216b4c103573d2bf2f9bbbcd6c34172830",
@@ -628,6 +748,10 @@
     "animation-variants/538b0bcf75aeb568643833c97679225e0399b4d56d95b264515f05d205d16a2d.mp4": {
       "sha256": "e58ea257515d7728a6e296934e026360c57377a9c5957af996b2076609d2517f",
       "bytes": 109059
+    },
+    "animation-variants/549a22d21908053b997826c099eed91f478735d9061e239c94415e7bc34075ba.mp4": {
+      "sha256": "c70c86b73ab914010313341bda0fc4f470d02133727911aabf0270e4cdde06bd",
+      "bytes": 168124
     },
     "animation-variants/55c9c2cbbfd20f6b7f135afd44366e2d6e0224e15437ab9f18c5687473fb576e.webm": {
       "sha256": "76d8f4076bbcc0034e48fcfb4b0818f7c71000c5d1d4e59417b9dba7836ebe70",
@@ -705,6 +829,10 @@
       "sha256": "46deee499f17c04d943f1bc51ca946dbacd612a5fbb849e92b48ba26061465da",
       "bytes": 45715
     },
+    "animation-variants/5d22d4ae490f5fc2bb74b821fd5cc007558bf3557a1e9ba57e4732719cb54a6b.webm": {
+      "sha256": "f7579ed366a792dadd1724b03eea9f57851b456af1df1d110c2a1f144a9f4f31",
+      "bytes": 11068
+    },
     "animation-variants/5d6bb37357da04d273ae51f2bc205268ee102a3c84578712e060f1d4d7e74dff.mp4": {
       "sha256": "fb45276403ab775ed918ce38fecb27805106d614f434611b9f4974c7d717c4a5",
       "bytes": 41489
@@ -732,6 +860,10 @@
     "animation-variants/5ffeb2425740c4b2c1e593c171f03bd16ee22f1237ca974ee904475ab3d47262.mp4": {
       "sha256": "463f40f6618416e9cf9cdc0579f61b45b665465386c3d288bd1371bcccd34464",
       "bytes": 4659
+    },
+    "animation-variants/600122ec8509528755b6b7820cd7e9a771a2e7a725c3dc9f56c4fa0f4128568b.mp4": {
+      "sha256": "246bf761fec1564a327ecdb51d788d38bd3e683b2a7bcd9d38ab1c58246d8b8f",
+      "bytes": 33354
     },
     "animation-variants/6019ee8b6a5a7e04d613547bcaf2ee083834bba5df335c96fa75291a27335297.mp4": {
       "sha256": "9c93b67bda9062a62ef25fa60c81a4c7800fa5599530c6f22889cc902be22446",
@@ -765,6 +897,14 @@
       "sha256": "6e6347009954350b9824b2b7aedbd697fb7eb3c0300291ec4effa070ca18c140",
       "bytes": 25223
     },
+    "animation-variants/63e0c72d6f81913c138c2d47aa9b6a3ae34820fda522c293bf623a21d07b8b56.mp4": {
+      "sha256": "40c6ea845e1c49fbcb8a695ed419b17e8641286118c4562412431a261c8a482a",
+      "bytes": 167965
+    },
+    "animation-variants/64a5c258b1d7427a00945d28d2e707ab00a6ead83c2f49f0e8dacb798e585c13.mp4": {
+      "sha256": "7d5433073b830fd9f3dac889f1bc7cd08150cac7fcbb925026fd74dd9b17c9f1",
+      "bytes": 11906
+    },
     "animation-variants/64aa87f642f41353823e663a5cbfc42d5e91850caac80f31c33d168df5812768.webm": {
       "sha256": "9e78b07afba302c22f4ecccf9a5b0f1d78ceb49444e85624d93fff3ebf7a2b19",
       "bytes": 69237
@@ -784,6 +924,14 @@
     "animation-variants/6978249d44d2d0242f2ab94a0c807326fb512dbbe305927f0c062be2f1a57ee5.mp4": {
       "sha256": "83d7eaede7d46ceb63d3719dd35a0cd5f079fde92a680d4a83275c906dbce648",
       "bytes": 41313
+    },
+    "animation-variants/6985b77520d544fade0ef58114ce6aeb20fbd9aed64124551b52f6603955d21f.mp4": {
+      "sha256": "035e7ff819ef83a80cae44f383e93a6c925fd568e337843322f4c386f3187b48",
+      "bytes": 8939
+    },
+    "animation-variants/6a04bc9601395b80e23d52cbf5e9958d4f9e238b3164594558c928d9b754252f.webm": {
+      "sha256": "2ef3f3cbbb470c18d3a63a956cda944cda0c40749dfdded16e2663eb1764e95a",
+      "bytes": 294556
     },
     "animation-variants/6b2f68efa5c0e678e91a1156349bb05a1bf919efcd499d918a3458ccb1dc159e.mp4": {
       "sha256": "070ac52d4ecea7c286e3a64eb2de889bb8be8c2c9feadcf7139c0dbfe1aeba23",
@@ -829,6 +977,14 @@
       "sha256": "8206e69158ffa4a8f484121a3d662a910484ea25122ae7f7f7097bae70add645",
       "bytes": 226915
     },
+    "animation-variants/723038c101c51ff3903e48f26e57764d54e8174e50eddcbd35c885cd1a646e94.webm": {
+      "sha256": "bd5c73e733b5d8eb416c67f0d008b3ae6aa79e6ff30f2968aca2b07744eacb84",
+      "bytes": 17017
+    },
+    "animation-variants/7235c7f41605a9fc9ba94e26cee8d10db70e4846e83b2402af6873c0cd58ecb5.mp4": {
+      "sha256": "a09cd4cae0e2dc0eef8fbc91b0e691fe4ed519b21fe172a3504bda67caeca189",
+      "bytes": 83816
+    },
     "animation-variants/737d1a829a7587c15e57db8ffd584fb5697817d388173b9db44d2ceb7725420d.webm": {
       "sha256": "bd600dadefd57e004756c556ecc16e8878d8360d4e020249580c471acec474d2",
       "bytes": 16523
@@ -840,6 +996,10 @@
     "animation-variants/745e2d4ef7e939008167c30c9490809f2168260a8f03a8185d255f547c9e916c.webm": {
       "sha256": "f6ac5bfd808bac65e136992b0ade1ec51aaa34b9c6854e1fe88ae90ccb21c3e8",
       "bytes": 6229
+    },
+    "animation-variants/757dc16abfb08e5a1f309c90111ff33465ffe98eb3f2f49a337702bb38a2cc28.mp4": {
+      "sha256": "c159c23e3f43c937e1988ddb6b1fce34f80700777f49faccaae0de3481860725",
+      "bytes": 21981
     },
     "animation-variants/76588b6f68a4cb6a1edc15a4814b62c3469bd48dddafdb27c1b157fe0b6913c2.mp4": {
       "sha256": "6a67f9f8de1114d4a9ed0d4fc45dc8b07c7ccb848ba9881c5994fb9a960905a8",
@@ -872,6 +1032,10 @@
     "animation-variants/78c323283d83d9995ca3934a560368d3d8ac6f79759ac26eef7b90884fe1c620.mp4": {
       "sha256": "43c39378ef64a903dfea4fe55dec9b1836231a6a2010adc11ceee56e8fb343d5",
       "bytes": 31500
+    },
+    "animation-variants/7a99c4a50f5dedf2065f721927c62770287562fea74b7c48373c2401584c3ce3.webm": {
+      "sha256": "d18a33ea93583067a8ab68dca6c96989982aee8b9c100e6bb8342ac99be5563d",
+      "bytes": 27882
     },
     "animation-variants/7afb80930438b42f6bcf20b0b87df308f49c0406eb1b419d184ce589c10106e8.webp": {
       "sha256": "3905cafcaa85c3f6abf2de57360fa36b4a9ec9c6268bad1963ac2eb71cafb218",
@@ -913,6 +1077,10 @@
       "sha256": "0402641f5d3d08df909337fdb890139cf80882ac671bcf40f6239b14efe9c5c3",
       "bytes": 7061
     },
+    "animation-variants/7f11b2426ad0de5c4f6c5b8046da4a28aa89fdd86c8b73543be44b059cdfd03c.mp4": {
+      "sha256": "c6a9a3b00f8a27e1bfc6c96b41254d90102a4a257c40b805a8be5c9b1c1a9cd2",
+      "bytes": 227917
+    },
     "animation-variants/7f9bf7dc08cc6f6518e82227ed3f876c593029571b76472e8b4ddb146ded8193.mp4": {
       "sha256": "8c9e41496de8011bf85f22c7537e281d03001af7551fed114968af5f381cdd5c",
       "bytes": 35008
@@ -924,6 +1092,14 @@
     "animation-variants/7ff415e9c204c7ca2d7c2be1c309ef8ed488152ad1b897730266dfca945b9532.webm": {
       "sha256": "a5d1d3540a7eb0d31471d7400f314c1f79030aef1428d4794a38f39583b8bdb7",
       "bytes": 224995
+    },
+    "animation-variants/805170de260ef367d4a262a1fcd7cb3e8b280e30d703d01fbe2e8109d21d55fe.mp4": {
+      "sha256": "2f03d277bffa95d0b55d00fe7ea5aadbd1f40f0e5e0151640a01fa83f25cf8c8",
+      "bytes": 10500
+    },
+    "animation-variants/8052d830d4c5c3009dc2f2d9d79abce4f45d5031c7144f3f520e3b7b809fd3b6.mp4": {
+      "sha256": "26fa124b88f3c9b634d584dcfee45d41e6c9201e034a41a45450b3056e4382ad",
+      "bytes": 63982
     },
     "animation-variants/8053b5fc782cf9207012c2a8d629fa09b7d144f21743e1079c1b856010f1ab88.mp4": {
       "sha256": "d6907aedb4fda281774906f74076582fa0b5195b34121eceb755709016fc0b62",
@@ -940,6 +1116,10 @@
     "animation-variants/823bddfe87ff4af8535cf962b167d607ab9cac5af1421efbb4c0fb4bc6978f64.webm": {
       "sha256": "ef089664935a9684a38a74043c356b1a638d4326c22e241216943cf0c3d58bc9",
       "bytes": 116921
+    },
+    "animation-variants/82a4096cc63242e3eaa0bb9b29d3fca4bae9dde0cd32fc3354768ddc48a7a240.mp4": {
+      "sha256": "d07099e8f6cf58ccdaf824d84fbf1fbf6a8d73a00835a2ab847932426c88f0c1",
+      "bytes": 306789
     },
     "animation-variants/82e7b823169a1e1baa69d73200f05ecdac47b4fab647801f1c8bfecdcb079273.webm": {
       "sha256": "d3ca40dba608bc2abc5a64c63b8ded91839e9d98a85b1b24632bc38e42dfaa31",
@@ -961,9 +1141,17 @@
       "sha256": "3e4e6c501dc8a869de03abc96d4e96c4d200cd42d3c8f7750c0cb9af5e75a7fe",
       "bytes": 58606
     },
+    "animation-variants/858ed17f7a804778288a27e9a8b111fa1b505b55cd1c40bd7815e9c79070053f.webm": {
+      "sha256": "0cf3f46fdfff00d586080ebbf00af9fecf8062ef5efc98b076f106756ba67545",
+      "bytes": 63636
+    },
     "animation-variants/85bda26416b037646a040381ede9847c85fd4948e3e550a072e4205369edbc81.mp4": {
       "sha256": "cd2aecd7fc275461abbc3a9fb9d5ff84fb4b23890d6a9a993dfe3b7e4913ccca",
       "bytes": 8023
+    },
+    "animation-variants/85c43890506931100e814bd903958df3902d70ae8a3e1b10ddd6e937b9102869.webm": {
+      "sha256": "48755200ceead872c84ba874db14b4e4dc84d8add38a36e382cd06fd290ce602",
+      "bytes": 26676
     },
     "animation-variants/85db59b34cd4d07d31760845e062f7f0ddbc55a6032ea0e576035ad1439e92ad.webm": {
       "sha256": "1827075c3405a10a9170c24d0a4aa7dcc5ed5a41528a5036c438b2284d2d4432",
@@ -988,6 +1176,10 @@
     "animation-variants/89ef0f205bb7c7706b59132bad119d251425ef0e92b1b0e48ffc1d18bbede25a.mp4": {
       "sha256": "c53dbd31df13552e8df63ff98964c1bde03dc5b0bd7e118e16a289cb19d8d4eb",
       "bytes": 5096
+    },
+    "animation-variants/8a856ba0a7b2b8cd9ddae83f20e118726df6a2f571ada0322ea9442e8ab73ddb.webm": {
+      "sha256": "46bfa641eb728bccf0db5e0e1f3dd6c2b815df5858b17d1e5e77251a2980525d",
+      "bytes": 46563
     },
     "animation-variants/8b241bbaf622793f6de7b979f8ac6cb76345b002f7307933998e00b3d69d48ad.mp4": {
       "sha256": "e565870f1cfdcc90355c3a452d1a1a2edbfa2b04f069880259e9eea2229a5435",
@@ -1029,6 +1221,10 @@
       "sha256": "43395a2c33d519b761e7474d7b29c3e03edcee6324806b83082091e45ee2406b",
       "bytes": 110048
     },
+    "animation-variants/90fa3eb3f1314a60c9b22d0cbc853db284647b3c595dc990a0965863a25b5865.mp4": {
+      "sha256": "256bc5b106ab6cc286c2b180552b2b86ff36a679063d34b33033c8bdc55b37f5",
+      "bytes": 182357
+    },
     "animation-variants/9131ebd232cdbb53f1a1b3a2631145c81a67e0848761dab48223fb9a0623a4fe.mp4": {
       "sha256": "dfda3a305a787cbf79480ed912d9f1a77091dc46c30719aff249becbe18f5183",
       "bytes": 17303
@@ -1041,6 +1237,10 @@
       "sha256": "ef0f7e52004e04432a35a166330893e7f437565c3ceb052f40de35dbc73a3c15",
       "bytes": 112405
     },
+    "animation-variants/93d2260a5d7c70da160f8f2c945d386da6352d420d31ab3259604ed4b569a4fc.webm": {
+      "sha256": "bfe0651368898348464f4c156a98227192af2c2e96dc0d6d73126b3597cf026e",
+      "bytes": 65437
+    },
     "animation-variants/94af0124c046f6c9cfa9055748e104b24f64f3aa425c34a502d82dc57c448d35.mp4": {
       "sha256": "37e5a5fbbb0b9c0921fecd2c70feded45eb54399727b2b8002910b0c13d39c48",
       "bytes": 25743
@@ -1049,9 +1249,21 @@
       "sha256": "61fc4059bb8c2183963c5b3dfd4eba42354cd8cdf7d0e49c6c226a100dfb9675",
       "bytes": 7804
     },
+    "animation-variants/95ad6de8a1c8c6348e2a83a21970c246cebd002c7b53a812ec13d45744c20d74.webm": {
+      "sha256": "ee193826a65275610a14192e94a975e060f3750c3754447b0e9b5594289a4606",
+      "bytes": 225863
+    },
+    "animation-variants/962f061da722423d4c3e5ecd0da9a415278d1a5e053946260a2f9b8f23d40e77.mp4": {
+      "sha256": "6e08c5b3282b47f84afef6c5869f0531b423b389c41d08c09f9451e4a3f73986",
+      "bytes": 30198
+    },
     "animation-variants/96d39c5896c38d8c58caf9eda142ac1257a8fd86cb7c5f2d4697cb093a02b8a1.webm": {
       "sha256": "fdbf9862ecd6ed0b59774af86b1d635d66adf4cc0f6416750d9509be4d750dfa",
       "bytes": 3557
+    },
+    "animation-variants/96e01a0a4a384361815cc09c8d3b5ac1a6125a4bc64700ce2e368c44a1b73c7d.mp4": {
+      "sha256": "00b87ae35e058b7ccb928f348c4ce33453fd8d932e82ea5bb0f55072c1f6b461",
+      "bytes": 36784
     },
     "animation-variants/981fc037ee30ec8ec05fe1d9341352c202106508592cbce89febdd0fde437746.webm": {
       "sha256": "9d349c8608b0bdd0fc218c821786e4b9406fd5e4dcdd2021981fc5939befca58",
@@ -1068,6 +1280,10 @@
     "animation-variants/9885921b707d31cfcfb7c24168db26d46bbd9721bc4c74c9b7ce70ddc3ebbe2d.mp4": {
       "sha256": "b927c66ca295ec8395c8ac0bb79e0de99ed19cb0c53b01bcab500cd3940e8b00",
       "bytes": 18960
+    },
+    "animation-variants/9891e04f1f89c7fe484665d9d5af6cd8deaafda84bd7ff6d0b6658d4bbe6aacf.mp4": {
+      "sha256": "465189b9bae6bdcfa3cc26bb95e8d58590ad0247f5140a5cc4ea82dd5ad52c13",
+      "bytes": 56557
     },
     "animation-variants/99011fa2357b4b2fbecb15623558b1152b20d0f27dcf3592d0931db4eb115002.mp4": {
       "sha256": "8906344cfe9d3618adde3e0ffec10e18d7cd5c5e9f516ebb95e0826b061b60d2",
@@ -1097,9 +1313,17 @@
       "sha256": "a1d86e329b71fca16c0ee88b6d3bb50f8744e65222a116a0b80c46e04c98ade7",
       "bytes": 167447
     },
+    "animation-variants/9bf84a6b84c358d66c74875c6046e626ad98a5334d4824197bb277898f99c684.mp4": {
+      "sha256": "077a3eb87dbfa4b522e2695cc4fa33b2d58ac8ac692d1cfb9fcdd2872951cb78",
+      "bytes": 11168
+    },
     "animation-variants/9c000dc0789539280ea4c05faca0dabe371f64565800d3c28f0626a05dfe9a49.mp4": {
       "sha256": "2e2cfc9299d3886bc0aa93cbc709377f1df49b3ce9d2401d0bdaf7a4a7784b5e",
       "bytes": 5377
+    },
+    "animation-variants/9cf6d6caa9b2d65baeee7c110e10f1847c3b47d9cdc5c9e59c3c69f7af482d35.webm": {
+      "sha256": "9afcea5b54d22b299c457b7b1a47ab2027bc5720d51751ecbb68fb1a2e2282b2",
+      "bytes": 239140
     },
     "animation-variants/9dfcf61895197502b79db064876c795308ab465df9d3d2e1d4eab5de2296659d.mp4": {
       "sha256": "78ff57167e62e1147c25c8d872316bb5b55966fb99712ce40853455df49cea94",
@@ -1116,6 +1340,14 @@
     "animation-variants/a0c98e04ab4a65d33217b597e38fcf206112e6309ef44d839d803cf30c095fd7.mp4": {
       "sha256": "962edee624dc97864b3c99704f64321242fc90506dee2094cb542227097c839d",
       "bytes": 62227
+    },
+    "animation-variants/a0df2eeb03789fcd9480bb564a155f4369a0c4ff0858f21e8f082a76e72da3d1.mp4": {
+      "sha256": "54c38ef0fbaf9531f4659d2f4bd2353f14f8a21500488c6804104db1c8f366f1",
+      "bytes": 83817
+    },
+    "animation-variants/a0edd51093f72cbe381597b84ec58fb81415257ea8a0d385398dd0533ae96206.mp4": {
+      "sha256": "e835dfabe0d6e6a4725ca9d82cb86152aa6660a87cd8b9fb7d8e342103c4ab81",
+      "bytes": 17870
     },
     "animation-variants/a0f4bd7bf659b2ae4cd41250d93ca967cd932b8f0a15b9aa0f7e39434b3759ab.mp4": {
       "sha256": "cc2f7dfb394ea91a0a4a7960acc7999e78d9f4ae0f528e37ea3adafc642d21fd",
@@ -1169,6 +1401,10 @@
       "sha256": "4e2de4637c37da6ec3cf1b2eeb2f2c030eaf664184076cb3c480e6acd4152042",
       "bytes": 105934
     },
+    "animation-variants/a81c627d01c12230cdc21c2d79693b51cceafd6648b05514a9ac64f5c4be6a2f.mp4": {
+      "sha256": "4da47d76241f76847edd43b5b2b23c6409da49e044b03973a3a4c812b1687e99",
+      "bytes": 136574
+    },
     "animation-variants/a87450099f5aee7cc92db355b50870ae5f4d5c82b88bd71f98e04024b96c6bee.mp4": {
       "sha256": "30d8ad06263f644e2fcd1c9c097bd0cf5c9b4b325fb335b444fb3e67092d08ad",
       "bytes": 69729
@@ -1185,17 +1421,33 @@
       "sha256": "4c20edc8c65c442ae6412bf24a28eb838b0890574830a3eea5abc33e61f2c5fc",
       "bytes": 241590
     },
+    "animation-variants/a9c069a21cdf16c27fc7d77a72a09f5ceb3a14a4fe9ef7304a286a8433ea1c07.webm": {
+      "sha256": "9f760bad4d5c2b533d99de5bdd9882dcd1696c5b84e7d6b85c9c2d45a76bae3d",
+      "bytes": 101002
+    },
     "animation-variants/aa852bd7cf831a0564effbc230224a3be2bfed426b129b74905b242f7c709e74.mp4": {
       "sha256": "b503f6fac6876cf522051d574931f00acce1912f46958df2b29707f24ae49cba",
       "bytes": 26861
+    },
+    "animation-variants/aa9db9eb0a155d42f09cf5962ee231a9e540086ec017c6b1fcb82f65b35e99c7.mp4": {
+      "sha256": "168e4850453f2cb83cddc6840c31d0f4a912bdb4d773ef6decb9e5a092d82c7a",
+      "bytes": 17044
     },
     "animation-variants/aae0276ad23466d712fbd181df052611ee8b223e867b9201d626d6f854817a5f.mp4": {
       "sha256": "16c15a944322db1808f785a5221efe556e50c15191e152ea2a1e72564bbf103b",
       "bytes": 6886
     },
+    "animation-variants/aae7eb8970011e1c042a2e40d5e8bd8447f65079cd217c475b9218fb5d34952a.webm": {
+      "sha256": "16fad52154a82882a8125cd025faf855c5ba99632e566d0232a9fc00ba52a518",
+      "bytes": 12898
+    },
     "animation-variants/ab9813e03af20610216a32a56b3914e0c89567a02ee167db529d959e4aaf2107.webp": {
       "sha256": "380146e6b0384d34ba51ec23301094b59b9bb0e312fe6e0f8c2ae9420c0ede8f",
       "bytes": 4504032
+    },
+    "animation-variants/abb7baf1bbada383ef326732630b57c089a17fc6c3229df9914a0cd1ef0ef7be.webm": {
+      "sha256": "0b37a74d0075f37ef43623cc413ce8f172a9f4df3d197a1049a90cfe29e5f172",
+      "bytes": 23285
     },
     "animation-variants/abe4f56970969042d21cb9fc1591d99d3b3b6cb02c9c837794d454ae49623465.mp4": {
       "sha256": "54ce11cf1a4baf6107996e6df9db43c5eb58e609fc6f9547f69eb9380df4647c",
@@ -1225,6 +1477,10 @@
       "sha256": "7bc369ca2800f2b17577b9056f7d65551c87397e9d4657ac4a18b33ce9f1ef5a",
       "bytes": 41772
     },
+    "animation-variants/b1271cacd75c91fb48770160a420a8527c9b056bee98d00313a30c1503bb488a.webm": {
+      "sha256": "9e81f8799798eaced9811dada48ba0ffefe0882d5881eef6c0b8b40117c8b761",
+      "bytes": 15642
+    },
     "animation-variants/b1efc75e9a7aba823e3af24de9db5d296b39b6f17bc6153ea5d37fd3ae3679e2.webm": {
       "sha256": "4d0e4b7e82f3e34353829662108e5405f6ae37373a6030a5da72f74687ec8a22",
       "bytes": 153507
@@ -1232,6 +1488,10 @@
     "animation-variants/b28a4005e8f00adcdaddb5b99b1f8a77d9a4c1651796d3a19f689f15fb86808d.mp4": {
       "sha256": "f422a3dd23c0cc507da768d820cb28cc39bf743b6faf0aa236eef9ad4bf26f93",
       "bytes": 166827
+    },
+    "animation-variants/b3b9c5bc8a18efe8b80a2154a0ce5ccdffa0075c28a1b4097d8188cefafac35f.webm": {
+      "sha256": "8a71240a6d1ea82f029ba7fa73b75938134f2f4c8494ff73ae6f1471990670bb",
+      "bytes": 42371
     },
     "animation-variants/b61897fa423e83725e75ab900ce3feb3b9786fc9e409211da245dfc14f9c3e8a.webm": {
       "sha256": "39c44fb0e5717835a5766a8e13dabe8e9ecaa792504eb57938805f04a462ff02",
@@ -1256,6 +1516,10 @@
     "animation-variants/b995528a9081da3c3c8fb6bda74f0cb7e81fb3bb0ebe17060c5a349babec8519.webp": {
       "sha256": "5c6bc9663520d77a0d54bf2a3a3b37cff5cb91653063c6bb834b9ffc257db4a6",
       "bytes": 868976
+    },
+    "animation-variants/ba20e414c8239e6443eae25b4e6a2e2a12b174b70cfb64bfc5c01203d2d8941d.webm": {
+      "sha256": "acfbdacccc5be302e52f7cf469503ecbc506a2733a42746c07b5ba6ef1cf376d",
+      "bytes": 183172
     },
     "animation-variants/ba8805438f0ed28cc02e14c4aeee58a54d30a7647358feddbe19e9da217c27b9.webm": {
       "sha256": "038447fa864ffd7c8d0a6d9aa621d358c3173e881652f1fbff06e03abdb32944",
@@ -1289,6 +1553,10 @@
       "sha256": "028c989e24a5fb969f146fe99afc4601df105ff75af4f7b6f98d2cf691fbb704",
       "bytes": 19575
     },
+    "animation-variants/be1ceed2c1ce7184ae747deef1878bc4d2f08dff2fd285dbff395870aed185ec.webm": {
+      "sha256": "9f019008bad553cc1e7339d294c17bdc7bc8daa2298ceb30299944411b9c408d",
+      "bytes": 8763
+    },
     "animation-variants/be2867e1e2a79506d21d879d4fc8a994049f08d8463fa16328aa2504d1b96178.mp4": {
       "sha256": "a4edad4c1415b1010f1a43435b337ac20d1a343ed93f5d675151694dacea82c4",
       "bytes": 147979
@@ -1300,6 +1568,10 @@
     "animation-variants/bf1911cb41f270c94b8d52b32d1f93fb19f986187af63658ccf55ebeacbe24b7.mp4": {
       "sha256": "567ad40a97ef26954d0438fa37f891fbb7ffb36e112ebc6e32cb32a9f587350c",
       "bytes": 26803
+    },
+    "animation-variants/bf1f03cb9350c449e739b78092ab01b34afc1b1d4cd169606a4c052bdc2e72cb.webm": {
+      "sha256": "d0f9086016c216203e10eb11e506443a79e5a2b2f61d37e819956bac1530cc8c",
+      "bytes": 81603
     },
     "animation-variants/bf6b901649f416952735adb51dd8386969b92d5ac480e19a1544b28c7959ac09.webm": {
       "sha256": "1e533d558698f2cd2b38b6fddaac38e7e8e4eaf23d5ad9076b4d8d895e06c762",
@@ -1316,6 +1588,22 @@
     "animation-variants/c0bcd5e934c7f0e6a2a73d45edafdbf432a654efc3f3c88d56ea0867df787866.mp4": {
       "sha256": "ca1f5c9639304da20b4d7dbbb0dd5532949c2c3351e32665a41792e173996c06",
       "bytes": 8236
+    },
+    "animation-variants/c134c12b6b9ac46959bb4ab65c83f65830a96cd8442557a4e725be853dd6d2fb.webm": {
+      "sha256": "e2402d0b42c01b65ccdf0aef3c9112681b19ce5097a343cf0ef82f08ee5f8449",
+      "bytes": 109110
+    },
+    "animation-variants/c2041da6d9164338c96e44f4ded9e9dce9b93655941252ed11b6e7684eb32852.mp4": {
+      "sha256": "e3768e550b3cdbc32b5ecfb705877aadae44ec6b54aa4c57947b6b66c5fd5642",
+      "bytes": 27191
+    },
+    "animation-variants/c2577b5e7a7735645aa3d203a78e79105850a8b9a7da07647467f3614d83fd19.webm": {
+      "sha256": "20f36b15d6d65e1b64d5533cabcd582af4f05a50211c90b6e80d80b529a4fb42",
+      "bytes": 29762
+    },
+    "animation-variants/c32e2086ee0076ebd237f4329892a149119bda589d3289ce0f46d82baf40c719.mp4": {
+      "sha256": "3e928b74c79843006a887b19c4a32e8038120becbe7ee2c7319476c4186504f1",
+      "bytes": 222397
     },
     "animation-variants/c3a96c484aebd94d11409e0a39feaa3fb88306f48bb0f21e6447202f8116514c.webm": {
       "sha256": "ae89cdf86823db80ec530e870c6092cf4d2e1c1ca7944dcd94e64f6b9aebe9e3",
@@ -1376,6 +1664,10 @@
     "animation-variants/cc454715274ad1130ace5074f6a3a241a379309b569311362ecbf76d47e9340a.mp4": {
       "sha256": "ce50c272fc3e46b360a219e219a5f2254dbd5a8fcce00843d1befbf8ce476e7c",
       "bytes": 13380
+    },
+    "animation-variants/cccf4742b67ac0ce10ddc264a4d47d132db637ebdb2264416840a4c16154cc36.mp4": {
+      "sha256": "b125cb0a5996e897e040648c327cdce2d1550aad35f797417459cd8ae55497f9",
+      "bytes": 24692
     },
     "animation-variants/cdab3ac3e9a957a7cea757ee30198fd2c596da6236caac120a43771663719bfe.webm": {
       "sha256": "ac767dec2e096f3917469ebf45970c23731bdd9e93365d823c80442169db1a84",
@@ -1465,6 +1757,10 @@
       "sha256": "f70917b9b8bf62d98a36f884a8e1d7aada7a966d7469f26d3b96851423156691",
       "bytes": 6261
     },
+    "animation-variants/d95a9adebc71211bc574040584f6a30c5ddefc40e9e52b61b53df7ff72edb2b5.mp4": {
+      "sha256": "4c7d446b01612c5763710a7a2c8d09862e2cb9cc77adfa83049b3be34f7eb931",
+      "bytes": 10000
+    },
     "animation-variants/d982a8541856e6c4da38f14abf54c1fc7037aefbe416dbede145f96127c4b6e1.webm": {
       "sha256": "efac7ebc156c45efc032930415296bc8b4425288216fb5221b6487b06cde477f",
       "bytes": 7082
@@ -1480,6 +1776,10 @@
     "animation-variants/db36d7fb5d07bfbc8e6b42319b147bd2add8bf6e0def4cddbbdbcb79b3ec4174.webp": {
       "sha256": "44f2823eed596d841a549e67b8665ca0a9417fd62cd00f6160fe6df6b34af880",
       "bytes": 89098
+    },
+    "animation-variants/db72dc6772116a4c33a5c46135e8508f698ef3a8336c9c81d781f27c8b9e933e.webm": {
+      "sha256": "31dabe646a11a164a936bb7ef8793fe2417ef50b054dfe86352b430b4c0980e3",
+      "bytes": 510852
     },
     "animation-variants/db897b076aa29c47bc0047d879cb006ec3d8667b2748f5c71d3781ac4b60b484.webm": {
       "sha256": "a39b0261b533842073d80872a57f44a734b6ba316b884c540ee8c802279afe9b",
@@ -1521,6 +1821,10 @@
       "sha256": "867e4dfdccc6fcab0042bf4d2769de01f521ed99e538ee358270f8bebc05d4c3",
       "bytes": 16782
     },
+    "animation-variants/dfeb23bf4edd3ce101e23fd1853a5547556b0228700a9400303e0306c7b730e1.webm": {
+      "sha256": "bafb557d836054821e705a9e3525c2e7dfeae071a4554a2b82ecdfc50c396e58",
+      "bytes": 5504
+    },
     "animation-variants/e11d321858fd9c03c0ccfb1f9c0ddcb0ab589cf091ae4eb8cebbb75f94e4597a.webp": {
       "sha256": "93f8bc4eb3958d3c53540d4a0864001f3ba2c00e5293736e4b996e9db529f064",
       "bytes": 4110238
@@ -1556,6 +1860,14 @@
     "animation-variants/e4ff1f4598e41fa2c500b4f870fc64d87e977bd48ef4f18f12206f31993cac1f.webm": {
       "sha256": "8304411b837f63a4d8bc664645bcdfa867d5a4aecaabe4a23ef548fd18d86578",
       "bytes": 7224
+    },
+    "animation-variants/e56d14cd562301566fad0acdbe7e81516615165a046b5b46f2ece53babea9d10.webm": {
+      "sha256": "50f2cf45a219b2082e23146b31e8ef58ef908b856bb469ecac370ce99e5eff02",
+      "bytes": 331252
+    },
+    "animation-variants/e59ee570f9f178cf87959496e5233c3645b18d3c40c032e5d018821dc65b63c8.mp4": {
+      "sha256": "271a7af9dc2126ba1f8fcc1289b7e8646eb7132c55856e2868086ea3192445f0",
+      "bytes": 7190
     },
     "animation-variants/e6c03ce0b2120cab6648549f084b23792b672901c605e5ed1890a24ae0bee7a5.mp4": {
       "sha256": "0eded041b264a1731d311d6b1e69cfa9f819035e8fef5f45f7184e0636c1e3ae",
@@ -1617,6 +1929,10 @@
       "sha256": "ee9f6ddb8d1b3f27834d5706eb734d8368a34e370c9cb9f533abe430db30a17c",
       "bytes": 7325
     },
+    "animation-variants/ee371620bb54e66c46fd6838b7c0dbceaf0833993776a9189ef05fb6d9b5609e.mp4": {
+      "sha256": "c2d620d595cc4cf4301ff062a859b86abd55c8eeffcad57dc0d3df7fdb75ee6e",
+      "bytes": 21060
+    },
     "animation-variants/ee51b411d3df737fdac327ef4e0166b1623bc938effda5487e8d5c6e0eefbf7e.mp4": {
       "sha256": "14aa9b156d6f4037177473c12961b39cc37204c49b8b3c89e44f0a66fe88b409",
       "bytes": 16006
@@ -1661,6 +1977,10 @@
       "sha256": "6bba9cf33fcc52cb415937930041448618be52d5fa9e80b4154cd1530f5bd1a9",
       "bytes": 116574
     },
+    "animation-variants/f2e95a983fc97715bfcd98755a44d16d573360e18e0615b008543a394d59543f.mp4": {
+      "sha256": "3b3bdbe54199853ab9da3e6e870b3c54ed67228be9690bf5bb03d006e45e1fdc",
+      "bytes": 83403
+    },
     "animation-variants/f3482dd3bd19f93cc0b4fec893a45c0b9dbd1770530af55b14e4736222f448b3.webp": {
       "sha256": "5c04b1abe6ec860c38245fbf64c7e67b4f17e28cadab5169f8f81796162672b1",
       "bytes": 4321832
@@ -1673,13 +1993,29 @@
       "sha256": "f532a060d129ef6ff20b32163fe23d509c500e8669fe2872a946fa62fdf4d381",
       "bytes": 8077
     },
+    "animation-variants/f42591ed47e5c3ab5d1419cfc78cf633b4f066bac0a8147bb41c457e53687cf2.mp4": {
+      "sha256": "a5c11d6003f57e8f139b1411f405c4db61933482c95e1dc8ee3f44a6ac22f73b",
+      "bytes": 11674
+    },
     "animation-variants/f42e3da66e68ce5d40990b4cab604b357dbf9298f15c8b7e88e84f09d342b708.webp": {
       "sha256": "f371298e8130b133fe1a625fff077818551673bbf3924117f89721b3454fbc39",
       "bytes": 92508
     },
+    "animation-variants/f458084b190cd8aeeb51a3d52bdb7d0b38acddef80bbc5dfb55146cc56a27de5.mp4": {
+      "sha256": "54f473ba576733b2c9cf8bedade5b597fc23abf065f87294d24d18e25232b5b7",
+      "bytes": 26521
+    },
     "animation-variants/f466ce24e66317da1c154891f0703164e7c334bf193ce6d5dadc6c8140d7eb9e.mp4": {
       "sha256": "a57d6f06686b728998c209efff3ac6d7144e5c4a860e8aa66bd51484fbe9d8d7",
       "bytes": 184294
+    },
+    "animation-variants/f484a98850ad902a33758723765c016de84cbaf43129784875138c52ca210f3a.mp4": {
+      "sha256": "860358f19f0ac7b16cb80527dc411d0c8bcff48933ead3c9f5e5af4563c78225",
+      "bytes": 9436
+    },
+    "animation-variants/f4d29077d090615fa059ea1e473013af71d5879b4d3b132d4a8d9798178ee0d3.webm": {
+      "sha256": "6ddec35b72bb93c9c3c66149474e478a722af98f5a70f58e7fb1837ebed0157b",
+      "bytes": 8083
     },
     "animation-variants/f5117060b164ec41fec631b0fd8ccb49f5e0ec7ccb0e9291c2d4c8c4d18936c4.webp": {
       "sha256": "37191a2a4b494cdb1e85a0903f4a82ec883474d3dfcb0067e216ed70b77aa885",
@@ -1701,6 +2037,10 @@
       "sha256": "75cb823932707631e614112c9758bed7fb967e017c345aead331a54a230b818d",
       "bytes": 37886
     },
+    "animation-variants/f91800d23bdd487641bb0841f2cf45447dfca2469c37731fd192cefe2dda6635.webm": {
+      "sha256": "1c1d1301d251728ecf8344e36409d4ff4a34e1d0283367d39827a9388d90ed22",
+      "bytes": 279267
+    },
     "animation-variants/f9ec23cbc75bc5bc0e6719578bdc35077e32823c771dd5a26f9980d6dcb5649b.mp4": {
       "sha256": "97781a6712dee74220605d8f1de525f08aa6c8b55ecfcaf070ccaba3423cf9a2",
       "bytes": 7567
@@ -1712,6 +2052,10 @@
     "animation-variants/fa9f5d2691f1bf759de0262c967165ed4c04f7671300d13133b05dc46c0574b4.webm": {
       "sha256": "23cfc15bdf08cdd65fb26e9e0b6e7a5032ebff683425ce4aaf083e07bb13bfeb",
       "bytes": 33003
+    },
+    "animation-variants/fb0aa246327e11d678ea853fab8d086898617c9b8bc0728e69091c84cd2dbb70.webm": {
+      "sha256": "00a778a536dcddcdf5e55dae79ddc02957a7c3f8924510eca6359849fc9a675c",
+      "bytes": 24986
     },
     "animation-variants/fb171d2d6723290444a59a825f2ec941aeb1c0fe8a06d24f5ffce22e9a12112e.webp": {
       "sha256": "846996ca1fcce0c3f74260d891a67e96a67791e6fa1417e1c76953a52bba910d",
@@ -1729,6 +2073,10 @@
       "sha256": "e6ad2e3a7f6e8bb29ad2f7536d9c014f0e24fe69cf905d6882f09b7792945678",
       "bytes": 3035892
     },
+    "animation-variants/fdc0a462b1477960bc329245e982dc61f7ce714da7fa35c248f654a050e3763a.mp4": {
+      "sha256": "021e213eed1e15297b6c6649e2d206328df983bf5352ab3355e543be041ce904",
+      "bytes": 166303
+    },
     "animation-variants/fdc3c369c298e04b3d7948c9eb4ec3ebe53a8c3f67c01a8fcdefbd5737a6977d.webm": {
       "sha256": "f74b55f580611bbcbcf6452a6e95fbc955789e19ad28939bde0d6ba567a96fb1",
       "bytes": 176036
@@ -1741,13 +2089,17 @@
       "sha256": "786680884764d077caa20fb1b8d6e0b2c6c636e5d79fe4baff2827efba483cca",
       "bytes": 1470902
     },
+    "animation-variants/ffb0fb1813091236de5861ec0876eaaac647eba4aa38ca26155af8ae8e32fb5d.webm": {
+      "sha256": "fde153a60a606c6a0a35277e6ea4ecf0f13adb015ce84aeb2c1f1e5f6a86504e",
+      "bytes": 10212
+    },
     "animation-variants/ffb6c8af228b37b1296cc3595dc520cf67c349cb8ef4813a58c321c4577924f0.webm": {
       "sha256": "1d85106450e5ec9a8362cf6c684c744a34ccf9d12d0df32e572edce6d265eba3",
       "bytes": 39767
     },
     "animation-variants/manifest.json": {
-      "sha256": "0d8e84dd1ada2c5e7668163606563f7d466e99802fbb3ee79c1db5b76e987c80",
-      "bytes": 102543
+      "sha256": "54fe421f086253870ddb782c9e30241502d24bb4e119a9fcd2d39d18c9041b13",
+      "bytes": 123042
     },
     "assets/game/loop-masters/buildings/crystal-mine-mid.mp4": {
       "sha256": "5c57f74d6ed6527218f053e2f591df6d16c51916583b3dd2e33607066726487c",
@@ -1899,9 +2251,64 @@
       "bytes": 1172441,
       "publishOnly": true
     },
+    "assets/game/loop-masters/research/computer.mp4": {
+      "sha256": "fc38566addd0ddbccc29dc642d78566f579564c492b507a5787b1ae655386c4f",
+      "bytes": 1604550,
+      "publishOnly": true
+    },
     "assets/game/loop-masters/research/energy.mp4": {
       "sha256": "fcc388f312bbbfba47dc740a023f11f373371e2007fc11ae3ac4e6cc03d3b939",
       "bytes": 1340409,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/graviton.mp4": {
+      "sha256": "44695389cba4768bbd84c97d1f55d9a19c5cbd081bf5c6c77d921d3e1d587eba",
+      "bytes": 1444990,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/hyperspace-drive.mp4": {
+      "sha256": "89de0ea5c5fbed8f6697fba83c9b99bef22d5efb325dc342412ad1854a178d7e",
+      "bytes": 1234065,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/hyperspace.mp4": {
+      "sha256": "3763c1eaa0606441fd8d9aa9a193c9ce38b7bfc3d395cbb62f2d4ff8f177c68f",
+      "bytes": 1192116,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/impulse-drive.mp4": {
+      "sha256": "a0fe5891dd82ffb650eb8aa4bbe5720dfbce196948034925d0e05a45831cb382",
+      "bytes": 992022,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/intergalactic-research-network.mp4": {
+      "sha256": "a8a49b41c7e0430f2d09a139db0367dc235fbc4ee34d80f515f1a62dfe3554bb",
+      "bytes": 1304636,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/ion.mp4": {
+      "sha256": "52a78fb7ea2248bcb6e5f4b2be33c55842e07d447cd66735c82e9f63b0bf743d",
+      "bytes": 1371898,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/laser.mp4": {
+      "sha256": "ac80c0a7fd9204f603fb2a4d8ad16e1918275580093f98d52d4b1c771161254e",
+      "bytes": 1089258,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/plasma.mp4": {
+      "sha256": "065deace0c2fec2846c5cf003b94c2896d36ac495b8c0e5ef50f8b24e12d7cb3",
+      "bytes": 1140780,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/shielding.mp4": {
+      "sha256": "8b657554ca8294ac0831c7a8bd8aa63b76c9cd7a9d4c2c29f47c14f91476755c",
+      "bytes": 1801923,
+      "publishOnly": true
+    },
+    "assets/game/loop-masters/research/weapons.mp4": {
+      "sha256": "c666f712943db67f8807e6f5da610bde770b3cc150012fff2d859fb52ed75046",
+      "bytes": 1480303,
       "publishOnly": true
     },
     "assets/game/loop-masters/ships/battlecruiser.mp4": {

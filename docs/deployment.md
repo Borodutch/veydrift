@@ -305,11 +305,11 @@ Check during a deploy:
 
 Large frontend media is not in git and never enters an image: the landing trailer,
 the planet/moon animation masters and their 60 precomputed size variants, and the
-building/ship/defense/research loop masters with their 376 precomputed WebM/MP4 variants
-(505 files, about 721 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size.
+building/ship/defense/research loop masters with their 464 precomputed WebM/MP4 variants
+(604 files, about 742 MiB). `apps/frontend/media.json` pins every file by sha256 and byte size.
 The files are assets of the `media-v1` GitHub release on this repository, named
 `<sha256><ext>`. Moon and loop masters are marked `publishOnly`: no route serves them
-at full size, so servers skip them and sync about 427 MiB.
+at full size, so servers skip them and sync about 435 MiB.
 
 Before binding its port, `bun run serve` (and Vite dev/preview) runs
 `scripts/media.mjs` sync into the media root:

@@ -10,7 +10,7 @@ import { moonBuildingAsset, researchAssetByKey, shipAssetByKey } from "../../src
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, shipyardCatalog } from "../../src/playableMvp";
 import "../../src/styles.css";
 
-// Every ship and defense has a loop, so this real game still stands in for an asset without one.
+// Every ship, defense and research has a loop, so this real game still stands in for an asset without one.
 const noLoopStill = "/assets/game/style-pass/generated/rift-under-construction.webp";
 const stills = [
   ...buildingCatalog.map((building) => building.asset),
