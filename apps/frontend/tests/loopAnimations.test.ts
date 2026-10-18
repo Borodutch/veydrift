@@ -33,7 +33,7 @@ const request = (path: string, headers: Record<string, string> = {}) => frontend
 const hasTool = (name: string) => { try { execFileSync(name, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
 
 describe("building/ship loop configuration", () => {
-  test("ships the 47 approved loops, each resolved from the still the app actually renders", () => {
+  test("ships the 58 approved loops, each resolved from the still the app actually renders", () => {
     expect(loopNames.sort()).toEqual([
       "buildings/crystal-mine-mid", "buildings/crystal-storage-mid", "buildings/deuterium-synthesizer-mid", "buildings/deuterium-tank-mid",
       "buildings/fusion-reactor-mid", "buildings/interdimensional-rift-stabilizer-mid", "buildings/jump-gate", "buildings/lunar-base",
@@ -42,7 +42,9 @@ describe("building/ship loop configuration", () => {
       "buildings/solar-plant-mid", "defenses/anti-ballistic-missile", "defenses/gauss-cannon", "defenses/heavy-laser",
       "defenses/interplanetary-missile", "defenses/ion-cannon", "defenses/large-shield-dome", "defenses/light-laser",
       "defenses/plasma-turret", "defenses/rocket-launcher", "defenses/small-shield-dome", "research/armor", "research/astrophysics",
-      "research/combustion-drive", "research/energy", "ships/battlecruiser", "ships/battleship",
+      "research/combustion-drive", "research/computer", "research/energy", "research/graviton", "research/hyperspace",
+      "research/hyperspace-drive", "research/impulse-drive", "research/intergalactic-research-network", "research/ion",
+      "research/laser", "research/plasma", "research/shielding", "research/weapons", "ships/battlecruiser", "ships/battleship",
       "ships/bomber", "ships/colony-ship", "ships/crawler-approved", "ships/cruiser", "ships/deathstar", "ships/destroyer",
       "ships/heavy-fighter", "ships/large-cargo", "ships/light-fighter", "ships/pathfinder", "ships/reaper-symmetric", "ships/recycler",
       "ships/small-cargo", "ships/solar-satellite",
@@ -55,12 +57,18 @@ describe("building/ship loop configuration", () => {
     }));
     // Every loop is reachable from the app, plus the three shared-art aliases.
     expect(new Set(resolved.values())).toEqual(new Set(loopNames));
-    expect(resolved.size).toBe(50);
+    expect(resolved.size).toBe(61);
     expect(loopAnimationNameForStill(buildingCatalog.find((building) => building.key === "shipyard")!.asset)).toBe("buildings/shipyard-mid");
     // Research surfaces (tiles, detail, queues, planet/empire rows) all render the catalog asset.
-    for (const [key, name] of [["armor", "armor"], ["astrophysics", "astrophysics"], ["combustionDrive", "combustion-drive"], ["energy", "energy"]]) {
-      expect(loopAnimationNameForStill(researchCatalog.find((research) => research.key === key)!.asset)).toBe(`research/${name}`);
-    }
+    // Every research has a loop named after its still's file stem.
+    const researchLoopByKey = {
+      armor: "armor", astrophysics: "astrophysics", combustionDrive: "combustion-drive", computer: "computer", energy: "energy",
+      graviton: "graviton", hyperspace: "hyperspace", hyperspaceDrive: "hyperspace-drive", impulseDrive: "impulse-drive",
+      intergalacticResearchNetwork: "intergalactic-research-network", ion: "ion", laser: "laser", plasma: "plasma",
+      shielding: "shielding", weapons: "weapons",
+    };
+    expect(researchCatalog.map((research) => [research.key, loopAnimationNameForStill(research.asset)]).sort())
+      .toEqual(Object.entries(researchLoopByKey).map(([key, name]) => [key, `research/${name}`]).sort());
     for (const [alias, target] of Object.entries(LOOP_ANIMATION_ALIASES)) {
       const still = (name: string) => readFileSync(new URL(`../public${LOOP_ANIMATION_STILL_BASE}/${name}.webp`, import.meta.url));
       // Aliases are only valid while production renders byte-identical art.
@@ -76,7 +84,8 @@ describe("building/ship loop configuration", () => {
   test("keeps the still for assets without a loop", () => {
     for (const src of [
       `${LOOP_ANIMATION_STILL_BASE}/rift-under-construction.webp`, `${LOOP_ANIMATION_STILL_BASE}/ships/crawler.webp`,
-      researchAssetByKey.plasma, researchAssetByKey.weapons,
+      // Every research now has a loop; only an unknown stem or another extension under research/ has none.
+      `${LOOP_ANIMATION_STILL_BASE}/research/antimatter.webp`, researchAssetByKey.plasma.replace(/\.webp$/, ".png"),
       "/assets/game/style-pass/generated/planets/lush-temperate.webp", "/assets/game/planet-animations/frozen-ice.webp",
       `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser.png`, `${LOOP_ANIMATION_STILL_BASE}/ships/cruiser`, "/assets/game/buildings/metal-mine-mid.webp",
     ]) expect(loopAnimationNameForStill(src)).toBeUndefined();
