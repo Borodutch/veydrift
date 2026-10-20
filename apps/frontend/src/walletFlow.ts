@@ -1135,9 +1135,22 @@ export type PendingWithdrawal = {
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;
+  // Amount locked at the start; `amount` is what survived raids so far.
+  startedAmount?: string;
   requestedAt: string;
   unlocksAt: string;
   ready: boolean;
+};
+
+export type RiftHistoryEntry = {
+  id: string;
+  kind: "injected" | "extractionStarted" | "extracted" | "raided" | "raid";
+  planetId: string;
+  amounts: OnChainResources;
+  counterparty: string | null;
+  unlocksAt: string | null;
+  occurredAt: string;
+  transactionHash: string | null;
 };
 
 export type ChainRiftState = {
@@ -1149,7 +1162,10 @@ export type ChainRiftState = {
   withdrawalDelaySeconds: string;
   requirements: RiftRequirement[];
   resources: RiftResourceState[];
+  // Active claims on every planet of the wallet.
   pendingWithdrawals: PendingWithdrawal[];
+  // Absent on backends older than the Rift launch.
+  history?: RiftHistoryEntry[];
 };
 
 export type MissionShips = {
@@ -1575,7 +1591,9 @@ const ALLIANCE_SELECTORS = {
   transferAllianceOwnership: "0xb1d3b1e4",
 } as const;
 const ERC20_SELECTORS = {
+  allowance: "0xdd62ed3e",
   approve: "0x095ea7b3",
+  balanceOf: "0x70a08231",
 } as const;
 const ERC721_SELECTORS = {
   ownerOf: "0x6352211e",
@@ -3743,6 +3761,29 @@ export async function sendProductionBatchTransaction(
   return sendWalletTransaction(provider, account, {
     from: account, to: contractAddress, data: encodeProductionBatchCall(body, planetId, orders),
   }, { maxEstimatedGas: 12_000_000n });
+}
+
+export type RiftTokenWallet = { balance: bigint; allowance: bigint };
+
+/** A wallet's resource tokens and its allowance to the Game, read through the app's Base RPC
+ * rather than the wallet (which may sit on another network). Unconfigured tokens are omitted. */
+export async function fetchRiftTokenWallet(
+  rpcUrl: string,
+  owner: string,
+  spender: string,
+  tokens: Partial<Record<RiftResourceKey, string | null>>,
+): Promise<Partial<Record<RiftResourceKey, RiftTokenWallet>>> {
+  const word = (address: string) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  const read = async (to: string, data: string) => decodeUintResult(await transactionRpcRequest<string>(rpcUrl, "eth_call", [{ to, data }, "latest"]));
+  const entries = await Promise.all(Object.entries(tokens).map(async ([key, token]) => {
+    if (!token) return [];
+    const [balance, allowance] = await Promise.all([
+      read(token, ERC20_SELECTORS.balanceOf + word(owner)),
+      read(token, ERC20_SELECTORS.allowance + word(owner) + word(spender)),
+    ]);
+    return [[key, { balance, allowance }] as const];
+  }));
+  return Object.fromEntries(entries.flat());
 }
 
 export async function sendApproveResourceTokenTransaction(provider: Eip1193Provider, account: string, tokenAddress: string, spenderAddress: string, amount: bigint | number | string): Promise<string> {

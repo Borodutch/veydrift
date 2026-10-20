@@ -156,6 +156,7 @@ import {
   type ResourceSnapshotMetadata,
   type Resources,
   riftRequirements,
+  type RiftHistoryEntry,
   type RiftState,
   type RpcLog,
   type SettledPlanetEvent,
@@ -640,6 +641,7 @@ type RiftExtractionRow = {
   amount: string;
   started_at: string;
   unlocks_at: string;
+  event_json: string;
   planet_json: string;
 };
 
@@ -4779,20 +4781,14 @@ export class SettlementIndexer {
       : null;
     const balances = this.riftBalances(wallet, planetId);
     const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
-    const pending = this.pendingWithdrawals(wallet, planetId);
-    const extractions = this.riftExtractions(wallet, planetId);
+    // Claims on every planet of the wallet, so one page can finalize them all; the
+    // per-resource locked balance stays scoped to the selected planet.
+    const pending = this.pendingWithdrawals(wallet);
+    const extractions = this.riftExtractions(wallet);
     const lockedByResource = new Map<number, bigint>();
-    for (const withdrawal of pending) {
-      lockedByResource.set(
-        withdrawal.resource_id,
-        (lockedByResource.get(withdrawal.resource_id) ?? 0n) + BigInt(withdrawal.amount)
-      );
-    }
-    for (const extraction of extractions) {
-      lockedByResource.set(
-        extraction.resource_id,
-        (lockedByResource.get(extraction.resource_id) ?? 0n) + BigInt(extraction.amount)
-      );
+    for (const row of [...pending, ...extractions]) {
+      if (row.planet_id !== planetId) continue;
+      lockedByResource.set(row.resource_id, (lockedByResource.get(row.resource_id) ?? 0n) + BigInt(row.amount));
     }
     return {
       wallet,
@@ -4832,17 +4828,43 @@ export class SettlementIndexer {
           "0",
           row.unlocks_at
         )),
-        ...extractions.map((extraction) => riftPendingWithdrawal(
-          `extraction:${extraction.planet_id}:${extraction.resource_id}`,
-          "riftExtraction",
-          extraction.planet_id,
-          extraction.resource_id,
-          extraction.amount,
-          extraction.started_at,
-          extraction.unlocks_at
-        ))
-      ]
+        ...extractions.map((extraction) => ({
+          ...riftPendingWithdrawal(
+            `extraction:${extraction.planet_id}:${extraction.resource_id}`,
+            "riftExtraction",
+            extraction.planet_id,
+            extraction.resource_id,
+            extraction.amount,
+            extraction.started_at,
+            extraction.unlocks_at
+          ),
+          // The row keeps its RiftExtractionStarted event while raids shrink `amount`.
+          startedAmount: parseEvent<{ amount?: string }>(extraction.event_json).amount ?? extraction.amount
+        }))
+      ],
+      history: this.riftHistory(wallet)
     };
+  }
+
+  /**
+   * The wallet's newest Rift events across all of its planets, read from the player activity
+   * feed: it is already backfilled, keyed by wallet, and drops rows for reorged logs.
+   */
+  riftHistory(wallet: `0x${string}`, limit = 50): RiftHistoryEntry[] {
+    // The ORDER BY matches indexed_player_activity_feed_wallet_category_idx, so a busy wallet's
+    // other activity is never scanned (the time-order index made this ~300x slower).
+    const rows = this.db.query(`
+      SELECT activity_json
+      FROM indexed_player_activity_feed
+      WHERE wallet = lower(?) AND json_extract(activity_json, '$.category') = 'rift'
+      ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(occurred_at AS INTEGER) DESC
+      LIMIT ?
+    `).all(wallet, limit) as Array<{ activity_json: string }>;
+    return rows.flatMap((row) => {
+      const activity = parseEvent<PlayerActivityItem>(row.activity_json);
+      const entry = riftHistoryEntry(activity);
+      return entry ? [entry] : [];
+    });
   }
 
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
@@ -12940,8 +12962,10 @@ export class SettlementIndexer {
           category: "rift",
           kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
           direction: "personal",
-          title: humanizeContractName(event.eventName.replace(/^MarketResource/, "Rift ")),
-          detail: null,
+          title: event.eventName === "MarketResourceDeposited"
+            ? "Tokens injected through the Rift"
+            : humanizeContractName(event.eventName.replace(/^MarketResource/, "Rift ")),
+          detail: riftActivityDetail(event.planetId, riftAmounts(event.resourceId, event.amount)),
           occurredAt: transactionAt,
           metadata: activityPrimitiveMetadata(event)
         });
@@ -12949,34 +12973,38 @@ export class SettlementIndexer {
         const event = decodeRiftExtractionLog(log);
         if (event.eventName === "RiftExtractionLooted") {
           const owner = this.ownerForPlanetActivity(event.planetId);
+          // Flatten the looted amounts and the victim into primitives the Rift history can read.
+          const metadata = activityPrimitiveMetadata({ ...event, ...event.resources, defender: owner });
+          const detail = riftActivityDetail(event.planetId, event.resources);
           add(event.attacker, {
             category: "rift",
             kind: "rift-extraction-looted",
             direction: "outgoing",
             title: "Rift extraction looted",
-            detail: `Planet #${event.planetId}`,
+            detail,
             occurredAt: transactionAt,
-            metadata: activityPrimitiveMetadata(event)
+            metadata
           });
           if (owner?.toLowerCase() !== event.attacker.toLowerCase()) {
             add(owner, {
               category: "rift",
               kind: "rift-extraction-looted",
               direction: "incoming",
-              title: "Rift extraction was looted",
-              detail: `Planet #${event.planetId}`,
+              title: "Your Rift extraction was raided",
+              detail,
               occurredAt: transactionAt,
-              metadata: activityPrimitiveMetadata(event)
+              metadata
             });
           }
         } else {
+          const started = event.eventName === "RiftExtractionStarted";
           add(event.owner, {
             category: "rift",
             kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
             direction: "personal",
-            title: humanizeContractName(event.eventName),
-            detail: `Planet #${event.planetId}`,
-            occurredAt: "startedAt" in event ? event.startedAt : transactionAt,
+            title: started ? "Rift extraction started" : "Rift extraction finished",
+            detail: riftActivityDetail(event.planetId, riftAmounts(event.resourceId, event.amount)),
+            occurredAt: started ? event.startedAt : transactionAt,
             metadata: activityPrimitiveMetadata(event)
           });
         }
@@ -13186,24 +13214,22 @@ export class SettlementIndexer {
     `).run(owner, planetId, resourceId, inGameBalance.toString(), lockedBalance.toString());
   }
 
-  private pendingWithdrawals(wallet: `0x${string}`, planetId: string | null): PendingWithdrawalRow[] {
-    if (!planetId) return [];
+  private pendingWithdrawals(wallet: `0x${string}`): PendingWithdrawalRow[] {
     return this.db.query(`
       SELECT withdrawal_key, planet_id, resource_id, amount, unlocks_at
       FROM indexed_rift_withdrawals
-      WHERE owner = lower(?) AND planet_id = ?
+      WHERE owner = lower(?)
       ORDER BY CAST(unlocks_at AS INTEGER) ASC
-    `).all(wallet, planetId) as PendingWithdrawalRow[];
+    `).all(wallet) as PendingWithdrawalRow[];
   }
 
-  private riftExtractions(wallet: `0x${string}`, planetId: string | null): RiftExtractionRow[] {
-    if (!planetId) return [];
+  private riftExtractions(wallet: `0x${string}`): RiftExtractionRow[] {
     return this.db.query(`
-      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at
+      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at, event_json
       FROM indexed_rift_extractions
-      WHERE owner = lower(?) AND planet_id = ?
-      ORDER BY CAST(unlocks_at AS INTEGER) ASC
-    `).all(wallet, planetId) as RiftExtractionRow[];
+      WHERE owner = lower(?)
+      ORDER BY CAST(unlocks_at AS INTEGER) ASC, CAST(planet_id AS INTEGER) ASC, resource_id ASC
+    `).all(wallet) as RiftExtractionRow[];
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
@@ -16840,6 +16866,52 @@ function delay(milliseconds: number): Promise<void> {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+}
+
+const riftHistoryKinds: Record<string, RiftHistoryEntry["kind"]> = {
+  "market-resource-deposited": "injected",
+  "rift-extraction-started": "extractionStarted",
+  "rift-extraction-finalized": "extracted",
+  // Retired 30-day withdrawals read as the same lifecycle.
+  "market-resource-withdrawal-requested": "extractionStarted",
+  "market-resource-withdrawal-finished": "extracted"
+};
+
+function riftAmounts(resourceId: unknown, amount: string): Resources {
+  const key = riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key;
+  return { metal: "0", crystal: "0", deuterium: "0", ...(key ? { [key]: amount } : {}) };
+}
+
+function riftActivityDetail(planetId: string, amounts: Resources): string {
+  const moved = riftResourceRows
+    .filter((resource) => /^\d+$/.test(amounts[resource.key]) && BigInt(amounts[resource.key]) > 0n)
+    .map((resource) => `${BigInt(amounts[resource.key]).toLocaleString("en-US")} ${resource.label}`);
+  return [...moved, `Planet #${planetId}`].join(" · ");
+}
+
+function riftHistoryEntry(activity: PlayerActivityItem): RiftHistoryEntry | null {
+  const meta = activity.metadata;
+  const kind = activity.kind === "rift-extraction-looted"
+    ? activity.direction === "incoming" ? "raided" : "raid"
+    : riftHistoryKinds[activity.kind];
+  if (!kind || typeof meta.planetId !== "string") return null;
+  const text = (key: string) => (typeof meta[key] === "string" ? meta[key] : null);
+  const iso = (seconds: string | null) => (seconds && /^\d+$/.test(seconds) ? new Date(Number(seconds) * 1_000).toISOString() : null);
+  // Single-resource events carry resourceId + amount; raids carry all three amounts.
+  const amounts = typeof meta.resourceId === "number"
+    ? riftAmounts(meta.resourceId, text("amount") ?? "0")
+    : { metal: text("metal") ?? "0", crystal: text("crystal") ?? "0", deuterium: text("deuterium") ?? "0" };
+  const counterparty = kind === "raided" ? text("attacker") : kind === "raid" ? text("defender") : null;
+  return {
+    id: activity.id,
+    kind,
+    planetId: meta.planetId,
+    amounts,
+    counterparty: counterparty as Address | null,
+    unlocksAt: kind === "extractionStarted" ? iso(text("unlocksAt")) : null,
+    occurredAt: iso(activity.occurredAt) ?? iso(activity.transactionAt) ?? new Date(0).toISOString(),
+    transactionHash: activity.transactionHash
+  };
 }
 
 function riftPendingWithdrawal(

@@ -7449,6 +7449,64 @@ describe("SettlementIndexer", () => {
     expect(indexer.riftTargets()).toEqual([]);
   });
 
+  test("serves a wallet's Rift claims on every planet and its injection, extraction and raid history", () => {
+    const raider = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, eventName: "ColonyCreated", transactionHash: "0xcolony", planetId: "8", position: 10 });
+    const at = (seconds: bigint) => `0x${seconds.toString(16)}`;
+    indexer.applyLog({
+      blockNumber: "0x90", blockTimestamp: at(1_770_000_000n), transactionHash: "0xinject", logIndex: "0x0",
+      topics: [marketResourceDepositedTopic, addressTopic(player), topic(7n), topic(2n)], data: abiWords(5_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91", blockTimestamp: at(1_770_000_100n), transactionHash: "0xstart", logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(8n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_100n, 1_772_419_300n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92", blockTimestamp: at(1_770_000_200n), transactionHash: "0xraid", logIndex: "0x1",
+      topics: [riftExtractionLootedTopic, addressTopic(raider), topic(8n)], data: abiWords(400n, 0n, 0n)
+    });
+
+    // Planet 7 is selected, yet the claim on colony 8 stays visible (and finalizable) from it.
+    const state = indexer.riftState(player, "7");
+    expect(state.pendingWithdrawals).toEqual([
+      expect.objectContaining({ id: "extraction:8:0", kind: "riftExtraction", planetId: "8", amount: "600", startedAmount: "1000" })
+    ]);
+    expect(state.resources.find((resource) => resource.key === "metal")?.lockedBalance).toBe("0");
+    expect(indexer.riftState(player, "8").resources.find((resource) => resource.key === "metal")?.lockedBalance).toBe("600");
+    expect(state.history).toEqual([
+      {
+        id: expect.any(String), kind: "raided", planetId: "8", amounts: { metal: "400", crystal: "0", deuterium: "0" },
+        counterparty: raider, unlocksAt: null, occurredAt: "2026-02-02T02:43:20.000Z", transactionHash: "0xraid"
+      },
+      {
+        id: expect.any(String), kind: "extractionStarted", planetId: "8", amounts: { metal: "1000", crystal: "0", deuterium: "0" },
+        counterparty: null, unlocksAt: "2026-03-02T02:41:40.000Z", occurredAt: "2026-02-02T02:41:40.000Z", transactionHash: "0xstart"
+      },
+      {
+        id: expect.any(String), kind: "injected", planetId: "7", amounts: { metal: "0", crystal: "0", deuterium: "5000" },
+        counterparty: null, unlocksAt: null, occurredAt: "2026-02-02T02:40:00.000Z", transactionHash: "0xinject"
+      }
+    ]);
+    // The raider's history shows the other side of the same raid.
+    expect(indexer.riftHistory(raider)).toEqual([
+      expect.objectContaining({ kind: "raid", planetId: "8", counterparty: player, amounts: { metal: "400", crystal: "0", deuterium: "0" } })
+    ]);
+
+    indexer.applyLog({
+      blockNumber: "0x93", blockTimestamp: at(1_772_419_400n), transactionHash: "0xfinalize", logIndex: "0x0",
+      topics: [riftExtractionFinalizedTopic, addressTopic(player), topic(8n), topic(0n)], data: abiWords(600n)
+    });
+    expect(indexer.riftState(player, "7").pendingWithdrawals).toEqual([]);
+    expect(indexer.riftHistory(player)[0]).toMatchObject({ kind: "extracted", planetId: "8", amounts: { metal: "600", crystal: "0", deuterium: "0" } });
+  });
+
   test("indexes alliance membership, profile, invites, and join requests from event logs", () => {
     const officer = "0x3333333333333333333333333333333333333333" as Address;
     const applicant = "0x4444444444444444444444444444444444444444" as Address;

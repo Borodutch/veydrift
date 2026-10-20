@@ -9,7 +9,6 @@ import { shouldAutoDismissActionNotice } from "../src/actionNoticeAutoDismiss";
 import { CONTRACT_REJECTED_NO_REASON_MESSAGE, fetchGameApiJson, fetchGameApiMutation, isTransientWalletBootstrapError } from "../src/walletFlow";
 import { GameApiError } from "../src/gameApiError";
 import { InlineStateNotice } from "../src/components/InlineStateNotice";
-import { RiftUnderConstruction } from "../src/components/RiftPage";
 import { TopBar } from "../src/components/TopBar";
 
 const originalFetch = globalThis.fetch;
@@ -35,14 +34,6 @@ describe("frontend copy audit", () => {
     expect(text).toContain("Insufficient energy reduces mine output to 50%");
     expect(text).toContain("Crawler production details are loading");
     expect(text).not.toMatch(/backend|production model|verified/i);
-  });
-
-  test("Rift keeps one truthful unavailable heading, not placeholder badges or description", () => {
-    const section = RiftUnderConstruction();
-    expect(section.props["aria-labelledby"]).toBe("rift-under-construction-title");
-    const text = visibleCopy(section);
-    expect(text).toContain("The Rift is not available yet");
-    expect(text).not.toMatch(/Under construction|taking shape|assembled and stabilized/);
   });
 
   test("onboarding and wallet errors retain player recovery and settlement gates", () => {
