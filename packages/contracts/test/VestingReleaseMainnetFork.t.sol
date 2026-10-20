@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {VestingWallet} from "@openzeppelin/contracts/finance/VestingWallet.sol";
 
-/// @notice Proves the live VEYDRIFT vesting wallets pay the treasury on schedule and leave nothing
+/// @notice Proves the live VEYDRIFT vesting wallets pay their owner on schedule and leave nothing
 ///         stuck: permissionless `release` at the cliff, midway and after the end, on live Base state.
 contract VestingReleaseMainnetForkTest is Test {
     IERC20 internal constant VEYDRIFT = IERC20(0x442E9Ba64899d6B0bD25DF2558d3E804427bF448);
-    address internal constant TREASURY = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
+    address internal constant OWNER = 0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE; // borodutch.eth
     VestingWallet internal constant DEVELOPMENT =
         VestingWallet(payable(0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4));
     VestingWallet internal constant CONTRIBUTOR =
@@ -18,12 +18,12 @@ contract VestingReleaseMainnetForkTest is Test {
         VestingWallet(payable(0x64C323e8ef7D6df9730E64627d7755c9A1050162));
     uint256 internal constant START = 1_792_699_200; // 2026-10-22 20:00 UTC
 
-    function testEveryWalletReleasesEverythingToTheTreasury() external {
+    function testEveryWalletReleasesEverythingToTheOwner() external {
         if (!_onBase()) return;
 
-        assertEq(DEVELOPMENT.owner(), TREASURY);
-        assertEq(CONTRIBUTOR.owner(), TREASURY);
-        assertEq(ECOSYSTEM.owner(), TREASURY);
+        assertEq(DEVELOPMENT.owner(), OWNER);
+        assertEq(CONTRIBUTOR.owner(), OWNER);
+        assertEq(ECOSYSTEM.owner(), OWNER);
 
         // Nothing before the start, and nothing from the contributor wallet before its 1-year cliff.
         vm.warp(START - 1);
@@ -42,8 +42,8 @@ contract VestingReleaseMainnetForkTest is Test {
         _release(ECOSYSTEM, 100_000_000 ether);
         _release(DEVELOPMENT, 150_000_000 ether);
 
-        // After the last end date every wallet is empty and the treasury got all 650M.
-        uint256 before = VEYDRIFT.balanceOf(TREASURY);
+        // After the last end date every wallet is empty and the owner got all 650M.
+        uint256 before = VEYDRIFT.balanceOf(OWNER);
         vm.warp(START + 6 * 365 days);
         DEVELOPMENT.release(address(VEYDRIFT));
         CONTRIBUTOR.release(address(VEYDRIFT));
@@ -51,13 +51,13 @@ contract VestingReleaseMainnetForkTest is Test {
         assertEq(VEYDRIFT.balanceOf(address(DEVELOPMENT)), 0);
         assertEq(VEYDRIFT.balanceOf(address(CONTRIBUTOR)), 0);
         assertEq(VEYDRIFT.balanceOf(address(ECOSYSTEM)), 0);
-        assertEq(VEYDRIFT.balanceOf(TREASURY) - before, (100 + 150 + 100) * 1_000_000 ether);
+        assertEq(VEYDRIFT.balanceOf(OWNER) - before, (100 + 150 + 100) * 1_000_000 ether);
     }
 
     /// The one way to lock them forever: renouncing a wallet's ownership makes every release revert.
     function testRenouncingOwnershipWouldLockTheRest() external {
         if (!_onBase()) return;
-        vm.prank(TREASURY);
+        vm.prank(OWNER);
         ECOSYSTEM.renounceOwnership();
         vm.warp(START + 6 * 365 days);
         vm.expectRevert();
@@ -77,9 +77,9 @@ contract VestingReleaseMainnetForkTest is Test {
     }
 
     function _release(VestingWallet wallet, uint256 expected) internal {
-        uint256 before = VEYDRIFT.balanceOf(TREASURY);
+        uint256 before = VEYDRIFT.balanceOf(OWNER);
         vm.prank(address(0xBEEF));
         wallet.release(address(VEYDRIFT));
-        assertApproxEqAbs(VEYDRIFT.balanceOf(TREASURY) - before, expected, 2 ether);
+        assertApproxEqAbs(VEYDRIFT.balanceOf(OWNER) - before, expected, 2 ether);
     }
 }
