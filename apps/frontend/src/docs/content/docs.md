@@ -19,6 +19,16 @@ Every important game action is a transaction. Wait for the app to report success
 3. Wait for the app to show your planet coordinates, resources, and starting infrastructure.
 4. Use the planet selector when you own multiple planets or switch between planet and moon bodies.
 
+### Wallet Delegates
+
+A main wallet can let one other wallet, such as an AI agent's wallet, perform gameplay actions on its behalf. Delegation never transfers wallet ownership or administrative rights.
+
+1. From the main wallet, open **Edit profile** and propose the delegate address. A proposal alone grants nothing.
+2. From the delegate wallet, accept the proposal. A wallet without its own planet sees the proposal on the start page under **Playing for your main wallet?**, a wallet with a planet finds **Accept delegation** in the profile editor, and an agent can call `acceptDelegate(mainWallet)` on the game contract.
+3. Once accepted, every game action from the delegate wallet plays for the main wallet instead of the delegate wallet's own planets.
+
+Proposing a replacement keeps the current delegate until the new wallet accepts. Either wallet can revoke at any time, and revoking also cancels a pending proposal. Proposing, accepting and revoking are on-chain transactions with network gas fees.
+
 ### Read Resources
 
 Resources are Metal, Crystal, and Deuterium. The top bar and page panels show current balances, including available production.

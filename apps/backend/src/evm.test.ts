@@ -3133,6 +3133,7 @@ describe("wallet delegation reads", () => {
   test("resolves a delegate wallet to its main wallet and returns the main delegate", async () => {
     const delegate = "0x3333333333333333333333333333333333333333" as Address;
     const main = "0x4444444444444444444444444444444444444444" as Address;
+    const pendingDelegate = "0x6666666666666666666666666666666666666666" as Address;
     const calls: string[] = [];
     const reader = new VeydriftGameReader(readerConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
@@ -3141,6 +3142,7 @@ describe("wallet delegation reads", () => {
         calls.push(data);
         if (data.startsWith("0x6d3498d8")) return dataWords([addressWord(main)]) as T;
         if (data.startsWith("0x8d22ea2a")) return dataWords([addressWord(delegate)]) as T;
+        if (data.startsWith("0xa070d0e0")) return dataWords([addressWord(pendingDelegate)]) as T;
         throw new Error(`Unexpected call ${data}`);
       }
     });
@@ -3149,12 +3151,41 @@ describe("wallet delegation reads", () => {
       wallet: delegate,
       main,
       delegate,
+      pendingDelegate,
+      proposedBy: [],
       actingAsDelegate: true
     });
     expect(calls).toEqual([
       `0x6d3498d8${addressWord(delegate)}`,
-      `0x8d22ea2a${addressWord(main)}`
+      `0x8d22ea2a${addressWord(main)}`,
+      `0xa070d0e0${addressWord(main)}`
     ]);
+  });
+
+  test("reports no pending delegate on a Game from before delegate consent", async () => {
+    const main = "0x5555555555555555555555555555555555555555" as Address;
+    let pendingFailure = new Error("execution reverted");
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const data = (params[0] as { data: string }).data;
+        if (data.startsWith("0xa070d0e0")) throw pendingFailure;
+        return (data.startsWith("0x6d3498d8")
+          ? dataWords([addressWord(main)])
+          : dataWords([addressWord("0x0000000000000000000000000000000000000000")])) as T;
+      }
+    });
+
+    await expect(reader.getDelegationState(main)).resolves.toEqual({
+      wallet: main,
+      main,
+      delegate: null,
+      pendingDelegate: null,
+      proposedBy: [],
+      actingAsDelegate: false
+    });
+    // Only a revert means "no proposals"; an unavailable RPC must not hide a pending proposal.
+    pendingFailure = new Error("RPC HTTP 503");
+    await expect(reader.getDelegationState(main)).rejects.toThrow("RPC HTTP 503");
   });
 
   test("returns null when a main wallet has no delegate", async () => {
@@ -3172,6 +3203,35 @@ describe("wallet delegation reads", () => {
       wallet: main,
       main,
       delegate: null,
+      pendingDelegate: null,
+      proposedBy: [],
+      actingAsDelegate: false
+    });
+  });
+
+  test("keeps only indexed proposal candidates that the chain still records for the wallet", async () => {
+    const wallet = "0x5555555555555555555555555555555555555555" as Address;
+    const proposing = "0x7777777777777777777777777777777777777777" as Address;
+    const withdrawn = "0x8888888888888888888888888888888888888888" as Address;
+    const unreadable = "0x9999999999999999999999999999999999999999" as Address;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const data = (params[0] as { data: string }).data;
+        if (data === `0xa070d0e0${addressWord(proposing)}`) return dataWords([addressWord(wallet)]) as T;
+        if (data === `0xa070d0e0${addressWord(withdrawn)}`) return dataWords([addressWord(proposing)]) as T;
+        if (data === `0xa070d0e0${addressWord(unreadable)}`) throw new Error("RPC HTTP 503");
+        return (data.startsWith("0x6d3498d8")
+          ? dataWords([addressWord(wallet)])
+          : dataWords([addressWord("0x0000000000000000000000000000000000000000")])) as T;
+      }
+    });
+
+    await expect(reader.getDelegationState(wallet, [proposing, withdrawn, unreadable])).resolves.toEqual({
+      wallet,
+      main: wallet,
+      delegate: null,
+      pendingDelegate: null,
+      proposedBy: [proposing],
       actingAsDelegate: false
     });
   });

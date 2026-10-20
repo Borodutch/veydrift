@@ -675,7 +675,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         } else if (
             msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846
                 || msg.sig == 0x8d22ea2a || msg.sig == 0x2222ef9f || msg.sig == 0x6d3498d8
-                || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38
+                || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38 || msg.sig == 0xe2feb35c
+                || msg.sig == 0xa070d0e0
         ) {
             _delegateToFirstPlanetSettlementModule();
         } else if (
