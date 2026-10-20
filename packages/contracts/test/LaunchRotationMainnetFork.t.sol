@@ -129,9 +129,9 @@ contract LaunchRotationMainnetForkTest is Test {
         VeydriftResource metal = new VeydriftResource("Veydrift Metal", "vMETAL", TREASURY);
         VeydriftResource crystal = new VeydriftResource("Veydrift Crystal", "vCRYSTAL", TREASURY);
         VeydriftResource deuterium = new VeydriftResource("Veydrift Deuterium", "vDEUT", TREASURY);
-        metal.transfer(GAME, GAME_RESERVE);
-        crystal.transfer(GAME, GAME_RESERVE);
-        deuterium.transfer(GAME, GAME_RESERVE);
+        assertTrue(metal.transfer(GAME, GAME_RESERVE));
+        assertTrue(crystal.transfer(GAME, GAME_RESERVE));
+        assertTrue(deuterium.transfer(GAME, GAME_RESERVE));
         vm.stopPrank();
 
         IReserveGame game = IReserveGame(GAME);

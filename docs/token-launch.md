@@ -6,6 +6,25 @@ Any execution requires a newly approved schedule, fresh block bounds and every o
 Do not reuse an expired auction window. Supply, vesting and launch safeguards are maintained here;
 alternative-venue scripts are excluded from this bundle.
 
+## Live tokens and authorities (2026-10-20 redeploy)
+
+All four tokens were redeployed with plain from PR #1957; `packages/contracts/deployments/base.json`
+records every address. The earlier VEYDRIFT (`0x255F…B671`) and its auction are abandoned.
+
+| What | Base address |
+| --- | --- |
+| VEYDRIFT (fixed 1B, no owner) | `0x442E9Ba64899d6B0bD25DF2558d3E804427bF448` |
+| Development / contributor / ecosystem vesting (start 2026-10-22 20:00 UTC, owner = treasury) | `0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4` / `0x4A55cff3006e87360285969dD366acBd79445BeD` / `0x64C323e8ef7D6df9730E64627d7755c9A1050162` |
+| vMETAL / vCRYSTAL / vDEUT (`VeydriftResource`: fixed 10B, 6 decimals, no owner/proxy) | `0xbD87aa148f2586D1f1499C5370f8bd05ee147209` / `0x6920c4C7c29C2b82869250B2e290A0fFfb02126c` / `0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28` |
+| Token treasury (genesis supply; Vaultwarden "Veydrift Mainnet Token Treasury (2026-10)") | `0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7` |
+| Owner of Game, ProxyAdmin, Moon, Alliance, PaidInvites, RandomnessEngine, MigrationSettlement (+ its state signer); Vaultwarden "Veydrift Mainnet Owner (2026-10)" | `0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02` |
+
+The Game reserve holds 1,000,000 of each new resource token (thousands of times the in-game
+liabilities); the treasury tops it up with a plain transfer when needed. The legacy proxies
+`0x91A4…cB41`, `0xC688…6B76` and `0x5A60…81e2` were renounced (no mint, no upgrade) and stay stranded
+in the Game. MoonSystem's `chickenBurnGranter` is the chicken-burn listener key `0x735a…6DDC`, which can
+only grant burn moons.
+
 ## Launch plan (owner decision, 2026-10-15)
 
 The auction is created from the Uniswap web app's CCA flow (<https://cca.uniswap.org/>), not with

@@ -1,0 +1,22 @@
+{
+  "VeydriftCatalog": "0xFe98b1115DDa641fa501364A1c0f68A8Bf890Bb4",
+  "VeydriftContributorVestingWallet": "0x4A55cff3006e87360285969dD366acBd79445BeD",
+  "VeydriftDependencies": "0x847DA6C5e033350Db0fd19fe9095b5bE65Be4479",
+  "VeydriftDevelopmentVestingWallet": "0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4",
+  "VeydriftEcosystemVestingWallet": "0x64C323e8ef7D6df9730E64627d7755c9A1050162",
+  "VeydriftFormulas": "0xb6B4Cb6D3E828C713A51Ca01935b23AB8b273501",
+  "VeydriftMoonBuildings": "0xcd57DC99200a8FBA2943956BfdFe8a802B7104d8",
+  "VeydriftMoonDefenseBacklog": "0x1F74f278E26df37f2863221982DF7F9bf6549544",
+  "VeydriftMoonDefenseProduction": "0xBdCBf6957992682E404B2f1502cD412f784F142D",
+  "VeydriftMoonGateShips": "0x86fe39CB48625BC4AFE38Ce0357417F44242D3B6",
+  "VeydriftMoonMath": "0x2A984453728A95501Cdfb1EE1a7aa3792fAb4f86",
+  "VeydriftMoonProductionBatch": "0xAc2F50fdf7E7fe6421D3e463c6699511b74B2A30",
+  "VeydriftMoonShipBacklog": "0xbEE97588C1e0BcD6E22152750AFCB6Ec1D3144fd",
+  "VeydriftMoonShipDependencies": "0xa4C3f9648e1C89e67F20cF9c2cF277aaA8788E4c",
+  "VeydriftMoonShipProduction": "0xA08cb5b26185cCaf4A67f4e2761f725334F851Fd",
+  "VeydriftMoonSystem": "0xc76B55D420b1547117aaa4dB28C5fF38B5C121db",
+  "VeydriftResource": "0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28",
+  "VeydriftResource#1": "0xbD87aa148f2586D1f1499C5370f8bd05ee147209",
+  "VeydriftResource#2": "0x6920c4C7c29C2b82869250B2e290A0fFfb02126c",
+  "VeydriftToken": "0x442E9Ba64899d6B0bD25DF2558d3E804427bF448"
+}
