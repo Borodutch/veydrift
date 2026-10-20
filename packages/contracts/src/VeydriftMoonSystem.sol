@@ -157,6 +157,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     // Append-only incarnation counter. Existing live moons are generation zero; every creation
     // after this upgrade advances the counter, so in-flight missions cannot bind to a replacement.
     mapping(uint256 planetId => uint64 generation) internal _moonGenerations;
+    // Append-only. The chicken-burn listener's hot key: it may only grant burn moons, so the
+    // owner (who can mint moon state and upgrade this contract) stays a cold key.
+    address public chickenBurnGranter;
     error ChickenBurnAlreadyGranted(bytes32 burnId);
     error ConstructionActive();
     error ConstructionInactive();
@@ -274,6 +277,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint64 nextReadyAt
     );
     event MoonChanceReporterUpdated(address indexed oldReporter, address indexed newReporter);
+    event ChickenBurnGranterUpdated(address indexed oldGranter, address indexed newGranter);
     event MoonChanceSkippedExistingMoon(
         uint256 indexed battleId,
         uint256 indexed targetPlanetId,
@@ -387,6 +391,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             _settleMoonDefenseDue(planetId);
         }
         VeydriftMoonDefenseBacklog.applyChanges(_moonDefenseCounts, planetId, changes, repair);
+    }
+
+    function setChickenBurnGranter(address granter) external onlyOwner {
+        emit ChickenBurnGranterUpdated(chickenBurnGranter, granter);
+        chickenBurnGranter = granter;
     }
 
     function setMoonChanceReporter(address nextReporter) external onlyOwner {
@@ -538,9 +547,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function grantMoonFromChickenBurn(bytes32 burnId, address player, uint256 planetId)
         external
-        onlyOwner
         returns (Moon memory createdMoon)
     {
+        if (msg.sender != owner && msg.sender != chickenBurnGranter) {
+            revert NotOwner(msg.sender);
+        }
         if (burnId == bytes32(0) || player == address(0)) revert ZeroAddress();
         if (chickenBurnMoonGranted[burnId]) revert ChickenBurnAlreadyGranted(burnId);
 
