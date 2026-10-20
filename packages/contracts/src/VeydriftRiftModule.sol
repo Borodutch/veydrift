@@ -157,8 +157,10 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
             _riftLockedResources[planetId], capacity, metalBps, crystalBps, deuteriumBps
         );
         if (raided.metal == 0 && raided.crystal == 0 && raided.deuterium == 0) return raided;
+        // A pure reclassification (locked -> in game; the reserve requirement is unchanged), so it
+        // skips the capacity check: an under-backed reserve must never strand the battle.
         _lockedWithdrawalResources = _subtract(_lockedWithdrawalResources, raided);
-        _increaseInternalResources(raided);
+        _totalInternalResources = _add(_totalInternalResources, raided);
         _riftExtractionSubtract(planetId, Resource.Metal, raided.metal);
         _riftExtractionSubtract(planetId, Resource.Crystal, raided.crystal);
         _riftExtractionSubtract(planetId, Resource.Deuterium, raided.deuterium);
