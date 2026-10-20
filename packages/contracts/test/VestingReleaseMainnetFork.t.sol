@@ -30,19 +30,19 @@ contract VestingReleaseMainnetForkTest is Test {
         assertEq(DEVELOPMENT.releasable(address(VEYDRIFT)), 0);
         vm.warp(START + 365 days - 1);
         assertEq(CONTRIBUTOR.releasable(address(VEYDRIFT)), 0);
-        assertApproxEqAbs(DEVELOPMENT.releasable(address(VEYDRIFT)), 30_000_000 ether, 1 ether);
+        assertApproxEqAbs(DEVELOPMENT.releasable(address(VEYDRIFT)), 50_000_000 ether, 2 ether);
 
         // At the cliff the contributor wallet has vested exactly a quarter.
         vm.warp(START + 365 days);
-        assertEq(CONTRIBUTOR.releasable(address(VEYDRIFT)), 25_000_000 ether);
-        _release(CONTRIBUTOR, 25_000_000 ether);
+        assertEq(CONTRIBUTOR.releasable(address(VEYDRIFT)), 50_000_000 ether);
+        _release(CONTRIBUTOR, 50_000_000 ether);
 
         // Midway releases are linear (anyone may call; tokens always go to the owner).
         vm.warp(START + 3 * 365 days);
-        _release(ECOSYSTEM, 50_000_000 ether);
-        _release(DEVELOPMENT, 90_000_000 ether);
+        _release(ECOSYSTEM, 100_000_000 ether);
+        _release(DEVELOPMENT, 150_000_000 ether);
 
-        // After the last end date every wallet is empty and the treasury got all 350M.
+        // After the last end date every wallet is empty and the treasury got all 650M.
         uint256 before = VEYDRIFT.balanceOf(TREASURY);
         vm.warp(START + 6 * 365 days);
         DEVELOPMENT.release(address(VEYDRIFT));
@@ -51,7 +51,7 @@ contract VestingReleaseMainnetForkTest is Test {
         assertEq(VEYDRIFT.balanceOf(address(DEVELOPMENT)), 0);
         assertEq(VEYDRIFT.balanceOf(address(CONTRIBUTOR)), 0);
         assertEq(VEYDRIFT.balanceOf(address(ECOSYSTEM)), 0);
-        assertEq(VEYDRIFT.balanceOf(TREASURY) - before, (60 + 75 + 50) * 1_000_000 ether);
+        assertEq(VEYDRIFT.balanceOf(TREASURY) - before, (100 + 150 + 100) * 1_000_000 ether);
     }
 
     /// The one way to lock them forever: renouncing a wallet's ownership makes every release revert.
@@ -80,6 +80,6 @@ contract VestingReleaseMainnetForkTest is Test {
         uint256 before = VEYDRIFT.balanceOf(TREASURY);
         vm.prank(address(0xBEEF));
         wallet.release(address(VEYDRIFT));
-        assertApproxEqAbs(VEYDRIFT.balanceOf(TREASURY) - before, expected, 1 ether);
+        assertApproxEqAbs(VEYDRIFT.balanceOf(TREASURY) - before, expected, 2 ether);
     }
 }

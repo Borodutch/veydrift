@@ -14,9 +14,10 @@ records every address. The earlier VEYDRIFT (`0x255F…B671`) and its auction ar
 | What | Base address |
 | --- | --- |
 | VEYDRIFT (fixed 1B, no owner) | `0x442E9Ba64899d6B0bD25DF2558d3E804427bF448` |
-| Development / contributor / ecosystem vesting (start 2026-10-22 20:00 UTC, owner = treasury) | `0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4` / `0x4A55cff3006e87360285969dD366acBd79445BeD` / `0x64C323e8ef7D6df9730E64627d7755c9A1050162` |
+| Development / contributor / ecosystem vesting: 250M / 200M / 200M (start 2026-10-22 20:00 UTC, owner = treasury) | `0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4` / `0x4A55cff3006e87360285969dD366acBd79445BeD` / `0x64C323e8ef7D6df9730E64627d7755c9A1050162` |
 | vMETAL / vCRYSTAL / vDEUT (`VeydriftResource`: fixed 10B, 6 decimals, no owner/proxy) | `0xbD87aa148f2586D1f1499C5370f8bd05ee147209` / `0x6920c4C7c29C2b82869250B2e290A0fFfb02126c` / `0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28` |
 | Token treasury (genesis supply; Vaultwarden "Veydrift Mainnet Token Treasury (2026-10)") | `0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7` |
+| CCA wallet borodutch.eth: 200M VEYDRIFT (auction deposit) + 1M each vMETAL/vCRYSTAL/vDEUT (resource pools) | `0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE` |
 | Owner of Game, ProxyAdmin, Moon, Alliance, PaidInvites, RandomnessEngine, MigrationSettlement (+ its state signer); Vaultwarden "Veydrift Mainnet Owner (2026-10)" | `0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02` |
 
 The Game reserve holds 1,000,000 of each new resource token (thousands of times the in-game
@@ -24,6 +25,23 @@ liabilities); the treasury tops it up with a plain transfer when needed. The leg
 `0x91A4…cB41`, `0xC688…6B76` and `0x5A60…81e2` were renounced (no mint, no upgrade) and stay stranded
 in the Game. MoonSystem's `chickenBurnGranter` is the chicken-burn listener key `0x735a…6DDC`, which can
 only grant burn moons.
+
+## Launch plan (owner decision, 2026-10-20)
+
+Supersedes the 2026-10-15 plan below. The auction is created from the Uniswap web app with these inputs
+(field-by-field sheet kept outside the repo):
+
+| Parameter | Value |
+| --- | --- |
+| Sold | 100,000,000 VEYDRIFT (10%); deposit 200M with 100% of proceeds to liquidity (100M reserved for the pool) |
+| Currency | native ETH |
+| Floor | $0.0005 per VEYDRIFT ($500K FDV); the UI's launch threshold is floor × sold = $50K |
+| Start / end | 2026-10-22 13:00 PDT (20:00 UTC) / 2026-11-05 12:00 PST (20:00 UTC) |
+| Pool | Uniswap v4 VEYDRIFT/ETH, 1% fee, full range, LP position time-locked 1 year, fees to borodutch.eth |
+
+The 300M VEYDRIFT no longer sold went 100M each into the three vesting wallets before vesting started,
+so they follow the original schedules. The resource pools (50M VEYDRIFT from the treasury against
+vMETAL/vCRYSTAL/vDEUT from borodutch.eth) are added after the auction.
 
 ## Launch plan (owner decision, 2026-10-15)
 
