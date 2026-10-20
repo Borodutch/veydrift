@@ -2,7 +2,7 @@
 
 GitHub: https://github.com/Borodutch/veydrift
 
-Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
+Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. **Contracts And Tokens** lists every contract address, its owner, and where every $VEYDRIFT and resource token is held. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
 
 ## Beginner Tutorial
 
@@ -549,3 +549,72 @@ dreadstar destruction bps = min(floor(sqrt(moon diameter km)) * 50, 10000)
 ```
 
 Jump Gate transfers require both origin and destination moons to have a Jump Gate. A transfer moves ships only, carries no resources, and sets a cooldown on both gates.
+
+## Contracts And Tokens
+
+Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on October 20, 2026.
+
+### $VEYDRIFT
+
+[0x442E9Ba64899d6B0bD25DF2558d3E804427bF448](https://basescan.org/token/0x442E9Ba64899d6B0bD25DF2558d3E804427bF448) is the only $VEYDRIFT. Its supply is fixed at 1,000,000,000 (18 decimals): it has no owner, no minter, no proxy, no tax and no pause switch. The whole supply was minted once, at deployment.
+
+| Holder | Address | $VEYDRIFT | Share | Purpose |
+| --- | --- | --- | --- | --- |
+| Auction wallet (borodutch.eth) | [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE) | 200,000,000 | 20% | Deposited into the Uniswap continuous clearing auction: 100M are sold, and 100M go into the $VEYDRIFT/ETH pool together with all the ETH the auction raises |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 150,000,000 | 15% | The $VEYDRIFT side of the vMETAL, vCRYSTAL and vDEUT pools (50M each) |
+| Development vesting | [0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4](https://basescan.org/address/0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4) | 250,000,000 | 25% | Locked; vests over 5 years |
+| Contributor vesting | [0x4A55cff3006e87360285969dD366acBd79445BeD](https://basescan.org/address/0x4A55cff3006e87360285969dD366acBd79445BeD) | 200,000,000 | 20% | Locked; 1-year cliff, then vests until year 4 |
+| Ecosystem vesting | [0x64C323e8ef7D6df9730E64627d7755c9A1050162](https://basescan.org/address/0x64C323e8ef7D6df9730E64627d7755c9A1050162) | 200,000,000 | 20% | Locked; vests over 6 years |
+
+### Vesting Schedules
+
+The three vesting wallets are OpenZeppelin `VestingWallet` contracts. All of them start on October 22, 2026 at 20:00 UTC, when the auction opens, and each year counts as 365 days.
+
+| Wallet | Locked | Schedule | Fully vested |
+| --- | --- | --- | --- |
+| Development | 250,000,000 | Linear from the start, about 136,986 per day | October 21, 2031 |
+| Contributor | 200,000,000 | Nothing until the cliff on October 22, 2027, when 50,000,000 (25%) vest at once; then linear | October 21, 2030 |
+| Ecosystem | 200,000,000 | Linear from the start, about 91,324 per day | October 20, 2032 |
+
+Unvested tokens cannot be moved by anyone. Once tokens vest, anyone can call `release(token)` on a vesting wallet, but the tokens always go to that wallet's owner, which is the treasury [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7). Only the owner can name a different recipient. Tokens sent to a vesting wallet later vest on the same schedule.
+
+### Resource Tokens
+
+Metal, Crystal and Deuterium are ERC-20 tokens with a fixed supply of 10,000,000,000 each (6 decimals). Like $VEYDRIFT, they have no owner, no minter and no proxy. One whole token equals 1,000,000 units in the game, and every unit you hold in the game is backed by a token in the game contract's reserve.
+
+| Token | Address |
+| --- | --- |
+| vMETAL | [0xbD87aa148f2586D1f1499C5370f8bd05ee147209](https://basescan.org/token/0xbD87aa148f2586D1f1499C5370f8bd05ee147209) |
+| vCRYSTAL | [0x6920c4C7c29C2b82869250B2e290A0fFfb02126c](https://basescan.org/token/0x6920c4C7c29C2b82869250B2e290A0fFfb02126c) |
+| vDEUT | [0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28](https://basescan.org/token/0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28) |
+
+| Holder | Address | Of each token | Purpose |
+| --- | --- | --- | --- |
+| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 1,000,000 | Backs every resource in the game; players inject and extract tokens through the Rift |
+| Auction wallet (borodutch.eth) | [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE) | 1,000,000 | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT, added after the auction |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 9,998,000,000 | Tops up the game's reserve as players produce more resources |
+
+### Game Contracts And Owners
+
+One owner address, [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02), controls upgrades and settings of the game contracts below. It holds no tokens.
+
+| Contract | Address | Owner | Other roles |
+| --- | --- | --- | --- |
+| Game | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 0xc2ae…FC02 | Upgraded through the ProxyAdmin below. Battle referee and randomness server: [0xeC336742A19a9D0D046a83603491E4Ae08329788](https://basescan.org/address/0xeC336742A19a9D0D046a83603491E4Ae08329788) |
+| Game ProxyAdmin | [0xc81609E77b5ea79d0CdA9794b75B65D567535cb9](https://basescan.org/address/0xc81609E77b5ea79d0CdA9794b75B65D567535cb9) | 0xc2ae…FC02 | |
+| Moon system | [0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C](https://basescan.org/address/0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C) | 0xc2ae…FC02 | Burning Chicken moon granter [0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC](https://basescan.org/address/0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC), which can only grant moons for burned NFTs |
+| Alliance system | [0x0E5a6210482B15780cf5Ec036107031dcA702001](https://basescan.org/address/0x0E5a6210482B15780cf5Ec036107031dcA702001) | 0xc2ae…FC02 | |
+| Paid alliance invites | [0x01771E2608C35d1C5966FC8556584EEe7d4128f0](https://basescan.org/address/0x01771E2608C35d1C5966FC8556584EEe7d4128f0) | 0xc2ae…FC02 | Invite signer [0x45efFEF7dbef46D960479ac5893af3f11F23c46c](https://basescan.org/address/0x45efFEF7dbef46D960479ac5893af3f11F23c46c) |
+| Randomness engine | [0xdc7d3388bfb07E2cC8DD3Be265d7C1182D34d069](https://basescan.org/address/0xdc7d3388bfb07E2cC8DD3Be265d7C1182D34d069) | 0xc2ae…FC02 | Fulfiller 0xeC33…9788 |
+| Migration settlement | [0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3](https://basescan.org/address/0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3) | 0xc2ae…FC02 | State signer 0xc2ae…FC02 |
+| Referral system | [0x9B9A94836eaa715A3b801e91Aa409099FC1393B3](https://basescan.org/address/0x9B9A94836eaa715A3b801e91Aa409099FC1393B3) | [0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B](https://basescan.org/address/0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B) | Its owner can't be changed; an upgradeable replacement owned by 0xc2ae…FC02 is in progress. Referral signer [0xCA105d70136fFfa7bf4ED5fFf0Bc6909F985273D](https://basescan.org/address/0xCA105d70136fFfa7bf4ED5fFf0Bc6909F985273D) |
+| Alliance war protection | [0x255fD3212ef778C950cdB94cEA31CE2BBA529E07](https://basescan.org/address/0x255fD3212ef778C950cdB94cEA31CE2BBA529E07) | none | Not upgradeable |
+
+### Retired Contracts
+
+These earlier tokens are no longer used. Don't buy them.
+
+| Token | Address | Status |
+| --- | --- | --- |
+| Old $VEYDRIFT | [0x255F6913E104eC786Fc4B50885D13DC8435BB671](https://basescan.org/token/0x255F6913E104eC786Fc4B50885D13DC8435BB671) | Abandoned before any public sale |
+| Old vMETAL, vCRYSTAL, vDEUT | [0x91A4f8A9D05F21E010dc1eE0B17Ab644D433cB41](https://basescan.org/token/0x91A4f8A9D05F21E010dc1eE0B17Ab644D433cB41), [0xC6881a2C4C50E28AdCaC4D5577cD8e211E806B76](https://basescan.org/token/0xC6881a2C4C50E28AdCaC4D5577cD8e211E806B76), [0x5A6027DE1C7E52B4b1AD0c13c3eC3Ad5FCb481e2](https://basescan.org/token/0x5A6027DE1C7E52B4b1AD0c13c3eC3Ad5FCb481e2) | Ownership renounced, so they can never be minted; their whole supply stays locked in the game contract |
