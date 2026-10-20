@@ -10,9 +10,7 @@ import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
 import {Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftAcsAttackProtection {
-    function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
-        external
-        view;
+    function enforceJoinAttackProtection(address joiner, uint256 attackMissionId) external view;
 }
 
 /// @notice Delegatecall target for joining an outbound ACS attack from either a planet or moon.
@@ -112,10 +110,9 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
                     false
                 )
         ) revert InvalidId();
+        // A joiner only the live Rift lock admits may join a Rift-only battle alone (Rift module).
         IVeydriftAcsAttackProtection(address(this))
-            .enforceBodyAttackProtection(
-                _actingPlayer(), attack.targetPlanetId, attack.targetIsMoon
-            );
+            .enforceJoinAttackProtection(_actingPlayer(), attackMissionId);
     }
 
     function _prepareJoinFleet(

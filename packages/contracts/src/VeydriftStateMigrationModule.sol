@@ -9,7 +9,14 @@ import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol
 import {VeydriftReserveRelease} from "./libraries/VeydriftReserveRelease.sol";
 import {VeydriftRiftModule} from "./VeydriftRiftModule.sol";
 import {VeydriftCombatRaidModule} from "./VeydriftCombatRaidModule.sol";
-import {Building, Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {
+    Building,
+    Defense,
+    MoonBuilding,
+    Resource,
+    Ship,
+    Technology
+} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftStateMigrationMoonSystem {
     function importMigratedMoonState(
@@ -346,6 +353,17 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
             emit PlanetRenamed(player, planetId, planetState.name);
         }
 
+        // An abandoned id keeps its old per-planet state; the Rift must not come with it: no
+        // inherited claim, no raided-out record, no Stabilizer the importer never built.
+        Resources storage locked = _riftLockedResources[planetId];
+        if (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0) revert InvalidId();
+        delete riftExtractions[planetId][Resource.Metal];
+        delete riftExtractions[planetId][Resource.Crystal];
+        delete riftExtractions[planetId][Resource.Deuterium];
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] != 0) {
+            _snapshotPlanetScore(planetId);
+            delete _buildingLevels[planetId][Building.InterdimensionalRiftStabilizer];
+        }
         for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
             uint16 level = planetState.buildingLevels[id];
             if (level != 0) {
