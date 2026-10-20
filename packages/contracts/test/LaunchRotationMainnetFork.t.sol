@@ -6,6 +6,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {
     ITransparentUpgradeableProxy
 } from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftResource} from "../src/VeydriftResource.sol";
 import {
     VeydriftContributorVestingWallet,
@@ -20,6 +21,8 @@ interface IRotatable {
     function transferOwnership(address nextOwner) external;
     function renounceOwnership() external;
     function mint(address to, uint256 amount) external;
+    function setStateSigner(address nextSigner) external;
+    function stateSigner() external view returns (address);
 }
 
 interface IReserveGame {
@@ -38,12 +41,15 @@ interface IReserveGame {
 }
 
 /// @notice Rehearses the 2026-10 launch prep on live Base state with impersonated owners (no keys):
-///         owner rotation, legacy resource renounce, fixed-supply token deploys and the Game switch.
+///         Moon granter upgrade, owner rotation, legacy resource renounce, fixed-supply token deploys
+///         and the Game switch.
 contract LaunchRotationMainnetForkTest is Test {
     address internal constant NEW_OWNER = 0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02;
     address internal constant TREASURY = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
     address internal constant GAME = 0xf397910F005151b09644228573a4353818D3755d;
     address internal constant PROXY_ADMIN = 0xc81609E77b5ea79d0CdA9794b75B65D567535cb9;
+    address internal constant MOON = 0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C;
+    address internal constant MIGRATION = 0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3;
     uint256 internal constant GAME_RESERVE = 1_000_000 * 10 ** 6;
     uint64 internal constant VESTING_START = 1_792_699_200; // 2026-10-22 20:00 UTC, the CCA start
 
@@ -61,9 +67,22 @@ contract LaunchRotationMainnetForkTest is Test {
         // Each old owner hands over what it owns (same lists as the RotateOwnership runs).
         _transfer(0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B, GAME);
         _transfer(0x4755D28078442cb7E7Ac2409868fb3Ff1B9fA73B, PROXY_ADMIN);
-        _transfer(
-            0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC, 0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C
-        );
+        // Moon: upgrade to the granter-role build, keep the listener key as granter only, then rotate.
+        VeydriftMoonSystem moon = VeydriftMoonSystem(payable(MOON));
+        address listener = 0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC;
+        address moonImplementation =
+            address(new VeydriftMoonSystem(address(moon.game()), address(moon.randomness())));
+        vm.startPrank(listener);
+        moon.upgradeToAndCall(moonImplementation, "");
+        moon.setChickenBurnGranter(listener);
+        vm.stopPrank();
+        _transfer(listener, MOON);
+        vm.prank(listener);
+        vm.expectRevert(VeydriftMoonSystem.ZeroAddress.selector);
+        moon.grantMoonFromChickenBurn(bytes32(0), address(0), 0); // past the auth check
+        vm.prank(listener);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, listener));
+        moon.createMoon(1);
         _transfer(
             0x7637888E9AAaD9c3941803414084A032324476De, 0x0E5a6210482B15780cf5Ec036107031dcA702001
         );
@@ -73,9 +92,10 @@ contract LaunchRotationMainnetForkTest is Test {
         _transfer(
             0xC7f7EB2cA489c2B2b4D5a38b446c829e3987386d, 0xdc7d3388bfb07E2cC8DD3Be265d7C1182D34d069
         );
-        _transfer(
-            0x496494cB54153e97e4D28454092e0cf293A97088, 0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3
-        );
+        vm.prank(0x496494cB54153e97e4D28454092e0cf293A97088);
+        IRotatable(MIGRATION).setStateSigner(NEW_OWNER);
+        assertEq(IRotatable(MIGRATION).stateSigner(), NEW_OWNER);
+        _transfer(0x496494cB54153e97e4D28454092e0cf293A97088, MIGRATION);
         _renounce(
             0x41aE0a1095D93BC7BFbcBB5A0382912fA3a044Ac, 0x91A4f8A9D05F21E010dc1eE0B17Ab644D433cB41
         );
