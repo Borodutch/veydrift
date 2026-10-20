@@ -1181,8 +1181,8 @@ export function hiddenWhitepaperPath(pathname) {
 
 export const ccaMeta = {
   title: "$VEYDRIFT continuous clearing auction — Veydrift",
-  description: "25% of $VEYDRIFT sold over two weeks through Uniswap's continuous clearing auction on Base, starting October 22 at 1 PM Pacific. $750K FDV floor, $50K minimum raise, and 100% of the raise goes into Uniswap v4 liquidity. Veydrift is the onchain space strategy game with 75% weekly player retention. Register your interest.",
-  imagePath: "/assets/landing/cca-og-v2.jpg",
+  description: "10% of $VEYDRIFT sold over two weeks through Uniswap's continuous clearing auction on Base, starting October 22 at 1 PM Pacific. $500K FDV floor, $50K minimum raise, and 100% of the raise goes into Uniswap v4 liquidity. Veydrift is the onchain space strategy game with 75% weekly player retention. Register your interest.",
+  imagePath: "/assets/landing/cca-og-v3.jpg",
 };
 
 async function ccaHtmlResponse(request, url) {

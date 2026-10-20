@@ -419,6 +419,22 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
         moons.grantMoonFromChickenBurn(keccak256("non-admin"), player, planetId);
+
+        // The listener's granter key can grant burn moons but nothing owner-only.
+        address granter = address(0x6A);
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
+        moons.setChickenBurnGranter(granter);
+        moons.setChickenBurnGranter(granter);
+        vm.prank(granter);
+        assertTrue(moons.grantMoonFromChickenBurn(keccak256("granter"), player, planetId).exists);
+        vm.prank(granter);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, granter));
+        moons.createMoon(planetId);
+        moons.setChickenBurnGranter(address(0));
+        vm.prank(granter);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, granter));
+        moons.grantMoonFromChickenBurn(keccak256("revoked"), player, planetId);
     }
 
     function _testMoonChanceCalculationAndCap() internal view {
