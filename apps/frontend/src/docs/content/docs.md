@@ -566,7 +566,7 @@ The three vesting wallets are OpenZeppelin `VestingWallet` contracts. All of the
 | Contributor | 200,000,000 | Nothing until the cliff on October 22, 2027, when 50,000,000 (25%) vest at once; then linear | October 21, 2030 |
 | Ecosystem | 200,000,000 | Linear from the start, about 91,324 per day | October 20, 2032 |
 
-Unvested tokens cannot be moved by anyone. Once tokens vest, anyone can call `release(token)` on a vesting wallet, but the tokens always go to that wallet's owner, which is the treasury [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7). Only the owner can name a different recipient. Tokens sent to a vesting wallet later vest on the same schedule.
+Unvested tokens cannot be moved by anyone. Once tokens vest, anyone can call `release(token)` on a vesting wallet, but the tokens always go to that wallet's owner: borodutch.eth, [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE), for all three. Only the owner can name a different recipient. Tokens sent to a vesting wallet later vest on the same schedule.
 
 ### Resource Tokens
 
