@@ -267,7 +267,7 @@ contract RiftAuditRegressionsTest is Test {
 
     function _land(uint256 id) internal {
         (, uint64 arrivalAt, uint256 requestId) = _mission(id);
-        if (arrivalAt > block.timestamp) vm.warp(arrivalAt);
+        if (arrivalAt > vm.getBlockTimestamp()) vm.warp(arrivalAt);
         vm.prank(fulfiller);
         randomness.fulfillRandomness(requestId, 7);
         for (uint256 i; i < 400; ++i) {
@@ -502,7 +502,7 @@ contract RiftAuditRegressionsTest is Test {
         // The metal reserve ends one unit short of the ledger (e.g. a misbehaving token).
         uint256 excess = metal.balanceOf(address(game)) - game.resourceReserveRequirement().metal;
         vm.prank(address(game));
-        metal.transfer(stranger, excess + 1);
+        assertTrue(metal.transfer(stranger, excess + 1));
         // Before the fix the lock's `_increaseInternalResources` capacity check reverted the
         // raid stage, leaving the battle (and its body lock) stuck for good.
         _land(id);
