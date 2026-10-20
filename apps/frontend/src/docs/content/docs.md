@@ -142,6 +142,24 @@ Attack protection prevents invalid or abusive launches. The mission screen shows
 | Same alliance | Blocks hostile attacks against current allies. |
 | Bashing window | Tracks repeated attacks by attacker, defender, and planet in the 24 hour window. |
 | Inactive defender | May remove some protection gates when the defender is marked inactive. |
+| Live Rift extraction | A planet with resources locked in the Rift can be attacked through new or low-score protection and the bashing window, but never by its own alliance. When the attack is only allowed because of the lock, raiders can take only the locked resources. |
+
+### The Rift
+
+The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under **Contracts And Tokens**). One whole token equals 1,000,000 units in the game, so extracting 500,000 Metal pays out 0.5 vMETAL.
+
+A planet uses the Rift once it has a Rift Stabilizer. The Stabilizer needs Robotics Factory 4, Research Lab 2, Energy Technology 5 and Hyperspace Technology 1, and every planet needs its own. Open the Rift page with that planet selected.
+
+**Injecting** is instant. You approve the game to take exactly the amount you inject, then inject it, and the planet's resources rise in the same transaction. Injected resources are spent like mined ones. You can only inject into your own planets; to help a friend, send them tokens and let them inject.
+
+**Extracting** is slow and public on purpose:
+
+1. Starting an extraction takes the amount from the planet and locks it there for 28 days. Each planet runs one extraction per resource at a time, and an extraction can't be cancelled.
+2. While it is locked, every player sees it in the Raid Finder under **Rifters**, and the planet can be attacked even when new or low-score protection or the bashing window would normally stop the attack. Your own alliance still can't attack you, and moon attacks can't reach a planet's Rift lock.
+3. A winning attack takes its normal loot first and then fills any spare cargo from the lock. The lock has no 50% raid ceiling, so a fleet with enough cargo can take all of it.
+4. After 28 days you finalize the extraction on the Rift page, and whatever survived is paid to the planet owner's wallet as tokens. Until you finalize, raiders can still take it.
+
+Extracted tokens are ordinary ERC-20 tokens that you can hold, send to another player, or inject into any of your planets with a Stabilizer. The Rift page lists the active extractions of all your planets with their countdowns, and its history shows every injection, extraction, payout and raid. A wallet delegate injects from its own wallet, while finalized tokens always go to the planet owner.
 
 ### Alliances And ACS Defend
 
@@ -174,7 +192,7 @@ All costs are base costs before level scaling unless noted.
 | Terraformer | 50,000 crystal, 100,000 deuterium | Adds planet fields. |
 | Alliance Depot | 20,000 metal, 40,000 crystal | Supports ACS Defend holding fuel. |
 | Missile Silo | 20,000 metal, 20,000 crystal, 1,000 deuterium | Stores anti-ballistic and interplanetary missiles. |
-| Rift Stabilizer | 8,000 metal, 8,000 crystal, 4,000 deuterium | Enables rift features where available. |
+| Rift Stabilizer | 8,000 metal, 8,000 crystal, 4,000 deuterium | Opens the Rift on this planet: inject resource tokens and extract resources as tokens. |
 
 ### Research
 
@@ -291,6 +309,10 @@ ACS Defend stations an allied fleet at the defended planet until the hostile att
 ### Moon Actions
 
 Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. For Chicken moon grants, the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for the moon to appear.
+
+### Use The Rift
+
+Injecting takes two wallet transactions: an ERC-20 `approve` for exactly the injected amount, then `depositMarketResource`, which moves the tokens into the game's reserve and credits the planet. Extracting starts with `startRiftExtraction`, which spends the planet's resources into the 28-day lock, and ends with `finalizeRiftExtraction`, which pays out what survived once the lock has run. Injecting and starting an extraction need the planet's Rift Stabilizer; finalizing does not, so you can finalize from the Rift page of any of your planets.
 
 ## Formulas
 
