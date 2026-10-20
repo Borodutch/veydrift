@@ -6,6 +6,7 @@ import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
 import type { CanonicalPlanetChainState, QueueState, ResearchState, RpcLog, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { ReferralInviteStore, resolveReferralCode } from "./referrals";
 
 const player = "0x2222222222222222222222222222222222222222";
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
@@ -1438,6 +1439,72 @@ describe("ChainSyncService (polling)", () => {
     expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
     expect(indexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
     retry.stop();
+  });
+
+  test("switching referrals from 0x9B9A to the upgradeable replacement keeps dashboards and code resolution", async () => {
+    const proxy = "0x6666666666666666666666666666666666666666" as const;
+    const other = "0x7777777777777777777777777777777777777777";
+    const invitee = "0x5555555555555555555555555555555555555555";
+    const startPriceWei = "12000000000000000";
+    const commitmentOf = (inviter: string, code: string) => keccak256(encodeAbiParameters(
+      parseAbiParameters("address,bytes32"), [inviter as `0x${string}`, keccak256(toHex(code))]
+    ));
+    const log = (address: string, block: number, topics: string[], data: string): TestLog => ({
+      address, blockNumber: `0x${block.toString(16)}`, transactionHash: topicWord(BigInt(block)), logIndex: "0x0", topics, data
+    });
+    const activation = (address: string, block: number, inviter: string, code: string, at: bigint, migrated: boolean) => log(
+      address, block,
+      [referralInviteWindowActivatedTopic, ownerTopic(inviter), keccak256(toHex(code)), commitmentOf(inviter, code)],
+      encodeAbiParameters(parseAbiParameters("string,uint64,uint64,bool"), [code, at, at + 86_400n, migrated])
+    );
+    const redemption = (address: string, block: number) => log(
+      address, block,
+      [referralInviteRedeemedTopic, ownerTopic(player), ownerTopic(invitee), commitmentOf(player, "cryptomill")],
+      abiWords(6_000_000_000_000_000n, 1n, 0n, 1_100n)
+    );
+    // 0x9B9A holds a migrated code with a migrated paid redemption, live top-ups of that code and a
+    // code claimed live. The replacement re-emits each code's latest activation and every redemption
+    // with the source timestamps, which is what MigrateReferralSystem imports.
+    const indexer = makeIndexer();
+    for (const legacy of [
+      activation(referralAddress, 120, player, "cryptomill", 1_000n, true),
+      redemption(referralAddress, 121),
+      activation(referralAddress, 130, player, "cryptomill", 90_000n, false),
+      activation(referralAddress, 131, other, "ujbmwnylr", 90_100n, false),
+      activation(referralAddress, 140, player, "cryptomill", 180_000n, false)
+    ]) indexer.applyLog(legacy);
+    indexer.recordReferralHistoryBackfill(referralAddress, 112n, 150n);
+    const now = new Date(200_000_000);
+    const views = () => ({
+      dashboards: [player, other].map((wallet) => JSON.parse(JSON.stringify(
+        new ReferralInviteStore().dashboard(wallet, indexer, startPriceWei, true, now),
+        (key, value) => key === "txHash" ? undefined : value
+      ))),
+      codes: ["cryptomill", "ujbmwnylr"].map((code) =>
+        resolveReferralCode({ code, index: indexer, invitee: `0x${"88".repeat(20)}`, now, startPriceWei })),
+      replay: resolveReferralCode({ code: "cryptomill", index: indexer, invitee, now, startPriceWei }).status
+    });
+    const before = views();
+    expect(before.replay).toBe("already_redeemed");
+    expect(before.codes.map(({ status }) => status)).toEqual(["active", "active"]);
+
+    const backfiller = new MockBackfiller(182n);
+    backfiller.referralLogsFor = () => [
+      activation(proxy, 160, other, "ujbmwnylr", 90_100n, true),
+      activation(proxy, 161, player, "cryptomill", 180_000n, true),
+      redemption(proxy, 162)
+    ];
+    const service = new ChainSyncService(
+      { ...config, referralIndexFromBlock: 155n, referralSystemAddress: proxy },
+      indexer,
+      { logBackfiller: backfiller }
+    );
+    await service.poll();
+    service.stop();
+
+    expect(backfiller.referralRanges).toEqual([{ from: 155n, to: 182n }]);
+    expect(indexer.referralClaims(player).every((claim) => claim.transactionHash !== topicWord(140n))).toBe(true);
+    expect(views()).toEqual(before);
   });
 
   test("single-flights paid alliance invite history from its deployment block and persists completion", async () => {

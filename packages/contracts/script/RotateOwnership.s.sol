@@ -21,7 +21,8 @@ interface IVeydriftOwnable {
 ///         - then the broadcaster's ETH minus a gas buffer goes to VEYDRIFT_SWEEP_TO (default: the
 ///           new owner) unless VEYDRIFT_SWEEP=false.
 ///         Reverts unless the broadcaster owns every named contract, so nothing is silently skipped.
-/// @dev The referral systems have an immutable owner and cannot be rotated.
+/// @dev The legacy referral system 0x9B9A… has an immutable owner and cannot be rotated; its
+///      upgradeable replacement can (VEYDRIFT_TRANSFER_*).
 contract RotateOwnership is Script {
     uint256 internal constant GAS_BUFFER = 0.0001 ether;
 

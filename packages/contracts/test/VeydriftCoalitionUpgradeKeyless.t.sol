@@ -12,6 +12,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
+import {newReferralSystem} from "./support/ReferralProxy.sol";
 
 /// @dev LOCAL fixture only. This is deliberately not persisted mainnet-state evidence.
 contract VeydriftCoalitionUpgradeKeylessTest is Test {
@@ -33,8 +34,8 @@ contract VeydriftCoalitionUpgradeKeylessTest is Test {
         vm.setEnv("UPGRADE_DRY_RUN_OWNER", vm.toString(OWNER));
         vm.setEnv("ADMIN_ADDRESS", vm.toString(OWNER));
         vm.deal(OWNER, 100 ether);
-        source = new VeydriftReferralSystem(OWNER);
-        target = new VeydriftReferralSystem(OWNER);
+        source = newReferralSystem(OWNER);
+        target = newReferralSystem(OWNER);
         vm.startPrank(OWNER);
         source.setReferralSigner(address(0xCAFE));
         target.setReferralSigner(address(0xCAFE));
@@ -131,7 +132,7 @@ contract VeydriftCoalitionUpgradeKeylessTest is Test {
     }
 
     function testCanonicalKeylessRejectsUnfinalizedMigrationBeforeDeploy() public {
-        VeydriftReferralSystem unfinished = new VeydriftReferralSystem(OWNER);
+        VeydriftReferralSystem unfinished = newReferralSystem(OWNER);
         vm.setEnv("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS", vm.toString(address(unfinished)));
         vm.expectRevert(bytes("REFERRAL_MIGRATION_PENDING"));
         gameScript.run();

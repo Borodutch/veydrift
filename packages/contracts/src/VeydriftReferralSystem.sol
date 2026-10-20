@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
 interface IVeydriftReferralGame {
     function effectivePlayer(address actor) external view returns (address);
     function gamePaused() external view returns (bool);
@@ -8,7 +11,10 @@ interface IVeydriftReferralGame {
     function startPrice() external view returns (uint256);
 }
 
-contract VeydriftReferralSystem {
+/// @notice Referral codes, invite redemption and inviter rewards for the Game.
+/// @dev UUPS implementation behind an ERC1967 proxy: the owner authorizes upgrades and can hand
+///      ownership over. Proxy storage is append-only; never reorder or remove a variable below.
+contract VeydriftReferralSystem is Initializable, UUPSUpgradeable {
     bytes32 public constant REFERRAL_REDEEM_DOMAIN = keccak256("veydrift.referral.redeem.v1");
     uint8 public constant REFERRAL_CLAIM_LIMIT = 3;
     uint8 public constant REFERRAL_CODE_MAX_LENGTH = 24;
@@ -137,6 +143,7 @@ contract VeydriftReferralSystem {
         bytes32 expectedHash, bytes32 importedHash, uint32 expectedCount, uint32 importedCount
     );
 
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event ReferralGameUpdated(address indexed oldGame, address indexed newGame);
     event ReferralSignerUpdated(address indexed oldSigner, address indexed newSigner);
     event ReferralCodeOwnershipClaimed(
@@ -210,9 +217,14 @@ contract VeydriftReferralSystem {
         uint64 claimedAt
     );
 
-    constructor(address initialOwner) {
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner) external initializer {
         if (initialOwner == address(0)) revert Unauthorized(address(0));
         owner = initialOwner;
+        emit OwnershipTransferred(address(0), initialOwner);
     }
 
     modifier onlyOwner() {
@@ -224,6 +236,14 @@ contract VeydriftReferralSystem {
         if (msg.sender != game) revert Unauthorized(msg.sender);
         _;
     }
+
+    function transferOwnership(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert Unauthorized(address(0));
+        emit OwnershipTransferred(owner, nextOwner);
+        owner = nextOwner;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     function setGame(address nextGame) external onlyOwner {
         address oldGame = game;

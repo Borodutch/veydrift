@@ -166,6 +166,7 @@ export function planChecks(scope, group = "all") {
       "scripts/veydrift-upgrade-receipt.test.mjs",
     ]);
     add("referral-migration-manifest-test", "node", ["--test",
+      "scripts/veydrift-referral-migration-input.test.mjs",
       "scripts/veydrift-referral-migration-manifest.test.mjs",
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",

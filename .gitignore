@@ -37,6 +37,7 @@ apps/frontend/.media-src/
 broadcast/
 artifacts/
 packages/contracts/manifests/private-paid-invite-migration.json
+packages/contracts/manifests/private-referral-*.json
 # Regenerated local-only mission batch EVM fixture state.
 packages/contracts/manifests/vey918-mixed-alloc.json
 packages/contracts/manifests/vey918-mixed-meta.json
