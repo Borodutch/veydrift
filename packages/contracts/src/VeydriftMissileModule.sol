@@ -5,6 +5,10 @@ import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {Defense, Technology} from "./libraries/VeydriftTypes.sol";
 
+interface IVeydriftMissileProductionSettler {
+    function settleProductionUntil(uint256 planetId, uint64 settledAt) external;
+}
+
 /// @notice Delegatecall target for timed, one-way interplanetary missile missions.
 contract VeydriftMissileModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
@@ -35,9 +39,10 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
-        // Complete ready origin production before checking inventory. Target interception and damage
-        // are deliberately deferred until arrival, when queues are settled only through impactAt.
-        _settleDuePlanet(originPlanetId);
+        // Settle origin resources, then its ready queues, before checking inventory: completing
+        // satellites/crawlers first would credit their output retroactively. Target interception and
+        // damage are deliberately deferred until arrival, when queues are settled only through impactAt.
+        _settleActionPlanet(originPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
         _enforceAttackProtection(_actingPlayer(), targetPlanetId);
 
@@ -256,6 +261,13 @@ contract VeydriftMissileModule is VeydriftResourceReserves {
         returns (bool)
     {
         MissileQueueSettlementProgress storage progress = _missileQueueSettlementProgress[missionId];
+        // Production through impact first, as every other arrival does (`_settleScheduledTarget`):
+        // units completing below must not raise output for the window before they existed.
+        // Idempotent across chunks; an abandoned target has nothing to settle.
+        if (progress.stage == 0 && _planets[planetId].owner != address(0)) {
+            IVeydriftMissileProductionSettler(address(this))
+                .settleProductionUntil(planetId, cutoffAt);
+        }
         uint256 operations;
         while (operations < MAX_QUEUE_SETTLEMENT_OPERATIONS && progress.stage < 6) {
             if (progress.stage == 0) {
