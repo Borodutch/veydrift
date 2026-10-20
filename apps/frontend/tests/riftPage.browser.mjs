@@ -95,12 +95,20 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       await send("Input.insertText", { text: value });
       await settle();
     }
-    async function screenshot(name) {
+    // Full-page by default; fixed overlays such as dialogs need a viewport-sized capture.
+    async function screenshot(name, { viewport = false } = {}) {
       if (!artifacts) return;
       // Give the hero art a moment to paint; screenshots are review aids, not assertions.
       const deadline = Date.now() + 5_000;
       while (Date.now() < deadline && !(await evaluate("Array.from(document.querySelectorAll('img, video')).every(m => m.tagName === 'IMG' ? m.complete && m.naturalWidth > 0 : m.readyState >= 2)"))) {
         await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (viewport) {
+        // Let the overlay scroll indicator from the last scrollIntoView fade first.
+        await new Promise(resolve => setTimeout(resolve, 1_500));
+        const shot = await send("Page.captureScreenshot", { format: "png" });
+        writeFileSync(join(artifacts, name), Buffer.from(shot.data, "base64"));
+        return;
       }
       const height = await evaluate("document.documentElement.scrollHeight");
       const width = await evaluate("innerWidth");
@@ -148,13 +156,21 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       assert.equal(await evaluate(`${buttonStarting("Review extraction")}.disabled`), false, where);
       await tap(buttonStarting("Review extraction"), mobile);
       await waitFor(`document.querySelector('[role="dialog"]')`, `${where}: extraction dialog did not open`);
+      // The shared Modal fades in over 200 ms; judge it once its enter animations have finished.
+      await waitFor(`document.querySelector(".modal-backdrop").getAnimations({ subtree: true }).every(a => a.playState === "finished")`, `${where}: dialog still animating`);
+      // An opaque navy panel over a backdrop that covers the whole viewport.
+      assert.deepEqual(await evaluate(`(() => {
+        const panel = getComputedStyle(document.querySelector('[role="dialog"]'));
+        const backdrop = document.querySelector(".modal-backdrop").getBoundingClientRect();
+        return { background: panel.backgroundColor, opacity: panel.opacity, covers: backdrop.left <= 0 && backdrop.top <= 0 && backdrop.right >= innerWidth && backdrop.bottom >= innerHeight };
+      })()`), { background: "rgb(13, 24, 41)", opacity: "1", covers: true }, `${where}: dialog surface`);
       const dialog = await evaluate(`document.querySelector('[role="dialog"]').innerText`);
       assert.match(dialog, /Extract 25,000 Deuterium/, where);
       assert.match(dialog, /even through newbie, score and bashing protection/, where);
       assert.match(dialog, /can't be cancelled/, where);
       assert.match(dialog, /If nobody raids it\s*0\.025 vDEUT/, where);
       assert.equal(await evaluate(`${buttonStarting("Start extraction")}.disabled`), true, `${where}: start needs the acknowledgement`);
-      await screenshot(`rift-page-extract-dialog-${width}.png`);
+      await screenshot(`rift-page-extract-dialog-${width}.png`, { viewport: true });
       await tap(`document.querySelector('[role="dialog"] input[type="checkbox"]')`, mobile);
       await tap(buttonStarting("Start extraction"), mobile);
       assert.deepEqual((await calls()).extract, ["deuterium:25000"], where);
