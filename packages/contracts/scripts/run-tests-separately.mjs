@@ -63,7 +63,11 @@ function forge(args) {
 }
 
 function main() {
-  let testFiles = readdirSync("test")
+  // Audit regressions live in test/audit/ and run like any other top-level test file.
+  let testFiles = [
+    ...readdirSync("test"),
+    ...readdirSync("test/audit").map((file) => `audit/${file}`),
+  ]
     .filter((file) => file.endsWith(".t.sol"))
     .sort();
   const sources = Object.fromEntries(testFiles.map((file) => [file, readFileSync(`test/${file}`, "utf8")]));
