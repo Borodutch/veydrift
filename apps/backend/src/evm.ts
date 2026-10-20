@@ -1442,7 +1442,7 @@ export interface ChainReader {
   getCombatModelVersion?(): Promise<number | null>;
   getMoonSupplyBatchVersion?(): Promise<number | null>;
   canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
-  getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
+  getDelegationState?(wallet: Address, proposedByCandidates?: readonly Address[]): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getStartPrice(): Promise<string | null>;
   getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
@@ -1508,6 +1508,8 @@ export type WalletDelegationState = {
   delegate: Address | null;
   /** Proposed by `main`; it gains no authority until that wallet accepts on-chain. */
   pendingDelegate: Address | null;
+  /** Mains whose pending proposal names `wallet`, i.e. delegations this wallet can accept. */
+  proposedBy: Address[];
   actingAsDelegate: boolean;
 };
 
@@ -2077,18 +2079,22 @@ export class VeydriftGameReader implements ChainReader {
     return this.transport.failoverRpc?.(reason) ?? false;
   }
 
-  async getDelegationState(wallet: Address): Promise<WalletDelegationState> {
+  /** `proposedByCandidates` (e.g. indexed proposals) are kept only if the chain still records them. */
+  async getDelegationState(wallet: Address, proposedByCandidates: readonly Address[] = []): Promise<WalletDelegationState> {
     assertAddress(wallet);
     const main = decodeAddressWord(
       wordAt(splitWords(await this.call("0x6d3498d8", [encodeAddress(wallet)])), 0)
     );
-    const [delegateWord, pendingWord] = await Promise.all([
+    const pendingDelegateOf = (account: Address) => this.call("0xa070d0e0", [encodeAddress(account)]);
+    const [delegateWord, pendingWord, ...candidateWords] = await Promise.all([
       this.call("0x8d22ea2a", [encodeAddress(main)]),
-      // pendingDelegateOf(main). A Game from before delegate consent reverts and has no proposals.
-      this.call("0xa070d0e0", [encodeAddress(main)]).catch((error: unknown) => {
+      // A Game from before delegate consent reverts pendingDelegateOf and has no proposals.
+      pendingDelegateOf(main).catch((error: unknown) => {
         if (isRpcRevert(error)) return zeroAddress;
         throw error;
-      })
+      }),
+      // Candidates are a convenience: a failed check drops one instead of failing the read.
+      ...proposedByCandidates.map((candidate) => pendingDelegateOf(candidate).catch(() => zeroAddress))
     ]);
     const delegateAddress = decodeAddressWord(wordAt(splitWords(delegateWord), 0));
     const pendingDelegate = decodeAddressWord(wordAt(splitWords(pendingWord), 0));
@@ -2097,6 +2103,9 @@ export class VeydriftGameReader implements ChainReader {
       main,
       delegate: delegateAddress === zeroAddress ? null : delegateAddress,
       pendingDelegate: pendingDelegate === zeroAddress ? null : pendingDelegate,
+      proposedBy: proposedByCandidates.filter((_, index) =>
+        decodeAddressWord(wordAt(splitWords(candidateWords[index] ?? zeroAddress), 0)).toLowerCase() === wallet.toLowerCase()
+      ),
       actingAsDelegate: main.toLowerCase() !== wallet.toLowerCase()
     };
   }
@@ -6267,6 +6276,8 @@ const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a
 const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
 const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
+export const delegateUpdatedTopic = keccak256(stringToHex("DelegateUpdated(address,address,address,address)"));
+export const delegateProposedTopic = keccak256(stringToHex("DelegateProposed(address,address)"));
 
 const eventNamesByTopic = new Map<string, string>([
   [planetStartedTopic, "PlanetStarted"],
@@ -6369,7 +6380,9 @@ const eventNamesByTopic = new Map<string, string>([
   [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
   [riftExtractionStartedTopic, "RiftExtractionStarted"],
   [riftExtractionLootedTopic, "RiftExtractionLooted"],
-  [riftExtractionFinalizedTopic, "RiftExtractionFinalized"]
+  [riftExtractionFinalizedTopic, "RiftExtractionFinalized"],
+  [delegateUpdatedTopic, "DelegateUpdated"],
+  [delegateProposedTopic, "DelegateProposed"]
 ]);
 
 export function eventNameForTopic(topic: string | null | undefined): string | null {
@@ -7019,6 +7032,22 @@ export function decodePlanetRenamedLog(log: RpcLog): PlanetRenamedEvent {
     planetId: decodeUint(topicAt(log.topics, 2)).toString(),
     name: decodeStringResult(log.data)
   };
+}
+
+export function isDelegationLog(log: RpcLog): boolean {
+  const topic = log.topics[0]?.toLowerCase();
+  return topic === delegateProposedTopic || topic === delegateUpdatedTopic;
+}
+
+/**
+ * The main's pending delegate proposal after this log. DelegateProposed sets it (zero clears it);
+ * every DelegateUpdated clears it, because both acceptDelegate and revokeDelegate delete it.
+ */
+export function decodeDelegateProposalLog(log: RpcLog): { main: Address; pendingDelegate: Address | null } {
+  const main = decodeAddressWord(topicAt(log.topics, 1));
+  if (log.topics[0]?.toLowerCase() !== delegateProposedTopic) return { main, pendingDelegate: null };
+  const delegate = decodeAddressWord(topicAt(log.topics, 2));
+  return { main, pendingDelegate: delegate === zeroAddress ? null : delegate };
 }
 
 export function decodePlanetTemperatureChangedLog(log: RpcLog): PlanetTemperatureChangedEvent {

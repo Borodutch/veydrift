@@ -111,6 +111,8 @@ const batchPlanResources = { metal: "100000", crystal: "100000", deuterium: "100
 const raidEligibilityProbe = fixtureParams.get("raidEligibilityProbe") === "true";
 let constructionPhase = fixtureParams.get("construction") ?? "idle";
 const delegationProbe = fixtureParams.has("delegation");
+// A planet-less connected wallet that the unrelated owner proposed as its delegate.
+const delegationInvite = fixtureParams.get("delegationInvite") === "true";
 let delegateValue: string | null = fixtureParams.get("delegation") === "self" ? account : null;
 let delegationPhase = "confirmed";
 let delegationStaleReads = 0;
@@ -404,7 +406,8 @@ globalThis.fetch = (async (input, init) => {
     const pendingDelegate = wallet === account ? (stale ? previousPendingDelegate : pendingDelegateValue) : null;
     // The fixture account acts for the unrelated owner whenever it is served as that owner's delegate.
     const actingAsDelegate = delegationProbe && wallet === account && value === account;
-    const response = Response.json({ wallet, main: actingAsDelegate ? unrelatedOwner : wallet, delegate: wallet === account ? value : null, pendingDelegate, actingAsDelegate });
+    const proposedBy = delegationInvite && wallet === account && !actingAsDelegate ? [unrelatedOwner] : [];
+    const response = Response.json({ wallet, main: actingAsDelegate ? unrelatedOwner : wallet, delegate: wallet === account ? value : null, pendingDelegate, proposedBy, actingAsDelegate });
     if (holdDelegation) { holdDelegation = false; await new Promise<void>(resolve => { releaseDelegationRead = resolve; }); }
     return response;
   }
@@ -413,6 +416,12 @@ globalThis.fetch = (async (input, init) => {
       events: [], indexedEventCount: delegationPhase === "applied" ? 1 : 0, latestIndexedBlock: "20", receiptBlock: "20" });
   }
 
+  if (delegationInvite && url.pathname.endsWith(`/wallet/${account}/settlement`)) {
+    return Response.json({ hasFirstPlanet: false, homePlanetId: null, planet: null, wallet: account });
+  }
+  if (delegationInvite && url.pathname.endsWith(`/wallet/${unrelatedOwner}/settlement`)) {
+    return Response.json({ ...walletOverview().settlement, wallet: unrelatedOwner });
+  }
   if (url.pathname.endsWith(`/wallet/${account}/settlement`)) {
     if (manualNetworkSwitch && !manualSwitchComplete) return Response.json({ hasFirstPlanet: false, homePlanetId: null, planet: null, wallet: account });
     return Response.json(walletOverview().settlement);

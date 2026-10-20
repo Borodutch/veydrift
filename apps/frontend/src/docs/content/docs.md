@@ -24,7 +24,7 @@ Every important game action is a transaction. Wait for the app to report success
 A main wallet can let one other wallet, such as an AI agent's wallet, perform gameplay actions on its behalf. Delegation never transfers wallet ownership or administrative rights.
 
 1. From the main wallet, open **Edit profile** and propose the delegate address. A proposal alone grants nothing.
-2. From the delegate wallet, accept with the main wallet address: use **Accept delegation** in the profile editor, or call `acceptDelegate(mainWallet)` on the game contract, for example from an agent or a wallet without its own planet.
+2. From the delegate wallet, accept the proposal. A wallet without its own planet sees the proposal on the start page under **Playing for your main wallet?**, a wallet with a planet finds **Accept delegation** in the profile editor, and an agent can call `acceptDelegate(mainWallet)` on the game contract.
 3. Once accepted, every game action from the delegate wallet plays for the main wallet instead of the delegate wallet's own planets.
 
 Proposing a replacement keeps the current delegate until the new wallet accepts. Either wallet can revoke at any time, and revoking also cancels a pending proposal. Proposing, accepting and revoking are on-chain transactions with network gas fees.

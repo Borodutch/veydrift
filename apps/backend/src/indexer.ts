@@ -36,6 +36,7 @@ import {
   decodeMoonResourcesChangedLog,
   decodePlanetSettledLog,
   decodeInviteeProductionBoostLog,
+  decodeDelegateProposalLog,
   decodePlanetRenamedLog,
   decodePlanetTemperatureChangedLog,
   decodeFleetMissionLogs,
@@ -59,6 +60,8 @@ import {
   fleetMissionLootRatioTopic,
   interplanetaryMissileLaunchedTopic,
   inviteeProductionBoostActivatedTopic,
+  delegateProposedTopic,
+  delegateUpdatedTopic,
   jumpGateJumpedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
@@ -83,6 +86,7 @@ import {
   isMoonShipCountChangedLog,
   isPlanetSettledLog,
   isInviteeProductionBoostLog,
+  isDelegationLog,
   isPlanetRenamedLog,
   isPlanetTemperatureChangedLog,
   isPlayerMigrationLog,
@@ -4880,6 +4884,54 @@ export class SettlementIndexer {
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
   }
 
+  /** Mains whose indexed pending proposal names `wallet`, newest first. Candidates for a chain check. */
+  delegateProposalsFor(wallet: string): Address[] {
+    const rows = this.db.query(`
+      SELECT main
+      FROM contract_delegate_proposals
+      WHERE delegate = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+      LIMIT 5
+    `).all(wallet) as Array<{ main: Address }>;
+    return rows.map((row) => row.main);
+  }
+
+  private applyDelegateProposalLog(log: IndexedRpcLog): void {
+    const { main, pendingDelegate } = decodeDelegateProposalLog(log);
+    const blockNumber = BigInt(blockNumberToDecimal(log.blockNumber));
+    const logIndex = BigInt(log.logIndex ?? "0x0");
+    const existing = this.db.query(`
+      SELECT block_number, log_index FROM contract_delegate_proposals WHERE main = lower(?)
+    `).get(main) as { block_number: string; log_index: string } | null;
+    // Out-of-order delivery must never resurrect a proposal that a later log changed.
+    if (existing) {
+      const existingBlock = BigInt(existing.block_number);
+      if (existingBlock > blockNumber || (existingBlock === blockNumber && BigInt(existing.log_index) >= logIndex)) return;
+    }
+    this.db.query(`
+      INSERT INTO contract_delegate_proposals (main, delegate, block_number, log_index)
+      VALUES (lower(?), lower(?), ?, ?)
+      ON CONFLICT(main) DO UPDATE SET
+        delegate = excluded.delegate,
+        block_number = excluded.block_number,
+        log_index = excluded.log_index
+    `).run(main, pendingDelegate, blockNumber.toString(), logIndex.toString());
+  }
+
+  private repairDelegateProposalsFromEventLogs(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (lower(?), lower(?))
+    `).all(delegateProposedTopic, delegateUpdatedTopic) as EventRow[];
+    this.db.transaction(() => {
+      // The raw ledger is canonical, so this also recovers proposals journaled by an older writer.
+      this.db.query("DELETE FROM contract_delegate_proposals").run();
+      for (const log of sortedEventRows(rows)) this.applyDelegateProposalLog(log);
+    })();
+  }
+
   applyMoonResourcesSettledEvent(event: MoonResourcesSettledEvent): IndexerSnapshot {
     if (this.isKnownDestroyedMoon(event.planetId)) return this.snapshot();
     this.upsertMoonResourceSnapshot(
@@ -5068,6 +5120,9 @@ export class SettlementIndexer {
         if (isInviteeProductionBoostLog(log)) {
           this.removeInviteeProductionBoostEvent(log);
         }
+        if (isDelegationLog(log)) {
+          this.repairDelegateProposalsFromEventLogs();
+        }
         if (isBattleReportLog(log)) {
           if (this.reconcileCombatResolutionProgress(battleLogMissionId(log)) > 0) this.touch();
         }
@@ -5147,6 +5202,17 @@ export class SettlementIndexer {
         this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(log));
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isDelegationLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.applyDelegateProposalLog(log);
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && this.isMoonStateProjectionLog(log)) {
         this.advanceIndexedRevision();
@@ -5414,6 +5480,9 @@ export class SettlementIndexer {
       this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    // Delegate proposals only back the uncached, client-polled delegation endpoint. Still report the
+    // log as ignored so it does not fan out an unscoped chain event that refreshes every client.
+    if (isDelegationLog(log)) this.applyDelegateProposalLog(log);
 
     return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
   }
@@ -6497,6 +6566,16 @@ export class SettlementIndexer {
         expires_at TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      -- One row per main: its pending delegate proposal (NULL once accepted, revoked or cleared)
+      -- and the position of the delegation log that last changed it.
+      CREATE TABLE IF NOT EXISTS contract_delegate_proposals (
+        main TEXT PRIMARY KEY,
+        delegate TEXT,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_delegate_proposals_delegate_idx
+        ON contract_delegate_proposals (delegate);
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -7068,6 +7147,7 @@ export class SettlementIndexer {
     this.backfillMoonStateEventLedger();
     this.repairDestroyedMoonStateFromEventLogs();
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
+    this.repairDelegateProposalsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
   }

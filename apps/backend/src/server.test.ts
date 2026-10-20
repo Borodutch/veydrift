@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { defenseQueueTimingSetTopic } from "./evm";
+import { defenseQueueTimingSetTopic, delegateProposedTopic } from "./evm";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1678,7 +1678,7 @@ describe("Veydrift backend", () => {
     const chainReader = Object.assign(new MockChainReader(), {
       async getDelegationState(wallet: Address) {
         expect(wallet).toBe(delegate);
-        return { wallet, main: player, delegate, pendingDelegate, actingAsDelegate: true };
+        return { wallet, main: player, delegate, pendingDelegate, proposedBy: [], actingAsDelegate: true };
       },
     });
     const handler = createRequestHandler({
@@ -1695,8 +1695,35 @@ describe("Veydrift backend", () => {
       main: player,
       delegate,
       pendingDelegate,
+      proposedBy: [],
       actingAsDelegate: true,
     });
+  });
+
+  test("passes indexed delegate proposals to the chain read as candidates for the proposed wallet", async () => {
+    const proposed = "0x7777777777777777777777777777777777777777" as Address;
+    const proposer = "0x8888888888888888888888888888888888888888" as Address;
+    const indexer = testIndexer();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: `0x${"81".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [delegateProposedTopic, `0x${proposer.slice(2).padStart(64, "0")}`, `0x${proposed.slice(2).padStart(64, "0")}`],
+      data: "0x",
+    });
+    const candidateCalls: Array<readonly Address[]> = [];
+    const chainReader = Object.assign(new MockChainReader(), {
+      async getDelegationState(wallet: Address, candidates: readonly Address[] = []) {
+        candidateCalls.push(candidates);
+        return { wallet, main: wallet, delegate: null, pendingDelegate: null, proposedBy: [...candidates], actingAsDelegate: false };
+      },
+    });
+    const handler = createRequestHandler({ chainReader, config: configuredTestConfig, indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${proposed}/delegation`));
+    expect(response.status).toBe(200);
+    expect((await response.json()).proposedBy).toEqual([proposer]);
+    expect(candidateCalls).toEqual([[proposer]]);
   });
 
   test("cold callers share one peer wait while unrelated keys load independently", async () => {

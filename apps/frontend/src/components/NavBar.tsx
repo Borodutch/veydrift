@@ -15,6 +15,7 @@ import {
   type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
+import { DelegationAcceptForm } from "./DelegationAcceptForm";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../sidebarPreference";
@@ -137,7 +138,6 @@ export function NavBar({
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [delegateDraft, setDelegateDraft] = useState(delegation?.delegate ?? "");
-  const [delegatorDraft, setDelegatorDraft] = useState("");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
   const [mobileCommanderOpen, setMobileCommanderOpen] = useState(false);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
@@ -236,7 +236,6 @@ export function NavBar({
 
   useEffect(() => {
     setDelegateDraft(delegation?.delegate ?? "");
-    setDelegatorDraft("");
   }, [delegation?.delegate, signerAccount]);
 
   useEffect(() => {
@@ -463,28 +462,13 @@ export function NavBar({
           ) : null}
         </div>
         {canAcceptDelegate ? (
-          <div className="grid gap-2 border-t border-cyan-300/10 pt-3">
-            <label className="grid gap-1 text-xs font-medium text-slate-200">
-              Main wallet address
-              <input
-                className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 font-mono text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={delegationBusy || playerProfileBusy}
-                onInput={(event) => setDelegatorDraft(event.currentTarget.value)}
-                placeholder="0x…"
-                value={delegatorDraft}
-              />
-            </label>
-            <p className="text-[11px] leading-4 text-slate-300">
-              Accept only a proposal from a main wallet you trust. Once accepted, every game action from this wallet plays for that main wallet instead of this one until either wallet revokes.
-            </p>
-            <button
-              className="h-8 justify-self-end rounded border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={delegationBusy || playerProfileBusy || !delegatorDraft.trim()}
-              onClick={() => onAcceptDelegate?.(delegatorDraft)}
-              type="button"
-            >
-              Accept delegation
-            </button>
+          <div className="border-t border-cyan-300/10 pt-3">
+            <DelegationAcceptForm
+              busy={delegationBusy || playerProfileBusy}
+              key={signerAccount}
+              onAccept={(main) => onAcceptDelegate?.(main)}
+              proposedBy={delegation?.proposedBy}
+            />
           </div>
         ) : null}
         {delegationStatusLabel ? (

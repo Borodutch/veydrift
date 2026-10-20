@@ -3152,6 +3152,7 @@ describe("wallet delegation reads", () => {
       main,
       delegate,
       pendingDelegate,
+      proposedBy: [],
       actingAsDelegate: true
     });
     expect(calls).toEqual([
@@ -3179,6 +3180,7 @@ describe("wallet delegation reads", () => {
       main,
       delegate: null,
       pendingDelegate: null,
+      proposedBy: [],
       actingAsDelegate: false
     });
     // Only a revert means "no proposals"; an unavailable RPC must not hide a pending proposal.
@@ -3202,6 +3204,34 @@ describe("wallet delegation reads", () => {
       main,
       delegate: null,
       pendingDelegate: null,
+      proposedBy: [],
+      actingAsDelegate: false
+    });
+  });
+
+  test("keeps only indexed proposal candidates that the chain still records for the wallet", async () => {
+    const wallet = "0x5555555555555555555555555555555555555555" as Address;
+    const proposing = "0x7777777777777777777777777777777777777777" as Address;
+    const withdrawn = "0x8888888888888888888888888888888888888888" as Address;
+    const unreadable = "0x9999999999999999999999999999999999999999" as Address;
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(_method: string, params: unknown[]): Promise<T> {
+        const data = (params[0] as { data: string }).data;
+        if (data === `0xa070d0e0${addressWord(proposing)}`) return dataWords([addressWord(wallet)]) as T;
+        if (data === `0xa070d0e0${addressWord(withdrawn)}`) return dataWords([addressWord(proposing)]) as T;
+        if (data === `0xa070d0e0${addressWord(unreadable)}`) throw new Error("RPC HTTP 503");
+        return (data.startsWith("0x6d3498d8")
+          ? dataWords([addressWord(wallet)])
+          : dataWords([addressWord("0x0000000000000000000000000000000000000000")])) as T;
+      }
+    });
+
+    await expect(reader.getDelegationState(wallet, [proposing, withdrawn, unreadable])).resolves.toEqual({
+      wallet,
+      main: wallet,
+      delegate: null,
+      pendingDelegate: null,
+      proposedBy: [proposing],
       actingAsDelegate: false
     });
   });

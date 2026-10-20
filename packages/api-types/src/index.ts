@@ -7,6 +7,8 @@ export type WalletDelegation<Wallet extends string = string> = {
   delegate: Wallet | null;
   /** Proposed by `main`; it gains no authority until that wallet accepts on-chain. */
   pendingDelegate: Wallet | null;
+  /** Mains whose pending proposal names `wallet`, i.e. delegations this wallet can accept. */
+  proposedBy: Wallet[];
   actingAsDelegate: boolean;
 };
 
