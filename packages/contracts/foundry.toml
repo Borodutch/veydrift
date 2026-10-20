@@ -45,6 +45,7 @@ compilation_restrictions = [
   { paths = "test/VeydriftSpaceDockSystem.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftStagedReviewRegression.t.sol", max_optimizer_runs = 0 },
   { paths = "test/VeydriftToken.t.sol", max_optimizer_runs = 0 },
+  { paths = "test/audit/RiftAuditRegressions.t.sol", max_optimizer_runs = 0 },
 ]
 fs_permissions = [
   { access = "read-write", path = "./manifests" },

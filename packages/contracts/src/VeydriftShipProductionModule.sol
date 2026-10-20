@@ -175,7 +175,14 @@ contract VeydriftShipProductionModule is VeydriftResourceReserves {
         _requireNoPendingMissionResolutionForPlanet(planetId);
         ShipQueue memory queue = shipQueues[planetId];
         if (!queue.active) revert QueueInactive();
-        if (_settleShipProductionUntil(planetId, _currentTimestamp()) == 0) {
+        // Production first, like every lazy settle: a satellite or crawler that lands here must
+        // not raise output for the unsettled window that elapsed before it existed.
+        _settleResources(planetId);
+        ShipQueue memory current = shipQueues[planetId];
+        if (
+            current.active && current.ship == queue.ship && current.readyAt == queue.readyAt
+                && current.quantity == queue.quantity
+        ) {
             ProductionQueueTiming memory timing = _shipQueueTimings[planetId][queue.readyAt];
             uint32 settledQuantity = timing.startedAt == 0
                 || timing.originalQuantity < queue.quantity
