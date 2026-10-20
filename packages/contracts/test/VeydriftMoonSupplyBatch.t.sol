@@ -272,6 +272,8 @@ contract VeydriftMoonSupplyBatchTest is VeydriftMoonSystemTestBase {
         vm.prank(player);
         IVeydriftDelegation(address(game)).setDelegate(delegate);
         vm.prank(delegate);
+        IVeydriftDelegation(address(game)).acceptDelegate(player);
+        vm.prank(delegate);
         uint256[] memory ids = _batch().launchBodyDeployBatch(target, orders);
         (,, address owner,,,,,,,,) = game.fleetMission(ids[1]);
         assertEq(owner, player);

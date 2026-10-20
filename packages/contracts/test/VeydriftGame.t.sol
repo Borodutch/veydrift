@@ -284,6 +284,7 @@ contract VeydriftGameTest is Test {
         address indexed delegate,
         address actor
     );
+    event DelegateProposed(address indexed main, address indexed delegate);
 
     event FirstPlanetSettled(
         address indexed player,
@@ -473,8 +474,7 @@ contract VeydriftGameTest is Test {
     function testDelegateAndMainCanActForMainAndEitherCanRevoke() public {
         IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
 
-        vm.prank(player);
-        delegation.setDelegate(delegate);
+        _bindDelegate(player, delegate);
         assertEq(delegation.delegateOf(player), delegate);
         assertEq(delegation.delegatorOf(delegate), player);
         assertEq(delegation.effectivePlayer(delegate), player);
@@ -501,8 +501,7 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
         game.renamePlanet(planetId, "Denied");
 
-        vm.prank(player);
-        delegation.setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(player);
         delegation.revokeDelegate();
         assertEq(delegation.delegateOf(player), address(0));
@@ -513,19 +512,199 @@ contract VeydriftGameTest is Test {
         address replacement = address(0xD2E);
 
         vm.expectEmit(true, true, true, true, address(game));
-        emit DelegateUpdated(player, address(0), delegate, player);
+        emit DelegateProposed(player, delegate);
         vm.prank(player);
         delegation.setDelegate(delegate);
 
         vm.expectEmit(true, true, true, true, address(game));
-        emit DelegateUpdated(player, delegate, replacement, player);
+        emit DelegateUpdated(player, address(0), delegate, delegate);
+        vm.prank(delegate);
+        delegation.acceptDelegate(player);
+
         vm.prank(player);
         delegation.setDelegate(replacement);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateUpdated(player, delegate, replacement, replacement);
+        vm.prank(replacement);
+        delegation.acceptDelegate(player);
 
         vm.expectEmit(true, true, true, true, address(game));
         emit DelegateUpdated(player, replacement, address(0), replacement);
         vm.prank(replacement);
         delegation.revokeDelegate();
+    }
+
+    function testUnacceptedDelegateProposalNeverBindsTheProposedWallet() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address attacker = address(0xBAD);
+        vm.prank(player);
+        uint256 victimPlanet = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(attacker);
+        delegation.setDelegate(player);
+        assertEq(delegation.pendingDelegateOf(attacker), player);
+        assertEq(delegation.delegateOf(attacker), address(0));
+        assertEq(delegation.delegatorOf(player), address(0));
+        assertEq(delegation.effectivePlayer(player), player);
+        // The proposed player keeps acting for themselves.
+        vm.prank(player);
+        game.renamePlanet(victimPlanet, "Still Mine");
+        assertEq(game.planetNames(victimPlanet), "Still Mine");
+
+        // A proposed fresh wallet's paid start settles its own planet, not the proposer's.
+        vm.prank(attacker);
+        delegation.setDelegate(delegate);
+        vm.prank(delegate);
+        uint256 delegatePlanet = game.startPlanet{value: 0.05 ether}();
+        assertEq(game.homePlanetOf(delegate), delegatePlanet);
+        assertEq(game.homePlanetOf(attacker), 0);
+    }
+
+    function testOnlyTheProposedWalletCanAcceptOnce() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address other = address(0xD2E);
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        vm.prank(other);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.DelegateNotProposed.selector, player, other)
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, address(0), delegate
+            )
+        );
+        delegation.acceptDelegate(address(0));
+        assertEq(delegation.delegateOf(player), address(0));
+        assertEq(delegation.delegatorOf(other), address(0));
+
+        vm.prank(delegate);
+        delegation.acceptDelegate(player);
+        assertEq(delegation.delegateOf(player), delegate);
+        assertEq(delegation.delegatorOf(delegate), player);
+        assertEq(delegation.effectivePlayer(delegate), player);
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+    }
+
+    function testReplacingDelegateWaitsForReplacementConsent() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address replacement = address(0xD2E);
+        _bindDelegate(player, delegate);
+
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+        assertEq(delegation.pendingDelegateOf(player), replacement);
+        assertEq(delegation.delegateOf(player), delegate);
+        assertEq(delegation.delegatorOf(delegate), player);
+        assertEq(delegation.delegatorOf(replacement), address(0));
+
+        vm.prank(replacement);
+        delegation.acceptDelegate(player);
+        assertEq(delegation.delegateOf(player), replacement);
+        assertEq(delegation.delegatorOf(replacement), player);
+        assertEq(delegation.delegatorOf(delegate), address(0));
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+    }
+
+    function testRevokeDelegateWithdrawsPendingProposal() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address replacement = address(0xD2E);
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateProposed(player, address(0));
+        vm.prank(player);
+        delegation.revokeDelegate();
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.NoDelegate.selector, player));
+        delegation.revokeDelegate();
+
+        // Revoking the active delegate, here by the delegate, also clears a pending replacement.
+        _bindDelegate(player, delegate);
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+        assertEq(delegation.delegateOf(player), address(0));
+        assertEq(delegation.delegatorOf(delegate), address(0));
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+        vm.prank(replacement);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, replacement
+            )
+        );
+        delegation.acceptDelegate(player);
+    }
+
+    function testAcceptDelegateRechecksAuthorityAtAcceptTime() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address otherMain = address(0xC0FFEE);
+        address nested = address(0xD2E);
+
+        // The proposed wallet was bound to another main after the proposal.
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        _bindDelegate(otherMain, delegate);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateAlreadyAssigned.selector, delegate, otherMain
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+
+        // The proposed wallet appointed its own delegate after the proposal.
+        _bindDelegate(delegate, nested);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateHasDelegate.selector, delegate, nested
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+
+        // The proposing main became another main's delegate after the proposal.
+        _bindDelegate(otherMain, player);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegatedWalletCannotDelegate.selector, player, otherMain
+            )
+        );
+        delegation.acceptDelegate(player);
     }
 
     function testDelegationRejectsAmbiguousOrNestedAuthority() public {
@@ -543,9 +722,13 @@ contract VeydriftGameTest is Test {
             abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, player)
         );
         delegation.setDelegate(player);
-
         vm.prank(player);
-        delegation.setDelegate(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, address(game))
+        );
+        delegation.setDelegate(address(game));
+
+        _bindDelegate(player, delegate);
 
         vm.prank(otherMain);
         vm.expectRevert(
@@ -571,17 +754,14 @@ contract VeydriftGameTest is Test {
         );
         delegation.setDelegate(player);
 
-        vm.prank(player);
-        delegation.setDelegate(replacement);
+        _bindDelegate(player, replacement);
         assertEq(delegation.delegateOf(player), replacement);
         assertEq(delegation.delegatorOf(delegate), address(0));
         assertEq(delegation.delegatorOf(replacement), player);
     }
 
     function testDelegationNeverGrantsAdministrativeAuthority() public {
-        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
-        vm.prank(admin);
-        delegation.setDelegate(delegate);
+        _bindDelegate(admin, delegate);
 
         vm.prank(delegate);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, delegate));
@@ -590,6 +770,13 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         game.setStartPrice(0.01 ether);
         assertEq(game.startPrice(), 0.01 ether);
+    }
+
+    function _bindDelegate(address main, address wallet) internal {
+        vm.prank(main);
+        IVeydriftDelegation(address(game)).setDelegate(wallet);
+        vm.prank(wallet);
+        IVeydriftDelegation(address(game)).acceptDelegate(main);
     }
 
     function testInitializationAndOwnerGuard() public {
@@ -870,8 +1057,7 @@ contract VeydriftGameTest is Test {
         assertEq(existsAfter, existsBefore);
         assertEq(claimedAfter, claimedBefore);
         vm.deal(delegate, 1 ether);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
         assertEq(game.homePlanetOf(player), 42);
@@ -898,8 +1084,7 @@ contract VeydriftGameTest is Test {
         );
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
 
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         (, bytes memory wrongSignature) = _signedMigrationPayload(migration, 0x6161, player, 42);
         vm.prank(delegate);
         vm.expectRevert(VeydriftMigrationSettlement.BadMigrationSignature.selector);
@@ -913,8 +1098,7 @@ contract VeydriftGameTest is Test {
             )
         );
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
         assertEq(game.homePlanetOf(player), 42);
@@ -953,8 +1137,7 @@ contract VeydriftGameTest is Test {
             _signedMigrationPayload(migration, signerKey, player, 42);
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(player, commitment);
         vm.deal(delegate, 1 ether);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimWithReferralForDelegate{value: 0.05 ether}(
             player, payload, signature, commitment, v, r, s
@@ -2156,6 +2339,8 @@ contract VeydriftGameTest is Test {
         rejectingInviter.startPlanet{value: 0.05 ether}(game);
         rejectingInviter.claimReferralCode(referralSystem, code);
         rejectingInviter.setDelegate(game, referralDelegate);
+        vm.prank(referralDelegate);
+        IVeydriftDelegation(address(game)).acceptDelegate(address(rejectingInviter));
 
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
         vm.prank(invitee);
@@ -5437,8 +5622,7 @@ contract VeydriftGameTest is Test {
         orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
         vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
         game.startProductionBatch(planetId, orders);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         game.startProductionBatch(planetId, orders);
         vm.prank(admin);
@@ -7672,8 +7856,7 @@ contract VeydriftGameTest is Test {
     function testLaunchDeployBatchPreservesDelegatedPlayer() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
             _seedDeployBatch(2);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);

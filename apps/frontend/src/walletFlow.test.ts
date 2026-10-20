@@ -110,6 +110,7 @@ import {
   readWalletNativeBalance,
   sendSettlementTransaction,
   sendSetDelegateTransaction,
+  sendAcceptDelegateTransaction,
   sendRevokeDelegateTransaction,
   settlementFundingShortfallWei,
   settlementFundingWithWalletBalance,
@@ -3531,6 +3532,7 @@ describe("walletFlow", () => {
 
     await expect(sendSetDelegateTransaction(provider, account, contract, delegate)).resolves.toBe("0xtx1");
     await expect(sendRevokeDelegateTransaction(provider, account, contract)).resolves.toBe("0xtx2");
+    await expect(sendAcceptDelegateTransaction(provider, delegate, contract, account)).resolves.toBe("0xtx3");
 
     expect(requests).toEqual([
       {
@@ -3547,6 +3549,14 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: "0x55d1ef38",
+        }],
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: delegate,
+          to: contract,
+          data: encodeAddressCall("0xe2feb35c", account),
         }],
       },
     ]);

@@ -15,6 +15,7 @@ import {
   type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
+import { DelegationAcceptForm } from "./DelegationAcceptForm";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../sidebarPreference";
@@ -46,6 +47,7 @@ interface NavBarProps {
   onNavigate: (page: Page) => void;
   onConnectWallet?: (() => void) | undefined;
   onOpenActivity?: (() => void) | undefined;
+  onAcceptDelegate?: ((main: string) => void) | undefined;
   onRevokeDelegate?: (() => void) | undefined;
   onSetDelegate?: ((delegate: string) => void) | undefined;
   onRefreshDelegation?: (() => void) | undefined;
@@ -117,6 +119,7 @@ export function NavBar({
   onConnectWallet,
   onNavigate,
   onOpenActivity,
+  onAcceptDelegate,
   onRevokeDelegate,
   onSetDelegate,
   onRefreshDelegation,
@@ -166,6 +169,15 @@ export function NavBar({
       && signerAccount.toLowerCase() === account.toLowerCase()
       && !delegation?.actingAsDelegate
       && onSetDelegate,
+  );
+  // A wallet with no delegate, proposal or main of its own may accept another wallet's proposal.
+  const canAcceptDelegate = Boolean(
+    signerAccount
+      && delegation
+      && !delegation.actingAsDelegate
+      && !delegation.delegate
+      && !delegation.pendingDelegate
+      && onAcceptDelegate,
   );
 
   const closeMobileMenu = () => {
@@ -403,12 +415,17 @@ export function NavBar({
                 : "No delegate is currently set."}
             </p>
           )}
+          {delegation?.pendingDelegate && !delegation.actingAsDelegate ? (
+            <p className="mt-1 text-[11px] leading-4 text-amber-200">
+              Pending: {shortAddress(delegation.pendingDelegate)} must accept from that wallet before the change takes effect.
+            </p>
+          ) : null}
         </div>
         <p className="text-[11px] leading-4 text-slate-300">
-          Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can set or replace a delegate.
+          Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can propose a delegate, and the delegate wallet must accept before it can act.
         </p>
         <p className="text-[11px] leading-4 text-slate-300">
-          Setting, replacing, or revoking a delegate is an on-chain transaction with network gas fees.
+          Proposing, accepting, or revoking a delegate is an on-chain transaction with network gas fees.
         </p>
         {canSetDelegate ? (
           <label className="grid gap-1 text-xs font-medium text-slate-200">
@@ -423,14 +440,14 @@ export function NavBar({
           </label>
         ) : null}
         <div className="flex flex-wrap justify-end gap-2">
-          {delegation?.delegate && onRevokeDelegate ? (
+          {(delegation?.delegate || delegation?.pendingDelegate) && onRevokeDelegate ? (
             <button
               className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={delegationBusy || playerProfileBusy}
               onClick={onRevokeDelegate}
               type="button"
             >
-              {delegation?.actingAsDelegate ? "Revoke my access" : "Revoke delegate"}
+              {delegation?.actingAsDelegate ? "Revoke my access" : delegation?.delegate ? "Revoke delegate" : "Cancel proposal"}
             </button>
           ) : null}
           {canSetDelegate ? (
@@ -440,10 +457,20 @@ export function NavBar({
               onClick={() => onSetDelegate?.(delegateDraft)}
               type="button"
             >
-              {delegation?.delegate ? "Replace delegate" : "Set delegate"}
+              {delegation?.delegate ? "Propose replacement" : "Propose delegate"}
             </button>
           ) : null}
         </div>
+        {canAcceptDelegate ? (
+          <div className="border-t border-cyan-300/10 pt-3">
+            <DelegationAcceptForm
+              busy={delegationBusy || playerProfileBusy}
+              key={signerAccount}
+              onAccept={(main) => onAcceptDelegate?.(main)}
+              proposedBy={delegation?.proposedBy}
+            />
+          </div>
+        ) : null}
         {delegationStatusLabel ? (
           <p role="status" className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
         ) : null}

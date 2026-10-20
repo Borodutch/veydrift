@@ -1256,7 +1256,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             message: "Wallet delegation state is temporarily unavailable."
           }, { headers: corsHeaders, status: 503 });
         }
-        const delegation: WalletDelegationState = await rawChainReader.getDelegationState(wallet);
+        let proposedByCandidates: Address[] = [];
+        try {
+          proposedByCandidates = indexer?.delegateProposalsFor(wallet) ?? [];
+        } catch {
+          // Indexed proposals are optional candidates; the chain read below stays authoritative.
+        }
+        const delegation: WalletDelegationState = await rawChainReader.getDelegationState(wallet, proposedByCandidates);
         return Response.json(delegation, {
           headers: { ...corsHeaders, "cache-control": "no-store" }
         });

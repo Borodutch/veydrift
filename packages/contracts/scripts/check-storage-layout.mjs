@@ -215,6 +215,7 @@ const reviewedStorageAppend = [
   { label: "_chronologyMigrationComplete", slot: "85", offset: 0, type: "bool" },
   { label: "_chronologyRegistered", slot: "86", offset: 0, type: "mapping(uint256 => bool)" },
   { label: "_chronologyLegacyCursor", slot: "87", offset: 0, type: "mapping(address => uint256)" },
+  { label: "_pendingDelegateOf", slot: "88", offset: 0, type: "mapping(address => address)" },
 ];
 const riftExtractionStruct = [
   {label: "active", slot: "0", offset: 0, type: "bool"},

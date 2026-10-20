@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
+import { delegateProposedTopic, delegateUpdatedTopic, inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { combatStageAdvancedTopic, decodeBattleReportLogs } from "./evm";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
@@ -984,6 +984,77 @@ describe("SettlementIndexer", () => {
 
     indexer.applyLog({ ...log, removed: true });
     expect(indexer.inviteeProductionBoostExpiresAt(player)).toBeNull();
+  });
+
+  test("projects pending delegate proposals per proposed wallet and clears accepted, revoked or cancelled ones", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database: new Database(":memory:"), runStartupBackfill: false });
+    const wallet = "0x7777777777777777777777777777777777777777" as Address;
+    const mainA = "0x8888888888888888888888888888888888888888" as Address;
+    const mainB = "0x9999999999999999999999999999999999999999" as Address;
+    const zero = "0x0000000000000000000000000000000000000000" as Address;
+    const proposed = (main: Address, delegate: Address, blockNumber: string, logIndex = "0x0") => ({
+      blockNumber,
+      transactionHash: `0x${blockNumber.slice(2).padStart(64, "a")}`,
+      logIndex,
+      topics: [delegateProposedTopic, addressTopic(main), addressTopic(delegate)],
+      data: "0x"
+    });
+    const updated = (main: Address, previous: Address, delegate: Address, blockNumber: string) => ({
+      blockNumber,
+      transactionHash: `0x${blockNumber.slice(2).padStart(64, "b")}`,
+      logIndex: "0x0",
+      topics: [delegateUpdatedTopic, addressTopic(main), addressTopic(previous), addressTopic(delegate)],
+      data: abiWords(BigInt(delegate))
+    });
+
+    // Projection only: delegation logs never fan out a chain event.
+    expect(indexer.applyLog(proposed(mainA, wallet, "0x90"))).toMatchObject({ applied: false, ignored: true });
+    indexer.applyLog(proposed(mainB, wallet, "0x91"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([mainB, mainA]);
+
+    indexer.applyLog(updated(mainA, zero, wallet, "0x92"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([mainB]);
+    indexer.applyLog(proposed(mainB, zero, "0x93"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([]);
+    // A late, older proposal must not resurrect one that a later log cleared.
+    indexer.applyLog(proposed(mainB, wallet, "0x90", "0x5"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([]);
+  });
+
+  test("replays delegate proposals journaled before the upgraded indexer starts and drops removed ones", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const wallet = "0x7777777777777777777777777777777777777777" as Address;
+    const main = "0x8888888888888888888888888888888888888888" as Address;
+    const log = {
+      blockNumber: "0x95",
+      transactionHash: `0x${"96".repeat(32)}`,
+      logIndex: "0x1",
+      removed: false,
+      topics: [delegateProposedTopic, addressTopic(main), addressTopic(wallet)],
+      data: "0x"
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(`${log.transactionHash}:${log.logIndex}`, log.transactionHash, log.logIndex, "149", JSON.stringify(log), new Date().toISOString());
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([main]);
+
+    restarted.applyLog({ ...log, removed: true });
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([]);
+    restarted.applyLog(log);
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([main]);
   });
 
   test("queues only canonical legacy battle reports for defender-loss backfill on reader startup", () => {
