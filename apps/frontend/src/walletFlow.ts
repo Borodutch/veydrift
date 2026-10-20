@@ -1542,6 +1542,7 @@ const GAME_SELECTORS = {
 } as const;
 const DELEGATION_SELECTORS = {
   setDelegate: "0xca5eb5e1",
+  acceptDelegate: "0xe2feb35c",
   revokeDelegate: "0x55d1ef38",
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
@@ -4988,6 +4989,7 @@ export async function fetchWalletDelegation(
   );
 }
 
+/** Only proposes `delegate`; it can act for `account` after it calls acceptDelegate(account). */
 export async function sendSetDelegateTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -4998,6 +5000,20 @@ export async function sendSetDelegateTransaction(
     from: account,
     to: contractAddress,
     data: encodeAddressCall(DELEGATION_SELECTORS.setDelegate, delegate),
+  });
+}
+
+/** Sent by the proposed delegate wallet `account` to start acting for `main`. */
+export async function sendAcceptDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  main: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeAddressCall(DELEGATION_SELECTORS.acceptDelegate, main),
   });
 }
 

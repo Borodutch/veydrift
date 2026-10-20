@@ -3118,12 +3118,12 @@ test("wallet delegation dialog separates profile form, keyboard actions and gas 
     await fillDelegate("0x3333333333333333333333333333333333333333");
     await enterKey(); await delay(100);
     assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => ['personal_sign','eth_sendTransaction'].includes(r.method)).length`), 0);
-    await evaluate(`${delegateButton("Set delegate")}.click(); ${delegateButton("Set delegate")}.click()`);
+    await evaluate(`${delegateButton("Propose delegate")}.click(); ${delegateButton("Propose delegate")}.click()`);
     await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
     assert.equal(await evaluate(`document.querySelector('[aria-label="Save player profile"]').disabled`), true);
     await evaluate(`window.inspectorProof.rejectWalletSend()`);
     await waitForExpression(`${delegateSection}.textContent.includes('rejected')`);
-    assert.equal(await evaluate(`${delegateButton("Set delegate")}.disabled`), false);
+    assert.equal(await evaluate(`${delegateButton("Propose delegate")}.disabled`), false);
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
     await evaluate(`document.querySelector('form[aria-labelledby="profile-details-title"] input').focus()`);
     await enterKey();
@@ -3133,30 +3133,64 @@ test("wallet delegation dialog separates profile form, keyboard actions and gas 
   }
 });
 
-test("wallet delegation set replace revoke refresh the open dialog only after canonical confirmation", { timeout: 60_000 }, async () => {
+test("wallet delegation propose replace revoke refresh the open dialog only after canonical confirmation", { timeout: 90_000 }, async () => {
   await openDelegationDialog();
   const first = "0x3333333333333333333333333333333333333333";
   const second = "0x4444444444444444444444444444444444444444";
   let sends = 0;
-  for (const [next, label] of [[first, "Set delegate"], [second, "Replace delegate"], [null, "Revoke delegate"]]) {
+  // [typed address, button, served [delegate, pending] before and after indexing, success notice]
+  for (const [next, label, [oldDelegate, oldPending], [newDelegate, newPending], notice] of [
+    [first, "Propose delegate", [null, null], [null, first], "Delegate proposed."],
+    [second, "Propose replacement", [first, null], [first, second], "Delegate proposed."],
+    [null, "Revoke delegate", [first, second], [null, null], "Current delegate updated."],
+  ]) {
     if (next) await fillDelegate(next);
     await clickExpression(delegateButton(label));
     await waitForExpression(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length === ${++sends}`);
-    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next === first ? null : first)}, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegate${sends}')`);
+    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(oldDelegate)}, 'confirmed', 0, ${JSON.stringify(oldPending)}); window.inspectorProof.resolveWalletSend('0xdelegate${sends}')`);
     await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
-    assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
-    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied', 2)`);
-    await waitForExpression(`${delegateSection}.textContent.includes('Current delegate updated.')`, 20_000);
-    assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), next ?? "");
+    assert.equal(await evaluate(`${delegateSection}.textContent.includes(${JSON.stringify(notice)})`), false);
+    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(newDelegate)}, 'applied', 2, ${JSON.stringify(newPending)})`);
+    await waitForExpression(`${delegateSection}.textContent.includes(${JSON.stringify(notice)})`, 20_000);
+    // A proposal changes nothing until the proposed wallet itself accepts.
+    assert.equal(await evaluate(`${delegateSection}.textContent.includes('must accept from that wallet')`), Boolean(newPending));
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
     assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), sends);
+    if (newPending === first) {
+      // The first wallet accepts from its own wallet; the open dialog shows it once served.
+      await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(first)}, 'applied')`);
+      await waitForExpression(`${delegateButton("Propose replacement")} !== undefined`, 20_000);
+      assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), first);
+    }
   }
+  assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
+});
+
+test("wallet delegation accept form sends acceptDelegate and acts for the main only once served", { timeout: 40_000 }, async () => {
+  await openDelegationDialog();
+  const main = "0x9999999999999999999999999999999999999999";
+  await evaluate(`(() => { const input = ${delegateSection}.querySelectorAll('input')[1]; input.value = ${JSON.stringify(main)}; input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await clickExpression(delegateButton("Accept delegation"));
+  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
+  assert.equal(
+    await evaluate(`window.inspectorProof.walletRequests.find(r => r.method === 'eth_sendTransaction').params[0].data`),
+    `0xe2feb35c${main.slice(2).padStart(64, "0")}`,
+  );
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegateaccept')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('acting for')`), false);
+  await evaluate(`window.inspectorProof.setDelegation(window.inspectorProof.account, 'applied', 1)`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Delegation accepted.')`, 15_000);
+  assert.match(await evaluate(`${delegateSection}.textContent`), /Connected as .*acting for/);
+  assert.equal(await evaluate(`${delegateSection}.querySelector('input')`), null);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
 for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcome} transaction stays failed after read-only retry`, async () => {
   await openDelegationDialog();
   await fillDelegate("0x3333333333333333333333333333333333333333");
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
   await evaluate(outcome === "reverted"
     ? `window.inspectorProof.setDelegation(null, 'reverted'); window.inspectorProof.resolveWalletSend('0xdelegatereverted')`
@@ -3166,9 +3200,9 @@ for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcom
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('Current delegate refreshed.')`);
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('${outcome}')`), true);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.ok(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`) > before);
-  assert.equal(await evaluate(`${delegateButton("Set delegate")}.disabled`), false);
+  assert.equal(await evaluate(`${delegateButton("Propose delegate")}.disabled`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
@@ -3176,22 +3210,22 @@ test("wallet delegation bounded lag offers read-only retry and fences a late rea
   await openDelegationDialog();
   const next = "0x3333333333333333333333333333333333333333";
   await fillDelegate(next);
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied', 100); window.inspectorProof.resolveWalletSend('0xdelegatelag')`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 100, ${JSON.stringify(next)}); window.inspectorProof.resolveWalletSend('0xdelegatelag')`);
   await waitForExpression(`${delegateSection}.textContent.includes('do not resend')`, 10_000);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   const count = await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`);
   await delay(500);
   assert.equal(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`), count);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied'); window.inspectorProof.holdDelegationRead()`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 0, ${JSON.stringify(next)}); window.inspectorProof.holdDelegationRead()`);
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('Checking current delegate')`);
   await evaluate(`window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount]); window.inspectorProof.setPlayableAccount(window.inspectorProof.alternateAccount)`);
   await delay(100);
   await evaluate(`window.inspectorProof.releaseDelegationRead()`);
   await delay(100);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
@@ -3247,14 +3281,14 @@ test("wallet delegation unknown wallet outcome stays unknown after a read-only r
   await openDelegationDialog();
   const next = "0x3333333333333333333333333333333333333333";
   await fillDelegate(next);
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
   await evaluate(`window.inspectorProof.failWalletSend()`);
   await waitForExpression(`${delegateSection}.textContent.includes('may already have been sent')`);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'confirmed')`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed', 0, ${JSON.stringify(next)})`);
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('outcome is still unknown')`);
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('Transaction confirmed')`), false);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });

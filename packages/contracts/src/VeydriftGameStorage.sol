@@ -479,6 +479,9 @@ abstract contract VeydriftGameStorage is Initializable {
     // Sticky per-mission generation: only new allocation writes this, never lifecycle settlement.
     mapping(uint256 missionId => bool registered) internal _chronologyRegistered;
     mapping(address player => uint256 cursor) internal _chronologyLegacyCursor;
+    // Append-only delegate consent: `setDelegate` only proposes. The binding in `_delegateOf` /
+    // `_delegatorOf` changes when the proposed wallet itself calls `acceptDelegate`.
+    mapping(address main => address delegate) internal _pendingDelegateOf;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -555,6 +558,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error DelegatedWalletCannotDelegate(address wallet, address main);
     error DelegateHasDelegate(address delegate, address nestedDelegate);
     error NoDelegate(address account);
+    error DelegateNotProposed(address main, address delegate);
     error GameMustBePaused();
     error PlanetTemperatureMigrationPending();
     error PlanetTemperatureMigrationCompleted();
@@ -964,6 +968,8 @@ abstract contract VeydriftGameStorage is Initializable {
         address indexed delegate,
         address actor
     );
+    /// @dev `delegate == address(0)` means the main's pending proposal was cleared.
+    event DelegateProposed(address indexed main, address indexed delegate);
 
     constructor(address admin) {
         _initializeGameStorage(admin);

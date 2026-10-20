@@ -35,7 +35,7 @@ declare global {
       resolveWalletSend(hash: string): void;
       rejectWalletSend(): void;
       failWalletSend(): void;
-      setDelegation(delegate: string | null, phase: string, staleReads?: number): void;
+      setDelegation(delegate: string | null, phase: string, staleReads?: number, pendingDelegate?: string | null): void;
       holdDelegationRead(): void;
       releaseDelegationRead(): void;
       alternateAccount: string;
@@ -115,6 +115,8 @@ let delegateValue: string | null = fixtureParams.get("delegation") === "self" ? 
 let delegationPhase = "confirmed";
 let delegationStaleReads = 0;
 let previousDelegate = delegateValue;
+let pendingDelegateValue: string | null = null;
+let previousPendingDelegate: string | null = null;
 let holdDelegation = false;
 let releaseDelegationRead = () => {};
 let rejectWalletSend = () => {};
@@ -397,9 +399,12 @@ globalThis.fetch = (async (input, init) => {
 
   if (url.pathname.match(/\/wallet\/[^/]+\/delegation$/)) {
     const wallet = url.pathname.split("/").at(-2)!;
-    const value = delegationStaleReads-- > 0 ? previousDelegate : delegateValue;
-    const actingAsDelegate = delegationProbe && fixtureParams.get("delegation") === "self" && wallet === account && value === account;
-    const response = Response.json({ wallet, main: actingAsDelegate ? unrelatedOwner : wallet, delegate: wallet === account ? value : null, actingAsDelegate });
+    const stale = delegationStaleReads-- > 0;
+    const value = stale ? previousDelegate : delegateValue;
+    const pendingDelegate = wallet === account ? (stale ? previousPendingDelegate : pendingDelegateValue) : null;
+    // The fixture account acts for the unrelated owner whenever it is served as that owner's delegate.
+    const actingAsDelegate = delegationProbe && wallet === account && value === account;
+    const response = Response.json({ wallet, main: actingAsDelegate ? unrelatedOwner : wallet, delegate: wallet === account ? value : null, pendingDelegate, actingAsDelegate });
     if (holdDelegation) { holdDelegation = false; await new Promise<void>(resolve => { releaseDelegationRead = resolve; }); }
     return response;
   }
@@ -782,8 +787,9 @@ window.inspectorProof = {
   failWalletSend() { failWalletSend(); },
   holdDelegationRead() { holdDelegation = true; },
   releaseDelegationRead() { releaseDelegationRead(); },
-  setDelegation(delegate, phase, staleReads = 0) {
+  setDelegation(delegate, phase, staleReads = 0, pendingDelegate = null) {
     previousDelegate = delegateValue; delegateValue = delegate; delegationPhase = phase; delegationStaleReads = staleReads;
+    previousPendingDelegate = pendingDelegateValue; pendingDelegateValue = pendingDelegate;
     window.dispatchEvent(new Event("focus"));
   },
   failAttackProtection(index) {

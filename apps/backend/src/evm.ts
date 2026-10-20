@@ -1506,6 +1506,8 @@ export type WalletDelegationState = {
   wallet: Address;
   main: Address;
   delegate: Address | null;
+  /** Proposed by `main`; it gains no authority until that wallet accepts on-chain. */
+  pendingDelegate: Address | null;
   actingAsDelegate: boolean;
 };
 
@@ -2080,13 +2082,21 @@ export class VeydriftGameReader implements ChainReader {
     const main = decodeAddressWord(
       wordAt(splitWords(await this.call("0x6d3498d8", [encodeAddress(wallet)])), 0)
     );
-    const delegateAddress = decodeAddressWord(
-      wordAt(splitWords(await this.call("0x8d22ea2a", [encodeAddress(main)])), 0)
-    );
+    const [delegateWord, pendingWord] = await Promise.all([
+      this.call("0x8d22ea2a", [encodeAddress(main)]),
+      // pendingDelegateOf(main). A Game from before delegate consent reverts and has no proposals.
+      this.call("0xa070d0e0", [encodeAddress(main)]).catch((error: unknown) => {
+        if (isRpcRevert(error)) return zeroAddress;
+        throw error;
+      })
+    ]);
+    const delegateAddress = decodeAddressWord(wordAt(splitWords(delegateWord), 0));
+    const pendingDelegate = decodeAddressWord(wordAt(splitWords(pendingWord), 0));
     return {
       wallet,
       main,
       delegate: delegateAddress === zeroAddress ? null : delegateAddress,
+      pendingDelegate: pendingDelegate === zeroAddress ? null : pendingDelegate,
       actingAsDelegate: main.toLowerCase() !== wallet.toLowerCase()
     };
   }

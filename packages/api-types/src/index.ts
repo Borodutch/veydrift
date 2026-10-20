@@ -5,6 +5,8 @@ export type WalletDelegation<Wallet extends string = string> = {
   wallet: Wallet;
   main: Wallet;
   delegate: Wallet | null;
+  /** Proposed by `main`; it gains no authority until that wallet accepts on-chain. */
+  pendingDelegate: Wallet | null;
   actingAsDelegate: boolean;
 };
 

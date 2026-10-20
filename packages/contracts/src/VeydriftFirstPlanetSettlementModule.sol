@@ -60,13 +60,59 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         return main == address(0) ? actor : main;
     }
 
+    function pendingDelegateOf(address main) external view returns (address) {
+        return _pendingDelegateOf[main];
+    }
+
+    /// @notice Proposes `delegate` for the caller. Nothing binds (and any current delegate stays)
+    ///         until `delegate` itself calls `acceptDelegate(caller)`.
     function setDelegate(address delegate) external {
-        address main = msg.sender;
+        _requireAssignableDelegate(msg.sender, delegate);
+        _pendingDelegateOf[msg.sender] = delegate;
+        emit DelegateProposed(msg.sender, delegate);
+    }
+
+    /// @notice Accepts `main`'s pending proposal for the caller, replacing any previous delegate.
+    function acceptDelegate(address main) external {
+        address delegate = msg.sender;
+        if (_pendingDelegateOf[main] != delegate) revert DelegateNotProposed(main, delegate);
+        // Bindings may have changed since the proposal; re-check them for the binding itself.
+        _requireAssignableDelegate(main, delegate);
+
+        delete _pendingDelegateOf[main];
+        address previous = _delegateOf[main];
+        if (previous != address(0)) delete _delegatorOf[previous];
+        _delegateOf[main] = delegate;
+        _delegatorOf[delegate] = main;
+        emit DelegateUpdated(main, previous, delegate, delegate);
+    }
+
+    /// @notice Main or delegate removes the binding; also withdraws the main's pending proposal.
+    function revokeDelegate() external {
+        address main = _delegatorOf[msg.sender];
+        if (main == address(0)) main = msg.sender;
+        address delegate = _delegateOf[main];
+        bool proposed = _pendingDelegateOf[main] != address(0);
+        if (delegate == address(0) && !proposed) revert NoDelegate(msg.sender);
+        if (proposed) {
+            delete _pendingDelegateOf[main];
+            emit DelegateProposed(main, address(0));
+        }
+        if (delegate == address(0)) return;
+        delete _delegateOf[main];
+        delete _delegatorOf[delegate];
+        emit DelegateUpdated(main, delegate, address(0), msg.sender);
+    }
+
+    function _requireAssignableDelegate(address main, address delegate) private view {
         address delegatedMain = _delegatorOf[main];
         if (delegatedMain != address(0)) {
             revert DelegatedWalletCannotDelegate(main, delegatedMain);
         }
-        if (delegate == address(0) || delegate == main) revert InvalidDelegate(delegate);
+        // The Game must never act for a player: calls it makes itself would resolve to them.
+        if (delegate == address(0) || delegate == main || delegate == address(this)) {
+            revert InvalidDelegate(delegate);
+        }
         address assignedMain = _delegatorOf[delegate];
         if (assignedMain != address(0) && assignedMain != main) {
             revert DelegateAlreadyAssigned(delegate, assignedMain);
@@ -75,23 +121,7 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         if (nestedDelegate != address(0)) {
             revert DelegateHasDelegate(delegate, nestedDelegate);
         }
-
-        address previous = _delegateOf[main];
-        if (previous == delegate) revert DelegateAlreadyAssigned(delegate, main);
-        if (previous != address(0)) delete _delegatorOf[previous];
-        _delegateOf[main] = delegate;
-        _delegatorOf[delegate] = main;
-        emit DelegateUpdated(main, previous, delegate, main);
-    }
-
-    function revokeDelegate() external {
-        address main = _delegatorOf[msg.sender];
-        if (main == address(0)) main = msg.sender;
-        address delegate = _delegateOf[main];
-        if (delegate == address(0)) revert NoDelegate(msg.sender);
-        delete _delegateOf[main];
-        delete _delegatorOf[delegate];
-        emit DelegateUpdated(main, delegate, address(0), msg.sender);
+        if (_delegateOf[main] == delegate) revert DelegateAlreadyAssigned(delegate, main);
     }
 
     function startBuildingUpgrade(uint256 planetId, Building building) external {

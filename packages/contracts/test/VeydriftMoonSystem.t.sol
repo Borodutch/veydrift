@@ -247,6 +247,8 @@ abstract contract VeydriftMoonSystemTestBase is Test {
         IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
         vm.prank(player);
         delegation.setDelegate(delegate);
+        vm.prank(delegate);
+        delegation.acceptDelegate(player);
 
         vm.prank(delegate);
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
@@ -3025,6 +3027,8 @@ contract VeydriftMoonProductionBatchTest is VeydriftMoonSystemTestBase {
         vm.prank(player);
         IVeydriftDelegation(address(game)).setDelegate(delegate);
         vm.prank(delegate);
+        IVeydriftDelegation(address(game)).acceptDelegate(player);
+        vm.prank(delegate);
         moons.startMoonProductionBatch(planetId, orders);
         vm.prank(admin);
         game.setGamePaused(true);
@@ -3668,6 +3672,8 @@ contract VeydriftBuildingDemolitionTest is VeydriftMoonSystemTestBase {
         _fundPlanet(planetId, 10_000, 10_000, 0);
         vm.prank(player);
         IVeydriftDelegation(address(game)).setDelegate(delegate);
+        vm.prank(delegate);
+        IVeydriftDelegation(address(game)).acceptDelegate(player);
 
         vm.prank(delegate);
         game.startBuildingDemolition(planetId, Building.CrystalMine);

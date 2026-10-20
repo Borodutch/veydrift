@@ -14,15 +14,18 @@ describe("wallet delegation", () => {
     expect(playableSource).toContain("Boolean(provider && signerAccount && account && gameContract)");
   });
 
-  test("exposes set, replace, revoke, and acting-for context without allowing a delegate to delegate again", async () => {
+  test("exposes propose, accept, replace, revoke, and acting-for context without allowing a delegate to delegate again", async () => {
     const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
     const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(navSource).toContain('aria-label="Wallet delegation"');
     expect(navSource).toContain("delegation?.actingAsDelegate");
-    expect(navSource).toContain('delegation?.delegate ? "Replace delegate" : "Set delegate"');
+    expect(navSource).toContain('delegation?.delegate ? "Propose replacement" : "Propose delegate"');
+    expect(navSource).toContain("must accept from that wallet before the change takes effect");
+    expect(navSource).toContain("onAcceptDelegate?.(delegatorDraft)");
     expect(navSource).toContain("!delegation?.actingAsDelegate");
-    expect(playableSource).toContain("sendSetDelegateTransaction(walletProvider, signerAccount, gameContract, delegate)");
+    expect(playableSource).toContain("sendSetDelegateTransaction(walletProvider, signerAccount, gameContract, change.delegate)");
+    expect(playableSource).toContain("sendAcceptDelegateTransaction(walletProvider, signerAccount, gameContract, change.main)");
     expect(playableSource).toContain("sendRevokeDelegateTransaction(walletProvider, signerAccount, gameContract)");
   });
 });

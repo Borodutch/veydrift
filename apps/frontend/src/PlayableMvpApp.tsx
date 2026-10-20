@@ -189,6 +189,7 @@ import {
   sendRecallFleetMissionTransaction,
   sendRenamePlanetTransaction,
   fetchMission,
+  sendAcceptDelegateTransaction,
   sendRevokeDelegateTransaction,
   sendSetDelegateTransaction,
   sendCancelBuildingDemolitionTransaction,
@@ -5461,7 +5462,8 @@ export function PlayableMvpApp({
   const delegationReadRunning = useRef(false);
   const delegationSubmitting = useRef(false);
   const delegationFailure = useRef<string>();
-  const delegationExpected = useRef<{ identity: typeof delegationIdentity.current; main: string; delegate: string | null; confirmed: boolean }>();
+  // Omitted delegate/pendingDelegate fields are not determined by the change and are not compared.
+  const delegationExpected = useRef<{ identity: typeof delegationIdentity.current; main: string; delegate?: string | null; pendingDelegate?: string | null; success: string; confirmed: boolean }>();
   useEffect(() => {
     setDelegationAction({ status: "idle" });
     delegationExpected.current = undefined;
@@ -5501,10 +5503,13 @@ export function PlayableMvpApp({
         try {
           const next = await backendData.queries.delegation(signerAccount, { fresh: true, timeoutMs: 5_000 }).read();
           if (!current()) return;
+          const matches = (actual: string | null | undefined, wanted: string | null | undefined) =>
+            wanted === undefined || (actual?.toLowerCase() ?? null) === (wanted?.toLowerCase() ?? null);
           if (next.wallet.toLowerCase() === signerAccount.toLowerCase()
             && (!expected || (expected.identity === identity
               && next.main.toLowerCase() === expected.main.toLowerCase()
-              && (next.delegate?.toLowerCase() ?? null) === (expected.delegate?.toLowerCase() ?? null)))) {
+              && matches(next.delegate, expected.delegate)
+              && matches(next.pendingDelegate, expected.pendingDelegate)))) {
             if (failure) {
               setDelegationAction({ status: "error", autoDismiss: false, label: `${failure} Current delegate refreshed.` });
               return;
@@ -5514,7 +5519,7 @@ export function PlayableMvpApp({
               return;
             }
             delegationExpected.current = undefined;
-            setDelegationAction({ status: "success", label: "Current delegate updated." });
+            setDelegationAction({ status: "success", label: expected?.success ?? "Current delegate updated." });
             void Promise.resolve(onDelegationChanged?.()).catch(() => {});
             return;
           }
@@ -5527,24 +5532,36 @@ export function PlayableMvpApp({
     }
   }, [backendData, onDelegationChanged, signerAccount]);
 
-  const runDelegationChange = useCallback(async (delegate: string | null) => {
+  // setDelegate only proposes; the proposed wallet's acceptDelegate binds it.
+  const runDelegationChange = useCallback(async (change: { kind: "set"; delegate: string } | { kind: "accept"; main: string } | { kind: "revoke" }) => {
     if (!provider || !signerAccount || !account || !gameContract || delegationAction.status === "pending" || delegationReadRunning.current || delegationSubmitting.current) return;
     delegationSubmitting.current = true;
     delegationFailure.current = undefined;
     const identity = delegationIdentity.current;
     const attempt = ++delegationAttempt.current;
     const current = () => delegationIdentity.current === identity && delegationAttempt.current === attempt;
-    delegationExpected.current = { identity, main: delegate === null ? signerAccount : account, delegate, confirmed: false };
+    const revokesDelegate = Boolean(delegation?.delegate || delegation?.actingAsDelegate);
+    delegationExpected.current = change.kind === "set"
+      // A proposal leaves any current delegate in place until the proposed wallet accepts.
+      ? { identity, main: account, pendingDelegate: change.delegate, success: "Delegate proposed. It can act for you after that wallet accepts.", confirmed: false }
+      : change.kind === "accept"
+        ? { identity, main: change.main, delegate: signerAccount, success: "Delegation accepted.", confirmed: false }
+        // A main's revoke also withdraws its pending proposal.
+        : { identity, main: signerAccount, delegate: null, ...(delegation?.actingAsDelegate ? {} : { pendingDelegate: null }), success: "Current delegate updated.", confirmed: false };
     try {
       await runCoordinatedWriteTransaction({
         recoveryIdentity: current,
-        key: delegate === null ? "wallet-delegation:revoke" : "wallet-delegation:set",
-        label: delegate === null ? "Revoke wallet delegate" : delegation?.delegate ? "Replace wallet delegate" : "Set wallet delegate",
+        key: `wallet-delegation:${change.kind}`,
+        label: change.kind === "accept" ? "Accept wallet delegation"
+          : change.kind === "revoke" ? revokesDelegate ? "Revoke wallet delegate" : "Cancel delegate proposal"
+          : delegation?.delegate ? "Propose replacement delegate" : "Propose wallet delegate",
         send: walletProvider => {
           if (!current()) throw new Error("Wallet changed before submission. Please try again.");
-          return delegate === null
+          return change.kind === "revoke"
             ? sendRevokeDelegateTransaction(walletProvider, signerAccount, gameContract)
-            : sendSetDelegateTransaction(walletProvider, signerAccount, gameContract, delegate);
+            : change.kind === "accept"
+              ? sendAcceptDelegateTransaction(walletProvider, signerAccount, gameContract, change.main)
+              : sendSetDelegateTransaction(walletProvider, signerAccount, gameContract, change.delegate);
         },
         invalidateTags: [`wallet:${account.toLowerCase()}`],
         onStateChange: state => {
@@ -5570,12 +5587,12 @@ export function PlayableMvpApp({
     } finally {
       if (delegationIdentity.current === identity) delegationSubmitting.current = false;
     }
-  }, [account, delegation?.delegate, delegationAction.status, gameContract, provider, refreshDelegation, runCoordinatedWriteTransaction, signerAccount]);
+  }, [account, delegation?.actingAsDelegate, delegation?.delegate, delegationAction.status, gameContract, provider, refreshDelegation, runCoordinatedWriteTransaction, signerAccount]);
 
   const handleSetDelegate = useCallback(async (delegateAddress: string) => {
     const delegate = delegateAddress.trim();
     if (!provider || !signerAccount || !account || !gameContract || signerAccount.toLowerCase() !== account.toLowerCase()) {
-      setDelegationAction({ status: "error", label: "Only the main wallet can set its delegate." });
+      setDelegationAction({ status: "error", label: "Only the main wallet can propose its delegate." });
       return;
     }
     if (!/^0x[0-9a-fA-F]{40}$/.test(delegate) || /^0x0{40}$/i.test(delegate)) {
@@ -5586,16 +5603,29 @@ export function PlayableMvpApp({
       setDelegationAction({ status: "error", label: "The main wallet cannot delegate to itself." });
       return;
     }
-    await runDelegationChange(delegate);
+    await runDelegationChange({ kind: "set", delegate });
   }, [account, gameContract, provider, runDelegationChange, signerAccount]);
 
-  const handleRevokeDelegate = useCallback(async () => {
-    if (!provider || !signerAccount || !account || !gameContract || !delegation?.delegate) {
-      setDelegationAction({ status: "error", label: "No wallet delegate is available to revoke." });
+  const handleAcceptDelegate = useCallback(async (mainAddress: string) => {
+    const main = mainAddress.trim();
+    if (!provider || !signerAccount || !account || !gameContract || delegation?.actingAsDelegate || delegation?.delegate) {
+      setDelegationAction({ status: "error", label: "Only a wallet without a delegate can accept a delegation." });
       return;
     }
-    await runDelegationChange(null);
-  }, [account, delegation?.delegate, gameContract, provider, runDelegationChange, signerAccount]);
+    if (!/^0x[0-9a-fA-F]{40}$/.test(main) || /^0x0{40}$/i.test(main) || main.toLowerCase() === signerAccount.toLowerCase()) {
+      setDelegationAction({ status: "error", label: "Enter the main wallet address that proposed this wallet." });
+      return;
+    }
+    await runDelegationChange({ kind: "accept", main });
+  }, [account, delegation?.actingAsDelegate, delegation?.delegate, gameContract, provider, runDelegationChange, signerAccount]);
+
+  const handleRevokeDelegate = useCallback(async () => {
+    if (!provider || !signerAccount || !account || !gameContract || !(delegation?.delegate || delegation?.pendingDelegate)) {
+      setDelegationAction({ status: "error", label: "No wallet delegate or proposal is available to revoke." });
+      return;
+    }
+    await runDelegationChange({ kind: "revoke" });
+  }, [account, delegation?.delegate, delegation?.pendingDelegate, gameContract, provider, runDelegationChange, signerAccount]);
 
   const handleAbandonPlanet = useCallback(() => {
     if (!provider || !signerAccount || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
@@ -7664,6 +7694,7 @@ export function PlayableMvpApp({
           onConnectWallet={effectiveConnectWallet}
           onNavigate={handleNavigate}
           onOpenActivity={() => setPlayerActivityOpen(true)}
+          onAcceptDelegate={handleAcceptDelegate}
           onRefreshDelegation={refreshDelegation}
           onRevokeDelegate={handleRevokeDelegate}
           onSetDelegate={handleSetDelegate}

@@ -208,6 +208,8 @@ contract VeydriftAllianceSystemTest is Test {
         IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
         vm.prank(leader);
         delegation.setDelegate(delegate);
+        vm.prank(delegate);
+        delegation.acceptDelegate(leader);
 
         vm.prank(delegate);
         uint256 allianceId = alliances.createAlliance("DLGT", "Delegated", "created by delegate");

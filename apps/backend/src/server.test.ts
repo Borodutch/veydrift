@@ -1674,10 +1674,11 @@ describe("Veydrift backend", () => {
 
   test("returns uncached effective-player delegation state", async () => {
     const delegate = "0x3333333333333333333333333333333333333333" as Address;
+    const pendingDelegate = "0x6666666666666666666666666666666666666666" as Address;
     const chainReader = Object.assign(new MockChainReader(), {
       async getDelegationState(wallet: Address) {
         expect(wallet).toBe(delegate);
-        return { wallet, main: player, delegate, actingAsDelegate: true };
+        return { wallet, main: player, delegate, pendingDelegate, actingAsDelegate: true };
       },
     });
     const handler = createRequestHandler({
@@ -1693,6 +1694,7 @@ describe("Veydrift backend", () => {
       wallet: delegate,
       main: player,
       delegate,
+      pendingDelegate,
       actingAsDelegate: true,
     });
   });
