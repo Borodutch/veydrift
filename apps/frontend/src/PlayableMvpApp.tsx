@@ -149,7 +149,6 @@ import {
   PAID_ALLIANCE_INVITE_PRICE_WEI,
   paidAllianceInviteCommitment,
   paidAllianceInviteLink,
-  parseRiftTokenAmount,
   requestAccounts,
   sendAbandonPlanetTransaction,
   sendAcceptAllianceInviteTransaction,
@@ -5223,8 +5222,9 @@ export function PlayableMvpApp({
     [account, activePlanetId, apiBaseUrl, gameContract, effectiveResearchState, provider, backendData, runResearchTransaction, signerAccount],
   );
 
+  // Amounts arrive validated from the Rift page as raw token units (1 unit = 1 in-game resource).
   const handleApproveRiftResource = useCallback(
-    (resource: RiftResourceState, amount: string) => {
+    (resource: RiftResourceState, amount: bigint) => {
       if (!provider || !signerAccount || !account || !gameContract || !resource.tokenAddress) {
         setRiftAction({
           status: "error",
@@ -5233,24 +5233,14 @@ export function PlayableMvpApp({
         return;
       }
 
-      let parsed: bigint;
-      try {
-        parsed = parseRiftTokenAmount(amount);
-      } catch (error) {
-        setRiftAction({
-          status: "error",
-          label: error instanceof Error ? error.message : "Invalid approval amount.",
-        });
-        return;
-      }
-
-      void runRiftTransaction(`${resource.label} approval`, (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, signerAccount, resource.tokenAddress ?? "", gameContract, parsed));
+      // Exactly the injected amount, never an unlimited allowance.
+      void runRiftTransaction(`${resource.label} approval`, (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, signerAccount, resource.tokenAddress ?? "", gameContract, amount));
     },
     [account, gameContract, provider, runRiftTransaction, signerAccount],
   );
 
   const handleDepositRiftResource = useCallback(
-    (resource: RiftResourceState, amount: string) => {
+    (resource: RiftResourceState, amount: bigint) => {
       if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
@@ -5260,18 +5250,7 @@ export function PlayableMvpApp({
       }
       const homePlanetId = riftState.homePlanetId;
 
-      let parsed: bigint;
-      try {
-        parsed = parseRiftTokenAmount(amount);
-      } catch (error) {
-        setRiftAction({
-          status: "error",
-          label: error instanceof Error ? error.message : "Invalid deposit amount.",
-        });
-        return;
-      }
-
-      void runRiftTransaction(`${resource.label} deposit`, (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, parsed), {
+      void runRiftTransaction(`${resource.label} injection`, (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount), {
         bodyKind: "planet",
         planetId: homePlanetId,
       });
@@ -5280,7 +5259,7 @@ export function PlayableMvpApp({
   );
 
   const handleRequestRiftWithdrawal = useCallback(
-    (resource: RiftResourceState, amount: string) => {
+    (resource: RiftResourceState, amount: bigint) => {
       if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
@@ -5290,18 +5269,7 @@ export function PlayableMvpApp({
       }
       const homePlanetId = riftState.homePlanetId;
 
-      let parsed: bigint;
-      try {
-        parsed = parseRiftTokenAmount(amount);
-      } catch (error) {
-        setRiftAction({
-          status: "error",
-          label: error instanceof Error ? error.message : "Invalid withdrawal amount.",
-        });
-        return;
-      }
-
-      void runRiftTransaction(`${resource.label} extraction start`, (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, parsed), {
+      void runRiftTransaction(`${resource.label} extraction start`, (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount), {
         bodyKind: "planet",
         planetId: homePlanetId,
       });
@@ -7564,18 +7532,25 @@ export function PlayableMvpApp({
     if (page === "rift") {
       return (
         <RiftPage
+          account={account}
           actionState={riftAction}
           canTransact={canSubmitGameTransaction && !riftTransactionPending}
           error={riftError}
+          gameContract={gameContract}
           loading={riftLoading}
           now={now}
           onApprove={handleApproveRiftResource}
           onDeposit={handleDepositRiftResource}
           onFinishWithdrawal={handleFinishRiftWithdrawal}
+          onOpenRaidFinder={() => handleNavigate("raid-target-finder")}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshRiftState}
           onRequestWithdrawal={handleRequestRiftWithdrawal}
+          onSelectPlanet={handleSelectManagedPlanet}
+          planets={walletPlanets}
           riftState={riftState}
+          rpcUrl={gameWalletChain.rpcUrls[0]}
+          signerAccount={signerAccount}
           transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );

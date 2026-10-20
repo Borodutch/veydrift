@@ -767,7 +767,8 @@ class MockChainReader implements ChainReader {
           unlocksAt: "2026-05-31T00:00:00.000Z",
           ready: false
         }
-      ]
+      ],
+      history: []
     };
   }
 
@@ -9865,6 +9866,7 @@ describe("Veydrift backend", () => {
     });
     indexer.applyLog({
       blockNumber: "0x86",
+      blockTimestamp: "0x69801c90",
       transactionHash: "0xdeposit",
       logIndex: "0x0",
       topics: [
@@ -9912,12 +9914,17 @@ describe("Veydrift backend", () => {
       resources: expect.arrayContaining([
         expect.objectContaining({
           key: "metal",
+          // Token addresses come from the deployment config, never from code.
+          tokenAddress: configuredTestConfig.resourceTokenAddresses.metal,
           // Rift bridge events are not a player's spendable mine balance. The
           // selected planet's indexed resources are the canonical amount shown
           // to the extractor.
           inGameBalance: "2200"
         })
-      ])
+      ]),
+      history: [
+        expect.objectContaining({ kind: "injected", planetId: "7", amounts: { metal: "1000", crystal: "0", deuterium: "0" }, transactionHash: "0xdeposit" })
+      ]
     });
   });
 

@@ -66,6 +66,7 @@ import {
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   normalizeReferralClaimCode,
+  fetchRiftTokenWallet,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
@@ -2615,6 +2616,32 @@ describe("walletFlow", () => {
           },
         ],
       },
+    ]);
+  });
+
+  test("reads Rift token balances and Game allowances through the app RPC, skipping unconfigured tokens", async () => {
+    const originalFetch = globalThis.fetch;
+    const owner = "0xAbCdEf0000000000000000000000000000000001";
+    const game = "0x00000000000000000000000000000000000000aa";
+    const metal = "0x5555555555555555555555555555555555555555";
+    const calls: Array<{ url: string; to: string; data: string }> = [];
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params: [{ to: string; data: string }, string] };
+      expect(body.method).toBe("eth_call");
+      expect(body.params[1]).toBe("latest");
+      calls.push({ url: String(input), ...body.params[0] });
+      const value = body.params[0].data.startsWith("0x70a08231") ? 12_500_000n : 2_500_000n;
+      return Response.json({ id: 1, jsonrpc: "2.0", result: `0x${value.toString(16).padStart(64, "0")}` });
+    }) as typeof fetch;
+    try {
+      await expect(fetchRiftTokenWallet("https://rpc.test", owner, game, { metal, crystal: null })).resolves.toEqual({
+        metal: { balance: 12_500_000n, allowance: 2_500_000n },
+      });
+    } finally { globalThis.fetch = originalFetch; }
+    const word = (address: string) => address.toLowerCase().slice(2).padStart(64, "0");
+    expect(calls).toEqual([
+      { url: "https://rpc.test", to: metal, data: `0x70a08231${word(owner)}` },
+      { url: "https://rpc.test", to: metal, data: `0xdd62ed3e${word(owner)}${word(game)}` },
     ]);
   });
 

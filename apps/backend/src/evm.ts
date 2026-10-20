@@ -1098,9 +1098,24 @@ export type PendingWithdrawal = {
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;
+  // Amount locked when the extraction started; `amount` is what survived raids so far.
+  startedAmount?: string;
   requestedAt: string;
   unlocksAt: string;
   ready: boolean;
+};
+
+// One Rift event in a wallet's history: tokens injected, an extraction started or finalized,
+// a raid on this wallet's lock (`raided`, counterparty = raider) or by this wallet (`raid`).
+export type RiftHistoryEntry = {
+  id: string;
+  kind: "injected" | "extractionStarted" | "extracted" | "raided" | "raid";
+  planetId: string;
+  amounts: Resources;
+  counterparty: Address | null;
+  unlocksAt: string | null;
+  occurredAt: string;
+  transactionHash: string | null;
 };
 
 export type RiftState = {
@@ -1112,7 +1127,9 @@ export type RiftState = {
   withdrawalDelaySeconds: string;
   requirements: RiftRequirement[];
   resources: RiftResourceState[];
+  // Every active extraction of the wallet, on any planet; `resources[].lockedBalance` covers homePlanetId only.
   pendingWithdrawals: PendingWithdrawal[];
+  history: RiftHistoryEntry[];
 };
 
 export type AllianceState = {
@@ -3044,7 +3061,8 @@ export class VeydriftGameReader implements ChainReader {
       withdrawalDelaySeconds: riftExtractionDelaySeconds.toString(),
       requirements,
       resources,
-      pendingWithdrawals
+      pendingWithdrawals,
+      history: []
     };
   }
 
@@ -6412,7 +6430,8 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
       inGameBalance: "0",
       lockedBalance: "0"
     })),
-    pendingWithdrawals: []
+    pendingWithdrawals: [],
+    history: []
   };
 }
 

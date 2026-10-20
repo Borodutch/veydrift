@@ -464,8 +464,9 @@ function RiftSection() {
 
         <div className="lg:py-8">
           <p className="landing-reveal max-w-2xl text-lg leading-8 text-slate-300">
-            Veydrift resources are ERC20 tokens: Metal, Crystal and Deuterium. The Rift is designed
-            to become the bridge between in-game production and open markets.
+            Veydrift resources are ERC20 tokens: Metal, Crystal and Deuterium. The Rift is the bridge
+            between in-game production and your wallet, and every extraction spends 28 days locked on its
+            planet where any raider can fight for it.
           </p>
           <div className="landing-reveal-group mt-10 grid gap-5">
             <RiftPoint title="Extract your surplus" body="Move spare production out of your planets as tradeable resource tokens." />
