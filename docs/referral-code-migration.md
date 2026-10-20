@@ -285,7 +285,7 @@ This hop reuses every step above. The differences:
   ownership control. With the real manifest (and `REFERRAL_SYSTEM_ADDRESS` once the proxy exists)
   the same test is the last check against Base before the Game switch.
 
-Order and signers (the PR that added this section has the full commands):
+Order and signers (full commands, downtime and rollback in PR #1959):
 
 1. `0xc2ae…` deploys the proxy with `DeployReferralSystem.s.sol` (inert: `game()` zero, migration
    not finalized). Record its address and deployment block. Build the inventory up to now.
