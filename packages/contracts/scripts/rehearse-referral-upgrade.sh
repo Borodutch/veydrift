@@ -32,11 +32,17 @@ until cast block-number --rpc-url "$LOCAL" >/dev/null 2>&1; do
 done
 echo "anvil fork of Base at block $(cast block-number --rpc-url "$LOCAL")"
 
-cast send --unlocked --from "$NEW_OWNER" "$GAME" "setGamePaused(bool)" true --rpc-url "$LOCAL" >/dev/null
-UPGRADE_DRY_RUN_OWNER="$SOURCE_OWNER" GAME_PROXY_ADDRESS="$GAME" SOURCE_REFERRAL_SYSTEM_ADDRESS="$SOURCE" \
-  forge script script/FreezeReferralSystem.s.sol:FreezeReferralSystem \
-  --rpc-url "$LOCAL" --broadcast --unlocked --sender "$SOURCE_OWNER"
-cast send --unlocked --from "$NEW_OWNER" "$GAME" "setGamePaused(bool)" false --rpc-url "$LOCAL" >/dev/null
+# The keyless plan of a production script, sent to the fork by the impersonated owner.
+run_as() {
+  local sender=$1 target=$2
+  shift 2
+  env UPGRADE_DRY_RUN_OWNER="$sender" "$@" forge script "$target" \
+    --rpc-url "$LOCAL" --broadcast --unlocked --sender "$sender"
+}
+run_as "$NEW_OWNER" script/SetGamePaused.s.sol:SetGamePaused GAME_PROXY_ADDRESS="$GAME" GAME_PAUSED=true
+run_as "$SOURCE_OWNER" script/FreezeReferralSystem.s.sol:FreezeReferralSystem \
+  GAME_PROXY_ADDRESS="$GAME" SOURCE_REFERRAL_SYSTEM_ADDRESS="$SOURCE"
+run_as "$NEW_OWNER" script/SetGamePaused.s.sol:SetGamePaused GAME_PROXY_ADDRESS="$GAME" GAME_PAUSED=false
 
 node ../../scripts/veydrift-referral-migration-input.mjs --rpc-url "$LOCAL" --source "$SOURCE" \
   --index-from-block "$SOURCE_DEPLOY_BLOCK" --log-chunk-size "$CHUNK" --out "$INPUT" \

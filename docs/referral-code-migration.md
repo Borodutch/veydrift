@@ -272,7 +272,8 @@ This hop reuses every step above. The differences:
   the source's own `migrateLegacyReferralCodeOwnership` calldata. Run it against a different RPC
   provider than the manifest generator, so the two log scans are independent. `--previous` resumes
   an inventory built before the freeze and rescans only the newer blocks.
-- Every script accepts `UPGRADE_DRY_RUN_OWNER=<public owner>` for a keyless simulation.
+- Every script accepts `UPGRADE_DRY_RUN_OWNER=<public owner>` for a keyless plan, which is what
+  gets sent; `SetGamePaused.s.sol` plans the owner's pause and unpause the same way.
 - The Game is paused only around the freeze transaction. Once `game()` is zero every state-changing
   entry point of the source reverts (claims and top-ups need `game`, redemptions need
   `msg.sender == game`, withdrawals call `game`, migration functions are finalized and owner-only),
@@ -285,11 +286,14 @@ This hop reuses every step above. The differences:
   ownership control. With the real manifest (and `REFERRAL_SYSTEM_ADDRESS` once the proxy exists)
   the same test is the last check against Base before the Game switch.
 
-Order and signers (full commands, downtime and rollback in PR #1959):
+Order and signers (full commands, downtime and rollback in PR #1959). Every transaction is planned
+keylessly (`UPGRADE_DRY_RUN_OWNER`, no `--broadcast`) and that exact dry-run plan is sent with a
+hash-tracked sender, one step at a time:
 
 1. `0xc2ae…` deploys the proxy with `DeployReferralSystem.s.sol` (inert: `game()` zero, migration
    not finalized). Record its address and deployment block. Build the inventory up to now.
-2. `0xc2ae…` pauses the Game, `0x4755…` runs `FreezeReferralSystem.s.sol`, `0xc2ae…` unpauses.
+2. `0xc2ae…` pauses the Game with `SetGamePaused.s.sol`, `0x4755…` runs
+   `FreezeReferralSystem.s.sol`, `0xc2ae…` unpauses.
 3. Extend the inventory past the freeze with `--previous`, generate the manifest on another
    provider, optionally run the fork test against Base with it, then `0xc2ae…` runs
    `MigrateReferralSystem.s.sol`.

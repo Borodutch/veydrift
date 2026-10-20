@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {DeployReferralSystem} from "../script/DeployReferralSystem.s.sol";
 import {FreezeReferralSystem} from "../script/FreezeReferralSystem.s.sol";
 import {MigrateReferralSystem} from "../script/MigrateReferralSystem.s.sol";
+import {SetGamePaused} from "../script/SetGamePaused.s.sol";
 import {UpgradeGame} from "../script/UpgradeGame.s.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 
 interface IReferralGame {
-    function setGamePaused(bool paused) external;
     function startPrice() external view returns (uint256);
     function homePlanetOf(address player) external view returns (uint256);
     function effectivePlayer(address actor) external view returns (address);
@@ -70,15 +70,13 @@ contract ReferralUpgradeMainnetForkTest is Test {
         manifest = vm.readFile(manifestFile);
 
         // 1. Old owner freezes the source; the Game is paused only around that one transaction.
+        vm.setEnv("GAME_PROXY_ADDRESS", vm.toString(GAME));
         if (source.game() != address(0)) {
-            vm.prank(NEW_OWNER);
-            game.setGamePaused(true);
+            _setGamePaused(true);
             vm.setEnv("UPGRADE_DRY_RUN_OWNER", vm.toString(SOURCE_OWNER));
-            vm.setEnv("GAME_PROXY_ADDRESS", vm.toString(GAME));
             vm.setEnv("SOURCE_REFERRAL_SYSTEM_ADDRESS", vm.toString(SOURCE));
             new FreezeReferralSystem().run();
-            vm.prank(NEW_OWNER);
-            game.setGamePaused(false);
+            _setGamePaused(false);
         }
         assertEq(source.game(), address(0), "source frozen");
 
@@ -99,7 +97,6 @@ contract ReferralUpgradeMainnetForkTest is Test {
         _assertMigratedStateMatchesSource();
 
         // 4. New owner switches the Game (sets the target's game pointer, deploys, upgrades).
-        vm.setEnv("GAME_PROXY_ADDRESS", vm.toString(GAME));
         vm.setEnv("GAME_PROXY_ADMIN", vm.toString(PROXY_ADMIN));
         vm.setEnv("MOON_PROXY_ADDRESS", vm.toString(MOON));
         vm.setEnv("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS", vm.toString(address(target)));
@@ -109,6 +106,12 @@ contract ReferralUpgradeMainnetForkTest is Test {
 
         _redeemExistingCodeThroughGame();
         _ownerControlsUpgradesAndOwnership();
+    }
+
+    function _setGamePaused(bool paused) internal {
+        vm.setEnv("UPGRADE_DRY_RUN_OWNER", vm.toString(NEW_OWNER));
+        vm.setEnv("GAME_PAUSED", paused ? "true" : "false");
+        new SetGamePaused().run();
     }
 
     function _assertMigratedStateMatchesSource() internal view {
