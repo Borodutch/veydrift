@@ -26,7 +26,10 @@ MANIFEST=manifests/private-referral-rehearsal.json
 anvil --fork-url "$BASE_RPC_URL" --port "${REHEARSAL_PORT:-8547}" --auto-impersonate --silent &
 ANVIL_PID=$!
 trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
-until cast block-number --rpc-url "$LOCAL" >/dev/null 2>&1; do sleep 1; done
+until cast block-number --rpc-url "$LOCAL" >/dev/null 2>&1; do
+  kill -0 "$ANVIL_PID" 2>/dev/null || { echo "anvil did not start (port in use?)" >&2; exit 1; }
+  sleep 1
+done
 echo "anvil fork of Base at block $(cast block-number --rpc-url "$LOCAL")"
 
 cast send --unlocked --from "$NEW_OWNER" "$GAME" "setGamePaused(bool)" true --rpc-url "$LOCAL" >/dev/null
