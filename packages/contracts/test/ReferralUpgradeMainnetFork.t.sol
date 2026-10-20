@@ -224,9 +224,15 @@ contract ReferralUpgradeMainnetForkTest is Test {
         assertTrue(target.referralInviteeRedeemed(invitee));
         assertFalse(source.referralInviteeRedeemed(invitee), "frozen source untouched");
         assertEq(target.totalReferralRewardsAccrued(inviter), accrued + price / 2);
-        if (target.claimableReferralRewards(inviter) == 0) {
+        // A wallet whose code rejects the 30k-gas payout is credited instead (unchanged behaviour).
+        uint256 credited = target.referralRewardCredits(commitment, invitee);
+        if (credited == 0) {
             assertEq(inviter.balance, inviterBalance + price / 2, "inviter paid directly");
+        } else {
+            assertEq(credited, price / 2, "inviter reward credited");
+            assertEq(address(target).balance, credited);
         }
+        emit log_named_uint("inviter reward credited instead of paid (wei)", credited);
         (uint8 remainingAfter,) = target.referralRedemptionQuota(commitment);
         assertEq(remainingAfter, remaining - 1);
     }

@@ -5,13 +5,15 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VeydriftReferralSystem} from "../../src/VeydriftReferralSystem.sol";
 
 /// @dev The referral system is deployed like production: implementation behind an ERC1967 proxy.
-function newReferralSystem(address owner) returns (VeydriftReferralSystem) {
-    return VeydriftReferralSystem(
-        address(
-            new ERC1967Proxy(
-                address(new VeydriftReferralSystem()),
-                abi.encodeCall(VeydriftReferralSystem.initialize, (owner))
+library ReferralProxy {
+    function deploy(address owner) internal returns (VeydriftReferralSystem) {
+        return VeydriftReferralSystem(
+            address(
+                new ERC1967Proxy(
+                    address(new VeydriftReferralSystem()),
+                    abi.encodeCall(VeydriftReferralSystem.initialize, (owner))
+                )
             )
-        )
-    );
+        );
+    }
 }

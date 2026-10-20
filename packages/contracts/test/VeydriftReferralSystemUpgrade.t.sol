@@ -7,7 +7,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
-import {newReferralSystem} from "./support/ReferralProxy.sol";
+import {ReferralProxy} from "./support/ReferralProxy.sol";
 
 contract VeydriftReferralSystemUpgradeTest is Test {
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
@@ -16,7 +16,7 @@ contract VeydriftReferralSystemUpgradeTest is Test {
     VeydriftReferralSystem private referral;
 
     function setUp() public {
-        referral = newReferralSystem(OWNER);
+        referral = ReferralProxy.deploy(OWNER);
     }
 
     function testProxyInitializesOnceAndImplementationIsLocked() public {

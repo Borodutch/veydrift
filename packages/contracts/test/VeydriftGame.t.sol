@@ -33,7 +33,7 @@ import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.so
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
-import {newReferralSystem} from "./support/ReferralProxy.sol";
+import {ReferralProxy} from "./support/ReferralProxy.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {
     IVeydriftResourceProjectionGame,
@@ -1427,7 +1427,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralClaimRequiresCompletedMigration() public {
-        VeydriftReferralSystem pendingReferralSystem = newReferralSystem(admin);
+        VeydriftReferralSystem pendingReferralSystem = ReferralProxy.deploy(admin);
         vm.prank(admin);
         pendingReferralSystem.setGame(address(game));
 
@@ -1542,7 +1542,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationRejectsCollisionAndPreservesExpiredOwnership() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         address otherPlayer = address(0xBEEF);
         vm.warp(3 days);
         address[] memory inviters = new address[](1);
@@ -1576,7 +1576,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationAcceptsRawReceiptCommitmentsAndKeepsNewBinding() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
 
         string memory validCode = "Legacy_Code";
@@ -1625,7 +1625,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationAcceptsCanonicalReplacementCommitment() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
 
         string memory code = "replacement-code";
@@ -1653,7 +1653,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralRewardStatsMigrationRequiresExactReviewedCountersAndZeroEscrow() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         bytes32 digest = migrating.referralMigrationLeafRewardStats(
             player, 0.025 ether, 0.025 ether, 0.01 ether
         );
@@ -1704,7 +1704,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralHistoryMigrationReemitsSettledCreditAndPreservesTotals() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         address invitee = address(0xBEEF);
         address recipient = address(0xCAFE);
@@ -1785,7 +1785,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationFinalizesReviewedSixTenThreeInventoryOutOfOrder() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
 
         address[] memory validOwners = new address[](6);
@@ -1924,7 +1924,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationPreservesReplayAndActiveCommitmentQuota() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         vm.prank(admin);
         migrating.setGame(address(game));
@@ -1973,7 +1973,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationFailsClosedForRedemptionManifestAndInvalidRows() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         string memory code = "preserve1";
         bytes32 codeHash = keccak256(bytes(code));
@@ -2052,7 +2052,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationRejectsWrongCommitmentAndCannotFinalizeWrongManifest() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
         string memory code = "receipt01";
         bytes32 codeHash = keccak256(bytes(code));
@@ -2117,7 +2117,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationCannotFinalizeAlteredTimestamp() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
         string memory code = "receipt02";
         bytes32 codeHash = keccak256(bytes(code));
@@ -2160,7 +2160,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralHashOnlyMigrationRejectsAlteredReceiptEvidence() public {
-        VeydriftReferralSystem migrating = newReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         string memory code = _legacyOverlengthCode(0);
         bytes32 codeHash = keccak256(bytes(_lowercaseReferralCode(code)));
         bytes32 receiptCommitment = keccak256(bytes(code));
@@ -13657,7 +13657,7 @@ contract VeydriftGameTest is Test {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftReferralSystem deployedReferralSystem = newReferralSystem(owner);
+        VeydriftReferralSystem deployedReferralSystem = ReferralProxy.deploy(owner);
         VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
             address(deployedReferralSystem), address(new VeydriftCombatRaidModule())
         );
