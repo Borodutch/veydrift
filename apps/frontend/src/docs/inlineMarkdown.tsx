@@ -1,5 +1,7 @@
 import type { ComponentChildren } from "preact";
 
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
 export function InlineMarkdown({ text }: { text: string }) {
   return <>{renderInline(text)}</>;
 }
@@ -16,7 +18,8 @@ export function renderInline(text: string): ComponentChildren[] {
       nodes.push(<code className="rounded bg-cyan-300/10 px-1 py-0.5 text-cyan-100">{match[2]}</code>);
     } else if (match[3] && match[4]) {
       nodes.push(
-        <a className="text-cyan-200 underline decoration-cyan-300/40 underline-offset-4 hover:text-cyan-100" href={match[4]}>
+        // Addresses always show in full (never shortened), in mono so they read and copy cleanly.
+        <a className={`text-cyan-200 underline decoration-cyan-300/40 underline-offset-4 hover:text-cyan-100${ADDRESS.test(match[3]) ? " font-mono text-xs" : ""}`} href={match[4]}>
           {match[3]}
         </a>,
       );
