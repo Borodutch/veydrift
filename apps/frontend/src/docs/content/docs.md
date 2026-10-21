@@ -187,7 +187,7 @@ All costs are base costs before level scaling unless noted.
 | Metal Storage | 1,000 metal | Raises metal storage cap. |
 | Crystal Storage | 1,000 metal, 500 crystal | Raises crystal storage cap. |
 | Deuterium Tank | 1,000 metal, 1,000 crystal | Raises deuterium storage cap. |
-| Fusion Reactor | 900 metal, 360 crystal, 180 deuterium | Produces energy and consumes deuterium production. |
+| Fusion Reactor | 900 metal, 360 crystal, 180 deuterium | Produces energy for a fixed deuterium upkeep, paid from stored deuterium when the synthesizer falls short. |
 | Nanite Factory | 1,000,000 metal, 500,000 crystal, 100,000 deuterium | Multiplies construction and production speed. |
 | Terraformer | 50,000 crystal, 100,000 deuterium | Adds planet fields. |
 | Alliance Depot | 20,000 metal, 40,000 crystal | Supports ACS Defend holding fuel. |
@@ -354,14 +354,42 @@ with modifiers applied in this order, rounding down after every basis-point scal
 crawler boost bps = min(effective crawlers * 2, 5,000)
 effective crawlers = min(crawler count, 8 * (metal level + crystal level + deuterium level))
 boosted mine output = floor(raw mine output * (10,000 + crawler boost bps) / 10,000)
+live effective output = floor(boosted mine output * energy scale bps / 10,000)
 fusion deuterium upkeep = ceil(10 * fusion level * 11 ^ fusion level / 10 ^ fusion level)
-post-upkeep deuterium = max(0, boosted deuterium - fusion deuterium upkeep)
-live effective output = floor(post-boost output * energy scale bps / 10,000)
+net deuterium = live effective deuterium output - fusion deuterium upkeep
 ```
 
-For Metal and Crystal, `post-boost output` is the boosted mine output. For
-Deuterium it is the post-upkeep value. If energy production is sufficient, the
-energy scale is 10,000 bps and output is not reduced.
+If energy production is sufficient, the energy scale is 10,000 bps and output
+is not reduced. The Fusion Reactor upkeep is always charged in full: an energy
+shortage never reduces it, and net deuterium is negative when the upkeep is
+larger than the synthesizer's output.
+
+#### Fusion Reactor Upkeep
+
+A negative net deuterium rate burns stored deuterium. The reactor runs at full
+power for as long as the store pays for it:
+
+```text
+deficit = fusion deuterium upkeep - live effective deuterium output
+seconds paid = floor(stored deuterium * 3,600 / deficit)
+deuterium burned = ceil(deficit * elapsed seconds / 3,600), or all stored deuterium once the seconds paid run out
+```
+
+Once the store is empty, the reactor runs only at the share of its upkeep the
+synthesizer covers on its own, so fusion energy is never free:
+
+```text
+unpowered deuterium = live effective deuterium output with no Fusion Reactor energy
+fusion share bps = floor(unpowered deuterium * 10,000 / fusion deuterium upkeep)
+fusion reactor energy = floor(full fusion reactor energy * fusion share bps / 10,000)
+fusion deuterium upkeep = ceil(full upkeep * fusion share bps / 10,000)
+```
+
+The energy scale and every mine's output then use that reduced fusion energy,
+and the synthesizer output left over after the reduced upkeep goes into
+storage, where the next settlement spends it at full power again. Without a
+synthesizer the reactor stops. The invite production boost doubles what a
+planet adds, never the deuterium burned.
 
 ### Energy
 

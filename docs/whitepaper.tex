@@ -148,7 +148,7 @@ Energy is a real constraint, not flavor text. If demand exceeds production, all 
 E_{\mathrm{required}}=10L_M+10L_C+20L_D
 \]
 
-after applying the building-specific scaling rules. Fusion generation also consumes deuterium, creating a recurring sink at higher industrial intensity.
+after applying the building-specific scaling rules. Fusion generation also consumes deuterium, creating a recurring sink at higher industrial intensity. The reactor upkeep $D_{\mathrm{fusion}}=\lceil 10 L_F (1.1)^{L_F} \rceil$ is charged in full and is never reduced by $\mu_E$, so $D_h$ can be negative; the shortfall burns stored deuterium. Once the store is empty, the reactor runs only at the share of its upkeep that the synthesizer covers without fusion power, so fusion energy is never free.
 
 \subsection{Exponential costs}
 
