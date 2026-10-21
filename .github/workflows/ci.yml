@@ -37,6 +37,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       BASE_REF: ${{ github.base_ref }}
       HEAD_REF: ${{ github.sha }}
+      PLAIN_VERSION: 0.4.0
     steps:
       # Self-hosted workspaces persist between runs: keep ignored build outputs (node_modules,
       # Foundry out/cache, pinned frontend media) warm, but drop any other untracked leftovers.
@@ -100,6 +101,26 @@ jobs:
           echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
           "$HOME/.foundry/bin/forge" --version | grep -q 'Version: 1.7.1' \
             || { echo "::error::Install Foundry 1.7.1 on this runner: foundryup --install 1.7.1"; exit 1; }
+
+      # plain (getplain.org) runs the contract tests and the size and storage-layout checks; Foundry
+      # still formats, builds out/ and runs anvil.
+      - name: Set up plain
+        if: steps.plan.outputs.foundry == 'true' && runner.environment == 'github-hosted'
+        run: |
+          scripts/install-plain.sh "$PLAIN_VERSION" "$RUNNER_TEMP/plain"
+          echo "$RUNNER_TEMP/plain" >> "$GITHUB_PATH"
+
+      # Like Foundry, the Mac's plain is installed once, at a path per version: jobs never install it.
+      # CI keeps its own PLAIN_HOME (solc, test-result cache) so local and dev builds on this Mac never
+      # feed results into CI.
+      - name: Use the Mac's plain
+        if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
+        run: |
+          dir="$HOME/.plain/versions/$PLAIN_VERSION"
+          echo "$dir" >> "$GITHUB_PATH"
+          echo "PLAIN_HOME=$HOME/.plain-ci" >> "$GITHUB_ENV"
+          "$dir/plain" --version | grep -qx "plain $PLAIN_VERSION" \
+            || { echo "::error::Install plain $PLAIN_VERSION on this runner: scripts/install-plain.sh $PLAIN_VERSION $dir"; exit 1; }
 
       # Hosted runners only (fork PRs). Keyed per job: a key shared with jobs that compile less
       # once let a near-empty cache win for everyone.

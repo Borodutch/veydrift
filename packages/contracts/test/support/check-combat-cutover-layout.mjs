@@ -3,7 +3,8 @@
 // arrays/maps/structs. Only Battle's terminal combatMathVersion field may be appended.
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
-const inspect = name => JSON.parse(execFileSync('forge', ['inspect', name, 'storage-layout', '--json'], {encoding:'utf8'}));
+import {FORGE} from '../../scripts/run-tests-separately.mjs';
+const inspect = name => JSON.parse(execFileSync(FORGE, ['inspect', name, 'storage-layout', '--json'], {encoding:'utf8'}));
 const old = inspect('CutoverLayoutV1');
 const current = inspect('CutoverLayoutV2');
 const seen = new Set();
