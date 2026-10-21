@@ -46,7 +46,7 @@
     "settled": {
       "metal": 23581,
       "crystal": 27626,
-      "deuterium": 10524
+      "deuterium": 10523
     },
     "scoreAfterSettle": 3285,
     "fieldsUsed": 57,
@@ -70,7 +70,7 @@
       "resources": {
         "metal": 22581,
         "crystal": 27626,
-        "deuterium": 10524
+        "deuterium": 10523
       }
     },
     "scoreBeforeSettle": 3285,
@@ -78,7 +78,7 @@
     "settled": {
       "metal": 22724,
       "crystal": 28675,
-      "deuterium": 10886
+      "deuterium": 10883
     },
     "scoreAfterSettle": 3205,
     "fieldsUsed": 56,
@@ -102,7 +102,7 @@
       "resources": {
         "metal": 22224,
         "crystal": 28475,
-        "deuterium": 10786
+        "deuterium": 10783
       }
     },
     "scoreBeforeSettle": 3205,
@@ -110,7 +110,7 @@
     "settled": {
       "metal": 22224,
       "crystal": 28995,
-      "deuterium": 10975
+      "deuterium": 10972
     },
     "scoreAfterSettle": 3095,
     "fieldsUsed": 55,
@@ -134,7 +134,7 @@
       "resources": {
         "metal": 20163,
         "crystal": 27965,
-        "deuterium": 10975
+        "deuterium": 10972
       }
     },
     "upgrade": {
@@ -150,7 +150,7 @@
       "resources": {
         "metal": 12379,
         "crystal": 26282,
-        "deuterium": 11076
+        "deuterium": 11073
       },
       "crystalMineLevel": 9
     },
@@ -159,7 +159,7 @@
     "settled": {
       "metal": 14994,
       "crystal": 27190,
-      "deuterium": 11483
+      "deuterium": 11480
     },
     "scoreAfterSettle": 3085,
     "fieldsUsed": 55,
@@ -183,7 +183,7 @@
       "resources": {
         "metal": 14594,
         "crystal": 26990,
-        "deuterium": 11383
+        "deuterium": 11380
       }
     },
     "ship": {
@@ -206,7 +206,7 @@
       "resources": {
         "metal": 11690,
         "crystal": 25683,
-        "deuterium": 11224
+        "deuterium": 11221
       }
     },
     "research": {

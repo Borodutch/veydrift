@@ -689,4 +689,121 @@ contract RiftAuditRegressionsTest is Test {
         (active,,) = _extraction(planetId, Resource.Crystal);
         assertFalse(active);
     }
+
+    // ----------- Low: the Fusion Reactor's draw is charged in full, never capped by the synthesizer
+
+    /// Fusion 15 (draw 627/h, 2,814 energy at Energy 8) powers Metal 20 and Crystal 18 (2,345
+    /// required) on its own: 4,036 metal and 2,001 crystal per hour while the draw is paid.
+    function _fusionPlanet(uint16 synthesizer, uint16 solar, uint128 deuterium)
+        internal
+        returns (uint256 planetId)
+    {
+        planetId = _start(defender);
+        _tech(defender, Technology.Energy, 8);
+        _building(planetId, Building.MetalMine, 20);
+        _building(planetId, Building.CrystalMine, 18);
+        _building(planetId, Building.DeuteriumSynthesizer, synthesizer);
+        _building(planetId, Building.SolarPlant, solar);
+        _building(planetId, Building.FusionReactor, 15);
+        _building(planetId, Building.MetalStorage, 10);
+        _building(planetId, Building.CrystalStorage, 10);
+        _building(planetId, Building.DeuteriumTank, 10);
+        // Neutral deuterium multiplier, so the synthesizer numbers do not depend on temperature.
+        uint256 slot = uint256(keccak256(abi.encode(planetId, uint256(4)))) + 1;
+        vm.store(
+            address(game),
+            bytes32(slot),
+            bytes32(
+                uint256(10_000) | (uint256(10_000) << 16)
+                    | (uint256(game.planet(planetId).lastSettledAt) << 32)
+            )
+        );
+        _res(planetId, 0, 0, deuterium);
+    }
+
+    function _assertSettlesTo(uint256 planetId, uint128 m, uint128 c, uint128 d) internal {
+        S.Resources memory preview = game.previewResources(planetId);
+        vm.prank(defender);
+        game.collectResources(planetId);
+        S.Resources memory settled = game.planet(planetId).resources;
+        assertEq(settled.metal, m, "metal");
+        assertEq(settled.crystal, c, "crystal");
+        assertEq(settled.deuterium, d, "deuterium");
+        assertEq(preview.metal, m, "preview metal");
+        assertEq(preview.crystal, c, "preview crystal");
+        assertEq(preview.deuterium, d, "preview deuterium");
+    }
+
+    function testFusionWithoutASynthesizerBurnsStoredDeuterium() public {
+        uint256 planetId = _fusionPlanet(0, 0, 1_000_000);
+        uint128 internalBefore = game.totalInternalResources().deuterium;
+        vm.warp(block.timestamp + 10 hours);
+        // Before the fix the draw was capped at the (demolished) synthesizer's zero output: ten
+        // hours of full fusion power cost nothing and the store stayed at 1,000,000.
+        _assertSettlesTo(planetId, 40_360, 20_010, 1_000_000 - 6_270);
+        assertEq(game.totalInternalResources().deuterium, internalBefore - 6_270);
+    }
+
+    function testFusionThrottlesOnceTheStoreRunsDryMidWindow() public {
+        // 300 deuterium pays floor(300 * 3600 / 627) = 1,722 s of the draw. With no synthesizer the
+        // reactor then stops, so the rest of the hour has no power and produces nothing.
+        uint256 planetId = _fusionPlanet(0, 0, 300);
+        vm.warp(block.timestamp + 1 hours);
+        _assertSettlesTo(planetId, 1_930, 957, 0);
+        vm.warp(block.timestamp + 1 hours);
+        _assertSettlesTo(planetId, 1_930, 957, 0);
+    }
+
+    function testFusionWithAnEmptyStoreRunsOnTheShareTheSynthesizerCovers() public {
+        // Synthesizer 12 makes 376/h at full power but only 152/h on Solar 15 alone, so a dry store
+        // runs the reactor at floor(152 * 10,000 / 627) = 2,424 bps: 682 energy for a 152/h draw.
+        // The synthesizer then makes 234/h, leaving 82/h; a store refilled by that pays full
+        // fusion again until it runs dry.
+        uint256 planetId = _fusionPlanet(12, 15, 0);
+        vm.warp(block.timestamp + 1 hours);
+        _assertSettlesTo(planetId, 2_520, 1_249, 82);
+        vm.warp(block.timestamp + 1 hours);
+        // 82 stored pays floor(82 * 3600 / 251) = 1,176 s at full power, then the throttle again.
+        _assertSettlesTo(planetId, 2_520 + 3_014, 1_249 + 1_493, 55);
+    }
+
+    function testFusionCoveredByTheSynthesizerSettlesAsBefore() public {
+        uint256 planetId = _fusionPlanet(15, 20, 1_000);
+        _building(planetId, Building.FusionReactor, 10);
+        // Fully powered, Synthesizer 15 makes 626/h and the reactor draws 260/h: +366/h, exactly
+        // as before the fix.
+        vm.warp(block.timestamp + 1 hours);
+        _assertSettlesTo(planetId, 4_036, 2_001, 1_366);
+    }
+
+    /// @dev Mirrored by apps/backend/src/server.test.ts: the lens carries the burnt store across
+    ///      the lazily completed building instead of re-reading the settled snapshot.
+    function testFusionBurnSpansALazyBuildingCompletion() public {
+        uint256 planetId = _fusionPlanet(0, 0, 300);
+        _res(planetId, 1_000, 1_000, 300);
+        vm.prank(defender);
+        game.startBuildingUpgrade(planetId, Building.SolarPlant);
+        assertEq(game.activeBuildingConstruction(planetId).readyAt, block.timestamp + 151);
+        vm.warp(block.timestamp + 1 hours);
+        vm.prank(defender);
+        game.collectResources(planetId);
+        assertEq(game.buildingLevel(planetId, Building.SolarPlant), 1);
+        // 151 s at full power burn 27, leaving 273 for 1,567 s more; the reactor then stops and
+        // Solar 1 alone powers the mines at 93 bps for the last 1,882 s.
+        S.Resources memory settled = game.planet(planetId).resources;
+        assertEq(settled.metal, 925 + 169 + 1_756 + 19);
+        assertEq(settled.crystal, 970 + 83 + 870 + 9);
+        assertEq(settled.deuterium, 0);
+    }
+
+    function testInviteBoostDoublesProductionButNeverTheFusionBurn() public {
+        uint256 planetId = _fusionPlanet(0, 0, 1_000_000);
+        vm.store(
+            address(game),
+            keccak256(abi.encode(defender, uint256(57))),
+            bytes32(uint256(block.timestamp + 4 days))
+        );
+        vm.warp(block.timestamp + 1 hours);
+        _assertSettlesTo(planetId, 8_072, 4_002, 1_000_000 - 627);
+    }
 }

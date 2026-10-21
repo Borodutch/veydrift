@@ -77,11 +77,76 @@ contract VeydriftFormulaConformanceTest is Test {
         assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(1), 11);
         assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(2), 25);
 
+        // 69 of 79 energy: the synthesizer runs at 8,734 bps (50 -> 43/h) and the reactor's full
+        // 25/h draw is charged on top, never scaled by the shortage.
         (uint256 metal, uint256 crystal, uint256 deuterium) =
             VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 0, 0, 0, 3, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
-        assertEq(deuterium, 21);
+        assertEq(deuterium, 18);
+    }
+
+    /// @dev Mirrored by apps/frontend/tests/formulaConformance.test.ts and
+    ///      apps/backend/src/readModels.test.ts.
+    function testFusionDrawBurnsTheStoreThenThrottlesTheReactor() public pure {
+        // Metal 20, Crystal 18, Synthesizer 12, Solar 15, Fusion 15, Energy 8, neutral multipliers.
+        VeydriftFormulas.ProductionInputs memory p = VeydriftFormulas.ProductionInputs(
+            20, 18, 12, 15, 15, 0, 0, 0, 8, 10_000, 10_000, 10_000
+        );
+        _assertRates(p, BPS, 4_036, 2_001, 376, 627);
+        // Without fusion power Solar 15 covers 1,253 of 3,098 energy: the synthesizer makes 152/h.
+        _assertRates(p, 0, 1_632, 809, 152, 0);
+        // A dry store runs the reactor at floor(152 * 10,000 / 627) = 2,424 bps.
+        _assertRates(p, 2_424, 2_520, 1_249, 234, 152);
+
+        // 1,000 stored covers the 251/h deficit for the whole hour.
+        _assertWindow(p, 1_000, 0, 0, 4_036, 2_001, 0, 251);
+        // 100 stored pays 1,434 s at full power; the other 2,166 s run throttled.
+        _assertWindow(p, 100, 0, 0, 3_123, 1_548, 49, 100);
+        _assertWindow(p, 0, 0, 0, 2_520, 1_249, 82, 0);
+        // The invite boost doubles what is added, never the burn.
+        _assertWindow(p, 1_000, 0, 1 hours, 8_072, 4_002, 0, 251);
+        _assertWindow(p, 0, 0, 1 hours, 5_040, 2_498, 164, 0);
+        // Fully powered, a synthesizer that covers the draw settles as before the fix: +366/h.
+        p.deuteriumLevel = 15;
+        p.solarLevel = 20;
+        p.fusionLevel = 10;
+        _assertWindow(p, 0, 0, 0, 4_036, 2_001, 366, 0);
+    }
+
+    function _assertRates(
+        VeydriftFormulas.ProductionInputs memory p,
+        uint256 fusionBps,
+        uint256 metal,
+        uint256 crystal,
+        uint256 deuterium,
+        uint256 draw
+    ) private pure {
+        (uint256 m, uint256 c, uint256 d, uint256 u) =
+            VeydriftFormulas.productionRates(p, fusionBps);
+        assertEq(m, metal, "metal/h");
+        assertEq(c, crystal, "crystal/h");
+        assertEq(d, deuterium, "deuterium/h");
+        assertEq(u, draw, "fusion draw/h");
+    }
+
+    function _assertWindow(
+        VeydriftFormulas.ProductionInputs memory p,
+        uint256 stored,
+        uint256 boostFromAt,
+        uint256 boostToAt,
+        uint256 metal,
+        uint256 crystal,
+        uint256 deuterium,
+        uint256 burned
+    ) private pure {
+        (uint256 m, uint256 c, uint256 d, uint256 b) = VeydriftFormulas.productionForWindow(
+            p, stored, 0, 1 hours, boostFromAt, boostToAt
+        );
+        assertEq(m, metal, "metal");
+        assertEq(c, crystal, "crystal");
+        assertEq(d, deuterium, "deuterium");
+        assertEq(b, burned, "burned");
     }
 
     function testSolarSatellitesProduceTemperatureScaledEnergy() public pure {

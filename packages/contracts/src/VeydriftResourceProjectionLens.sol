@@ -97,17 +97,38 @@ contract VeydriftResourceProjectionLens {
         uint64 settledAt,
         bool effective
     ) private view returns (VeydriftGameStorage.Resources memory) {
-        uint256 elapsed = uint256(settledAt) - fromAt;
-        if (elapsed == 0) return resources;
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) =
-            _productionPerHour(game, planetId, planetRef, construction, effective);
+        if (settledAt == fromAt) return resources;
+        (uint256 metal, uint256 crystal, uint256 deuterium, uint256 burned) = VeydriftFormulas.productionForWindow(
+            VeydriftFormulas.ProductionInputs(
+                _buildingLevel(game, planetId, construction, Building.MetalMine, effective),
+                _buildingLevel(game, planetId, construction, Building.CrystalMine, effective),
+                _buildingLevel(
+                    game, planetId, construction, Building.DeuteriumSynthesizer, effective
+                ),
+                _buildingLevel(game, planetId, construction, Building.SolarPlant, effective),
+                _buildingLevel(game, planetId, construction, Building.FusionReactor, effective),
+                game.shipCount(planetId, Ship.SolarSatellite),
+                game.shipCount(planetId, Ship.Crawler),
+                planetRef.temperature,
+                game.technologyLevel(planetRef.owner, Technology.Energy),
+                planetRef.metalMultiplierBps,
+                planetRef.crystalMultiplierBps,
+                planetRef.deuteriumMultiplierBps
+            ),
+            resources.deuterium,
+            fromAt,
+            settledAt,
+            0,
+            0
+        );
         (uint128 metalCap, uint128 crystalCap, uint128 deuteriumCap) =
             _storageCaps(game, planetId, construction, effective);
-        resources.metal = _addCapped(resources.metal, (metalPerHour * elapsed) / 1 hours, metalCap);
-        resources.crystal =
-            _addCapped(resources.crystal, (crystalPerHour * elapsed) / 1 hours, crystalCap);
-        resources.deuterium =
-            _addCapped(resources.deuterium, (deuteriumPerHour * elapsed) / 1 hours, deuteriumCap);
+        resources.metal = _addCapped(resources.metal, metal, metalCap);
+        resources.crystal = _addCapped(resources.crystal, crystal, crystalCap);
+        // Casting is safe because the burn never exceeds the stored deuterium.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        resources.deuterium -= uint128(burned);
+        resources.deuterium = _addCapped(resources.deuterium, deuterium, deuteriumCap);
         return resources;
     }
 
