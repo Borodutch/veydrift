@@ -34,9 +34,6 @@ import {VeydriftGameplayModule} from "../../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule as M} from "../../src/VeydriftStateMigrationModule.sol";
 import {Building, Resource, Ship, Technology} from "../../src/libraries/VeydriftTypes.sol";
-import {
-    ImportMissingMigrationReservations
-} from "../../script/ImportMissingMigrationReservations.s.sol";
 
 interface IRiftFork {
     function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external;
@@ -509,8 +506,11 @@ contract RiftAuditMainnetForkTest is Test {
 
     // ------------- #155: live signed claims whose planet ids mainnet planets took since
 
-    /// The six pending claims the live snapshot serves that could not settle: id 84 has its
-    /// reservation, 579 and 581-584 never got one, and every id but 581 is owned by someone else.
+    /// After the owner registered the missing reservations for ids 579 and 581-584 (block 52,910,823,
+    /// tx 0x5ffb2974...e47d211), before any of these six pending claims settled.
+    uint256 internal constant MIGRATION_RESERVED_BLOCK = 52_910_991;
+
+    /// Six pending claims the live snapshot serves: every id but 581 is owned by someone else.
     function _liveClaims()
         internal
         view
@@ -553,36 +553,29 @@ contract RiftAuditMainnetForkTest is Test {
     }
 
     function testLiveClaimsWhoseIdsWereTakenCannotSettle() external {
-        if (!_fork()) return;
+        if (!_forkAt(MIGRATION_RESERVED_BLOCK)) return;
         (address[] memory players, bytes[] memory payloads, bytes[] memory signatures) =
             _liveClaims();
         (bool signedOk, bytes memory signedResult) =
             _claimLive(players[0], payloads[0], signatures[0]);
         assertFalse(signedOk);
-        assertEq(bytes4(signedResult), bytes4(keccak256("BadMigrationSignature()")));
+        assertEq(signedResult, abi.encodeWithSignature("BadMigrationSignature()"));
         _acceptSnapshotSigner();
         for (uint256 i = 0; i < players.length; i++) {
+            M.MigrationPlayerState memory state = abi.decode(payloads[i], (M.MigrationPlayerState));
+            bool taken = GAME.planet(state.planets[0].planetId).owner != address(0);
             (bool ok, bytes memory result) = _claimLive(players[i], payloads[i], signatures[i]);
-            assertFalse(ok);
-            bytes4 expected = i == 0
-                ? S.InvalidId.selector
-                : bytes4(keccak256("MigrationReservationMissing(address)"));
-            assertEq(bytes4(result), expected);
+            assertEq(ok, !taken);
+            if (taken) assertEq(result, abi.encodeWithSelector(S.InvalidId.selector));
         }
     }
 
     function testUpgradedClaimsWhoseIdsWereTakenSettleUnderFreshIds() external {
-        if (!_fork()) return;
+        if (!_forkAt(MIGRATION_RESERVED_BLOCK)) return;
         (address[] memory players, bytes[] memory payloads, bytes[] memory signatures) =
             _liveClaims();
         _upgradeToBranch();
         _acceptSnapshotSigner();
-
-        // The owner transaction that registers the five missing reservations, keyless.
-        address owner = IOwnedFork(MIGRATION_SETTLEMENT).owner();
-        vm.setEnv("UPGRADE_DRY_RUN_OWNER", vm.toString(owner));
-        vm.setEnv("GAME_PROXY_ADDRESS", vm.toString(PROXY));
-        new ImportMissingMigrationReservations().run();
 
         uint256 freshId = GAME.nextPlanetId();
         for (uint256 i = 0; i < players.length; i++) {
