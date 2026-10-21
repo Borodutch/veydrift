@@ -213,7 +213,8 @@ remain unavailable while other gameplay continues. This visible interruption req
 rollout approval and a bounded recovery checkpoint.
 
 `UpgradeGame.s.sol` refuses the old standalone address as target and requires a frozen source,
-matching owners/signers, zero source ETH, finalized target and committed reward/history classes.
+matching signers, zero source ETH, finalized target and committed reward/history classes. The
+owners may differ; only the replacement owner signs its imports and `setGame`.
 It embeds the **new** referral address in both Game settlement/state-migration modules. Before the
 Game switch, only an authorized owner may restore source `game` if a rollback is chosen and no
 replacement activity occurred. After target starts receiving claims/redemptions, never switch Game
@@ -249,3 +250,78 @@ Do not delete or rebuild the shared index database for this repair.
 
 If verification fails, stop the cutover and preserve the manifest, receipts and before/after evidence.
 Do not delete state, discard an active deployment or improvise an on-chain rollback.
+
+## 2026-10: upgradeable replacement of 0x9B9A
+
+The referral system that went live in the first replacement (`0x66e5…2cf` → `0x9B9A…93B3`) has an
+owner fixed at construction (`0x4755…A73B`), so it could not follow the 2026-10 owner rotation to
+`0xc2ae…FC02`. Its replacement is the same contract as a UUPS implementation behind an ERC1967
+proxy: `initialize(owner)` replaces the constructor, `transferOwnership` hands the owner role over,
+and only the owner can `upgradeToAndCall`. External behaviour, events, errors and storage are
+otherwise unchanged, so frontend and backend ABIs keep working, and later logic fixes are proxy
+upgrades of the same address with no Game upgrade or state migration.
+
+This hop reuses every step above. The differences:
+
+- Only the freeze needs the old owner `0x4755…`. The replacement owner `0xc2ae…` deploys the
+  proxy, imports and finalizes the manifest (`MigrateReferralSystem.s.sol` reads the frozen source
+  and requires its owner to match the manifest's `sourceOwner`, not the broadcaster) and wires
+  `setGame` inside `UpgradeGame.s.sol`.
+- The inventory input comes from the chain: `scripts/veydrift-referral-migration-input.mjs` lists
+  every claim/redemption/reward-claim log of the source and recovers each hash-only preimage from
+  the source's own `migrateLegacyReferralCodeOwnership` calldata. Run it against a different RPC
+  provider than the manifest generator, so the two log scans are independent. `--previous` resumes
+  an inventory built before the freeze and rescans only the newer blocks.
+- Every script accepts `UPGRADE_DRY_RUN_OWNER=<public owner>` for a keyless plan, which is what
+  gets sent; `SetGamePaused.s.sol` plans the owner's pause and unpause the same way.
+- The Game is paused only around the freeze transaction. Once `game()` is zero every state-changing
+  entry point of the source reverts (claims and top-ups need `game`, redemptions need
+  `msg.sender == game`, withdrawals call `game`, migration functions are finalized and owner-only),
+  so the snapshot cannot move while gameplay continues. Referral redemptions and code claims are
+  unavailable from the freeze until the Game switch and the backend switch.
+- `scripts/rehearse-referral-upgrade.sh` runs the whole hop keylessly on an anvil fork of Base
+  (impersonated owners) and finishes with `test/ReferralUpgradeMainnetFork.t.sol`, which deploys,
+  migrates, compares every migrated getter with the frozen source, upgrades the Game, redeems an
+  existing code through `startPlanetWithReferral`, tops it up directly and checks upgrade and
+  ownership control. With the real manifest (and `REFERRAL_SYSTEM_ADDRESS` once the proxy exists)
+  the same test is the last check against Base before the Game switch.
+
+Order and signers (full commands, downtime and rollback in PR #1959). Every transaction is planned
+keylessly (`UPGRADE_DRY_RUN_OWNER`, no `--broadcast`) and that exact dry-run plan is sent with a
+hash-tracked sender, one step at a time:
+
+1. `0xc2ae…` deploys the proxy with `DeployReferralSystem.s.sol` (inert: `game()` zero, migration
+   not finalized). Record its address and deployment block. Build the inventory up to now.
+2. `0xc2ae…` pauses the Game with `SetGamePaused.s.sol`, `0x4755…` runs
+   `FreezeReferralSystem.s.sol`, `0xc2ae…` unpauses.
+3. Extend the inventory past the freeze with `--previous`, generate the manifest on another
+   provider, optionally run the fork test against Base with it, then `0xc2ae…` runs
+   `MigrateReferralSystem.s.sol`.
+4. `0xc2ae…` runs `UpgradeGame.s.sol` with the proxy as `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` and
+   0x9B9A as `VEYDRIFT_SOURCE_REFERRAL_SYSTEM_ADDRESS`, from a commit that has every Game change
+   already live.
+5. Switch the backend environment (below).
+
+Source inventory at block 52,869,445 (2026-10-20): 41 activations of 29 valid codes held by 24
+inviters (28 imported in the first hop, one claimed since, a dozen top-ups), 10 hash-only codes,
+18 redemptions (3 paid 0.006 ETH, 15 zero-reward legacy rows), no reward claims, no ETH, signer
+`0xCA10…273D`.
+
+State that is not byte-identical after the hop, none of which changes behaviour:
+
+- `referralCodeMigrationKind` is 1 for every valid code, including the code claimed live on
+  0x9B9A (0 there); only the hash-only value 2 is ever checked.
+- Each code's earlier top-ups are not re-emitted, only its latest activation; dashboards use the
+  latest activation per commitment. Indexed claim and redemption rows carry the import
+  transaction hashes instead of the original ones.
+- `referralRewardStatsImported` is true for every imported inviter.
+
+After the Game switch set `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` to the proxy and
+`VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` to its deployment block on every backend service (and the
+proxy address on the stats service), then redeploy. The replacement-address backfill described
+above rebuilds codes, redemptions and rewards from the proxy's re-emitted history; the frontend
+reads the address from `/runtime-config`.
+
+Before the Game switch, rolling back is the old owner restoring `setGame(Game)` on 0x9B9A (its
+state has not changed) while the proxy stays inert. After it, fix forward with a proxy upgrade:
+switching the Game back would need a reverse migration of everything redeemed on the proxy.

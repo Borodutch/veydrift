@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {MigrateReferralSystem} from "../script/MigrateReferralSystem.s.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
+import {ReferralProxy} from "./support/ReferralProxy.sol";
 
 contract MigrateReferralSystemTest is Test {
     // Disposable local Forge signer; never used on a live chain.
@@ -24,8 +25,8 @@ contract MigrateReferralSystemTest is Test {
 
     function setUp() public {
         owner = vm.addr(TEST_KEY);
-        source = new VeydriftReferralSystem(owner);
-        target = new VeydriftReferralSystem(owner);
+        source = ReferralProxy.deploy(owner);
+        target = ReferralProxy.deploy(owner);
         script = new MigrateReferralSystem();
         assertEq(bytes(LEGACY_CODE).length, 43);
         codeHash = keccak256(bytes("abcdefghijklmnopqrstuvwxyz0123456789_-abcd0"));
