@@ -4,16 +4,18 @@ Solidity contracts and Foundry tests for Veydrift on Base-compatible EVMs.
 
 ## Development
 
-Run from `packages/contracts` with Foundry installed:
+Run from `packages/contracts` with Foundry and [plain](https://getplain.org) installed:
 
 ```sh
 forge install
 forge fmt --check
 forge build
-forge test
+plain test
 ```
 
-Root equivalents are `bun run check:contracts` and `bun run test:contracts`.
+Root equivalents are `bun run check:contracts` and `bun run test:contracts`. Those run the tests and
+the size and storage-layout checks on plain, and the formatter and `out/` build on forge; `FORGE=forge`
+runs the plain steps on forge too.
 Compiler and build settings live in [foundry.toml](foundry.toml); dependencies in
 [foundry.lock](foundry.lock). Local tests do not need production signing keys.
 See [Development](../../docs/development.md#validation-and-ci) for workspace checks.

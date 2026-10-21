@@ -8,7 +8,7 @@ From the repository root:
 bun install
 ```
 
-Use Bun 1.1 or newer, Node.js 20 or newer, and Foundry for contract work.
+Use Bun 1.1 or newer, Node.js 20 or newer, and Foundry and [plain](https://getplain.org) for contract work.
 The exact CI tool versions are in [.github/workflows/ci.yml](../.github/workflows/ci.yml).
 
 ## Frontend

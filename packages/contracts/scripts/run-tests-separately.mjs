@@ -6,6 +6,9 @@ import {pathToFileURL} from "node:url";
 
 const TEST_FUNCTION = /function\s+(?:test|testFuzz|invariant)\w*\s*\(/g;
 
+// The forge-compatible CLI the tests run on: plain (getplain.org); FORGE=forge runs them on Foundry.
+export const FORGE = process.env.FORGE || "plain";
+
 // Deterministically split test files into `count` shards with balanced test counts
 // (largest file first, each onto the lightest shard). Returns the files for shard `index` (1-based).
 export function shardTestFiles(files, testCounts, index, count) {
@@ -56,8 +59,8 @@ export function splitTestFiles(files, sources) {
 }
 
 function forge(args) {
-  console.log(`\n$ forge ${args.join(" ")}`);
-  const result = spawnSync("forge", args, {stdio: "inherit"});
+  console.log(`\n$ ${FORGE} ${args.join(" ")}`);
+  const result = spawnSync(FORGE, args, {stdio: "inherit"});
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
