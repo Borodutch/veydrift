@@ -7654,7 +7654,7 @@ export function PlayableMvpApp({
       {/* overflow-x-clip (not overflow-hidden): a hidden overflow would make
           this box the scrollport for the sticky mobile nav, permanently
           displacing it by --topbar-h and detaching it from the viewport. */}
-      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row">
+      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))] md:flex-row">
         <NavBar
           account={account}
           active={page}

@@ -131,7 +131,7 @@ describe("navigation and planet selector UI source contracts", () => {
     // into the sticky scrollport and detach the top bar / mobile nav from
     // the viewport while still clipping horizontal overflow.
     expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-x-clip bg-[#060b16] text-slate-100"');
-    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row"');
+    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))] md:flex-row"');
     expect(playableSource).toContain("overflow-visible p-3");
     expect(playableSource).toContain("md:min-h-0 md:overflow-y-auto md:overscroll-contain");
     expect(playableSource).toContain("env(safe-area-inset-bottom)");
@@ -331,8 +331,8 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("keeps the desktop sidebar footer compact and sticky", () => {
-    expect(playableSource).toContain("md:h-[calc(100dvh-var(--topbar-h,2.75rem))]");
-    expect(navSource).toContain("h-[calc(100dvh-var(--topbar-h,2.75rem))]");
+    expect(playableSource).toContain("md:h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))]");
+    expect(navSource).toContain("h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))]");
     expect(navSource).toContain("md:sticky md:top-[var(--topbar-h,2.75rem)]");
     expect(navSource).toContain("flex w-full items-center");
     expect(navSource).toContain("min-h-0 flex-1 space-y-0.5 overflow-y-auto");

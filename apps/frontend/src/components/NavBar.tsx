@@ -486,7 +486,7 @@ export function NavBar({
   return (
     <>
       {/* Desktop sidebar */}
-      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
+      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
         <div className={`flex min-h-0 flex-1 flex-col gap-2 ${sidebarCollapsed ? "p-2" : "p-2.5"}`}>
           <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-0.5 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
             {pages.flatMap((page) => [
@@ -559,7 +559,7 @@ export function NavBar({
                 </>
               )}
             </summary>
-            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
+            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
               {accountSummary("")}
             </div>
           </details>
