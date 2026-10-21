@@ -27,7 +27,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
     <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#060b16] text-slate-100">
       <SiteHeader current="docs" wide />
 
-      <div className="relative z-10 mx-auto grid max-w-[96rem] gap-5 px-3 py-4 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)_14rem] lg:gap-8 lg:py-8">
+      <div className="relative z-10 mx-auto grid max-w-[96rem] gap-5 px-3 py-4 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[14rem_minmax(0,1fr)_14rem] lg:py-8">
         <aside className="min-w-0 lg:sticky lg:top-20 lg:self-start">
           <p className="mb-2 hidden px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70 lg:block">Chapters</p>
           <nav aria-label="Docs chapters" className="-mx-3 flex gap-1.5 overflow-x-auto px-3 [scrollbar-width:none] lg:mx-0 lg:grid lg:gap-0.5 lg:overflow-visible lg:px-0">
@@ -80,7 +80,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
           </div>
         </article>
 
-        <aside className="hidden lg:sticky lg:top-20 lg:block lg:self-start">
+        <aside className="hidden xl:sticky xl:top-20 xl:block xl:self-start">
           <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">On this page</p>
           <nav aria-label="On this page" className="grid border-l border-cyan-300/10">
             {tocHeadings.map((heading) => (
@@ -140,7 +140,7 @@ function MarkdownBlock({ node }: { node: MarkdownNode }) {
           <tbody>
             {node.rows.map((row, rowIndex) => (
               <tr className="border-b border-cyan-300/[0.06] last:border-0" key={rowIndex}>
-                {row.map((cell, cellIndex) => <td className="align-top px-3 py-2 leading-6 text-slate-300" key={`${rowIndex}-${cellIndex}`}><InlineMarkdown text={cell} /></td>)}
+                {row.map((cell, cellIndex) => <td className="align-top px-3 py-2 leading-6 text-slate-300" key={`${rowIndex}-${cellIndex}`}><InlineMarkdown compact text={cell} /></td>)}
               </tr>
             ))}
           </tbody>
