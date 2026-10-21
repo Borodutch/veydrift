@@ -610,7 +610,8 @@ Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan
 
 | Holder | Address | $VEYDRIFT | Share | Purpose |
 | --- | --- | --- | --- | --- |
-| Auction wallet (borodutch.eth) | [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE) | 200,000,000 | 20% | Deposited into the Uniswap continuous clearing auction: 100M are sold, and 100M go into the $VEYDRIFT/ETH pool together with all the ETH the auction raises |
+| Continuous clearing auction | [0xD06dC962191c591522C1243848012f9b0549df7a](https://basescan.org/address/0xD06dC962191c591522C1243848012f9b0549df7a) | 100,000,000 | 10% | Sold for ETH on [Uniswap](https://app.uniswap.org/explore/auctions/base/0xd06dc962191c591522c1243848012f9b0549df7a) from October 22 to November 5; any unsold tokens return to borodutch.eth |
+| Auction pool reserve (Uniswap launch strategy) | [0xf10124B01E9fa88b0a2eF3fA95a53B3310446000](https://basescan.org/address/0xf10124B01E9fa88b0a2eF3fA95a53B3310446000) | 100,000,000 | 10% | Goes into the $VEYDRIFT/ETH pool with all the ETH the auction raises; the pool position is locked until November 2027 in Uniswap's timelock [0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a](https://basescan.org/address/0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a) |
 | Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 150,000,000 | 15% | The $VEYDRIFT side of the vMETAL, vCRYSTAL and vDEUT pools (50M each) |
 | Development vesting | [0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4](https://basescan.org/address/0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4) | 250,000,000 | 25% | Locked; vests over 5 years |
 | Contributor vesting | [0x4A55cff3006e87360285969dD366acBd79445BeD](https://basescan.org/address/0x4A55cff3006e87360285969dD366acBd79445BeD) | 200,000,000 | 20% | Locked; 1-year cliff, then vests until year 4 |

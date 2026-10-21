@@ -8,6 +8,7 @@ import { LOOP_ANIMATION_BASE, LOOP_ANIMATIONS, loopAnimationWidths } from "../lo
 import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
+import { auctionUrl } from "../src/auction.ts";
 
 const distRoot = new URL("../dist/", import.meta.url);
 const publicRoot = new URL("../public/", import.meta.url);
@@ -1179,24 +1180,6 @@ export function hiddenWhitepaperPath(pathname) {
   return /(?:^|\/)whitepaper(?:\.pdf)?(?:[/?#]|$)/i.test(pathname);
 }
 
-export const ccaMeta = {
-  title: "$VEYDRIFT continuous clearing auction — Veydrift",
-  description: "10% of $VEYDRIFT sold over two weeks through Uniswap's continuous clearing auction on Base, starting October 22 at 1 PM Pacific. $500K FDV floor, $50K minimum raise, and 100% of the raise goes into Uniswap v4 liquidity. Veydrift is the onchain space strategy game with 75% weekly player retention. Register your interest.",
-  imagePath: "/assets/landing/cca-og-v3.jpg",
-};
-
-async function ccaHtmlResponse(request, url) {
-  const origin = publicOrigin(request, url);
-  const html = injectShareMeta(await readFile(staticFileUrl("/index.html"), "utf8"), {
-    canonicalUrl: `${origin}/cca`,
-    description: ccaMeta.description,
-    imageType: "image/jpeg",
-    imageUrl: `${origin}${ccaMeta.imagePath}`,
-    title: ccaMeta.title,
-  });
-  return new Response(html, { headers: { "cache-control": "public, max-age=60", "content-type": "text/html; charset=utf-8" } });
-}
-
 export async function frontendResponse(request) {
   const url = new URL(request.url);
   const pathname = decodeURIComponent(url.pathname).replaceAll("\\", "/");
@@ -1224,7 +1207,8 @@ export async function frontendResponse(request) {
     return shareHtmlResponse(request, shareRoute);
   }
 
-  if (route.replace(/\/+$/, "") === "/cca") return ccaHtmlResponse(request, url);
+  // The auction page and the retired Pact page both point at the live auction on Uniswap.
+  if (["/cca", "/pact"].includes(route.replace(/\/+$/, ""))) return Response.redirect(auctionUrl, 302);
 
   // Pinned media is authoritative, even over a stale copy left in dist/.
   const mediaPath = mediaFileForPathname(route);

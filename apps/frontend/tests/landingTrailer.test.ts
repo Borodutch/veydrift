@@ -5,7 +5,6 @@ import { frontendResponse, responseHeadersFor } from "../scripts/serve.mjs";
 
 const landingSource = new URL("../src/ComingSoonApp.tsx", import.meta.url);
 const playerSource = new URL("../src/components/TrailerPlayer.tsx", import.meta.url);
-const ccaSource = new URL("../src/components/CcaPage.tsx", import.meta.url);
 const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}`, import.meta.url);
 const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
 
@@ -27,17 +26,6 @@ describe("landing trailer", () => {
     expect(existsSync(landingAsset("veydrift-trailer-v1.mp4"))).toBe(false);
     expect(mediaManifest.files["assets/landing/veydrift-trailer-v1.mp4"].bytes).toBeLessThan(90 * 1024 * 1024);
     expect(await Bun.file(landingAsset("veydrift-trailer-v1.vtt")).text()).toStartWith("WEBVTT\n");
-  });
-
-  test("CCA shares the player below its hero and links to it without leaving the page", async () => {
-    const source = await Bun.file(ccaSource).text();
-    expect(source).toContain('import { TrailerPlayer } from "./TrailerPlayer"');
-    expect(source).toContain('<TrailerPlayer />');
-    expect(source.indexOf('<TrailerPlayer />')).toBeLessThan(source.indexOf('<Section eyebrow="Traction"'));
-    expect(source).toContain('id="trailer" tabIndex={-1}');
-    expect(source).toContain('href="#trailer">Watch the trailer</a>');
-    expect(source).not.toContain('href="/">Watch the trailer');
-    for (const name of trailerFiles) expect(source).not.toContain(name);
   });
 
   test("keeps the shared player lightweight, inline, accessible and captioned", async () => {

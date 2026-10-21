@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
 describe("app routing", () => {
-  test("renders docs separately and sends every other path to the game", async () => {
+  test("puts the auction banner above every page, renders docs separately and sends every other path to the game", async () => {
     const [source, game, topBar] = await Promise.all([
       Bun.file(new URL("./App.tsx", import.meta.url)).text(),
       Bun.file(new URL("./FirstPlanetSettlementApp.tsx", import.meta.url)).text(),
       Bun.file(new URL("./components/TopBar.tsx", import.meta.url)).text(),
     ]);
 
+    expect(source).toContain("<AuctionBanner />");
     expect(source).toContain('pathname.startsWith("/docs")');
-    expect(source).toContain("return <CcaApp />");
+    expect(source).not.toContain("CcaApp");
     expect(source).not.toContain("Pact");
     expect(source).toContain("return <FirstPlanetSettlementApp />");
     expect(game).not.toContain("auctionBanner");

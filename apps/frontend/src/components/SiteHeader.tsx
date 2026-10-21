@@ -1,13 +1,14 @@
 import { ArrowRight, ExternalLink, GitFork } from "lucide-preact";
+import { auctionUrl } from "../auction";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 
-type SiteSection = "home" | "cca" | "docs" | "calculator";
+type SiteSection = "home" | "docs" | "calculator";
 
-const links: Array<{ key: SiteSection | "stats"; label: string; href: string; external?: boolean }> = [
+const links: Array<{ key: SiteSection | "auction" | "stats"; label: string; href: string; external?: boolean }> = [
   { key: "docs", label: "Docs", href: "/docs" },
   { key: "calculator", label: "Calculator", href: "/calculator" },
-  { key: "cca", label: "Auction", href: "/cca" },
+  { key: "auction", label: "Auction", href: auctionUrl, external: true },
   { key: "stats", label: "Stats", href: "https://stats.veydrift.com", external: true },
 ];
 

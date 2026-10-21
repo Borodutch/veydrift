@@ -3,5 +3,4 @@ export function loopAnimationResponse(url: URL, rangeHeader: string | null | und
 export function loopAnimationRoute(url: URL): { error: string; status: number } | { base: string; assetType: string; version: string; size: number; format: "webm" | "mp4"; masterWidth: number } | null;
 export function hiddenWhitepaperPath(pathname: string): boolean;
 export function frontendResponse(request: Request): Promise<Response>;
-export const ccaMeta: { title: string; description: string; imagePath: string };
 export function rangeResponseFor(file: Blob, pathname: string, rangeHeader: string | null | undefined, baseHeaders?: Record<string, string>): Response;

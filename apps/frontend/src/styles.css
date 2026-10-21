@@ -229,6 +229,13 @@ body {
   }
 }
 
+/* The auction banner sits above every page; the desktop app fits the rest of the viewport. */
+@media (min-width: 768px) {
+  :root:has(.auction-banner) {
+    --auction-banner-h: 2.5rem;
+  }
+}
+
 .landing-page {
   --landing-scroll: 0;
   background:
