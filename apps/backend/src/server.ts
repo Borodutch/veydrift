@@ -87,7 +87,7 @@ import {
   type ReferralHistoryResponse,
   type ReferralResolveResult
 } from "./referrals";
-import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
+import { accrueProductionWindow, deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import {
   buildPaidAllianceInviteAuthorization,
   createPaidAllianceInviteReader,
@@ -4005,7 +4005,7 @@ function accruedPlanetState<T extends PlanetState | null>(
 // Single current-resource source of truth for wallet, public, and intel resource surfaces (VEY-KANEO-517):
 // canonical settled `resources` projected forward to the latest fully indexed block timestamp,
 // capped at storage. Every endpoint serving "current resources" should call this helper
-// instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
+// instead of re-running `accrueProductionWindow` locally, so endpoint values cannot
 // diverge or accidentally project an already-current balance a second time.
 function indexedCurrentResourcesForPlanet(
   indexer: SettlementIndexer,
@@ -4317,12 +4317,14 @@ function indexedInfrastructureState(
   };
 }
 
-function multiplyResources(resources: Resources | null, multiplier: number): Resources | null {
+// The invite boost doubles what a planet adds; a Fusion Reactor burn (a negative rate) is never boosted.
+function doubleProduction(resources: Resources | null): Resources | null {
   if (!resources) return null;
+  const doubled = (value: string) => (BigInt(value) > 0n ? BigInt(value) * 2n : BigInt(value)).toString();
   return {
-    metal: (BigInt(resources.metal) * BigInt(multiplier)).toString(),
-    crystal: (BigInt(resources.crystal) * BigInt(multiplier)).toString(),
-    deuterium: (BigInt(resources.deuterium) * BigInt(multiplier)).toString()
+    metal: doubled(resources.metal),
+    crystal: doubled(resources.crystal),
+    deuterium: doubled(resources.deuterium)
   };
 }
 
@@ -4336,7 +4338,7 @@ function effectiveProductionPerHour(
   productionPerHour: Resources | null
 ): Resources | null {
   return isInviteeProductionBoostActive(indexer.inviteeProductionBoostExpiresAt(owner))
-    ? multiplyResources(productionPerHour, 2)
+    ? doubleProduction(productionPerHour)
     : productionPerHour;
 }
 
@@ -5035,63 +5037,6 @@ function publicMoonStateRef(
   };
 }
 
-function resourcesWithClaimableAccrual(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  lastSettledAt: string,
-  now: number,
-  inviteeProductionBoostExpiresAt?: string | null
-): Resources {
-  if (!productionPerHour || !storageCaps) return current;
-
-  const lastSettledAtSeconds = Number(lastSettledAt);
-  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return current;
-
-  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
-  const boostedElapsedSeconds = boostedProductionSeconds(
-    lastSettledAtSeconds,
-    Math.floor(now / 1_000),
-    inviteeProductionBoostExpiresAt
-  );
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
-  };
-}
-
-function resourceWithClaimableAccrual(
-  current: string,
-  productionPerHour: string,
-  storageCap: string,
-  elapsedSeconds: number,
-  boostedElapsedSeconds = 0
-): string {
-  const currentValue = Number(current);
-  const rate = Math.max(0, Number(productionPerHour));
-  const cap = Number(storageCap);
-  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
-
-  const produced = Math.floor((rate * (elapsedSeconds + boostedElapsedSeconds)) / 3_600);
-  const remainingCapacity = Math.max(0, cap - currentValue);
-  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
-}
-
-function boostedProductionSeconds(
-  fromAt: number,
-  toAt: number,
-  inviteeProductionBoostExpiresAt?: string | null
-): number {
-  const expiresAt = Number(inviteeProductionBoostExpiresAt ?? "0");
-  // The activation event stores its exact end. Production boosts are contractually fixed at
-  // seven days, so derive the matching start boundary here as well as on-chain. This matters
-  // for migration snapshots whose lastSettledAt predates the claim transaction.
-  const startsAt = expiresAt - 7 * 24 * 60 * 60;
-  if (!Number.isFinite(expiresAt) || startsAt >= toAt || expiresAt <= fromAt) return 0;
-  return Math.max(0, Math.min(toAt, expiresAt) - Math.max(fromAt, startsAt));
-}
-
 function accruedResourcesWithBuildingQueue(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | PlanetState,
@@ -5121,13 +5066,14 @@ function accruedResourcesWithBuildingQueue(
 
   if (completed.length === 0) {
     const { buildings, ships, technologyLevels } = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
-    const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
-    return resourcesWithClaimableAccrual(
+    return accrueProductionWindow(
       planet.resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      planet.lastSettledAt,
-      now,
+      planet,
+      buildings,
+      ships,
+      technologyLevels,
+      lastSettledAtSeconds,
+      nowSeconds,
       inviteeProductionBoostExpiresAt
     );
   }
@@ -5142,13 +5088,15 @@ function accruedResourcesWithBuildingQueue(
     if (!Number.isFinite(readyAt) || readyAt > nowSeconds) continue;
 
     if (readyAt > cursor) {
-      const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
-      resources = resourcesWithClaimableAccrualByElapsed(
+      resources = accrueProductionWindow(
         resources,
-        derived.productionPerHour,
-        derived.storageCaps,
-        Math.floor(readyAt - cursor),
-        boostedProductionSeconds(cursor, readyAt, inviteeProductionBoostExpiresAt)
+        planet,
+        buildings,
+        projectionRows.ships,
+        projectionRows.technologyLevels,
+        cursor,
+        readyAt,
+        inviteeProductionBoostExpiresAt
       );
       cursor = readyAt;
     }
@@ -5160,33 +5108,16 @@ function accruedResourcesWithBuildingQueue(
     ));
   }
 
-  if (nowSeconds > cursor) {
-    const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
-    resources = resourcesWithClaimableAccrualByElapsed(
-      resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      Math.floor(nowSeconds - cursor),
-      boostedProductionSeconds(cursor, nowSeconds, inviteeProductionBoostExpiresAt)
-    );
-  }
-
-  return resources;
-}
-
-function resourcesWithClaimableAccrualByElapsed(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  elapsedSeconds: number,
-  boostedElapsedSeconds = 0
-): Resources {
-  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
-  };
+  return accrueProductionWindow(
+    resources,
+    planet,
+    buildings,
+    projectionRows.ships,
+    projectionRows.technologyLevels,
+    cursor,
+    nowSeconds,
+    inviteeProductionBoostExpiresAt
+  );
 }
 
 function compareQueueReadyAt(left: QueueState, right: QueueState): number {

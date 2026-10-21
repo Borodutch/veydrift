@@ -186,8 +186,8 @@ import {
 } from "./evm";
 import type { RandomnessRequestCandidates } from "./randomness";
 import {
+  accrueProductionWindow,
   calculateIndexedHighscore,
-  deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
   deriveMoonBuildingRows,
@@ -11082,17 +11082,14 @@ export class SettlementIndexer {
       return planet.resources;
     }
 
-    const derived = deriveInfrastructureFields(
+    return accrueProductionWindow(
+      planet.resources,
       planet,
       this.contractInfrastructureRows(planet.planetId),
       this.contractShipRows(planet.planetId),
-      this.contractTechnologyLevels(planet.owner)
-    );
-    return resourcesWithClaimableAccrual(
-      planet.resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      Math.floor(nextSettledAt - previousSettledAt)
+      this.contractTechnologyLevels(planet.owner),
+      previousSettledAt,
+      nextSettledAt
     );
   }
 
@@ -16286,37 +16283,6 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
     crystal: subtractResource(left.crystal, right.crystal),
     deuterium: subtractResource(left.deuterium, right.deuterium)
   };
-}
-
-function resourcesWithClaimableAccrual(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  elapsedSeconds: number
-): Resources {
-  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
-
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
-  };
-}
-
-function resourceWithClaimableAccrual(
-  current: string,
-  productionPerHour: string,
-  storageCap: string,
-  elapsedSeconds: number
-): string {
-  const currentValue = Number(current);
-  const rate = Math.max(0, Number(productionPerHour));
-  const cap = Number(storageCap);
-  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
-
-  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
-  const remainingCapacity = Math.max(0, cap - currentValue);
-  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
 }
 
 function queueStateFromEvent(event: QueueUpsertEvent): QueueState {

@@ -12512,6 +12512,53 @@ describe("building demolition lens (#121)", () => {
     expect(usedFields()).toBe(fixture.moon.fields);
   });
 
+  test("a Fusion Reactor burn carries the running store across a lazy building completion", async () => {
+    // Contract numbers: packages/contracts/test/audit/RiftAuditRegressions.t.sol
+    // testFusionBurnSpansALazyBuildingCompletion (Metal 20, Crystal 18, Fusion 15, Energy 8, no
+    // synthesizer, 300 deuterium; Solar Plant 0 -> 1 finishes 151 s into the hour).
+    const { indexer, transaction, settled, completed, projectAt } = lensHarness();
+    const startedAt = 1_769_700_000;
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      temperature: 0,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+      lastSettledAt: startedAt.toString(),
+      resources: { metal: "925", crystal: "970", deuterium: "300" }
+    });
+    transaction(
+      completed(0, 20),
+      completed(1, 18),
+      completed(7, 10),
+      completed(8, 10),
+      completed(9, 10),
+      completed(10, 15),
+      { topics: [researchCompletedTopic, addressTopic(player), topic(0n)], data: abiWords(8n) }
+    );
+    transaction(settled({ metal: 925, crystal: 970, deuterium: 300 }, startedAt), {
+      topics: [buildingStartedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n, BigInt(startedAt + 151), 75n, 30n, 0n),
+      at: startedAt
+    });
+
+    const burning = await projectAt(startedAt + 100);
+    expect(burning.productionPerHour).toMatchObject({ metal: "4036", deuterium: "-627" });
+    const lazy = await projectAt(startedAt + 3_600);
+    expect(level(lazy, 3)).toBe(1);
+    expect(lazy.resourcesAsOfNow).toEqual({ metal: "2869", crystal: "1932", deuterium: "0" });
+    // Dry store and no synthesizer: the reactor is off, Solar 1 powers the mines at 93 bps.
+    expect(lazy.productionPerHour).toEqual({ metal: "37", crystal: "18", deuterium: "0" });
+    expect(lazy.energyBalance).toMatchObject({
+      produced: "22",
+      scaleBps: "93",
+      sources: { fusionReactor: "0", fusionReactorDeuteriumConsumed: "0" }
+    });
+  });
+
   test("a cancelled demolition is never applied by the lens, even after its finish time", async () => {
     const harness = lensHarness();
     const { transaction, settled, demolitionStarted, projectAt } = harness;

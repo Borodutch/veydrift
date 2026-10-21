@@ -3002,9 +3002,13 @@ function publicProductionProjection(
   current: MissionResourceSnapshot,
   travelSeconds: number,
 ): { resources: MissionResourceSnapshot; detail: string } | null {
-  const production = resourceSnapshotFromPublicState(target?.publicState?.productionPerHour);
+  const rates = target?.publicState?.productionPerHour;
+  const production = resourceSnapshotFromPublicState(rates);
   const caps = resourceSnapshotFromPublicState(target?.publicState?.storageCaps);
   if (!production || !caps) return null;
+  // A negative deuterium rate is a Fusion Reactor draw burning the store.
+  const deuteriumRate = Math.trunc(Number(rates?.deuterium));
+  if (deuteriumRate < 0) production.deuterium = deuteriumRate;
 
   return {
     resources: projectResourcesForTravel(current, production, caps, travelSeconds),
@@ -3022,7 +3026,7 @@ function projectResourcesForTravel(
   return {
     metal: Math.min(caps.metal, current.metal + Math.floor(production.metal * hours)),
     crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
-    deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
+    deuterium: Math.max(0, Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours))),
   };
 }
 

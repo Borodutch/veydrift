@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PlanetState } from "./evm";
 
 import {
+  accrueProductionWindow,
   buildingDurationSeconds,
   deriveBuildingRows,
   deriveDefenseRows,
@@ -282,6 +283,56 @@ describe("deriveInfrastructureFields crawler production", () => {
       metal: "120",
       crystal: "58",
       deuterium: "24"
+    });
+  });
+});
+
+// Contract vectors: packages/contracts/test/VeydriftFormulaConformance.t.sol
+// (testCanonicalVeydriftFusionReactorEnergyAndDeuteriumUse, testFusionDrawBurnsTheStoreThenThrottlesTheReactor).
+describe("Fusion Reactor draw", () => {
+  const planet = { ...crawlerTestPlanet, temperature: 0 };
+  // Metal 20, Crystal 18, Synthesizer 12, Solar 15, Fusion 15 at Energy 8.
+  const rows = deriveBuildingRows((id) => ({ 0: 20, 1: 18, 2: 12, 3: 15, 10: 15 })[id] ?? 0);
+  const ships = deriveShipRows(() => 0);
+  const technologies = { "0": 8 };
+  const accrue = (deuterium: string, boostExpiresAt?: string) =>
+    accrueProductionWindow({ metal: "0", crystal: "0", deuterium }, planet, rows, ships, technologies, 1_000, 4_600, boostExpiresAt);
+
+  test("is charged in full and never scaled by an energy shortage", () => {
+    const fields = deriveInfrastructureFields(
+      { ...planet, deuteriumMultiplierBps: 13_040, resources: { metal: "0", crystal: "0", deuterium: "1" } },
+      deriveBuildingRows((id) => (id === 2 ? 3 : id === 10 ? 2 : 0)),
+      ships,
+      { "0": 3 }
+    );
+    expect(fields.energyBalance).toMatchObject({ produced: "69", required: "79", scaleBps: "8734" });
+    expect(fields.productionPerHour?.deuterium).toBe("18");
+  });
+
+  test("burns the store, then runs on the share the synthesizer covers", () => {
+    expect(accrue("1000")).toEqual({ metal: "4036", crystal: "2001", deuterium: "749" });
+    expect(accrue("100")).toEqual({ metal: "3123", crystal: "1548", deuterium: "49" });
+    expect(accrue("0")).toEqual({ metal: "2520", crystal: "1249", deuterium: "82" });
+    // The invite boost doubles what is added, never the burn.
+    expect(accrue("1000", "4600")).toEqual({ metal: "8072", crystal: "4002", deuterium: "749" });
+    expect(accrue("0", "4600")).toEqual({ metal: "5040", crystal: "2498", deuterium: "164" });
+  });
+
+  test("reports the rates for the stored balance", () => {
+    const stored = deriveInfrastructureFields({ ...planet, resources: { metal: "0", crystal: "0", deuterium: "1000" } }, rows, ships, technologies);
+    expect(stored.productionPerHour).toEqual({ metal: "4036", crystal: "2001", deuterium: "-251" });
+    expect(stored.energyBalance).toMatchObject({
+      produced: "4067",
+      scaleBps: "10000",
+      sources: { fusionReactor: "2814", fusionReactorDeuteriumConsumed: "627" }
+    });
+    const dry = deriveInfrastructureFields(planet, rows, ships, technologies);
+    expect(dry.productionPerHour).toEqual({ metal: "2520", crystal: "1249", deuterium: "82" });
+    expect(dry.energyBalance).toMatchObject({
+      produced: "1935",
+      required: "3098",
+      scaleBps: "6245",
+      sources: { fusionReactor: "682", fusionReactorDeuteriumConsumed: "152" }
     });
   });
 });

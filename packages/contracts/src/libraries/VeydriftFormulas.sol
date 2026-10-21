@@ -34,6 +34,25 @@ library VeydriftFormulas {
         deuteriumMultiplier = deuteriumBps <= 0 ? 0 : deuteriumBps.toUint256().toUint16();
     }
 
+    /// @notice A planet's production inputs, constant over one settlement window.
+    struct ProductionInputs {
+        uint256 metalLevel;
+        uint256 crystalLevel;
+        uint256 deuteriumLevel;
+        uint256 solarLevel;
+        uint256 fusionLevel;
+        uint256 solarSatelliteCount;
+        uint256 crawlerCount;
+        int16 maxTemperature;
+        uint256 energyTechnologyLevel;
+        uint16 metalMultiplierBps;
+        uint16 crystalMultiplierBps;
+        uint16 deuteriumMultiplierBps;
+    }
+
+    /// @notice Hourly rates with the Fusion Reactor fully paid. Deuterium is the net rate, floored
+    ///         at zero; a draw above the synthesizer's output burns stored deuterium instead (see
+    ///         `productionForWindow`).
     function productionPerHour(
         uint256 metalLevel,
         uint256 crystalLevel,
@@ -48,42 +67,145 @@ library VeydriftFormulas {
         uint16 crystalMultiplierBps,
         uint16 deuteriumMultiplierBps
     ) public pure returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour) {
-        (, uint256 requiredEnergy, uint256 energyScale) = energyBalance(
-            metalLevel,
-            crystalLevel,
-            deuteriumLevel,
-            solarLevel,
-            fusionLevel,
-            solarSatelliteCount,
-            maxTemperature,
-            energyTechnologyLevel
+        uint256 fusionDeuteriumPerHour;
+        (metalPerHour, crystalPerHour, deuteriumPerHour, fusionDeuteriumPerHour) = productionRates(
+            ProductionInputs(
+                metalLevel,
+                crystalLevel,
+                deuteriumLevel,
+                solarLevel,
+                fusionLevel,
+                solarSatelliteCount,
+                crawlerCount,
+                maxTemperature,
+                energyTechnologyLevel,
+                metalMultiplierBps,
+                crystalMultiplierBps,
+                deuteriumMultiplierBps
+            ),
+            BPS
         );
-
-        metalPerHour = _scaleByBps(_scaledLevelValue(30, metalLevel), metalMultiplierBps, BPS);
-        crystalPerHour = _scaleByBps(_scaledLevelValue(20, crystalLevel), crystalMultiplierBps, BPS);
-        deuteriumPerHour =
-            _scaleByBps(_scaledLevelValue(10, deuteriumLevel), deuteriumMultiplierBps, BPS);
-
-        // Crawlers boost mine output before fusion deuterium upkeep and the energy
-        // shortage factor are applied, so the bonus tracks raw mine production.
-        uint256 crawlerBoostBps =
-            crawlerProductionBoostBps(crawlerCount, metalLevel, crystalLevel, deuteriumLevel);
-        if (crawlerBoostBps != 0) {
-            metalPerHour = _scaleByBps(metalPerHour, BPS + crawlerBoostBps, BPS);
-            crystalPerHour = _scaleByBps(crystalPerHour, BPS + crawlerBoostBps, BPS);
-            deuteriumPerHour = _scaleByBps(deuteriumPerHour, BPS + crawlerBoostBps, BPS);
-        }
-
-        uint256 fusionDeuteriumPerHour = fusionReactorDeuteriumConsumption(fusionLevel);
         deuteriumPerHour = deuteriumPerHour > fusionDeuteriumPerHour
             ? deuteriumPerHour - fusionDeuteriumPerHour
             : 0;
+    }
 
-        if (requiredEnergy != 0) {
-            metalPerHour = _scaleByBps(metalPerHour, energyScale, BPS);
-            crystalPerHour = _scaleByBps(crystalPerHour, energyScale, BPS);
-            deuteriumPerHour = _scaleByBps(deuteriumPerHour, energyScale, BPS);
+    /// @notice Hourly mine output and Fusion Reactor draw with the reactor at `fusionBps` of its
+    ///         full output. Crawlers boost raw mine output, then the energy factor (fusion counted
+    ///         at `fusionBps`) scales it. The draw, `ceil(full draw * fusionBps / 10,000)`, is
+    ///         never scaled by the energy factor.
+    function productionRates(ProductionInputs memory p, uint256 fusionBps)
+        public
+        pure
+        returns (
+            uint256 metalPerHour,
+            uint256 crystalPerHour,
+            uint256 deuteriumPerHour,
+            uint256 fusionDeuteriumPerHour
+        )
+    {
+        (uint256 producedEnergy, uint256 requiredEnergy,) = energyBalance(
+            p.metalLevel,
+            p.crystalLevel,
+            p.deuteriumLevel,
+            p.solarLevel,
+            0,
+            p.solarSatelliteCount,
+            p.maxTemperature,
+            p.energyTechnologyLevel
+        );
+        producedEnergy += (fusionReactorEnergyProduction(p.fusionLevel, p.energyTechnologyLevel)
+                * fusionBps) / BPS;
+        uint256 energyScale = requiredEnergy == 0 || producedEnergy >= requiredEnergy
+            ? BPS
+            : (producedEnergy * BPS) / requiredEnergy;
+        uint256 boost = BPS
+            + crawlerProductionBoostBps(
+                p.crawlerCount, p.metalLevel, p.crystalLevel, p.deuteriumLevel
+            );
+        metalPerHour = _mineOutput(30, p.metalLevel, p.metalMultiplierBps, boost, energyScale);
+        crystalPerHour = _mineOutput(20, p.crystalLevel, p.crystalMultiplierBps, boost, energyScale);
+        deuteriumPerHour =
+            _mineOutput(10, p.deuteriumLevel, p.deuteriumMultiplierBps, boost, energyScale);
+        fusionDeuteriumPerHour =
+            (fusionReactorDeuteriumConsumption(p.fusionLevel) * fusionBps + BPS - 1) / BPS;
+    }
+
+    /// @notice Production of one window, `fromAt` to `toAt`, of constant planet state that starts
+    ///         with `storedDeuterium`. The reactor's draw is always charged in full: whatever the
+    ///         synthesizer does not cover burns stored deuterium (`deuteriumBurned`, rounded up,
+    ///         never more than is stored). Once the store runs dry, the rest of the window runs
+    ///         the reactor at the share of its draw the synthesizer covers on its own, its output
+    ///         with no fusion power, so fusion energy is never free. The invitee boost
+    ///         (`boostFromAt` to `boostToAt`, zeros for none) doubles what is added, never the burn.
+    function productionForWindow(
+        ProductionInputs memory p,
+        uint256 storedDeuterium,
+        uint256 fromAt,
+        uint256 toAt,
+        uint256 boostFromAt,
+        uint256 boostToAt
+    )
+        public
+        pure
+        returns (uint256 metal, uint256 crystal, uint256 deuterium, uint256 deuteriumBurned)
+    {
+        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour, uint256 draw) =
+            productionRates(p, BPS);
+        uint256 paidUntil = toAt;
+        if (deuteriumPerHour < draw) {
+            uint256 deficit = draw - deuteriumPerHour;
+            // Whole seconds the store pays for, rounded down: the reactor never runs on credit.
+            uint256 paidSeconds = (storedDeuterium * 1 hours) / deficit;
+            if (paidSeconds < toAt - fromAt) {
+                paidUntil = fromAt + paidSeconds;
+                deuteriumBurned = storedDeuterium;
+            } else {
+                deuteriumBurned = (deficit * (toAt - fromAt) + 1 hours - 1) / 1 hours;
+            }
+            deuteriumPerHour = draw;
         }
+        uint256 elapsed = _boostedSeconds(fromAt, paidUntil, boostFromAt, boostToAt);
+        metal = (metalPerHour * elapsed) / 1 hours;
+        crystal = (crystalPerHour * elapsed) / 1 hours;
+        deuterium = ((deuteriumPerHour - draw) * elapsed) / 1 hours;
+        if (paidUntil == toAt) return (metal, crystal, deuterium, deuteriumBurned);
+
+        (,, uint256 unpoweredDeuterium,) = productionRates(p, 0);
+        (metalPerHour, crystalPerHour, deuteriumPerHour, draw) =
+            productionRates(p, (unpoweredDeuterium * BPS) / draw);
+        elapsed = _boostedSeconds(paidUntil, toAt, boostFromAt, boostToAt);
+        metal += (metalPerHour * elapsed) / 1 hours;
+        crystal += (crystalPerHour * elapsed) / 1 hours;
+        // The throttled draw never exceeds the unpowered synthesizer output, so this cannot underflow.
+        deuterium += ((deuteriumPerHour - draw) * elapsed) / 1 hours;
+    }
+
+    function _mineOutput(
+        uint256 base,
+        uint256 level,
+        uint256 multiplierBps,
+        uint256 boostBps,
+        uint256 energyScaleBps
+    ) private pure returns (uint256) {
+        return _scaleByBps(
+            _scaleByBps(
+                _scaleByBps(_scaledLevelValue(base, level), multiplierBps, BPS), boostBps, BPS
+            ),
+            energyScaleBps,
+            BPS
+        );
+    }
+
+    function _boostedSeconds(uint256 fromAt, uint256 toAt, uint256 boostFromAt, uint256 boostToAt)
+        private
+        pure
+        returns (uint256 elapsed)
+    {
+        elapsed = toAt - fromAt;
+        uint256 start = boostFromAt > fromAt ? boostFromAt : fromAt;
+        uint256 end = boostToAt < toAt ? boostToAt : toAt;
+        if (end > start) elapsed += end - start;
     }
 
     /// @notice Crawler production bonus in basis points for a planet.

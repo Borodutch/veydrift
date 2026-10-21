@@ -1555,10 +1555,12 @@ export function productionPerHour(
 
   const capacity = productionCapacityPerHour(buildings, profile);
 
+  // The Fusion Reactor's draw is charged in full, never scaled by an energy shortage: a negative
+  // deuterium rate burns the store (VeydriftFormulas.productionRates).
   return {
     metal: scaleByBps(capacity.metal, energy.scaleBps),
     crystal: scaleByBps(capacity.crystal, energy.scaleBps),
-    deuterium: scaleByBps(Math.max(0, capacity.deuterium - energy.deuteriumConsumed), energy.scaleBps),
+    deuterium: scaleByBps(capacity.deuterium, energy.scaleBps) - energy.deuteriumConsumed,
   };
 }
 
