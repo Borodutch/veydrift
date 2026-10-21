@@ -2,7 +2,7 @@
 
 GitHub: https://github.com/Borodutch/veydrift
 
-Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. **Contracts And Tokens** lists every contract address, its owner, and where every $VEYDRIFT and resource token is held. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
+Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. [Contracts And Tokens](https://veydrift.com/docs/contracts) lists every contract address, its owner, and where every $VEYDRIFT and resource token is held. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
 
 ## Beginner Tutorial
 
@@ -146,7 +146,7 @@ Attack protection prevents invalid or abusive launches. The mission screen shows
 
 ### The Rift
 
-The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under **Contracts And Tokens**). One whole token equals 1,000,000 units in the game, so extracting 500,000 Metal pays out 0.5 vMETAL.
+The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under [Contracts And Tokens](https://veydrift.com/docs/contracts)). One whole token equals 1,000,000 units in the game, so extracting 500,000 Metal pays out 0.5 vMETAL.
 
 A planet uses the Rift once it has a Rift Stabilizer. The Stabilizer needs Robotics Factory 4, Research Lab 2, Energy Technology 5 and Hyperspace Technology 1, and every planet needs its own. Open the Rift page with that planet selected.
 
