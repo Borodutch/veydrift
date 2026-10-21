@@ -1,4 +1,5 @@
 import { Bot, GitFork } from "lucide-preact";
+import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { SiteHeader } from "./SiteHeader";
 import { docsPageForSlug, docsPages, docsSlugFromPath } from "../docs/docsSource";
 import { InlineMarkdown } from "../docs/inlineMarkdown";
@@ -27,7 +28,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
     <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#060b16] text-slate-100">
       <SiteHeader current="docs" wide />
 
-      <div className="relative z-10 mx-auto grid max-w-[96rem] gap-5 px-3 py-4 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-8 xl:grid-cols-[14rem_minmax(0,1fr)_14rem] lg:py-8">
+      <div className="relative z-10 mx-auto grid max-w-[96rem] gap-5 px-3 py-4 sm:px-6 lg:grid-cols-[14rem_minmax(0,1fr)_14rem] lg:gap-8 lg:py-8">
         <aside className="min-w-0 lg:sticky lg:top-20 lg:self-start">
           <p className="mb-2 hidden px-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70 lg:block">Chapters</p>
           <nav aria-label="Docs chapters" className="-mx-3 flex gap-1.5 overflow-x-auto px-3 [scrollbar-width:none] lg:mx-0 lg:grid lg:gap-0.5 lg:overflow-visible lg:px-0">
@@ -73,14 +74,14 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-white sm:text-4xl">{activePage.title}</h1>
             <p className="mt-3 max-w-2xl text-[15px] leading-7 text-slate-300">{activePage.description}</p>
           </div>
-          <div className="docs-prose max-w-[52rem] px-5 pb-8 pt-2 sm:px-8">
+          <div className="docs-prose break-words px-5 pb-8 pt-2 sm:px-8 [&>*:not(.docs-table)]:max-w-[52rem]">
             {nodes.map((node, index) => (
               <MarkdownBlock key={`${node.type}-${index}`} node={node} />
             ))}
           </div>
         </article>
 
-        <aside className="hidden xl:sticky xl:top-20 xl:block xl:self-start">
+        <aside className="hidden lg:sticky lg:top-20 lg:block lg:self-start">
           <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">On this page</p>
           <nav aria-label="On this page" className="grid border-l border-cyan-300/10">
             {tocHeadings.map((heading) => (
@@ -130,24 +131,7 @@ function MarkdownBlock({ node }: { node: MarkdownNode }) {
     );
   }
 
-  if (node.type === "table") {
-    return (
-      <div className="surface-inset mt-6 overflow-x-auto rounded-lg">
-        <table className="min-w-full border-collapse text-left text-sm">
-          <thead className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">
-            <tr>{node.headers.map((header) => <th className="border-b border-cyan-300/10 px-3 py-2.5 font-semibold" key={header}>{header}</th>)}</tr>
-          </thead>
-          <tbody>
-            {node.rows.map((row, rowIndex) => (
-              <tr className="border-b border-cyan-300/[0.06] last:border-0" key={rowIndex}>
-                {row.map((cell, cellIndex) => <td className="align-top px-3 py-2 leading-6 text-slate-300" key={`${rowIndex}-${cellIndex}`}><InlineMarkdown compact text={cell} /></td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
+  if (node.type === "table") return <DocsTable headers={node.headers} rows={node.rows} />;
 
   if (node.type === "code") {
     return <pre className="mt-6 overflow-x-auto rounded-lg border border-cyan-300/15 bg-[#081120] p-4 text-xs leading-6 text-cyan-100"><code>{node.value}</code></pre>;
@@ -155,4 +139,67 @@ function MarkdownBlock({ node }: { node: MarkdownNode }) {
 
   const tone = node.tone === "warning" ? "border-amber-300 bg-amber-300/[0.07] text-amber-100" : "border-cyan-300 bg-cyan-300/[0.07] text-cyan-100";
   return <aside className={`mt-6 rounded-r-lg border-l-2 px-4 py-3 text-sm leading-6 ${tone}`}><InlineMarkdown text={node.text} /></aside>;
+}
+
+/** A table while it fits the article (tables may use its full width, text stays at 52rem); once it would
+ *  overflow, each row stacks as a card of label/value pairs. */
+function DocsTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+  const box = useRef<HTMLDivElement>(null);
+  const table = useRef<HTMLTableElement>(null);
+  const [width, setWidth] = useState(0);
+  const [needed, setNeeded] = useState(0); // box width the table needs, 0 while it fits
+
+  useLayoutEffect(() => {
+    const element = box.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      setWidth(element.clientWidth);
+      if (table.current) setNeeded(element.scrollWidth > element.clientWidth + 1 ? element.scrollWidth : 0);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  // Long text gets a floor width, so a tight table overflows (and stacks) instead of wrapping a word per line.
+  const long = headers.map((_, column) => rows.some((row) => (row[column] ?? "").replace(/\]\([^)]*\)/g, "]").length > 60));
+
+  return (
+    <div className="docs-table surface-inset mt-6 overflow-x-auto rounded-lg" ref={box}>
+      {needed > 0 && width < needed ? (
+        <div className="divide-y divide-cyan-300/10 text-sm leading-6">
+          {rows.map((row, rowIndex) => (
+            <dl className="px-3 py-2.5" key={rowIndex}>
+              <dt className="sr-only">{headers[0]}</dt>
+              <dd className="font-semibold text-slate-100"><InlineMarkdown text={row[0] ?? ""} /></dd>
+              {row.slice(1).map((cell, cellIndex) => cell.trim() && (
+                <div className="mt-1 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3" key={cellIndex}>
+                  <dt className="pt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70">{headers[cellIndex + 1]}</dt>
+                  <dd className="text-slate-300"><InlineMarkdown text={cell} /></dd>
+                </div>
+              ))}
+            </dl>
+          ))}
+        </div>
+      ) : (
+        <table className="min-w-full border-collapse text-left text-sm" ref={table}>
+          <thead className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">
+            <tr>{headers.map((header) => <th className="border-b border-cyan-300/10 px-3 py-2.5 font-semibold" key={header}>{header}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr className="border-b border-cyan-300/[0.06] last:border-0" key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td className="align-top px-3 py-2 leading-6 text-slate-300" key={`${rowIndex}-${cellIndex}`}>
+                    {long[cellIndex] ? <div className="min-w-[14rem]"><InlineMarkdown text={cell} /></div> : <InlineMarkdown text={cell} />}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }
