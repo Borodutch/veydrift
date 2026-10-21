@@ -669,7 +669,7 @@ function ResourceCells({
               <span className={`mr-1 text-[10px] font-bold ${color}`}>{abbr}</span>
               {value === undefined ? "—" : formatCompactResource(value)}
             </span>
-            {rate > 0 ? <span className={`block truncate text-[10px] ${rateColor}`}>+{formatCompactResource(rate)}/h</span> : null}
+            {rate !== 0 ? <span className={`block truncate text-[10px] ${rate < 0 ? "text-red-300" : rateColor}`}>{rate < 0 ? "-" : "+"}{formatCompactResource(Math.abs(rate))}/h</span> : null}
           </span>
         );
       })}

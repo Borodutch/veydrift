@@ -335,14 +335,14 @@ export function deriveInfrastructureFields(
   ships: ShipyardState["ships"],
   technologyLevels: Record<string, number>
 ): Pick<InfrastructureState, "crawlerProduction" | "energyBalance" | "productionPerHour" | "protectedResources" | "raidableResources" | "storageCaps"> {
-  const levels = buildingLevels(buildings);
-  const solarSatelliteCount = ships.find((ship) => ship.id === 9)?.count ?? 0;
-  const crawlerCount = ships.find((ship) => ship.id === 15)?.count ?? 0;
-  const energy = energyBalance(levels, solarSatelliteCount, planet.temperature, technologyLevels["0"] ?? 0);
+  const inputs = productionInputs(planet, buildings, ships, technologyLevels);
+  const { levels, solarSatelliteCount, crawlerCount } = inputs;
+  // Rates for the balance in `planet.resources`: a dry store throttles the Fusion Reactor.
+  const energy = energyBalance(inputs, fusionShareBps(inputs, Number(planet.resources.deuterium)));
   const caps = storageCaps(levels);
   const protectedResources = scaleResources(caps, RAID_PROTECTED_STORAGE_BPS);
-  const productionWithoutCrawlers = productionPerHour(levels, planet, energy, 0);
-  const productionWithCrawlers = productionPerHour(levels, planet, energy, crawlerCount);
+  const productionWithoutCrawlers = productionPerHour(inputs, energy, 0);
+  const productionWithCrawlers = productionPerHour(inputs, energy, crawlerCount);
 
   return {
     energyBalance: {
@@ -459,26 +459,157 @@ function researchCost(id: number, currentLevel: number): NumericResources {
   return multiplyResources(baseCost, 2 ** currentLevel);
 }
 
-function productionPerHour(
-  buildings: Record<BuildingKey, number>,
-  planet: PlanetState,
-  energy: { deuteriumConsumed: number; scaleBps: number },
-  crawlerCount = 0
-): Resources {
-  const metal = scaleByBps(scaledLevelValue(30, buildings.metalMine), planet.metalMultiplierBps);
-  const crystal = scaleByBps(scaledLevelValue(20, buildings.crystalMine), planet.crystalMultiplierBps);
-  let deuteriumCapacity = scaleByBps(scaledLevelValue(10, buildings.deuteriumSynthesizer), planet.deuteriumMultiplierBps);
-  const crawlerBoostBps = crawlerProductionBoostBps(crawlerCount, buildings);
-  const boostedMetal = scaleByBps(metal, BPS + crawlerBoostBps);
-  const boostedCrystal = scaleByBps(crystal, BPS + crawlerBoostBps);
-  deuteriumCapacity = scaleByBps(deuteriumCapacity, BPS + crawlerBoostBps);
-  const deuterium = Math.max(0, deuteriumCapacity - energy.deuteriumConsumed);
+type ProductionInputs = {
+  levels: Record<BuildingKey, number>;
+  planet: Pick<PlanetState, "temperature" | "metalMultiplierBps" | "crystalMultiplierBps" | "deuteriumMultiplierBps">;
+  solarSatelliteCount: number;
+  crawlerCount: number;
+  energyTechnologyLevel: number;
+};
 
-  return toResources({
-    metal: scaleByBps(boostedMetal, energy.scaleBps),
-    crystal: scaleByBps(boostedCrystal, energy.scaleBps),
-    deuterium: scaleByBps(deuterium, energy.scaleBps)
-  });
+function productionInputs(
+  planet: ProductionInputs["planet"],
+  buildings: InfrastructureState["buildings"],
+  ships: ShipyardState["ships"],
+  technologyLevels: Record<string, number>
+): ProductionInputs {
+  return {
+    levels: buildingLevels(buildings),
+    planet,
+    solarSatelliteCount: ships.find((ship) => ship.id === 9)?.count ?? 0,
+    crawlerCount: ships.find((ship) => ship.id === 15)?.count ?? 0,
+    energyTechnologyLevel: technologyLevels["0"] ?? 0
+  };
+}
+
+// Net hourly rates: mine output less the Fusion Reactor's draw, so deuterium is negative while
+// the draw burns the store.
+function productionPerHour(
+  inputs: ProductionInputs,
+  energy: { deuteriumConsumed: number; scaleBps: number },
+  crawlerCount: number
+): Resources {
+  const output = mineOutputPerHour(inputs, energy.scaleBps, crawlerCount);
+  return toResources({ ...output, deuterium: output.deuterium - energy.deuteriumConsumed });
+}
+
+// Mirrors VeydriftFormulas.productionRates: crawlers boost raw mine output, then the energy factor
+// scales it. The reactor's draw is never scaled by the energy factor.
+function mineOutputPerHour(inputs: ProductionInputs, energyScaleBps: number, crawlerCount: number): NumericResources {
+  const { levels, planet } = inputs;
+  const boost = BPS + crawlerProductionBoostBps(crawlerCount, levels);
+  const output = (base: number, level: number, multiplierBps: number) =>
+    scaleByBps(scaleByBps(scaleByBps(scaledLevelValue(base, level), multiplierBps), boost), energyScaleBps);
+  return {
+    metal: output(30, levels.metalMine, planet.metalMultiplierBps),
+    crystal: output(20, levels.crystalMine, planet.crystalMultiplierBps),
+    deuterium: output(10, levels.deuteriumSynthesizer, planet.deuteriumMultiplierBps)
+  };
+}
+
+function productionRates(inputs: ProductionInputs, fusionBps: number): NumericResources & { draw: number } {
+  const energy = energyBalance(inputs, fusionBps);
+  return { ...mineOutputPerHour(inputs, energy.scaleBps, inputs.crawlerCount), draw: energy.deuteriumConsumed };
+}
+
+// The reactor share VeydriftFormulas.productionForWindow runs at for `storedDeuterium`: full while
+// the store or the synthesizer pays the draw, otherwise the share of its draw the synthesizer
+// covers without fusion power.
+function fusionShareBps(inputs: ProductionInputs, storedDeuterium: number): number {
+  const full = productionRates(inputs, BPS);
+  if (storedDeuterium > 0 || full.deuterium >= full.draw) return BPS;
+  return Math.floor((productionRates(inputs, 0).deuterium * BPS) / full.draw);
+}
+
+type ProductionWindow = { metal: bigint; crystal: bigint; deuterium: bigint; deuteriumBurned: bigint };
+
+// Mirrors VeydriftFormulas.productionForWindow: one window of constant planet state. The draw the
+// synthesizer does not cover burns the store (rounded up, never more than is stored); once the
+// store is dry the reactor runs at `fusionShareBps`. The invite boost doubles what is added,
+// never the burn.
+function productionForWindow(
+  inputs: ProductionInputs,
+  storedDeuterium: bigint,
+  fromAt: number,
+  toAt: number,
+  boostFromAt = 0,
+  boostToAt = 0
+): ProductionWindow {
+  const hour = BigInt(SECONDS_PER_HOUR);
+  const full = productionRates(inputs, BPS);
+  let paidUntil = toAt;
+  let deuteriumBurned = 0n;
+  let net = BigInt(full.deuterium - full.draw);
+  if (net < 0n) {
+    const deficit = -net;
+    const paidSeconds = (storedDeuterium * hour) / deficit;
+    if (paidSeconds < BigInt(toAt - fromAt)) {
+      paidUntil = fromAt + Number(paidSeconds);
+      deuteriumBurned = storedDeuterium;
+    } else {
+      deuteriumBurned = (deficit * BigInt(toAt - fromAt) + hour - 1n) / hour;
+    }
+    net = 0n;
+  }
+  let elapsed = BigInt(boostedSeconds(fromAt, paidUntil, boostFromAt, boostToAt));
+  const window = {
+    metal: (BigInt(full.metal) * elapsed) / hour,
+    crystal: (BigInt(full.crystal) * elapsed) / hour,
+    deuterium: (net * elapsed) / hour,
+    deuteriumBurned
+  };
+  if (paidUntil === toAt) return window;
+
+  const throttled = productionRates(inputs, fusionShareBps(inputs, 0));
+  elapsed = BigInt(boostedSeconds(paidUntil, toAt, boostFromAt, boostToAt));
+  window.metal += (BigInt(throttled.metal) * elapsed) / hour;
+  window.crystal += (BigInt(throttled.crystal) * elapsed) / hour;
+  window.deuterium += (BigInt(throttled.deuterium - throttled.draw) * elapsed) / hour;
+  return window;
+}
+
+function boostedSeconds(fromAt: number, toAt: number, boostFromAt: number, boostToAt: number): number {
+  return toAt - fromAt + Math.max(0, Math.min(toAt, boostToAt) - Math.max(fromAt, boostFromAt));
+}
+
+const INVITEE_PRODUCTION_BOOST_SECONDS = 7 * 24 * 60 * 60;
+
+// The contract's settlement of `fromAt`..`toAt` onto `current`: the burn comes off the store, then
+// what the window adds is capped at storage (a balance already above its cap is kept as is).
+export function accrueProductionWindow(
+  current: Resources,
+  planet: ProductionInputs["planet"],
+  buildings: InfrastructureState["buildings"],
+  ships: ShipyardState["ships"],
+  technologyLevels: Record<string, number>,
+  fromAt: number,
+  toAt: number,
+  inviteeProductionBoostExpiresAt?: string | null
+): Resources {
+  const balance = [current.metal, current.crystal, current.deuterium];
+  if (!(toAt > fromAt) || !balance.every((value) => /^\d+$/.test(value))) return current;
+
+  const inputs = productionInputs(planet, buildings, ships, technologyLevels);
+  // Boosts are contractually fixed at seven days, so the stored end also fixes the start.
+  const boostToAt = Number(inviteeProductionBoostExpiresAt ?? "0") || 0;
+  const window = productionForWindow(
+    inputs,
+    BigInt(current.deuterium),
+    fromAt,
+    toAt,
+    boostToAt > 0 ? boostToAt - INVITEE_PRODUCTION_BOOST_SECONDS : 0,
+    boostToAt
+  );
+  const caps = storageCaps(inputs.levels);
+  const addCapped = (value: bigint, added: bigint, cap: string) => {
+    const room = BigInt(cap) - value;
+    return (value + (room <= 0n ? 0n : added < room ? added : room)).toString();
+  };
+  return {
+    metal: addCapped(BigInt(current.metal), window.metal, caps.metal),
+    crystal: addCapped(BigInt(current.crystal), window.crystal, caps.crystal),
+    deuterium: addCapped(BigInt(current.deuterium) - window.deuteriumBurned, window.deuterium, caps.deuterium)
+  };
 }
 
 function crawlerProductionEffect(
@@ -511,11 +642,10 @@ function crawlerProductionBoostBps(crawlerCount: number, buildings: Record<Build
   return Math.min(CRAWLER_MAX_BOOST_BPS, effective * CRAWLER_BOOST_BPS_PER_UNIT);
 }
 
+// `fusionBps` is the share of its output and draw the Fusion Reactor runs at (see fusionShareBps).
 function energyBalance(
-  buildings: Record<BuildingKey, number>,
-  solarSatelliteCount: number,
-  maxTemperature: number,
-  energyTechnologyLevel: number
+  { levels: buildings, solarSatelliteCount, planet, energyTechnologyLevel }: ProductionInputs,
+  fusionBps = BPS
 ): {
   deuteriumConsumed: number;
   produced: number;
@@ -532,13 +662,15 @@ function energyBalance(
     + scaledLevelValue(10, buildings.crystalMine)
     + scaledLevelValue(20, buildings.deuteriumSynthesizer);
   const solarPlant = scaledLevelValue(20, buildings.solarPlant);
-  const fusionReactor = fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel);
-  const solarSatelliteEnergyPerUnit = solarSatelliteEnergy(maxTemperature);
+  const fusionReactor = Math.floor(
+    (fusionReactorEnergyProduction(buildings.fusionReactor, energyTechnologyLevel) * fusionBps) / BPS
+  );
+  const solarSatelliteEnergyPerUnit = solarSatelliteEnergy(planet.temperature);
   const solarSatellites = solarSatelliteEnergyPerUnit * solarSatelliteCount;
   const produced = solarPlant + fusionReactor + solarSatellites;
 
   return {
-    deuteriumConsumed: fusionReactorDeuteriumConsumption(buildings.fusionReactor),
+    deuteriumConsumed: Math.ceil((fusionReactorDeuteriumConsumption(buildings.fusionReactor) * fusionBps) / BPS),
     produced,
     required,
     scaleBps: required === 0 || produced >= required ? BPS : Math.floor((produced * BPS) / required),

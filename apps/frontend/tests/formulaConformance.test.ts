@@ -129,11 +129,28 @@ describe("canonical Veydrift formula conformance", () => {
     expect(fusionReactorEnergyProduction(1, 3)).toBe(32);
     expect(fusionReactorDeuteriumConsumption(1)).toBe(11);
     expect(fusionReactorDeuteriumConsumption(2)).toBe(25);
+    // The synthesizer runs at 8,734 bps (50 -> 43/h); the full 25/h draw is never scaled.
     expect(productionPerHour(buildings, profile, 3)).toEqual({
       metal: 0,
       crystal: 0,
-      deuterium: 21,
+      deuterium: 18,
     });
+  });
+
+  test("charges the full Fusion Reactor draw when the synthesizer falls short", () => {
+    // VeydriftFormulaConformance.testFusionDrawBurnsTheStoreThenThrottlesTheReactor, full power.
+    const buildings = {
+      ...createInitialPlayableState().buildings,
+      metalMine: 20,
+      crystalMine: 18,
+      deuteriumSynthesizer: 12,
+      solarPlant: 15,
+      fusionReactor: 15,
+    };
+    const profile = { metalMultiplierBps: 10_000, crystalMultiplierBps: 10_000, deuteriumMultiplierBps: 10_000 };
+
+    expect(energyBalance(buildings, 8, 0, profile)).toMatchObject({ deuteriumConsumed: 627, produced: 4_067, required: 3_098 });
+    expect(productionPerHour(buildings, profile, 8)).toEqual({ metal: 4_036, crystal: 2_001, deuterium: -251 });
   });
 
   test("uses base per-building cost growth factors", () => {
