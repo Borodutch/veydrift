@@ -1528,7 +1528,6 @@ const GAME_SELECTORS = {
   finalizeRiftExtraction: "0xe2f2de34",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
-  finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
   joinBodyAttackMission: "0xdd3e1279",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
@@ -1549,7 +1548,6 @@ const GAME_SELECTORS = {
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
-  requestResourceWithdrawal: "0x62a10a46",
   startRiftExtraction: "0x0870c082",
   recallFleetMission: "0x1cbc460c",
   startDefenseProduction: "0xfec06283",
@@ -3806,29 +3804,6 @@ export async function sendDepositResourceTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount]),
-  });
-}
-
-export async function sendRequestResourceWithdrawalTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  resourceId: number,
-  amount: bigint | number | string,
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount]),
-  });
-}
-
-export async function sendFinishResourceWithdrawalTransaction(provider: Eip1193Provider, account: string, contractAddress: string, resourceId: number): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId]),
   });
 }
 

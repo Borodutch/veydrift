@@ -70,7 +70,6 @@ import {
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
-  sendFinishResourceWithdrawalTransaction,
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
   sendLaunchAttackMissionTransaction,
@@ -98,7 +97,6 @@ import {
   sendCreateAllianceTransaction,
   sendBurningChickenMoonTransaction,
   sendDismissAllianceJoinRequestTransaction,
-  sendRequestResourceWithdrawalTransaction,
   sendReferralClaimTransaction,
   requestAccounts,
   referralCodeHash,
@@ -2653,7 +2651,7 @@ describe("walletFlow", () => {
     expect(() => parseRiftTokenAmount("abc")).toThrow("Enter a valid token amount.");
   });
 
-  test("submits Rift approval, deposit, withdrawal request, and finish calls against the contract ABI", async () => {
+  test("submits Rift approval and deposit calls against the contract ABI", async () => {
     const token = "0x3333333333333333333333333333333333333333";
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
@@ -2663,8 +2661,6 @@ describe("walletFlow", () => {
 
     await expect(sendApproveResourceTokenTransaction(provider, account, token, contract, 1_500_000n)).resolves.toBe("0xrift1");
     await expect(sendDepositResourceTransaction(provider, account, contract, "7", 0, 1_500_000n)).resolves.toBe("0xrift2");
-    await expect(sendRequestResourceWithdrawalTransaction(provider, account, contract, "7", 1, 2_000_000n)).resolves.toBe("0xrift3");
-    await expect(sendFinishResourceWithdrawalTransaction(provider, account, contract, 1)).resolves.toBe("0xrift4");
 
     expect(requests).toEqual([
       {
@@ -2684,26 +2680,6 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x25819e15", [7, 0, 1_500_000n]),
-          },
-        ],
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x62a10a46", [7, 1, 2_000_000n]),
-          },
-        ],
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0xde0f208c", [1]),
           },
         ],
       },
@@ -3643,8 +3619,6 @@ describe("walletFlow", () => {
       () => sendStartResearchTransaction(walletProvider, account, contract, "7", 12),
       () => sendApproveResourceTokenTransaction(walletProvider, account, "0x3333333333333333333333333333333333333333", contract, 1_500_000n),
       () => sendDepositResourceTransaction(walletProvider, account, contract, "7", 0, 1_500_000n),
-      () => sendRequestResourceWithdrawalTransaction(walletProvider, account, contract, "7", 1, 2_000_000n),
-      () => sendFinishResourceWithdrawalTransaction(walletProvider, account, contract, 1),
     ];
 
     for (let index = 0; index < submissions.length; index += 1) {

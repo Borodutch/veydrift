@@ -12119,7 +12119,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
-    function testRiftDepositAndLegacyWithdrawalIsDisabled() public {
+    function testRiftDepositWorksAndTheRetiredWithdrawalIsGone() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
@@ -12134,33 +12134,22 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(planetId).resources.metal, 1_100);
         assertEq(metalToken.balanceOf(player), 900);
 
-        vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.LegacyWithdrawalDisabled.selector);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 50);
+        // The retired 30-day market withdrawal has no entry point left: request nor finish.
+        vm.startPrank(player);
+        (bool requested,) = address(game)
+            .call(
+                abi.encodeWithSignature(
+                    "requestMarketResourceWithdrawal(uint256,uint8,uint128)", planetId, 0, 50
+                )
+            );
+        (bool finished,) =
+            address(game).call(abi.encodeWithSignature("finishMarketResourceWithdrawal(uint8)", 0));
+        vm.stopPrank();
+        assertFalse(requested);
+        assertFalse(finished);
         (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
         assertFalse(active);
         assertEq(game.planet(planetId).resources.metal, 1_100);
-    }
-
-    function testGrandfatheredLegacyWithdrawalRemainsFinishable() public {
-        vm.prank(player);
-        uint256 planetId = game.startPlanet{value: 0.05 ether}();
-        uint128 amount = 50;
-
-        bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
-        bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
-        vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
-        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 1), bytes32(planetId));
-        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 2), bytes32(uint256(amount) << 8));
-        vm.store(address(game), bytes32(uint256(16)), bytes32(uint256(amount)));
-        metalToken.mint(address(game), amount);
-
-        vm.prank(player);
-        game.finishMarketResourceWithdrawal(Resource.Metal);
-
-        (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
-        assertFalse(active);
-        assertEq(metalToken.balanceOf(player), amount);
     }
 
     function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {

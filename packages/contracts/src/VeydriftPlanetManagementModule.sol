@@ -263,42 +263,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _creditResources(planetId, resourceAmount);
     }
 
-    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
-        external
-        pure
-    {
-        planetId;
-        resource;
-        amount;
-        revert LegacyWithdrawalDisabled();
-    }
-
-    function finishMarketResourceWithdrawal(Resource resource) external {
-        ResourceWithdrawal memory withdrawal = resourceWithdrawals[_actingPlayer()][resource];
-        if (!withdrawal.active) revert WithdrawalInactive(resource);
-        _settleDueCombatArrivals(_actingPlayer());
-        _requireNoPendingMissionResolutionForPlanet(withdrawal.planetId);
-        if (_currentTimestamp() < withdrawal.unlocksAt) {
-            revert WithdrawalNotReady(withdrawal.unlocksAt);
-        }
-
-        delete resourceWithdrawals[_actingPlayer()][resource];
-        Resources memory amount = _resourceAmount(resource, withdrawal.amount);
-        _lockedWithdrawalResources = Resources({
-            metal: _lockedWithdrawalResources.metal - amount.metal,
-            crystal: _lockedWithdrawalResources.crystal - amount.crystal,
-            deuterium: _lockedWithdrawalResources.deuterium - amount.deuterium
-        });
-        if (!_requireReserveResource(resource).transfer(_actingPlayer(), withdrawal.amount)) {
-            revert ResourceTransferFailed(
-                resource, address(_resourceTokens[resource]), withdrawal.amount
-            );
-        }
-        emit MarketResourceWithdrawalFinished(
-            _actingPlayer(), withdrawal.planetId, resource, withdrawal.amount
-        );
-    }
-
     function protectedResources(uint256 planetId) external view returns (Resources memory) {
         return _protectedResources(planetId);
     }

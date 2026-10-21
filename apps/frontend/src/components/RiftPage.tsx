@@ -741,7 +741,8 @@ function RiftClaims({
   riftState,
   transactionUnavailableReason,
 }: RiftPageProps & { riftState: ChainRiftState }) {
-  const claims = [...riftState.pendingWithdrawals].sort((left, right) =>
+  // Retired market withdrawals can no longer be created or finished; only Rift locks are listed.
+  const claims = riftState.pendingWithdrawals.filter((claim) => claim.kind !== "legacyMarketWithdrawal").sort((left, right) =>
     Number(right.planetId === riftState.homePlanetId) - Number(left.planetId === riftState.homePlanetId)
       || Date.parse(left.unlocksAt) - Date.parse(right.unlocksAt));
   return (
@@ -795,7 +796,6 @@ function ClaimCard({
 }) {
   const style = resourceStyles[claim.resource];
   const ready = isWithdrawalReady(claim, now);
-  const legacy = claim.kind === "legacyMarketWithdrawal";
   const started = toUnits(claim.startedAmount ?? claim.amount);
   const surviving = toUnits(claim.amount);
   const raided = started > surviving ? started - surviving : 0n;
@@ -824,23 +824,21 @@ function ClaimCard({
         value={riftLockProgress(claim, now)}
       />
       <p className="text-xs leading-5 text-slate-400">
-        {legacy ? "Retired 30-day withdrawal" : `Started ${formatUnlock(claim.requestedAt)}`} · Unlocks {formatUnlock(claim.unlocksAt)}
+        Started {formatUnlock(claim.requestedAt)} · Unlocks {formatUnlock(claim.unlocksAt)}
       </p>
-      {legacy ? null : (
-        <p className="flex items-start gap-2 text-xs leading-5 text-slate-300">
-          <Crosshair aria-hidden="true" className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${ready ? "text-slate-500" : "text-rose-300"}`} />
-          <span>
-            {ready
-              ? "Raiders can still take it until you finalize."
-              : `${formatIntegerAmount(claim.amount)} ${style.label} is open to every raider.`}
-            {raided > 0n ? ` Raids took ${formatIntegerAmount(raided.toString())} (${percentOf(raided, started)}).` : ""}
-          </span>
-        </p>
-      )}
+      <p className="flex items-start gap-2 text-xs leading-5 text-slate-300">
+        <Crosshair aria-hidden="true" className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${ready ? "text-slate-500" : "text-rose-300"}`} />
+        <span>
+          {ready
+            ? "Raiders can still take it until you finalize."
+            : `${formatIntegerAmount(claim.amount)} ${style.label} is open to every raider.`}
+          {raided > 0n ? ` Raids took ${formatIntegerAmount(raided.toString())} (${percentOf(raided, started)}).` : ""}
+        </span>
+      </p>
       <div className="grid gap-1">
         <button className={ready ? emeraldButton : quietButton} disabled={!ready || !canTransact} onClick={onFinish} type="button">
           <ArrowUpFromLine aria-hidden="true" className="h-4 w-4" />
-          {legacy ? "Finish withdrawal" : `Finalize and receive ${formatRiftTokens(claim.amount)} ${style.symbol}`}
+          Finalize and receive {formatRiftTokens(claim.amount)} {style.symbol}
         </button>
         <ActionReasonNote reason={blocker} />
       </div>
