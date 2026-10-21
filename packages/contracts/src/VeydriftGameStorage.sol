@@ -526,7 +526,6 @@ abstract contract VeydriftGameStorage is Initializable {
     error ResourceTokenNotConfigured(Resource resource);
     error LegacyWithdrawalDisabled();
     error WithdrawalActive(Resource resource);
-    error WithdrawalInactive(Resource resource);
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
