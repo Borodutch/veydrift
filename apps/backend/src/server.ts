@@ -3412,17 +3412,15 @@ function withMigrationSnapshotFields<T extends object>(
   };
 }
 
-// A claim whose signed id another planet took imports under a fresh id (#155), so a home planet
-// on the reserved coordinates counts as the claim too.
+// A claim imports under a fresh id (#155), so only a home planet on the reserved coordinates counts
+// as the claim. A bare id match can't: the signed id may belong to a planet the wallet started.
 function migrationReservationClaimedByBody(body: object, reservation: MigrationReservedPlanet): boolean {
   const { homePlanetId, planet } = body as { homePlanetId?: unknown; planet?: Partial<PlanetState> | null };
   if (typeof homePlanetId !== "string") return false;
-  return reservation.planetId === homePlanetId || (
-    planet?.planetId === homePlanetId
+  return planet?.planetId === homePlanetId
     && planet.galaxy === reservation.galaxy
     && planet.system === reservation.system
-    && planet.position === reservation.position
-  );
+    && planet.position === reservation.position;
 }
 
 function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
