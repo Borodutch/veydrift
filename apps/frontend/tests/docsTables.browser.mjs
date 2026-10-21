@@ -81,8 +81,12 @@ test("docs tables never overflow and keep full addresses from phone to desktop w
     }
   } finally {
     for (const { timer } of pending.values()) clearTimeout(timer);
-    chrome?.kill();
+    if (chrome && chrome.exitCode === null) {
+      const exited = new Promise(resolve => chrome.once("exit", resolve));
+      chrome.kill();
+      await exited;
+    }
     await server.close();
-    rmSync(profile, { recursive: true, force: true });
+    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
