@@ -1274,6 +1274,166 @@ contract VeydriftGameTest is Test {
         assertTrue(claimed);
     }
 
+    function _reserveMigration(
+        VeydriftMigrationSettlement migration,
+        address who,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
+    ) internal {
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = who;
+        galaxies[0] = galaxy;
+        systems[0] = system;
+        positions[0] = position;
+        fields[0] = 211;
+        temperatures[0] = -14;
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
+    }
+
+    function testMigrationClaimMovesATakenColonyIdAndRejectsADuplicateId() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+        address other = address(0xD2E);
+        vm.deal(other, 1 ether);
+        vm.prank(other);
+        uint256 takenId = game.startPlanet{value: 0.05 ether}();
+        _reserveMigration(migration, player, 2, 99, 7);
+
+        (bytes memory single,) = _signedMigrationPayload(migration, signerKey, player, 42);
+        VeydriftStateMigrationModule.MigrationPlayerState memory state =
+            abi.decode(single, (VeydriftStateMigrationModule.MigrationPlayerState));
+        VeydriftStateMigrationModule.MigrationPlanetState[] memory planets =
+            new VeydriftStateMigrationModule.MigrationPlanetState[](2);
+        planets[0] = state.planets[0];
+        planets[1] = abi.decode(
+            abi.encode(state.planets[0]), (VeydriftStateMigrationModule.MigrationPlanetState)
+        );
+        planets[1].position = 8;
+        planets[1].name = "Migrated Colony";
+        planets[1].hasMoon = false;
+        state.planets = planets;
+        vm.deal(player, 1 ether);
+
+        // Two planets naming one id would import both under fresh ids; the payload is rejected.
+        planets[1].planetId = 42;
+        bytes memory payload = abi.encode(state);
+        bytes memory signature = _migrationSignature(migration, signerKey, player, payload);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.InvalidId.selector);
+        migration.claim{value: 0.05 ether}(payload, signature);
+
+        planets[1].planetId = takenId;
+        payload = abi.encode(state);
+        signature = _migrationSignature(migration, signerKey, player, payload);
+        vm.prank(player);
+        migration.claim{value: 0.05 ether}(payload, signature);
+
+        assertEq(game.homePlanetOf(player), 42);
+        assertEq(game.planetCountOf(player), 2);
+        assertEq(game.nextPlanetId(), 44);
+        assertEq(game.planet(takenId).owner, other);
+        assertEq(game.planet(43).owner, player);
+        assertEq(game.planet(43).position, 8);
+        assertEq(game.planetNames(43), "Migrated Colony");
+        assertEq(game.shipCount(43, Ship.SmallCargo), 123);
+        assertEq(game.planet(42).position, 7);
+        assertEq(moons.moon(42).owner, player);
+        assertFalse(moons.moon(43).exists);
+    }
+
+    function testMigrationClaimNeverReusesAnAbandonedId() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+
+        // `other` started by accident and then migrated, which leaves the started id ownerless
+        // with whatever per-planet state it held; a later import must not land on it.
+        address other = address(0xD2E);
+        vm.deal(other, 1 ether);
+        vm.prank(other);
+        uint256 abandonedId = game.startPlanet{value: 0.05 ether}();
+        _reserveMigration(migration, other, 2, 98, 7);
+        (bytes memory otherPayload, bytes memory otherSignature) =
+            _signedMigrationPayload(migration, signerKey, other, 42);
+        vm.prank(other);
+        migration.claim{value: 0.05 ether}(otherPayload, otherSignature);
+        assertEq(game.planet(abandonedId).owner, address(0));
+        assertEq(game.homePlanetOf(other), 42);
+
+        _reserveMigration(migration, player, 2, 99, 7);
+        (bytes memory payload, bytes memory signature) =
+            _signedMigrationPayload(migration, signerKey, player, abandonedId);
+        vm.deal(player, 1 ether);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit VeydriftStateMigrationModule.MigratedPlanetIdReassigned(player, abandonedId, 43);
+        vm.prank(player);
+        migration.claim{value: 0.05 ether}(payload, signature);
+
+        assertEq(game.homePlanetOf(player), 43);
+        assertEq(game.planet(abandonedId).owner, address(0));
+        assertEq(game.planet(43).owner, player);
+        assertEq(moons.moon(43).owner, player);
+        assertEq(moons.moon(42).owner, other);
+    }
+
+    function testMigrationReferralBonusLandsOnTheReassignedHome() public {
+        address invitee = address(0xCAFE728);
+        string memory code = "farcaster-start";
+        bytes32 commitment = referralSystem.referralCommitment(player, keccak256(bytes(code)));
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        vm.deal(invitee, 1 ether);
+        uint256 migrationSignerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(migrationSignerKey));
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        uint256 takenId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(code);
+        _reserveMigration(migration, invitee, 2, 99, 7);
+
+        (bytes memory payload,) =
+            _signedMigrationPayload(migration, migrationSignerKey, invitee, takenId);
+        VeydriftStateMigrationModule.MigrationPlayerState memory state =
+            abi.decode(payload, (VeydriftStateMigrationModule.MigrationPlayerState));
+        state.planets[0].resources =
+            VeydriftGameStorage.Resources({metal: 500, crystal: 500, deuterium: 0});
+        payload = abi.encode(state);
+        bytes memory migrationSignature =
+            _migrationSignature(migration, migrationSignerKey, invitee, payload);
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        uint256 freshId = game.nextPlanetId();
+
+        vm.prank(invitee);
+        migration.claimWithReferral{value: 0.05 ether}(
+            payload, migrationSignature, commitment, v, r, s
+        );
+
+        assertEq(game.homePlanetOf(invitee), freshId);
+        assertEq(game.planet(freshId).resources.metal, 1_000);
+        assertEq(game.planet(freshId).resources.crystal, 1_000);
+        assertEq(game.planet(takenId).owner, player);
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
+    }
+
     function testMigrationOwnerCanClaimForAccidentalStartedPlayer() public {
         VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
         vm.prank(admin);

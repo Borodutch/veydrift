@@ -6378,7 +6378,10 @@ function migrationReservationPayloadForWallet(
   const reservation = migrationReservedPlanetsForWallet(wallet)[0];
   if (!reservation) return null;
   const claimed = Boolean(settlement && migrationReservationClaimedByBody(settlement, reservation));
-  return { ...reservation, exists: true, claimed };
+  if (!claimed) return { ...reservation, exists: true, claimed };
+  // The claim may have imported under a fresh id; report the planet it actually became.
+  const homePlanetId = (settlement as { homePlanetId: string }).homePlanetId;
+  return { ...reservation, planetId: homePlanetId, exists: true, claimed };
 }
 
 function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {

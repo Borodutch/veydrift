@@ -2904,7 +2904,7 @@ describe("Veydrift backend", () => {
   });
 
   test("treats a migration claim imported under a fresh id on the reserved coordinates as claimed", async () => {
-    // #155: the signed id 26 was taken by another planet, so the import moved the claim to id 7.
+    // #155: the signed id 26 was already issued, so the import moved the claim to id 7.
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
         throw new Error("warm settlement claim should not call chain reader");
@@ -2946,7 +2946,7 @@ describe("Veydrift backend", () => {
         expect(response.status).toBe(200);
         const body = await response.json() as Record<string, unknown>;
         expect(body.migrationClaim).toBeUndefined();
-        expect(body.migrationReservation).toMatchObject({ exists: true, claimed: true, planetId: "26" });
+        expect(body.migrationReservation).toMatchObject({ exists: true, claimed: true, planetId: "7" });
       }
     } finally {
       if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;

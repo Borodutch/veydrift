@@ -212,7 +212,7 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         if (homePlanetOf[player] != 0) {
             _discardSingleStartedPlanetBeforeMigration(player);
         }
-        _reassignTakenPlanetIds(player, state);
+        _reassignIssuedPlanetIds(player, state);
 
         if (referred) {
             _applyReferralStartingBonus(state);
@@ -266,12 +266,21 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     }
 
     /// @dev Snapshot ids were signed while the sequence was still below them, so a planet started
-    ///      since can own a pending claim's id (#155). The claim's coordinates stay reserved for
-    ///      its player; only the id moves, to a fresh one past every id the payload names.
-    function _reassignTakenPlanetIds(address player, MigrationPlayerState memory state) private {
+    ///      since can own a pending claim's id, or have owned it and been abandoned with its moon
+    ///      and other per-planet state still attached (#155). An id the sequence has passed is
+    ///      never reused: the claim's coordinates stay reserved for its player and the planet
+    ///      imports under a fresh id past every id the payload names.
+    function _reassignIssuedPlanetIds(address player, MigrationPlayerState memory state) private {
+        uint256 issuedBefore = nextPlanetId;
         uint256 count = state.planets.length;
         for (uint256 i = 0; i < count;) {
             uint256 planetId = state.planets[i].planetId;
+            for (uint256 j = 0; j < i;) {
+                if (state.planets[j].planetId == planetId) revert InvalidId();
+                unchecked {
+                    ++j;
+                }
+            }
             if (planetId >= nextPlanetId) nextPlanetId = planetId + 1;
             unchecked {
                 ++i;
@@ -279,7 +288,7 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
         for (uint256 i = 0; i < count;) {
             uint256 planetId = state.planets[i].planetId;
-            if (planetId != 0 && _planets[planetId].owner != address(0)) {
+            if (planetId != 0 && planetId < issuedBefore) {
                 uint256 freshId = nextPlanetId++;
                 state.planets[i].planetId = freshId;
                 if (state.homePlanetId == planetId) state.homePlanetId = freshId;

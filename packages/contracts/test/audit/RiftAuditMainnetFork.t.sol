@@ -47,6 +47,10 @@ interface IRiftFork {
 interface IOwnedFork {
     function owner() external view returns (address);
     function setStateSigner(address nextSigner) external;
+    function migrationReservation(address player)
+        external
+        view
+        returns (bool, bool, uint16, uint16, uint8, uint16, int16);
 }
 
 interface IAllianceFork {
@@ -583,17 +587,21 @@ contract RiftAuditMainnetForkTest is Test {
             assertEq(state.planets.length, 1);
             M.MigrationPlanetState memory signed = state.planets[0];
             address idOwner = GAME.planet(signed.planetId).owner;
+            (bool reserved,, uint16 galaxy, uint16 system, uint8 position,,) =
+                IOwnedFork(MIGRATION_SETTLEMENT).migrationReservation(players[i]);
+            assertTrue(reserved);
+            assertEq(galaxy, signed.galaxy);
+            assertEq(system, signed.system);
+            assertEq(position, signed.position);
 
             (bool ok,) = _claimLive(players[i], payloads[i], signatures[i]);
             assertTrue(ok, "claim settles");
 
             uint256 home = GAME.homePlanetOf(players[i]);
-            if (idOwner == address(0)) {
-                assertEq(home, signed.planetId, "a free id is kept");
-            } else {
-                assertEq(home, freshId++, "a taken id moves to the next fresh id");
-                assertEq(GAME.planet(signed.planetId).owner, idOwner, "the id's owner keeps it");
-            }
+            // Every snapshot id is below the live sequence, so each import takes the next fresh id,
+            // 581 (never issued) included, and an issued id stays with whoever holds it.
+            assertEq(home, freshId++, "the import moves to the next fresh id");
+            assertEq(GAME.planet(signed.planetId).owner, idOwner, "the id's owner keeps it");
             S.Planet memory planet = GAME.planet(home);
             assertEq(planet.owner, players[i]);
             assertEq(planet.galaxy, signed.galaxy);

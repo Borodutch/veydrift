@@ -565,17 +565,20 @@ contract RiftAuditRegressionsTest is Test {
         assertEq(game.buildingLevel(colony, Building.InterdimensionalRiftStabilizer), 1);
 
         // Before the fix the importer of the reused id got a Stabilizer it never built and a
-        // stale `active` record that blocked its own Metal extraction.
+        // stale `active` record that blocked its own Metal extraction. Since #155 an import never
+        // reuses an issued id: it lands on a fresh one with none of that state.
         vm.prank(admin);
         game.setMigrationSettlement(address(this));
+        uint256 imported = game.nextPlanetId();
         _import(stranger, colony);
-        assertEq(game.planet(colony).owner, stranger);
-        assertEq(game.buildingLevel(colony, Building.InterdimensionalRiftStabilizer), 0);
-        (bool active,,) = _extraction(colony, Resource.Metal);
+        assertEq(game.planet(colony).owner, address(0));
+        assertEq(game.homePlanetOf(stranger), imported);
+        assertEq(game.buildingLevel(imported, Building.InterdimensionalRiftStabilizer), 0);
+        (bool active,,) = _extraction(imported, Resource.Metal);
         assertFalse(active);
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(S.RiftStabilizerRequired.selector, colony));
-        game.depositMarketResource(colony, Resource.Metal, 1);
+        vm.expectRevert(abi.encodeWithSelector(S.RiftStabilizerRequired.selector, imported));
+        game.depositMarketResource(imported, Resource.Metal, 1);
     }
 
     // ------------------- L2: migration discard must not orphan or hand over a live Rift lock
@@ -886,10 +889,12 @@ contract RiftAuditRegressionsTest is Test {
 
         vm.prank(admin);
         game.setMigrationSettlement(address(this));
+        uint256 imported = game.nextPlanetId();
         _import(stranger, colony);
-        assertEq(game.planet(colony).owner, stranger);
-        assertEq(game.buildingLevel(colony, Building.MetalMine), 0);
-        assertEq(game.shipCount(colony, Ship.LargeCargo), 0);
-        assertEq(game.defenseCount(colony, Defense.RocketLauncher), 0);
+        assertEq(game.planet(colony).owner, address(0));
+        assertEq(game.homePlanetOf(stranger), imported);
+        assertEq(game.buildingLevel(imported, Building.MetalMine), 0);
+        assertEq(game.shipCount(imported, Ship.LargeCargo), 0);
+        assertEq(game.defenseCount(imported, Defense.RocketLauncher), 0);
     }
 }
