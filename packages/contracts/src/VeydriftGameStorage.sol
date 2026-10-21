@@ -525,7 +525,6 @@ abstract contract VeydriftGameStorage is Initializable {
     error RiftExtractionInactive(uint256 planetId, Resource resource);
     error ResourceTokenNotConfigured(Resource resource);
     error LegacyWithdrawalDisabled();
-    error WithdrawalActive(Resource resource);
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
