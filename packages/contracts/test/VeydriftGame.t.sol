@@ -12152,6 +12152,33 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(planetId).resources.metal, 1_100);
     }
 
+    function testLegacyWithdrawalFinishIsRemoved() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        uint128 amount = 50;
+
+        // Seed an active pre-upgrade claim directly: even with one in storage, the removed
+        // `finishMarketResourceWithdrawal(uint8)` selector must not pay it out.
+        bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
+        bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
+        vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
+        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 1), bytes32(planetId));
+        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 2), bytes32(uint256(amount) << 8));
+        vm.store(address(game), bytes32(uint256(16)), bytes32(uint256(amount)));
+        metalToken.mint(address(game), amount);
+
+        vm.prank(player);
+        (bool ok, bytes memory result) =
+            address(game).call(abi.encodeWithSelector(0xde0f208c, uint8(Resource.Metal)));
+        assertFalse(ok);
+        assertEq(result.length, 0);
+
+        (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
+        assertTrue(active);
+        assertEq(metalToken.balanceOf(player), 0);
+        assertEq(game.lockedWithdrawalResources().metal, amount);
+    }
+
     function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

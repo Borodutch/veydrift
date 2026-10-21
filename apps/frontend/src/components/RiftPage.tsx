@@ -228,8 +228,8 @@ function RiftWorkbench({
   const input = inputs[`${mode}:${resource.key}`] ?? "";
   const setInput = (value: string) => setInputs((current) => ({ ...current, [`${mode}:${resource.key}`]: value }));
   const wallet = tokenWallet.data?.[resource.key];
-  const activeClaim = riftState.pendingWithdrawals.find((claim) => claim.kind !== "legacyMarketWithdrawal"
-    && claim.planetId === riftState.homePlanetId && claim.resource === resource.key);
+  const activeClaim = riftState.pendingWithdrawals.find((claim) => claim.planetId === riftState.homePlanetId
+    && claim.resource === resource.key);
   const delegated = Boolean(signerAccount && account && signerAccount.toLowerCase() !== account.toLowerCase());
 
   const check = mode === "inject"
@@ -741,8 +741,7 @@ function RiftClaims({
   riftState,
   transactionUnavailableReason,
 }: RiftPageProps & { riftState: ChainRiftState }) {
-  // Retired market withdrawals can no longer be created or finished; only Rift locks are listed.
-  const claims = riftState.pendingWithdrawals.filter((claim) => claim.kind !== "legacyMarketWithdrawal").sort((left, right) =>
+  const claims = [...riftState.pendingWithdrawals].sort((left, right) =>
     Number(right.planetId === riftState.homePlanetId) - Number(left.planetId === riftState.homePlanetId)
       || Date.parse(left.unlocksAt) - Date.parse(right.unlocksAt));
   return (

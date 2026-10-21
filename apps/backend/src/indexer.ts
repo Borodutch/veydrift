@@ -626,14 +626,6 @@ type RiftBalanceRow = {
   resource_id: number;
 };
 
-type PendingWithdrawalRow = {
-  amount: string;
-  planet_id: string;
-  resource_id: number;
-  unlocks_at: string;
-  withdrawal_key: string;
-};
-
 type RiftExtractionRow = {
   owner: string;
   planet_id: string;
@@ -4783,10 +4775,9 @@ export class SettlementIndexer {
     const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
     // Claims on every planet of the wallet, so one page can finalize them all; the
     // per-resource locked balance stays scoped to the selected planet.
-    const pending = this.pendingWithdrawals(wallet);
     const extractions = this.riftExtractions(wallet);
     const lockedByResource = new Map<number, bigint>();
-    for (const row of [...pending, ...extractions]) {
+    for (const row of extractions) {
       if (row.planet_id !== planetId) continue;
       lockedByResource.set(row.resource_id, (lockedByResource.get(row.resource_id) ?? 0n) + BigInt(row.amount));
     }
@@ -4819,19 +4810,9 @@ export class SettlementIndexer {
         };
       }),
       pendingWithdrawals: [
-        ...pending.map((row) => riftPendingWithdrawal(
-          row.withdrawal_key,
-          "legacyMarketWithdrawal",
-          row.planet_id,
-          row.resource_id,
-          row.amount,
-          "0",
-          row.unlocks_at
-        )),
         ...extractions.map((extraction) => ({
           ...riftPendingWithdrawal(
             `extraction:${extraction.planet_id}:${extraction.resource_id}`,
-            "riftExtraction",
             extraction.planet_id,
             extraction.resource_id,
             extraction.amount,
@@ -6801,15 +6782,6 @@ export class SettlementIndexer {
         locked_balance TEXT NOT NULL,
         PRIMARY KEY (owner, planet_id, resource_id)
       );
-      CREATE TABLE IF NOT EXISTS indexed_rift_withdrawals (
-        withdrawal_key TEXT PRIMARY KEY,
-        owner TEXT NOT NULL,
-        planet_id TEXT NOT NULL,
-        resource_id INTEGER NOT NULL,
-        amount TEXT NOT NULL,
-        unlocks_at TEXT NOT NULL,
-        event_json TEXT NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS indexed_rift_extractions (
         owner TEXT NOT NULL,
         planet_id TEXT NOT NULL,
@@ -8425,7 +8397,6 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_moons").run();
     this.db.query("DELETE FROM indexed_moon_building_levels").run();
     this.db.query("DELETE FROM indexed_rift_balances").run();
-    this.db.query("DELETE FROM indexed_rift_withdrawals").run();
     this.db.query("DELETE FROM indexed_rift_extractions").run();
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
@@ -11631,27 +11602,7 @@ export class SettlementIndexer {
     const current = this.riftBalance(owner, event.planetId, event.resourceId);
     const inGameBalance = BigInt(current?.in_game_balance ?? "0");
     const lockedBalance = BigInt(current?.locked_balance ?? "0");
-    const amount = BigInt(event.amount);
-
-    if (event.eventName === "MarketResourceDeposited") {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance + amount, lockedBalance);
-    } else if (event.eventName === "MarketResourceWithdrawalRequested") {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, subtractNonNegative(inGameBalance, amount), lockedBalance + amount);
-      this.db.query(`
-        INSERT INTO indexed_rift_withdrawals (withdrawal_key, owner, planet_id, resource_id, amount, unlocks_at, event_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(withdrawal_key) DO UPDATE SET
-          amount = excluded.amount,
-          unlocks_at = excluded.unlocks_at,
-          event_json = excluded.event_json
-      `).run(riftWithdrawalKey(event), owner, event.planetId, event.resourceId, event.amount, event.unlocksAt ?? "0", JSON.stringify(event));
-    } else {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance, subtractNonNegative(lockedBalance, amount));
-      this.db.query(`
-        DELETE FROM indexed_rift_withdrawals
-        WHERE owner = ? AND planet_id = ? AND resource_id = ? AND amount = ?
-      `).run(owner, event.planetId, event.resourceId, event.amount);
-    }
+    this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance + BigInt(event.amount), lockedBalance);
     this.touch();
   }
 
@@ -12959,9 +12910,7 @@ export class SettlementIndexer {
           category: "rift",
           kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
           direction: "personal",
-          title: event.eventName === "MarketResourceDeposited"
-            ? "Tokens injected through the Rift"
-            : humanizeContractName(event.eventName.replace(/^MarketResource/, "Rift ")),
+          title: "Tokens injected through the Rift",
           detail: riftActivityDetail(event.planetId, riftAmounts(event.resourceId, event.amount)),
           occurredAt: transactionAt,
           metadata: activityPrimitiveMetadata(event)
@@ -13209,15 +13158,6 @@ export class SettlementIndexer {
         in_game_balance = excluded.in_game_balance,
         locked_balance = excluded.locked_balance
     `).run(owner, planetId, resourceId, inGameBalance.toString(), lockedBalance.toString());
-  }
-
-  private pendingWithdrawals(wallet: `0x${string}`): PendingWithdrawalRow[] {
-    return this.db.query(`
-      SELECT withdrawal_key, planet_id, resource_id, amount, unlocks_at
-      FROM indexed_rift_withdrawals
-      WHERE owner = lower(?)
-      ORDER BY CAST(unlocks_at AS INTEGER) ASC
-    `).all(wallet) as PendingWithdrawalRow[];
   }
 
   private riftExtractions(wallet: `0x${string}`): RiftExtractionRow[] {
@@ -16830,17 +16770,10 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
-  return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
-}
-
 const riftHistoryKinds: Record<string, RiftHistoryEntry["kind"]> = {
   "market-resource-deposited": "injected",
   "rift-extraction-started": "extractionStarted",
-  "rift-extraction-finalized": "extracted",
-  // Retired 30-day withdrawals read as the same lifecycle.
-  "market-resource-withdrawal-requested": "extractionStarted",
-  "market-resource-withdrawal-finished": "extracted"
+  "rift-extraction-finalized": "extracted"
 };
 
 function riftAmounts(resourceId: unknown, amount: string): Resources {
@@ -16882,7 +16815,6 @@ function riftHistoryEntry(activity: PlayerActivityItem): RiftHistoryEntry | null
 
 function riftPendingWithdrawal(
   id: string,
-  kind: "riftExtraction" | "legacyMarketWithdrawal",
   planetId: string,
   resourceId: number,
   amount: string,
@@ -16893,7 +16825,7 @@ function riftPendingWithdrawal(
   const unlocksAtSeconds = BigInt(unlocksAt);
   return {
     id,
-    kind,
+    kind: "riftExtraction" as const,
     planetId,
     resource: riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key ?? "metal",
     amount,

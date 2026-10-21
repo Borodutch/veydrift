@@ -1131,7 +1131,7 @@ export type RiftResourceState = {
 
 export type PendingWithdrawal = {
   id: string;
-  kind?: "riftExtraction" | "legacyMarketWithdrawal";
+  kind?: "riftExtraction";
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;

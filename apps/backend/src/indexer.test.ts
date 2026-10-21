@@ -48,8 +48,6 @@ const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd31
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
 const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
-const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
-const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
 const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
@@ -7266,7 +7264,7 @@ describe("SettlementIndexer", () => {
     database.close();
   });
 
-  test("indexes rift deposits and withdrawal lifecycle", () => {
+  test("indexes rift deposits", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -7296,57 +7294,11 @@ describe("SettlementIndexer", () => {
       ],
       data: abiWords(1000n)
     });
-    indexer.applyLog({
-      blockNumber: "0x8c",
-      transactionHash: "0xwithdraw",
-      logIndex: "0x0",
-      topics: [
-        marketResourceWithdrawalRequestedTopic,
-        addressTopic(player),
-        topic(7n),
-        topic(0n)
-      ],
-      data: abiWords(250n, 1770500000n)
-    });
-
-    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
-      unlocked: true,
-      resources: expect.arrayContaining([
-        expect.objectContaining({
-          key: "metal",
-          inGameBalance: "750",
-          lockedBalance: "250"
-        })
-      ]),
-      pendingWithdrawals: [
-        expect.objectContaining({
-          kind: "legacyMarketWithdrawal",
-          planetId: "7",
-          amount: "250",
-          resource: "metal",
-          unlocksAt: "2026-02-07T21:33:20.000Z"
-        })
-      ]
-    });
-
-    indexer.applyLog({
-      blockNumber: "0x8d",
-      transactionHash: "0xfinishwithdraw",
-      logIndex: "0x0",
-      topics: [
-        marketResourceWithdrawalFinishedTopic,
-        addressTopic(player),
-        topic(7n),
-        topic(0n)
-      ],
-      data: abiWords(250n)
-    });
-
     expect(indexer.riftState(player, planet.planetId)).toMatchObject({
       resources: expect.arrayContaining([
         expect.objectContaining({
           key: "metal",
-          inGameBalance: "750",
+          inGameBalance: "1000",
           lockedBalance: "0"
         })
       ]),
