@@ -1,6 +1,6 @@
 import docsMarkdown from "./content/docs.md?raw";
 
-export type DocsPageSlug = "beginner" | "concepts" | "catalogs" | "formulas" | "mechanics";
+export type DocsPageSlug = "beginner" | "concepts" | "catalogs" | "formulas" | "mechanics" | "contracts";
 
 export type DocsPageSource = {
   slug: DocsPageSlug;
@@ -44,6 +44,12 @@ const docsPageDefinitions: DocsPageDefinition[] = [
     title: "Action Mechanics",
     eyebrow: "Transactions",
     description: "What each transaction does and when its effects appear.",
+  },
+  {
+    slug: "contracts",
+    title: "Contracts And Tokens",
+    eyebrow: "On-chain",
+    description: "Every contract address and its owner, where $VEYDRIFT and the resource tokens are held, and the vesting schedules.",
   },
 ];
 

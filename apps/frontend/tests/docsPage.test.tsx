@@ -139,7 +139,10 @@ energy scale = produced / required
   });
 
   test("docs content covers the required source files and excludes prohibited public references", () => {
-    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics"]);
+    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics", "contracts"]);
+    // A top-level section without a page is shipped but never shown anywhere.
+    const sections = readFileSync(join(DOCS_CONTENT_ROOT, "docs.md"), "utf8").split(/\r?\n/).filter((line) => /^##\s/.test(line)).map((line) => line.replace(/^##\s+/, "").trim());
+    expect(sections.toSorted()).toEqual(docsPages.map((page) => page.title).toSorted());
     const docsFiles = collectDocsFiles();
     expect(docsFiles.map((file) => file.split("/").at(-1))).toEqual(["docs.md"]);
     for (const file of docsFiles) {

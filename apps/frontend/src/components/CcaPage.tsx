@@ -247,7 +247,7 @@ export function CcaApp() {
           35% goes to the auction and to liquidity, and the other 65% vests over four to six years. The contract is{" "}
           <a className="font-mono text-signal hover:underline" href="https://basescan.org/token/0x442E9Ba64899d6B0bD25DF2558d3E804427bF448" rel="noopener noreferrer" target="_blank">0x442E9Ba64899d6B0bD25DF2558d3E804427bF448</a>
           , and the{" "}
-          <a className="text-signal hover:underline" href="/docs#contracts-and-tokens">docs</a> list every holder and vesting wallet.
+          <a className="text-signal hover:underline" href="/docs/contracts">docs</a> list every holder and vesting wallet.
         </p>
         <div className="mt-6 flex h-3 overflow-hidden rounded-full" aria-hidden="true">
           {allocations.map((item) => (
