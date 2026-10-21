@@ -22,15 +22,23 @@ interface IVeydriftReserveGame {
 ///         The Game itself reverts unless its new-token balances already cover every liability.
 contract SwitchGameResourceTokens is Script {
     function run() external {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
+        // UPGRADE_DRY_RUN_OWNER = the Game owner's address plans the switch keylessly; never --broadcast it.
+        address rehearsal = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address owner = rehearsal;
+        if (rehearsal == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            owner = vm.addr(privateKey);
+        }
         IVeydriftReserveGame game =
             IVeydriftReserveGame(vm.envAddress("VEYDRIFT_GAME_CONTRACT_ADDRESS"));
         address metal = vm.envAddress("VEYDRIFT_METAL_TOKEN_ADDRESS");
         address crystal = vm.envAddress("VEYDRIFT_CRYSTAL_TOKEN_ADDRESS");
         address deuterium = vm.envAddress("VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS");
-        require(game.owner() == vm.addr(privateKey), "NOT_GAME_OWNER");
+        require(game.owner() == owner, "NOT_GAME_OWNER");
 
-        vm.startBroadcast(privateKey);
+        if (rehearsal != address(0)) vm.startBroadcast(rehearsal);
+        else vm.startBroadcast(privateKey);
         game.setResourceTokens(metal, crystal, deuterium);
         vm.stopBroadcast();
 

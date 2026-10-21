@@ -65,7 +65,7 @@ The central economic design is deliberately simple:
   \item \textbf{Extraction is a strategic event, not a passive yield claim.} A player advertising an exit creates a four-week target, an incentive to defend, and an opportunity for rivals. Security, intelligence, transport, and conflict become economic services.
 \end{itemize}
 
-Each resource token has 6 decimals and a fixed genesis supply of 10 billion whole tokens. Almost all supply begins in the game reserve. One whole token represents one million in-game resource units, so the reserve is backing capacity rather than circulating float.
+Each resource token has no decimals and a fixed genesis supply of 50 billion tokens, and one token represents one in-game resource unit. The game reserve holds 2 billion of each as backing capacity; the token treasury holds the rest for the resource pools and later reserve top-ups.
 
 \token{VEYDRIFT} has a fixed maximum supply of 1 billion tokens on Base mainnet. Most of the supply not reserved for development, contributors, Pact participants, and strategic uses enters circulation through an auction and protocol-owned liquidity. The launch bootstrap assigns 250 million \token{VEYDRIFT} to a continuous clearing auction and reserves 250 million for the post-auction \token{VEYDRIFT}/WETH pool. Before the auction, a 5\% Pact round sells 50 million \token{VEYDRIFT} at \$0.002 per token. The auction floor is \$0.0026 per \token{VEYDRIFT}, 30\% above the Pact price; it is a minimum accepted price, not the expected clearing price or a peg. The three resource pools are balanced at the floor against reference prices of \$1.50, \$2.25, and \$3.75 per \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}, encoding the initial $1:1.5:2.5$ scarcity ratio:
 
@@ -239,19 +239,13 @@ Defense losses create no debris. Debris persists at the coordinate, accumulates 
 \toprule
 \textbf{Asset} & \textbf{Symbol} & \textbf{Decimals} & \textbf{Fixed supply} \\
 \midrule
-Veydrift Metal & \token{vMETAL} & 6 & 10,000,000,000 \\
-Veydrift Crystal & \token{vCRYSTAL} & 6 & 10,000,000,000 \\
-Veydrift Deuterium & \token{vDEUT} & 6 & 10,000,000,000 \\
+Veydrift Metal & \token{vMETAL} & 0 & 50,000,000,000 \\
+Veydrift Crystal & \token{vCRYSTAL} & 0 & 50,000,000,000 \\
+Veydrift Deuterium & \token{vDEUT} & 0 & 50,000,000,000 \\
 \bottomrule
 \end{tabularx}
 
-The deployed token symbols are \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}. One whole external resource token equals 1,000,000 in-game resource units. The token quantity and the user-interface resource quantity must never be conflated:
-
-\begin{align*}
-1\ \token{vMETAL} &= 10^6\ \text{metal units}, &
-1\ \token{vCRYSTAL} &= 10^6\ \text{crystal units},\\
-1\ \token{vDEUT} &= 10^6\ \text{deuterium units}. &&
-\end{align*}
+The deployed token symbols are \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}. One external resource token equals one in-game resource unit, so a token amount and the matching in-game amount are the same number.
 
 \subsection{Reserve invariant}
 
@@ -265,11 +259,11 @@ The protocol blocks new internal issuance when the corresponding external reserv
 
 \subsection{Contract control and supply policy}
 
-Each resource token has a hard supply cap of 10 billion. Resource-market liquidity is released from provable excess reserve rather than created through additional minting. Supply policy follows three rules:
+Each resource token has a hard supply cap of 50 billion, minted once to the token treasury; the tokens have no owner, minter or proxy. Supply policy follows three rules:
 
 \begin{enumerate}
-  \item The initial AMM float is released from the existing 10-billion-token reserve only when the remaining reserve fully covers internal liabilities.
-  \item No additional resource tokens are minted for launch liquidity.
+  \item The game reserve always covers internal liabilities; the treasury tops it up with plain transfers.
+  \item No additional resource tokens are ever minted, for liquidity or anything else.
   \item Reserve, internal liability, locked exit, and circulating float are reported separately for each resource.
 \end{enumerate}
 
@@ -624,9 +618,9 @@ The result is a system in which markets can deepen play: builders bring demand, 
 \begin{tabularx}{\textwidth}{@{}p{0.24\textwidth}X@{}}
 \toprule
 Game contract & \address{0xf397910F005151b09644228573a4353818D3755d} \\
-Metal token & \address{0xbD87aa148f2586D1f1499C5370f8bd05ee147209} \\
-Crystal token & \address{0x6920c4C7c29C2b82869250B2e290A0fFfb02126c} \\
-Deuterium token & \address{0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28} \\
+Metal token & \address{0x078b4EC3E7681D1A658c32eb806872FBCD922CFc} \\
+Crystal token & \address{0x045627dc0b1A10289B53E23a5045aF7D470EF50f} \\
+Deuterium token & \address{0x99FF0a1e24c3171132912D4703dF2c67b4Da6698} \\
 \bottomrule
 \end{tabularx}
 

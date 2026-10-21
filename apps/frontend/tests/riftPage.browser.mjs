@@ -123,7 +123,7 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       await send("Emulation.setTouchEmulationEnabled", { enabled: mobile, maxTouchPoints: 1 });
       await send("Page.navigate", { url });
       // Wallet balances come from the (stubbed) Base RPC, not the game API.
-      await waitFor(`window.riftFixture && document.querySelector("#rift-amount") && document.body.innerText.includes("12.5 vMETAL")`, `${where}: Rift page did not render wallet balances`);
+      await waitFor(`window.riftFixture && document.querySelector("#rift-amount") && document.body.innerText.includes("12,500,000 vMETAL")`, `${where}: Rift page did not render wallet balances`);
       assert.equal(await evaluate("document.querySelector('#rift-title').textContent"), "Move resources between Aurora Prime and your wallet", where);
       assert.equal(await evaluate("document.documentElement.scrollWidth > innerWidth"), false, `${where}: horizontal overflow`);
       assert.equal(await evaluate("document.querySelector('label[for=\"rift-amount\"]').textContent"), "Amount of Metal", `${where}: amount input is labelled`);
@@ -134,7 +134,7 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       assert.equal(claims.length, 2, `${where}: ${JSON.stringify(claims)}`);
       assert.match(claims[0], /Metal[\s\S]*Aurora Prime[\s\S]*20d 0h[\s\S]*600,000 Metal is open to every raider\. Raids took 400,000 \(40%\)/, where);
       assert.match(claims[1], /Crystal[\s\S]*Kestrel Reach[\s\S]*Ready to finalize/, where);
-      assert.equal(await evaluate(`${button("Finalize and receive 0.6 vMETAL")}.disabled`), true, `${where}: a locked extraction cannot finalize`);
+      assert.equal(await evaluate(`${button("Finalize and receive 600,000 vMETAL")}.disabled`), true, `${where}: a locked extraction cannot finalize`);
       assert.match(await text(), /Unlocks in 20d 0h\./, where);
 
       // History defaults to this planet; "All planets" adds the colony and the player's own raid.
@@ -168,7 +168,7 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       assert.match(dialog, /Extract 25,000 Deuterium/, where);
       assert.match(dialog, /even through newbie, score and bashing protection/, where);
       assert.match(dialog, /can't be cancelled/, where);
-      assert.match(dialog, /If nobody raids it\s*0\.025 vDEUT/, where);
+      assert.match(dialog, /If nobody raids it\s*25,000 vDEUT/, where);
       assert.equal(await evaluate(`${buttonStarting("Start extraction")}.disabled`), true, `${where}: start needs the acknowledgement`);
       await screenshot(`rift-page-extract-dialog-${width}.png`, { viewport: true });
       await tap(`document.querySelector('[role="dialog"] input[type="checkbox"]')`, mobile);
@@ -180,26 +180,26 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
       // Inject: approve exactly the amount, then inject once the allowance reads back.
       await tap(buttonStarting("Inject into planet"), mobile);
       await tap(`document.querySelector('[aria-labelledby="rift-resource-label"]').querySelectorAll("button")[0]`, mobile);
-      await type("2.5");
-      assert.match(await text(), /You send\s*2\.5 vMETAL[\s\S]*Aurora Prime gets\s*\+2,500,000 Metal/, where);
+      await type("2500000");
+      assert.match(await text(), /You send\s*2,500,000 vMETAL[\s\S]*Aurora Prime gets\s*\+2,500,000 Metal/, where);
       assert.equal(await evaluate(`${button("Inject")}.disabled`), true, `${where}: inject waits for approval`);
       await tap(button("Approve"), mobile);
       assert.deepEqual((await calls()).approve, ["metal:2500000"], `${where}: approval is exact, never unlimited`);
       await waitFor(`${button("Approved")} && !${button("Inject")}.disabled`, `${where}: allowance was not re-read after approval`);
       await tap(button("Inject"), mobile);
       assert.deepEqual((await calls()).deposit, ["metal:2500000"], where);
-      await type("13");
-      assert.equal(await evaluate(`document.querySelector("#rift-amount-hint").textContent`), "Your wallet holds 12.5 vMETAL.", `${where}: insufficient balance`);
+      await type("12500001");
+      assert.equal(await evaluate(`document.querySelector("#rift-amount-hint").textContent`), "Your wallet holds 12,500,000 vMETAL.", `${where}: insufficient balance`);
       await tap(`document.querySelector('[aria-labelledby="rift-resource-label"]').querySelectorAll("button")[1]`, mobile);
       assert.match(await text(), /You have no vCRYSTAL yet\./, where);
       assert.equal(await evaluate(`${button("Max")}.disabled`), true, `${where}: nothing to inject`);
       await screenshot(`rift-page-inject-${width}.png`);
 
       // A ready extraction on another planet finalizes from here.
-      await tap(button("Finalize and receive 0.25 vCRYSTAL"), mobile);
+      await tap(button("Finalize and receive 250,000 vCRYSTAL"), mobile);
       assert.deepEqual((await calls()).finalize, ["extraction:2:1"], where);
       if (mobile) {
-        for (const label of ["Approve", "Max", "Finalize and receive 0.25 vCRYSTAL"]) {
+        for (const label of ["Approve", "Max", "Finalize and receive 250,000 vCRYSTAL"]) {
           const height = await evaluate(`${button(label)}.getBoundingClientRect().height`);
           assert.ok(height >= 40, `${where}: ${label} tap target ${height}px`);
         }

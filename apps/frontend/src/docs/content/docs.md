@@ -146,7 +146,7 @@ Attack protection prevents invalid or abusive launches. The mission screen shows
 
 ### The Rift
 
-The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under [Contracts And Tokens](https://veydrift.com/docs/contracts)). One whole token equals 1,000,000 units in the game, so extracting 500,000 Metal pays out 0.5 vMETAL.
+The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under [Contracts And Tokens](https://veydrift.com/docs/contracts)). One token equals one unit in the game, so extracting 500,000 Metal pays out 500,000 vMETAL.
 
 A planet uses the Rift once it has a Rift Stabilizer. The Stabilizer needs Robotics Factory 4, Research Lab 2, Energy Technology 5 and Hyperspace Technology 1, and every planet needs its own. Open the Rift page with that planet selected.
 
@@ -602,7 +602,7 @@ Jump Gate transfers require both origin and destination moons to have a Jump Gat
 
 ## Contracts And Tokens
 
-Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on October 20, 2026.
+Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on October 21, 2026.
 
 ### $VEYDRIFT
 
@@ -630,19 +630,18 @@ Unvested tokens cannot be moved by anyone. Once tokens vest, anyone can call `re
 
 ### Resource Tokens
 
-Metal, Crystal and Deuterium are ERC-20 tokens with a fixed supply of 10,000,000,000 each (6 decimals). Like $VEYDRIFT, they have no owner, no minter and no proxy. One whole token equals 1,000,000 units in the game, and every unit you hold in the game is backed by a token in the game contract's reserve.
+Metal, Crystal and Deuterium are ERC-20 tokens with a fixed supply of 50,000,000,000 each and no decimals. Like $VEYDRIFT, they have no owner, no minter and no proxy. One token equals one unit in the game, and every unit you hold in the game is backed by a token in the game contract's reserve.
 
 | Token | Address |
 | --- | --- |
-| vMETAL | [0xbD87aa148f2586D1f1499C5370f8bd05ee147209](https://basescan.org/token/0xbD87aa148f2586D1f1499C5370f8bd05ee147209) |
-| vCRYSTAL | [0x6920c4C7c29C2b82869250B2e290A0fFfb02126c](https://basescan.org/token/0x6920c4C7c29C2b82869250B2e290A0fFfb02126c) |
-| vDEUT | [0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28](https://basescan.org/token/0x9c8359E30A1fCE80Ff19907B898A12B5f0a30b28) |
+| vMETAL | [0x078b4EC3E7681D1A658c32eb806872FBCD922CFc](https://basescan.org/token/0x078b4EC3E7681D1A658c32eb806872FBCD922CFc) |
+| vCRYSTAL | [0x045627dc0b1A10289B53E23a5045aF7D470EF50f](https://basescan.org/token/0x045627dc0b1A10289B53E23a5045aF7D470EF50f) |
+| vDEUT | [0x99FF0a1e24c3171132912D4703dF2c67b4Da6698](https://basescan.org/token/0x99FF0a1e24c3171132912D4703dF2c67b4Da6698) |
 
 | Holder | Address | Of each token | Purpose |
 | --- | --- | --- | --- |
-| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 1,000,000 | Backs every resource in the game; players inject and extract tokens through the Rift |
-| Auction wallet (borodutch.eth) | [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE) | 1,000,000 | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT, added after the auction |
-| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 9,998,000,000 | Tops up the game's reserve as players produce more resources |
+| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 2,000,000,000 | Backs every resource in the game; players inject and extract tokens through the Rift |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 48,000,000,000 | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT, added after the auction; the rest tops up the game's reserve as players produce more resources |
 
 ### Game Contracts And Owners
 
