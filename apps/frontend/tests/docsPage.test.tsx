@@ -3,7 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DocsPage } from "../src/components/DocsPage";
-import { docsPageForSlug, docsPages, docsSlugFromPath } from "../src/docs/docsSource";
+import { docsMarkdownSource, docsPageForSlug, docsPages, docsSlugFromPath } from "../src/docs/docsSource";
 import { parseMarkdown } from "../src/docs/markdown";
 
 describe("Markdown-backed docs", () => {
@@ -139,7 +139,10 @@ energy scale = produced / required
   });
 
   test("docs content covers the required source files and excludes prohibited public references", () => {
-    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics"]);
+    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics", "contracts"]);
+    // A top-level section without a page is shipped but never shown anywhere.
+    const sections = docsMarkdownSource.split(/\r?\n/).filter((line) => /^##\s/.test(line)).map((line) => line.replace(/^##\s+/, "").trim());
+    expect(sections.toSorted()).toEqual(docsPages.map((page) => page.title).toSorted());
     const docsFiles = collectDocsFiles();
     expect(docsFiles.map((file) => file.split("/").at(-1))).toEqual(["docs.md"]);
     for (const file of docsFiles) {
