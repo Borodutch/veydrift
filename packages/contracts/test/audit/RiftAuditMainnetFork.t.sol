@@ -63,6 +63,10 @@ contract RiftAuditMainnetForkTest is Test {
 
     /// Last block before the 2026-10-20 Game upgrade that shipped #1958 (two-step delegation).
     uint256 internal constant PRE_CONSENT_BLOCK = 52_871_779;
+    /// Last blocks before the Game upgrades that shipped #1961 (this audit's fixes) and #1962
+    /// (fusion upkeep): the live replays of those findings run on the code they were found on.
+    uint256 internal constant PRE_AUDIT_FIX_BLOCK = 52_873_718;
+    uint256 internal constant PRE_FUSION_FIX_BLOCK = 52_878_339;
 
     /// The vMETAL the Game used at the forked block, so pinned and live forks both inject the right token.
     function _metal() internal view returns (IERC20) {
@@ -172,7 +176,7 @@ contract RiftAuditMainnetForkTest is Test {
     // ------------------------------------------- L2: migration discard and another importer
 
     function testLiveDiscardHandsALiveRiftLockToTheNextImporterOfTheId() external {
-        if (!_fork()) return;
+        if (!_forkAt(PRE_AUDIT_FIX_BLOCK)) return;
         (address victim, uint256 planetId, uint128 amount) = _lockedSinglePlanet("rift-victim");
         uint256 lockedBefore = GAME.lockedWithdrawalResources().metal;
 
@@ -278,7 +282,7 @@ contract RiftAuditMainnetForkTest is Test {
     }
 
     function testLivePastTheBashingLimitRiftAttackIsRecordedAsAnOpenRaid() external {
-        if (!_fork()) return;
+        if (!_forkAt(PRE_AUDIT_FIX_BLOCK)) return;
         assertEq(_pastBashingLimitVerdict(false), 1, "live: loots 50% of ordinary resources");
     }
 
@@ -324,7 +328,7 @@ contract RiftAuditMainnetForkTest is Test {
     }
 
     function testLiveProtectedJoinerRidesANewbieLeadersOpenRaid() external {
-        if (!_fork()) return;
+        if (!_forkAt(PRE_AUDIT_FIX_BLOCK)) return;
         assertTrue(_protectedJoin(false), "live: the strong joiner shares the open raid");
     }
 
@@ -432,7 +436,7 @@ contract RiftAuditMainnetForkTest is Test {
     }
 
     function testLiveFinishShipProductionCreditsSatelliteOutputRetroactively() external {
-        if (!_fork()) return;
+        if (!_forkAt(PRE_AUDIT_FIX_BLOCK)) return;
         (uint256 credited, uint256 honest) = _retroactiveMetal(false);
         emit log_named_uint("live: metal credited for 10 starved days", credited);
         emit log_named_uint("live: metal actually produced", honest);
@@ -479,7 +483,7 @@ contract RiftAuditMainnetForkTest is Test {
     }
 
     function testLiveFusionWithoutASynthesizerRunsForFree() external {
-        if (!_fork()) return;
+        if (!_forkAt(PRE_FUSION_FIX_BLOCK)) return;
         S.Resources memory balance = _fusionWithoutSynthesizer(false);
         emit log_named_uint("live: metal from ten hours of Fusion 15", balance.metal);
         assertEq(balance.metal, 500 + 40_360, "full fusion power");

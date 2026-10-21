@@ -806,4 +806,90 @@ contract RiftAuditRegressionsTest is Test {
         vm.warp(block.timestamp + 1 hours);
         _assertSettlesTo(planetId, 8_072, 4_002, 1_000_000 - 627);
     }
+
+    // ----- #151 L1: a joiner that hops into the defender's alliance takes no loot from it
+
+    function testJoinerThatHopsIntoTheDefendersAllianceTakesNoLoot() public {
+        uint256 target = _start(defender);
+        _place(target, 1, 101, 9);
+        _res(target, 1_000_000, 0, 0);
+        vm.prank(defender);
+        uint256 defenders = alliance.createAlliance("DEF", "Defenders", "");
+        uint256 leaderOrigin = _start(stranger);
+        _place(leaderOrigin, 1, 102, 9);
+        uint256 joinerOrigin = _start(attacker);
+        _place(joinerOrigin, 1, 101, 4);
+        vm.prank(stranger);
+        uint256 raiders = alliance.createAlliance("RAD", "Raiders", "");
+        vm.prank(stranger);
+        alliance.inviteMember(raiders, attacker);
+        vm.prank(attacker);
+        alliance.acceptInvite(raiders);
+
+        _ships(leaderOrigin, Ship.LargeCargo, 1);
+        _res(leaderOrigin, 0, 0, 1e9);
+        uint256 lead = _attack(stranger, leaderOrigin, target, _fleet(Ship.LargeCargo, 1));
+        _ships(joinerOrigin, Ship.LargeCargo, 40);
+        _res(joinerOrigin, 0, 0, 1e9);
+        vm.prank(attacker);
+        uint256 joined = game.joinAttackMission(
+            joinerOrigin, lead, target, _fleet(Ship.LargeCargo, 40), _none()
+        );
+
+        // Joined as the leader's ally, then back into the defender's alliance before arrival.
+        vm.prank(attacker);
+        alliance.leaveAlliance();
+        vm.prank(defender);
+        alliance.inviteMember(defenders, attacker);
+        vm.prank(attacker);
+        alliance.acceptInvite(defenders);
+
+        _land(lead);
+        // Before the fix its 40 Large Cargo carried off ~97.6% of the raid.
+        assertEq(_cargoMetal(joined), 0, "no loot for the defender's ally");
+        assertGt(_cargoMetal(lead), 0, "the leader still raids");
+    }
+
+    // ----- #151 L2: an alliance move never settles a planet past an arrived attack
+
+    function testAllianceMoveDoesNotSettlePastAnArrivedAttack() public {
+        uint256 target = _start(defender);
+        _place(target, 1, 101, 9);
+        _building(target, Building.MetalMine, 20);
+        uint256 origin = _start(attacker);
+        _place(origin, 1, 102, 9);
+        _ships(origin, Ship.LargeCargo, 1);
+        _res(origin, 0, 0, 1e9);
+        uint256 id = _attack(attacker, origin, target, _fleet(Ship.LargeCargo, 1));
+        (, uint64 arrivalAt,) = _mission(id);
+        vm.warp(uint256(arrivalAt) + 1 hours);
+        // Arrived, not yet resolved. Before the fix this settled to now, so the raid then saw
+        // an hour of production the defender made after the fleet had arrived.
+        vm.prank(defender);
+        alliance.createAlliance("DEF", "Defenders", "");
+        assertEq(game.planet(target).lastSettledAt, arrivalAt);
+    }
+
+    // ----- #151 L3: an import onto a reused id writes every unit count, zero included
+
+    function testImportOntoAnAbandonedIdBringsNoStaleUnits() public {
+        uint256 home = _start(defender);
+        _res(home, 0, 0, 1e6);
+        uint256 colony = _colonize(defender, home);
+        _res(colony, 0, 0, 0);
+        vm.prank(defender);
+        game.abandonPlanet(colony);
+        // Whatever the abandoned id still holds, the importer never built.
+        _building(colony, Building.MetalMine, 12);
+        _ships(colony, Ship.LargeCargo, 30);
+        _defenses(colony, Defense.RocketLauncher, 50);
+
+        vm.prank(admin);
+        game.setMigrationSettlement(address(this));
+        _import(stranger, colony);
+        assertEq(game.planet(colony).owner, stranger);
+        assertEq(game.buildingLevel(colony, Building.MetalMine), 0);
+        assertEq(game.shipCount(colony, Ship.LargeCargo), 0);
+        assertEq(game.defenseCount(colony, Defense.RocketLauncher), 0);
+    }
 }

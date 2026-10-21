@@ -353,20 +353,17 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
             emit PlanetRenamed(player, planetId, planetState.name);
         }
 
-        // An abandoned id keeps its old per-planet state; the Rift must not come with it: no
-        // inherited claim, no raided-out record, no Stabilizer the importer never built.
+        // An abandoned id keeps its old per-planet state; none of it may come with the import: no
+        // inherited Rift claim or raided-out record, and every building level, ship and defense
+        // count below is written from the payload, zero included, over whatever the id held.
         Resources storage locked = _riftLockedResources[planetId];
         if (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0) revert InvalidId();
         delete riftExtractions[planetId][Resource.Metal];
         delete riftExtractions[planetId][Resource.Crystal];
         delete riftExtractions[planetId][Resource.Deuterium];
-        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] != 0) {
-            _snapshotPlanetScore(planetId);
-            delete _buildingLevels[planetId][Building.InterdimensionalRiftStabilizer];
-        }
         for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
             uint16 level = planetState.buildingLevels[id];
-            if (level != 0) {
+            if (level != _buildingLevels[planetId][Building(id)]) {
                 _snapshotPlanetScore(planetId);
                 _buildingLevels[planetId][Building(id)] = level;
                 emit BuildingCompleted(planetId, Building(id), level);
@@ -377,14 +374,18 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
         for (uint8 id = 0; id <= MAX_SHIP_ID;) {
             uint32 count = planetState.shipCounts[id];
-            if (count != 0) _setPlanetShipCount(planetId, Ship(id), count);
+            if (count != _shipCounts[planetId][Ship(id)]) {
+                _setPlanetShipCount(planetId, Ship(id), count);
+            }
             unchecked {
                 ++id;
             }
         }
         for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
             uint32 count = planetState.defenseCounts[id];
-            if (count != 0) _setPlanetDefenseCount(planetId, Defense(id), count);
+            if (count != _defenseCounts[planetId][Defense(id)]) {
+                _setPlanetDefenseCount(planetId, Defense(id), count);
+            }
             unchecked {
                 ++id;
             }

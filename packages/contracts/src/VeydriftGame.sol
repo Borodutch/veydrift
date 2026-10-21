@@ -264,7 +264,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         for (uint256 i = 0; i < planetIds.length;) {
             uint256 lockId = Store.layout().bodyLock[planetIds[i]];
             if (lockId != 0) revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
-            _settleResourcesUpTo(planetIds[i], settledAt);
+            // An arrived attack loots the planet as it was at arrival: never settle past it.
+            uint64 pendingArrival = _earliestPendingMissionArrivalForPlanet(planetIds[i]);
+            _settleResourcesUpTo(
+                planetIds[i], pendingArrival < settledAt ? pendingArrival : settledAt
+            );
             unchecked {
                 ++i;
             }
