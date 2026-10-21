@@ -225,6 +225,18 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             hasResources := or(ordinaryResources, or(sload(riftSlot), sload(add(riftSlot, 1))))
         }
         if (hasResources) revert PlanetHasResources();
+        // Legacy withdrawals predate the planet-scoped, raidable Rift extraction.
+        // New ones are disabled, but a grandfathered claim must remain tied to its
+        // planet until the owner finishes it; otherwise abandoning would make the
+        // locked reserve claim unraidable.
+        for (uint8 resource; resource < 3;) {
+            ResourceWithdrawal storage withdrawal =
+                resourceWithdrawals[_actingPlayer()][Resource(resource)];
+            if (withdrawal.active && withdrawal.planetId == planetId) revert PlanetHasResources();
+            unchecked {
+                ++resource;
+            }
+        }
 
         _snapshotPlanetScore(planetId);
         delete _planets[planetId];
@@ -249,16 +261,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _increaseInternalResources(resourceAmount);
         emit MarketResourceDeposited(_actingPlayer(), planetId, resource, amount);
         _creditResources(planetId, resourceAmount);
-    }
-
-    function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
-        external
-        pure
-    {
-        planetId;
-        resource;
-        amount;
-        revert LegacyWithdrawalDisabled();
     }
 
     function protectedResources(uint256 planetId) external view returns (Resources memory) {
