@@ -34,6 +34,9 @@ import {VeydriftGameplayModule} from "../../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftStateMigrationModule as M} from "../../src/VeydriftStateMigrationModule.sol";
 import {Building, Resource, Ship, Technology} from "../../src/libraries/VeydriftTypes.sol";
+import {
+    ImportMissingMigrationReservations
+} from "../../script/ImportMissingMigrationReservations.s.sol";
 
 interface IRiftFork {
     function startRiftExtraction(uint256 planetId, Resource resource, uint128 amount) external;
@@ -42,6 +45,11 @@ interface IRiftFork {
     function setDelegate(address delegate) external;
     function revokeDelegate() external;
     function delegatorOf(address delegate) external view returns (address);
+}
+
+interface IOwnedFork {
+    function owner() external view returns (address);
+    function setStateSigner(address nextSigner) external;
 }
 
 interface IAllianceFork {
@@ -58,6 +66,8 @@ contract RiftAuditMainnetForkTest is Test {
     address internal constant PROXY = 0xf397910F005151b09644228573a4353818D3755d;
     address internal constant PROXY_ADMIN = 0xc81609E77b5ea79d0CdA9794b75B65D567535cb9;
     address internal constant TREASURY = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
+    address internal constant MIGRATION_SETTLEMENT = 0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3;
+    address internal constant SNAPSHOT_SIGNER = 0x496494cB54153e97e4D28454092e0cf293A97088;
     VeydriftGame internal constant GAME = VeydriftGame(payable(PROXY));
     IRiftFork internal constant RIFT = IRiftFork(PROXY);
 
@@ -495,5 +505,111 @@ contract RiftAuditMainnetForkTest is Test {
         S.Resources memory balance = _fusionWithoutSynthesizer(true);
         assertEq(balance.metal, 500 + 40_360);
         assertEq(balance.deuterium, 100_000 - 6_270);
+    }
+
+    // ------------- #155: live signed claims whose planet ids mainnet planets took since
+
+    /// The six pending claims the live snapshot serves that could not settle: id 84 has its
+    /// reservation, 579 and 581-584 never got one, and every id but 581 is owned by someone else.
+    function _liveClaims()
+        internal
+        view
+        returns (address[] memory players, bytes[] memory payloads, bytes[] memory signatures)
+    {
+        string memory
+            json = vm.readFile(
+            string.concat(vm.projectRoot(), "/test/audit/migration-id-collision-claims.json")
+        );
+        players = new address[](6);
+        payloads = new bytes[](6);
+        signatures = new bytes[](6);
+        for (uint256 i = 0; i < 6; i++) {
+            string memory row = string.concat(".claims[", vm.toString(i), "]");
+            players[i] = vm.parseJsonAddress(json, string.concat(row, ".player"));
+            payloads[i] = vm.parseJsonBytes(json, string.concat(row, ".statePayload"));
+            signatures[i] = vm.parseJsonBytes(json, string.concat(row, ".signature"));
+        }
+    }
+
+    /// The snapshot was signed by the pre-launch owner key; the 2026-10-20 owner rotation moved the
+    /// state signer to the new owner without re-signing it, so on Base every one of these (and every
+    /// other pending claim) now stops at `BadMigrationSignature` first. Tracked apart from #155:
+    /// these replays put the snapshot's signer back on the fork to reach the id and reservation.
+    function _acceptSnapshotSigner() internal {
+        vm.prank(IOwnedFork(MIGRATION_SETTLEMENT).owner());
+        IOwnedFork(MIGRATION_SETTLEMENT).setStateSigner(SNAPSHOT_SIGNER);
+    }
+
+    function _claimLive(address player, bytes memory payload, bytes memory signature)
+        internal
+        returns (bool ok, bytes memory result)
+    {
+        uint256 price = GAME.startPrice();
+        vm.deal(player, price);
+        vm.prank(player);
+        (ok, result) = MIGRATION_SETTLEMENT.call{value: price}(
+            abi.encodeWithSignature("claim(bytes,bytes)", payload, signature)
+        );
+    }
+
+    function testLiveClaimsWhoseIdsWereTakenCannotSettle() external {
+        if (!_fork()) return;
+        (address[] memory players, bytes[] memory payloads, bytes[] memory signatures) =
+            _liveClaims();
+        (bool signedOk, bytes memory signedResult) =
+            _claimLive(players[0], payloads[0], signatures[0]);
+        assertFalse(signedOk);
+        assertEq(bytes4(signedResult), bytes4(keccak256("BadMigrationSignature()")));
+        _acceptSnapshotSigner();
+        for (uint256 i = 0; i < players.length; i++) {
+            (bool ok, bytes memory result) = _claimLive(players[i], payloads[i], signatures[i]);
+            assertFalse(ok);
+            bytes4 expected = i == 0
+                ? S.InvalidId.selector
+                : bytes4(keccak256("MigrationReservationMissing(address)"));
+            assertEq(bytes4(result), expected);
+        }
+    }
+
+    function testUpgradedClaimsWhoseIdsWereTakenSettleUnderFreshIds() external {
+        if (!_fork()) return;
+        (address[] memory players, bytes[] memory payloads, bytes[] memory signatures) =
+            _liveClaims();
+        _upgradeToBranch();
+        _acceptSnapshotSigner();
+
+        // The owner transaction that registers the five missing reservations, keyless.
+        address owner = IOwnedFork(MIGRATION_SETTLEMENT).owner();
+        vm.setEnv("UPGRADE_DRY_RUN_OWNER", vm.toString(owner));
+        vm.setEnv("GAME_PROXY_ADDRESS", vm.toString(PROXY));
+        new ImportMissingMigrationReservations().run();
+
+        uint256 freshId = GAME.nextPlanetId();
+        for (uint256 i = 0; i < players.length; i++) {
+            M.MigrationPlayerState memory state = abi.decode(payloads[i], (M.MigrationPlayerState));
+            assertEq(state.planets.length, 1);
+            M.MigrationPlanetState memory signed = state.planets[0];
+            address idOwner = GAME.planet(signed.planetId).owner;
+
+            (bool ok,) = _claimLive(players[i], payloads[i], signatures[i]);
+            assertTrue(ok, "claim settles");
+
+            uint256 home = GAME.homePlanetOf(players[i]);
+            if (idOwner == address(0)) {
+                assertEq(home, signed.planetId, "a free id is kept");
+            } else {
+                assertEq(home, freshId++, "a taken id moves to the next fresh id");
+                assertEq(GAME.planet(signed.planetId).owner, idOwner, "the id's owner keeps it");
+            }
+            S.Planet memory planet = GAME.planet(home);
+            assertEq(planet.owner, players[i]);
+            assertEq(planet.galaxy, signed.galaxy);
+            assertEq(planet.system, signed.system);
+            assertEq(planet.position, signed.position);
+            assertEq(planet.fields, signed.fields);
+            assertEq(GAME.planetCountOf(players[i]), 1);
+            assertEq(GAME.buildingLevel(home, Building(0)), signed.buildingLevels[0]);
+        }
+        assertEq(freshId, GAME.nextPlanetId());
     }
 }

@@ -2903,6 +2903,58 @@ describe("Veydrift backend", () => {
     }
   });
 
+  test("treats a migration claim imported under a fresh id on the reserved coordinates as claimed", async () => {
+    // #155: the signed id 26 was taken by another planet, so the import moved the claim to id 7.
+    const chainReader = new class extends MockChainReader {
+      override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+        throw new Error("warm settlement claim should not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+      settlementStartPriceWei: configuredTestConfig.settlementStartPriceWei!
+    });
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-migration-claims-"));
+    const snapshotPath = join(dir, "claims.json");
+    writeFileSync(snapshotPath, JSON.stringify({
+      claims: {
+        [player.toLowerCase()]: {
+          signature: "0xabcd",
+          statePayload: "0x1234",
+          reservedPlanets: [{
+            planetId: "26",
+            galaxy: planet.galaxy,
+            system: planet.system,
+            position: planet.position,
+            fields: planet.fields,
+            temperature: planet.temperature
+          }]
+        }
+      }
+    }));
+    const previousPath = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+    process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = snapshotPath;
+    try {
+      const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+      for (const path of ["settlement", "settlement-funding"]) {
+        const response = await handler(new Request(`http://localhost/wallet/${player}/${path}`));
+        expect(response.status).toBe(200);
+        const body = await response.json() as Record<string, unknown>;
+        expect(body.migrationClaim).toBeUndefined();
+        expect(body.migrationReservation).toMatchObject({ exists: true, claimed: true, planetId: "26" });
+      }
+    } finally {
+      if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+      else process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = previousPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("reports settlement-funding unavailable when indexed start price truth is absent", async () => {
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {

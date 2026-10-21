@@ -3404,14 +3404,7 @@ function withMigrationSnapshotFields<T extends object>(
   migrationClaim?: MigrationClaimPayload;
   migrationReservation?: MigrationReservedPlanet & { exists: true; claimed: boolean };
 } {
-  const reservedPlanet = migrationReservedPlanetsForWallet(wallet)[0];
-  const reservation = reservedPlanet
-    ? {
-        ...reservedPlanet,
-        exists: true as const,
-        claimed: migrationReservationClaimedByBody(body, reservedPlanet)
-      }
-    : null;
+  const reservation = migrationReservationPayloadForWallet(wallet, body);
   return {
     ...body,
     ...(reservation?.claimed ? {} : migrationClaimPayloadFields(wallet)),
@@ -3419,9 +3412,17 @@ function withMigrationSnapshotFields<T extends object>(
   };
 }
 
+// A claim whose signed id another planet took imports under a fresh id (#155), so a home planet
+// on the reserved coordinates counts as the claim too.
 function migrationReservationClaimedByBody(body: object, reservation: MigrationReservedPlanet): boolean {
-  const homePlanetId = (body as { homePlanetId?: unknown }).homePlanetId;
-  return typeof homePlanetId === "string" && reservation.planetId === homePlanetId;
+  const { homePlanetId, planet } = body as { homePlanetId?: unknown; planet?: Partial<PlanetState> | null };
+  if (typeof homePlanetId !== "string") return false;
+  return reservation.planetId === homePlanetId || (
+    planet?.planetId === homePlanetId
+    && planet.galaxy === reservation.galaxy
+    && planet.system === reservation.system
+    && planet.position === reservation.position
+  );
 }
 
 function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
@@ -6322,10 +6323,7 @@ function indexedSettlementFundingResponse(
   // balance is checked by the wallet at submission time; the mutable start price
   // comes from the persisted StartPriceUpdated/canonical-rebuild projection.
   const settlement = wallet && indexer ? indexer.walletSettlement(wallet) : null;
-  const reservation = wallet ? migrationReservationPayloadForWallet(
-    wallet,
-    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
-  ) : null;
+  const reservation = wallet ? migrationReservationPayloadForWallet(wallet, settlement) : null;
   const migrationClaim = wallet && !reservation?.claimed ? migrationClaimPayloadForWallet(wallet) : null;
   const resourceTokensConfigured = Boolean(
     config.resourceTokenAddresses.metal
@@ -6369,19 +6367,18 @@ function migrationReservationPayloadFields(
 ):
   | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: boolean } }
   | Record<string, never> {
-  const reservation = migrationReservationPayloadForWallet(
-    wallet,
-    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
-  );
+  const reservation = migrationReservationPayloadForWallet(wallet, settlement);
   return reservation ? { migrationReservation: reservation } : {};
 }
 
 function migrationReservationPayloadForWallet(
   wallet: `0x${string}`,
-  claimed: boolean
+  settlement: object | null | undefined
 ): (MigrationReservedPlanet & { exists: true; claimed: boolean }) | null {
   const reservation = migrationReservedPlanetsForWallet(wallet)[0];
-  return reservation ? { ...reservation, exists: true, claimed } : null;
+  if (!reservation) return null;
+  const claimed = Boolean(settlement && migrationReservationClaimedByBody(settlement, reservation));
+  return { ...reservation, exists: true, claimed };
 }
 
 function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {

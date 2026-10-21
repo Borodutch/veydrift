@@ -115,6 +115,9 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     }
 
     event MigrationStateImported(address indexed player, uint256 homePlanetId, uint256 planetCount);
+    event MigratedPlanetIdReassigned(
+        address indexed player, uint256 signedPlanetId, uint256 planetId
+    );
 
     constructor(address referralSystemAddress, address combatRaidModule)
         VeydriftResourceReserves(address(0))
@@ -209,6 +212,7 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         if (homePlanetOf[player] != 0) {
             _discardSingleStartedPlanetBeforeMigration(player);
         }
+        _reassignTakenPlanetIds(player, state);
 
         if (referred) {
             _applyReferralStartingBonus(state);
@@ -259,6 +263,32 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
 
         emit MigrationStateImported(player, state.homePlanetId, state.planets.length);
+    }
+
+    /// @dev Snapshot ids were signed while the sequence was still below them, so a planet started
+    ///      since can own a pending claim's id (#155). The claim's coordinates stay reserved for
+    ///      its player; only the id moves, to a fresh one past every id the payload names.
+    function _reassignTakenPlanetIds(address player, MigrationPlayerState memory state) private {
+        uint256 count = state.planets.length;
+        for (uint256 i = 0; i < count;) {
+            uint256 planetId = state.planets[i].planetId;
+            if (planetId >= nextPlanetId) nextPlanetId = planetId + 1;
+            unchecked {
+                ++i;
+            }
+        }
+        for (uint256 i = 0; i < count;) {
+            uint256 planetId = state.planets[i].planetId;
+            if (planetId != 0 && _planets[planetId].owner != address(0)) {
+                uint256 freshId = nextPlanetId++;
+                state.planets[i].planetId = freshId;
+                if (state.homePlanetId == planetId) state.homePlanetId = freshId;
+                emit MigratedPlanetIdReassigned(player, planetId, freshId);
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function _applyReferralStartingBonus(MigrationPlayerState memory state) private pure {

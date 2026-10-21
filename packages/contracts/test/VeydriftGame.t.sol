@@ -1209,6 +1209,71 @@ contract VeydriftGameTest is Test {
         assertTrue(claimed);
     }
 
+    function testMigrationClaimMovesAnIdAnotherPlayerTookToAFreshId() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        uint256 signerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(signerKey));
+
+        address other = address(0xD2E);
+        vm.deal(other, 1 ether);
+        vm.prank(other);
+        uint256 takenId = game.startPlanet{value: 0.05 ether}();
+        VeydriftGameStorage.Planet memory othersPlanet = game.planet(takenId);
+
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = player;
+        galaxies[0] = 2;
+        systems[0] = 99;
+        positions[0] = 7;
+        fields[0] = 211;
+        temperatures[0] = -14;
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
+
+        // The payload was signed before the other player's planet took its id.
+        (bytes memory payload, bytes memory signature) =
+            _signedMigrationPayload(migration, signerKey, player, takenId);
+        uint256 freshId = game.nextPlanetId();
+        vm.deal(player, 1 ether);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit VeydriftStateMigrationModule.MigratedPlanetIdReassigned(player, takenId, freshId);
+        vm.prank(player);
+        migration.claim{value: 0.05 ether}(payload, signature);
+
+        assertEq(game.planet(takenId).owner, other);
+        assertEq(game.planet(takenId).galaxy, othersPlanet.galaxy);
+        assertEq(game.homePlanetOf(other), takenId);
+        assertEq(game.shipCount(takenId, Ship.SmallCargo), 0);
+
+        VeydriftGameStorage.Planet memory planet = game.planet(freshId);
+        assertEq(game.homePlanetOf(player), freshId);
+        assertEq(game.planetCountOf(player), 1);
+        assertEq(game.nextPlanetId(), freshId + 1);
+        assertEq(planet.owner, player);
+        assertEq(planet.galaxy, 2);
+        assertEq(planet.system, 99);
+        assertEq(planet.position, 7);
+        assertEq(planet.resources.metal, 12_345);
+        assertEq(game.planetNames(freshId), "Migrated Home");
+        assertEq(game.buildingLevel(freshId, Building.MetalMine), 17);
+        assertEq(game.shipCount(freshId, Ship.SmallCargo), 123);
+        assertEq(game.shipQueue(freshId).quantity, 7);
+        assertEq(game.technologyLevel(player, Technology.Computer), 8);
+        assertEq(moons.moon(freshId).owner, player);
+        assertEq(game.moonShipCount(freshId, Ship.Recycler), 12);
+
+        (, bool claimed,,,,,) = migration.migrationReservation(player);
+        assertTrue(claimed);
+    }
+
     function testMigrationOwnerCanClaimForAccidentalStartedPlayer() public {
         VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
         vm.prank(admin);
