@@ -330,3 +330,69 @@ if (JSON.stringify(actualRandomnessStorage) !== JSON.stringify(expectedRandomnes
 }
 
 console.log("RandomnessEngine storage layout preserves the live v1 prefix, recovery state and appended battle policy and used commitments");
+
+const referralArtifactPath = join(outDir, "VeydriftReferralSystem.sol", "VeydriftReferralSystem.json");
+const referralStorage = JSON.parse(readFileSync(referralArtifactPath, "utf8")).storageLayout?.storage;
+if (!Array.isArray(referralStorage)) {
+  throw new Error(
+    `Missing storageLayout in ${referralArtifactPath}. Run forge build --extra-output storageLayout.`
+  );
+}
+
+// The UUPS port keeps the non-upgradeable 0x9B9A layout slot for slot (OZ initializer state is
+// namespaced). The live proxy can only take appends after these.
+const expectedReferralStorage = [
+  ["owner", "0", 0],
+  ["game", "1", 0],
+  ["referralSigner", "2", 0],
+  ["referralMigrationFinalized", "2", 20],
+  ["referralMigrationConfigured", "2", 21],
+  ["referralRedemptionMigrationConfigured", "2", 22],
+  ["referralMigrationExpectedValidHash", "3", 0],
+  ["referralMigrationExpectedHashOnlyHash", "4", 0],
+  ["referralMigrationImportedValidHash", "5", 0],
+  ["referralMigrationImportedHashOnlyHash", "6", 0],
+  ["referralMigrationExpectedValidCount", "7", 0],
+  ["referralMigrationExpectedHashOnlyCount", "7", 4],
+  ["referralMigrationImportedValidCount", "7", 8],
+  ["referralMigrationImportedHashOnlyCount", "7", 12],
+  ["referralMigrationExpectedRedemptionHash", "8", 0],
+  ["referralMigrationImportedRedemptionHash", "9", 0],
+  ["referralMigrationExpectedRedemptionCount", "10", 0],
+  ["referralMigrationImportedRedemptionCount", "10", 4],
+  ["referralRewardMigrationConfigured", "10", 8],
+  ["referralMigrationExpectedRewardStatsHash", "11", 0],
+  ["referralMigrationImportedRewardStatsHash", "12", 0],
+  ["referralMigrationExpectedRewardStatsCount", "13", 0],
+  ["referralMigrationImportedRewardStatsCount", "13", 4],
+  ["referralRewardStatsImported", "14", 0],
+  ["referralRewardClaimMigrationConfigured", "15", 0],
+  ["referralMigrationExpectedRewardClaimHash", "16", 0],
+  ["referralMigrationImportedRewardClaimHash", "17", 0],
+  ["referralMigrationExpectedRewardClaimCount", "18", 0],
+  ["referralMigrationImportedRewardClaimCount", "18", 4],
+  ["referralRewardClaimHistoryImported", "19", 0],
+  ["referralCodeOwner", "20", 0],
+  ["referralCodeMigrationKind", "21", 0],
+  ["referralCodeOwnedBy", "22", 0],
+  ["referralCodeHashOf", "23", 0],
+  ["referralInvites", "24", 0],
+  ["referralCommitmentOf", "25", 0],
+  ["referralClaimedAt", "26", 0],
+  ["_referralRedemptionWindows", "27", 0],
+  ["referralRedemptions", "28", 0],
+  ["referralInviteeRedeemed", "29", 0],
+  ["claimableReferralRewards", "30", 0],
+  ["totalReferralRewardsAccrued", "31", 0],
+  ["totalReferralRewardsPaid", "32", 0],
+  ["totalReferralRewardsClaimed", "33", 0],
+  ["referralRewardCredits", "34", 0],
+  ["_withdrawingReferralReward", "35", 0],
+];
+const actualReferralStorage = referralStorage.map(({label, slot, offset}) => [label, slot, offset]);
+if (JSON.stringify(actualReferralStorage) !== JSON.stringify(expectedReferralStorage)) {
+  console.error("VeydriftReferralSystem storage layout is not the reviewed 0x9B9A-compatible proxy layout");
+  process.exit(1);
+}
+
+console.log("VeydriftReferralSystem storage layout matches the reviewed proxy layout");
