@@ -439,4 +439,52 @@ contract RiftAuditMainnetForkTest is Test {
         (uint256 credited, uint256 honest) = _retroactiveMetal(true);
         assertEq(credited, honest);
     }
+
+    // ----------- Low: Fusion upkeep capped at the synthesizer (demolish it for free fusion)
+
+    /// Fusion 15 at Energy 8 alone powers Metal 20 and Crystal 18 on a planet with no
+    /// synthesizer, holding 100,000 deuterium injected through the Rift. Returns the balance
+    /// after ten hours.
+    function _fusionWithoutSynthesizer(bool upgraded) internal returns (S.Resources memory) {
+        if (upgraded) _upgradeToBranch();
+        (address who, uint256 planetId) = _newPlayer("fusion");
+        bytes32 technologies = keccak256(abi.encode(who, uint256(20)));
+        vm.store(
+            PROXY,
+            keccak256(abi.encode(uint256(uint8(Technology.Energy)), technologies)),
+            bytes32(uint256(8))
+        );
+        _building(planetId, Building.MetalMine, 20);
+        _building(planetId, Building.CrystalMine, 18);
+        _building(planetId, Building.FusionReactor, 15);
+        _building(planetId, Building.MetalStorage, 10);
+        _building(planetId, Building.CrystalStorage, 10);
+        _building(planetId, Building.DeuteriumTank, 10);
+        _building(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        IERC20 deuterium = IERC20(GAME.resourceToken(Resource.Deuterium));
+        vm.prank(TREASURY);
+        assertTrue(deuterium.transfer(who, 100_000));
+        vm.startPrank(who);
+        deuterium.approve(PROXY, 100_000);
+        GAME.depositMarketResource(planetId, Resource.Deuterium, 100_000);
+        vm.warp(block.timestamp + 10 hours);
+        GAME.collectResources(planetId);
+        vm.stopPrank();
+        return GAME.planet(planetId).resources;
+    }
+
+    function testLiveFusionWithoutASynthesizerRunsForFree() external {
+        if (!_fork()) return;
+        S.Resources memory balance = _fusionWithoutSynthesizer(false);
+        emit log_named_uint("live: metal from ten hours of Fusion 15", balance.metal);
+        assertEq(balance.metal, 500 + 40_360, "full fusion power");
+        assertEq(balance.deuterium, 100_000, "the 627/h upkeep cost nothing");
+    }
+
+    function testUpgradedFusionWithoutASynthesizerBurnsItsUpkeep() external {
+        if (!_fork()) return;
+        S.Resources memory balance = _fusionWithoutSynthesizer(true);
+        assertEq(balance.metal, 500 + 40_360);
+        assertEq(balance.deuterium, 100_000 - 6_270);
+    }
 }
