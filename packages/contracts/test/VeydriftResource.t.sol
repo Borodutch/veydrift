@@ -9,8 +9,8 @@ contract VeydriftResourceTest is Test {
         address holder = makeAddr("treasury");
         VeydriftResource token = new VeydriftResource("Veydrift Metal", "vMETAL", holder);
 
-        assertEq(token.decimals(), 6);
-        assertEq(token.totalSupply(), 10_000_000_000 * 10 ** 6);
+        assertEq(token.decimals(), 0);
+        assertEq(token.totalSupply(), 50_000_000_000);
         assertEq(token.balanceOf(holder), token.totalSupply());
         assertEq(token.symbol(), "vMETAL");
     }

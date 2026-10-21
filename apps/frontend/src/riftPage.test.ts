@@ -103,20 +103,19 @@ describe("RiftPage helpers", () => {
     expect(formatRiftCountdown("2026-05-20T11:59:00.000Z", now)).toBe("Ready");
   });
 
-  test("shows raw units as 6-decimal tokens: 1 token = 1,000,000 units", () => {
-    expect(formatRiftTokens(929_852n)).toBe("0.929852");
-    expect(formatRiftTokens("2500000")).toBe("2.5");
-    expect(formatRiftTokens(1_000_000_000_000n)).toBe("1,000,000");
-    expect(formatRiftTokens(1n)).toBe("0.000001");
+  test("shows tokens 1:1 with in-game units (0 decimals)", () => {
+    expect(formatRiftTokens(929_852n)).toBe("929,852");
+    expect(formatRiftTokens("2500000")).toBe("2,500,000");
+    expect(formatRiftTokens(1n)).toBe("1");
     expect(formatRiftTokens(0n)).toBe("0");
   });
 
-  test("validates injections in tokens and extractions in whole units", () => {
-    const short = "Your wallet holds 12.5 vMETAL.";
-    expect(riftAmountCheck("2.5", "tokens", 12_500_000n, short)).toEqual({ amount: 2_500_000n });
-    expect(riftAmountCheck(" 1,000 ", "tokens", undefined, short)).toEqual({ amount: 1_000_000_000n });
-    expect(riftAmountCheck("13", "tokens", 12_500_000n, short)).toEqual({ reason: short });
-    expect(riftAmountCheck("0.0000001", "tokens", undefined, short).reason).toBe("Enter a token amount with at most 6 decimals.");
+  test("validates injections in whole tokens and extractions in whole units", () => {
+    const short = "Your wallet holds 12,500,000 vMETAL.";
+    expect(riftAmountCheck("2500000", "tokens", 12_500_000n, short)).toEqual({ amount: 2_500_000n });
+    expect(riftAmountCheck(" 1,000 ", "tokens", undefined, short)).toEqual({ amount: 1_000n });
+    expect(riftAmountCheck("12500001", "tokens", 12_500_000n, short)).toEqual({ reason: short });
+    expect(riftAmountCheck("2.5", "tokens", undefined, short).reason).toBe("Enter a whole number of tokens.");
     expect(riftAmountCheck("", "tokens", undefined, short).reason).toBe("Enter an amount.");
     expect(riftAmountCheck("0", "units", 10n, short).reason).toBe("Enter an amount above zero.");
     expect(riftAmountCheck("25,000", "units", 41_870n, "low")).toEqual({ amount: 25_000n });

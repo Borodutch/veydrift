@@ -77,7 +77,6 @@ interface RiftPageProps {
   transactionUnavailableReason?: string | undefined;
 }
 
-const UNITS_PER_TOKEN = 1_000_000n;
 const MAX_UINT128 = (1n << 128n) - 1n;
 const DEFAULT_LOCK_SECONDS = 28 * 24 * 60 * 60;
 const RIFT_ART = "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp";
@@ -189,7 +188,7 @@ function RiftHero({ lockSeconds, planetLabel }: { lockSeconds: number; planetLab
         <ul className="mt-1 flex flex-wrap gap-2 text-xs">
           <HeroChip icon={ArrowDownToLine} label="Injecting is instant" />
           <HeroChip icon={Hourglass} label={`Extracting takes ${lockDays} days`} />
-          <HeroChip icon={Coins} label="1 token = 1,000,000 units" />
+          <HeroChip icon={Coins} label="1 token = 1 unit" />
         </ul>
       </div>
     </section>
@@ -311,9 +310,9 @@ function RiftWorkbench({
                   autoComplete="off"
                   className="h-11 min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-base tabular-nums text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 sm:h-10 sm:text-sm"
                   id="rift-amount"
-                  inputMode={mode === "inject" ? "decimal" : "numeric"}
+                  inputMode="numeric"
                   onInput={(event) => setInput((event.currentTarget as HTMLInputElement).value)}
-                  placeholder={mode === "inject" ? "0.0" : "0"}
+                  placeholder="0"
                   spellcheck={false}
                   value={input}
                 />
@@ -967,23 +966,20 @@ function toUnits(value: string | null | undefined): bigint {
   return value && /^\d+$/.test(value) ? BigInt(value) : 0n;
 }
 
-/** Raw token units as a token amount: 1 token = 1,000,000 in-game units (6 decimals). */
+/** A token amount: the tokens have 0 decimals, so 1 token = 1 in-game unit. */
 export function formatRiftTokens(value: bigint | string): string {
-  const raw = typeof value === "bigint" ? value : toUnits(value);
-  const whole = (raw / UNITS_PER_TOKEN).toLocaleString("en-US");
-  const fraction = (raw % UNITS_PER_TOKEN).toString().padStart(6, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : whole;
+  return (typeof value === "bigint" ? value : toUnits(value)).toLocaleString("en-US");
 }
 
-/** Validates a typed amount: token amounts (6 decimals) for injections, whole units for extractions. */
+/** Validates a typed amount: whole tokens for injections, whole units for extractions. */
 export function riftAmountCheck(input: string, unit: "tokens" | "units", available: bigint | undefined, shortfall: string): { amount?: bigint; reason?: string } {
   const value = input.replace(/[\s,_]/g, "");
   if (!value) return { reason: "Enter an amount." };
   let amount: bigint;
   try {
-    amount = parseRiftTokenAmount(value, unit === "tokens" ? 6 : 0);
+    amount = parseRiftTokenAmount(value, 0);
   } catch {
-    return { reason: unit === "tokens" ? "Enter a token amount with at most 6 decimals." : "Enter a whole number of units." };
+    return { reason: `Enter a whole number of ${unit}.` };
   }
   if (amount <= 0n) return { reason: "Enter an amount above zero." };
   if (amount > MAX_UINT128 || (available !== undefined && amount > available)) return { reason: shortfall };

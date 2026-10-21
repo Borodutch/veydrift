@@ -25,10 +25,10 @@ interface IRiftGame {
 ///         into a planet with a Rift Stabilizer, extract it, and get the tokens back after 28 days.
 contract RiftNewTokensMainnetForkTest is Test {
     IRiftGame internal constant GAME = IRiftGame(0xf397910F005151b09644228573a4353818D3755d);
-    IERC20 internal constant METAL = IERC20(0xbD87aa148f2586D1f1499C5370f8bd05ee147209);
+    IERC20 internal constant METAL = IERC20(0x078b4EC3E7681D1A658c32eb806872FBCD922CFc);
     address internal constant TREASURY = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
     address internal constant PLAYER = 0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE; // planet 1 has a stabilizer
-    uint128 internal constant AMOUNT = 10 * 10 ** 6; // 10 vMETAL = 10,000,000 metal
+    uint128 internal constant AMOUNT = 10_000_000; // 10,000,000 vMETAL = 10,000,000 metal
 
     function testInjectExtractAndFinalizeWithNewTokens() external {
         if (block.chainid != 8453) {

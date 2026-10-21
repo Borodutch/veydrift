@@ -58,12 +58,16 @@ contract RiftAuditMainnetForkTest is Test {
     address internal constant PROXY = 0xf397910F005151b09644228573a4353818D3755d;
     address internal constant PROXY_ADMIN = 0xc81609E77b5ea79d0CdA9794b75B65D567535cb9;
     address internal constant TREASURY = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
-    IERC20 internal constant METAL = IERC20(0xbD87aa148f2586D1f1499C5370f8bd05ee147209);
     VeydriftGame internal constant GAME = VeydriftGame(payable(PROXY));
     IRiftFork internal constant RIFT = IRiftFork(PROXY);
 
     /// Last block before the 2026-10-20 Game upgrade that shipped #1958 (two-step delegation).
     uint256 internal constant PRE_CONSENT_BLOCK = 52_871_779;
+
+    /// The vMETAL the Game used at the forked block, so pinned and live forks both inject the right token.
+    function _metal() internal view returns (IERC20) {
+        return IERC20(GAME.resourceToken(Resource.Metal));
+    }
 
     function _fork() internal returns (bool) {
         return _forkAt(0);
@@ -147,18 +151,19 @@ contract RiftAuditMainnetForkTest is Test {
         GAME.importMigratedState{value: price}(who, _migrationPayload(who, planetId));
     }
 
-    /// A fresh single-planet player with a Stabilizer and 10 vMETAL injected through the Rift.
+    /// A fresh single-planet player with a Stabilizer and 10,000,000 metal injected through the Rift.
     function _lockedSinglePlanet(string memory label)
         internal
         returns (address who, uint256 planetId, uint128 amount)
     {
         (who, planetId) = _newPlayer(label);
         _building(planetId, Building.InterdimensionalRiftStabilizer, 1);
-        amount = 10 * 10 ** 6;
+        amount = 10_000_000;
+        IERC20 metal = _metal();
         vm.prank(TREASURY);
-        assertTrue(METAL.transfer(who, amount));
+        assertTrue(metal.transfer(who, amount));
         vm.startPrank(who);
-        METAL.approve(PROXY, amount);
+        metal.approve(PROXY, amount);
         GAME.depositMarketResource(planetId, Resource.Metal, amount);
         RIFT.startRiftExtraction(planetId, Resource.Metal, amount);
         vm.stopPrank();
@@ -183,8 +188,8 @@ contract RiftAuditMainnetForkTest is Test {
         vm.warp(block.timestamp + 28 days);
         vm.prank(heir);
         RIFT.finalizeRiftExtraction(planetId, Resource.Metal);
-        assertEq(METAL.balanceOf(heir), amount, "heir paid the victim's tokens");
-        assertEq(METAL.balanceOf(victim), 0);
+        assertEq(_metal().balanceOf(heir), amount, "heir paid the victim's tokens");
+        assertEq(_metal().balanceOf(victim), 0);
     }
 
     function testUpgradedDiscardRefusesALiveRiftLock() external {
@@ -379,7 +384,7 @@ contract RiftAuditMainnetForkTest is Test {
         vm.warp(block.timestamp + 28 days);
         vm.prank(victim);
         RIFT.finalizeRiftExtraction(planetId, Resource.Metal);
-        assertEq(METAL.balanceOf(victim), amount);
+        assertEq(_metal().balanceOf(victim), amount);
     }
 
     // ---------------------------------- L1: satellites landing without a production settle
