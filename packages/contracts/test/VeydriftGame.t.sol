@@ -8689,31 +8689,6 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).owner, player);
     }
 
-    function testAbandonColonyCannotOrphanGrandfatheredLegacyWithdrawal() public {
-        vm.prank(player);
-        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setTechnologyLevel(player, Technology.Astrophysics, 1);
-        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
-        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 14);
-
-        // Existing production claims are retained solely so their owners can finish them.
-        // Seed the pre-upgrade mapping directly and prove the planet cannot be abandoned
-        // while that reserve-backed value still references it.
-        bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
-        bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
-        vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
-        vm.store(address(game), bytes32(uint256(withdrawalSlot) + 1), bytes32(colonyPlanetId));
-
-        (bool active, uint256 withdrawalPlanetId,,,) =
-            game.resourceWithdrawals(player, Resource.Metal);
-        assertTrue(active);
-        assertEq(withdrawalPlanetId, colonyPlanetId);
-
-        vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.PlanetHasResources.selector);
-        game.abandonPlanet(colonyPlanetId);
-    }
-
     function testAbandonColonyRejectsActiveQueuesAndFleetMissions() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -12142,11 +12117,13 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(planetId).resources.metal, 1_100);
     }
 
-    function testGrandfatheredLegacyWithdrawalRemainsFinishable() public {
+    function testLegacyWithdrawalFinishIsRemoved() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         uint128 amount = 50;
 
+        // Seed an active pre-upgrade claim directly: even with one in storage, the removed
+        // `finishMarketResourceWithdrawal(uint8)` selector must not pay it out.
         bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
         bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
         vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
@@ -12156,11 +12133,15 @@ contract VeydriftGameTest is Test {
         metalToken.mint(address(game), amount);
 
         vm.prank(player);
-        game.finishMarketResourceWithdrawal(Resource.Metal);
+        (bool ok, bytes memory result) =
+            address(game).call(abi.encodeWithSelector(0xde0f208c, uint8(Resource.Metal)));
+        assertFalse(ok);
+        assertEq(result.length, 0);
 
         (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
-        assertFalse(active);
-        assertEq(metalToken.balanceOf(player), amount);
+        assertTrue(active);
+        assertEq(metalToken.balanceOf(player), 0);
+        assertEq(game.lockedWithdrawalResources().metal, amount);
     }
 
     function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {

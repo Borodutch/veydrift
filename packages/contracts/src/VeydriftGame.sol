@@ -662,11 +662,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
-    function finishMarketResourceWithdrawal(Resource) external {
-        _touchPlayer(_actingPlayer());
-        _delegateToPlanetManagementModule();
-    }
-
     fallback() external {
         // First-planet preview selectors stay in the proxy surface through fallback to keep the
         // size-constrained implementation below EIP-170's 24 KiB limit.

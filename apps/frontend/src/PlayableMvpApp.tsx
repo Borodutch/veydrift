@@ -172,7 +172,6 @@ import {
   sendDepositResourceTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendFinalizeRiftExtractionTransaction,
-  sendFinishResourceWithdrawalTransaction,
   sendJoinAttackMissionTransaction,
   sendJoinBodyAttackMissionTransaction,
   sendJumpGateJumpTransaction,
@@ -5285,11 +5284,6 @@ export function PlayableMvpApp({
           status: "error",
           label: "Wallet, game connection, or withdrawal resource is unavailable.",
         });
-        return;
-      }
-
-      if (withdrawal.kind === "legacyMarketWithdrawal") {
-        void runRiftTransaction(`${resource.label} legacy withdrawal finalization`, (provider: Eip1193Provider) => sendFinishResourceWithdrawalTransaction(provider, signerAccount, gameContract, resource.resourceId));
         return;
       }
 

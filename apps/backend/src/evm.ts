@@ -256,14 +256,13 @@ export type IndexedMoonJumpGateEvent = {
 };
 
 export type IndexedRiftResourceEvent = {
-  eventName: "MarketResourceDeposited" | "MarketResourceWithdrawalRequested" | "MarketResourceWithdrawalFinished";
+  eventName: "MarketResourceDeposited";
   transactionHash: string;
   blockNumber: string;
   owner: Address;
   planetId: string;
   resourceId: number;
   amount: string;
-  unlocksAt?: string;
 };
 
 // Rift V2 locks mined planet resources for a public 28-day extraction window.
@@ -1094,7 +1093,7 @@ export type RiftResourceState = {
 
 export type PendingWithdrawal = {
   id: string;
-  kind?: "riftExtraction" | "legacyMarketWithdrawal";
+  kind?: "riftExtraction";
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;
@@ -3038,11 +3037,7 @@ export class VeydriftGameReader implements ChainReader {
     );
     const unlocked = bridgeBuilt === true;
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
-    const [legacyWithdrawals, extractions] = await Promise.all([
-      this.readLegacyRiftWithdrawals(wallet, planetId),
-      this.readRiftExtractions(planetId)
-    ]);
-    const pendingWithdrawals = [...legacyWithdrawals, ...extractions];
+    const pendingWithdrawals = await this.readRiftExtractions(planetId);
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Rift Stabilizer building yet."
@@ -5001,47 +4996,6 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
-  private async readLegacyRiftWithdrawals(
-    wallet: Address,
-    planetId: bigint
-  ): Promise<PendingWithdrawal[]> {
-    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
-    const withdrawals = await Promise.all(
-      riftResourceCatalog.map(async (resource) => {
-        const words = splitWords(await this.call("0x91f8dfce", [encodeAddress(wallet), encodeUint(BigInt(resource.resourceId))]));
-        const active = decodeBoolWord(wordAt(words, 0));
-        if (!active) {
-          return null;
-        }
-
-        const withdrawalPlanetId = decodeUintWord(wordAt(words, 1));
-        if (withdrawalPlanetId !== planetId) {
-          return null;
-        }
-        const amount = decodeUintWord(wordAt(words, 3));
-        const unlocksAt = decodeUintWord(wordAt(words, 4));
-        const requestedAt = unlocksAt > BigInt(legacyMarketWithdrawalDelaySeconds)
-          ? unlocksAt - BigInt(legacyMarketWithdrawalDelaySeconds)
-          : 0n;
-
-        const withdrawal: PendingWithdrawal = {
-          id: `legacy:${withdrawalPlanetId}:${resource.key}`,
-          kind: "legacyMarketWithdrawal",
-          planetId: withdrawalPlanetId.toString(),
-          resource: resource.key,
-          amount: amount.toString(),
-          requestedAt: new Date(Number(requestedAt) * 1000).toISOString(),
-          unlocksAt: new Date(Number(unlocksAt) * 1000).toISOString(),
-          ready: nowSeconds >= unlocksAt
-        };
-
-        return withdrawal;
-      })
-    );
-
-    return withdrawals.filter((withdrawal): withdrawal is PendingWithdrawal => withdrawal !== null);
-  }
-
   private async readRiftExtractions(planetId: bigint): Promise<PendingWithdrawal[]> {
     const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
     const extractions: Array<PendingWithdrawal | null> = await Promise.all(
@@ -6174,7 +6128,6 @@ const missionShipKeys = [
 const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftExtractionDelaySeconds = 28 * 24 * 60 * 60;
-const legacyMarketWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
   { key: "metal", label: "Metal", resourceId: 0 },
   { key: "crystal", label: "Crystal", resourceId: 1 },
@@ -6289,8 +6242,6 @@ export const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187
 export const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
 export const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
-const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
-const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
 const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
@@ -6394,8 +6345,6 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceProductionBonusDeferredTopic, "AllianceProductionBonusDeferred"],
   [allianceBonusWithdrawnTopic, "AllianceBonusWithdrawn"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
-  [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
-  [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
   [riftExtractionStartedTopic, "RiftExtractionStarted"],
   [riftExtractionLootedTopic, "RiftExtractionLooted"],
   [riftExtractionFinalizedTopic, "RiftExtractionFinalized"],
@@ -6647,10 +6596,7 @@ export function isMoonJumpGateLog(log: RpcLog): boolean {
 }
 
 export function isRiftResourceLog(log: RpcLog): boolean {
-  const topic = topicAt(log.topics, 0);
-  return topic === marketResourceDepositedTopic
-    || topic === marketResourceWithdrawalRequestedTopic
-    || topic === marketResourceWithdrawalFinishedTopic;
+  return topicAt(log.topics, 0) === marketResourceDepositedTopic;
 }
 
 export function isRiftExtractionLog(log: RpcLog): boolean {
@@ -7311,30 +7257,15 @@ export function decodeMoonJumpGateLog(log: RpcLog): IndexedMoonJumpGateEvent {
 }
 
 export function decodeRiftResourceLog(log: RpcLog): IndexedRiftResourceEvent {
-  const topic = topicAt(log.topics, 0);
   const words = splitWords(log.data);
-  const base = {
+  return {
+    eventName: "MarketResourceDeposited",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     owner: decodeAddressWord(topicAt(log.topics, 1)),
     planetId: decodeUint(topicAt(log.topics, 2)).toString(),
     resourceId: Number(decodeUint(topicAt(log.topics, 3))),
     amount: decodeUintWord(wordAt(words, 0)).toString()
-  };
-
-  if (topic === marketResourceWithdrawalRequestedTopic) {
-    return {
-      ...base,
-      eventName: "MarketResourceWithdrawalRequested",
-      unlocksAt: decodeUintWord(wordAt(words, 1)).toString()
-    };
-  }
-
-  return {
-    ...base,
-    eventName: topic === marketResourceDepositedTopic
-      ? "MarketResourceDeposited"
-      : "MarketResourceWithdrawalFinished"
   };
 }
 
