@@ -432,29 +432,18 @@ export function GalaxyRowsSkeleton({ rows = 8 }: { rows?: number | undefined }):
 export function RiftSkeleton(): JSX.Element {
   return (
     <SkeletonRegion className="grid gap-4" label="Loading Rift state">
-      <div className="grid gap-3 md:grid-cols-3">
-        {skeletonList(3, (index) => (
-          <article className="rounded-lg surface p-4" key={index}>
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="mt-1.5 h-3 w-20" />
-              </div>
-              <Skeleton className="h-6 w-16 rounded" />
-            </div>
-            <div className="mt-4 grid gap-2">
-              {skeletonList(4, (rowIndex) => (
-                <div className="flex items-center justify-between gap-3" key={rowIndex}>
-                  <Skeleton className="h-3.5 w-24" />
-                  <Skeleton className="h-3.5 w-14" />
-                </div>
-              ))}
-            </div>
-            <Skeleton className="mt-4 h-9 w-full rounded" />
-            <Skeleton className="mt-2 h-9 w-full rounded" />
-          </article>
-        ))}
-      </div>
+      <article className="grid gap-5 rounded-xl surface p-4 sm:p-5">
+        <div>
+          <Skeleton className="h-5 w-72 max-w-full" />
+          <Skeleton className="mt-2 h-3.5 w-96 max-w-full" />
+        </div>
+        <Skeleton className="h-11 w-full rounded-lg" />
+        <div className="grid grid-cols-3 gap-2">
+          {skeletonList(3, (index) => <Skeleton className="h-14 w-full rounded-md" key={index} />)}
+        </div>
+        <Skeleton className="h-11 w-full rounded-md" />
+        <Skeleton className="h-11 w-full rounded-md" />
+      </article>
     </SkeletonRegion>
   );
 }

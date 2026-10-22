@@ -47,6 +47,7 @@ import { PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { PlayerActivityCenter } from "./components/PlayerActivityDialog";
 import type { RaidTargetAttackAction } from "./components/RaidTargetFinderPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
+import type { RiftTransfer } from "./components/RiftPage";
 import { type ResearchActionState } from "./components/ResearchPage";
 import { ShareDialog } from "./components/ShareDialog";
 import { TopBar } from "./components/TopBar";
@@ -237,7 +238,6 @@ import {
   type PlayerProfile,
   type PlayerQueuesResponse,
   type QueueStateResponse,
-  type RiftResourceState,
   type SupplySourcesResponse,
   type VeydriftWalletChain,
   type WalletPlanetsResponse,
@@ -4462,7 +4462,7 @@ export function PlayableMvpApp({
   const runRiftTransaction = useCallback(
     async (label: string, send: (provider: Eip1193Provider) => Promise<string>, resourceChange?: Pick<ChainResourceChange, "bodyKind" | "planetId">) => {
       const refreshTags = backendScopeTags(account, activePlanetId, "kind:rift", "kind:infrastructure");
-      await runCoordinatedWriteTransaction({
+      return runCoordinatedWriteTransaction({
         key: `rift:${label}`,
         conflictKeys: ["wallet-resources", ...(activePlanetId ? [`planet:${activePlanetId}`] : [])],
         label,
@@ -5221,10 +5221,21 @@ export function PlayableMvpApp({
     [account, activePlanetId, apiBaseUrl, gameContract, effectiveResearchState, provider, backendData, runResearchTransaction, signerAccount],
   );
 
+  // The contracts move one resource per call, so a multi-resource Rift action asks the wallet once
+  // per resource, in order, and stops at the first one that isn't sent.
+  const runRiftTransactions = useCallback(
+    async (steps: readonly Parameters<typeof runRiftTransaction>[]) => {
+      for (const step of steps) {
+        if (!transactionWasSubmitted((await runRiftTransaction(...step)).outcome)) return;
+      }
+    },
+    [runRiftTransaction],
+  );
+
   // Amounts arrive validated from the Rift page as raw token units (1 unit = 1 in-game resource).
-  const handleApproveRiftResource = useCallback(
-    (resource: RiftResourceState, amount: bigint) => {
-      if (!provider || !signerAccount || !account || !gameContract || !resource.tokenAddress) {
+  const handleApproveRiftResources = useCallback(
+    (transfers: readonly RiftTransfer[]) => {
+      if (!provider || !signerAccount || !account || !gameContract || transfers.some(({ resource }) => !resource.tokenAddress)) {
         setRiftAction({
           status: "error",
           label: "Wallet, game connection, or resource token is unavailable.",
@@ -5232,14 +5243,17 @@ export function PlayableMvpApp({
         return;
       }
 
-      // Exactly the injected amount, never an unlimited allowance.
-      void runRiftTransaction(`${resource.label} approval`, (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, signerAccount, resource.tokenAddress ?? "", gameContract, amount));
+      // Exactly the injected amounts, never an unlimited allowance.
+      void runRiftTransactions(transfers.map(({ resource, amount }) => [
+        `${resource.label} approval`,
+        (provider: Eip1193Provider) => sendApproveResourceTokenTransaction(provider, signerAccount, resource.tokenAddress ?? "", gameContract, amount),
+      ]));
     },
-    [account, gameContract, provider, runRiftTransaction, signerAccount],
+    [account, gameContract, provider, runRiftTransactions, signerAccount],
   );
 
-  const handleDepositRiftResource = useCallback(
-    (resource: RiftResourceState, amount: bigint) => {
+  const handleDepositRiftResources = useCallback(
+    (transfers: readonly RiftTransfer[]) => {
       if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
@@ -5249,16 +5263,17 @@ export function PlayableMvpApp({
       }
       const homePlanetId = riftState.homePlanetId;
 
-      void runRiftTransaction(`${resource.label} injection`, (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount), {
-        bodyKind: "planet",
-        planetId: homePlanetId,
-      });
+      void runRiftTransactions(transfers.map(({ resource, amount }) => [
+        `${resource.label} injection`,
+        (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount),
+        { bodyKind: "planet", planetId: homePlanetId },
+      ]));
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction, signerAccount],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransactions, signerAccount],
   );
 
-  const handleRequestRiftWithdrawal = useCallback(
-    (resource: RiftResourceState, amount: bigint) => {
+  const handleRequestRiftWithdrawals = useCallback(
+    (transfers: readonly RiftTransfer[]) => {
       if (!provider || !signerAccount || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
         setRiftAction({
           status: "error",
@@ -5268,12 +5283,13 @@ export function PlayableMvpApp({
       }
       const homePlanetId = riftState.homePlanetId;
 
-      void runRiftTransaction(`${resource.label} extraction start`, (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount), {
-        bodyKind: "planet",
-        planetId: homePlanetId,
-      });
+      void runRiftTransactions(transfers.map(({ resource, amount }) => [
+        `${resource.label} extraction start`,
+        (provider: Eip1193Provider) => sendStartRiftExtractionTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount),
+        { bodyKind: "planet", planetId: homePlanetId },
+      ]));
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction, signerAccount],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransactions, signerAccount],
   );
 
   const handleFinishRiftWithdrawal = useCallback(
@@ -7533,13 +7549,13 @@ export function PlayableMvpApp({
           gameContract={gameContract}
           loading={riftLoading}
           now={now}
-          onApprove={handleApproveRiftResource}
-          onDeposit={handleDepositRiftResource}
+          onApprove={handleApproveRiftResources}
+          onDeposit={handleDepositRiftResources}
           onFinishWithdrawal={handleFinishRiftWithdrawal}
           onOpenRaidFinder={() => handleNavigate("raid-target-finder")}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshRiftState}
-          onRequestWithdrawal={handleRequestRiftWithdrawal}
+          onRequestWithdrawal={handleRequestRiftWithdrawals}
           onSelectPlanet={handleSelectManagedPlanet}
           planets={walletPlanets}
           riftState={riftState}
