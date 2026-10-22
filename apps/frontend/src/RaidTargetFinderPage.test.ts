@@ -52,6 +52,7 @@ describe("RaidTargetFinderPage persistence", () => {
         hideSameAlliance: false,
         hideDefended: true,
         hideActiveFleet: true,
+        afk: "hide",
         minLoot: 2500,
         maxDistance: 150,
       },
@@ -65,6 +66,7 @@ describe("RaidTargetFinderPage persistence", () => {
         hideSameAlliance: false,
         hideDefended: true,
         hideActiveFleet: true,
+        afk: "hide",
         minLoot: 2500,
         maxDistance: 150,
       },
@@ -94,6 +96,7 @@ describe("RaidTargetFinderPage persistence", () => {
         maxDistance: null,
       },
     }));
+    // Settings saved before the AFK filter existed default it to "any".
 
     expect(readPersistedRaidTargetSettings()).toEqual({
       filters: {
@@ -101,6 +104,7 @@ describe("RaidTargetFinderPage persistence", () => {
         hideSameAlliance: true,
         hideDefended: false,
         hideActiveFleet: false,
+        afk: "any",
         minLoot: 900,
         maxDistance: null,
       },

@@ -61,6 +61,28 @@ describe("RaidTargetFinderPage", () => {
     expect(visibleText(controls)).toContain("Hide active fleet");
   });
 
+  test("AFK filter control cycles any, only AFK and hide AFK", () => {
+    const selected: string[] = [];
+    let filters = DEFAULT_RAID_TARGET_FILTERS;
+    for (let step = 0; step < 3; step += 1) {
+      const controls = RaidTargetFilterControls({
+        filters,
+        onChange: (next) => {
+          filters = next;
+        },
+        showAllianceFilter: true,
+        totals: { total: 10, visible: 6, protected: 1, sameAlliance: 1 },
+      });
+      const label = ["AFK: any", "Only AFK", "Hide AFK"][step]!;
+      expect(visibleText(controls)).toContain(label);
+      elementNodes(controls)
+        .find((item) => item.props?.title === "AFK commanders: any, only AFK, or hide AFK")
+        ?.props?.onToggle?.();
+      selected.push(filters.afk);
+    }
+    expect(selected).toEqual(["only", "hide", "any"]);
+  });
+
   test("defense hover label combines defending combat ships and static defenses", () => {
     const target = raidTarget({
       combatPower: 6_000,

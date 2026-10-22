@@ -16,6 +16,7 @@ import {
   sortRaidTargets,
   type DebrisFinderTarget,
   type RaidTarget,
+  type RaidTargetFilters,
 } from "./raidTargetFinder";
 import type {
   ChainShipyardState,
@@ -36,6 +37,7 @@ describe("persisted raid target settings", () => {
       hideSameAlliance: false,
       hideDefended: true,
       hideActiveFleet: true,
+      afk: "only",
       minLoot: 1234.9,
       maxDistance: 987.6,
       unrelated: "ignored",
@@ -46,6 +48,7 @@ describe("persisted raid target settings", () => {
       hideSameAlliance: false,
       hideDefended: true,
       hideActiveFleet: true,
+      afk: "only",
       minLoot: 1234,
       maxDistance: 987,
     });
@@ -57,6 +60,9 @@ describe("persisted raid target settings", () => {
       minLoot: 0,
     });
     expect(normalizeRaidTargetFilters("bad")).toEqual(DEFAULT_RAID_TARGET_FILTERS);
+    expect(normalizeRaidTargetFilters({ afk: true }).afk).toBe("any");
+    expect(normalizeRaidTargetFilters({ afk: "sometimes" }).afk).toBe("any");
+    expect(normalizeRaidTargetFilters({ afk: "hide" }).afk).toBe("hide");
   });
 
   test("normalizes saved sort preferences and falls back safely for corrupt values", () => {
@@ -373,6 +379,19 @@ describe("filterRaidTargets", () => {
     );
 
     expect(visible.map((target) => target.planetId)).toEqual(["open"]);
+  });
+
+  test("afk filter keeps only, or hides, inactive commanders", () => {
+    const afkTargets: RaidTarget[] = [
+      { ...targets[2]!, planetId: "afk", protection: { ...targets[2]!.protection, defenderInactive: true } },
+      { ...targets[2]!, planetId: "active", protection: { ...targets[2]!.protection, defenderInactive: false } },
+    ];
+    const ids = (afk: RaidTargetFilters["afk"]) =>
+      filterRaidTargets(afkTargets, { ...DEFAULT_RAID_TARGET_FILTERS, afk }).map((target) => target.planetId);
+
+    expect(ids("any")).toEqual(["afk", "active"]);
+    expect(ids("only")).toEqual(["afk"]);
+    expect(ids("hide")).toEqual(["active"]);
   });
 
   test("minLoot threshold excludes low-value targets", () => {

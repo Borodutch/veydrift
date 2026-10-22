@@ -34,6 +34,7 @@ import {
   type DebrisTargetSort,
   type DebrisTargetSortKey,
   type RaidTarget,
+  type RaidTargetAfkFilter,
   type RaidTargetFilters,
   type RaidTargetSort,
   type RaidTargetSortKey,
@@ -572,6 +573,12 @@ export function RaidTargetFilterControls({
         label="Hide active fleet"
         onToggle={() => onChange({ ...filters, hideActiveFleet: !filters.hideActiveFleet })}
       />
+      <FilterToggle
+        active={filters.afk !== "any"}
+        label={AFK_FILTER_LABELS[filters.afk]}
+        onToggle={() => onChange({ ...filters, afk: NEXT_AFK_FILTER[filters.afk] })}
+        title="AFK commanders: any, only AFK, or hide AFK"
+      />
       <NumberFilter
         label="Min loot"
         onChange={(value) => onChange({ ...filters, minLoot: value ?? 0 })}
@@ -597,14 +604,28 @@ export function RaidTargetFilterControls({
   );
 }
 
+const AFK_FILTER_LABELS: Record<RaidTargetAfkFilter, string> = {
+  any: "AFK: any",
+  only: "Only AFK",
+  hide: "Hide AFK",
+};
+
+const NEXT_AFK_FILTER: Record<RaidTargetAfkFilter, RaidTargetAfkFilter> = {
+  any: "only",
+  only: "hide",
+  hide: "any",
+};
+
 function FilterToggle({
   active,
   label,
   onToggle,
+  title,
 }: {
   active: boolean;
   label: string;
   onToggle: () => void;
+  title?: string;
 }) {
   return (
     <button
@@ -615,6 +636,7 @@ function FilterToggle({
           : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
       }`}
       onClick={onToggle}
+      title={title}
       type="button"
     >
       {label}

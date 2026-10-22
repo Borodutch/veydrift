@@ -126,11 +126,15 @@ export type RaidTargetSort = {
   direction: RaidTargetSortDirection;
 };
 
+// "only" keeps just AFK (inactive) commanders, "hide" removes them.
+export type RaidTargetAfkFilter = "any" | "only" | "hide";
+
 export type RaidTargetFilters = {
   hideProtected: boolean;
   hideSameAlliance: boolean;
   hideDefended: boolean;
   hideActiveFleet: boolean;
+  afk: RaidTargetAfkFilter;
   minLoot: number;
   maxDistance: number | null;
 };
@@ -176,6 +180,7 @@ export const DEFAULT_RAID_TARGET_FILTERS: RaidTargetFilters = {
   hideSameAlliance: true,
   hideDefended: false,
   hideActiveFleet: false,
+  afk: "any",
   minLoot: 0,
   maxDistance: null,
 };
@@ -220,6 +225,9 @@ export function normalizeRaidTargetFilters(value: unknown): RaidTargetFilters {
     hideActiveFleet: typeof candidate.hideActiveFleet === "boolean"
       ? candidate.hideActiveFleet
       : DEFAULT_RAID_TARGET_FILTERS.hideActiveFleet,
+    afk: candidate.afk === "any" || candidate.afk === "only" || candidate.afk === "hide"
+      ? candidate.afk
+      : DEFAULT_RAID_TARGET_FILTERS.afk,
     minLoot: persistedNumber(candidate.minLoot, DEFAULT_RAID_TARGET_FILTERS.minLoot),
     maxDistance: persistedNullableNumber(candidate.maxDistance, DEFAULT_RAID_TARGET_FILTERS.maxDistance),
   };
@@ -481,6 +489,8 @@ export function filterRaidTargets(
     ) {
       return false;
     }
+    if (filters.afk === "only" && !target.protection.defenderInactive) return false;
+    if (filters.afk === "hide" && target.protection.defenderInactive) return false;
     if (target.loot < filters.minLoot) return false;
     if (
       filters.maxDistance !== null
