@@ -19,9 +19,10 @@ describe("Batch Supply source row presentation", () => {
     expect(batchSupplyModalSource).not.toContain("Auto-plan cargo");
     expect(batchSupplyModalSource).not.toContain("Recalculate with latest");
     expect(batchSupplyModalSource).not.toContain("Use only this source");
-    expect(batchSupplyModalSource).toContain("{checked ? <>");
+    // Each source is one summary row; its cargo and ship controls open from its Edit button.
+    expect(batchSupplyModalSource).toContain("{expanded ? <div");
     expect(batchSupplyModalSource).toContain("Available: M");
-    expect(batchSupplyModalSource).toContain("disabled={!checked || loading");
+    expect(batchSupplyModalSource).toContain("disabled={!checked || busy");
   });
   test("uses Empire mission icons without substitutes", async () => {
     const empire = await Bun.file(new URL("./OverviewPage.tsx", import.meta.url)).text();
@@ -32,9 +33,11 @@ describe("Batch Supply source row presentation", () => {
   test("Max shares all preview inputs and submission uses that same preview", () => {
     expect(batchSupplyModalSource).toContain("buildBatchSupplyPlan(planOptions)");
     expect(batchSupplyModalSource).toContain("setSelectedSourceIds(suggestBatchSupplySourceIds(");
-    expect(batchSupplyModalSource).toContain("useBatchSupplyMax(planOptions, target.planetId");
-    expect(batchSupplyModalSource).not.toContain("maximumBatchSupplyResource(");
-    expect(batchSupplyModalSource).toContain("!maximum.busy");
+    // Max is a budgeted synchronous search over the same preview inputs: no worker, no pending state.
+    expect(batchSupplyModalSource).toContain("maximumBatchSupplyResource(planOptions, resource)");
+    expect(batchSupplyModalSource).toContain("maximumBatchSupplyResource({ ...planOptions, requested: next }, key)");
+    expect(batchSupplyModalSource).not.toContain("new Worker(");
+    expect(batchSupplyModalSource).not.toContain("Cancel Max");
     expect(batchSupplyModalSource).toContain("onConfirm(plan.orders, shipTypesBySource, mission, fleetModesBySource)");
     expect(batchSupplyModalSource).not.toContain("Number.MAX_SAFE_INTEGER");
   });

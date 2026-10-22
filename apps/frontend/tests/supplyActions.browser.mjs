@@ -106,14 +106,14 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     // First preflight publishes increased shortfall; second identical attempt must
     // remain blocked even though the parent now has that new preview.
     await load();
-    await evaluate('document.querySelector("[data-supply-details]").open=true');
+    await evaluate('document.querySelector(\'button[aria-label="Edit New Zion shipment"]\').click()'); await settle();
     await evaluate('(() => {const i=document.querySelector(\'input[aria-label="New Zion metal to send"]\');i.value="12300";i.dispatchEvent(new Event("input",{bubbles:true}));})()'); await settle();
     await evaluate('actionsFixture.spend()'); await launch(); await idle();
     assert.equal((await state()).sent.length,0);
     assert.deepEqual((await state()).preview.missing,{metal:12800,crystal:3840,deuterium:6400});
     assert.equal(await evaluate('document.querySelector("footer button").disabled'),true);
     assert.equal(await evaluate('document.querySelector(\'input[aria-label="New Zion metal to send"]\').value'),'12300');
-    assert.ok(await evaluate('document.querySelector(\'[aria-label="Supply totals"]\').textContent.includes("RemainingM 500 · C 500 · D 0")'));
+    assert.ok(await evaluate('document.querySelector(\'[aria-label="Supply totals"]\').textContent.includes("Short M 500 · C 500.")'));
     await evaluate('actionsFixture.retryOriginal()'); await idle();
     assert.equal((await state()).sent.length,0,'unchanged second confirmation cannot accept incomplete cargo');
     await evaluate('[...document.querySelectorAll("button")].find(b=>b.textContent==="Refresh destination and shortfall").click()');await idle();
@@ -227,33 +227,30 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     }
     console.log('PASS preserved coordinator deadline and late-hash recovery after six post-send context changes');
 
-    await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
-    await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').closest("label").querySelector("button").click()');await settle();
-    for(const kind of ['unselected']) {
-      await evaluate('actionsFixture.stock('+JSON.stringify(kind)+')');await settle();
-      assert.equal(await evaluate('Boolean(heldMax.terminated)'),false,kind+' cannot cancel reviewed Max');
-      assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false);
-    }
-    await evaluate('heldMax.onmessage({data:{maximum:12300}})');await settle();
+    // Max applies at once from the latest inventory: there is no worker or pending state to cancel.
+    const maxMetal = 'document.querySelector(\'input[aria-label="metal to send"]\').closest("label").querySelector("button").click()';
+    await load();await evaluate(maxMetal);await settle();
+    await evaluate('actionsFixture.stock("unselected")');await settle();
+    assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false,'unselected inventory keeps the reviewed plan');
     assert.equal(await evaluate('document.querySelector("footer button").disabled'),false,'identical reviewed plan remains launchable');
     await launch();await idle();assert.equal((await state()).sent.length,1);
-    // A selected source's resource reserve is an input to Max even when the
-    // current smaller shipment is unchanged. An old worker must not apply it.
-    await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
-    await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="metal to send"]') + ').closest("label").querySelector("button").click()');await settle();
+    // A selected source's reserve change that leaves the shipment unchanged needs no second look.
+    await load();await evaluate(maxMetal);await settle();
     await evaluate('actionsFixture.stock("irrelevant")');await settle();
-    assert.equal(await evaluate('Boolean(heldMax.terminated)'),true,'selected resource changes invalidate an old Max snapshot');
     assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false,'unchanged reviewed shipment remains valid');
     assert.equal((await state()).sent.length,0);
-    for (const kind of ['fuel','lock','drive','fleet']) {
-      await load();await evaluate('document.querySelector("[data-supply-amounts]").open=true;window.Worker=class {constructor(){window.heldMax=this}postMessage(){}terminate(){this.terminated=true}}');
-      await evaluate('document.querySelector(' + JSON.stringify('input[aria-label="metal to send"]') + ').closest("label").querySelector("button").click()');await settle();
+    // Faster drives only shorten the trip: same origins and totals, so the plan stays launchable.
+    await load();await evaluate(maxMetal);await settle();
+    await evaluate('actionsFixture.stock("drive")');await settle();
+    assert.equal(await evaluate('document.body.textContent.includes("Source inventory changed")'),false,'drive: no review for a faster route');
+    assert.equal(await evaluate('document.querySelector("footer button").disabled'),false,'drive: plan stays launchable');
+    for (const kind of ['fuel','lock','fleet']) {
+      await load();await evaluate(maxMetal);await settle();
       await evaluate('actionsFixture.stock('+JSON.stringify(kind)+')');await settle();
       assert.equal(await evaluate('document.querySelector("footer button").disabled'),true,kind+': invalid reviewed fleet blocks');
-      assert.equal(await evaluate('heldMax.terminated'),true,kind+': relevant feasibility change cancels worker');
       assert.equal((await state()).sent.length,0);
     }
-    console.log('PASS unselected inventory preserves Max; selected reserves invalidate Max without resetting unchanged shipment; insufficient fuel blocks');
+    console.log('PASS instant Max; unselected inventory and faster drives keep the plan; unchanged shipments need no review; missing fuel, locks and fleets block');
     await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);

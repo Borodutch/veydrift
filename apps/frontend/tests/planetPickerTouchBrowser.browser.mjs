@@ -1267,14 +1267,14 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate("window.supplyProof.sourceReads"), 0, 'Opening Supply reuses the ready aggregated snapshot');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
   const titleAlignment = await evaluate(`(() => {
     // The shared modal header places the icon beside the heading.
     const heading = document.querySelector('[role="dialog"] h2');
-    const parts = [heading.querySelector('[role="group"]'), heading].map(node => node.getBoundingClientRect());
+    const parts = [heading.parentElement.parentElement.firstElementChild, heading].map(node => node.getBoundingClientRect());
     return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
   })()`);
   assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
@@ -1290,7 +1290,7 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
@@ -1335,7 +1335,7 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
@@ -1391,7 +1391,7 @@ test("Supply preparation expires without locking the modal or submitting late", 
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Ships · planned / available') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
