@@ -1,18 +1,15 @@
-import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   ArrowDownToLine,
   ArrowRight,
   ArrowUpFromLine,
   CircleCheck,
-  Coins,
   Crosshair,
   History,
   Hourglass,
   Lock,
   Swords,
   TriangleAlert,
-  Wallet,
   type LucideIcon,
 } from "lucide-preact";
 import { buildingCatalog, type BuildingKey, type ResearchKey } from "../playableMvp";
@@ -36,8 +33,6 @@ import { AnimatedProgressBar } from "./AnimatedProgressBar";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { InlineStateNotice } from "./InlineStateNotice";
 import { RiftSkeleton } from "./LoadingSkeletons";
-import { Modal } from "./Modal";
-import { ModalHeader } from "./ModalHeader";
 import { OptimizedImage } from "./OptimizedImage";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
@@ -50,6 +45,8 @@ type RiftActionState =
 type RiftMode = "extract" | "inject";
 type RiftPlanet = Pick<ManagedPlanetResponse, "planetId" | "name" | "coordinates" | "buildingLevels">;
 type TokenWallet = Partial<Record<RiftResourceKey, RiftTokenWallet>>;
+/** One resource's share of a Rift action; the contracts take one resource per call. */
+export type RiftTransfer = { resource: RiftResourceState; amount: bigint };
 
 interface RiftPageProps {
   /** The planet owner: extractions pay out to this wallet. */
@@ -60,13 +57,13 @@ interface RiftPageProps {
   gameContract?: string | undefined;
   loading: boolean;
   now: number;
-  onApprove: (resource: RiftResourceState, amount: bigint) => void;
-  onDeposit: (resource: RiftResourceState, amount: bigint) => void;
+  onApprove: (transfers: readonly RiftTransfer[]) => void;
+  onDeposit: (transfers: readonly RiftTransfer[]) => void;
   onFinishWithdrawal: (withdrawal: PendingWithdrawal) => void;
   onOpenRaidFinder?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
-  onRequestWithdrawal: (resource: RiftResourceState, amount: bigint) => void;
+  onRequestWithdrawal: (transfers: readonly RiftTransfer[]) => void;
   onSelectPlanet?: ((planetId: string) => void) | undefined;
   planets?: readonly RiftPlanet[] | undefined;
   riftState: ChainRiftState | null;
@@ -86,10 +83,10 @@ const stabilizerCost = (() => {
   return `${cost.metal.toLocaleString("en-US")} Metal, ${cost.crystal.toLocaleString("en-US")} Crystal and ${cost.deuterium.toLocaleString("en-US")} Deuterium`;
 })();
 
-const resourceStyles: Record<RiftResourceKey, { label: string; symbol: string; dot: string; text: string; selected: string }> = {
-  metal: { label: "Metal", symbol: "vMETAL", dot: "bg-amber-300", text: "text-amber-200", selected: "border-amber-300/50 bg-amber-300/10 text-amber-100" },
-  crystal: { label: "Crystal", symbol: "vCRYSTAL", dot: "bg-cyan-300", text: "text-cyan-200", selected: "border-cyan-300/50 bg-cyan-300/10 text-cyan-100" },
-  deuterium: { label: "Deuterium", symbol: "vDEUT", dot: "bg-emerald-300", text: "text-emerald-200", selected: "border-emerald-300/50 bg-emerald-300/10 text-emerald-100" },
+const resourceStyles: Record<RiftResourceKey, { label: string; symbol: string; dot: string; text: string }> = {
+  metal: { label: "Metal", symbol: "vMETAL", dot: "bg-amber-300", text: "text-amber-200" },
+  crystal: { label: "Crystal", symbol: "vCRYSTAL", dot: "bg-cyan-300", text: "text-cyan-200" },
+  deuterium: { label: "Deuterium", symbol: "vDEUT", dot: "bg-emerald-300", text: "text-emerald-200" },
 };
 const resourceKeys = ["metal", "crystal", "deuterium"] as const satisfies readonly RiftResourceKey[];
 
@@ -101,7 +98,7 @@ const quietButton = `${buttonBase} border-white/10 bg-white/5 text-slate-200 hov
 const sectionLabel = "text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-200/70";
 
 export function RiftPage(props: RiftPageProps) {
-  const { actionState, canTransact, error, loading, now, onRefresh, planets = [], riftState, transactionUnavailableReason } = props;
+  const { actionState, canTransact, error, loading, onRefresh, planets = [], riftState, transactionUnavailableReason } = props;
   const [txRevision, setTxRevision] = useState(0);
   // Re-read wallet tokens after every confirmed Rift transaction (approvals change nothing the game indexes).
   useEffect(() => {
@@ -113,8 +110,7 @@ export function RiftPage(props: RiftPageProps) {
     [riftState?.resources],
   );
   const tokenWallet = useRiftTokenWallet(props.rpcUrl, props.signerAccount, props.gameContract, tokens, txRevision);
-  const planetId = riftState?.homePlanetId ?? undefined;
-  const planetLabel = planetName(planets, planetId);
+  const planetLabel = planetName(planets, riftState?.homePlanetId ?? undefined);
   const lockSeconds = Number(riftState?.withdrawalDelaySeconds) || DEFAULT_LOCK_SECONDS;
   const loadError = error ? playerNotice(error) ?? error : undefined;
   const unavailableReason = actionState.status === "pending" ? actionState.label : transactionUnavailableReason;
@@ -127,8 +123,6 @@ export function RiftPage(props: RiftPageProps) {
       {!canTransact && transactionUnavailableReason && actionState.status !== "pending" ? (
         <InlineStateNotice tone="info">{transactionUnavailableReason}</InlineStateNotice>
       ) : null}
-
-      <RiftHero lockSeconds={lockSeconds} planetLabel={riftState ? planetLabel : undefined} />
 
       {loading && !riftState ? (
         <RiftSkeleton />
@@ -147,60 +141,33 @@ export function RiftPage(props: RiftPageProps) {
         )
       ) : (
         <>
+          <RiftClaims {...props} planets={planets} riftState={riftState} transactionUnavailableReason={unavailableReason} />
           {riftState.unlocked ? (
             <RiftWorkbench {...props} lockSeconds={lockSeconds} planetLabel={planetLabel} riftState={riftState} tokenWallet={tokenWallet} transactionUnavailableReason={unavailableReason} />
           ) : (
             <RiftLockedPanel {...props} planetLabel={planetLabel} riftState={riftState} />
           )}
-          <RiftClaims {...props} planets={planets} riftState={riftState} transactionUnavailableReason={unavailableReason} />
-          <RiftHistoryPanel planetId={planetId} planets={planets} riftState={riftState} />
+          <RiftHistoryPanel planets={planets} riftState={riftState} />
         </>
       )}
     </section>
   );
 }
 
-function RiftHero({ lockSeconds, planetLabel }: { lockSeconds: number; planetLabel?: string | undefined }) {
-  const lockDays = Math.round(lockSeconds / 86_400);
+function RiftArt() {
   return (
-    <section aria-labelledby="rift-title" className="surface relative grid overflow-hidden rounded-xl md:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)]">
-      <div className="relative h-44 overflow-hidden bg-black/30 sm:h-56 md:h-full md:min-h-[17rem]">
-        <OptimizedImage
-          alt="A Rift Stabilizer holding an interdimensional rift open"
-          className="absolute inset-0 h-full w-full object-cover"
-          height={1024}
-          loading="eager"
-          sizes="(min-width: 768px) 360px, calc(100vw - 2rem)"
-          src={RIFT_ART}
-          width={1024}
-        />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0d1829] via-[#0d1829]/10 to-transparent md:bg-gradient-to-r md:from-transparent md:via-transparent md:to-[#0d1829]" />
-      </div>
-      <div className="relative grid content-center gap-3 px-5 pb-5 pt-1 sm:px-6 md:py-6">
-        <h2 className="text-xl font-semibold leading-tight text-white sm:text-2xl" id="rift-title">
-          {planetLabel ? `Move resources between ${planetLabel} and your wallet` : "Move resources between your planets and your wallet"}
-        </h2>
-        <p className="max-w-2xl text-sm leading-6 text-slate-300">
-          Metal, Crystal and Deuterium also exist as tokens: vMETAL, vCRYSTAL and vDEUT. Inject tokens to add resources to a planet
-          right away, or extract resources to lock them on the planet for {lockDays} days in plain sight of every raider, after which
-          whatever survives is paid to your wallet.
-        </p>
-        <ul className="mt-1 flex flex-wrap gap-2 text-xs">
-          <HeroChip icon={ArrowDownToLine} label="Injecting is instant" />
-          <HeroChip icon={Hourglass} label={`Extracting takes ${lockDays} days`} />
-          <HeroChip icon={Coins} label="1 token = 1 unit" />
-        </ul>
-      </div>
-    </section>
-  );
-}
-
-function HeroChip({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
-  return (
-    <li className="surface-inset inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 font-medium text-slate-200">
-      <Icon aria-hidden="true" className="h-3.5 w-3.5 text-cyan-300" />
-      {label}
-    </li>
+    <div className="relative h-44 overflow-hidden bg-black/30 sm:h-56 md:h-auto md:min-h-[24rem]">
+      <OptimizedImage
+        alt="A Rift Stabilizer holding an interdimensional rift open"
+        className="absolute inset-0 h-full w-full object-cover"
+        height={1024}
+        loading="eager"
+        sizes="(min-width: 768px) 40vw, calc(100vw - 2rem)"
+        src={RIFT_ART}
+        width={1024}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#0d1829] via-[#0d1829]/10 to-transparent md:bg-gradient-to-r md:from-transparent md:via-transparent md:to-[#0d1829]" />
+    </div>
   );
 }
 
@@ -219,247 +186,213 @@ function RiftWorkbench({
   transactionUnavailableReason,
 }: RiftPageProps & { lockSeconds: number; planetLabel: string; riftState: ChainRiftState; tokenWallet: TokenWalletRead }) {
   const [mode, setMode] = useState<RiftMode>("extract");
-  const [resourceKey, setResourceKey] = useState<RiftResourceKey>("metal");
   const [inputs, setInputs] = useState<Partial<Record<`${RiftMode}:${RiftResourceKey}`, string>>>({});
-  const [confirming, setConfirming] = useState<{ resource: RiftResourceState; amount: bigint } | null>(null);
-  const resource = riftState.resources.find((item) => item.key === resourceKey) ?? riftState.resources[0];
-  if (!resource) return null;
-  const style = resourceStyles[resource.key];
-  const input = inputs[`${mode}:${resource.key}`] ?? "";
-  const setInput = (value: string) => setInputs((current) => ({ ...current, [`${mode}:${resource.key}`]: value }));
-  const wallet = tokenWallet.data?.[resource.key];
-  const activeClaim = riftState.pendingWithdrawals.find((claim) => claim.planetId === riftState.homePlanetId
-    && claim.resource === resource.key);
+  const [understood, setUnderstood] = useState(false);
+  const inject = mode === "inject";
   const delegated = Boolean(signerAccount && account && signerAccount.toLowerCase() !== account.toLowerCase());
+  const clearInputs = (transfers: readonly RiftTransfer[]) => setInputs((current) => ({
+    ...current,
+    ...Object.fromEntries(transfers.map(({ resource }) => [`${mode}:${resource.key}`, ""])),
+  }));
 
-  const check = mode === "inject"
-    ? riftAmountCheck(input, "tokens", wallet?.balance, `Your wallet holds ${formatRiftTokens(wallet?.balance ?? 0n)} ${style.symbol}.`)
-    : riftAmountCheck(input, "units", toUnits(resource.inGameBalance), `${planetLabel} holds ${formatIntegerAmount(resource.inGameBalance)} ${style.label}.`);
+  const rows = riftState.resources.map((resource) => {
+    const style = resourceStyles[resource.key];
+    const input = inputs[`${mode}:${resource.key}`] ?? "";
+    const wallet = tokenWallet.data?.[resource.key];
+    const activeClaim = inject ? undefined : riftState.pendingWithdrawals.find((claim) => claim.planetId === riftState.homePlanetId
+      && claim.resource === resource.key);
+    const disabled = inject ? !resource.tokenAddress || (!wallet && tokenWallet.failed) : Boolean(activeClaim);
+    const available = inject ? wallet?.balance : toUnits(resource.inGameBalance);
+    const check = input && !disabled
+      ? riftAmountCheck(input, inject ? "tokens" : "units", available, inject
+        ? `Your wallet holds ${formatRiftTokens(available ?? 0n)} ${style.symbol}.`
+        : `${planetLabel} holds ${formatIntegerAmount(resource.inGameBalance)} ${style.label}.`)
+      : {};
+    return {
+      resource,
+      style,
+      input,
+      disabled,
+      invalid: Boolean(check.reason),
+      // A typed injection waits for the wallet balance before it counts.
+      amount: inject && !wallet ? undefined : check.amount,
+      available: inject
+        ? wallet ? formatRiftTokens(wallet.balance) : disabled ? "—" : "…"
+        : formatIntegerAmount(resource.inGameBalance),
+      max: available && available > 0n ? available.toString() : undefined,
+      note: activeClaim
+        ? `Already extracting until ${formatUnlock(activeClaim.unlocksAt)}.`
+        : inject && !resource.tokenAddress ? `${style.symbol} isn't available right now.` : check.reason,
+    };
+  });
+  const transfers = rows.flatMap((row) => row.amount === undefined ? [] : [{ resource: row.resource, amount: row.amount }]);
+  const toApprove = inject ? transfers.filter(({ resource, amount }) => (tokenWallet.data?.[resource.key]?.allowance ?? 0n) < amount) : [];
   const blocker = !canTransact
     ? transactionUnavailableReason ?? "Wallet or game connection unavailable"
-    : mode === "inject" && !resource.tokenAddress
-      ? `${style.symbol} isn't available right now.`
-      : mode === "inject" && !wallet
-        ? tokenWallet.failed ? `Your ${style.symbol} balance couldn't be read.` : `Reading your ${style.symbol} balance.`
-        : mode === "extract" && activeClaim
-          ? `${style.label} is already extracting from ${planetLabel}. Finalize it after ${formatUnlock(activeClaim.unlocksAt)} to start another.`
-          : undefined;
-  const amount = blocker ? undefined : check.amount;
-  const needsApproval = Boolean(amount && wallet && wallet.allowance < amount);
-  const maxValue = mode === "inject"
-    ? wallet ? formatRiftTokens(wallet.balance).replace(/,/g, "") : undefined
-    : resource.inGameBalance;
+    : rows.some((row) => row.invalid)
+      ? "Fix the amounts above."
+      : inject && rows.some((row) => row.input && !row.disabled && row.amount === undefined)
+        ? tokenWallet.failed ? "Your token balances couldn't be read." : "Reading your token balances."
+        : transfers.length === 0 ? `Enter an amount to ${inject ? "inject" : "extract"}.` : undefined;
+  const ready = !blocker;
+  const several = (toApprove.length || transfers.length) > 1;
 
   return (
-    <section aria-labelledby="rift-actions-title" className="grid gap-4">
-      <h2 className="sr-only" id="rift-actions-title">Rift balances and actions</h2>
-      <div className="grid gap-3 md:grid-cols-3">
-        {riftState.resources.map((item) => (
-          <ResourceCard
-            key={item.key}
-            onSelect={() => setResourceKey(item.key)}
-            planetLabel={planetLabel}
-            resource={item}
-            selected={item.key === resource.key}
-            wallet={tokenWallet.data?.[item.key]}
-            walletFailed={tokenWallet.failed}
-          />
-        ))}
-      </div>
-      {tokenWallet.failed ? (
-        <InlineStateNotice tone="error">
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            Your token balances couldn't be read.
-            <button className="font-semibold text-cyan-200 underline-offset-4 hover:underline" onClick={tokenWallet.retry} type="button">Try again</button>
-          </span>
-        </InlineStateNotice>
-      ) : null}
-
-      <div className="surface grid overflow-hidden rounded-xl">
-        <div aria-label="Rift direction" className="grid grid-cols-2 border-b border-cyan-300/10" role="group">
-          <ModeButton active={mode === "extract"} icon={ArrowUpFromLine} label="Extract to wallet" onClick={() => setMode("extract")} />
-          <ModeButton active={mode === "inject"} icon={ArrowDownToLine} label="Inject into planet" onClick={() => setMode("inject")} />
+    <section aria-labelledby="rift-title" className="surface grid overflow-hidden rounded-xl md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <RiftArt />
+      <div className="grid min-w-0 content-start gap-5 p-4 sm:p-5">
+        <div>
+          <h2 className="text-lg font-semibold leading-tight text-white" id="rift-title">Move resources between {planetLabel} and your wallet</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-400">
+            Metal, Crystal and Deuterium also exist as the tokens vMETAL, vCRYSTAL and vDEUT, one token per unit.
+          </p>
         </div>
-        <div className="grid gap-5 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="grid content-start gap-4">
-            <div>
-              <p className={sectionLabel} id="rift-resource-label">Resource</p>
-              <div aria-labelledby="rift-resource-label" className="mt-2 grid grid-cols-3 gap-2" role="group">
-                {resourceKeys.map((key) => (
+
+        <div aria-label="Rift direction" className="grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-black/20 p-1" role="group">
+          <ModeButton active={!inject} icon={ArrowUpFromLine} label="Extract to wallet" onClick={() => setMode("extract")} />
+          <ModeButton active={inject} icon={ArrowDownToLine} label="Inject into planet" onClick={() => setMode("inject")} />
+        </div>
+
+        <div className="grid gap-3">
+          <div className={`grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-3 ${sectionLabel}`}>
+            <span>{inject ? "In your wallet" : `On ${planetLabel}`}</span>
+            <span>{inject ? "Inject" : "Extract"}</span>
+          </div>
+          {rows.map((row) => {
+            const id = `rift-amount-${row.resource.key}`;
+            return (
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] items-center gap-x-3 gap-y-1" key={row.resource.key}>
+                <label className="min-w-0" htmlFor={id}>
+                  <span className={`flex items-center gap-2 text-sm font-semibold ${row.style.text}`}>
+                    <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${row.style.dot}`} />
+                    {row.style.label}
+                  </span>
+                  <span className="block truncate font-mono text-xs tabular-nums text-slate-400">{row.available}</span>
+                </label>
+                <div className="flex min-w-0 gap-2">
+                  <input
+                    aria-describedby={row.note ? `${id}-note` : undefined}
+                    aria-invalid={row.invalid}
+                    autoComplete="off"
+                    className="h-11 min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-base tabular-nums text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 disabled:cursor-not-allowed disabled:opacity-50 sm:h-10 sm:text-sm"
+                    disabled={row.disabled}
+                    id={id}
+                    inputMode="numeric"
+                    onInput={(event) => {
+                      const value = (event.currentTarget as HTMLInputElement).value;
+                      setInputs((current) => ({ ...current, [`${mode}:${row.resource.key}`]: value }));
+                    }}
+                    placeholder="0"
+                    spellcheck={false}
+                    value={row.disabled ? "" : row.input}
+                  />
                   <button
-                    aria-pressed={key === resource.key}
-                    className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-2 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 sm:min-h-10 ${key === resource.key ? resourceStyles[key].selected : "border-white/10 bg-white/[0.03] text-slate-300 hover:bg-white/[0.07]"}`}
-                    key={key}
-                    onClick={() => setResourceKey(key)}
+                    aria-label={`Max ${row.style.label}`}
+                    className={quietButton}
+                    disabled={row.disabled || !row.max}
+                    onClick={() => row.max && setInputs((current) => ({ ...current, [`${mode}:${row.resource.key}`]: row.max! }))}
                     type="button"
                   >
-                    <span aria-hidden="true" className={`h-2 w-2 rounded-full ${resourceStyles[key].dot}`} />
-                    {resourceStyles[key].label}
+                    Max
                   </button>
-                ))}
+                </div>
+                {row.note ? (
+                  <p className={`col-start-2 text-xs leading-5 ${row.invalid ? "text-amber-200" : "text-slate-400"}`} id={`${id}-note`} role={row.invalid ? "alert" : undefined}>
+                    {row.note}
+                  </p>
+                ) : null}
               </div>
-            </div>
-            <div>
-              <label className={sectionLabel} htmlFor="rift-amount">
-                {mode === "inject" ? `Amount in ${style.symbol}` : `Amount of ${style.label}`}
-              </label>
-              <div className="mt-2 flex gap-2">
-                <input
-                  aria-describedby="rift-amount-hint"
-                  aria-invalid={Boolean(input && check.reason)}
-                  autoComplete="off"
-                  className="h-11 min-w-0 flex-1 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-base tabular-nums text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/50 sm:h-10 sm:text-sm"
-                  id="rift-amount"
-                  inputMode="numeric"
-                  onInput={(event) => setInput((event.currentTarget as HTMLInputElement).value)}
-                  placeholder="0"
-                  spellcheck={false}
-                  value={input}
-                />
-                <button
-                  className={quietButton}
-                  disabled={!maxValue || maxValue === "0"}
-                  onClick={() => maxValue && setInput(maxValue)}
-                  type="button"
-                >
-                  Max
-                </button>
-              </div>
-              <p className={`mt-2 text-xs leading-5 ${input && check.reason ? "text-amber-200" : "text-slate-400"}`} id="rift-amount-hint" role={input && check.reason ? "alert" : undefined}>
-                {input && check.reason
-                  ? check.reason
-                  : mode === "inject"
-                    ? wallet ? `Your wallet holds ${formatRiftTokens(wallet.balance)} ${style.symbol}.` : `Reading your ${style.symbol} balance.`
-                    : `${planetLabel} holds ${formatIntegerAmount(resource.inGameBalance)} ${style.label}.`}
-              </p>
-            </div>
-            <ol className="grid gap-3 border-t border-white/[0.06] pt-4">
-              {mode === "inject" ? (
-                <>
-                  <GuideStep icon={Wallet} title="From your wallet">
-                    {wallet?.balance === 0n
-                      ? `You have no ${style.symbol} yet. Extract ${style.label} through the Rift, or receive ${style.symbol} from another player.`
-                      : `The tokens come from ${delegated && signerAccount ? shortAddress(signerAccount) : "your connected wallet"}; the game takes exactly what you approve.`}
-                  </GuideStep>
-                  <GuideStep icon={ArrowDownToLine} title={`Straight onto ${planetLabel}`}>
-                    The {style.label} is ready to spend the moment the injection confirms, just like mined {style.label}.
-                  </GuideStep>
-                  <GuideStep icon={Hourglass} title={`Leaving again takes ${Math.round(lockSeconds / 86_400)} days`}>
-                    Turning {style.label} back into {style.symbol} always goes through an extraction and its public lock.
-                  </GuideStep>
-                </>
-              ) : (
-                <>
-                  <GuideStep icon={Lock} title="Today">
-                    The {style.label} leaves {planetLabel}'s storage and is locked on the planet.
-                  </GuideStep>
-                  <GuideStep icon={Crosshair} title={`For ${Math.round(lockSeconds / 86_400)} days`}>
-                    Every player sees it in the Raid Finder, and raiders can take it.
-                  </GuideStep>
-                  <GuideStep icon={Coins} title="After it unlocks">
-                    Finalize it below and whatever survived arrives in your wallet as {style.symbol}.
-                  </GuideStep>
-                </>
-              )}
-            </ol>
-          </div>
-
-          {mode === "inject" ? (
-            <InjectSummary
-              amount={amount}
-              blocker={blocker ?? (input ? undefined : "Enter an amount to inject.")}
-              delegated={delegated}
-              needsApproval={needsApproval}
-              onApprove={() => amount && onApprove(resource, amount)}
-              onDeposit={() => amount && onDeposit(resource, amount)}
-              planetLabel={planetLabel}
-              resource={resource}
-              signerAccount={signerAccount}
-            />
-          ) : (
-            <ExtractSummary
-              account={account}
-              amount={amount}
-              blocker={blocker ?? (input ? undefined : "Enter an amount to extract.")}
-              lockSeconds={lockSeconds}
-              now={now}
-              onReview={() => amount && setConfirming({ resource, amount })}
-              planetLabel={planetLabel}
-              resource={resource}
-            />
-          )}
+            );
+          })}
         </div>
+
+        {inject && tokenWallet.failed ? (
+          <InlineStateNotice tone="error">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              Your token balances couldn't be read.
+              <button className="font-semibold text-cyan-200 underline-offset-4 hover:underline" onClick={tokenWallet.retry} type="button">Try again</button>
+            </span>
+          </InlineStateNotice>
+        ) : null}
+
+        {inject ? (
+          <div className="grid gap-2">
+            {ready ? (
+              <p className="text-sm leading-6 text-slate-300">
+                {planetLabel} gets{" "}
+                <span className="font-semibold text-white">{listJoin(transfers.map(({ resource, amount }) => `+${formatRiftTokens(amount)} ${resourceStyles[resource.key].label}`))}</span>{" "}
+                right away{delegated && signerAccount ? `, paid from ${shortAddress(signerAccount)}` : ""}.
+              </p>
+            ) : null}
+            {ready && toApprove.length ? (
+              <button className={cyanButton} onClick={() => onApprove(toApprove)} type="button">
+                <CircleCheck aria-hidden="true" className="h-4 w-4" />
+                Approve {listJoin(toApprove.map(({ resource }) => resourceStyles[resource.key].symbol))}
+              </button>
+            ) : (
+              <button
+                className={cyanButton}
+                disabled={!ready}
+                onClick={() => {
+                  onDeposit(transfers);
+                  clearInputs(transfers);
+                }}
+                type="button"
+              >
+                <ArrowDownToLine aria-hidden="true" className="h-4 w-4" />
+                Inject
+              </button>
+            )}
+            {ready && toApprove.length ? <p className="text-xs leading-5 text-slate-400">Step 1 of 2: lets the game take exactly these amounts. Then inject.</p> : null}
+            {ready && several ? <p className="text-xs leading-5 text-slate-400">Your wallet asks you to confirm each resource separately.</p> : null}
+            <ActionReasonNote reason={blocker} />
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {ready ? (
+              <p className="text-sm leading-6 text-slate-300">
+                You receive up to{" "}
+                <span className="font-semibold text-white">{listJoin(transfers.map(({ resource, amount }) => `${formatRiftTokens(amount)} ${resourceStyles[resource.key].symbol}`))}</span>
+                {delegated && account ? ` at ${shortAddress(account)}` : " in your wallet"} on {formatUnlock(new Date(now + lockSeconds * 1_000).toISOString())}.
+              </p>
+            ) : null}
+            <p className="flex gap-2 rounded-md border border-amber-300/25 bg-amber-300/[0.07] p-3 text-xs leading-5 text-amber-100">
+              <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+              <span>
+                For {Math.round(lockSeconds / 86_400)} days the extracted resources stay on {planetLabel}, and anyone outside your alliance can
+                raid them, even through newbie, score and bashing protection. Only what survives is paid out.
+              </span>
+            </p>
+            <label className="flex cursor-pointer items-start gap-3 text-sm leading-5 text-slate-200">
+              <input
+                checked={understood}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-amber-300"
+                onChange={(event) => setUnderstood((event.currentTarget as HTMLInputElement).checked)}
+                type="checkbox"
+              />
+              I understand they can be raided and an extraction can't be cancelled.
+            </label>
+            <div className="grid gap-1">
+              <button
+                className={amberButton}
+                disabled={!ready || !understood}
+                onClick={() => {
+                  onRequestWithdrawal(transfers);
+                  clearInputs(transfers);
+                  setUnderstood(false);
+                }}
+                type="button"
+              >
+                <Lock aria-hidden="true" className="h-4 w-4" />
+                {transfers.length > 1 ? `Start ${transfers.length} extractions` : "Start extraction"}
+              </button>
+              {ready && several ? <p className="text-xs leading-5 text-slate-400">Your wallet asks you to confirm each resource separately.</p> : null}
+              <ActionReasonNote reason={blocker} />
+            </div>
+          </div>
+        )}
       </div>
-
-      {confirming ? (
-        <ExtractDialog
-          account={account}
-          amount={confirming.amount}
-          lockSeconds={lockSeconds}
-          now={now}
-          onCancel={() => setConfirming(null)}
-          onConfirm={() => {
-            onRequestWithdrawal(confirming.resource, confirming.amount);
-            setInputs((current) => ({ ...current, [`extract:${confirming.resource.key}`]: "" }));
-            setConfirming(null);
-          }}
-          planetLabel={planetLabel}
-          resource={confirming.resource}
-        />
-      ) : null}
     </section>
-  );
-}
-
-function ResourceCard({
-  onSelect,
-  planetLabel,
-  resource,
-  selected,
-  wallet,
-  walletFailed,
-}: {
-  onSelect: () => void;
-  planetLabel: string;
-  resource: RiftResourceState;
-  selected: boolean;
-  wallet?: RiftTokenWallet | undefined;
-  walletFailed: boolean;
-}) {
-  const style = resourceStyles[resource.key];
-  const locked = toUnits(resource.lockedBalance);
-  return (
-    <button
-      aria-pressed={selected}
-      className={`landing-feature grid gap-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 ${selected ? "!border-cyan-300/40 ring-1 ring-cyan-300/20" : "hover:!border-cyan-300/25"}`}
-      onClick={onSelect}
-      type="button"
-    >
-      <span className="flex items-center justify-between gap-2">
-        <span className={`inline-flex items-center gap-2 text-sm font-semibold ${style.text}`}>
-          <span aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${style.dot}`} />
-          {style.label}
-        </span>
-        <span className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-slate-300">{style.symbol}</span>
-      </span>
-      <span>
-        <span className="block text-xs text-slate-400">On {planetLabel}</span>
-        <span className="mt-0.5 block text-2xl font-semibold tabular-nums text-white">{formatIntegerAmount(resource.inGameBalance)}</span>
-        <span className="block text-xs tabular-nums text-slate-500">= {formatRiftTokens(resource.inGameBalance)} {style.symbol}</span>
-      </span>
-      <span className="grid gap-1.5 border-t border-white/[0.06] pt-3 text-xs">
-        <span className="flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 text-slate-400"><Wallet aria-hidden="true" className="h-3.5 w-3.5" />Wallet</span>
-          <span className="font-mono tabular-nums text-slate-100">
-            {wallet ? `${formatRiftTokens(wallet.balance)} ${style.symbol}` : walletFailed || !resource.tokenAddress ? "Unavailable" : "Reading…"}
-          </span>
-        </span>
-        <span className="flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 text-slate-400"><Lock aria-hidden="true" className="h-3.5 w-3.5" />Extracting</span>
-          <span className={`font-mono tabular-nums ${locked > 0n ? "text-amber-200" : "text-slate-100"}`}>{formatIntegerAmount(resource.lockedBalance)}</span>
-        </span>
-      </span>
-    </button>
   );
 }
 
@@ -467,233 +400,13 @@ function ModeButton({ active, icon: Icon, label, onClick }: { active: boolean; i
   return (
     <button
       aria-pressed={active}
-      className={`inline-flex min-h-12 items-center justify-center gap-2 border-b-2 px-3 text-sm font-semibold transition focus:outline-none focus-visible:bg-cyan-300/10 ${active ? "border-cyan-300 bg-cyan-300/[0.06] text-white" : "border-transparent text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"}`}
+      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60 sm:min-h-10 ${active ? "bg-cyan-300/15 text-white" : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"}`}
       onClick={onClick}
       type="button"
     >
-      <Icon aria-hidden="true" className={`h-4 w-4 ${active ? "text-cyan-300" : ""}`} />
+      <Icon aria-hidden="true" className={`hidden h-4 w-4 sm:block ${active ? "text-cyan-300" : ""}`} />
       {label}
     </button>
-  );
-}
-
-function SummaryRow({ label, children }: { label: string; children: ComponentChildren }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="text-slate-400">{label}</dt>
-      <dd className="text-right font-medium tabular-nums text-slate-100">{children}</dd>
-    </div>
-  );
-}
-
-function InjectSummary({
-  amount,
-  blocker,
-  delegated,
-  needsApproval,
-  onApprove,
-  onDeposit,
-  planetLabel,
-  resource,
-  signerAccount,
-}: {
-  amount: bigint | undefined;
-  blocker: string | undefined;
-  delegated: boolean;
-  needsApproval: boolean;
-  onApprove: () => void;
-  onDeposit: () => void;
-  planetLabel: string;
-  resource: RiftResourceState;
-  signerAccount?: string | undefined;
-}) {
-  const style = resourceStyles[resource.key];
-  const ready = amount !== undefined;
-  return (
-    <div className="surface-inset grid content-start gap-4 rounded-lg p-4">
-      <dl className="grid gap-2 text-sm">
-        <SummaryRow label="You send">{ready ? `${formatRiftTokens(amount)} ${style.symbol}` : "—"}</SummaryRow>
-        <SummaryRow label={`${planetLabel} gets`}>{ready ? `+${formatIntegerAmount(amount.toString())} ${style.label}` : "—"}</SummaryRow>
-        <SummaryRow label="Arrives">Right away</SummaryRow>
-        {delegated && signerAccount ? <SummaryRow label="Paid from">{shortAddress(signerAccount)}</SummaryRow> : null}
-      </dl>
-      <ol className="grid gap-2">
-        <Step
-          action={(
-            <button className={cyanButton} disabled={!ready || !needsApproval} onClick={onApprove} type="button">
-              {ready && !needsApproval ? <CircleCheck aria-hidden="true" className="h-4 w-4" /> : null}
-              {ready && !needsApproval ? "Approved" : "Approve"}
-            </button>
-          )}
-          detail={ready ? `Lets the game take exactly ${formatRiftTokens(amount)} ${style.symbol} from your wallet.` : "Lets the game take exactly the amount you inject."}
-          done={ready && !needsApproval}
-          index={1}
-          title="Approve"
-        />
-        <Step
-          action={(
-            <button className={cyanButton} disabled={!ready || needsApproval} onClick={onDeposit} type="button">
-              <ArrowDownToLine aria-hidden="true" className="h-4 w-4" />
-              Inject
-            </button>
-          )}
-          detail={`Moves the tokens into the game and adds ${style.label} to ${planetLabel}.`}
-          index={2}
-          title="Inject"
-        />
-      </ol>
-      <ActionReasonNote reason={blocker} />
-    </div>
-  );
-}
-
-function GuideStep({ children, icon: Icon, title }: { children: ComponentChildren; icon: LucideIcon; title: string }) {
-  return (
-    <li className="flex gap-3">
-      <span aria-hidden="true" className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.06]">
-        <Icon className="h-3.5 w-3.5 text-cyan-300" />
-      </span>
-      <span className="min-w-0 text-xs leading-5 text-slate-400">
-        <span className="block text-sm font-semibold text-slate-100">{title}</span>
-        {children}
-      </span>
-    </li>
-  );
-}
-
-function Step({ action, detail, done = false, index, title }: { action: ComponentChildren; detail: string; done?: boolean; index: number; title: string }) {
-  return (
-    <li className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/[0.06] bg-black/20 p-3">
-      <div className="flex min-w-0 flex-1 gap-3">
-        <span aria-hidden="true" className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs font-bold ${done ? "bg-emerald-300/15 text-emerald-200" : "bg-cyan-300/15 text-cyan-100"}`}>{index}</span>
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold text-white">{title}</span>
-          <span className="block text-xs leading-5 text-slate-400">{detail}</span>
-        </span>
-      </div>
-      {action}
-    </li>
-  );
-}
-
-function ExtractSummary({
-  account,
-  amount,
-  blocker,
-  lockSeconds,
-  now,
-  onReview,
-  planetLabel,
-  resource,
-}: {
-  account?: string | undefined;
-  amount: bigint | undefined;
-  blocker: string | undefined;
-  lockSeconds: number;
-  now: number;
-  onReview: () => void;
-  planetLabel: string;
-  resource: RiftResourceState;
-}) {
-  const style = resourceStyles[resource.key];
-  const ready = amount !== undefined;
-  return (
-    <div className="surface-inset grid content-start gap-4 rounded-lg p-4">
-      <dl className="grid gap-2 text-sm">
-        <SummaryRow label="Locked on planet">{ready ? `${formatIntegerAmount(amount.toString())} ${style.label}` : "—"}</SummaryRow>
-        <SummaryRow label="Unlocks">{formatUnlock(new Date(now + lockSeconds * 1_000).toISOString())}</SummaryRow>
-        <SummaryRow label="You receive">{ready ? `Up to ${formatRiftTokens(amount)} ${style.symbol}` : "—"}</SummaryRow>
-        {account ? <SummaryRow label="Paid to">{shortAddress(account)}</SummaryRow> : null}
-      </dl>
-      <p className="flex gap-2 rounded-md border border-amber-300/25 bg-amber-300/[0.07] p-3 text-xs leading-5 text-amber-100">
-        <TriangleAlert aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-        <span>
-          Until it unlocks, anyone can attack {planetLabel} for this {style.label}, even through newbie, score and bashing protection,
-          and a winning raid can take all of it. Only what survives is paid out.
-        </span>
-      </p>
-      <div className="grid gap-1">
-        <button className={amberButton} disabled={!ready} onClick={onReview} type="button">
-          <Lock aria-hidden="true" className="h-4 w-4" />
-          Review extraction
-        </button>
-        <ActionReasonNote reason={blocker} />
-      </div>
-    </div>
-  );
-}
-
-function ExtractDialog({
-  account,
-  amount,
-  lockSeconds,
-  now,
-  onCancel,
-  onConfirm,
-  planetLabel,
-  resource,
-}: {
-  account?: string | undefined;
-  amount: bigint;
-  lockSeconds: number;
-  now: number;
-  onCancel: () => void;
-  onConfirm: () => void;
-  planetLabel: string;
-  resource: RiftResourceState;
-}) {
-  const [understood, setUnderstood] = useState(false);
-  const style = resourceStyles[resource.key];
-  const lockDays = Math.round(lockSeconds / 86_400);
-  return (
-    <Modal labelledBy="rift-extract-title" onClose={onCancel} panelClassName="max-w-lg border-amber-300/30 p-4 sm:p-5">
-      <ModalHeader
-        closeLabel="Close extraction dialog"
-        icon={Lock}
-        onClose={onCancel}
-        title={`Extract ${formatIntegerAmount(amount.toString())} ${style.label} from ${planetLabel}`}
-        titleId="rift-extract-title"
-      />
-      <dl className="mt-4 grid gap-2 rounded-lg surface-inset p-3 text-sm">
-        <SummaryRow label="Public lock">{lockDays} days</SummaryRow>
-        <SummaryRow label="Unlocks">{formatUnlock(new Date(now + lockSeconds * 1_000).toISOString())}</SummaryRow>
-        <SummaryRow label="If nobody raids it">{`${formatRiftTokens(amount)} ${style.symbol}`}</SummaryRow>
-        {account ? <SummaryRow label="Paid to">{shortAddress(account)}</SummaryRow> : null}
-      </dl>
-      <ul className="mt-4 grid gap-2.5 text-sm leading-5 text-slate-300">
-        <DialogPoint icon={Crosshair}>Every player sees the locked {style.label} in the Raid Finder for the full {lockDays} days.</DialogPoint>
-        <DialogPoint icon={Swords}>
-          Attackers can hit {planetLabel} for it even through newbie, score and bashing protection; only your alliance can't. A winning raid fills its spare cargo from the lock with no 50% cap.
-        </DialogPoint>
-        <DialogPoint icon={Lock}>The extraction can't be cancelled, and each planet runs one extraction per resource at a time.</DialogPoint>
-        <DialogPoint icon={Coins}>After {lockDays} days you finalize it here, and whatever survived is paid out as {style.symbol}.</DialogPoint>
-      </ul>
-      <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-amber-300/25 bg-amber-300/[0.06] p-3 text-sm text-amber-50">
-        <input
-          checked={understood}
-          className="mt-0.5 h-4 w-4 shrink-0 accent-amber-300"
-          onChange={(event) => setUnderstood((event.currentTarget as HTMLInputElement).checked)}
-          type="checkbox"
-        />
-        I understand the locked {style.label} can be raided and the extraction can't be cancelled.
-      </label>
-      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button className={quietButton} onClick={onCancel} type="button">Keep it on {planetLabel}</button>
-        <button className={amberButton} disabled={!understood} onClick={onConfirm} type="button">
-          <Lock aria-hidden="true" className="h-4 w-4" />
-          Start extraction
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-function DialogPoint({ children, icon: Icon }: { children: ComponentChildren; icon: LucideIcon }) {
-  return (
-    <li className="flex gap-2.5">
-      <Icon aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-      <span>{children}</span>
-    </li>
   );
 }
 
@@ -707,26 +420,30 @@ function RiftLockedPanel({
   const elsewhere = planets.filter((planet) => planet.planetId !== riftState.homePlanetId
     && planet.buildingLevels?.some((building) => building.id === RIFT_STABILIZER_BUILDING_ID && building.level > 0));
   return (
-    <section aria-labelledby="rift-locked-title" className="surface grid gap-4 rounded-xl p-5">
-      <div>
-        <h2 className="text-base font-semibold text-white" id="rift-locked-title">Build a Rift Stabilizer on {planetLabel}</h2>
-        <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-          The Rift opens on planets with a Rift Stabilizer, which costs {stabilizerCost} and needs:
-        </p>
-      </div>
-      <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={riftRequirementFlairs(riftState.requirements)} />
-      <div className="flex flex-wrap gap-2">
-        {onOpenRequirement ? (
-          <button className={cyanButton} onClick={() => onOpenRequirement({ kind: "building", key: "interdimensionalRiftStabilizer" })} type="button">
-            Open Rift Stabilizer
-            <ArrowRight aria-hidden="true" className="h-4 w-4" />
-          </button>
-        ) : null}
-        {onSelectPlanet ? elsewhere.map((planet) => (
-          <button className={quietButton} key={planet.planetId} onClick={() => onSelectPlanet(planet.planetId)} type="button">
-            Use the Rift on {planetName(planets, planet.planetId)}
-          </button>
-        )) : null}
+    <section aria-labelledby="rift-locked-title" className="surface grid overflow-hidden rounded-xl md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <RiftArt />
+      <div className="grid content-start gap-4 p-5">
+        <div>
+          <h2 className="text-base font-semibold text-white" id="rift-locked-title">Build a Rift Stabilizer on {planetLabel}</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
+            The Rift turns Metal, Crystal and Deuterium into the tokens vMETAL, vCRYSTAL and vDEUT and back. It opens on planets with a
+            Rift Stabilizer, which costs {stabilizerCost} and needs:
+          </p>
+        </div>
+        <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={riftRequirementFlairs(riftState.requirements)} />
+        <div className="flex flex-wrap gap-2">
+          {onOpenRequirement ? (
+            <button className={cyanButton} onClick={() => onOpenRequirement({ kind: "building", key: "interdimensionalRiftStabilizer" })} type="button">
+              Open Rift Stabilizer
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
+            </button>
+          ) : null}
+          {onSelectPlanet ? elsewhere.map((planet) => (
+            <button className={quietButton} key={planet.planetId} onClick={() => onSelectPlanet(planet.planetId)} type="button">
+              Use the Rift on {planetName(planets, planet.planetId)}
+            </button>
+          )) : null}
+        </div>
       </div>
     </section>
   );
@@ -741,39 +458,34 @@ function RiftClaims({
   riftState,
   transactionUnavailableReason,
 }: RiftPageProps & { riftState: ChainRiftState }) {
+  if (riftState.pendingWithdrawals.length === 0) return null;
   const claims = [...riftState.pendingWithdrawals].sort((left, right) =>
     Number(right.planetId === riftState.homePlanetId) - Number(left.planetId === riftState.homePlanetId)
       || Date.parse(left.unlocksAt) - Date.parse(right.unlocksAt));
   return (
     <section aria-labelledby="rift-claims-title" className="grid gap-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <h2 className={sectionLabel} id="rift-claims-title">Active extractions</h2>
-        {claims.length > 0 && onOpenRaidFinder ? (
+        <h2 className={sectionLabel} id="rift-claims-title">Extractions</h2>
+        {onOpenRaidFinder ? (
           <button className="inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-200 underline-offset-4 hover:underline" onClick={onOpenRaidFinder} type="button">
             <Crosshair aria-hidden="true" className="h-3.5 w-3.5" />
             See what raiders see
           </button>
         ) : null}
       </div>
-      {claims.length === 0 ? (
-        <p className="surface rounded-xl p-4 text-sm leading-6 text-slate-400">
-          No extractions are running. A new extraction appears here with its countdown, and you finalize it here once it unlocks.
-        </p>
-      ) : (
-        <ul className="grid gap-3 md:grid-cols-2">
-          {claims.map((claim) => (
-            <ClaimCard
-              canTransact={canTransact}
-              claim={claim}
-              key={claim.id}
-              now={now}
-              onFinish={() => onFinishWithdrawal(claim)}
-              planetLabel={planetName(planets, claim.planetId)}
-              transactionUnavailableReason={transactionUnavailableReason}
-            />
-          ))}
-        </ul>
-      )}
+      <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {claims.map((claim) => (
+          <ClaimCard
+            canTransact={canTransact}
+            claim={claim}
+            key={claim.id}
+            now={now}
+            onFinish={() => onFinishWithdrawal(claim)}
+            planetLabel={planetName(planets, claim.planetId)}
+            transactionUnavailableReason={transactionUnavailableReason}
+          />
+        ))}
+      </ul>
     </section>
   );
 }
@@ -796,9 +508,7 @@ function ClaimCard({
   const style = resourceStyles[claim.resource];
   const ready = isWithdrawalReady(claim, now);
   const started = toUnits(claim.startedAmount ?? claim.amount);
-  const surviving = toUnits(claim.amount);
-  const raided = started > surviving ? started - surviving : 0n;
-  const blocker = !ready ? `Unlocks in ${formatRiftCountdown(claim.unlocksAt, now)}.` : !canTransact ? transactionUnavailableReason : undefined;
+  const raided = started > toUnits(claim.amount) ? started - toUnits(claim.amount) : 0n;
   return (
     <li className={`surface grid gap-3 rounded-xl p-4 ${ready ? "border-emerald-300/30" : ""}`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -809,11 +519,10 @@ function ClaimCard({
             <span className="font-normal text-slate-400">on {planetLabel}</span>
           </p>
           <p className="mt-1 text-2xl font-semibold tabular-nums text-white">{formatIntegerAmount(claim.amount)}</p>
-          <p className="text-xs tabular-nums text-slate-400">Pays {formatRiftTokens(claim.amount)} {style.symbol}</p>
         </div>
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${ready ? "bg-emerald-300/10 text-emerald-200" : "bg-amber-300/10 text-amber-100"}`}>
           {ready ? <CircleCheck aria-hidden="true" className="h-3.5 w-3.5" /> : <Hourglass aria-hidden="true" className="h-3.5 w-3.5" />}
-          {ready ? "Ready to finalize" : formatRiftCountdown(claim.unlocksAt, now)}
+          {ready ? "Ready" : formatRiftCountdown(claim.unlocksAt, now)}
         </span>
       </div>
       <AnimatedProgressBar
@@ -823,24 +532,18 @@ function ClaimCard({
         value={riftLockProgress(claim, now)}
       />
       <p className="text-xs leading-5 text-slate-400">
-        Started {formatUnlock(claim.requestedAt)} · Unlocks {formatUnlock(claim.unlocksAt)}
+        {ready ? "Raiders can still take it until you finalize." : `Open to raiders until ${formatUnlock(claim.unlocksAt)}.`}
+        {raided > 0n ? ` Raids took ${formatIntegerAmount(raided.toString())} (${percentOf(raided, started)}).` : ""}
       </p>
-      <p className="flex items-start gap-2 text-xs leading-5 text-slate-300">
-        <Crosshair aria-hidden="true" className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${ready ? "text-slate-500" : "text-rose-300"}`} />
-        <span>
-          {ready
-            ? "Raiders can still take it until you finalize."
-            : `${formatIntegerAmount(claim.amount)} ${style.label} is open to every raider.`}
-          {raided > 0n ? ` Raids took ${formatIntegerAmount(raided.toString())} (${percentOf(raided, started)}).` : ""}
-        </span>
-      </p>
-      <div className="grid gap-1">
-        <button className={ready ? emeraldButton : quietButton} disabled={!ready || !canTransact} onClick={onFinish} type="button">
-          <ArrowUpFromLine aria-hidden="true" className="h-4 w-4" />
-          Finalize and receive {formatRiftTokens(claim.amount)} {style.symbol}
-        </button>
-        <ActionReasonNote reason={blocker} />
-      </div>
+      {ready ? (
+        <div className="grid gap-1">
+          <button className={emeraldButton} disabled={!canTransact} onClick={onFinish} type="button">
+            <ArrowUpFromLine aria-hidden="true" className="h-4 w-4" />
+            Finalize and receive {formatRiftTokens(claim.amount)} {style.symbol}
+          </button>
+          <ActionReasonNote reason={canTransact ? undefined : transactionUnavailableReason} />
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -853,63 +556,41 @@ const historyCopy: Record<RiftHistoryEntry["kind"], { icon: LucideIcon; tone: st
   raid: { icon: Swords, tone: "text-emerald-300", title: () => "You raided a Rift lock", sign: "+" },
 };
 
-function RiftHistoryPanel({ planetId, planets, riftState }: { planetId?: string | undefined; planets: readonly RiftPlanet[]; riftState: ChainRiftState }) {
-  const [scope, setScope] = useState<"planet" | "all">("planet");
-  const all = riftState.history ?? [];
-  const entries = scope === "planet" ? all.filter((entry) => entry.planetId === planetId) : all;
+function RiftHistoryPanel({ planets, riftState }: { planets: readonly RiftPlanet[]; riftState: ChainRiftState }) {
+  const entries = riftState.history ?? [];
+  if (entries.length === 0) return null;
   return (
     <section aria-labelledby="rift-history-title" className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className={`${sectionLabel} inline-flex items-center gap-2`} id="rift-history-title">
-          <History aria-hidden="true" className="h-3.5 w-3.5" />
-          History
-        </h2>
-        <div aria-label="History scope" className="inline-flex rounded-md border border-white/10 p-0.5 text-xs" role="group">
-          {(["planet", "all"] as const).map((value) => (
-            <button
-              aria-pressed={scope === value}
-              className={`min-h-9 rounded px-3 font-semibold transition sm:min-h-7 ${scope === value ? "bg-cyan-300/15 text-cyan-50" : "text-slate-400 hover:text-slate-200"}`}
-              key={value}
-              onClick={() => setScope(value)}
-              type="button"
-            >
-              {value === "planet" ? "This planet" : "All planets"}
-            </button>
-          ))}
-        </div>
-      </div>
-      {entries.length === 0 ? (
-        <p className="surface rounded-xl p-4 text-sm leading-6 text-slate-400">
-          {scope === "planet" ? "Nothing has moved through the Rift on this planet yet." : "Nothing has moved through your Rifts yet."}
-        </p>
-      ) : (
-        <ol className="surface divide-y divide-white/[0.06] rounded-xl">
-          {entries.map((entry) => {
-            const copy = historyCopy[entry.kind];
-            const moved = resourceKeys.filter((key) => toUnits(entry.amounts[key]) > 0n);
-            return (
-              <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap" key={entry.id}>
-                <copy.icon aria-hidden="true" className={`h-4 w-4 shrink-0 ${copy.tone}`} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-white">{copy.title(entry)}</p>
-                  <p className="text-xs text-slate-400">
-                    {entry.kind === "raid" ? `From planet #${entry.planetId}` : planetName(planets, entry.planetId)}
-                    {entry.unlocksAt ? ` · unlocks ${formatUnlock(entry.unlocksAt)}` : ""}
-                  </p>
-                </div>
-                <p className="text-sm font-semibold tabular-nums text-slate-100">
-                  {moved.length === 0 ? "0" : moved.map((key) => (
-                    <span className={`ml-3 first:ml-0 ${resourceStyles[key].text}`} key={key}>
-                      {copy.sign}{formatIntegerAmount(entry.amounts[key])} {resourceStyles[key].label}
-                    </span>
-                  ))}
+      <h2 className={`${sectionLabel} inline-flex items-center gap-2`} id="rift-history-title">
+        <History aria-hidden="true" className="h-3.5 w-3.5" />
+        History
+      </h2>
+      <ol className="surface divide-y divide-white/[0.06] rounded-xl">
+        {entries.map((entry) => {
+          const copy = historyCopy[entry.kind];
+          const moved = resourceKeys.filter((key) => toUnits(entry.amounts[key]) > 0n);
+          return (
+            <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:flex-nowrap" key={entry.id}>
+              <copy.icon aria-hidden="true" className={`h-4 w-4 shrink-0 ${copy.tone}`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-white">{copy.title(entry)}</p>
+                <p className="text-xs text-slate-400">
+                  {entry.kind === "raid" ? `From planet #${entry.planetId}` : planetName(planets, entry.planetId)}
+                  {entry.unlocksAt ? ` · unlocks ${formatUnlock(entry.unlocksAt)}` : ""}
                 </p>
-                <time className="w-full text-xs text-slate-500 sm:w-auto sm:text-right" dateTime={entry.occurredAt}>{formatUnlock(entry.occurredAt)}</time>
-              </li>
-            );
-          })}
-        </ol>
-      )}
+              </div>
+              <p className="text-sm font-semibold tabular-nums text-slate-100">
+                {moved.length === 0 ? "0" : moved.map((key) => (
+                  <span className={`ml-3 first:ml-0 ${resourceStyles[key].text}`} key={key}>
+                    {copy.sign}{formatIntegerAmount(entry.amounts[key])} {resourceStyles[key].label}
+                  </span>
+                ))}
+              </p>
+              <time className="w-full text-xs text-slate-500 sm:w-auto sm:text-right" dateTime={entry.occurredAt}>{formatUnlock(entry.occurredAt)}</time>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
@@ -956,6 +637,11 @@ function formatUnlock(value: string): string {
 
 function percentOf(part: bigint, whole: bigint): string {
   return whole > 0n ? `${Number((part * 1_000n) / whole) / 10}%` : "0%";
+}
+
+/** "a", "a and b", "a, b and c". */
+function listJoin(items: readonly string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 /** API amounts are decimal strings; anything else reads as zero instead of breaking the page. */

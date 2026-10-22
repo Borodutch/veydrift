@@ -89,17 +89,19 @@ function Fixture() {
       gameContract="0x3333333333333333333333333333333333333333"
       loading={false}
       now={now}
-      onApprove={(resource, amount) => {
-        calls.approve.push(`${resource.key}:${amount}`);
-        // The approval confirms: the game may now take exactly this amount.
-        chain.allowance[resource.tokenAddress!] = amount;
-        setActionState({ status: "success", label: `${resource.label} approval confirmed.` });
+      onApprove={(transfers) => {
+        for (const { resource, amount } of transfers) {
+          calls.approve.push(`${resource.key}:${amount}`);
+          // The approval confirms: the game may now take exactly this amount.
+          chain.allowance[resource.tokenAddress!] = amount;
+        }
+        setActionState({ status: "success", label: "Approvals confirmed." });
       }}
-      onDeposit={(resource, amount) => calls.deposit.push(`${resource.key}:${amount}`)}
+      onDeposit={(transfers) => calls.deposit.push(...transfers.map(({ resource, amount }) => `${resource.key}:${amount}`))}
       onFinishWithdrawal={(claim) => calls.finalize.push(claim.id)}
       onOpenRequirement={() => {}}
       onRefresh={() => {}}
-      onRequestWithdrawal={(resource, amount) => calls.extract.push(`${resource.key}:${amount}`)}
+      onRequestWithdrawal={(transfers) => calls.extract.push(...transfers.map(({ resource, amount }) => `${resource.key}:${amount}`))}
       onSelectPlanet={(planetId) => calls.select.push(planetId)}
       planets={planets}
       riftState={riftState}
