@@ -65,9 +65,12 @@ describe("Supply Max preserves the actual shipment", () => {
     expect(replaced.plan.missing).toEqual(zero);
   });
 
-  test("finds the smaller launchable fleet instead of treating an oversized fuel-starved probe as zero", () => {
+  test("finds the smaller launchable fleet instead of treating an oversized fuel-starved request as zero", () => {
     const args = options([source("1", { resources: { metal: 100000, crystal: 0, deuterium: 2 }, ships: { smallCargo: 2 } })]);
-    expect(buildBatchSupplyPlan({ ...args, requested: { metal: 100000 } }).delivered.metal).toBe(0);
+    // An oversized request no longer blocks a fuel-starved source: it sends what an affordable fleet carries.
+    const oversized = buildBatchSupplyPlan({ ...args, requested: { metal: 100000 } });
+    expect(oversized.delivered.metal).toBe(4998);
+    expect(oversized.blockedSources).toEqual([]);
     expect(maxPlan(args, "metal").maximum).toBe(4998);
     const fuelBound = maxPlan(options([source("1", { resources: { metal: 1000, crystal: 1000, deuterium: 100 }, ships: { smallCargo: 2 } })], { metal: 500, crystal: 250 }), "deuterium");
     expect(fuelBound.maximum + fuelBound.plan.fuelCost).toBe(100);
