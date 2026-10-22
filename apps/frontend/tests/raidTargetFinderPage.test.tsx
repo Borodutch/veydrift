@@ -76,7 +76,7 @@ describe("RaidTargetFinderPage", () => {
       const label = ["AFK: any", "Only AFK", "Hide AFK"][step]!;
       expect(visibleText(controls)).toContain(label);
       elementNodes(controls)
-        .find((item) => item.props?.title === "AFK commanders: any, only AFK, or hide AFK")
+        .find((item) => item.props?.label === label)
         ?.props?.onToggle?.();
       selected.push(filters.afk);
     }

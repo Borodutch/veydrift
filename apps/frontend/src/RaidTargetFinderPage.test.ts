@@ -96,7 +96,6 @@ describe("RaidTargetFinderPage persistence", () => {
         maxDistance: null,
       },
     }));
-    // Settings saved before the AFK filter existed default it to "any".
 
     expect(readPersistedRaidTargetSettings()).toEqual({
       filters: {
@@ -104,6 +103,7 @@ describe("RaidTargetFinderPage persistence", () => {
         hideSameAlliance: true,
         hideDefended: false,
         hideActiveFleet: false,
+        // Settings saved before the AFK filter existed default it to "any".
         afk: "any",
         minLoot: 900,
         maxDistance: null,
