@@ -13,7 +13,7 @@ import { createPublicClient, createWalletClient, custom, decodeFunctionData, dec
 import { batchCalldata, defaultMissionBatchPolicy, missionBatchAbi, packMissionBatch, type BatchLeg } from "../apps/backend/src/missionBatch";
 import { quoteMissionBatch } from "../apps/backend/src/missionBatchFees";
 
-assert.equal(Bun.version, "1.1.42", "use revision-pinned Bun");
+assert.equal(Bun.version, "1.4.4", "use revision-pinned Bun");
 const root = new URL("../packages/contracts/", import.meta.url);
 const load = (path: string) => JSON.parse(readFileSync(new URL(path, root), "utf8"));
 const alloc = load("manifests/vey918-mixed-alloc.json");

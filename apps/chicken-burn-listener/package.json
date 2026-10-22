@@ -2,7 +2,7 @@
   "name": "@veydrift/chicken-burn-listener",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "bun@1.1.42",
+  "packageManager": "bun@1.4.4",
   "type": "module",
   "scripts": {
     "build": "tsc --project tsconfig.json",
