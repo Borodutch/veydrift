@@ -12,4 +12,5 @@ apps/frontend/.media-src/
 .git/
 docs/
 .github/
+.forgejo/
 /*.md
