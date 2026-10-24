@@ -9412,7 +9412,9 @@ contract VeydriftGameTest is Test {
                     VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
                     VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
                     811,
-                    VeydriftGameStorage.LootRatio({metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 2_000})
+                    VeydriftGameStorage.LootRatio({
+                        metalBps: 5_000, crystalBps: 3_000, deuteriumBps: 2_000
+                    })
                 )
             ),
             hex"62635f32683979363869680b0080218021802180218021802180218021"
