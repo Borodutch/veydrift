@@ -107,9 +107,9 @@ async function runLogged(label, command, args) {
 // spread over them so its ~8 minutes of serial browser tests take about a third of that.
 export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
 const HEAVY = {
-  "frontend-touch-browser-1": "browser",
+  "frontend-touch-browser-1": "contracts",
   "frontend-touch-browser-2": "contracts-checks",
-  "frontend-touch-browser-3": "contracts",
+  "frontend-touch-browser-3": "browser",
   "contracts-build": "contracts",
   "contracts-test": "contracts",
   // Both build into their own out dirs (src only), so they run in parallel with the main build.
