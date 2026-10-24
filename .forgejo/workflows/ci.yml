@@ -1,8 +1,8 @@
 name: CI
 
 # PRs only. Branch protection requires the four `checks (<group>)` statuses and up-to-date
-# branches (strict), so a PR
-# merges only after passing on the exact tree that lands on main; a main run would repeat it.
+# branches (strict), so a PR merges only after passing on the exact tree that lands on main;
+# a main run would repeat it.
 on:
   pull_request:
 
