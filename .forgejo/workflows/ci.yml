@@ -168,7 +168,10 @@ jobs:
         if: steps.plan.outputs.work == 'true'
         run: bun install --frozen-lockfile
 
+      # The Mac runner daemons get launchd's default light resource limits (no ProcessType), which
+      # made browser tests ~5x slower than in a login session and time out under load. taskpolicy -a
+      # gives the checks (and their children) the resource policies of an app.
       - name: Run scoped checks
         if: steps.plan.outputs.docs == 'true'
         run: |
-          node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
+          ${{ runner.os == 'macOS' && 'taskpolicy -a' || '' }} node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
