@@ -103,9 +103,13 @@ async function runLogged(label, command, args) {
 
 // Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
 // Without a group (local preflight) every applicable check runs in one process, as before.
+// The group names are fixed (they are required statuses); the browser suite's three lanes are
+// spread over them so its ~8 minutes of serial browser tests take about a third of that.
 export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
 const HEAVY = {
-  "frontend-touch-browser": "browser",
+  "frontend-touch-browser-1": "browser",
+  "frontend-touch-browser-2": "contracts-checks",
+  "frontend-touch-browser-3": "contracts",
   "contracts-build": "contracts",
   "contracts-test": "contracts",
   // Both build into their own out dirs (src only), so they run in parallel with the main build.
@@ -144,7 +148,9 @@ export function planChecks(scope, group = "all") {
     add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
     add("frontend-test", "bun", ["run", "test:frontend"]);
     add("frontend-build", "bun", ["run", "build:frontend"]);
-    add("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
+    for (const lane of [1, 2, 3]) {
+      add(`frontend-touch-browser-${lane}`, "bash", ["-lc", `cd apps/frontend && bun run test:touch-browser:${lane}`]);
+    }
   }
 
   if (scope.stats) add("stats-check", "bun", ["run", "check:stats"]);
@@ -183,9 +189,9 @@ export function planChecks(scope, group = "all") {
 
   if (group === "all") return plan;
   const selected = plan.filter(({ label }) => (HEAVY[label] || "rest") === group);
-  // The browser job repeats the cheap frontend asset preparation it relies on.
+  // Groups with a browser lane repeat the cheap frontend asset preparation it relies on.
   const precheck = plan.find(({ label }) => label === "frontend-precheck");
-  if (precheck && group === "browser" && selected.length) selected.unshift(precheck);
+  if (precheck && selected.some(({ label }) => label.startsWith("frontend-touch-browser-"))) selected.unshift(precheck);
   return selected;
 }
 

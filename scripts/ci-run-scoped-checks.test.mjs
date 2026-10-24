@@ -231,10 +231,12 @@ test("parallel check groups partition the full sequential plan", () => {
     .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
     .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-test"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["contracts-fast-check", "contracts-storage-check"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
-  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label === "frontend-touch-browser"));
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["frontend-precheck", "frontend-touch-browser-3", "contracts-build", "contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["frontend-precheck", "frontend-touch-browser-2", "contracts-fast-check", "contracts-storage-check"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser-1"]);
+  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label.startsWith("frontend-touch-browser")));
+  const contractsOnly = { ...FULL_SCOPE, universe: false, backend: false, frontend: false, stats: false, keeper: false, chicken: false };
+  assert.deepEqual(labels(planChecks(contractsOnly, "contracts")), ["contracts-build", "contracts-test"]);
   assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
 });
 
