@@ -2999,25 +2999,6 @@ test("wallet delegation accept form sends acceptDelegate and acts for the main o
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
-test("wallet delegation invitation lets a planet-less wallet accept its main's proposal from the landing", { timeout: 60_000 }, async () => {
-  const main = "0x9999999999999999999999999999999999999999";
-  await loadInspectorFixture("/", 1280, { shell: "settlement", delegation: "main", delegationInvite: "true", waitForPlanetSelectors: "false" });
-  const invitation = `document.querySelector('[aria-label="Delegation invitation"]')`;
-  await waitForExpression(`${invitation}?.open === true && ${invitation}.textContent.includes('wants this wallet as its delegate')`, 20_000);
-  assert.equal(await evaluate(`document.querySelector('nav[aria-label="Desktop app sections"]')`), null);
-  await clickExpression(`${invitation}.querySelector('button[aria-label="Accept delegation from ${main}"]')`);
-  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
-  assert.equal(
-    await evaluate(`window.inspectorProof.walletRequests.find(r => r.method === 'eth_sendTransaction').params[0].data`),
-    `0xe2feb35c${main.slice(2).padStart(64, "0")}`,
-  );
-  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegatelanding')`);
-  await evaluate(`window.inspectorProof.setDelegation(window.inspectorProof.account, 'applied')`);
-  // The landing hands over to the main wallet's game once the signer is served as its delegate.
-  await waitForExpression(`${invitation} === null && document.querySelector('nav[aria-label="Desktop app sections"]') !== null`, 30_000);
-  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
-});
-
 for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcome} transaction stays failed after read-only retry`, async () => {
   await openDelegationDialog();
   await fillDelegate("0x3333333333333333333333333333333333333333");

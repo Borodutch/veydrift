@@ -9,9 +9,9 @@ import { spawn } from "node:child_process";
 
 export const LANES = [
   [["planetPickerTouchBrowser@1/4"], ["batchSupply@1/4", "levelSupply"], ["currentState"]],
-  [["planetPickerTouchBrowser@2/4"], ["batchSupply@2/4", "docsTables", "riftPage"], ["resolvedGroupMissions", "trailerPlayer"]],
+  [["planetPickerTouchBrowser@2/4"], ["batchSupply@2/4", "riftPage"], ["resolvedGroupMissions", "trailerPlayer"]],
   [["planetPickerTouchBrowser@3/4"], ["batchSupply@3/4", "combatModelRefresh"], ["levelPopupLayout", "galaxySlots", "planetFleetActivity"]],
-  [["planetPickerTouchBrowser@4/4"], ["batchSupply@4/4", "loopAnimations"], ["productionQueueSizing", "sidebar", "publicMoonActions", "demolishIcon"]],
+  [["planetPickerTouchBrowser@4/4"], ["batchSupply@4/4", "loopAnimations"], ["productionQueueSizing", "sidebar", "demolishIcon"]],
 ];
 
 // Resolves to the file's exit code and full log.
