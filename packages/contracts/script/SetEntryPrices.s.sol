@@ -53,7 +53,9 @@ contract SetEntryPrices is Script {
         vm.stopBroadcast();
 
         require(invites.INVITE_PRICE() == price, "INVITE_PRICE_NOT_APPLIED");
-        require(invites.owner() == broadcaster && invites.signer() == signer, "PAID_INVITES_STATE_LOST");
+        require(
+            invites.owner() == broadcaster && invites.signer() == signer, "PAID_INVITES_STATE_LOST"
+        );
         require(game.startPrice() == price, "START_PRICE_NOT_APPLIED");
         console2.log("Paid invite implementation:", newImplementation);
         console2.log("Join + invite price (wei):", price);
