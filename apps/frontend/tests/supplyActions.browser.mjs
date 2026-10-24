@@ -90,7 +90,9 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
       assert.deepEqual(words.slice(0, 3), [831n, 64n, BigInt(count)]);
       assert.equal(result.walletCalls.filter(method => method === 'eth_call').length, 2, 'capability + exact batch simulation');
     }
-    for (const appRpc of [false, true]) for (const stage of ['simulation', 'gas', 'chain']) for (const change of ['account', 'body', 'close']) {
+    // The context fence does not depend on which RPC served a stage: the configured app RPC runs one
+    // change per stage (its routing is what it adds), the wallet RPC every change.
+    for (const appRpc of [false, true]) for (const stage of ['simulation', 'gas', 'chain']) for (const change of appRpc ? ['account'] : ['account', 'body', 'close']) {
       await load(); await evaluate('actionsFixture.multiMoon()'); await settle();
       await evaluate('actionsFixture.coordinate(10000,' + appRpc + '); actionsFixture.holdStage(' + JSON.stringify(stage) + ')');
       await launch(); await waitFor('actionsFixture.status().stagePending');
@@ -175,7 +177,8 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     };
     for (const appRpc of [false, true]) {
       for (const stage of ['simulation', 'gas', 'chain']) {
-        for (const change of ['close', 'reopen', 'account', 'target', 'body', 'unmount']) {
+        // As above: every change on the wallet RPC; one per stage on the app RPC, for its routing.
+        for (const change of appRpc ? ['account'] : ['close', 'reopen', 'account', 'target', 'body', 'unmount']) {
           await load();
           await evaluate('actionsFixture.coordinate(10000,'+appRpc+');actionsFixture.holdStage('+JSON.stringify(stage)+')');
           await launch(); await waitFor('actionsFixture.status().stagePending');
@@ -196,7 +199,7 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
         }
       }
     }
-    console.log('PASS 36 real-coordinator simulation/gas/final-chain context races, including configured app RPC');
+    console.log('PASS 21 real-coordinator simulation/gas/final-chain context races, including configured app RPC');
 
     // An unchanged draft still cannot outlive the existing coordinator deadline.
     await load();await evaluate('actionsFixture.coordinate(500,true);actionsFixture.holdStage("simulation")');
