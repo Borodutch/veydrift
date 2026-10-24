@@ -57,9 +57,25 @@ export const statsSourceBatchSql = `SELECT rowid AS source_rowid, event_id, tran
 const localBatchSql = "SELECT * FROM stats_events WHERE source_rowid > ? AND source_rowid <= ? ORDER BY source_rowid LIMIT ?";
 
 export function initializeStatsStore(store: Database): void {
-  store.exec(`
-    PRAGMA busy_timeout = 1000;
-    PRAGMA journal_mode = WAL;
+  store.exec("PRAGMA busy_timeout = 1000;");
+  // Switching a new store to WAL needs an exclusive lock, and SQLite can refuse it with SQLITE_BUSY
+  // without consulting busy_timeout while another first worker holds a lock: wait up to ~1s here too.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      store.exec("PRAGMA journal_mode = WAL;");
+      break;
+    } catch (error) {
+      if ((error as { code?: string }).code !== "SQLITE_BUSY" || attempt >= 50) throw error;
+      Bun.sleepSync(20);
+    }
+  }
+  // One write transaction taken up front: two first workers each running the CREATEs as separate
+  // autocommit statements could both hold a read lock and want the write lock, and SQLite answers
+  // that deadlock with an immediate SQLITE_BUSY ("database is locked") without waiting.
+  // BEGIN IMMEDIATE waits on busy_timeout instead.
+  store.exec("BEGIN IMMEDIATE");
+  try {
+    store.exec(`
     CREATE TABLE IF NOT EXISTS stats_state (id INTEGER PRIMARY KEY CHECK(id = 1), progress TEXT NOT NULL, snapshot TEXT);
     CREATE TABLE IF NOT EXISTS stats_events (
       source_rowid INTEGER PRIMARY KEY, event_id TEXT NOT NULL, tx TEXT NOT NULL,
@@ -83,6 +99,11 @@ export function initializeStatsStore(store: Database): void {
     CREATE TABLE IF NOT EXISTS stats_joins (wallet TEXT PRIMARY KEY, timestamp INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS stats_joins_timestamp ON stats_joins(timestamp);
   `);
+    store.exec("COMMIT");
+  } catch (error) {
+    if (store.inTransaction) store.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 // Every refresh runs in a short-lived worker process, and nothing else keeps the store open.
