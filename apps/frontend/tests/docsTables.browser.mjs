@@ -60,7 +60,7 @@ test("docs tables never overflow and keep full addresses from phone to desktop w
           const started = Date.now();
           const check = () => {
             const boxes = [...document.querySelectorAll(".docs-prose .docs-table")];
-            if (!boxes.length && Date.now() - started < 10000) return setTimeout(check, 100);
+            if (!boxes.length && Date.now() - started < 60000) return setTimeout(check, 100); // loaded runners took >10s
             // Two frames: the ResizeObserver has measured and any switch to cards has rendered.
             requestAnimationFrame(() => requestAnimationFrame(() => resolve({
               tables: boxes.length,

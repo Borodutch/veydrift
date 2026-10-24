@@ -125,10 +125,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       assert.ok(state.poster.endsWith(src.replace("/assets/game/", "/assets/game/sizes/256/")), `${src}: poster ${state.poster}`);
       assert.deepEqual([state.muted, state.loop, state.inline, state.preload, state.auto], [true, true, true, "none", true], src);
     }
-    const before = await evaluate("Array.from(document.querySelectorAll('[data-tile] video')).map(v => v.currentTime)");
-    await sleep(600);
-    const after = await evaluate("Array.from(document.querySelectorAll('[data-tile] video')).map(v => v.currentTime)");
-    assert.ok(after.every((time, index) => time !== before[index]), "every on-screen loop is advancing");
+    // Every loop's clock moves (polled: a loaded runner decodes 61 videos slowly).
+    await evaluate("window.loopStart = Array.from(document.querySelectorAll('[data-tile] video')).map(v => v.currentTime)");
+    await until("Array.from(document.querySelectorAll('[data-tile] video')).every((v, i) => v.currentTime !== window.loopStart[i])", "every on-screen loop is advancing");
 
     // imageRef points at the loop's poster probe, the same image onLoad reports (#134).
     await until("Boolean(window.loopFixture.refLoad)", "imageRef loop never reported its poster");
