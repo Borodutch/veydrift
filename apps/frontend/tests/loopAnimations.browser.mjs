@@ -233,6 +233,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       assert.equal(match[4], loops[match[1]].version, name);
     }
     await evaluate("scrollTo(0, 0)");
+    console.log("DIAG", JSON.stringify(await evaluate(`({sy: scrollY, iw: innerWidth, cw: document.documentElement.clientWidth, sh: document.documentElement.scrollHeight, fonts: document.fonts.status, scrolled: Array.from(document.querySelectorAll('*')).filter(e => e.scrollTop || e.scrollLeft).map(e => [e.tagName, e.className.toString().slice(0, 80), e.scrollTop, e.scrollLeft]), first: (() => { const t = document.querySelector('[data-tile]'); const chain = []; for (let e = t; e; e = e.parentElement) { const r = e.getBoundingClientRect(); chain.push([e.tagName, e.className.toString().slice(0, 60), Math.round(r.y), Math.round(r.height)]); } return chain; })(), body: Array.from(document.body.children).map(e => [e.tagName, e.id, Math.round(e.getBoundingClientRect().y), Math.round(e.getBoundingClientRect().height)]), pre: Array.from(document.querySelector('main').children).slice(0, 4).map(e => [e.tagName, e.className.toString().slice(0, 60), Math.round(e.getBoundingClientRect().y), Math.round(e.getBoundingClientRect().height), e.textContent.slice(0, 120)])})`)));
     const animated = await evaluate(boxes);
 
     // A box that grows (e.g. a narrow to xl layout) upgrades to a sharper variant; it never downgrades.
@@ -249,6 +250,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await open();
     assert.equal(await evaluate("document.querySelectorAll('video').length"), 0);
     assert.deepEqual(await evaluate(loopRequests), []);
+    console.log("DIAG", JSON.stringify(await evaluate(`({sy: scrollY, iw: innerWidth, cw: document.documentElement.clientWidth, sh: document.documentElement.scrollHeight, fonts: document.fonts.status, scrolled: Array.from(document.querySelectorAll('*')).filter(e => e.scrollTop || e.scrollLeft).map(e => [e.tagName, e.className.toString().slice(0, 80), e.scrollTop, e.scrollLeft]), first: (() => { const t = document.querySelector('[data-tile]'); const chain = []; for (let e = t; e; e = e.parentElement) { const r = e.getBoundingClientRect(); chain.push([e.tagName, e.className.toString().slice(0, 60), Math.round(r.y), Math.round(r.height)]); } return chain; })(), body: Array.from(document.body.children).map(e => [e.tagName, e.id, Math.round(e.getBoundingClientRect().y), Math.round(e.getBoundingClientRect().height)]), pre: Array.from(document.querySelector('main').children).slice(0, 4).map(e => [e.tagName, e.className.toString().slice(0, 60), Math.round(e.getBoundingClientRect().y), Math.round(e.getBoundingClientRect().height), e.textContent.slice(0, 120)])})`)));
     const still = await evaluate(boxes);
     assert.deepEqual(Object.keys(still), Object.keys(animated));
     for (const [key, box] of Object.entries(animated)) {
