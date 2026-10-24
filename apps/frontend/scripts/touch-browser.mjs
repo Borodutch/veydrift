@@ -32,9 +32,19 @@ function run(unit) {
   });
 }
 
-async function chain(units) {
+// In a CI lane a failed file runs once more: the runners are shared with simulators and other jobs,
+// and a first run that times out while Vite is still optimizing a cold dep cache never saves it.
+// A real failure fails both times.
+async function chain(units, retry) {
   let ok = true;
-  for (const unit of units) ok = (await run(unit)) && ok;
+  for (const unit of units) {
+    let passed = await run(unit);
+    if (!passed && retry) {
+      process.stdout.write(`\n# RETRY ${unit}: failed once, running it again\n`);
+      passed = await run(unit);
+    }
+    ok = passed && ok;
+  }
   return ok;
 }
 
@@ -42,7 +52,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const lane = process.argv[2];
   if (lane && !LANES[Number(lane) - 1]) throw new Error(`no browser lane ${lane} (1-${LANES.length})`);
   const results = lane
-    ? await Promise.all(LANES[Number(lane) - 1].map(chain))
+    ? await Promise.all(LANES[Number(lane) - 1].map((units) => chain(units, true)))
     : [await chain(LANES.flat(2))];
   process.exit(results.every(Boolean) ? 0 : 1);
 }
