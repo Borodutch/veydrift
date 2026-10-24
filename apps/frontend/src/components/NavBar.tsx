@@ -99,7 +99,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
-  { key: "alliance-invites", label: "Earn $10", mobileLabel: "Earn $10", icon: Mail },
+  { key: "alliance-invites", label: "Earn $", mobileLabel: "Earn $", icon: Mail },
 ];
 
 // The public battle calculator opens in its own tab so the game keeps its state.

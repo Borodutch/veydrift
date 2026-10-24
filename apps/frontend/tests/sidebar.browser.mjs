@@ -196,7 +196,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     // Real Tab navigation must retain labels when focus auto-scrolls the rail.
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
     const overview=desktop+' a[aria-label="Empire"]';
-    const earn=desktop+' a[aria-label="Earn $10"]';
+    const earn=desktop+' a[aria-label="Earn $"]';
     const settle = async () => { await frame(); await frame(); await new Promise(resolve=>setTimeout(resolve,60)); };
     async function assertFocusedTooltip(label) {
       await settle();
@@ -209,7 +209,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()');
     await assertFocusedTooltip('Empire');
     let scroll=0;
-    for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Calculator','Earn $10']) {
+    for (const label of ['Infrastructure','Defenses','Research','Shipyard','Mission Control','Moon','Alliance','Rift','Rankings','Galaxy','Raid Finder','Calculator','Earn $']) {
       await press('Tab');
       scroll=await assertFocusedTooltip(label);
     }
@@ -217,12 +217,12 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     // Focusing an offscreen link directly also auto-scrolls it into view.
     await evaluate('document.querySelector('+JSON.stringify(overview)+').focus()'); await settle();
     await evaluate('document.querySelector('+JSON.stringify(earn)+').focus()');
-    await assertFocusedTooltip('Earn $10');
+    await assertFocusedTooltip('Earn $');
     // Scrolling the focused link out of view hides it, and back restores it.
     await evaluate('document.querySelector("#desktop-navigation-links").scrollTop=0'); await settle();
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
     await evaluate('document.querySelector('+JSON.stringify(earn)+').scrollIntoView({block:"nearest"})');
-    await assertFocusedTooltip('Earn $10');
+    await assertFocusedTooltip('Earn $');
     await press('Escape');
     await evaluate('document.querySelector("#desktop-navigation-links").scrollTop-=1'); await settle();
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'scroll must not undo Escape dismissal');
