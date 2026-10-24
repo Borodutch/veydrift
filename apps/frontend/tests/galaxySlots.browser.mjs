@@ -59,7 +59,7 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
     // Select row containers by their leading slot badge, for both empty and planet rows.
     const rowExpression = '[...document.querySelectorAll("main .grid > div")].filter(row => row.children.length > 1 && row.firstElementChild && /^(?:[1-9]|1[0-5])$/.test(row.firstElementChild.textContent.trim()))';
     async function ready(galaxy = 5, system = 199, empty = false) {
-      const deadline = Date.now() + 20_000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!(await evaluate('(' + rowExpression + ').length === 15 && ' + (empty ? 'true' : 'document.querySelector(' + JSON.stringify('button[aria-label="Open Planet ' + galaxy + '.' + system + '.1"]') + ') !== null')))) {
         assert.ok(Date.now() < deadline, 'fixture rows did not render: ' + await evaluate('document.body.innerText'));
         await new Promise(resolve => setTimeout(resolve, 50));

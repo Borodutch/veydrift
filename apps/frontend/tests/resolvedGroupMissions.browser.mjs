@@ -61,7 +61,7 @@ test("Resolved group mission labels, scope and actions survive desktop/mobile si
     for (const width of [1440, 1100, 791, 320]) { // 320 also covers the 390 phone layout (same <640 bucket)
       await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 640 });
       await send('Page.navigate', { url });
-      const deadline = Date.now() + 20000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (await evaluate('(' + rowsExpression + ').length') !== 4) {
         assert.ok(Date.now() < deadline, 'four fixture rows did not render: ' + await evaluate('document.body.innerText'));
         await new Promise(resolve => setTimeout(resolve, 50));

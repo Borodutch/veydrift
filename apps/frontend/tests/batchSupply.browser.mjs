@@ -86,7 +86,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       const navigationUrl = url + '?' + query + '&fixtureRun=' + Math.random();
       await send('Page.navigate', { url: navigationUrl });
       await new Promise(resolve => setTimeout(resolve, 100));
-      const deadline = Date.now() + 20_000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!(await evaluate('location.href === ' + JSON.stringify(navigationUrl) + ' && Boolean(window.supplyFixture && document.querySelector("[role=dialog]"))'))) {
         assert.ok(Date.now() < deadline, 'fixture did not render');
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -313,7 +313,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       await send('Emulation.setDeviceMetricsOverride', {width, height:900, deviceScaleFactor:1, mobile:false});
       await send('Page.navigate', {url: url + '?normal=1'});
       await new Promise(resolve => setTimeout(resolve, 100));
-      const deadline = Date.now() + 20_000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!(await evaluate('Boolean(document.querySelector("#resource-metal"))'))) {
         assert.ok(Date.now() < deadline, 'normal cargo fixture did not render');
         await new Promise(resolve => setTimeout(resolve, 50));

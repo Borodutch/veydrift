@@ -59,7 +59,7 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
 
     const attack = `document.querySelector('[aria-label="Moon actions"] button[aria-label^="Attack"]')`;
     async function until(expression) {
-      const deadline = Date.now() + 15000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!await evaluate(expression)) {
         assert.ok(Date.now() < deadline, "fixture condition failed: " + expression + " — " + await evaluate("document.body.innerText"));
         await new Promise(resolve => setTimeout(resolve, 50));

@@ -25,7 +25,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     const apiBase = "http://127.0.0.1:" + await freePort();
     backend = spawn("bun", ["tests/fixtures/inventory65Server.ts", new URL(apiBase).port], { stdio: "ignore",
       env: { ...process.env, VEYDRIFT_ALLOWED_ORIGIN: `http://127.0.0.1:${server.httpServer.address().port}` } });
-    const apiDeadline = Date.now() + 15000;
+    const apiDeadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
     while (!(await fetch(apiBase + "/__fixture/status").then(r => r.ok).catch(() => false))) {
       assert.ok(Date.now() < apiDeadline && backend.exitCode === null, "real fixture backend starts");
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -68,7 +68,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       return result.result.value;
     }
     await send("Page.navigate", { url });
-    const deadline = Date.now() + 20000;
+    const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
     while (!(await evaluate("Boolean(window.fixture)"))) { assert.ok(Date.now() < deadline, "fixture load"); await new Promise(r => setTimeout(r, 100)); }
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });

@@ -62,7 +62,7 @@ test("Landing and Pact share lazy, responsive, user-initiated trailer playback",
     await send('Network.enable');
     await send('Network.setBlockedURLs', { urls: ['*://api.veydrift.com/*', '*://api-test.veydrift.com/*', '*/prod-api/*', '*/test-api/*', '*/local-api/*'] });
     async function until(expression, label) {
-      const deadline = Date.now() + 20000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!await evaluate(expression)) {
         assert.ok(Date.now() < deadline, label);
         await new Promise(resolve => setTimeout(resolve, 50));

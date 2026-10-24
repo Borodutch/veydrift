@@ -56,7 +56,7 @@ test("Combat verification preserves mounted reports and fails closed", { timeout
     }
 
     async function until(expression, label) {
-      const deadline = Date.now() + 20_000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!await evaluate(expression)) {
         assert.ok(Date.now() < deadline, label + ': ' + await evaluate('document.body.innerText'));
         await new Promise(resolve => setTimeout(resolve, 25));

@@ -63,7 +63,7 @@ test("Mission activity local clock, ticking, cleanup and responsive layout", { t
       for (const width of [1200, 790, 320]) { // 320 also covers the 390 phone layout (same <640 bucket)
         await send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: width < 640 });
         await send("Page.navigate", { url });
-        const deadline = Date.now() + 20000;
+        const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
         while (!await evaluate('Boolean(window.fixture && document.querySelectorAll("main a").length === 5 && fixture.timers() === 1)')) {
           assert.ok(Date.now() < deadline, "fixture did not mount: " + await evaluate("document.body.innerText"));
           await new Promise(resolve => setTimeout(resolve, 50));

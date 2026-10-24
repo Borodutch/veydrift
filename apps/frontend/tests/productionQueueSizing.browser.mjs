@@ -60,7 +60,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
     async function load(query, width = 1280) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url: url + "?" + query });
-      const deadline = Date.now() + 20_000;
+      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
       while (!(await evaluate('Boolean(document.querySelector("[data-build-plan]"))'))) {
         assert.ok(Date.now() < deadline, "fixture did not render");
         await new Promise(resolve => setTimeout(resolve, 50));

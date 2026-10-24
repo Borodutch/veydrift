@@ -93,7 +93,7 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
         for (const state of ["ready", "blocked", "upgrading"]) {
           const available = state === "ready";
           await send("Page.navigate", { url: `${url}?view=${view}&state=${state}` });
-          const deadline = Date.now() + 20_000;
+          const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
           // Moon detail opens on the Lunar Base; pick the demolishable structure like a player would.
           const tile = `Array.from(document.querySelectorAll("button[aria-pressed]")).find(b => b.textContent.includes(${JSON.stringify(label)}))`;
           // Tie every assertion to this state's own page load.
@@ -157,7 +157,7 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
         for (const state of ["demolishing", "finished"]) {
           const where = `${view} ${state} ${width}`;
           await send("Page.navigate", { url: `${url}?view=${view}&state=${state}` });
-          const deadline = Date.now() + 20_000;
+          const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
           const tile = `Array.from(document.querySelectorAll("button[aria-pressed]")).find(b => b.textContent.includes(${JSON.stringify(label)}))`;
           while (!(await evaluate(`Boolean(window.demolishFixture && ${tile})`))) {
             assert.ok(Date.now() < deadline, `demolition fixture did not render: ${where}`);
