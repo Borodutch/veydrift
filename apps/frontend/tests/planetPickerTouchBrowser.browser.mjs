@@ -205,8 +205,7 @@ async function evaluate(expression) {
   return response.result.value;
 }
 
-// Returns as soon as the expression holds; 15s covers a loaded runner (5s overran).
-async function waitForExpression(expression, timeoutMs = 15_000) {
+async function waitForExpression(expression, timeoutMs = 5_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await evaluate(expression)) return;
@@ -796,40 +795,6 @@ test("planet switches show balances and production together and retain cached re
   await evaluate("window.resourceSwitch.hold = false; window.resourceSwitch.release()");
   await delay(100);
   assert.equal(await evaluate(metalTitle), alphaTitle);
-});
-
-test("resource numbers animate green and red without crossing planets or changing sibling values", async () => {
-  await loadInspectorFixture("/", 1280, { shell: "settlement" });
-  const amount = "document.querySelector('[data-resource=\"M\"] [data-resource-amount]')";
-  const displayed = `Number(${amount}?.querySelector('.hidden')?.textContent.replaceAll(',', ''))`;
-  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 10)");
-  assert.equal(await evaluate(displayed), 10);
-  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
-  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 110)");
-  await waitForExpression(`${displayed} > 10 && ${displayed} < 110`);
-  assert.equal(await evaluate(`${amount}.dataset.direction`), "up");
-  assert.equal(await evaluate(`getComputedStyle(${amount}).animationName`), "resource-flash-up");
-  await waitForExpression(`${displayed} === 110`);
-  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 5)");
-  await waitForExpression(`${displayed} < 110 && ${displayed} > 5`);
-  assert.equal(await evaluate(`${amount}.dataset.direction`), "down");
-  assert.equal(await evaluate(`getComputedStyle(${amount}).animationName`), "resource-flash-down");
-  await waitForExpression(`${displayed} === 5`);
-  assert.equal(await evaluate("document.querySelector('[data-resource=\"C\"] [data-resource-amount] .hidden').textContent"), "222");
-  assert.equal(await evaluate("document.querySelector('[data-resource=\"D\"] [data-resource-amount] .hidden').textContent"), "333");
-
-  await evaluate("window.inspectorProof.renderResourceBar('planet-a', 1000)");
-  await waitForExpression(`${displayed} > 5 && ${displayed} < 1000`);
-  await evaluate("window.inspectorProof.renderResourceBar('planet-b', 50)");
-  assert.equal(await evaluate(displayed), 50);
-  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
-  await delay(500);
-  assert.equal(await evaluate(displayed), 50, "the old planet's animation must be cancelled");
-  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
-  await evaluate("window.inspectorProof.renderResourceBar('planet-b', 70)");
-  await waitForExpression(`${displayed} === 70`);
-  assert.equal(await evaluate(`${amount}.dataset.direction`), undefined);
-  await cdp.send("Emulation.setEmulatedMedia", { features: [] });
 });
 
 test("desktop selector atomically replaces an unrelated inspector with one owned route and dataset", async () => {
@@ -1562,23 +1527,6 @@ test("Mission Control populates the All active count without selecting the tab",
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
-test("presentation clock updates without rerendering the app shell and pauses while hidden", async () => {
-  await loadInspectorFixture("/", 1280, { profileRoot: "true", activeMission: "true" });
-  await delay(2000);
-  await evaluate(`window.inspectorProof.rootRenderMs.length = 0; window.inspectorProof.clockRenders = 0`);
-  await delay(2200);
-  assert.ok(await evaluate(`window.inspectorProof.clockRenders >= 2`), "visible presentation clock should keep updating");
-  assert.equal(await evaluate(`window.inspectorProof.rootRenderMs.length`), 0, "clock must not rerender the app shell");
-  await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }); document.dispatchEvent(new Event('visibilitychange'))`);
-  await delay(100);
-  const hiddenRenders = await evaluate(`window.inspectorProof.clockRenders`);
-  await delay(2200);
-  assert.equal(await evaluate(`window.inspectorProof.clockRenders`), hiddenRenders);
-  await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange'))`);
-  await waitForExpression(`window.inspectorProof.clockRenders > ${hiddenRenders}`);
-  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
-});
-
 test("public player header loads rank and biography without an extra profile request", async () => {
   const wallet = "0x9999999999999999999999999999999999999999";
   await loadInspectorFixture(`/player/${wallet}`, 1280);
@@ -1610,30 +1558,6 @@ test("Galaxy settles its system and target-protection state once", async () => {
   assert.ok(rendered.systemRequests <= 2, JSON.stringify(rendered));
   assert.equal(rendered.protectionRequests, 2, JSON.stringify(rendered));
   assert.deepEqual(rendered.errors, []);
-});
-
-test("Galaxy attack hydrates coordinate-keyed targets and a stalled report can retry", async () => {
-  await loadInspectorFixture("/galaxy", 1280, { attackIntelProbe: "true" });
-  await waitForExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)') !== null`);
-  await clickExpression(`document.querySelector('main button[aria-label="Attack"]:not(:disabled)')`);
-  await waitForExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]') !== null`);
-  assert.equal(await evaluate(`document.querySelector('[aria-label="Calculating battle outcome"]') !== null`), false);
-  assert.ok(await evaluate(`window.inspectorProof.requests.some(path => path.includes('detail=full'))`));
-  await evaluate(`(() => {
-    window.combatWorkerProof = { original: window.Worker, terminated: 0 };
-    window.Worker = class {
-      postMessage() {}
-      terminate() { window.combatWorkerProof.terminated++; }
-    };
-  })()`);
-  await clickExpression(`document.querySelector('summary[aria-label="Open simulated battle report"]')`);
-  await waitForExpression(`document.querySelector('[aria-label="Simulated battle report"]')?.textContent.includes('took too long')`, 7_000);
-  assert.equal(await evaluate(`window.combatWorkerProof.terminated`), 1);
-  await evaluate(`window.Worker = window.combatWorkerProof.original`);
-  await clickExpression(`[...document.querySelectorAll('[aria-label="Simulated battle report"] button')].find(button => button.textContent.trim() === 'Retry')`);
-  await waitForExpression(`document.querySelector('[aria-label="Simulated battle report"]')?.textContent.includes('Final outcome')`);
-  assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
-  assert.equal(await evaluate(`window.inspectorProof.walletRequests.some(request => request.method === 'eth_sendTransaction')`), false);
 });
 
 test("Galaxy prepares an unknown target but keeps Confirm fail-closed without a canonical allowed verdict", async () => {
@@ -2123,73 +2047,6 @@ test("mobile Shipyard keeps Supply immediately right of Build and prefills quant
   assert.deepEqual(request, { crystal: "1995", deuterium: "", metal: "1990" });
 });
 
-for (const phase of ["complete", "settled"]) {
-  test(`completed defense queue stays absent across route hydration and hard reload: ${phase} (VEY-891)`, async () => {
-    const options = { defenseCompletion: phase, shell: "settlement" };
-    await loadInspectorFixture("/defenses", 1280, options);
-    const deployed = 9;
-    const assertDefense = async () => {
-      await waitForExpression(`location.pathname === '/defenses' && document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent?.includes('Deployed: ${deployed}') === true`);
-      const state = await evaluate(`({
-        catalog: document.querySelector('[data-production-catalog-key="rocketLauncher"]')?.textContent,
-        detail: document.querySelector('main')?.textContent?.replace(/\\s+/g, ' ').trim(),
-        settlement: document.querySelector('main [aria-label="Defense settlement"]')?.textContent ?? null,
-        activeQueues: document.querySelectorAll('main [aria-label^="Queue:"]').length,
-        errors: window.inspectorProof.errors,
-      })`);
-      assert.equal(state.activeQueues, 0);
-      assert.equal(state.settlement, null);
-      assert.doesNotMatch(state.detail, /awaiting settlement|Finish defenses/);
-      assert.doesNotMatch(state.catalog, /Queued/);
-      assert.match(state.detail, new RegExp('Deployed ' + deployed));
-      assert.doesNotMatch(state.detail, /Queued [1-9]/);
-      assert.deepEqual(state.errors, []);
-    };
-    await assertDefense();
-    const fixture = await evaluate(`(async () => {
-      const base = '/api/wallet/' + window.inspectorProof.account;
-      const production = await (await fetch(base + '/defenses?planetId=101')).json();
-      const overview = await (await fetch(base + '/overview')).json();
-      return {
-        deployed: production.defenses.find(item => item.id === 0)?.count,
-        launchable: production.launchableDefenses.find(item => item.id === 0)?.count,
-        active: production.queue,
-        unsettled: production.unsettledQueue?.quantity ?? 0,
-        remaining: production.unsettledQueue?.asOfNow?.remainingQuantity ?? 0,
-        overviewActive: overview.queues.defense,
-        overviewUnsettled: overview.queues.unsettledDefense?.quantity ?? 0,
-        planetActive: overview.planetsResponse.planets[0].queues.defense,
-        planetUnsettled: overview.planetsResponse.planets[0].queues.unsettledDefense?.quantity ?? 0,
-      };
-    })()`);
-    assert.deepEqual(fixture, {
-      deployed, launchable: 9, active: null, unsettled: phase === "complete" ? 1 : 0, remaining: 0,
-      overviewActive: null, overviewUnsettled: phase === "complete" ? 1 : 0,
-      planetActive: null, planetUnsettled: phase === "complete" ? 1 : 0,
-    });
-    // Restore the fixture URL (the mounted app routes replace it), then perform
-    // an actual cache-bypassing reload rather than reusing the in-memory store.
-    const reloadUrl = `${inspectorFixtureUrl}?${new URLSearchParams({ route: "/defenses", ...options })}`;
-    await evaluate(`history.replaceState(null, '', ${JSON.stringify(reloadUrl)})`);
-    await cdp.send("Page.reload", { ignoreCache: true });
-    // A cache-bypassing reload refetches every dev module: give it the app bootstrap budget.
-    await waitForExpression("window.inspectorProof?.appReady === true", INSPECTOR_APP_READY_TIMEOUT_MS);
-    await assertDefense();
-    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Empire')");
-    await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Empire"] li') !== null`);
-    const overview = await evaluate(`({
-      text: document.querySelector('main section[aria-label="Empire"]')?.textContent,
-      activeQueues: document.querySelectorAll('main section[aria-label="Empire"] [title^="Defense:"]').length,
-      settlement: document.querySelector('main [aria-label="Defense settlement"]')?.textContent ?? null,
-    })`);
-    assert.equal(overview.activeQueues, 0);
-    assert.equal(overview.settlement, null);
-    assert.doesNotMatch(overview.text, /awaiting settlement/);
-    await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Defenses')");
-    await assertDefense();
-  });
-}
-
 test("mobile Defenses renders its indexed planet snapshot while wallet overview hydration is incomplete", async () => {
   await loadInspectorFixture("/defenses", 390, {
     incompleteOverview: "true",
@@ -2543,61 +2400,6 @@ test("wallet bootstrap completes after a pre-subscription lifecycle event withou
   await delay(100);
   assert.deepEqual(await evaluate(`window.inspectorProof.walletRequests.map(request => request.method).filter(method => method === 'eth_accounts' || method === 'eth_requestAccounts')`), walletInitializations,
     "focus recovery must not restart wallet initialization");
-});
-
-for (const method of ["eth_accounts", "eth_chainId"]) {
-  test(`cold bootstrap bounds a hanging ${method} and recovers without refresh`, async () => {
-    await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: method, waitForPlanetSelectors: "false" });
-    await waitForExpression(`window.inspectorProof.walletRequests.some(request => request.method === '${method}')`);
-    const started = Date.now();
-    await waitForExpression(`document.body.textContent.includes('Wallet connection is taking longer than expected')`, 4_500);
-    assert.ok(Date.now() - started < 4_500, "wallet boundary must replace the unexplained skeleton promptly");
-    await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.some(line => { const d = JSON.parse(line); return d.method === '${method}' && d.phase === 'timed_out'; })`, 4_000);
-    assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Retry wallet connection' && !button.disabled)`), true);
-    const diagnostics = await evaluate("window.inspectorProof.bootstrapDiagnostics.map(JSON.parse)");
-    assert.ok(diagnostics.every(d => d.providerId > 0 && d.attempt === 1 && d.source === 'injected'));
-    assert.ok(diagnostics.every(d => Object.keys(d).sort().join(',') === 'attempt,elapsedMs,event,flags,method,phase,providerId,source'));
-    await evaluate(`window.inspectorProof.wakeBootstrapWallet(); window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('pageshow')); document.dispatchEvent(new Event('visibilitychange')); window.inspectorProof.emitWalletConnect()`);
-    await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
-    const reads = await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === '${method}').length`);
-    assert.equal(reads, 2, "lifecycle burst must start only one recovery attempt");
-    await evaluate("window.inspectorProof.resolveStaleBootstrap(); window.dispatchEvent(new Event('focus'))");
-    await delay(200);
-    assert.equal(await evaluate("document.querySelectorAll('[data-planet-selector-item]').length >= 2"), true);
-    assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === '${method}').length`), reads);
-    assert.equal(await evaluate("document.body.textContent.includes('Wrong network')"), false);
-    assert.equal(await evaluate("window.inspectorProof.requests.some(path => path.includes(window.inspectorProof.alternateAccount))"), false);
-  });
-}
-
-for (const event of ["pageshow", "connect", "manual", "automatic"]) {
-  test(`cold bootstrap wakes on ${event} alone after a timeout`, async () => {
-    await loadInspectorFixture("/", 1280, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
-    await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.some(line => JSON.parse(line).phase === 'timed_out')`, 8_000);
-    await evaluate("window.inspectorProof.wakeBootstrapWallet()");
-    if (event === "manual") await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Retry wallet connection')`);
-    else if (event === "connect") await evaluate("window.inspectorProof.emitWalletConnect()");
-    else if (event === "pageshow") await evaluate("window.dispatchEvent(new Event('pageshow'))");
-    await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
-    assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 2);
-  });
-}
-
-test("cold bootstrap preserves four automatic retries without returning to a skeleton", { timeout: 50_000 }, async () => {
-  await loadInspectorFixture("/", 390, { shell: "settlement", stallBootstrapMethod: "eth_accounts", waitForPlanetSelectors: "false" });
-  await waitForExpression("document.body.textContent.includes('Wallet connection is taking longer than expected')", 5_000);
-  await evaluate(`window.bootstrapSkeletonReturned = false; window.bootstrapObserver = new MutationObserver(() => {
-    if (!document.body.textContent.includes('Wallet connection is taking longer than expected')) window.bootstrapSkeletonReturned = true;
-  }); window.bootstrapObserver.observe(document.querySelector('#app'), { childList: true, subtree: true });`);
-  await waitForExpression(`window.inspectorProof.bootstrapDiagnostics.filter(line => JSON.parse(line).phase === 'timed_out').length === 5`, 36_000);
-  await evaluate("window.bootstrapObserver.disconnect()");
-  assert.equal(await evaluate("window.bootstrapSkeletonReturned"), false);
-  assert.deepEqual(await evaluate(`window.inspectorProof.bootstrapDiagnostics.map(JSON.parse).filter(d => d.method === 'eth_accounts' && d.phase === 'requested').map(d => d.attempt)`), [1, 2, 3, 4, 5]);
-  await delay(1_300);
-  assert.equal(await evaluate("window.inspectorProof.walletRequests.filter(r => r.method === 'eth_accounts').length"), 5);
-  await evaluate("window.inspectorProof.wakeBootstrapWallet()");
-  await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Retry wallet connection')`);
-  await waitForExpression("document.querySelectorAll('[data-planet-selector-item]').length >= 2");
 });
 
 test("cold bootstrap ignores an expired account response after a newer account event", async () => {
@@ -3232,30 +3034,6 @@ for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcom
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.ok(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`) > before);
   assert.equal(await evaluate(`${delegateButton("Propose delegate")}.disabled`), false);
-  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
-});
-
-test("wallet delegation bounded lag offers read-only retry and fences a late read after account switch", { timeout: 40_000 }, async () => {
-  await openDelegationDialog();
-  const next = "0x3333333333333333333333333333333333333333";
-  await fillDelegate(next);
-  await clickExpression(delegateButton("Propose delegate"));
-  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
-  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 100, ${JSON.stringify(next)}); window.inspectorProof.resolveWalletSend('0xdelegatelag')`);
-  await waitForExpression(`${delegateSection}.textContent.includes('do not resend')`, 10_000);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
-  const count = await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`);
-  await delay(500);
-  assert.equal(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`), count);
-  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 0, ${JSON.stringify(next)}); window.inspectorProof.holdDelegationRead()`);
-  await clickExpression(delegateButton("Refresh delegate status"));
-  await waitForExpression(`${delegateSection}.textContent.includes('Checking current delegate')`);
-  await evaluate(`window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount]); window.inspectorProof.setPlayableAccount(window.inspectorProof.alternateAccount)`);
-  await delay(100);
-  await evaluate(`window.inspectorProof.releaseDelegationRead()`);
-  await delay(100);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
-  assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 

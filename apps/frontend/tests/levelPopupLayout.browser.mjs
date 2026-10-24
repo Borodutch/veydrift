@@ -71,7 +71,7 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
     for (const width of WIDTHS) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url });
-      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
+      const deadline = Date.now() + 20_000;
       while (!(await evaluate("Boolean(window.levelPopup)"))) {
         assert.ok(Date.now() < deadline, "level popup fixture did not render");
         await new Promise(resolve => setTimeout(resolve, 50));

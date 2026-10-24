@@ -65,7 +65,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     const key = 'veydrift.sidebar.collapsed.v1';
     const frame = () => evaluate('new Promise(requestAnimationFrame)');
     async function mounted() {
-      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
+      const deadline = Date.now() + 20000;
       while (!await evaluate('Boolean(window.fixture && document.querySelector('+JSON.stringify(desktop)+'))').catch(() => false)) {
         assert.ok(Date.now() < deadline, 'fixture did not mount');
         await new Promise(resolve => setTimeout(resolve, 50));

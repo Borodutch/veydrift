@@ -231,7 +231,8 @@ test("parallel check groups partition the full sequential plan", () => {
     .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
     .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["frontend-precheck", "frontend-touch-browser-3", "contracts-build", "contracts-test"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["frontend-precheck", "frontend-build", "frontend-touch-browser-3", "stats-check",
+    "contracts-build", "contracts-test"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["frontend-precheck", "frontend-typecheck", "frontend-test",
     "frontend-touch-browser-2", "contracts-fast-check", "contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "backend-test", "frontend-touch-browser-1"]);

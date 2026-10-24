@@ -131,6 +131,8 @@ const HEAVY = {
   "frontend-touch-browser-3": "contracts",
   "contracts-build": "contracts",
   "contracts-test": "contracts",
+  "frontend-build": "contracts",
+  "stats-check": "contracts",
   // Lane 4 runs in "rest", next to everything else.
 };
 
@@ -144,6 +146,8 @@ export function planChecks(scope, group = "all") {
   add("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
   add("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
   for (const testFile of scope.script_tests ?? []) {
+    // The CI workflow already runs this one first, in the rest job, on every PR.
+    if (group !== "all" && testFile === "scripts/ci-run-scoped-checks.test.mjs") continue;
     add(`script-test ${testFile}`, "node", ["--test", testFile]);
   }
 

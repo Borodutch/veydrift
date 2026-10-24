@@ -70,7 +70,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         const selector = 'button[aria-label="Supply resources up to Level ' + level + '"]';
         await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
         await send('Page.navigate', { url: url + '?kind=' + kind });
-        const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
+        const deadline = Date.now() + 20000;
         while (!(await evaluate('Boolean(window.levelFixture && document.querySelector(' + JSON.stringify(selector) + '))'))) {
           assert.ok(Date.now() < deadline, 'level fixture did not render: ' + kind);
           await new Promise(resolve => setTimeout(resolve, 50));

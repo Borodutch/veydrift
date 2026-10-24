@@ -64,7 +64,7 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
     }
     const settle = () => evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
     async function waitFor(expression, label) {
-      const deadline = Date.now() + 60_000; // returns once rendered; a cold Vite page on a loaded runner took >15s
+      const deadline = Date.now() + 20_000;
       while (!(await evaluate(`Boolean(${expression})`))) {
         assert.ok(Date.now() < deadline, `${label}\n` + await evaluate("document.body.innerText.slice(0, 1200)"));
         await new Promise(resolve => setTimeout(resolve, 50));
