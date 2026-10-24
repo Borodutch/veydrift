@@ -27,7 +27,9 @@ function git(args) {
 }
 
 function diffNames(range) {
-  return git(["diff", "--name-only", range])
+  // --no-renames: a moved file counts for its old and new area, and a blobless CI clone never has to
+  // fetch file contents for rename detection.
+  return git(["diff", "--name-only", "--no-renames", range])
     .split("\n")
     .filter(Boolean);
 }
@@ -55,12 +57,12 @@ function changedFiles({ base, head = "HEAD", eventName = "local" } = {}) {
   const diffBase = base || process.env.BASE_REF || "";
   const diffHead = head || "HEAD";
 
-  // A pull_request checkout is GitHub's merge commit: its first parent is the base branch tip,
-  // so HEAD^1..HEAD is exactly the change the PR introduces. A squash-merge push to main diffs
+  // A pull_request checkout is the PR head commit (Forgejo has no merge commit), so the PR's change
+  // is everything since its merge base with the base branch. A squash-merge push to main diffs
   // against the previous main tip. Both therefore select the same checks for the same change.
   if (eventName === "pull_request") {
     try {
-      return diffNames(`${diffHead}^1..${diffHead}`);
+      return diffNames(`${diffBase || "origin/main"}...${diffHead}`);
     } catch {
       return ["package.json"];
     }

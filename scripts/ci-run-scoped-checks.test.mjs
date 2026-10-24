@@ -51,6 +51,15 @@ test("PR and push CI select the same scoped checks for the same change", () => {
       assert.deepEqual(pr, push, file);
       assert.deepEqual(areas(pr).sort(), [...want].sort(), file);
     }
+    // A PR checks every commit since its merge base, not just its last commit.
+    git("reset", "--hard", base);
+    for (const file of ["apps/stats/src/example.ts", "apps/battle-keeper/src/example.ts"]) {
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), "second fixture\n");
+      git("add", file);
+      git("commit", "-m", `change ${file}`);
+    }
+    assert.deepEqual(areas(scope("pull_request", "main")), ["stats", "keeper"]);
     // A push whose previous tip is unknown checks everything.
     assert.equal(scope("push", "0000000000000000000000000000000000000000").full, true);
   } finally {
