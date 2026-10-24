@@ -9,7 +9,9 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 240_000 }, async () => {
+// 17 fixture loads and ~60 interactions in one scenario: ~3 minutes on an idle Mac, longer on the
+// CPU-throttled CI runner daemons, where 240 s timed out on every run.
+test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 480_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
