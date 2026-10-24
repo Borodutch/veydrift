@@ -2,7 +2,7 @@
 // mini app host, navigator.vibrate in regular browsers. Fire and forget.
 
 import { sdk } from "@farcaster/miniapp-sdk";
-import { detectFarcasterMiniApp, hasMiniAppUrlHint } from "./farcasterReady";
+import { detectFarcasterMiniApp } from "./farcasterReady";
 
 export type HapticPattern = "complete" | "error" | "select" | "success" | "tick" | "warning";
 
@@ -19,7 +19,6 @@ let miniAppDetection: Promise<boolean> | null = null;
 
 function isMiniAppHost(): Promise<boolean> {
   if (typeof window === "undefined") return Promise.resolve(false);
-  if (hasMiniAppUrlHint(window.location)) return Promise.resolve(true);
   miniAppDetection ??= detectFarcasterMiniApp().catch(() => false);
   return miniAppDetection;
 }
