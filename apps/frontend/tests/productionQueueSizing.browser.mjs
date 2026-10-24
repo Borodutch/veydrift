@@ -134,7 +134,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
-    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 390, 320]) for (const count of [1, 4]) {
+    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 320]) for (const count of [1, 4]) { // 390 behaves as 320 (<640) and runs below
       await load(new URLSearchParams({ body, kind, count: String(count) }), width);
       assert.equal(await evaluate('document.querySelectorAll("[data-build-plan] button[aria-label^=Remove]").length'), count);
       await record(body + '-' + kind + '-' + width + (count === 1 ? '-one' : ''), width);

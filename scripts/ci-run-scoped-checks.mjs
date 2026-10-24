@@ -116,34 +116,28 @@ async function runLogged(label, command, args) {
 // The group names are fixed (they are required statuses); the browser suite's four lanes
 // (apps/frontend/scripts/touch-browser.mjs) are spread over all of them.
 export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
+// Each group runs its browser lane next to one serial chain of the other checks (more side-by-side
+// checks only made the CPU-heavy unit suites time out on the shared Mac), so the slow non-browser
+// checks are spread over the groups too.
 const HEAVY = {
   "frontend-touch-browser-1": "browser",
+  "backend-test": "browser",
   "frontend-touch-browser-2": "contracts-checks",
-  "frontend-touch-browser-3": "contracts",
-  // Lane 4 runs in "rest", alongside the unit checks.
-  "contracts-build": "contracts",
-  "contracts-test": "contracts",
   // Both build into their own out dirs (src only), so they run in parallel with the main build.
   "contracts-fast-check": "contracts-checks",
   "contracts-storage-check": "contracts-checks",
-};
-
-// Steps of one chain run in order; chains (and unchained steps) of a CI group run side by side.
-// Quick node tests share one chain, type checks another, the forge build precedes the tests that use it.
-const CHAINS = {
-  "docs-link-tests": "node", "docs-check": "node", "backend-performance-tool-test": "node", "release-diagnostics-test": "node",
-  "deployment-manifest-test": "node", "referral-migration-manifest-test": "node",
-  "universe-check": "types", "backend-check": "types", "frontend-typecheck": "types", "keeper-check": "types",
-  "chicken-burn-listener-check": "types",
-  "universe-test": "unit", "frontend-test": "unit", "keeper-test": "unit", "chicken-burn-listener-test": "unit", "stats-check": "unit",
-  "contracts-build": "forge", "contracts-test": "forge",
-  "contracts-fast-check": "forge-checks", "contracts-storage-check": "forge-checks",
+  "frontend-typecheck": "contracts-checks",
+  "frontend-test": "contracts-checks",
+  "frontend-touch-browser-3": "contracts",
+  "contracts-build": "contracts",
+  "contracts-test": "contracts",
+  // Lane 4 runs in "rest", next to everything else.
 };
 
 export function planChecks(scope, group = "all") {
   if (!CHECK_GROUPS.includes(group)) throw new Error(`unknown check group "${group}" (use ${CHECK_GROUPS.join(", ")})`);
   const plan = [];
-  const add = (label, command, args) => plan.push({ label, command, args, chain: CHAINS[label] ?? (label.startsWith("script-test ") ? "node" : undefined) });
+  const add = (label, command, args) => plan.push({ label, command, args });
   const note = (label, message) => plan.push({ label, note: message });
 
   // Documentation-only changes must run these too; neither needs Bun or installed packages.
@@ -218,27 +212,20 @@ export function planChecks(scope, group = "all") {
   return selected;
 }
 
-// Within a CI group, chains run side by side (each chain's steps in order) once the shared
-// frontend asset preparation is done; the local preflight ("all") runs every step in order.
+// Within a CI group the browser lane runs next to the group's other checks, which run in order
+// after the shared frontend asset preparation; the local preflight ("all") runs every step in order.
 async function runPlan(plan, concurrent) {
   const steps = plan.filter((step) => !step.note);
-  if (!concurrent) {
-    for (const step of steps) if (!(await runLogged(step.label, step.command, step.args))) return false;
-    return true;
-  }
-  const precheck = steps.find((step) => step.label === "frontend-precheck");
-  if (precheck && !(await runLogged(precheck.label, precheck.command, precheck.args))) return false;
-  const chains = new Map();
-  for (const step of steps) {
-    if (step === precheck) continue;
-    const key = step.chain ?? step.label;
-    if (!chains.has(key)) chains.set(key, []);
-    chains.get(key).push(step);
-  }
-  const results = await Promise.all([...chains.values()].map(async (chain) => {
+  const serial = async (chain) => {
     for (const step of chain) if (!(await runLogged(step.label, step.command, step.args))) return false;
     return true;
-  }));
+  };
+  if (!concurrent) return serial(steps);
+  const precheck = steps.filter((step) => step.label === "frontend-precheck");
+  if (!(await serial(precheck))) return false;
+  const lane = (step) => step.label.startsWith("frontend-touch-browser-");
+  const rest = steps.filter((step) => !precheck.includes(step));
+  const results = await Promise.all([serial(rest.filter(lane)), serial(rest.filter((step) => !lane(step)))]);
   return results.every(Boolean);
 }
 

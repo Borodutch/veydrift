@@ -156,9 +156,9 @@ Other PRs run on the Linux runner. CI runs on PRs only: branch protection requir
 one the PR passed.
 Only the areas a change touches, plus the areas that read them, are checked (a backend-only PR
 runs only backend checks; contracts are compiled and tested only when contract code changes).
-Toolchain, lockfile, CI and unclassified files check everything. The four groups run as parallel jobs
-and each spreads its checks over side-by-side chains; the browser suite is split into four lanes, one per
-job. Contract
+Toolchain, lockfile, CI and unclassified files check everything. The four groups run as parallel jobs;
+the browser suite is split into four lanes, one per job, and each lane runs next to that job's other
+checks. Contract
 tests take seconds; contract CI time is solc via-IR compilation, which is single-threaded and
 incremental, so only changed sources and their dependents recompile.
 

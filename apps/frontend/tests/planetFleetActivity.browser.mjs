@@ -60,7 +60,7 @@ test("Mission activity local clock, ticking, cleanup and responsive layout", { t
     const clocks = [];
     for (const timezoneId of ["America/Vancouver", "Asia/Tokyo"]) {
       await send("Emulation.setTimezoneOverride", { timezoneId });
-      for (const width of [1200, 790, 390, 320]) {
+      for (const width of [1200, 790, 320]) { // 320 also covers the 390 phone layout (same <640 bucket)
         await send("Emulation.setDeviceMetricsOverride", { width, height: 1000, deviceScaleFactor: 1, mobile: width < 640 });
         await send("Page.navigate", { url });
         const deadline = Date.now() + 20000;

@@ -65,7 +65,7 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
-    for (const width of [1280, 390, 320]) {
+    for (const width of [1280, 320]) { // 320 also covers the 390 phone layout (same <640 bucket)
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       // Direct entry with an unresolved protection response must explain the guard.
       await send("Page.navigate", { url: url + "?mode=loading" });

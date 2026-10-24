@@ -58,7 +58,7 @@ test("Resolved group mission labels, scope and actions survive desktop/mobile si
     }
 
     const rowsExpression = '[...document.querySelectorAll("[data-mission-row]")].filter(row => row.getBoundingClientRect().height > 0)';
-    for (const width of [1440, 1100, 791, 390, 320]) {
+    for (const width of [1440, 1100, 791, 320]) { // 320 also covers the 390 phone layout (same <640 bucket)
       await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: width < 640 });
       await send('Page.navigate', { url });
       const deadline = Date.now() + 20000;

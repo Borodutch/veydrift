@@ -11,7 +11,9 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-const WIDTHS = [320, 360, 375, 390, 412, 640, 700, 768, 1024, 1280];
+// One width per layout: 320 (narrowest, ellipsis allowed), 390 (no ellipsis from here), 640 (sm), 1024 (lg;
+// the panel caps at max-w-4xl, so wider viewports lay out the same). In-between widths repeated these.
+const WIDTHS = [320, 390, 640, 1024];
 
 test("level popups fit every structure at every width", { timeout: 180_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
