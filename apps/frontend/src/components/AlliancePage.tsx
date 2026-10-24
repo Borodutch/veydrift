@@ -650,7 +650,7 @@ function MyAllianceSection({
                 }}
                 type="button"
               >
-                Buy private invite · 0.006 ETH (~$10)
+                Buy private invite · 0.002 ETH (~$5)
               </button>
               {canManageMembers ? (
                 <button
@@ -2451,7 +2451,7 @@ function AlliancePrivateInviteExplanation() {
       </li>
       <li className="flex items-start gap-2 leading-relaxed">
         <Crown className="mt-0.5 shrink-0 text-cyan-200" size={14} />
-        <span>Any alliance member can buy a private invite for 0.006 ETH.</span>
+        <span>Any alliance member can buy a private invite for 0.002 ETH.</span>
       </li>
       <li className="flex items-start gap-2 leading-relaxed">
         <Shield className="mt-0.5 shrink-0 text-cyan-200" size={14} />

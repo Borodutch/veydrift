@@ -34,7 +34,7 @@ interface IVeydriftPaidInviteAlliance {
 /// stay below EIP-170. Only commitments are public; the high-entropy secret remains in the link and
 /// is exchanged with the backend for a short-lived authorization bound to the recipient wallet.
 contract VeydriftPaidAllianceInvites is Initializable, UUPSUpgradeable {
-    uint128 public constant INVITE_PRICE = 0.006 ether;
+    uint128 public constant INVITE_PRICE = 0.002 ether;
     uint16 public constant PRODUCTION_BONUS_BPS = 200;
     uint16 private constant BPS = 10_000;
 
@@ -407,7 +407,7 @@ contract VeydriftPaidAllianceInvites is Initializable, UUPSUpgradeable {
         _invites[commitment] = PaidInvite({
             allianceId: allianceId,
             purchaser: player,
-            // INVITE_PRICE is the fixed 0.006 ether constant, well below uint128 max.
+            // INVITE_PRICE is the fixed 0.002 ether constant, well below uint128 max.
             // forge-lint: disable-next-line(unsafe-typecast)
             settlementPrice: uint128(price),
             purchasedAt: purchasedAt,
