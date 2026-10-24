@@ -205,7 +205,8 @@ async function evaluate(expression) {
   return response.result.value;
 }
 
-async function waitForExpression(expression, timeoutMs = 5_000) {
+// Returns as soon as the expression holds; 15s covers a loaded runner (5s overran).
+async function waitForExpression(expression, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await evaluate(expression)) return;
@@ -2171,7 +2172,8 @@ for (const phase of ["complete", "settled"]) {
     const reloadUrl = `${inspectorFixtureUrl}?${new URLSearchParams({ route: "/defenses", ...options })}`;
     await evaluate(`history.replaceState(null, '', ${JSON.stringify(reloadUrl)})`);
     await cdp.send("Page.reload", { ignoreCache: true });
-    await waitForExpression("window.inspectorProof?.appReady === true");
+    // A cache-bypassing reload refetches every dev module: give it the app bootstrap budget.
+    await waitForExpression("window.inspectorProof?.appReady === true", INSPECTOR_APP_READY_TIMEOUT_MS);
     await assertDefense();
     await clickExpression("[...document.querySelectorAll('a')].find(link => link.textContent?.trim() === 'Empire')");
     await waitForExpression(`location.pathname === '/' && document.querySelector('main section[aria-label="Empire"] li') !== null`);

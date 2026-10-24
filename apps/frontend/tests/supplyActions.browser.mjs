@@ -258,12 +258,16 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
     await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
+    // Bounded cleanup: a hung Chrome or Vite shutdown must not hide the test's own failure behind
+    // the test timeout (CI showed only "test timed out" and a cancelled dep-optimizer build).
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms).unref());
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       chrome.kill();
-      await exited;
+      await Promise.race([exited, sleep(5_000)]);
+      if (chrome.exitCode === null) chrome.kill("SIGKILL");
     }
-    await server.close();
+    await Promise.race([server.close(), sleep(10_000).then(() => console.error("Vite server did not close within 10s"))]);
     rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
