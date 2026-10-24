@@ -14,7 +14,7 @@ test("Rift page injects, extracts, finalizes and shows history at desktop and ph
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for the rendered Rift page regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-rift-page-"));
-  const server = await createServer({
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/riftPage`,
     // The Rift fixture renders no animated planets.
     plugins: [{ name: "rift-page-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");

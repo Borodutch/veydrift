@@ -103,13 +103,14 @@ async function runLogged(label, command, args) {
 
 // Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
 // Without a group (local preflight) every applicable check runs in one process, as before.
-// The group names are fixed (they are required statuses); the browser suite's three lanes are
-// spread over them so its ~8 minutes of serial browser tests take about a third of that.
+// The group names are fixed (they are required statuses); the browser suite's four lanes
+// (apps/frontend/scripts/touch-browser.mjs) are spread over all of them.
 export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
 const HEAVY = {
   "frontend-touch-browser-1": "browser",
   "frontend-touch-browser-2": "contracts-checks",
   "frontend-touch-browser-3": "contracts",
+  // Lane 4 runs in "rest", after the frontend unit checks.
   "contracts-build": "contracts",
   "contracts-test": "contracts",
   // Both build into their own out dirs (src only), so they run in parallel with the main build.
@@ -148,8 +149,8 @@ export function planChecks(scope, group = "all") {
     add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
     add("frontend-test", "bun", ["run", "test:frontend"]);
     add("frontend-build", "bun", ["run", "build:frontend"]);
-    for (const lane of [1, 2, 3]) {
-      add(`frontend-touch-browser-${lane}`, "bash", ["-lc", `cd apps/frontend && bun run test:touch-browser:${lane}`]);
+    for (const lane of [1, 2, 3, 4]) {
+      add(`frontend-touch-browser-${lane}`, "bash", ["-lc", `cd apps/frontend && node scripts/touch-browser.mjs ${lane}`]);
     }
   }
 

@@ -18,7 +18,7 @@ test("Demolish is an icon-only button inline with Upgrade on planet and moon bui
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered demolish layout regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-demolish-icon-"));
-  const server = await createServer({
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/demolishIcon`,
     // These fixtures render building detail panels, not animated planets.
     plugins: [{ name: "demolish-icon-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");

@@ -11,7 +11,7 @@ test("Public moon Attack loading, eligibility, navigation and responsive layout"
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-public-moon-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/publicMoonActions`, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.PUBLIC_MOON_ARTIFACTS;

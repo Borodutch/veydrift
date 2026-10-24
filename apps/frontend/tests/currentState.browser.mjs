@@ -14,7 +14,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
   // Local component proof does not need production animation baking or API proxies.
-  const server = await createServer({ configFile: false, esbuild: { jsx: "automatic", jsxImportSource: "preact" }, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/currentState`, configFile: false, esbuild: { jsx: "automatic", jsxImportSource: "preact" }, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome, backend;
   const pending = new Map();
   const artifacts = process.env.CURRENT_STATE_ARTIFACTS;

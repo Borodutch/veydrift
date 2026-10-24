@@ -17,7 +17,7 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered layout regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-level-popup-"));
-  const server = await createServer({
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/levelPopupLayout`,
     plugins: [{ name: "level-popup-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");
       if (animations) animations.configureServer = undefined;

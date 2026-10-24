@@ -3,10 +3,11 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, test as nodeTest } from "node:test";
 import sharp from "sharp";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
+import { inShard } from "./shard.mjs";
 import { PLANET_ANIMATION_VERSION } from "../planetAnimationConfig.ts";
 
 const chromeCandidates = [
@@ -34,6 +35,7 @@ let server;
 let routeChunkGate;
 let gatedRouteChunkRequests = [];
 
+const test = (...args) => (inShard() ? nodeTest(...args) : undefined);
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
 
@@ -256,7 +258,7 @@ async function preloadInspectorFixture() {
 }
 
 before(async () => {
-  server = await createServer({
+  server = await createServer({ cacheDir: `node_modules/.vite-browser/planetPickerTouchBrowser${(process.env.BROWSER_TEST_SHARD ?? "").replace("/", "-of-")}`,
     logLevel: "error",
     root: new URL("..", import.meta.url).pathname,
     // Fixture stores and mocked requests must not depend on a developer's .env.local.

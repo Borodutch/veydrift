@@ -12,7 +12,7 @@ test("Combat verification preserves mounted reports and fails closed", { timeout
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for mounted combat regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-combat-refresh-"));
-  const server = await createServer({ configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/combatModelRefresh`, configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   try {

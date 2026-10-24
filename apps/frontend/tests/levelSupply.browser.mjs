@@ -13,7 +13,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
-  const server = await createServer({
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/levelSupply`,
     // These fixtures render level tables/cargo controls, not animated planets.
     plugins: [{ name: "level-supply-no-animation-precompute", configResolved(config) {
       const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");

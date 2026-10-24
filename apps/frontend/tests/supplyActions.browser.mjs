@@ -13,7 +13,7 @@ test("Mounted production Supply handlers enforce goal, context and wallet parity
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
-  const server = await createServer({ cacheDir: join(profile, "vite-cache"),
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/supplyActions`,
     // This fixture renders cargo controls, not planet animations. Skip the pinned
     // media sync before Chrome starts (the media tests and server startup verify it).
     plugins: [{ name: "supply-fixture-no-animation-precompute", configResolved(config) {

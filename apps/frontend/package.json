@@ -16,10 +16,7 @@
     "serve": "bun scripts/serve.mjs",
     "start": "bun run serve",
     "test": "bun test tests src/*.test.ts",
-    "test:touch-browser": "bun run test:touch-browser:1 && bun run test:touch-browser:2 && bun run test:touch-browser:3",
-    "test:touch-browser:1": "node --test tests/sidebar.browser.mjs && node --test tests/planetPickerTouchBrowser.browser.mjs && node --test tests/productionQueueSizing.browser.mjs && node --test tests/galaxySlots.browser.mjs",
-    "test:touch-browser:2": "node --test tests/batchSupply.browser.mjs",
-    "test:touch-browser:3": "node --test tests/loopAnimations.browser.mjs"
+    "test:touch-browser": "node scripts/touch-browser.mjs"
   },
   "dependencies": {
     "@farcaster/miniapp-sdk": "^0.3.0",

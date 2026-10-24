@@ -234,7 +234,9 @@ test("parallel check groups partition the full sequential plan", () => {
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["frontend-precheck", "frontend-touch-browser-3", "contracts-build", "contracts-test"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["frontend-precheck", "frontend-touch-browser-2", "contracts-fast-check", "contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser-1"]);
-  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label.startsWith("frontend-touch-browser")));
+  const rest = labels(planChecks(FULL_SCOPE, "rest"));
+  assert.ok(!rest.some((label) => label.startsWith("contracts-")));
+  assert.deepEqual(rest.filter((label) => label.startsWith("frontend-touch-browser")), ["frontend-touch-browser-4"]);
   const contractsOnly = { ...FULL_SCOPE, universe: false, backend: false, frontend: false, stats: false, keeper: false, chicken: false };
   assert.deepEqual(labels(planChecks(contractsOnly, "contracts")), ["contracts-build", "contracts-test"]);
   assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
@@ -279,4 +281,25 @@ test("unoptimized contract test list rejects files that carry src logic or fork 
   assert.deepEqual(profileProblems("test/B.t.sol", "contract Harness is VeydriftGame {}", src), ["Harness inherits src VeydriftGame"]);
   assert.deepEqual(profileProblems("test/C.t.sol", 'import {Deploy} from "../script/Deploy.s.sol";', src), ["imports a deploy script"]);
   assert.deepEqual(profileProblems("test/DFork.t.sol", "", src), ["is a mainnet-fork test"]);
+});
+
+test("browser lanes run every browser test file exactly once, whole or as all of its shards", async () => {
+  const { readdirSync } = await import("node:fs");
+  const { LANES } = await import("../apps/frontend/scripts/touch-browser.mjs");
+  const files = readdirSync(new URL("../apps/frontend/tests/", import.meta.url)).filter((file) => file.endsWith(".browser.mjs"))
+    .map((file) => file.replace(/\.browser\.mjs$/, "")).sort();
+  const units = LANES.flat(2);
+  assert.equal(new Set(units).size, units.length, "no unit runs twice");
+  const covered = {};
+  for (const unit of units) {
+    const [file, shard] = unit.split("@");
+    (covered[file] ??= []).push(shard ?? "whole");
+  }
+  assert.deepEqual(Object.keys(covered).sort(), files);
+  for (const [file, shards] of Object.entries(covered)) {
+    if (shards.includes("whole")) { assert.deepEqual(shards, ["whole"], file); continue; }
+    const count = Number(shards[0].split("/")[1]);
+    assert.deepEqual(shards.sort(), Array.from({ length: count }, (_, i) => `${i + 1}/${count}`), file);
+  }
+  assert.equal(planChecks(FULL_SCOPE).filter((step) => step.label.startsWith("frontend-touch-browser-")).length, LANES.length);
 });
