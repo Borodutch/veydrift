@@ -78,15 +78,18 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
       await until("Boolean(window.loopFixture && document.querySelector('[data-catalog] img, [data-catalog] video'))", "fixture did not render");
       await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
     }
-    // Every element in the still's box, by stable key: tiles, icons, catalog thumbnails.
-    const boxes = `Object.fromEntries([
+    // Every element in the still's box, by stable key: tiles, icons, catalog thumbnails. Positions are
+    // relative to the fixture's <main>: on the CI runners' headless Chrome a reload under emulated reduced
+    // motion sometimes leaves <html>, <body> and #app (the elements that exist before Vite injects the
+    // stylesheet) on UA styles (8px body margin, 3px borders), moving the whole page 17px down.
+    const boxes = `(origin => Object.fromEntries([
       ...Array.from(document.querySelectorAll('[data-tile]')).map(t => ['tile ' + t.dataset.tile, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-icon]')).map(t => ['icon ' + t.dataset.icon, t.firstElementChild]),
       ...Array.from(document.querySelectorAll('[data-catalog] img, [data-catalog] video')).map((m, i) => ['catalog ' + i, m]),
       ...Array.from(document.querySelectorAll('[data-research] img, [data-research] video, [data-research-queue] img, [data-research-queue] video')).map((m, i) => ['research ' + i, m]),
       ['responsive', document.querySelector('[data-responsive]').firstElementChild],
       ['offscreen', document.querySelector('#offscreen').firstElementChild],
-    ].map(([key, m]) => { const r = m.getBoundingClientRect(); return [key, { tag: m.tagName, x: r.x, y: r.y, w: r.width, h: r.height, fit: getComputedStyle(m).objectFit }]; }))`;
+    ].map(([key, m]) => { const r = m.getBoundingClientRect(); return [key, { tag: m.tagName, x: r.x - origin.x, y: r.y - origin.y, w: r.width, h: r.height, fit: getComputedStyle(m).objectFit }]; })))(document.querySelector('main').getBoundingClientRect())`;
     const loopRequests = "performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/assets/game/loop'))";
 
     await open();

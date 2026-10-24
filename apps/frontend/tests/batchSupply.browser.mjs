@@ -10,8 +10,9 @@ import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 import { inShard } from "./shard.mjs";
 
-// 17 fixture loads and ~60 interactions in one scenario: ~3 minutes on an idle Mac, longer on the
-// CPU-throttled CI runner daemons, where 240 s timed out on every run.
+// Dozens of fixture loads and interactions in one scenario (CI runs it in shards). Mobile coverage is
+// 320 px, the narrowest supported width: 390 px sits in the same (<640 px, touch) layout, so scenarios
+// that also run at 320 px don't repeat it.
 test("Supply ship eligibility persists through mounted draft interactions at desktop/mobile sizes", { timeout: 480_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
@@ -117,16 +118,19 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       if (touch) { await new Promise(resolve => setTimeout(resolve, 100)); ({ x, y, reachable } = await point(expression)); }
       assert.ok(reachable, 'reachable pointer target: ' + expression);
       if (touch) {
+        const clicks = await evaluate('window.tapClicks ??= 0; if (!window.tapCounter) { window.tapCounter = true; addEventListener("click", () => window.tapClicks++, true); } window.tapClicks');
         await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
         await new Promise(resolve => setTimeout(resolve, 50));
         await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        // Chromium dispatches the compatibility click after touchend: wait for it (a tap on a
+        // disabled control never gets one) before scrolling to another target.
+        const deadline = Date.now() + 350;
+        while (await evaluate('window.tapClicks') === clicks && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
       } else {
         await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
         await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
       }
       await settle();
-      // Chromium dispatches the compatibility click after touchend; wait for it before scrolling to another target.
-      if (touch) await new Promise(resolve => setTimeout(resolve, 350));
     }
     const selected = () => evaluate('[...document.querySelectorAll("[role=group] button[aria-describedby]")].filter(input => input.getAttribute("aria-label").endsWith(" at Astro")).map(input => input.getAttribute("aria-pressed") === "true")');
     async function expectTypes(expected, reason) { await expandAll(); assert.deepEqual(await selected(), expected, reason); }
@@ -165,7 +169,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       }
     }
     // Compact source rows and centered header are measured in the mounted production UI.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       for (const longName of [false, true]) {
         await load(width, 'denver=1' + (longName ? '&longName=1' : ''), 568);
         const layout = await evaluate(`(() => {
@@ -202,7 +206,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       }
     }
     // Reporter-equivalent read-only fixture; production modal, never a real wallet.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       await load(width, 'denver=1', 568);
       assert.equal(await evaluate('document.querySelectorAll("[role=dialog] details").length'), 0);
       assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[inputmode=numeric]').length`), 3, 'only the selected source renders cargo controls');
@@ -334,7 +338,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     }
     if (ran) console.log('PASS normal transport Max stock refresh, appearance, focus and cargo preservation');
     // Mission selection is draft-local, survives refresh/rejection, and reaches onConfirm.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       await load(width);
       const transport = "document.querySelector('[aria-label=\"Mission type\"] button:first-child')";
       const deploy = "document.querySelector('[aria-label=\"Mission type\"] button:last-child')";
@@ -436,7 +440,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.deepEqual((await submit()).orders, multi.orders);
     }
     // Screenshot-equivalent fleet: five available, two actually sent, one selector row only.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       await load(width, 'plannedFleetExample=1', 568);
       const fleet = `document.querySelector('[aria-label="Planned fleet at Astro"]')`;
       const large = checkbox(0), recycler = checkbox(2);
@@ -505,7 +509,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       }
     }
     // No inventory is not an excluded fleet: do not direct players to nonexistent controls.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       await load(width, 'emptyFleet=1', 568);
       assert.equal(await evaluate('document.querySelectorAll("[role=group] button[aria-describedby]").length'), 0);
       assert.equal(await evaluate(source + '.disabled'), true);
@@ -518,7 +522,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       assert.ok((await point(launch)).reachable);
     }
     // Short viewports must scroll the whole draft, including newly inserted warnings.
-    if (block()) for (const width of [390, 320]) {
+    if (block()) for (const width of [320]) {
       await load(width, '', 568);
       // Reserve classic scrollbar space even on overlay-scrollbar platforms.
       await evaluate(`(() => {
@@ -548,7 +552,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
       console.log('PASS mounted Supply at ' + width + '×568: source deselect/reselect, shortfall state, type controls, footer, no horizontal overflow');
     }
     // The longest scenario: each width is its own shard unit.
-    for (const width of [1280, 390, 320]) if (block()) {
+    for (const width of [1280, 320]) if (block()) {
       await load(width);
       assert.equal(await evaluate('document.body.textContent.includes("Ship types for all sources")'), false);
       await expectTypes(defaults, 'Recycler defaults off');
@@ -657,7 +661,7 @@ test("Supply ship eligibility persists through mounted draft interactions at des
     }
     if (ran) console.log('PASS nearest combat-only origin stays opt-in with one and multiple slots on desktop/mobile');
     // Two distinct source inventories: physical taps/keyboard must not toggle another source or checkbox.
-    if (block()) for (const width of [1280, 390, 320]) {
+    if (block()) for (const width of [1280, 320]) {
       await load(width, 'twoSources=1', 568);
       await evaluate('[...document.querySelectorAll("[data-supply-details] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click())'); await settle();
       await expandAll();

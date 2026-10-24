@@ -191,8 +191,12 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:500,y:20});
-    await new Promise(resolve=>setTimeout(resolve,200));
-    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'leaving the hover target dismisses its label');
+    // The label hides 150ms after leaving; poll instead of one fixed 200ms wait, which a loaded runner overran.
+    const hideDeadline=Date.now()+5_000;
+    while(await evaluate('Boolean(document.querySelector("[role=tooltip]"))')){
+      assert.ok(Date.now()<hideDeadline,'leaving the hover target dismisses its label');
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
     // Real Tab navigation must retain labels when focus auto-scrolls the rail.
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
     const overview=desktop+' a[aria-label="Empire"]';

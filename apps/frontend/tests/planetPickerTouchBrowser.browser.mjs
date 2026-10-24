@@ -215,8 +215,8 @@ async function waitForExpression(expression, timeoutMs = 5_000) {
   throw new Error(`Timed out waiting for browser expression: ${expression}\n${JSON.stringify(diagnostics)}`);
 }
 
-async function loadFixture() {
-  await cdp.send("Page.navigate", { url: fixtureUrl });
+async function loadFixture(query = "") {
+  await cdp.send("Page.navigate", { url: fixtureUrl + query });
   await waitForExpression("window.touchProofReady === true");
 }
 
@@ -298,7 +298,7 @@ before(async () => {
     mobile: true,
     width: 390,
   });
-  await loadFixture();
+  await loadFixture("?noHold");
 });
 
 after(async () => {
@@ -374,7 +374,7 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   assert.equal(scrollState.preventedTouchMoves, 0);
   assert.ok(scrollState.scrollTop > 0, `expected native scroll, got scrollTop=${scrollState.scrollTop}`);
 
-  await loadFixture();
+  await loadFixture("?noHold");
   center = await planetCenter();
   await dispatchTouch("touchStart", center.x, center.y);
   await delay(30);

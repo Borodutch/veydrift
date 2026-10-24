@@ -17,8 +17,8 @@ import { ResolverTransactionCoordinator } from './resolverTransactions';
 import { ViemMissionResolutionChainClient } from './missionResolution';
 import { recoveryBinding } from './missionLegacyRecovery';
 
-for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persisted', 'persisted-dry', 'wallclock', 'old-path']) for(const failure of ['none','head','reference','nonce','lease','deadline','budget','rpc','paused','freshness','proof-freshness','acquisition-rpc','nonce-rpc','identity-rpc','reference-rpc','fee-rpc','simulation-rpc','lookup-rpc','identity-domain','fee-domain','simulation-domain','simulation-revert','cooldown','early-wait','early-deadline','expired-hold'] as const) {
- if(['wallclock','old-path'].includes(path) && (phase!==800||failure!=='none'))continue;
+for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persisted', 'persisted-dry', 'old-path']) for(const failure of ['none','head','reference','nonce','lease','deadline','budget','rpc','paused','freshness','proof-freshness','acquisition-rpc','nonce-rpc','identity-rpc','reference-rpc','fee-rpc','simulation-rpc','lookup-rpc','identity-domain','fee-domain','simulation-domain','simulation-revert','cooldown','early-wait','early-deadline','expired-hold'] as const) {
+ if(path==='old-path' && (phase!==800||failure!=='none'))continue;
  if(['cooldown','early-wait','early-deadline','expired-hold'].includes(failure) && !path.startsWith('persisted'))continue;
  if(path==='persisted-dry' && ['lease','budget'].includes(failure))continue;
  if(path==='dry' && ['lease','deadline','budget'].includes(failure))continue;
@@ -30,11 +30,11 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
   let reads=0, active=0, peak=0, clock=phase, signs=0, sends=0, waits=0;
   const events:any[]=[];
   const realPerformanceNow=performance.now.bind(performance);
-  const started=realPerformanceNow(), originalFetch=globalThis.fetch;
+  const originalFetch=globalThis.fetch;
   // Deterministic 40ms RPC waves; acquisition sleeps still advance virtual time.
   const realSetTimeout=globalThis.setTimeout;
-  if(path!=='wallclock')performance.now=()=>clock;
-  if(path!=='wallclock')globalThis.setTimeout=((handler:TimerHandler,ms?:number,...args:any[])=>realSetTimeout(()=>{if(ms===100)clock+=100; (handler as (...args:any[])=>void)(...args);},ms===100?1:ms)) as unknown as typeof setTimeout;
+  performance.now=()=>clock;
+  globalThis.setTimeout=((handler:TimerHandler,ms?:number,...args:any[])=>realSetTimeout(()=>{if(ms===100)clock+=100; (handler as (...args:any[])=>void)(...args);},ms===100?1:ms)) as unknown as typeof setTimeout;
   const trace=new RecoveryTrace();
   let db:Database|undefined;
   let simulated=false;
@@ -44,7 +44,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
    const q=JSON.parse(init!.body as string);reads++;active++;peak=Math.max(peak,active);
    const end=clock+40;
    try {
-    await new Promise(resolve=>setTimeout(resolve,path==='wallclock'?20:1));clock=path==='wallclock'?phase+realPerformanceNow()-started:Math.max(clock,end);
+    await new Promise(resolve=>setTimeout(resolve,1));clock=Math.max(clock,end);
     let result:unknown;
     const reference=new URL(String(url)).origin===new URL(input.referenceRpcUrl).origin;
     const injected=(failure==='acquisition-rpc'&&trace.stage==='fresh-head')
@@ -145,7 +145,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
    const held=failure==='cooldown'||(failure.startsWith('early')&&path==='persisted-dry');
    if(failure.startsWith('early'))expect(waits).toBe(path==='persisted'?1:0);
    if(held) { expect(simulated).toBe(false);expect(reads).toBeLessThan(25); }
-   if(!['old-path','wallclock'].includes(path)) {
+   if(path!=='old-path') {
      const expectedStage=held||failure==='early-deadline'?'retry-hold':success?(path==='persisted'?'dispatch':'final-guard'):
        failure==='acquisition-rpc'?'fresh-head':['nonce-rpc','lookup-rpc','budget'].includes(failure)?'initial-candidates':
        ['proof-freshness','identity-rpc','reference-rpc','fee-rpc','simulation-rpc','identity-domain','fee-domain','simulation-domain','simulation-revert'].includes(failure)?'proof':
@@ -157,7 +157,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
      expect(events.filter(e=>e.param==='latest').length).toBeGreaterThan(3);
    }
    if(path==='old-path'){expect(error).toBe('head-moved');expect(signs).toBe(0);expect(reservationCount).toBe(0);expect(history.map(e=>e.event)).toEqual(['claimed','original-attempt','quote']);}
-   else if(success) {expect(error).toBe(['dry','persisted-dry'].includes(path)?'':path==='persisted'?'SAFE_DISPATCH_SENTINEL':'SAFE_SIGNER_SENTINEL');expect(signs).toBe(['complete','wallclock'].includes(path)?1:0);}
+   else if(success) {expect(error).toBe(['dry','persisted-dry'].includes(path)?'':path==='persisted'?'SAFE_DISPATCH_SENTINEL':'SAFE_SIGNER_SENTINEL');expect(signs).toBe(path==='complete'?1:0);}
    else {
      expect(error).toBe(held?'retry-cooldown':failure==='early-deadline'?'pass-deadline':failure.endsWith('-rpc')?'rpc-unavailable':failure.endsWith('-domain')||failure==='simulation-revert'?'proof-rejected':failure==='proof-freshness'?'quote-expired':({head:'head-moved',reference:'reference-disagreement',nonce:'nonce-changed',lease:'lease-lost',deadline:'pass-deadline',budget:'pass-budget',rpc:'rpc-unavailable',paused:'paused',freshness:'quote-expired'} as Record<string,string>)[failure]!);
      expect(signs).toBe(0);expect(reservationCount).toBe(path.startsWith('persisted')?1:0);

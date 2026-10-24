@@ -135,6 +135,8 @@ describe("automatic transaction recovery", () => {
     prepare.resolve();
     await Bun.sleep(2);
     expect(sends).toBe(0);
+    // The next action gets the normal budget: 5ms also expired it on a loaded runner.
+    Object.assign(data, { transactionForegroundTimeoutMs: 60_000 });
     await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
   });
 

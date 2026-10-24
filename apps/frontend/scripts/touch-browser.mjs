@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Runs the browser test suite. `node scripts/touch-browser.mjs` runs every file one after another;
-// `node scripts/touch-browser.mjs <lane>` runs one CI lane: its two chains run side by side, each
-// chain's files one after another. Every file has its own Vite cache dir, so chains never share one.
+// `node scripts/touch-browser.mjs <lane>` runs one CI lane: its chains run side by side, each chain's
+// files one after another. Every file has its own Vite cache dir, so chains never share one.
 // "file@k/n" runs shard k of n of a file (tests/shard.mjs), so the two slowest files spread over lanes.
-// Lanes are balanced by measured durations (~1 min each on an idle M1 Max).
+// Lanes are balanced by measured durations (~35 s per chain on an idle M1 Max); the tests mostly wait
+// on the browser, so three chains per lane overlap well.
 import { spawn } from "node:child_process";
 
 export const LANES = [
-  [["batchSupply@1/3"], ["planetPickerTouchBrowser@1/3", "galaxySlots"]],
-  [["batchSupply@2/3", "levelPopupLayout"], ["planetPickerTouchBrowser@2/3", "productionQueueSizing"]],
-  [["batchSupply@3/3", "sidebar"], ["planetPickerTouchBrowser@3/3", "docsTables", "riftPage"]],
-  [["supplyActions", "currentState"], ["levelSupply", "resolvedGroupMissions", "planetFleetActivity", "combatModelRefresh",
-    "trailerPlayer", "publicMoonActions", "demolishIcon", "loopAnimations"]],
+  [["planetPickerTouchBrowser@1/4"], ["batchSupply@1/4", "levelSupply", "trailerPlayer"], ["currentState"]],
+  [["planetPickerTouchBrowser@2/4"], ["batchSupply@2/4", "docsTables", "riftPage"], ["supplyActions", "resolvedGroupMissions"]],
+  [["planetPickerTouchBrowser@3/4"], ["batchSupply@3/4", "combatModelRefresh"], ["levelPopupLayout", "galaxySlots", "planetFleetActivity"]],
+  [["planetPickerTouchBrowser@4/4"], ["batchSupply@4/4", "loopAnimations"], ["productionQueueSizing", "sidebar", "publicMoonActions", "demolishIcon"]],
 ];
 
 // Resolves to the file's exit code and full log.
@@ -29,19 +29,10 @@ function run(unit) {
   });
 }
 
-// In a CI lane a failed file runs once more: the runners are shared with simulators and other jobs,
-// and a first run that times out while Vite is still optimizing a cold dep cache never saves it.
-// A real failure fails both times. A passing retry logs one line instead of the first attempt's
-// log, because the CI check runner treats any logged error line as a failure.
-async function chain(units, retry) {
+async function chain(units) {
   let ok = true;
   for (const unit of units) {
-    let result = await run(unit);
-    if (result.code !== 0 && retry) {
-      const first = result;
-      result = await run(unit);
-      process.stdout.write(`\n# ${unit}: first attempt exited ${first.code}, retried${result.code === 0 ? "" : `\n${first.log}`}\n`);
-    }
+    const result = await run(unit);
     // One block per file, so side-by-side chains never interleave their output.
     process.stdout.write(`\n# ${unit} (exit ${result.code})\n${result.log}`);
     ok = result.code === 0 && ok;
@@ -53,7 +44,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const lane = process.argv[2];
   if (lane && !LANES[Number(lane) - 1]) throw new Error(`no browser lane ${lane} (1-${LANES.length})`);
   const results = lane
-    ? await Promise.all(LANES[Number(lane) - 1].map((units) => chain(units, true)))
+    ? await Promise.all(LANES[Number(lane) - 1].map(chain))
     : [await chain(LANES.flat(2))];
   process.exit(results.every(Boolean) ? 0 : 1);
 }
