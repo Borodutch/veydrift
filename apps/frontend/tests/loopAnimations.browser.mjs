@@ -55,6 +55,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
     await send("Page.enable");
     await send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 2, mobile: false });
+    // Overlay scrollbars everywhere: classic scrollbars (the CI daemon user's default) narrow the page
+    // when only one of the compared renders scrolls, which reflows text and shifts every box.
+    await send("Emulation.setScrollbarsHidden", { hidden: true });
     // Records why a loop fell back to its still (media/source errors, refused play()) for failure messages.
     await send("Page.addScriptToEvaluateOnNewDocument", { source: `window.loopErrors = [];
       document.addEventListener('error', event => { const target = event.target; if (target instanceof HTMLVideoElement || target instanceof HTMLSourceElement) { const video = target instanceof HTMLVideoElement ? target : target.parentElement; window.loopErrors.push([target.tagName, target.getAttribute('src') || video?.currentSrc, video?.error?.code ?? null, video?.error?.message ?? null]); } }, true);
@@ -76,9 +79,7 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     async function open() {
       await send("Page.navigate", { url });
       await until("Boolean(window.loopFixture && document.querySelector('[data-catalog] img, [data-catalog] video'))", "fixture did not render");
-      // Boxes are compared across loads: measure after web fonts settle the layout (a slow CI load
-      // measured the reduced-motion stills one text line higher than the loops).
-      await evaluate("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
+      await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
     }
     // Every element in the still's box, by stable key: tiles, icons, catalog thumbnails.
     const boxes = `Object.fromEntries([
