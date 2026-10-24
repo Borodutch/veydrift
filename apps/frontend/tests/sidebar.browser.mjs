@@ -73,7 +73,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       await frame();
     }
     async function click(selector) {
-      const point = await evaluate('(() => {const n=document.querySelector('+JSON.stringify(selector)+'); n.scrollIntoView({block:"nearest"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button,summary,a")===n};})()');
+      const locate = () => evaluate('(() => {const n=document.querySelector('+JSON.stringify(selector)+'); n.scrollIntoView({block:"nearest"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button,summary,a")===n};})()');
+      // Wait out a closing popover or transition over the target before the trusted click.
+      let point = await locate();
+      for (const deadline = Date.now() + 5_000; !point.hit && Date.now() < deadline; point = await locate()) await frame();
       assert.ok(point.hit, selector + ': unobstructed');
       await send('Input.dispatchMouseEvent', { type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1 });
       await send('Input.dispatchMouseEvent', { type:'mouseReleased',x:point.x,y:point.y,button:'left',clickCount:1 });

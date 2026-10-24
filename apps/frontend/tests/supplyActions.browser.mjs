@@ -9,7 +9,8 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Mounted production Supply handlers enforce goal, context and wallet parity", { timeout: 120_000 }, async () => {
+// A cold Vite dep cache (first run on a runner) bundles ethers/viem/AppKit before the first page renders.
+test("Mounted production Supply handlers enforce goal, context and wallet parity", { timeout: 300_000 }, async () => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
