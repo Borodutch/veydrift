@@ -26,10 +26,10 @@ describe("paid alliance invite frontend flow", () => {
   test("shows the public treasury and member purchase/withdraw controls", async () => {
     const source = await Bun.file(new URL("./components/AlliancePage.tsx", import.meta.url)).text();
     expect(source).toContain("Alliance treasury");
-    expect(source).toContain("Buy private invite · 0.006 ETH (~$10)");
+    expect(source).toContain("Buy private invite · 0.002 ETH (~$5)");
     expect(source).toContain("A redeemed invite adds 2% of the invitee&apos;s production to the alliance while they are a member; the invitee loses nothing.");
     expect(source).toContain("If an invitee leaves and rejoins the alliance, their production contribution resumes.");
-    expect(source).toContain("Any alliance member can buy a private invite for 0.006 ETH.");
+    expect(source).toContain("Any alliance member can buy a private invite for 0.002 ETH.");
     expect(source).toContain("Only alliance officers and owners can view or recover invite links.");
     expect(source).toContain("Each link is unique and single-use; share it only with its intended invitee.");
     expect(source).toContain("The invited commander joins the game for free (ETH gas on Base only, not Ethereum Mainnet), starts with 2× resources, and produces 2× resources for their first 7 days.");
@@ -140,7 +140,7 @@ describe("paid alliance invite frontend flow", () => {
     expect(paidAllianceInviteCommitmentFromPathname("/alliance-invite/0x1234")).toBe("");
   });
 
-  test("buys for exactly 0.006 ETH and supports a partial Rift-planet credit", async () => {
+  test("buys for exactly 0.002 ETH and supports a partial Rift-planet credit", async () => {
     const requests: unknown[] = [];
     const provider = providerRecording(requests);
     const secret = `0x${"ab".repeat(32)}`;
@@ -155,7 +155,7 @@ describe("paid alliance invite frontend flow", () => {
     expect((requests[0] as any).method).toBe("eth_call");
     expect((requests[1] as any).method).toBe("eth_sendTransaction");
     expect((requests[1] as any).params[0].data.slice(0, 10)).toBe("0x9c9a1061");
-    expect((requests[1] as any).params[0].value).toBe("0x1550f7dca70000");
+    expect((requests[1] as any).params[0].value).toBe("0x71afd498d0000");
     expect((requests[2] as any).method).toBe("eth_call");
     expect((requests[3] as any).method).toBe("eth_sendTransaction");
     expect((requests[3] as any).params[0].data.slice(0, 10)).toBe("0x2d20f511");

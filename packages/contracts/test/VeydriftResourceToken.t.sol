@@ -222,7 +222,7 @@ contract VeydriftResourceTokenTest is Test {
         assertTrue(allianceSystemAddress.code.length > 0);
         address paidInviteSystem = VeydriftAllianceSystem(allianceSystemAddress).paidInviteSystem();
         assertTrue(paidInviteSystem.code.length > 0);
-        assertEq(VeydriftPaidAllianceInvites(paidInviteSystem).INVITE_PRICE(), 0.006 ether);
+        assertEq(VeydriftPaidAllianceInvites(paidInviteSystem).INVITE_PRICE(), 0.002 ether);
         assertTrue(moonSystemAddress.code.length > 0);
         assertTrue(randomnessEngineAddress.code.length > 0);
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
