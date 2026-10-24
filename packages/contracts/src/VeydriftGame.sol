@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftRefereeBattle as Referee} from "./libraries/VeydriftRefereeBattle.sol";
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
@@ -63,9 +64,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         ) revert Unauthorized(msg.sender);
     }
 
-    /// @notice Math used by newly prepared battles; existing battles retain their frozen version.
-    function combatModelVersion() external pure returns (uint8) {
-        return 2;
+    /// @notice Math used by newly launched attacks: 3 = trusted-referee individual-shot rules
+    /// (ticket #44), otherwise staged model 2. Existing battles retain their frozen version.
+    function combatModelVersion() external view returns (uint8) {
+        return Referee.layout().prospective.version != 0 ? 3 : 2;
     }
 
     constructor(
@@ -193,6 +195,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToFirstPlanetSettlementModule();
     }
 
+    function startBuildingDemolition(uint256, Building) external {
+        _delegateToColonizationModule();
+    }
+
+    function cancelBuildingDemolition(uint256) external {
+        _delegateToColonizationModule();
+    }
+
     /// @notice Back-compat wrapper (VEY-KANEO-468): building upgrades auto-settle inside
     ///         `_settleResources` like every other completion, so this no longer gates on the
     ///         construction being ready — it simply runs the lazy reconcile, which completes the
@@ -254,7 +264,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         for (uint256 i = 0; i < planetIds.length;) {
             uint256 lockId = Store.layout().bodyLock[planetIds[i]];
             if (lockId != 0) revert FleetMissionNotResolved(_fleetMissions[lockId].arrivalAt);
-            _settleResourcesUpTo(planetIds[i], settledAt);
+            // An arrived attack loots the planet as it was at arrival: never settle past it.
+            uint64 pendingArrival = _earliestPendingMissionArrivalForPlanet(planetIds[i]);
+            _settleResourcesUpTo(
+                planetIds[i], pendingArrival < settledAt ? pendingArrival : settledAt
+            );
             unchecked {
                 ++i;
             }
@@ -422,7 +436,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         LootRatio calldata
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function launchFleetMission(
@@ -446,7 +460,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     /// @notice Launch an Attack mission with a player-selected loot ratio.
-    /// @dev Implemented in the gameplay module, which has the EIP-170 headroom for the launch and
+    /// @dev Implemented in the planet-management module, which has the EIP-170 headroom for the
     ///      loot-ratio bookkeeping; the facade only forwards the call via delegatecall.
     function launchAttackMission(
         uint256,
@@ -458,7 +472,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         LootRatio calldata
     ) external returns (uint256) {
         _touchPlayer(_actingPlayer());
-        _delegateToPlayModule();
+        _delegateToPlanetManagementModule();
     }
 
     function joinAttackMission(uint256, uint256, uint256, MissionShips calldata, Resources calldata)
@@ -643,16 +657,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
-    function requestMarketResourceWithdrawal(uint256, Resource, uint128) external {
-        _touchPlayer(_actingPlayer());
-        _delegateToPlanetManagementModule();
-    }
-
-    function finishMarketResourceWithdrawal(Resource) external {
-        _touchPlayer(_actingPlayer());
-        _delegateToPlanetManagementModule();
-    }
-
     fallback() external {
         // First-planet preview selectors stay in the proxy surface through fallback to keep the
         // size-constrained implementation below EIP-170's 24 KiB limit.
@@ -665,10 +669,16 @@ contract VeydriftGame is VeydriftResourceReserves {
         } else if (
             msg.sig == 0x29147f24 || msg.sig == 0x729b082f || msg.sig == 0x1d750846
                 || msg.sig == 0x8d22ea2a || msg.sig == 0x2222ef9f || msg.sig == 0x6d3498d8
-                || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38
+                || msg.sig == 0xca5eb5e1 || msg.sig == 0x55d1ef38 || msg.sig == 0xe2feb35c
+                || msg.sig == 0xa070d0e0
         ) {
             _delegateToFirstPlanetSettlementModule();
-        } else if (msg.sig == 0x9c26e0be || msg.sig == 0xc47915ea) {
+        } else if (
+            msg.sig == 0x9c26e0be || msg.sig == 0xc47915ea
+                || msg.sig == VeydriftBatchTransportModule.launchBodyTransportBatch.selector
+                || msg.sig == VeydriftBatchTransportModule.launchBodyDeployBatch.selector
+                || msg.sig == VeydriftBatchTransportModule.moonSupplyBatchVersion.selector
+        ) {
             (bool ok, bytes memory result) = _batchTransportModule.delegatecall(msg.data);
             assembly ("memory-safe") {
                 switch ok

@@ -4,7 +4,7 @@ import { buildingLevelInfoRows } from "../src/buildingDetails";
 import { buildingLevelInfoTable } from "../src/components/InfrastructurePage";
 import { moonStructureLevelInfoRows, moonStructureLevelInfoTable } from "../src/components/MoonPage";
 import { buildBatchSupplyPlan, type BatchSupplySource } from "../src/batchSupplyPlanner";
-import { levelSupplyCost, levelSupplyPreview, levelSupplyNeedsReview, readLevelSupplyPreview, type LevelSupplyRequest } from "../src/levelSupply";
+import { cumulativeLevelSupplyCost, levelSupplyCost, levelSupplyPreview, levelSupplyNeedsReview, readLevelSupplyPreview, type LevelSupplyRequest } from "../src/levelSupply";
 import type { ChainInfrastructureState, ChainMoonState, ChainResearchState } from "../src/walletFlow";
 
 const request: LevelSupplyRequest = { kind: "building", key: "roboticsFactory", label: "Robotics Factory", level: 9 };
@@ -33,7 +33,10 @@ describe("upgrade Supply handoff", () => {
     expect(plan.orders[0]!.ships.recycler).toBe(0);
     expect(plan.orders[0]!.ships.lightFighter).toBe(0);
     table.rows.find(row => row.level === 10)!.onSupply!();
-    expect(levelSupplyPreview({ ...request, level: selected }, snapshot, "7").requirement).toEqual({ metal: 204800, crystal: 61440, deuterium: 102400 });
+    // Level 10 from level 8 funds levels 9 (live cost) + 10 in one shipment.
+    const cumulative = levelSupplyPreview({ ...request, level: selected }, snapshot, "7");
+    expect(cumulative.requirement).toEqual({ metal: 102400 + 204800, crystal: 30720 + 61440, deuterium: 51200 + 102400 });
+    expect(cumulative.fromLevel).toBe(9);
   });
 
   test("fresh destination reads pin ID/body and reject mismatches, stale and missing balances", async () => {
@@ -92,5 +95,85 @@ describe("upgrade Supply handoff", () => {
     expect(() => levelSupplyPreview(huge, snapshot, "7")).toThrow("too large");
     expect(() => levelSupplyCost({ ...request, level: NaN })).toThrow("range");
     expect(() => levelSupplyPreview(request, { ...snapshot, resourcesAsOfNow: { ...resources, metal: "-1" } }, "7")).toThrow("unavailable");
+  });
+});
+
+describe("cumulative level Supply", () => {
+  const crystalMine: LevelSupplyRequest = { kind: "building", key: "crystalMine", label: "Crystal Mine", level: 11 };
+  const level9Cost = { metal: "2061", crystal: "1030", deuterium: "0" };
+  const empty = { metal: "0", crystal: "0", deuterium: "0" };
+  const mineSnapshot = (queue: unknown = null, mineResources = empty) => ({
+    wallet: "wallet", homePlanetId: "1", planetId: "7", resourcesAsOfNow: mineResources,
+    buildings: [{ id: buildingContractIds.crystalMine, level: 8, cost: level9Cost }], queue, infrastructureAvailable: true,
+  } as unknown as ChainInfrastructureState);
+
+  test("a single level sums to that level's own cost", () => {
+    expect(cumulativeLevelSupplyCost(crystalMine, 11)).toEqual(levelSupplyCost(crystalMine));
+    expect(levelSupplyPreview({ ...crystalMine, level: 9 }, mineSnapshot(), "7")).toMatchObject({ fromLevel: 9, requirement: { metal: 2061, crystal: 1030, deuterium: 0 } });
+  });
+
+  test("several levels sum every level from current+1 through N and match the popup rows", () => {
+    // Ticket example: Crystal Mine 8 → Supply on level 11 = levels 9 + 10 + 11.
+    expect(cumulativeLevelSupplyCost(crystalMine, 9)).toEqual({ metal: 2061n + 3298n + 5277n, crystal: 1030n + 1649n + 2638n, deuterium: 0n });
+    const preview = levelSupplyPreview(crystalMine, mineSnapshot(null, { metal: "636", crystal: "17", deuterium: "5" }), "7");
+    expect(preview.fromLevel).toBe(9);
+    expect(preview.requirement).toEqual({ metal: 10636, crystal: 5317, deuterium: 0 });
+    expect(preview.missing).toEqual({ metal: 10000, crystal: 5300, deuterium: 0 });
+    const state = createInitialPlayableState();
+    state.buildings.crystalMine = 8;
+    const rows = buildingLevelInfoRows(state.buildings, "crystalMine").filter(row => row.level >= 9 && row.level <= 11);
+    expect(rows.reduce((sum, row) => ({ metal: sum.metal + row.cost.metal, crystal: sum.crystal + row.cost.crystal, deuterium: sum.deuterium + row.cost.deuterium }), { metal: 0, crystal: 0, deuterium: 0 })).toEqual(preview.requirement);
+  });
+
+  test("popup row costs equal the Supply catalogue for every building at every level", () => {
+    const state = createInitialPlayableState();
+    for (const key of Object.keys(buildingContractIds) as Array<keyof typeof buildingContractIds>) {
+      if (key === "interdimensionalRiftStabilizer") continue;
+      for (const row of buildingLevelInfoRows(state.buildings, key)) {
+        const exact = levelSupplyCost({ kind: "building", key, label: key, level: row.level });
+        expect({ key, level: row.level, cost: row.cost }).toEqual({ key, level: row.level, cost: { metal: Number(exact.metal), crystal: Number(exact.crystal), deuterium: Number(exact.deuterium) } });
+      }
+    }
+  });
+
+  test("a queued level is the starting point and is never supplied again", () => {
+    const queued = mineSnapshot({ active: true, kind: "building", itemId: buildingContractIds.crystalMine, targetLevel: 9, action: "upgrade" });
+    const preview = levelSupplyPreview(crystalMine, queued, "7");
+    expect(preview).toMatchObject({ fromLevel: 10, inProgress: false, requirement: { metal: 3298 + 5277, crystal: 1649 + 2638, deuterium: 0 } });
+    expect(levelSupplyPreview({ ...crystalMine, level: 9 }, queued, "7")).toMatchObject({ inProgress: true, missing: { metal: 0, crystal: 0, deuterium: 0 } });
+    // Another building's queue or a demolition does not move the starting point.
+    for (const queue of [{ active: true, itemId: buildingContractIds.metalMine, targetLevel: 9 }, { active: true, itemId: buildingContractIds.crystalMine, targetLevel: 7, action: "demolish" }, { active: false, itemId: buildingContractIds.crystalMine, targetLevel: 9 }]) {
+      expect(levelSupplyPreview(crystalMine, mineSnapshot(queue), "7")).toMatchObject({ fromLevel: 9, inProgress: false, requirement: { metal: 10636, crystal: 5317, deuterium: 0 } });
+    }
+  });
+
+  test("the live chain cost replaces only the first unpaid level, never a queued one", () => {
+    const live = { metal: "2100", crystal: "1000", deuterium: "0" };
+    const withLive = (queue: unknown) => ({ ...mineSnapshot(queue), buildings: [{ id: buildingContractIds.crystalMine, level: 8, cost: live }] } as unknown as ChainInfrastructureState);
+    expect(levelSupplyPreview(crystalMine, withLive(null), "7").requirement).toEqual({ metal: 2100 + 3298 + 5277, crystal: 1000 + 1649 + 2638, deuterium: 0 });
+    const queued = { active: true, itemId: buildingContractIds.crystalMine, targetLevel: 9, action: "upgrade" };
+    expect(levelSupplyPreview(crystalMine, withLive(queued), "7").requirement).toEqual({ metal: 3298 + 5277, crystal: 1649 + 2638, deuterium: 0 });
+  });
+
+  test("moon and research queues also move the starting point", () => {
+    const moonRobotics: LevelSupplyRequest = { kind: "moon", key: "roboticsFactory", label: "Robotics Factory", level: 4 };
+    const moon = (queue: unknown) => ({ wallet: "wallet", homePlanetId: "1", parentPlanetId: "7", moon: { exists: true, planetId: "7" }, resourcesAsOfNow: empty, queue,
+      buildings: [{ id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 2, cost: { metal: "1600", crystal: "480", deuterium: "800" } }] } as unknown as ChainMoonState);
+    expect(levelSupplyPreview(moonRobotics, moon(null), "7")).toMatchObject({ fromLevel: 3, requirement: { metal: 1600 + 3200, crystal: 480 + 960, deuterium: 800 + 1600 } });
+    expect(levelSupplyPreview(moonRobotics, moon({ active: true, kind: "moonBuilding", itemId: 1, targetLevel: 3 }), "7")).toMatchObject({ fromLevel: 4, requirement: { metal: 3200, crystal: 960, deuterium: 1600 } });
+    const energyId = researchCatalog.find(r => r.key === "energy")!.id;
+    const energy: LevelSupplyRequest = { kind: "research", key: "energy", label: "Energy Technology", level: 6 };
+    const research = (queue: unknown) => ({ wallet: "wallet", homePlanetId: "1", planetId: "7", resourcesAsOfNow: empty, resources: null, researchAvailable: true, researchLabLevel: 1, queue,
+      technologies: [{ id: energyId, level: 4, cost: { metal: "0", crystal: "12800", deuterium: "6400" } }] } as unknown as ChainResearchState);
+    expect(levelSupplyPreview(energy, research(null), "7")).toMatchObject({ fromLevel: 5, requirement: { metal: 0, crystal: 12800 + 25600, deuterium: 6400 + 12800 } });
+    expect(levelSupplyPreview(energy, research({ active: true, kind: "research", itemId: energyId, targetLevel: 5 }), "7")).toMatchObject({ fromLevel: 6, requirement: { metal: 0, crystal: 25600, deuterium: 12800 } });
+  });
+
+  test("resource types with zero cost stay zero across the whole range", () => {
+    expect(cumulativeLevelSupplyCost({ kind: "research", key: "energy", label: "Energy Technology", level: 5 }, 2)).toMatchObject({ metal: 0n });
+    expect(cumulativeLevelSupplyCost({ kind: "research", key: "graviton", label: "Graviton", level: 1 }, 1)).toEqual({ metal: 0n, crystal: 0n, deuterium: 0n });
+    expect(cumulativeLevelSupplyCost(crystalMine, 1).deuterium).toBe(0n);
+    expect(() => cumulativeLevelSupplyCost(crystalMine, 12)).toThrow("range");
+    expect(() => cumulativeLevelSupplyCost(crystalMine, 0)).toThrow("range");
   });
 });

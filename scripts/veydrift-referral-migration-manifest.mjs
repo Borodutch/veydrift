@@ -27,13 +27,14 @@ const migrationKindRewardClaim = 5;
 const migrationKindRedemptionHistory = 6;
 const zeroHash = `0x${"0".repeat(64)}`;
 
-const referralAbi = parseAbi([
+export const referralAbi = parseAbi([
   "event ReferralInviteWindowActivated(address indexed inviter, bytes32 indexed codeHash, bytes32 indexed commitment, string code, uint64 activatedAt, uint64 activeUntil, bool migrated)",
   "event ReferralInviteRedeemed(address indexed inviter, address indexed invitee, bytes32 indexed commitment, uint256 rewardAmount, bool paid, bool credited, uint64 redeemedAt)",
   "event ReferralRedemptionImported(address indexed inviter,address indexed invitee,bytes32 indexed commitment,uint64 redeemedAt,bytes32 manifestLeaf)",
   "event ReferralRewardClaimed(address indexed inviter, address indexed invitee, bytes32 indexed commitment, address recipient, uint256 amount, uint64 claimedAt)",
   "event ReferralLegacyCodeOwnershipImported(address indexed owner, bytes32 indexed codeHash, bytes32 indexed legacyCommitment, bytes32 manifestLeaf)",
   "function migrateReferralRewardClaimHistory(address[] inviters,address[] invitees,bytes32[] commitments,address[] recipients,uint256[] amounts,uint64[] claimedAts)",
+  "function migrateLegacyReferralCodeOwnership(address[] inviters,string[] codes,bytes32[] legacyCommitments)",
   "function referralInvites(bytes32 commitment) view returns (address inviter)",
   "function referralCodeHashOf(bytes32 commitment) view returns (bytes32)",
   "function referralClaimedAt(bytes32 commitment) view returns (uint64)",
@@ -166,7 +167,7 @@ async function receiptWithRetry(client, hash) {
   return rpcWithRetry(() => client.getTransactionReceipt({ hash }));
 }
 
-async function rpcWithRetry(action) {
+export async function rpcWithRetry(action) {
   let lastError;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {

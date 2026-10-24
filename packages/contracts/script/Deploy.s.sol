@@ -98,7 +98,15 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftReferralSystem referralSystem = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem referralImplementation = new VeydriftReferralSystem();
+        VeydriftReferralSystem referralSystem = VeydriftReferralSystem(
+            address(
+                new ERC1967Proxy(
+                    address(referralImplementation),
+                    abi.encodeCall(VeydriftReferralSystem.initialize, (admin))
+                )
+            )
+        );
         VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
             address(referralSystem), address(new VeydriftCombatRaidModule())
         );
@@ -133,7 +141,7 @@ contract Deploy is ResourceTokenDeployment {
 
         referralSystem.setGame(gameAddress);
         emit VeydriftAuxiliaryProxyDeployed(
-            "referral", address(referralSystem), address(referralSystem)
+            "referral", address(referralSystem), address(referralImplementation)
         );
         VeydriftAllianceSystem allianceImplementation =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));

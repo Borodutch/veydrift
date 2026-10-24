@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { decodeAbiParameters, parseAbiParameters } from "viem";
 import { buildBatchSupplyPlan, defaultSupplyShipTypes, type BatchSupplySource, type SupplyShipKey } from "../src/batchSupplyPlanner";
 import { batchSupplyPlanMatchesOrders, replanBatchSupplyForConfirmation } from "../src/PlayableMvpApp";
-import { initialBatchSupplySourceIds } from "../src/components/BatchSupplyModal";
+import { suggestBatchSupplySourceIds } from "../src/batchSupplyPlanner";
 import { fleetMissionAvailableCargoCapacity, fleetMissionDistance, fleetMissionFuelCost, fleetMissionTravelSeconds } from "../src/fleetMissionRules";
 import { defaultVeydriftChainForLocation, sendLaunchTransportBatchTransaction } from "../src/walletFlow";
 
@@ -25,8 +25,8 @@ describe("Supply draft type eligibility", () => {
       { ...source, planetId: "cargo", ships: { largeCargo: 1 }, coordinates: { ...target, position: 5 } },
       { ...source, planetId: "colony", ships: { colonyShip: 1 }, coordinates: { ...target, position: 4 } },
     ];
-    const selectedPlanetIds = initialBatchSupplySourceIds(sources, slots);
-    expect([...selectedPlanetIds]).toEqual(slots === 1 ? ["cargo"] : ["cargo", "colony"]);
+    const selectedPlanetIds = suggestBatchSupplySourceIds({ sources, maxOrders: slots, targetCoordinates: target, requested: { metal: 100 } });
+    expect([...selectedPlanetIds]).toEqual(["cargo"]);
     const args = { sources, selectedPlanetIds, targetCoordinates: target, requested: { metal: 100 }, maxOrders: slots };
     const defaults = buildBatchSupplyPlan(args);
     expect(defaults.missing.metal).toBe(0);

@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import { inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
+import { delegateProposedTopic, delegateUpdatedTopic, inviteeProductionBoostActivatedTopic, type Address, type AllianceState, type CanonicalFleetMissionDetails, type CanonicalFleetMissionSnapshot, type CanonicalPlanetChainState, type DebrisFieldEvent, type DefenseState, type InfrastructureState, type MoonChanceReportEvent, type MoonState, type PlayerQueues, type ResearchState, type RpcLog, type ShipyardState, type SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { combatStageAdvancedTopic, decodeBattleReportLogs } from "./evm";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
@@ -48,8 +48,6 @@ const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd31
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
 const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
-const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
-const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
 const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
@@ -984,6 +982,77 @@ describe("SettlementIndexer", () => {
 
     indexer.applyLog({ ...log, removed: true });
     expect(indexer.inviteeProductionBoostExpiresAt(player)).toBeNull();
+  });
+
+  test("projects pending delegate proposals per proposed wallet and clears accepted, revoked or cancelled ones", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database: new Database(":memory:"), runStartupBackfill: false });
+    const wallet = "0x7777777777777777777777777777777777777777" as Address;
+    const mainA = "0x8888888888888888888888888888888888888888" as Address;
+    const mainB = "0x9999999999999999999999999999999999999999" as Address;
+    const zero = "0x0000000000000000000000000000000000000000" as Address;
+    const proposed = (main: Address, delegate: Address, blockNumber: string, logIndex = "0x0") => ({
+      blockNumber,
+      transactionHash: `0x${blockNumber.slice(2).padStart(64, "a")}`,
+      logIndex,
+      topics: [delegateProposedTopic, addressTopic(main), addressTopic(delegate)],
+      data: "0x"
+    });
+    const updated = (main: Address, previous: Address, delegate: Address, blockNumber: string) => ({
+      blockNumber,
+      transactionHash: `0x${blockNumber.slice(2).padStart(64, "b")}`,
+      logIndex: "0x0",
+      topics: [delegateUpdatedTopic, addressTopic(main), addressTopic(previous), addressTopic(delegate)],
+      data: abiWords(BigInt(delegate))
+    });
+
+    // Projection only: delegation logs never fan out a chain event.
+    expect(indexer.applyLog(proposed(mainA, wallet, "0x90"))).toMatchObject({ applied: false, ignored: true });
+    indexer.applyLog(proposed(mainB, wallet, "0x91"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([mainB, mainA]);
+
+    indexer.applyLog(updated(mainA, zero, wallet, "0x92"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([mainB]);
+    indexer.applyLog(proposed(mainB, zero, "0x93"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([]);
+    // A late, older proposal must not resurrect one that a later log cleared.
+    indexer.applyLog(proposed(mainB, wallet, "0x90", "0x5"));
+    expect(indexer.delegateProposalsFor(wallet)).toEqual([]);
+  });
+
+  test("replays delegate proposals journaled before the upgraded indexer starts and drops removed ones", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const wallet = "0x7777777777777777777777777777777777777777" as Address;
+    const main = "0x8888888888888888888888888888888888888888" as Address;
+    const log = {
+      blockNumber: "0x95",
+      transactionHash: `0x${"96".repeat(32)}`,
+      logIndex: "0x1",
+      removed: false,
+      topics: [delegateProposedTopic, addressTopic(main), addressTopic(wallet)],
+      data: "0x"
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(`${log.transactionHash}:${log.logIndex}`, log.transactionHash, log.logIndex, "149", JSON.stringify(log), new Date().toISOString());
+
+    const restarted = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([main]);
+
+    restarted.applyLog({ ...log, removed: true });
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([]);
+    restarted.applyLog(log);
+    expect(restarted.delegateProposalsFor(wallet)).toEqual([main]);
   });
 
   test("queues only canonical legacy battle reports for defender-loss backfill on reader startup", () => {
@@ -1983,6 +2052,37 @@ describe("SettlementIndexer", () => {
         length(log_index) DESC, log_index DESC LIMIT ? OFFSET ?`).all(player, 2000000000, 2, 2) as Array<{ detail: string }>;
     expect(plan.some(row => row.detail.includes("wallet_time_order_idx"))).toBe(true);
     expect(plan.some(row => row.detail.includes("TEMP B-TREE"))).toBe(false);
+    database.close();
+  });
+
+  test("removed timed-missile completion replay seeks the numeric block index instead of scanning the ledger", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const removedLog = {
+      address: player, blockNumber: "0x81", transactionHash: "0xremoved-completion", logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)], data: abiWords(4n, 4n)
+    };
+    const canonicalLog = { ...removedLog, transactionHash: "0xcanonical-completion" };
+    indexer.applyEvent(planet);
+    indexer.applyLog(removedLog);
+    indexer.applyLog(canonicalLog);
+    database.query("UPDATE indexed_event_logs SET removed = 1 WHERE transaction_hash = ?").run(removedLog.transactionHash);
+    const query = spyOn(database, "query");
+    const removed = indexer.removedTimedMissileCompletionLogs(player, 129n, 129n);
+    const sql = query.mock.calls.map(([text]) => String(text)).find(text => text.includes("FROM indexed_event_logs"));
+    query.mockRestore();
+    expect(removed.map(log => log.transactionHash)).toEqual([removedLog.transactionHash]);
+    expect(indexer.removedTimedMissileCompletionLogs(player, 130n, 140n)).toEqual([]);
+    expect(sql).toBeDefined();
+    const plan = database.query(`EXPLAIN QUERY PLAN ${sql}`).all(
+      "129", "129", player, shipCompletedTopic, shipCompletedTopic, shipCompletedTopic
+    ) as Array<{ detail: string }>;
+    expect(plan.some(row => row.detail.includes("indexed_event_logs_numeric_block_idx"))).toBe(true);
+    expect(plan.some(row => row.detail.startsWith("SCAN"))).toBe(false);
     database.close();
   });
 
@@ -4609,6 +4709,189 @@ describe("SettlementIndexer", () => {
     expect(indexer.walletPlanets(player).planets[0]?.buildingLevels).toContainEqual({ id: 5, level: 2 });
   });
 
+  test("indexes building demolitions as downgrades and clears cancelled demolitions (#112)", () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xbuilddone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)],
+      data: abiWords(2n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xdemolish",
+      logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n, 9_999_999_999n, 400n, 200n, 100n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      active: true,
+      kind: "building",
+      itemId: 5,
+      targetLevel: 1,
+      action: "demolish"
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xdemolished",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n)
+    });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xdemolish2",
+      logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(0n, 9_999_999_999n, 266n, 133n, 66n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building?.action).toBe("demolish");
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xcancel",
+      logIndex: "0x0",
+      topics: [demolitionCancelledTopic, topic(7n), topic(5n)],
+      data: abiWords(0n, 266n, 133n, 66n)
+    });
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+  });
+
+  test("a cancelled demolition stays cancelled when contract logs are replayed (#112)", async () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listContractLogs() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x82", transactionHash: "0xbuilddone", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(2n) });
+    // Already past readyAt: a lingering queue would be projected as a finished downgrade.
+    indexer.applyLog({ blockNumber: "0x83", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)], data: abiWords(1n, 1_000n, 400n, 200n, 100n) });
+    indexer.applyLog({ blockNumber: "0x84", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [demolitionCancelledTopic, topic(7n), topic(5n)], data: abiWords(1n, 400n, 200n, 100n) });
+
+    await indexer.replayContractLogs();
+
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(2);
+  });
+
+  test("indexes moon building demolitions through start, cancel and completion (#112)", () => {
+    const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const moonDemolitionCancelledTopic = keccak256(toHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xrobotics", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(2n) });
+
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 9_999_999_999n, 400n, 120n, 200n) });
+    expect(indexer.moonState(player, planet.planetId).queue).toMatchObject({
+      active: true,
+      itemId: 1,
+      targetLevel: 1,
+      action: "demolish"
+    });
+
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [moonDemolitionCancelledTopic, topic(7n), topic(1n)], data: abiWords(1n, 400n, 120n, 200n) });
+    expect(indexer.moonState(player, planet.planetId).queue?.active ?? false).toBe(false);
+    expect(indexer.moonState(player, planet.planetId).buildings.find((building) => building.id === 1)?.level).toBe(2);
+
+    indexer.applyLog({ blockNumber: "0x8b", transactionHash: "0xdemolish2", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 9_999_999_999n, 400n, 120n, 200n) });
+    indexer.applyLog({ blockNumber: "0x8c", transactionHash: "0xdemolished", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(1n) });
+    expect(indexer.moonState(player, planet.planetId).queue?.active ?? false).toBe(false);
+    expect(indexer.moonState(player, planet.planetId).buildings.find((building) => building.id === 1)?.level).toBe(1);
+  });
+
+  test("a rebuild with an idle chain queue replays an upgrade then a demolition back down (#112)", async () => {
+    const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const zero = { metal: "0", crystal: "0", deuterium: "0" };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getInfrastructureState() {
+        return { wallet: player, homePlanetId: planet.planetId, infrastructureAvailable: true, resources: planet.resources,
+          buildings: [{ id: 5, level: 1, cost: zero }], queue: null, technologyLevels: {} };
+      },
+      async getCanonicalPlanetState() {
+        return { planetId: planet.planetId, resources: planet.resources, buildings: [{ id: 5, level: 1, cost: zero }],
+          defenses: [], ships: [], queues: { building: null, defense: null, ship: null } };
+      }
+    } as never, 100n, { database: new Database(":memory:") });
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x82", transactionHash: "0xbuild", logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(5n)], data: abiWords(2n, 1_000n, 1n, 1n, 1n) });
+    indexer.applyLog({ blockNumber: "0x83", transactionHash: "0xbuilddone", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(2n) });
+    indexer.applyLog({ blockNumber: "0x84", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [demolitionStartedTopic, topic(7n), topic(5n)], data: abiWords(1n, 2_000n, 1n, 1n, 1n) });
+    indexer.applyLog({ blockNumber: "0x85", transactionHash: "0xdemolished", logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(5n)], data: abiWords(1n) });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+
+    await indexer.rebuild();
+
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level).toBe(1);
+  });
+
+  test("a moon reorg repair keeps a cancelled demolition cancelled (#112)", () => {
+    const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+    const moonDemolitionCancelledTopic = keccak256(toHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({ blockNumber: "0x87", transactionHash: "0xmoon", logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 12n, 8777n) });
+    indexer.applyLog({ blockNumber: "0x88", transactionHash: "0xrobotics", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(1n)], data: abiWords(2n) });
+    // Already past readyAt: a resurrected queue would be projected as a finished downgrade.
+    indexer.applyLog({ blockNumber: "0x89", transactionHash: "0xdemolish", logIndex: "0x0",
+      topics: [moonDemolitionStartedTopic, topic(7n), topic(1n)], data: abiWords(1n, 1_000n, 400n, 120n, 200n) });
+    indexer.applyLog({ blockNumber: "0x8a", transactionHash: "0xcancel", logIndex: "0x0",
+      topics: [moonDemolitionCancelledTopic, topic(7n), topic(1n)], data: abiWords(1n, 400n, 120n, 200n) });
+    const later = { blockNumber: "0x8b", transactionHash: "0xother", logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(2n)], data: abiWords(1n) };
+    indexer.applyLog(later);
+
+    indexer.applyLog({ ...later, removed: true });
+
+    const moon = indexer.moonState(player, planet.planetId);
+    expect(moon.queue?.active ?? false).toBe(false);
+    expect(moon.buildings.find((building) => building.id === 1)?.level).toBe(2);
+  });
+
   test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
     // PlanetSettled carries the authoritative post-mutation balance. A raid/spend emits a DECREASING
     // PlanetSettled; the read model must keep that lower balance. But logs do not always arrive in block
@@ -6981,7 +7264,7 @@ describe("SettlementIndexer", () => {
     database.close();
   });
 
-  test("indexes rift deposits and withdrawal lifecycle", () => {
+  test("indexes rift deposits", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -7011,57 +7294,11 @@ describe("SettlementIndexer", () => {
       ],
       data: abiWords(1000n)
     });
-    indexer.applyLog({
-      blockNumber: "0x8c",
-      transactionHash: "0xwithdraw",
-      logIndex: "0x0",
-      topics: [
-        marketResourceWithdrawalRequestedTopic,
-        addressTopic(player),
-        topic(7n),
-        topic(0n)
-      ],
-      data: abiWords(250n, 1770500000n)
-    });
-
-    expect(indexer.riftState(player, planet.planetId)).toMatchObject({
-      unlocked: true,
-      resources: expect.arrayContaining([
-        expect.objectContaining({
-          key: "metal",
-          inGameBalance: "750",
-          lockedBalance: "250"
-        })
-      ]),
-      pendingWithdrawals: [
-        expect.objectContaining({
-          kind: "legacyMarketWithdrawal",
-          planetId: "7",
-          amount: "250",
-          resource: "metal",
-          unlocksAt: "2026-02-07T21:33:20.000Z"
-        })
-      ]
-    });
-
-    indexer.applyLog({
-      blockNumber: "0x8d",
-      transactionHash: "0xfinishwithdraw",
-      logIndex: "0x0",
-      topics: [
-        marketResourceWithdrawalFinishedTopic,
-        addressTopic(player),
-        topic(7n),
-        topic(0n)
-      ],
-      data: abiWords(250n)
-    });
-
     expect(indexer.riftState(player, planet.planetId)).toMatchObject({
       resources: expect.arrayContaining([
         expect.objectContaining({
           key: "metal",
-          inGameBalance: "750",
+          inGameBalance: "1000",
           lockedBalance: "0"
         })
       ]),
@@ -7162,6 +7399,64 @@ describe("SettlementIndexer", () => {
       data: abiWords(400n)
     });
     expect(indexer.riftTargets()).toEqual([]);
+  });
+
+  test("serves a wallet's Rift claims on every planet and its injection, extraction and raid history", () => {
+    const raider = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, eventName: "ColonyCreated", transactionHash: "0xcolony", planetId: "8", position: 10 });
+    const at = (seconds: bigint) => `0x${seconds.toString(16)}`;
+    indexer.applyLog({
+      blockNumber: "0x90", blockTimestamp: at(1_770_000_000n), transactionHash: "0xinject", logIndex: "0x0",
+      topics: [marketResourceDepositedTopic, addressTopic(player), topic(7n), topic(2n)], data: abiWords(5_000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91", blockTimestamp: at(1_770_000_100n), transactionHash: "0xstart", logIndex: "0x0",
+      topics: [riftExtractionStartedTopic, addressTopic(player), topic(8n), topic(0n)],
+      data: abiWords(1_000n, 1_770_000_100n, 1_772_419_300n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92", blockTimestamp: at(1_770_000_200n), transactionHash: "0xraid", logIndex: "0x1",
+      topics: [riftExtractionLootedTopic, addressTopic(raider), topic(8n)], data: abiWords(400n, 0n, 0n)
+    });
+
+    // Planet 7 is selected, yet the claim on colony 8 stays visible (and finalizable) from it.
+    const state = indexer.riftState(player, "7");
+    expect(state.pendingWithdrawals).toEqual([
+      expect.objectContaining({ id: "extraction:8:0", kind: "riftExtraction", planetId: "8", amount: "600", startedAmount: "1000" })
+    ]);
+    expect(state.resources.find((resource) => resource.key === "metal")?.lockedBalance).toBe("0");
+    expect(indexer.riftState(player, "8").resources.find((resource) => resource.key === "metal")?.lockedBalance).toBe("600");
+    expect(state.history).toEqual([
+      {
+        id: expect.any(String), kind: "raided", planetId: "8", amounts: { metal: "400", crystal: "0", deuterium: "0" },
+        counterparty: raider, unlocksAt: null, occurredAt: "2026-02-02T02:43:20.000Z", transactionHash: "0xraid"
+      },
+      {
+        id: expect.any(String), kind: "extractionStarted", planetId: "8", amounts: { metal: "1000", crystal: "0", deuterium: "0" },
+        counterparty: null, unlocksAt: "2026-03-02T02:41:40.000Z", occurredAt: "2026-02-02T02:41:40.000Z", transactionHash: "0xstart"
+      },
+      {
+        id: expect.any(String), kind: "injected", planetId: "7", amounts: { metal: "0", crystal: "0", deuterium: "5000" },
+        counterparty: null, unlocksAt: null, occurredAt: "2026-02-02T02:40:00.000Z", transactionHash: "0xinject"
+      }
+    ]);
+    // The raider's history shows the other side of the same raid.
+    expect(indexer.riftHistory(raider)).toEqual([
+      expect.objectContaining({ kind: "raid", planetId: "8", counterparty: player, amounts: { metal: "400", crystal: "0", deuterium: "0" } })
+    ]);
+
+    indexer.applyLog({
+      blockNumber: "0x93", blockTimestamp: at(1_772_419_400n), transactionHash: "0xfinalize", logIndex: "0x0",
+      topics: [riftExtractionFinalizedTopic, addressTopic(player), topic(8n), topic(0n)], data: abiWords(600n)
+    });
+    expect(indexer.riftState(player, "7").pendingWithdrawals).toEqual([]);
+    expect(indexer.riftHistory(player)[0]).toMatchObject({ kind: "extracted", planetId: "8", amounts: { metal: "600", crystal: "0", deuterium: "0" } });
   });
 
   test("indexes alliance membership, profile, invites, and join requests from event logs", () => {

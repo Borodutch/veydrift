@@ -248,7 +248,7 @@ function ResourcePip({ abbr, label, value, rate, cap, color, scope }: { abbr: st
           <span className={`min-w-0 truncate text-[11px] leading-none sm:text-xs ${pct >= 90 ? "resource-cap-warning text-amber-100" : "text-white"}`}>
             <ResourceAmount key={`${scope}:${abbr}`} value={value} />
           </span>
-          {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">+{format(rate)}/h</span>}
+          {rate !== undefined && <span className="hidden text-[10px] leading-none text-slate-500 sm:inline">{formatRate(rate)}</span>}
           {pct >= 90 && <span className="resource-cap-warning hidden text-[10px] leading-none text-amber-400 sm:inline">{pct}%</span>}
         </span>
       </summary>
@@ -271,7 +271,7 @@ function ResourcePip({ abbr, label, value, rate, cap, color, scope }: { abbr: st
         {rate !== undefined && (
           <div className="mt-2 flex justify-between gap-3 border-t border-cyan-300/10 pt-2 text-[11px] leading-4">
             <span className="text-slate-400">Production</span>
-            <span className="font-semibold tabular-nums text-slate-100">+{format(rate)}/h</span>
+            <span className="font-semibold tabular-nums text-slate-100">{formatRate(rate)}</span>
           </div>
         )}
       </div>
@@ -482,8 +482,9 @@ function formatCrawlerImpact(value: number | string): string {
   return formatRate(numeric);
 }
 
+// A negative rate is a Fusion Reactor draw burning the store.
 function formatRate(value: number): string {
-  return `+${format(value)}/h`;
+  return `${value < 0 ? "" : "+"}${format(value)}/h`;
 }
 
 function crawlerExplanationTitle(crawler: CrawlerProductionInfo | null | undefined): string {
@@ -509,7 +510,7 @@ function crawlerExplanationTitle(crawler: CrawlerProductionInfo | null | undefin
 
 function resourceTitle(label: string, value: number, rate: number | undefined, cap: number | undefined): string {
   const details = [`${label}: ${format(value)}`];
-  if (rate !== undefined) details.push(`+${format(rate)}/h`);
+  if (rate !== undefined) details.push(formatRate(rate));
   if (cap !== undefined) details.push(`Cap ${format(cap)}`);
   return details.join(" / ");
 }

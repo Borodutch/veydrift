@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
+import {VeydriftRefereeBattle as Referee} from "./libraries/VeydriftRefereeBattle.sol";
 import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
 
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
@@ -42,11 +43,6 @@ interface IVeydriftArrivalOrderPreparer {
 
 /// @notice Delegatecall target for stateful gameplay paths that would push VeydriftGame over EIP-170.
 contract VeydriftGameplayModule is VeydriftResourceReserves {
-    bytes4 private constant LAUNCH_FLEET_MISSION_SELECTOR = bytes4(
-        keccak256(
-            "launchFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,uint256)"
-        )
-    );
     bytes4 private constant RESOLVE_COMBAT_ROUND_SELECTOR =
         bytes4(keccak256("resolveFleetMissionCombatRound(uint256)"));
     // Leave enough gas in the parent frame to catch an out-of-gas child round and return the
@@ -55,12 +51,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     // Most stages cost well under 1M. A rarer heavy stage (up to ~4.5M in huge battles) may run out
     // of gas as a later stage; it rolls back alone and runs first, with full gas, next call.
     uint256 private constant COMBAT_STAGE_GAS = 1_000_000;
-    bytes4 private constant LAUNCH_BODY_FLEET_MISSION_SELECTOR = bytes4(
-        keccak256(
-            "launchBodyFleetMission(uint256,uint256,uint8,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16,bool,bool)"
-        )
-    );
-
     using SafeCast for uint256;
 
     address private immutable _combatModule;
@@ -108,90 +98,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         );
     }
 
-    /// @notice Launch an Attack mission with a player-selected loot ratio (metal/crystal/deuterium
-    ///         bps split applied to cargo capacity, with capacity rollover for unfillable shares).
-    /// @dev The three bps shares must sum to exactly `BPS`. The mission itself is created by reusing
-    ///      the standard launch path: this call's calldata is re-dispatched as `launchFleetMission`
-    ///      (with the `Attack` mission type spliced in and the trailing loot ratio dropped) through
-    ///      the game facade, avoiding both a third inlined copy of the large launch routine and any
-    ///      costly struct re-encoding here. The loot ratio is then recorded on the created mission.
-    function launchAttackMission(
-        uint256,
-        uint256,
-        MissionShips calldata,
-        Resources calldata,
-        uint16,
-        uint256,
-        LootRatio calldata lootRatio
-    ) external returns (uint256 missionId) {
-        if (uint256(lootRatio.metalBps) + lootRatio.crystalBps + lootRatio.deuteriumBps != BPS) {
-            revert InvalidLootRatio();
-        }
-        bytes4 selector = LAUNCH_FLEET_MISSION_SELECTOR;
-        bool ok;
-        assembly ("memory-safe") {
-            let ptr := mload(0x40)
-            mstore(ptr, selector)
-            // origin + target (two words) copied verbatim after the selector
-            calldatacopy(add(ptr, 0x04), 0x04, 0x40)
-            // splice in the Attack mission type as the third argument
-            mstore(add(ptr, 0x44), 3)
-            // remaining args (ships, cargo, speed, randomnessRequestId), dropping the loot ratio tail
-            let restLen := sub(calldatasize(), 0xA4)
-            calldatacopy(add(ptr, 0x64), 0x44, restLen)
-            ok := delegatecall(gas(), address(), ptr, add(restLen, 0x64), ptr, 0x20)
-            missionId := mload(ptr)
-            if iszero(ok) {
-                returndatacopy(ptr, 0, returndatasize())
-                revert(ptr, returndatasize())
-            }
-        }
-        _fleetMissions[missionId].lootRatio = lootRatio;
-        emit FleetMissionLootRatio(
-            missionId, lootRatio.metalBps, lootRatio.crystalBps, lootRatio.deuteriumBps
-        );
-    }
-
-    /// @notice Launch a planet/moon Attack mission with the same player-selected loot ratio used
-    ///         by planet-to-planet attacks.
-    /// @dev Re-dispatches to the established body-aware launch path, then records the ratio on the
-    ///      created mission. The facade routes that nested call to VeydriftDefenseHoldModule, so
-    ///      body validation, fuel, inventory, and randomness continue to have one implementation.
-    function launchBodyAttackMission(
-        uint256,
-        uint256,
-        MissionShips calldata,
-        Resources calldata,
-        uint16,
-        bool,
-        bool,
-        LootRatio calldata lootRatio
-    ) external returns (uint256 missionId) {
-        if (uint256(lootRatio.metalBps) + lootRatio.crystalBps + lootRatio.deuteriumBps != BPS) {
-            revert InvalidLootRatio();
-        }
-        bytes4 selector = LAUNCH_BODY_FLEET_MISSION_SELECTOR;
-        bool ok;
-        assembly ("memory-safe") {
-            let ptr := mload(0x40)
-            mstore(ptr, selector)
-            calldatacopy(add(ptr, 0x04), 0x04, 0x40)
-            mstore(add(ptr, 0x44), 3)
-            let restLen := sub(calldatasize(), 0xA4)
-            calldatacopy(add(ptr, 0x64), 0x44, restLen)
-            ok := delegatecall(gas(), address(), ptr, add(restLen, 0x64), ptr, 0x20)
-            missionId := mload(ptr)
-            if iszero(ok) {
-                returndatacopy(ptr, 0, returndatasize())
-                revert(ptr, returndatasize())
-            }
-        }
-        _fleetMissions[missionId].lootRatio = lootRatio;
-        emit FleetMissionLootRatio(
-            missionId, lootRatio.metalBps, lootRatio.crystalBps, lootRatio.deuteriumBps
-        );
-    }
-
     function _launchFleetMission(
         uint256 originPlanetId,
         uint256 targetPlanetId,
@@ -235,8 +141,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             // DefenseHold (OGame-style ACS Defend) is launched via the planet-management module.
             revert InvalidMissionType(missionType);
         }
+        bool scoreProtected;
         if (missionType == FleetMissionType.Attack) {
-            _enforceAttackProtection(player, targetPlanetId, false);
+            scoreProtected = _enforceAttackProtection(player, targetPlanetId, false);
         }
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[player][Technology.Computer]
@@ -312,7 +219,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
         if (missionType == FleetMissionType.Attack) {
-            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+            randomnessRequestId = Referee.request(missionId, _randomnessEngine, scoreProtected);
         }
         activeFleetMissionCount[player] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -330,7 +237,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             randomnessRequestId: randomnessRequestId,
             lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
             originIsMoon: false,
-            targetIsMoon: false
+            // Counterplay fights at the hostile's body; mission 0 never exists for other types.
+            targetIsMoon: _fleetMissions[hostileMissionId].targetIsMoon
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (missionType == FleetMissionType.Attack) {
@@ -338,6 +246,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         } else if (counterplayMission) {
             _fleetCounterplayMissions[hostileMissionId].push(missionId);
             _trackCounterplayMissionResolution(hostileMissionId, _fleetMissions[missionId]);
+            if (_fleetMissions[missionId].targetIsMoon) {
+                emit FleetMissionBodies(missionId, false, true);
+            }
         }
 
         _registerFleetChronology(missionId);
@@ -355,9 +266,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _emitFleetMissionShips(missionId, ships);
     }
 
+    /// @return Score-protected target admitted only by its live Rift lock (see Rift module).
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId, bool targetIsMoon)
         private
         view
+        returns (bool)
     {
         (bool ok, bytes memory data) = address(this)
             .staticcall(abi.encodeWithSelector(0xcc4cc1ea, attacker, targetPlanetId, targetIsMoon));
@@ -366,14 +279,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 revert(add(data, 32), mload(data))
             }
         }
-    }
-
-    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
-        VeydriftBattleResearch.markLaunchedAttack(missionId);
-        address randomnessEngine = _randomnessEngine;
-        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
-        return IVeydriftAttackRandomnessEngine(randomnessEngine)
-            .requestRandomness(_attackBattlePurposeHash(missionId));
+        return abi.decode(data, (bool));
     }
 
     function _emitFleetMissionShips(uint256 missionId, MissionShips memory ships) private {
@@ -587,6 +493,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 return false;
             }
             if (abi.decode(result, (bool))) return true;
+            // Proof pending is not more combat work. Never spin until the gas envelope empties.
+            if (Store.battle(missionId).phase >= 16) return false;
         }
         return true;
     }

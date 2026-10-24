@@ -1,4 +1,6 @@
 import type { Coordinates } from "./types";
+import { shipCatalog } from "./playableMvp";
+import { fleetLaunchRequirementBlocker, type FleetLaunchConstraints } from "./walletFlow";
 import { emptyMissionShips, type MissionShips } from "./galaxyActions";
 import {
   fleetMissionAvailableCargoCapacity,
@@ -23,6 +25,7 @@ export type BatchSupplySource = {
   ships: Partial<MissionShips>;
   driveLevels: FleetDriveLevels;
   unavailableReason?: string;
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
 };
 
 export type SupplyMission = "transport" | "deploy";
@@ -59,6 +62,10 @@ export const supplyShipKeys = Object.keys(emptyMissionShips()) as SupplyShipKey[
 export type SupplyShipTypesBySource = Readonly<Record<string, readonly SupplyShipKey[]>>;
 
 export const defaultSupplyShipTypes: readonly SupplyShipKey[] = ["largeCargo", "smallCargo", "colonyShip"];
+
+function supplyShipId(key: string): number {
+  return shipCatalog.find(ship => ship.key === key)?.id ?? -1;
+}
 
 const cargoShipKeys: Array<{ id: number; key: SupplyShipKey }> = [
   { id: 4, key: "largeCargo" },
@@ -123,21 +130,33 @@ export function supplyResourceShortfall(
 export function maximumBatchSupplyResource(
   options: BatchSupplyOptions,
   resource: keyof SupplyResources,
+  budgetMs = 150,
 ): number {
+  const deadline = performance.now() + budgetMs;
   const requested = normalizeSupplyResources(options.requested);
   const baseline = buildBatchSupplyPlan(options);
   const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
   // A different Max must never hide an existing shortfall or displace its cargo.
   // The clicked field itself may be oversized and is intentionally replaced.
-  const missionLimit = options.targetIsMoon ? 1 : 15;
+  const missionLimit = Math.max(0, Math.min(options.maxOrders ?? 15, 15));
   if (baseline.sourceLimitReached || otherResources.some(key => baseline.missing[key] > 0)) return requested[resource];
 
-  let upper = Math.min(Number.MAX_SAFE_INTEGER, options.sources.reduce((total, source) =>
-    total + (options.selectedPlanetIds.has(source.planetId) && !source.unavailableReason
-      ? safeAmount(source.resources[resource]) : 0), 0));
-  // Work scales with planner branch/fleet-count boundaries, not stock units.
-  // UI callers must run this exact search in batchSupplyMax.worker, not render/events.
+  // Bound by what a source could carry, not its potentially enormous stock.
+  // This is only an upper bound: the traced planner below remains authoritative
+  // for allocation, manual cargo, mixed fleets, fuel and non-monotone feasibility.
+  const capacities = options.sources.filter(source => options.selectedPlanetIds.has(source.planetId))
+    .map(original => ({ original, source: supplyAllocationSource(original, options) }))
+    .filter(({ source }) => !source.unavailableReason)
+    .map(({ original, source }) => ({ source, capacity: sourceCargoCapacity(original, source, options) }));
+  const largest = (values: number[]) => values.sort((a, b) => b - a).slice(0, missionLimit).reduce((total, value) => total + value, 0);
+  let upper = Math.min(Number.MAX_SAFE_INTEGER,
+    largest(capacities.map(({ source, capacity }) => Math.min(safeAmount(source.resources[resource]), capacity))),
+    Math.max(0, largest(capacities.map(({ capacity }) => capacity)) - otherResources.reduce((total, key) => total + requested[key], 0)));
+  // Work scales with planner branch/fleet-count boundaries, not stock units: milliseconds for real
+  // empires, but huge fuel-bound fleets on long routes can need tens of thousands of steps. Past the
+  // budget, settle for a bisected launchable total so Max stays an instant click.
   while (upper >= 0) {
+    if (performance.now() > deadline) return bisectedBatchSupplyMaximum(options, requested, resource, upper, missionLimit, deadline + budgetMs);
     const range = new SupplyMaxRange(upper);
     const plan = planBatchSupply({ ...options, requested: { ...requested, [resource]: upper } }, { resource, range });
     // Within this traced interval every delivered amount is affine in the
@@ -154,11 +173,104 @@ export function maximumBatchSupplyResource(
         else if (slope < 0) lower = Math.max(lower, upper + Math.ceil(-deficit / slope));
         else if (deficit > 0) maximum = -1;
       }
-      if (maximum >= lower) return maximum;
+      if (maximum >= lower) {
+        const replay = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: maximum } });
+        if (!replay.blockedSources.length && !replay.sourceLimitReached && resourceTotal(replay.missing) === 0) return maximum;
+        return requested[resource];
+      }
     }
     upper = range.lower - 1;
   }
   return requested[resource];
+}
+
+/**
+ * Max fallback once the exact search runs out of time: binary search for a launchable total.
+ * ponytail: feasibility is not monotone, so this can settle below the exact maximum; it only runs
+ * for fleets the exact search cannot finish within the budget, and its answer always launches.
+ */
+function bisectedBatchSupplyMaximum(
+  options: BatchSupplyOptions,
+  requested: SupplyResources,
+  resource: keyof SupplyResources,
+  upper: number,
+  missionLimit: number,
+  deadline: number,
+): number {
+  const launchable = (value: number) => {
+    const plan = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: value } });
+    return plan.orders.length > 0 && plan.orders.length <= missionLimit && !plan.sourceLimitReached
+      && plan.blockedSources.length === 0 && resourceTotal(plan.missing) === 0;
+  };
+  if (!launchable(0)) return requested[resource];
+  let low = 0, high = upper;
+  // Every accepted value launches, so stopping at the deadline still returns a launchable total.
+  while (low < high && performance.now() <= deadline) {
+    const value = low + Math.ceil((high - low) / 2);
+    if (launchable(value)) low = value;
+    else high = value - 1;
+  }
+  return low;
+}
+
+/** Shared allocation inputs, not display inventory. Fixed/all fleets stay explicit. */
+function supplyAllocationSource(source: BatchSupplySource, options: Pick<BatchSupplyOptions, "shipTypesBySource" | "fleetModesBySource">): BatchSupplySource {
+  const selected = allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes);
+  const constraints = source.fleetLaunchConstraints;
+  if (constraints === undefined) return { ...source, ships: selected };
+  const fixed = supplyFixedShips(selected, options.fleetModesBySource?.[source.planetId]);
+  const blocker = fleetLaunchRequirementBlocker(constraints, Object.entries(fixed).map(([key, count]) => ({ id: supplyShipId(key), count })));
+  if (blocker || !constraints?.resources) return { ...source, ships: selected, unavailableReason: source.unavailableReason ?? blocker ?? "Current launch resources are unavailable." };
+  return { ...source,
+    ships: Object.fromEntries(supplyShipKeys.map(key => [key, Math.min(selected[key], constraints.ships.find(row => row.id === supplyShipId(key))?.count ?? 0)])),
+    resources: Object.fromEntries((["metal", "crystal", "deuterium"] as const).map(key => [key, Math.min(source.resources[key], Number(constraints.resources![key]))])) as SupplyResources,
+  };
+}
+
+/** Ships a source always sends: explicitly enabled combat ships, or every enabled ship in "all" mode. */
+function supplyFixedShips(ships: Partial<MissionShips>, fleetMode: "auto" | "all" | undefined): MissionShips {
+  return allowedSupplyShips(ships, fleetMode === "all" ? supplyShipKeys : supplyShipKeys.filter(key => !cargoShipKeys.some(ship => ship.key === key)));
+}
+
+const affordableCargoCache = new WeakMap<BatchSupplySource, Map<string, number>>();
+
+/**
+ * The most cargo an allocation source can launch: the planner's minimum fleet for it must be fuelled
+ * from the source's own deuterium. The planner caps every source here, so a fuel-starved source sends
+ * what it can afford instead of being blocked, and Max bounds each source by the same number.
+ * Cached per input source: it does not depend on the request.
+ * ponytail: binary search assumes fuel grows with cargo; a slower ship joining a mixed fleet can lower
+ * fuel, so an odd route may cap a little early. The capped plan is always launchable.
+ */
+function sourceCargoCapacity(
+  original: BatchSupplySource,
+  source: BatchSupplySource,
+  options: Pick<BatchSupplyOptions, "targetCoordinates" | "targetIsMoon" | "shipTypesBySource" | "fleetModesBySource">,
+): number {
+  const fleetMode = options.fleetModesBySource?.[source.planetId];
+  const { galaxy, system, position } = options.targetCoordinates;
+  const key = [galaxy, system, position, options.targetIsMoon ? 1 : 0, fleetMode ?? "auto",
+    (options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes).join(",")].join("|");
+  let cached = affordableCargoCache.get(original);
+  if (!cached) affordableCargoCache.set(original, cached = new Map());
+  const known = cached.get(key);
+  if (known !== undefined) return known;
+
+  const distance = fleetMissionDistance(source.coordinates, options.targetCoordinates, { targetIsMoon: options.targetIsMoon ?? false });
+  const deuterium = safeAmount(source.resources.deuterium);
+  const fixedShips = supplyFixedShips(source.ships, fleetMode);
+  const affordable = (cargo: number) => {
+    const fleet = minimumCargoFleet(source.ships, cargo, distance, source.driveLevels, undefined, 0, fixedShips);
+    return fleet !== null && fleetMissionFuelCost(fleet, distance, source.driveLevels) <= deuterium;
+  };
+  let low = 0, high = fleetMissionCargoCapacity(allowedSupplyShips(source.ships, supplyShipKeys));
+  while (low < high) {
+    const cargo = low + Math.ceil((high - low) / 2);
+    if (affordable(cargo)) low = cargo;
+    else high = cargo - 1;
+  }
+  cached.set(key, low);
+  return low;
 }
 
 type SupplyAmount = { value: number; slope: number };
@@ -203,6 +315,58 @@ export function buildBatchSupplyPlan(options: BatchSupplyOptions): BatchSupplyPl
   return planBatchSupply(options);
 }
 
+/** Evaluate every single origin, nearest-first, and largest-contribution-first.
+ * ponytail: bounded O(n²) candidate heuristic, not a global fleet optimizer.
+ * Freeze the chosen source set in the modal; Max keeps its exact existing search.
+ */
+export function suggestBatchSupplySourceIds(options: Omit<BatchSupplyOptions, "selectedPlanetIds">): Set<string> {
+  const eligible = options.sources.filter(source => !source.unavailableReason
+    && hasUsableSupplyFleet(allowedSupplyShips(source.ships, options.shipTypesBySource?.[source.planetId] ?? defaultSupplyShipTypes)));
+  const distance = (source: BatchSupplySource) => fleetMissionDistance(source.coordinates, options.targetCoordinates, { targetIsMoon: options.targetIsMoon ?? false });
+  const nearest = [...eligible].sort((a, b) => distance(a) - distance(b) || a.planetId.localeCompare(b.planetId));
+  const limit = Math.max(0, Math.min(options.maxOrders ?? 15, 15));
+  const evaluate = (sources: readonly BatchSupplySource[]) => planBatchSupply({ ...options, sources, selectedPlanetIds: new Set(sources.map(s => s.planetId)), maxOrders: limit });
+  if (resourceTotal(normalizeSupplyResources(options.requested)) === 0) return new Set(nearest.slice(0, limit).map(s => s.planetId));
+  const singles = nearest.map(source => ({ source, plan: evaluate([source]) }));
+  const largest = [...singles].sort((a, b) => resourceTotal(b.plan.delivered) - resourceTotal(a.plan.delivered) || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId)).map(item => item.source);
+  const candidates = [...singles.map(item => item.plan), evaluate(nearest.slice(0, limit)), evaluate(largest.slice(0, limit))];
+  // Add the origin which fills the current residual, rather than repeatedly
+  // ranking overlapping inventories against the original request (A metal,
+  // B metal, C crystal must choose A+C when only two slots are available).
+  const residualSources: BatchSupplySource[] = [];
+  let residual = evaluate(residualSources);
+  while (residualSources.length < limit && resourceTotal(residual.missing) > 0) {
+    const next = nearest.filter(source => !residualSources.includes(source))
+      .map(source => ({ source, plan: evaluate([...residualSources, source]) }))
+      .sort((a, b) => resourceTotal(a.plan.missing) - resourceTotal(b.plan.missing)
+        || a.plan.blockedSources.length - b.plan.blockedSources.length
+        || distance(a.source) - distance(b.source) || a.source.planetId.localeCompare(b.source.planetId))[0];
+    if (!next || resourceTotal(next.plan.missing) >= resourceTotal(residual.missing)) break;
+    residualSources.push(next.source);
+    residual = next.plan;
+    candidates.push(residual);
+  }
+  // The ordinary planner is nearest-first. Candidate pruning evaluates progressively
+  // smaller sets so a complete plan never retains empty/fuel-starved origins.
+  for (const ordering of [nearest, largest]) {
+    let ids = ordering.slice(0, limit);
+    for (const source of [...ids].reverse()) {
+      const reduced = ids.filter(item => item.planetId !== source.planetId);
+      const plan = evaluate(reduced);
+      candidates.push(plan);
+      if (resourceTotal(plan.missing) === 0 && plan.blockedSources.length === 0) ids = reduced;
+    }
+  }
+  candidates.sort((a, b) => resourceTotal(a.missing) - resourceTotal(b.missing)
+    || a.blockedSources.length - b.blockedSources.length
+    || a.orders.length - b.orders.length
+    || Math.max(0, ...a.orders.map(o => o.travelSeconds)) - Math.max(0, ...b.orders.map(o => o.travelSeconds))
+    || a.fuelCost - b.fuelCost
+    || a.orders.map(o => o.originPlanetId).join(",").localeCompare(b.orders.map(o => o.originPlanetId).join(",")));
+  const best = candidates[0];
+  return new Set(best?.orders.length ? best.orders.map(order => order.originPlanetId) : nearest.slice(0, limit).map(s => s.planetId));
+}
+
 type BatchSupplyOptions = {
   mission?: SupplyMission;
   targetCoordinates: Coordinates;
@@ -245,7 +409,7 @@ function planBatchSupply({
   // shows every allocation and lets the player deselect any source before submitting.
   const selected = sources
     .filter((source) => selectedPlanetIds.has(source.planetId))
-    .map((source) => ({ ...source, ships: allowedSupplyShips(source.ships, shipTypesBySource[source.planetId] ?? defaultSupplyShipTypes) }))
+    .map(source => supplyAllocationSource(source, { shipTypesBySource, fleetModesBySource }))
     // Apply player-edited shipments first, then use nearby sources to automatically fill the balance.
     .sort((left, right) => {
       const leftManual = sourceCargoOverrides[left.planetId] === undefined ? 0 : 1;
@@ -253,8 +417,9 @@ function planBatchSupply({
       if (leftManual !== rightManual) return rightManual - leftManual;
       return fleetMissionDistance(left.coordinates, targetCoordinates, { targetIsMoon }) - fleetMissionDistance(right.coordinates, targetCoordinates, { targetIsMoon });
     });
-  const boundedMaxOrders = Math.max(0, Math.trunc(maxOrders));
+  const boundedMaxOrders = Math.max(0, Math.min(15, Math.trunc(maxOrders)));
   const sourceLimitReached = selected.length > boundedMaxOrders;
+  const originals = new Map(sources.map(source => [source.planetId, source]));
 
   for (const source of selected.slice(0, boundedMaxOrders)) {
     if (source.unavailableReason) {
@@ -262,8 +427,7 @@ function planBatchSupply({
       continue;
     }
     const manualCargo = sourceCargoOverrides[source.planetId];
-    const fixedShips = allowedSupplyShips(source.ships, fleetModesBySource[source.planetId] === "all"
-      ? supplyShipKeys : supplyShipKeys.filter(key => !cargoShipKeys.some(candidate => candidate.key === key)));
+    const fixedShips = supplyFixedShips(source.ships, fleetModesBySource[source.planetId]);
     const hasFixedFleet = hasUsableSupplyFleet(fixedShips);
     const hasRemaining = trace
       ? trace.positive({ value: resourceTotal(remaining), slope: resourceTotal(slopes) })
@@ -293,12 +457,12 @@ function planBatchSupply({
       ? trace.positive({ value: resourceTotal(requestedFromSource), slope: resourceTotal(cargoSlopes) })
       : resourceTotal(requestedFromSource) > 0;
     if (!hasRequestedCargo && !hasFixedFleet) continue;
-    // A colony should contribute what it can carry, rather than being skipped just because the
-    // remaining total is larger than its entire cargo fleet. Keep the allocation deterministic so
-    // the preview exactly matches the generated child missions.
+    // A colony should contribute what it can carry and fuel, rather than being skipped (or blocked)
+    // just because the remaining total is larger than its fleet or its deuterium. Keep the allocation
+    // deterministic so the preview exactly matches the generated child missions.
     const cargo = capCargoToCapacity(
       requestedFromSource,
-      maximumCargoCapacity(source.ships, targetCoordinates, source.coordinates, source.driveLevels, targetIsMoon),
+      sourceCargoCapacity(originals.get(source.planetId)!, source, { targetCoordinates, targetIsMoon, shipTypesBySource, fleetModesBySource }),
       trace, cargoSlopes,
     );
     const loadout = supplyLoadoutForCargo({ cargo, source, targetCoordinates, targetIsMoon, trace, cargoSlopes, fixedShips });
@@ -306,6 +470,11 @@ function planBatchSupply({
       blockedSources.push({ planetId: source.planetId, reason: "Selected fleet cannot carry its fuel and cargo with the available deuterium." });
       continue;
     }
+
+    const constraintBlocker = fleetLaunchRequirementBlocker(source.fleetLaunchConstraints,
+      Object.entries(loadout.ships).map(([key, count]) => ({ id: supplyShipId(key), count })),
+      { ...loadout.cargo, deuterium: loadout.cargo.deuterium + loadout.fuelCost });
+    if (constraintBlocker) blockedSources.push({ planetId: source.planetId, reason: constraintBlocker });
 
     orders.push({
       originPlanetId: source.planetId,
@@ -340,21 +509,6 @@ function planBatchSupply({
     blockedSources,
     sourceLimitReached,
   };
-}
-
-function maximumCargoCapacity(
-  availableShips: Partial<MissionShips>,
-  targetCoordinates: Coordinates,
-  originCoordinates: Coordinates,
-  driveLevels: FleetDriveLevels,
-  targetIsMoon: boolean,
-): number {
-  const ships = allowedSupplyShips(availableShips, supplyShipKeys);
-  return fleetMissionAvailableCargoCapacity(
-    ships,
-    fleetMissionDistance(originCoordinates, targetCoordinates, { targetIsMoon }),
-    driveLevels,
-  );
 }
 
 function capCargoToCapacity(cargo: SupplyResources, capacity: number, trace?: SupplyMaxRange, slopes = emptySupplyResources()): SupplyResources {

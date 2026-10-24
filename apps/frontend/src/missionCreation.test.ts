@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { BodySelectionRow, AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, reconcileMissionShips, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
-import { forecastContractBattle, summarizeContractBattleForecast } from "./battlePreview";
+import { BodySelectionRow, AttackLootProjection, AttackIntelPanel, AttackOutcomePanel, buildMissionLaunchDraft, DestinationIntelPanel, forecastRaidLoot, initialMissionShips, LootRatioControls, MissionLootSection, MissionCargoPicker, missionCargoAfterBodyChange, reconcileMissionCargoAfterFleetChange, lootRatioFromUpToAmount, missionCargoMaxForResource, missionBodySelectionVisibility, missionAttackLootMode, missionConfirmButtonLabel, missionComposerRouteEndpoints, missionDraftBlocker, missionTargetCompositionUnits, missionTargetMoonUnavailableReason, MissionConfirmButton, MissionFuelCost, MissionProtectionRetryButton, MissionTimingGrid, MISSION_TIMING_PLACEHOLDER, MISSION_TIMING_RESERVED_HEIGHT_PX, missionSpecificLoadout, missionShipOptions, missionTimingRows, missionTimingSummary, NonAttackMissionIntelPanel, projectedMissionArrivalAtSeconds, preparePublicTargetBattleForecast, publicTargetBattleForecast, resolvePreparedPublicTargetBattleForecast, rebalanceLootRatio, ShipQuantityRow, shouldShowDestinationIntel, shouldShowReturnTiming, staleSelectedShipQuantityBlocker, stationedDefenderCompositionUnits, TargetIntelCard, targetResourceIntel } from "./components/MissionCreationPage";
+import { simulateBattleStats } from "./battlePreview";
 import { emptyMissionCargoDraft, type MissionCargoDraft, normalizeMissionCargoDraft } from "./components/missionCargoModel";
 import {
   attackProtectionPreparation,
@@ -17,6 +17,8 @@ import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
 const missionCreationSource = await Bun.file(new URL("./components/MissionCreationPage.tsx", import.meta.url)).text();
+// Compact fact rows and the simulated report dialog are shared with the battle calculator.
+const simulatedReportSource = await Bun.file(new URL("./components/SimulatedBattleReport.tsx", import.meta.url)).text();
 const playableMvpAppSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
 
 test("missile submit protection ignores only the fleet bashing limit", () => {
@@ -310,10 +312,10 @@ describe("mission creation", () => {
       })).toBe("Choose at least one ship.");
     }
 
-    // Desktop/mobile share one draft. Inventory reconciliation only reduces it;
+    // Desktop/mobile share one explicit draft. Inventory refresh never rewrites it;
     // body changes clear it and hydration never selects ships on the player's behalf.
     expect(missionCreationSource.match(/useState<MissionShips>/g)).toHaveLength(1);
-    expect(reconcileMissionShips(initialMissionShips(attackAction), { ships: [{ id: 0, count: 99 }] })).toEqual(initialMissionShips(attackAction));
+    expect(Object.values(initialMissionShips(attackAction)).every(count => count === 0)).toBe(true);
     // The application shell already pads the page; the composer must not add a
     // second outer padding layer.
     expect(missionCreationSource).toContain('aria-label="Mission creation"');
@@ -605,7 +607,7 @@ describe("mission creation", () => {
     }
     expect(String(manual.props?.className)).toContain("min-w-0");
     expect(String(manual.props?.className)).toContain("max-w-full");
-    expect(missionCreationSource).toContain("min-[360px]:grid-cols-[8rem_minmax(0,1fr)]");
+    expect(simulatedReportSource).toContain("min-[360px]:grid-cols-[8rem_minmax(0,1fr)]");
     expect(missionCreationSource).toContain("data-mission-composer");
     expect(missionCreationSource).toContain("data-mission-actions");
     expect(playableMvpAppSource).toContain("overflow-visible p-3");
@@ -711,7 +713,7 @@ describe("mission creation", () => {
     })).toBeUndefined();
     expect(playableMvpAppSource).toContain("validateShipInventory:");
     expect(playableMvpAppSource).toContain(
-      "backendData!.moon(account, options.validateShipInventory.originPlanetId, { fresh: true })",
+      "backend.moon(account, request.originPlanetId, { fresh: true })",
     );
   });
 
@@ -1070,8 +1072,7 @@ describe("mission creation", () => {
       publicState: { fleet: [], defenses: [], stationedDefenders: [], research: [] },
     }));
     if (prepared.status !== "simulate") throw new Error("Expected a simulation-ready forecast");
-    const simulation = forecastContractBattle(prepared.input, 1, false);
-    const summary = summarizeContractBattleForecast(simulation);
+    const stats = simulateBattleStats(prepared.input, 1);
     const cases = [
       { counts: { win: 81, draw: 47, defeat: 0 }, samples: 128, label: "63% win · 37% draw" },
       { counts: { win: 10, draw: 6, defeat: 0 }, samples: 16, label: "63% win · 37% draw" },
@@ -1083,16 +1084,19 @@ describe("mission creation", () => {
       { counts: { win: 0, draw: 0, defeat: 1 }, samples: 1, label: "100% defeat" },
     ];
     for (const { counts, samples, label } of cases) {
-      const forecast = resolvePreparedPublicTargetBattleForecast(prepared, {
-        ...summary, outcomeCounts: counts, sampleCount: samples,
-      });
+      const forecast = resolvePreparedPublicTargetBattleForecast(prepared, { ...stats, outcomes: counts, runs: samples });
       expect(forecast.label).toBe(label);
       const panel = AttackOutcomePanel({
-        battleForecast: { ...forecast, sampleReport: simulation.sampleReport }, lootableAtArrival: null,
+        battleForecast: forecast, lootableAtArrival: null,
         maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
       });
-      expect(findElements(panel, "p").some((element) => collectText(element).join("") === label)).toBe(true);
-      expect(collectText(panel).join(" ")).not.toContain("Probable win");
+      // The panel shows all three sides' odds; together they add up to 100%.
+      const text = collectText(panel).join(" ");
+      const shown = [...text.matchAll(/(Attacker|Draw|Defender)\s+(\d+)\s*%/g)].map((match) => Number(match[2]));
+      expect(shown).toHaveLength(3);
+      expect(shown.reduce((sum, value) => sum + value, 0)).toBe(100);
+      expect(text).toMatch(new RegExp(`Simulations\\s+${samples.toLocaleString()}`));
+      expect(text).not.toContain("Probable win");
     }
   });
 
@@ -1156,7 +1160,7 @@ describe("mission creation", () => {
       sampleCount: 128,
       outcomeCounts: { win: 0, draw: 128, defeat: 0 },
     });
-    expect(forecast.detail).toContain("actual battle may differ");
+    expect(forecast.detail).toBe("Based on current public intel.");
   });
 
   test("includes Solar Satellites in the attack-launch battle preview instead of silently omitting them", () => {
@@ -1198,7 +1202,7 @@ describe("mission creation", () => {
       count: 4,
     });
     expect(forecast.sampleReport?.rapidfireExtraShots.attacker).toBeGreaterThan(0);
-    expect(forecast.detail).toContain("actual battle may differ");
+    expect(forecast.detail).toBe("Based on current public intel.");
   });
 
   test("passes Crawler defenders into the battle worker input used for attack launch", () => {
@@ -1281,13 +1285,12 @@ describe("mission creation", () => {
       (element) => element.props?.["aria-label"] === "Close simulated battle report",
     );
 
-    expect(text).toMatch(/\d+ wins/);
-    expect(text).toMatch(/\d+ draws/);
-    expect(text).toMatch(/\d+ defeats/);
-    expect(text).toContain("runs");
-    expect(text).toContain("attacker survivors");
+    expect(text).toMatch(/Attacker\s+\d+\s*%/);
+    expect(text).toMatch(/Draw\s+\d+\s*%/);
+    expect(text).toMatch(/Defender\s+\d+\s*%/);
+    expect(text).toMatch(/Simulations\s+128/);
     expect(text).toContain("Possible battle");
-    expect(text).toContain("One possible outcome from the battle preview.");
+    expect(text).toContain("One simulated battle.");
     expect(text).not.toContain("Illustrative simulation");
     expect(text).not.toContain("Random word");
     expect(text).not.toContain("Contract lane");
@@ -1296,12 +1299,12 @@ describe("mission creation", () => {
     expect(text).toContain("Defenses:");
     expect(text).toContain("Combat rounds");
     expect(text).toContain("Rapidfire");
-    expect(text).toContain("future on-chain result may differ");
+    expect(text).toContain("Real battles vary");
     expect(reportTrigger?.props?.role).toBe("button");
     expect(dialog?.props?.["aria-modal"]).toBe("true");
     expect(dialog?.props?.className).toContain("overflow-y-auto");
     expect(closeButton).toBeDefined();
-    expect(missionCreationSource).toContain("max-h-[calc(100dvh-1.5rem)]");
+    expect(simulatedReportSource).toContain("max-h-[calc(100dvh-1.5rem)]");
   });
 
   test("shows an outcome skeleton while a debounced battle preview is calculating", () => {
@@ -1438,8 +1441,7 @@ describe("mission creation", () => {
 
     expect(shipyardOnlyForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(shipyardOnlyForecast.attackerTechLevels).toEqual({ weapons: 4, shielding: 0, armor: 5 });
-    expect(text).toContain("Your technology Weapons 4 · Shields 0 · Armor 5");
-    expect(text).toContain("Defender technology Weapons 0 · Shields 0 · Armor 0");
+    expect(text).toMatch(/Attacker tech\s+W4 S0 A5\s+· Defender tech W0 S0 A0/);
   });
 
   test("includes public stationed defenders in attack intel and battle forecast", () => {
@@ -1931,7 +1933,7 @@ describe("mission creation", () => {
         attackerLosses: zeroBattleLosses(),
         randomness: {
           outcomeCounts: { win: 81, draw: 47, defeat: 0 }, sampleCount: 128,
-          outcomeRange: ["win", "draw"], attackerSurvivorRange: { min: 1, max: 3 },
+          outcomeRange: ["win", "draw"],
         },
       },
       coords: { galaxy: 7, system: 41, position: 6 },
@@ -1956,9 +1958,6 @@ describe("mission creation", () => {
     expect(headline).toBeDefined();
     expect(headline?.props?.className).not.toContain("truncate");
     expect(text).not.toContain("Probable win");
-    expect(text).toContain("Your technology");
-    expect(text).toContain("DEF");
-    expect(text).toContain("200");
     expect(text).toContain("Defending forces");
     expect(text).toContain("Fleet");
     expect(text).toContain("Small Cargo");
@@ -2448,7 +2447,7 @@ describe("mission creation", () => {
 
     expect(text).toContain("No debris available");
     expect(text).toContain("Nothing to collect");
-    expect(text).not.toContain("Unknown");
+    expect(text).toContain("Resources Now Unknown");
   });
 
   test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {
@@ -3069,7 +3068,8 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
-    if (render.name === "Icon") return [];
+    // Manual VNode traversal has no hook owner; the lazy report popup needs Preact rendering.
+    if (render.name === "Icon" || render.name === "LazySimulatedBattleReportControl") return [];
     return findElements(render({ ...(vnode.props ?? {}) }), tag);
   }
   const self = vnode.type === tag ? [vnode] : [];
@@ -3085,7 +3085,7 @@ function collectText(node: unknown): string[] {
   const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown; title?: unknown; "aria-label"?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
-    if (render.name === "Icon") return [];
+    if (render.name === "Icon" || render.name === "LazySimulatedBattleReportControl") return [];
     return collectText(render({ ...(vnode.props ?? {}) }));
   }
   const labels = typeof vnode.type === "string"
@@ -3095,25 +3095,14 @@ function collectText(node: unknown): string[] {
 }
 
 
-describe("VEY-888 canonical mission quantities", () => {
-  test("reduces only invalid quantities and never reselects returned or newly produced ships", () => {
-    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 2, lightFighter: 3 };
-    const reduced = reconcileMissionShips(draft, { ships: [{ id: 0, count: 1 }, { id: 1, count: 3 }] });
-    expect(reduced).toEqual({ ...draft, smallCargo: 1 });
-    expect(draft.smallCargo).toBe(2);
-    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 9 }, { id: 1, count: 3 }] })).toBe(reduced);
-    expect(reconcileMissionShips(reduced, null)).toBe(reduced);
-    expect(reconcileMissionShips(reduced, { ships: [] })).toEqual(initialMissionShips({ mode: "mission" } as any));
-  });
-
-  test("last Small Cargo cannot survive canonical launchable inventory decreasing to zero", () => {
-    const draft = { ...initialMissionShips({ mode: "mission" } as any), smallCargo: 1 };
-    const inventory = missionInventory({ ships: [{ id: 0, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } }], launchableShips: [{ id: 0, count: 0 }] });
-    const reduced = reconcileMissionShips(draft, inventory);
-    expect(reduced.smallCargo).toBe(0);
-    expect(reconcileMissionShips(reduced, { ships: [{ id: 0, count: 1 }] }).smallCargo).toBe(0);
-  });
+test("refreshed quantities block rather than rewrite the explicit mission draft", () => {
+  expect(missionCreationSource).toContain("const ships = shipDraft;");
+  const draft = { ...initialMissionShips(attackAction), smallCargo: 6 };
+  const inventory = missionInventory({ ships: [{ id: 0, count: 99, cost: { metal: "0", crystal: "0", deuterium: "0" } }], launchableShips: [{ id: 0, count: 0 }] });
+  expect(staleSelectedShipQuantityBlocker(attackAction, draft, inventory)).toContain("6 selected / 0 available");
+  expect(draft.smallCargo).toBe(6);
 });
+
 
 
 test("attack readiness preparation locks both body selectors and Confirm before awaiting", async () => {
@@ -3168,4 +3157,9 @@ test("attack readiness preparation locks both body selectors and Confirm before 
     await Promise.all([first, duplicate]);
     expect(sends).toBe(1);
   } finally { release(); store.dispose(); }
+});
+
+test("explicit null public resources never fall back to seeded target balances", () => {
+  const target = targetPlanet({ resources: { metal: 999999, crystal: 999999, deuterium: 999999, energy: 0 }, publicState: { resources: null } });
+  expect(targetResourceIntel(target, 600).current).toBeNull();
 });

@@ -22,6 +22,7 @@ import {VeydriftDefenseHoldStorage} from "../src/libraries/VeydriftDefenseHoldSt
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFleetFuel} from "../src/libraries/VeydriftFleetFuel.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {VeydriftMoonBuildings} from "../src/libraries/VeydriftMoonBuildings.sol";
 import {VeydriftMoonDefenseBacklog} from "../src/libraries/VeydriftMoonDefenseBacklog.sol";
 import {VeydriftMoonDefenseProduction} from "../src/libraries/VeydriftMoonDefenseProduction.sol";
 import {VeydriftMoonGateShips} from "../src/libraries/VeydriftMoonGateShips.sol";
@@ -32,6 +33,7 @@ import {VeydriftMoonShipBacklog} from "../src/libraries/VeydriftMoonShipBacklog.
 import {VeydriftMoonShipDependencies} from "../src/libraries/VeydriftMoonShipDependencies.sol";
 import {VeydriftMoonShipProduction} from "../src/libraries/VeydriftMoonShipProduction.sol";
 import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
+import {VeydriftRefereeBattle} from "../src/libraries/VeydriftRefereeBattle.sol";
 import {VeydriftReserveRelease} from "../src/libraries/VeydriftReserveRelease.sol";
 import {VeydriftCombatAttribution} from "../src/libraries/VeydriftCombatAttribution.sol";
 import {VeydriftCombatPreparation} from "../src/libraries/VeydriftCombatPreparation.sol";
@@ -57,7 +59,7 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
         );
     }
 
-    function _touchCreatedChildren(address creator) private {
+    function _touchCreatedChildren(address creator) internal {
         uint64 nonce = vm.getNonce(creator);
         for (uint256 n = 1; n < nonce; ++n) {
             address child = vm.computeCreateAddress(creator, n);
@@ -65,6 +67,37 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
             vm.etch(child, child.code);
             _touchCreatedChildren(child);
         }
+    }
+
+    /// Forge predeploys linked libraries before the test state journal. Touch their exact
+    /// existing runtime so dumpState includes them (no relocation or invented pointers).
+    function _touchLinkedLibraries() internal {
+        vm.etch(address(VeydriftAntiRaidPrimitives), address(VeydriftAntiRaidPrimitives).code);
+        vm.etch(address(VeydriftBodyAttackWindow), address(VeydriftBodyAttackWindow).code);
+        vm.etch(address(VeydriftCatalog), address(VeydriftCatalog).code);
+        vm.etch(address(VeydriftDefenseHoldStorage), address(VeydriftDefenseHoldStorage).code);
+        vm.etch(address(VeydriftDependencies), address(VeydriftDependencies).code);
+        vm.etch(address(VeydriftFleetFuel), address(VeydriftFleetFuel).code);
+        vm.etch(address(VeydriftFormulas), address(VeydriftFormulas).code);
+        vm.etch(address(VeydriftMoonBuildings), address(VeydriftMoonBuildings).code);
+        vm.etch(address(VeydriftMoonDefenseBacklog), address(VeydriftMoonDefenseBacklog).code);
+        vm.etch(address(VeydriftMoonDefenseProduction), address(VeydriftMoonDefenseProduction).code);
+        vm.etch(address(VeydriftMoonGateShips), address(VeydriftMoonGateShips).code);
+        vm.etch(address(VeydriftMoonIncarnation), address(VeydriftMoonIncarnation).code);
+        vm.etch(address(VeydriftMoonMath), address(VeydriftMoonMath).code);
+        vm.etch(address(VeydriftMoonProductionBatch), address(VeydriftMoonProductionBatch).code);
+        vm.etch(address(VeydriftMoonShipBacklog), address(VeydriftMoonShipBacklog).code);
+        vm.etch(address(VeydriftMoonShipDependencies), address(VeydriftMoonShipDependencies).code);
+        vm.etch(address(VeydriftMoonShipProduction), address(VeydriftMoonShipProduction).code);
+        vm.etch(address(VeydriftRaidStorage), address(VeydriftRaidStorage).code);
+        vm.etch(address(VeydriftRefereeBattle), address(VeydriftRefereeBattle).code);
+        vm.etch(address(VeydriftReserveRelease), address(VeydriftReserveRelease).code);
+        vm.etch(address(VeydriftCombatAttribution), address(VeydriftCombatAttribution).code);
+        vm.etch(address(VeydriftCombatPreparation), address(VeydriftCombatPreparation).code);
+        vm.etch(address(VeydriftCombatStats), address(VeydriftCombatStats).code);
+        vm.etch(address(VeydriftLegacyCombatMutation), address(VeydriftLegacyCombatMutation).code);
+        vm.etch(address(VeydriftScoreSnapshot), address(VeydriftScoreSnapshot).code);
+        vm.etch(address(VeydriftStagedCohorts), address(VeydriftStagedCohorts).code);
     }
 
     function testExportMixedProxyFixture() external {
@@ -151,32 +184,7 @@ contract VeydriftBatchFixtureExportTest is VeydriftCombatReferenceParityTest {
         vm.serializeUint(key, "counterplayOrigin", battle.counterplayOriginPlanetId);
         vm.serializeUint(key, "returnIds", returnIds);
         vm.serializeUint(key, "homeIds", homeIds);
-        // Forge predeploys linked libraries before the test state journal. Touch their exact
-        // existing runtime so dumpState includes them (no relocation or invented pointers).
-        vm.etch(address(VeydriftAntiRaidPrimitives), address(VeydriftAntiRaidPrimitives).code);
-        vm.etch(address(VeydriftBodyAttackWindow), address(VeydriftBodyAttackWindow).code);
-        vm.etch(address(VeydriftCatalog), address(VeydriftCatalog).code);
-        vm.etch(address(VeydriftDefenseHoldStorage), address(VeydriftDefenseHoldStorage).code);
-        vm.etch(address(VeydriftDependencies), address(VeydriftDependencies).code);
-        vm.etch(address(VeydriftFleetFuel), address(VeydriftFleetFuel).code);
-        vm.etch(address(VeydriftFormulas), address(VeydriftFormulas).code);
-        vm.etch(address(VeydriftMoonDefenseBacklog), address(VeydriftMoonDefenseBacklog).code);
-        vm.etch(address(VeydriftMoonDefenseProduction), address(VeydriftMoonDefenseProduction).code);
-        vm.etch(address(VeydriftMoonGateShips), address(VeydriftMoonGateShips).code);
-        vm.etch(address(VeydriftMoonIncarnation), address(VeydriftMoonIncarnation).code);
-        vm.etch(address(VeydriftMoonMath), address(VeydriftMoonMath).code);
-        vm.etch(address(VeydriftMoonProductionBatch), address(VeydriftMoonProductionBatch).code);
-        vm.etch(address(VeydriftMoonShipBacklog), address(VeydriftMoonShipBacklog).code);
-        vm.etch(address(VeydriftMoonShipDependencies), address(VeydriftMoonShipDependencies).code);
-        vm.etch(address(VeydriftMoonShipProduction), address(VeydriftMoonShipProduction).code);
-        vm.etch(address(VeydriftRaidStorage), address(VeydriftRaidStorage).code);
-        vm.etch(address(VeydriftReserveRelease), address(VeydriftReserveRelease).code);
-        vm.etch(address(VeydriftCombatAttribution), address(VeydriftCombatAttribution).code);
-        vm.etch(address(VeydriftCombatPreparation), address(VeydriftCombatPreparation).code);
-        vm.etch(address(VeydriftCombatStats), address(VeydriftCombatStats).code);
-        vm.etch(address(VeydriftLegacyCombatMutation), address(VeydriftLegacyCombatMutation).code);
-        vm.etch(address(VeydriftScoreSnapshot), address(VeydriftScoreSnapshot).code);
-        vm.etch(address(VeydriftStagedCohorts), address(VeydriftStagedCohorts).code);
+        _touchLinkedLibraries();
         // dumpState exports journal-touched accounts, not every setup-created account.
         // Enumerate actual CREATE addresses/nonces recursively; copy code to itself so unused
         // modules (combat, return, rapidfire, etc.) are included before their first invocation.

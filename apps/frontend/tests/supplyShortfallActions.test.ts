@@ -13,14 +13,15 @@ describe("resource-shortfall Supply actions", () => {
     expect(appSource).toContain("handleOpenBatchSupply(selectedManagedPlanet, resources)");
     expect(appSource).toContain("initialRequested={batchSupplyInitialRequested}");
     expect(appSource.match(/onSupply=\{handleSupplyCurrentPlanet\}/g)).toHaveLength(4);
-    expect(appSource).toContain("isCurrent: () => batchSupplySourceLoadIdRef.current === sourceLoadId");
+    expect(appSource).toContain("const isCurrent = () => mounted.current && batchSupplySourceLoadIdRef.current === sourceLoadId");
+    expect(appSource).toContain("const { refreshLevelSupply, handleConfirmBatchSupply } = useBatchSupplyActions(");
     expect(appSource).toContain('if (!isCurrent()) throw new Error("Supply selection changed before submission.');
     expect(appSource).toContain("order.originPlanetId === target.planetId");
   });
 
   test("keeps Infrastructure and Research Supply inline to the right of the primary action", () => {
     expect(infrastructureSource).toContain("secondaryAction={supplyShortfall && onSupply");
-    expect(structureSource).toContain('className="mt-3 flex gap-2"');
+    expect(structureSource).toContain('className={inlineAction ? "mt-3 flex gap-2"');
     expect(structureSource).toContain('className="inline-flex h-10 w-10 shrink-0');
     expect(researchSource).toContain('className="mt-3 flex gap-2"');
     expect(researchSource).toContain('className="inline-flex h-10 w-10 shrink-0');

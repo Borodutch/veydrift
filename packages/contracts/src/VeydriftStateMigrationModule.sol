@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftRefereeSettlementModule} from "./VeydriftRefereeSettlementModule.sol";
 import {VeydriftMigrationDiscardModule} from "./VeydriftMigrationDiscardModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
@@ -8,7 +9,14 @@ import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol
 import {VeydriftReserveRelease} from "./libraries/VeydriftReserveRelease.sol";
 import {VeydriftRiftModule} from "./VeydriftRiftModule.sol";
 import {VeydriftCombatRaidModule} from "./VeydriftCombatRaidModule.sol";
-import {Building, Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {
+    Building,
+    Defense,
+    MoonBuilding,
+    Resource,
+    Ship,
+    Technology
+} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftStateMigrationMoonSystem {
     function importMigratedMoonState(
@@ -121,7 +129,18 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     /// @dev The VeydriftGame facade routes the size-sensitive Rift selectors here. This module
     ///      dispatches them again under the original proxy storage context.
     fallback() external {
-        address module = msg.sig == 0x41dfa622 ? _combatRaidModule : _riftModule;
+        address module = msg.sig == 0x41dfa622
+            || msg.sig == VeydriftRefereeSettlementModule.applyBattleResultLeaves.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultProgress.selector
+            || msg.sig == VeydriftRefereeSettlementModule.submitBattleResult.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultSummary.selector
+            || msg.sig == VeydriftRefereeSettlementModule.configureBattleReferee.selector
+            || msg.sig == VeydriftRefereeSettlementModule.refereeBattleRecord.selector
+            || msg.sig == VeydriftRefereeSettlementModule.battleResultBinding.selector
+            || msg.sig == VeydriftRefereeSettlementModule.resetBattleResult.selector
+            || msg.sig == VeydriftRefereeSettlementModule.voidRefereeBattle.selector
+            ? _combatRaidModule
+            : _riftModule;
         (bool ok, bytes memory result) = module.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
@@ -334,9 +353,17 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
             emit PlanetRenamed(player, planetId, planetState.name);
         }
 
+        // An abandoned id keeps its old per-planet state; none of it may come with the import: no
+        // inherited Rift claim or raided-out record, and every building level, ship and defense
+        // count below is written from the payload, zero included, over whatever the id held.
+        Resources storage locked = _riftLockedResources[planetId];
+        if (locked.metal != 0 || locked.crystal != 0 || locked.deuterium != 0) revert InvalidId();
+        delete riftExtractions[planetId][Resource.Metal];
+        delete riftExtractions[planetId][Resource.Crystal];
+        delete riftExtractions[planetId][Resource.Deuterium];
         for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
             uint16 level = planetState.buildingLevels[id];
-            if (level != 0) {
+            if (level != _buildingLevels[planetId][Building(id)]) {
                 _snapshotPlanetScore(planetId);
                 _buildingLevels[planetId][Building(id)] = level;
                 emit BuildingCompleted(planetId, Building(id), level);
@@ -347,14 +374,18 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
         for (uint8 id = 0; id <= MAX_SHIP_ID;) {
             uint32 count = planetState.shipCounts[id];
-            if (count != 0) _setPlanetShipCount(planetId, Ship(id), count);
+            if (count != _shipCounts[planetId][Ship(id)]) {
+                _setPlanetShipCount(planetId, Ship(id), count);
+            }
             unchecked {
                 ++id;
             }
         }
         for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
             uint32 count = planetState.defenseCounts[id];
-            if (count != 0) _setPlanetDefenseCount(planetId, Defense(id), count);
+            if (count != _defenseCounts[planetId][Defense(id)]) {
+                _setPlanetDefenseCount(planetId, Defense(id), count);
+            }
             unchecked {
                 ++id;
             }
@@ -370,16 +401,30 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         private
     {
         if (planetState.buildingQueue.active) {
-            buildingConstructions[planetId] = planetState.buildingQueue;
-            emit BuildingStarted(
-                planetId,
-                planetState.buildingQueue.building,
-                planetState.buildingQueue.targetLevel,
-                planetState.buildingQueue.readyAt,
-                planetState.buildingQueue.cost.metal,
-                planetState.buildingQueue.cost.crystal,
-                planetState.buildingQueue.cost.deuterium
-            );
+            BuildingConstruction memory queue = planetState.buildingQueue;
+            buildingConstructions[planetId] = queue;
+            // A target below the imported level is an in-flight demolition.
+            if (queue.targetLevel < _buildingLevels[planetId][queue.building]) {
+                emit BuildingDemolitionStarted(
+                    planetId,
+                    queue.building,
+                    queue.targetLevel,
+                    queue.readyAt,
+                    queue.cost.metal,
+                    queue.cost.crystal,
+                    queue.cost.deuterium
+                );
+            } else {
+                emit BuildingStarted(
+                    planetId,
+                    queue.building,
+                    queue.targetLevel,
+                    queue.readyAt,
+                    queue.cost.metal,
+                    queue.cost.crystal,
+                    queue.cost.deuterium
+                );
+            }
         }
 
         if (planetState.defenseQueue.active) {

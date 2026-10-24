@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { prepareMissionBattleForecast } from "./components/MissionBattleForecastPanel";
 import { preparePublicTargetBattleForecast, resolveVerifiedPublicTargetBattleForecast } from "./components/MissionCreationPage";
 import { emptyMissionShips } from "./galaxyActions";
+import { CONTRACT_COMBAT_MODEL_VERSION, REFEREE_COMBAT_MODEL_VERSION, setActiveCombatModel, simulateBattleStats } from "./battlePreview";
 import type { MissionDetailResponse, MissionBattleForecast } from "./walletFlow";
 
 const now = 1_790_000_000_000;
@@ -101,18 +102,23 @@ describe("en-route whole-battle forecast", () => {
 });
 
 
-test("both launch and en-route forecasts reject unverified models and previously cached odds", () => {
+test("both launch and en-route forecasts reject unverified models and previously simulated odds", () => {
   const value = detail();
   const mission = prepareMissionBattleForecast(value, now)!;
   const launch = preparePublicTargetBattleForecast({ ...emptyMissionShips(), cruiser: 3 }, { ...value.battleForecast!.target!, occupiedBy: null }, tech, false, undefined, { projectedAttackArrivalAt: now / 1000 + 600 });
   for (const prepared of [mission, launch]) {
-    expect(prepared.status).toBe("simulate");
-    expect(resolveVerifiedPublicTargetBattleForecast(prepared, false).kind).toBe("uncertain");
-    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true).kind).not.toBe("uncertain");
-    const downgraded = resolveVerifiedPublicTargetBattleForecast(prepared, false);
+    if (prepared.status !== "simulate") throw new Error("Expected simulation inputs");
+    const simulation = { status: "done" as const, input: prepared.input, modelVersion: 3, stats: simulateBattleStats(prepared.input, 8) };
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true).loading).toBe(true);
+    expect(resolveVerifiedPublicTargetBattleForecast(prepared, true, simulation).kind).not.toBe("uncertain");
+    const downgraded = resolveVerifiedPublicTargetBattleForecast(prepared, false, simulation);
     expect(downgraded.kind).toBe("uncertain");
+    expect(downgraded.simulation).toBeUndefined();
     expect(downgraded.sampleReport).toBeUndefined();
     expect(downgraded.reportInput).toBeUndefined();
+    const failed = resolveVerifiedPublicTargetBattleForecast(prepared, true, { status: "error", error: "This battle is too large to estimate here." });
+    expect(failed.kind).toBe("uncertain");
+    expect(failed.detail).toContain("too large");
   }
 });
 
@@ -120,4 +126,20 @@ test("already-started historical battles are never simulated with corrected math
   const value = detail();
   value.mission.combatResolutionProgress = { roundsCompleted: 0, totalRounds: 6 };
   expect(uncertain(value)).toContain("Battle in progress");
+});
+
+test("an empty attacker against a target too large to simulate never throws during render", () => {
+  setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
+  try {
+    const target = { ...preview().target!, occupiedBy: null };
+    target.publicState = { ...target.publicState!, fleet: [{ id: 1, count: 2_000_000 }] };
+    const prepared = preparePublicTargetBattleForecast(emptyMissionShips(), target, tech, false, undefined, { projectedAttackArrivalAt: now / 1000 + 600 });
+    expect(prepared.status).toBe("complete");
+    if (prepared.status !== "complete") throw new Error("Expected a complete forecast");
+    expect(prepared.forecast.kind).toBe("uncertain");
+    expect(prepared.forecast.loading).toBe(false);
+    expect(prepared.forecast.detail).toContain("too large");
+  } finally {
+    setActiveCombatModel(CONTRACT_COMBAT_MODEL_VERSION);
+  }
 });

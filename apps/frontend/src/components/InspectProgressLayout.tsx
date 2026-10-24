@@ -79,6 +79,7 @@ export function InspectTwoColumnLayout({
 export function InspectCatalogTile({
   asset,
   currentText,
+  demolition,
   isDimmed,
   isSelected,
   labelTone = "normal",
@@ -89,15 +90,17 @@ export function InspectCatalogTile({
 }: {
   asset: string;
   currentText: string;
+  /** A running demolition: rose wording plus a live countdown and progress bar. */
+  demolition?: { indeterminate: boolean; label: string; progress: number; remaining: string } | undefined;
   isDimmed: boolean;
   isSelected: boolean;
   labelTone?: "normal" | "muted" | undefined;
   label: string;
   onClick: () => void;
   statusText?: string | undefined;
-  statusTone?: "accent" | "warning" | undefined;
+  statusTone?: "accent" | "warning" | "danger" | undefined;
 }) {
-  const accentClass = statusTone === "warning" ? "text-amber-300" : "text-signal";
+  const accentClass = statusTone === "warning" ? "text-amber-300" : statusTone === "danger" ? "text-rose-300" : "text-signal";
   const labelClass = labelTone === "muted" ? "text-slate-500" : "text-white";
 
   return (
@@ -123,11 +126,23 @@ export function InspectCatalogTile({
       <span className="mt-2 block min-w-0">
         <span className={`block truncate text-sm font-semibold ${labelClass}`}>{label}</span>
         <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
-          <span className={isDimmed ? "text-slate-500" : "text-slate-300"}>
+          <span className={demolition ? "truncate text-rose-200" : isDimmed ? "text-slate-500" : "text-slate-300"}>
             {currentText}
           </span>
           {statusText ? <span className={`truncate text-right ${accentClass}`}>{statusText}</span> : null}
         </span>
+        {demolition ? (
+          <span className="mt-1.5 flex items-center gap-2">
+            <AnimatedProgressBar
+              className="h-1 min-w-0 flex-1 bg-black/25"
+              fillClassName="bg-rose-300"
+              indeterminate={demolition.indeterminate}
+              label={`${demolition.label} progress`}
+              value={demolition.progress}
+            />
+            <span className="shrink-0 text-[11px] tabular-nums text-rose-200/80">{demolition.remaining}</span>
+          </span>
+        ) : null}
       </span>
     </button>
   );

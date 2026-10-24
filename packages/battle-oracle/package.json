@@ -1,0 +1,21 @@
+{
+  "name": "@veydrift/battle-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./oracle.ts",
+    "./catalog": "./catalog.ts"
+  },
+  "scripts": {
+    "check": "tsc --project tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.23",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@noble/hashes": "1.8.0"
+  }
+}

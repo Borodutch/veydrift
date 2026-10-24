@@ -38,7 +38,11 @@ library VeydriftMoonDefenseBacklog {
         mapping(uint256 planetId => CombatPreparation preparation) combat;
     }
 
+    // Same bound as the moon ship lane and the batch path; keeps `_popFirst` shifts bounded.
+    uint256 internal constant MAX_BACKLOG = 16;
+
     error MoonCombatFrozen(uint256 planetId);
+    error MoonDefenseBacklogFull(uint256 planetId);
     error MoonCombatNotPrepared(uint256 planetId);
     error MoonCombatImpactChanged();
     error InvalidWorkBudget();
@@ -163,6 +167,9 @@ library VeydriftMoonDefenseBacklog {
     ) public returns (uint64 readyAt) {
         Entry storage active = activeQueues[planetId];
         Entry[] storage backlog = _layout().queues[planetId];
+        if (active.active && backlog.length >= MAX_BACKLOG) {
+            revert MoonDefenseBacklogFull(planetId);
+        }
         uint256 baseReadyAt = active.active
             ? (backlog.length == 0 ? active.readyAt : backlog[backlog.length - 1].readyAt)
             : nowAt;

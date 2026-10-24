@@ -95,6 +95,7 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
   test("refreshes mission action state eagerly only where launch controls are already visible", () => {
     expect(shouldRefreshMissionActionStateForPage("galaxy")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("planet")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("moon-inspect")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("mission-control")).toBe(false);
     expect(shouldRefreshMissionActionStateForPage("rankings")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
@@ -107,9 +108,11 @@ const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.u
 
     expect(shouldRefreshShipyardStateForPage("shipyard")).toBe(true);
     expect(shouldRefreshShipyardStateForPage("galaxy")).toBe(true);
+    expect(shouldRefreshShipyardStateForPage("moon-inspect")).toBe(true);
     expect(shouldRefreshShipyardStateForPage("mission-control")).toBe(false);
     expect(shouldRefreshShipyardStateForPage("research")).toBe(false);
     expect(source).toContain('shipyardQuery, shouldRefreshShipyardStateForPage(page) || page === "defenses" || composingMission');
+    expect(source).toContain('defenseQuery, page === "defenses" || page === "shipyard" || page === "infrastructure" || shouldRefreshMissionActionStateForPage(page) || composingMission');
   });
 
 

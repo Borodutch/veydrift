@@ -1,4 +1,6 @@
 import { battleForecastUnavailableNotice } from "../playerNotice";
+import { activeCombatModel } from "../battlePreview";
+import { FAST_SIMULATION, useBattleSimulation, type BattleSimulation } from "../battleSimulation";
 import { useVerifiedCombatModel } from "../combatModel";
 import { emptyMissionShips } from "../galaxyActions";
 import type { MissionDetailResponse } from "../walletFlow";
@@ -40,22 +42,27 @@ export function prepareMissionBattleForecast(detail: MissionDetailResponse, now:
 
 export function MissionBattleForecastPanel({ detail, now }: { detail: MissionDetailResponse; now: number }) {
   const verified = useVerifiedCombatModel();
-  return renderMissionBattleForecastPanel({ detail, now }, verified);
+  const prepared = prepareMissionBattleForecast(detail, now);
+  const simulation = useBattleSimulation(prepared?.status === "simulate" && verified ? prepared.input : null, activeCombatModel(), FAST_SIMULATION);
+  return renderMissionBattleForecastPanel({ detail, now }, verified, simulation);
 }
 
-export function renderMissionBattleForecastPanel({ detail, now }: { detail: MissionDetailResponse; now: number }, verified: boolean) {
+export function renderMissionBattleForecastPanel(
+  { detail, now }: { detail: MissionDetailResponse; now: number },
+  verified: boolean,
+  simulation?: BattleSimulation,
+) {
   const prepared = prepareMissionBattleForecast(detail, now);
   if (!prepared) return null;
-  const forecast = resolveVerifiedPublicTargetBattleForecast(prepared, verified);
+  const forecast = resolveVerifiedPublicTargetBattleForecast(prepared, verified, simulation);
   const preview = detail.battleForecast;
+  const supporters = preview?.stationedDefenders.length ?? 0;
   return <section className="grid gap-2 rounded-md surface-inset p-3" aria-label="Probable outcome">
     <h2 className="text-sm font-semibold text-slate-200">Probable outcome</h2>
-    {preview ? <p className="text-xs text-slate-400">Shared battle #{preview.leaderMissionId} · {preview.participants.length} attacking fleets · {preview.stationedDefenders.length} supporting defenders</p> : null}
-    <p className="text-xs text-slate-400">Current public intel, refreshed automatically. Participants, technology and target forces may change before impact. Simulations are estimates, not guaranteed casualties or loot.</p>
+    {preview ? <p className="text-xs text-slate-400">
+      Battle #{preview.leaderMissionId} · {preview.participants.length} attacking {preview.participants.length === 1 ? "fleet" : "fleets"}
+      {supporters ? ` · ${supporters} defending ${supporters === 1 ? "fleet" : "fleets"}` : ""} · based on current public intel
+    </p> : null}
     <AttackOutcomePanel battleForecast={forecast} />
-    {prepared.status === "simulate" ? <div className="grid gap-1 text-xs text-slate-400">
-      {prepared.input.attackers.map(participant => <div key={participant.id}>{participant.label} · W {participant.technology.weapons} / S {participant.technology.shielding} / A {participant.technology.armor}</div>)}
-      {prepared.input.defender.counterplay?.map(participant => <div key={participant.id}>{participant.label} · W {participant.technology.weapons} / S {participant.technology.shielding} / A {participant.technology.armor}</div>)}
-    </div> : null}
   </section>;
 }

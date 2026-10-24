@@ -33,6 +33,7 @@ import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.so
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
+import {ReferralProxy} from "./support/ReferralProxy.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {
     IVeydriftResourceProjectionGame,
@@ -43,6 +44,8 @@ import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {VeydriftFleetFuel} from "../src/libraries/VeydriftFleetFuel.sol";
+import {VeydriftScoreSnapshot} from "../src/libraries/VeydriftScoreSnapshot.sol";
 import {VeydriftPlanetGeneration} from "../src/libraries/VeydriftPlanetGeneration.sol";
 import {
     Building,
@@ -282,6 +285,7 @@ contract VeydriftGameTest is Test {
         address indexed delegate,
         address actor
     );
+    event DelegateProposed(address indexed main, address indexed delegate);
 
     event FirstPlanetSettled(
         address indexed player,
@@ -438,11 +442,40 @@ contract VeydriftGameTest is Test {
         vm.deal(delegate, 1 ether);
     }
 
+    function testBatchGasUsesProductionLinkedLibraries() public view {
+        // Game bytecode selection alone cannot detect a mixed-profile library graph.
+        // Runtime lengths ignore library self-address patches but distinguish the actual
+        // optimized deployment from the unoptimized tests-profile implementation.
+        assertEq(
+            address(VeydriftFormulas).code.length,
+            vm.getDeployedCode("VeydriftFormulas.sol:VeydriftFormulas:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftFleetFuel).code.length,
+            vm.getDeployedCode("VeydriftFleetFuel.sol:VeydriftFleetFuel:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftCatalog).code.length,
+            vm.getDeployedCode("VeydriftCatalog.sol:VeydriftCatalog:0.8.28:default").length
+        );
+        assertEq(
+            address(VeydriftAntiRaidPrimitives).code.length,
+            vm.getDeployedCode(
+                "VeydriftAntiRaidPrimitives.sol:VeydriftAntiRaidPrimitives:0.8.28:default"
+            )
+            .length
+        );
+        assertEq(
+            address(VeydriftScoreSnapshot).code.length,
+            vm.getDeployedCode("VeydriftScoreSnapshot.sol:VeydriftScoreSnapshot:0.8.28:default")
+            .length
+        );
+    }
+
     function testDelegateAndMainCanActForMainAndEitherCanRevoke() public {
         IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
 
-        vm.prank(player);
-        delegation.setDelegate(delegate);
+        _bindDelegate(player, delegate);
         assertEq(delegation.delegateOf(player), delegate);
         assertEq(delegation.delegatorOf(delegate), player);
         assertEq(delegation.effectivePlayer(delegate), player);
@@ -469,8 +502,7 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
         game.renamePlanet(planetId, "Denied");
 
-        vm.prank(player);
-        delegation.setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(player);
         delegation.revokeDelegate();
         assertEq(delegation.delegateOf(player), address(0));
@@ -481,19 +513,199 @@ contract VeydriftGameTest is Test {
         address replacement = address(0xD2E);
 
         vm.expectEmit(true, true, true, true, address(game));
-        emit DelegateUpdated(player, address(0), delegate, player);
+        emit DelegateProposed(player, delegate);
         vm.prank(player);
         delegation.setDelegate(delegate);
 
         vm.expectEmit(true, true, true, true, address(game));
-        emit DelegateUpdated(player, delegate, replacement, player);
+        emit DelegateUpdated(player, address(0), delegate, delegate);
+        vm.prank(delegate);
+        delegation.acceptDelegate(player);
+
         vm.prank(player);
         delegation.setDelegate(replacement);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateUpdated(player, delegate, replacement, replacement);
+        vm.prank(replacement);
+        delegation.acceptDelegate(player);
 
         vm.expectEmit(true, true, true, true, address(game));
         emit DelegateUpdated(player, replacement, address(0), replacement);
         vm.prank(replacement);
         delegation.revokeDelegate();
+    }
+
+    function testUnacceptedDelegateProposalNeverBindsTheProposedWallet() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address attacker = address(0xBAD);
+        vm.prank(player);
+        uint256 victimPlanet = game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(attacker);
+        delegation.setDelegate(player);
+        assertEq(delegation.pendingDelegateOf(attacker), player);
+        assertEq(delegation.delegateOf(attacker), address(0));
+        assertEq(delegation.delegatorOf(player), address(0));
+        assertEq(delegation.effectivePlayer(player), player);
+        // The proposed player keeps acting for themselves.
+        vm.prank(player);
+        game.renamePlanet(victimPlanet, "Still Mine");
+        assertEq(game.planetNames(victimPlanet), "Still Mine");
+
+        // A proposed fresh wallet's paid start settles its own planet, not the proposer's.
+        vm.prank(attacker);
+        delegation.setDelegate(delegate);
+        vm.prank(delegate);
+        uint256 delegatePlanet = game.startPlanet{value: 0.05 ether}();
+        assertEq(game.homePlanetOf(delegate), delegatePlanet);
+        assertEq(game.homePlanetOf(attacker), 0);
+    }
+
+    function testOnlyTheProposedWalletCanAcceptOnce() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address other = address(0xD2E);
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        vm.prank(other);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.DelegateNotProposed.selector, player, other)
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, address(0), delegate
+            )
+        );
+        delegation.acceptDelegate(address(0));
+        assertEq(delegation.delegateOf(player), address(0));
+        assertEq(delegation.delegatorOf(other), address(0));
+
+        vm.prank(delegate);
+        delegation.acceptDelegate(player);
+        assertEq(delegation.delegateOf(player), delegate);
+        assertEq(delegation.delegatorOf(delegate), player);
+        assertEq(delegation.effectivePlayer(delegate), player);
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+    }
+
+    function testReplacingDelegateWaitsForReplacementConsent() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address replacement = address(0xD2E);
+        _bindDelegate(player, delegate);
+
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+        assertEq(delegation.pendingDelegateOf(player), replacement);
+        assertEq(delegation.delegateOf(player), delegate);
+        assertEq(delegation.delegatorOf(delegate), player);
+        assertEq(delegation.delegatorOf(replacement), address(0));
+
+        vm.prank(replacement);
+        delegation.acceptDelegate(player);
+        assertEq(delegation.delegateOf(player), replacement);
+        assertEq(delegation.delegatorOf(replacement), player);
+        assertEq(delegation.delegatorOf(delegate), address(0));
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+    }
+
+    function testRevokeDelegateWithdrawsPendingProposal() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address replacement = address(0xD2E);
+
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DelegateProposed(player, address(0));
+        vm.prank(player);
+        delegation.revokeDelegate();
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, delegate
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.NoDelegate.selector, player));
+        delegation.revokeDelegate();
+
+        // Revoking the active delegate, here by the delegate, also clears a pending replacement.
+        _bindDelegate(player, delegate);
+        vm.prank(player);
+        delegation.setDelegate(replacement);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+        assertEq(delegation.delegateOf(player), address(0));
+        assertEq(delegation.delegatorOf(delegate), address(0));
+        assertEq(delegation.pendingDelegateOf(player), address(0));
+        vm.prank(replacement);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateNotProposed.selector, player, replacement
+            )
+        );
+        delegation.acceptDelegate(player);
+    }
+
+    function testAcceptDelegateRechecksAuthorityAtAcceptTime() public {
+        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
+        address otherMain = address(0xC0FFEE);
+        address nested = address(0xD2E);
+
+        // The proposed wallet was bound to another main after the proposal.
+        vm.prank(player);
+        delegation.setDelegate(delegate);
+        _bindDelegate(otherMain, delegate);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateAlreadyAssigned.selector, delegate, otherMain
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+
+        // The proposed wallet appointed its own delegate after the proposal.
+        _bindDelegate(delegate, nested);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegateHasDelegate.selector, delegate, nested
+            )
+        );
+        delegation.acceptDelegate(player);
+        vm.prank(delegate);
+        delegation.revokeDelegate();
+
+        // The proposing main became another main's delegate after the proposal.
+        _bindDelegate(otherMain, player);
+        vm.prank(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DelegatedWalletCannotDelegate.selector, player, otherMain
+            )
+        );
+        delegation.acceptDelegate(player);
     }
 
     function testDelegationRejectsAmbiguousOrNestedAuthority() public {
@@ -511,9 +723,13 @@ contract VeydriftGameTest is Test {
             abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, player)
         );
         delegation.setDelegate(player);
-
         vm.prank(player);
-        delegation.setDelegate(delegate);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InvalidDelegate.selector, address(game))
+        );
+        delegation.setDelegate(address(game));
+
+        _bindDelegate(player, delegate);
 
         vm.prank(otherMain);
         vm.expectRevert(
@@ -539,17 +755,14 @@ contract VeydriftGameTest is Test {
         );
         delegation.setDelegate(player);
 
-        vm.prank(player);
-        delegation.setDelegate(replacement);
+        _bindDelegate(player, replacement);
         assertEq(delegation.delegateOf(player), replacement);
         assertEq(delegation.delegatorOf(delegate), address(0));
         assertEq(delegation.delegatorOf(replacement), player);
     }
 
     function testDelegationNeverGrantsAdministrativeAuthority() public {
-        IVeydriftDelegation delegation = IVeydriftDelegation(address(game));
-        vm.prank(admin);
-        delegation.setDelegate(delegate);
+        _bindDelegate(admin, delegate);
 
         vm.prank(delegate);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, delegate));
@@ -558,6 +771,13 @@ contract VeydriftGameTest is Test {
         vm.prank(admin);
         game.setStartPrice(0.01 ether);
         assertEq(game.startPrice(), 0.01 ether);
+    }
+
+    function _bindDelegate(address main, address wallet) internal {
+        vm.prank(main);
+        IVeydriftDelegation(address(game)).setDelegate(wallet);
+        vm.prank(wallet);
+        IVeydriftDelegation(address(game)).acceptDelegate(main);
     }
 
     function testInitializationAndOwnerGuard() public {
@@ -838,8 +1058,7 @@ contract VeydriftGameTest is Test {
         assertEq(existsAfter, existsBefore);
         assertEq(claimedAfter, claimedBefore);
         vm.deal(delegate, 1 ether);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
         assertEq(game.homePlanetOf(player), 42);
@@ -866,8 +1085,7 @@ contract VeydriftGameTest is Test {
         );
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
 
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         (, bytes memory wrongSignature) = _signedMigrationPayload(migration, 0x6161, player, 42);
         vm.prank(delegate);
         vm.expectRevert(VeydriftMigrationSettlement.BadMigrationSignature.selector);
@@ -881,8 +1099,7 @@ contract VeydriftGameTest is Test {
             )
         );
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimForDelegate{value: 0.05 ether}(player, payload, signature);
         assertEq(game.homePlanetOf(player), 42);
@@ -921,8 +1138,7 @@ contract VeydriftGameTest is Test {
             _signedMigrationPayload(migration, signerKey, player, 42);
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(player, commitment);
         vm.deal(delegate, 1 ether);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         migration.claimWithReferralForDelegate{value: 0.05 ether}(
             player, payload, signature, commitment, v, r, s
@@ -1211,7 +1427,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralClaimRequiresCompletedMigration() public {
-        VeydriftReferralSystem pendingReferralSystem = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem pendingReferralSystem = ReferralProxy.deploy(admin);
         vm.prank(admin);
         pendingReferralSystem.setGame(address(game));
 
@@ -1326,7 +1542,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationRejectsCollisionAndPreservesExpiredOwnership() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         address otherPlayer = address(0xBEEF);
         vm.warp(3 days);
         address[] memory inviters = new address[](1);
@@ -1360,7 +1576,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationAcceptsRawReceiptCommitmentsAndKeepsNewBinding() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
 
         string memory validCode = "Legacy_Code";
@@ -1409,7 +1625,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationAcceptsCanonicalReplacementCommitment() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
 
         string memory code = "replacement-code";
@@ -1437,7 +1653,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralRewardStatsMigrationRequiresExactReviewedCountersAndZeroEscrow() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         bytes32 digest = migrating.referralMigrationLeafRewardStats(
             player, 0.025 ether, 0.025 ether, 0.01 ether
         );
@@ -1488,7 +1704,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralHistoryMigrationReemitsSettledCreditAndPreservesTotals() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         address invitee = address(0xBEEF);
         address recipient = address(0xCAFE);
@@ -1569,7 +1785,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationFinalizesReviewedSixTenThreeInventoryOutOfOrder() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
 
         address[] memory validOwners = new address[](6);
@@ -1708,7 +1924,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationPreservesReplayAndActiveCommitmentQuota() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         vm.prank(admin);
         migrating.setGame(address(game));
@@ -1757,7 +1973,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationFailsClosedForRedemptionManifestAndInvalidRows() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(10 days);
         string memory code = "preserve1";
         bytes32 codeHash = keccak256(bytes(code));
@@ -1836,7 +2052,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationRejectsWrongCommitmentAndCannotFinalizeWrongManifest() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
         string memory code = "receipt01";
         bytes32 codeHash = keccak256(bytes(code));
@@ -1901,7 +2117,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralMigrationCannotFinalizeAlteredTimestamp() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         vm.warp(3 days);
         string memory code = "receipt02";
         bytes32 codeHash = keccak256(bytes(code));
@@ -1944,7 +2160,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralHashOnlyMigrationRejectsAlteredReceiptEvidence() public {
-        VeydriftReferralSystem migrating = new VeydriftReferralSystem(admin);
+        VeydriftReferralSystem migrating = ReferralProxy.deploy(admin);
         string memory code = _legacyOverlengthCode(0);
         bytes32 codeHash = keccak256(bytes(_lowercaseReferralCode(code)));
         bytes32 receiptCommitment = keccak256(bytes(code));
@@ -2124,6 +2340,8 @@ contract VeydriftGameTest is Test {
         rejectingInviter.startPlanet{value: 0.05 ether}(game);
         rejectingInviter.claimReferralCode(referralSystem, code);
         rejectingInviter.setDelegate(game, referralDelegate);
+        vm.prank(referralDelegate);
+        IVeydriftDelegation(address(game)).acceptDelegate(address(rejectingInviter));
 
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
         vm.prank(invitee);
@@ -2502,8 +2720,8 @@ contract VeydriftGameTest is Test {
 
         assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
         assertEq(game.defenseCost(Defense.RocketLauncher).metal, 2_000);
-        assertEq(game.defenseCost(Defense.IonCannon).metal, 2_000);
-        assertEq(game.defenseCost(Defense.IonCannon).crystal, 6_000);
+        assertEq(game.defenseCost(Defense.IonCannon).metal, 5_000);
+        assertEq(game.defenseCost(Defense.IonCannon).crystal, 3_000);
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
         assertEq(game.technologyLevel(player, Technology.Energy), 0);
@@ -5405,8 +5623,7 @@ contract VeydriftGameTest is Test {
         orders[0] = ProductionOrder(0, uint8(Ship.SmallCargo), 1);
         vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
         game.startProductionBatch(planetId, orders);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         game.startProductionBatch(planetId, orders);
         vm.prank(admin);
@@ -6831,6 +7048,415 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    // #65: synthetic local state, not attribution of the unidentified live screenshot.
+    /// forge-config: default.isolate = true
+    function testInventory65TransportOverdueOutboundNeedsSecondVisit() public {
+        _inventory65Overdue(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployOverdueOutboundNeedsSecondVisit() public {
+        _inventory65Overdue(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportNinthOrderRollsBackFundedPrefix() public {
+        _inventory65Rollback(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployNinthOrderRollsBackFundedPrefix() public {
+        _inventory65Rollback(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportCanonicalFullEffectiveFreeAndMaturedComputer() public {
+        _inventory65Slots(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployCanonicalFullEffectiveFreeAndMaturedComputer() public {
+        _inventory65Slots(true);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65TransportBoundedSecondSourceRollsBackFirst() public {
+        _inventory65BoundedBatch(false);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65DeployBoundedSecondSourceRollsBackFirst() public {
+        _inventory65BoundedBatch(true);
+    }
+
+    function _inventory65BoundedBatch(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256[] memory ids = new uint256[](13);
+        for (uint16 i; i < 13; ++i) {
+            // The first child advances this mission to Returning. Appending that child
+            // shifts the next twelve-entry window past its due return, so order two is unfunded.
+            uint256 origin = i == 11 ? orders[1].originPlanetId : 2_000 + i;
+            if (i != 11) _inventory65Planet(origin, i + 1);
+            _inventory65Planet(3_000 + i, i + 21);
+            vm.prank(player);
+            ids[i] = game.launchFleetMission(
+                origin,
+                3_000 + i,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[0].ships,
+                orders[0].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+        assertEq(game.activeFleetMissionCount(player), 13);
+        uint256 firstId = game.nextFleetId();
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "funded first order plus lazy credits roll back"
+        );
+        for (uint256 i; i < ids.length; ++i) {
+            (
+                VeydriftGameStorage.FleetMissionStatus status,,,
+                VeydriftGameStorage.Resources memory cargo
+            ) = _fleetMission(ids[i]);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+            assertEq(keccak256(abi.encode(cargo)), keccak256(abi.encode(orders[0].cargo)));
+            assertEq(
+                keccak256(abi.encode(game.planet(3_000 + i).resources)),
+                keccak256(
+                    abi.encode(VeydriftGameStorage.Resources(1_000_000, 1_000_000, 1_000_000))
+                )
+            );
+            if (i != 11) assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0);
+        }
+        (VeydriftGameStorage.FleetMissionStatus newStatus,,,) = _fleetMission(firstId);
+        assertEq(uint8(newStatus), uint8(VeydriftGameStorage.FleetMissionStatus.None));
+        // Execute the exact first order alone to prove the funded prefix and cursor boundary.
+        VeydriftGameStorage.TransportBatchOrder[] memory prefix =
+            new VeydriftGameStorage.TransportBatchOrder[](1);
+        prefix[0] = orders[0];
+        assertEq(_inventory65Launch(deploy, target, prefix)[0], firstId);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 0);
+        (VeydriftGameStorage.FleetMissionStatus missed,,,) = _fleetMission(ids[11]);
+        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+        vm.prank(player);
+        game.renamePlanet(target, "Second bounded visit");
+        (missed,,,) = _fleetMission(ids[11]);
+        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+    }
+
+    /// forge-config: default.isolate = true
+    function testInventory65BoundedSweepVisitsOnlyTwelveUniqueMissions() public {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256[] memory ids = new uint256[](13);
+        for (uint16 i; i < 13; ++i) {
+            uint256 origin = 2_000 + i;
+            uint256 destination = 3_000 + i;
+            _inventory65Planet(origin, i + 1);
+            _inventory65Planet(destination, i + 21);
+            vm.prank(player);
+            ids[i] = game.launchFleetMission(
+                origin,
+                destination,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[0].ships,
+                orders[0].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        // rename is a genuine player action, not a mocked/self-call-only reconciler.
+        vm.prank(player);
+        game.renamePlanet(target, "First bounded visit");
+        uint256 outbound;
+        uint256 returning;
+        for (uint256 i; i < ids.length; ++i) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ids[i]);
+            if (status == VeydriftGameStorage.FleetMissionStatus.Outbound) ++outbound;
+            if (status == VeydriftGameStorage.FleetMissionStatus.Returning) ++returning;
+            assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0, "one leg per visit");
+        }
+        assertEq(outbound, 1, "thirteenth unique entry remains unvisited");
+        assertEq(returning, 12, "production sweep bound must stay twelve");
+        assertEq(game.activeFleetMissionCount(player), 13);
+        // Bounded retries eventually settle all legs without duplicate credits.
+        for (uint256 i; i < 4; ++i) {
+            vm.prank(player);
+            game.renamePlanet(target, "Continue bounded visits");
+        }
+        assertEq(game.activeFleetMissionCount(player), 0);
+        for (uint256 i; i < ids.length; ++i) {
+            assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 6);
+        }
+    }
+
+    function _inventory65Fixture()
+        private
+        returns (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders)
+    {
+        // Fail closed if the inline isolated-transaction setting stops taking effect.
+        ProductionBatchTransactionProbe probe = new ProductionBatchTransactionProbe();
+        probe.write(1);
+        (uint256 storageGas, uint256 transientValue) = probe.write(2);
+        assertGt(storageGas, 4_000, "batch gas checks need cold transaction boundaries");
+        assertEq(transientValue, 0);
+        // Reuse the real implementation/module stack, now behind the production proxy boundary.
+        game = VeydriftGame(
+            payable(address(
+                    new ERC1967Proxy(
+                        address(game), abi.encodeCall(VeydriftGame.initialize, (admin))
+                    )
+                ))
+        );
+        _fundGameReserves(RESERVE_FUNDING);
+        vm.warp(1_790_000_000);
+        target = 900;
+        _inventory65Planet(target, 100);
+        _setShipCount(target, Ship.LargeCargo, 0);
+        _setTechnologyLevel(player, Technology.Computer, 40);
+        orders = new VeydriftGameStorage.TransportBatchOrder[](9);
+        for (uint16 i; i < 9; ++i) {
+            _inventory65Planet(1_000 + i, i + 1);
+            orders[i].originPlanetId = 1_000 + i;
+            orders[i].ships.largeCargo = 6;
+            orders[i].cargo = VeydriftGameStorage.Resources(17, 11, 3);
+            orders[i].speedPercent = 100;
+        }
+    }
+
+    function _inventory65Planet(uint256 id, uint16 system) private {
+        _setPlanetOwner(id, player);
+        _setPlanetCoordinates(id, 1, system, 8);
+        _setPlanetLastSettledAt(id, uint64(block.timestamp));
+        _setShipCount(id, Ship.LargeCargo, 6);
+        VeydriftGameStorage.Resources memory total = game.totalInternalResources();
+        _setResources(id, 1_000_000, 1_000_000, 1_000_000);
+        // The existing helper overwrites shared accounting; preserve the sum of seeded bodies.
+        vm.store(
+            address(game),
+            bytes32(uint256(14)),
+            _packResourcesHead(total.metal + 1_000_000, total.crystal + 1_000_000)
+        );
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(total.deuterium) + 1_000_000));
+    }
+
+    function _inventory65Launch(
+        bool deploy,
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder[] memory orders
+    ) private returns (uint256[] memory ids) {
+        vm.prank(player);
+        // Keep the real Base transaction ceiling, with conservative calldata/intrinsic headroom.
+        if (deploy) {
+            return ITransportBatchEntrypoints(address(game)).launchDeployBatch{gas: 16_000_000}(
+                target, orders
+            );
+        }
+        return ITransportBatchEntrypoints(address(game)).launchTransportBatch{gas: 16_000_000}(
+            target, orders
+        );
+    }
+
+    function _inventory65DueTransport(
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder memory order
+    ) private returns (uint256 id) {
+        vm.prank(player);
+        id = game.launchFleetMission(
+            order.originPlanetId,
+            target,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            order.ships,
+            order.cargo,
+            100,
+            0
+        );
+        (, uint64 arrivalAt, uint64 returnAt,) = _fleetMission(id);
+        assertGt(returnAt, arrivalAt);
+        vm.warp(returnAt + 1);
+        assertEq(game.shipCount(order.originPlanetId, Ship.LargeCargo), 0);
+    }
+
+    function _inventory65State(
+        uint256 target,
+        VeydriftGameStorage.TransportBatchOrder[] memory orders
+    ) private view returns (bytes32 state) {
+        state = keccak256(
+            abi.encode(
+                game.nextFleetId(),
+                game.activeFleetMissionCount(player),
+                game.totalInternalResources(),
+                game.planet(target),
+                game.shipCount(target, Ship.LargeCargo),
+                metalToken.balanceOf(address(game)),
+                crystalToken.balanceOf(address(game)),
+                deuteriumToken.balanceOf(address(game)),
+                game.researchQueue(player)
+            )
+        );
+        for (uint256 i; i < orders.length; ++i) {
+            uint256 origin = orders[i].originPlanetId;
+            state = keccak256(
+                abi.encode(state, game.planet(origin), game.shipCount(origin, Ship.LargeCargo))
+            );
+        }
+    }
+
+    function _inventory65ExpectMissing() private {
+        // ABI order is ship, available, required (not required, available).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientShips.selector, Ship.LargeCargo, 0, 6
+            )
+        );
+    }
+
+    function _inventory65Overdue(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256 oldId = _inventory65DueTransport(target, orders[0]);
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(_inventory65State(target, orders), beforeState, "failed batch is atomic");
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
+        assertEq(
+            uint8(status),
+            uint8(VeydriftGameStorage.FleetMissionStatus.Outbound),
+            "arrival rolled back too"
+        );
+
+        vm.prank(player);
+        game.renamePlanet(target, "One lazy visit");
+        (status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(
+            game.shipCount(orders[0].originPlanetId, Ship.LargeCargo),
+            0,
+            "both deadlines due does not credit both legs"
+        );
+        // Positive control: the already-Returning leg is settled by the first child, then spent.
+        uint256[] memory ids = _inventory65Launch(deploy, target, orders);
+        assertEq(ids.length, 9);
+        assertEq(game.activeFleetMissionCount(player), 9);
+        (status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+        for (uint256 i; i < orders.length; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+        }
+        bytes32 spent = _inventory65State(target, orders);
+        game.completeFleetMissionReturn(oldId);
+        game.resolveFleetMission(oldId);
+        assertEq(
+            _inventory65State(target, orders),
+            spent,
+            "terminal replay cannot resurrect spent ships/cargo"
+        );
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(_inventory65State(target, orders), spent);
+    }
+
+    function _inventory65Rollback(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        _setShipCount(orders[8].originPlanetId, Ship.LargeCargo, 0);
+        uint256 firstId = game.nextFleetId();
+        bytes32 beforeState = _inventory65State(target, orders);
+        _inventory65ExpectMissing();
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "eight funded children and all shared accounting roll back"
+        );
+        for (uint256 i; i < 9; ++i) {
+            (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(firstId + i);
+            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.None));
+            assertEq(
+                uint256(vm.load(address(game), keccak256(abi.encode(firstId + i, uint256(86))))),
+                0,
+                "chronology registration rolled back"
+            );
+        }
+        // Prove the exact funded prefix really is executable, rather than failing an earlier guard.
+        VeydriftGameStorage.TransportBatchOrder[] memory prefix =
+            new VeydriftGameStorage.TransportBatchOrder[](8);
+        for (uint256 i; i < 8; ++i) {
+            prefix[i] = orders[i];
+        }
+        uint256[] memory ids = _inventory65Launch(deploy, target, prefix);
+        assertEq(ids.length, 8);
+        assertEq(game.nextFleetId(), firstId + 8);
+        assertEq(game.activeFleetMissionCount(player), 8);
+        for (uint256 i; i < 8; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+            assertLt(game.planet(orders[i].originPlanetId).resources.deuterium, 1_000_000);
+        }
+    }
+
+    function _inventory65Slots(bool deploy) private {
+        (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
+            _inventory65Fixture();
+        uint256 oldId = game.nextFleetId();
+        for (uint256 i; i < 8; ++i) {
+            vm.prank(player);
+            game.launchFleetMission(
+                orders[i].originPlanetId,
+                target,
+                VeydriftGameStorage.FleetMissionType.Transport,
+                orders[i].ships,
+                orders[i].cargo,
+                100,
+                0
+            );
+        }
+        vm.warp(block.timestamp + 30 days);
+        vm.prank(player);
+        game.renamePlanet(target, "Settle outbound legs");
+        _setTechnologyLevel(player, Technology.Computer, 7); // canonical 8/8; effective 0/8
+        _setResearchQueue(player, Technology.Computer, 8, uint64(block.timestamp)); // effective 0/9
+        assertEq(game.activeFleetMissionCount(player), 8);
+        for (uint256 i; i < 8; ++i) {
+            assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
+        }
+        bytes32 beforeState = _inventory65State(target, orders);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetSlotLimitReached.selector, 8)
+        );
+        _inventory65Launch(deploy, target, orders);
+        assertEq(
+            _inventory65State(target, orders),
+            beforeState,
+            "precheck runs before return and research settlement"
+        );
+        assertEq(game.technologyLevel(player, Technology.Computer), 7);
+        assertTrue(game.researchQueue(player).active);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        // finishResearch runs the ordinary fleet sweep and research completion, then retry.
+        vm.prank(player);
+        game.finishResearch();
+        assertEq(game.activeFleetMissionCount(player), 0);
+        assertEq(game.technologyLevel(player, Technology.Computer), 8);
+        assertFalse(game.researchQueue(player).active);
+        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
+        assertEq(_inventory65Launch(deploy, target, orders).length, 9);
+    }
+
     function testLaunchTransportBatchCreatesAtomicOwnedTransports() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -7103,11 +7729,12 @@ contract VeydriftGameTest is Test {
     }
 
     // Isolation commits setup writes and resets warmth/refunds before the actual call.
-    // Production source artifacts remain optimized via dynamic_test_linking.
+    // This file stays on the production profile, including linked libraries.
+    // Fifteen mixed orders alone fit after optimization; due settlement is the over-cap case.
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenExceedsBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         vm.prank(player);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
@@ -7121,7 +7748,7 @@ contract VeydriftGameTest is Test {
     /// forge-config: default.isolate = true
     function testLaunchDeployBatchMixedFifteenRevertsAtBaseGasCap() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
-            _seedMixedDeployBatch(15, false);
+            _seedMixedDeployBatch(15, true);
         uint256 nextId = game.nextFleetId();
         vm.prank(player);
         vm.expectRevert();
@@ -7230,8 +7857,7 @@ contract VeydriftGameTest is Test {
     function testLaunchDeployBatchPreservesDelegatedPlayer() public {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
             _seedDeployBatch(2);
-        vm.prank(player);
-        IVeydriftDelegation(address(game)).setDelegate(delegate);
+        _bindDelegate(player, delegate);
         vm.prank(delegate);
         uint256[] memory ids =
             ITransportBatchEntrypoints(address(game)).launchDeployBatch(target, orders);
@@ -7403,7 +8029,9 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
-    function testAttackResolutionBouncesWhenTargetBecomesScoreProtectedMidFlight() public {
+    function testAttackResolutionKeepsLaunchVerdictWhenTargetBecomesScoreProtectedMidFlight()
+        public
+    {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setTechnologyLevel(player, Technology.Computer, 2);
@@ -7433,32 +8061,20 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
         // While the fleet is in flight the attacker's empire balloons far past the newbie target,
-        // so the target is now score-protected and must not be raided on impact (the "attack gap").
+        // so live scores now read as score-protected...
         _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         (VeydriftGameStorage.AttackBlockReason impactReason,,) =
             _attackProtectionStatus(player, targetPlanetId);
         assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
-        uint32 defenderShipsBefore = game.shipCount(targetPlanetId, Ship.SmallCargo);
-
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
+        vm.recordLogs();
         _resolveAttackFully(missionId);
 
-        // The attack fleet bounced: it is returning with its ship intact and empty cargo (no
-        // plunder loaded), and the protected defender kept all of its ships. A real battle would
-        // have either loaded plunder into the cargo or destroyed the lone attacker (status
-        // Resolved), so this state is only reachable when no combat ran.
-        (
-            VeydriftGameStorage.FleetMissionStatus status,,,
-            VeydriftGameStorage.Resources memory cargo
-        ) = _fleetMission(missionId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(cargo.metal, 0);
-        assertEq(cargo.crystal, 0);
-        assertEq(cargo.deuterium, 0);
-        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
-        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
+        // ...but protection is the launch verdict (audit F4): no in-flight score change can flip
+        // a legally launched attack, so the battle is fought instead of bouncing.
+        assertGt(_attackBattleRoundsFromRecordedLogs(missionId), 0);
     }
 
     function testAttackRaidKeepsPreCombatPlunderWhenDefenderScoreDropsDuringBattle() public {
@@ -7550,9 +8166,11 @@ contract VeydriftGameTest is Test {
         IRiftLifecycleEntrypoints(address(game))
             .startRiftExtraction(targetPlanetId, Resource.Metal, 1);
 
+        // Score-protected at launch: only the live Rift lock admits the attack (launch verdict).
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         (VeydriftGameStorage.AttackBlockReason launchReason,,) =
             _attackProtectionStatus(player, targetPlanetId);
-        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 10;
@@ -7567,14 +8185,10 @@ contract VeydriftGameTest is Test {
         );
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
-        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
         // The departing attack carries the cargo; remove the original target fleet so the battle
         // settles deterministically and can demonstrate score-protected ordinary loot is skipped
         // while the Rift lock remains fully contestable.
         _setShipCount(targetPlanetId, Ship.SmallCargo, 0);
-        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
-            _attackProtectionStatus(player, targetPlanetId);
-        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
@@ -9350,6 +9964,23 @@ contract VeydriftGameTest is Test {
         assertEq(fuelCost, expectedFuelCost);
         assertEq(game.planet(allyPlanetId).resources.deuterium, 50_000 - expectedFuelCost);
         assertEq(game.planet(targetPlanetId).resources.deuterium, 50_000 - depotSupport);
+
+        // A 10-hour hold costs each ship its base fuel use: small cargo 10, bomber 700, reaper 1,100.
+        VeydriftGameStorage.MissionShips memory holders;
+        holders.smallCargo = 1;
+        (, uint128 netHolding, uint128 supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 10);
+        holders.smallCargo = 0;
+        holders.bomber = 1;
+        (, netHolding, supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 700);
+        holders.bomber = 0;
+        holders.reaper = 1;
+        (, netHolding, supported) =
+            allianceSystem.defenseHoldFuelContext(defender, targetPlanetId, holders, 10 hours);
+        assertEq(netHolding + supported, 1_100);
     }
 
     // --- OGame-style ACS Defend (DefenseHold) stationing: VEY-KANEO-441 ---
@@ -9859,6 +10490,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -9959,6 +10592,12 @@ contract VeydriftGameTest is Test {
         uint256 firstAllyPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(secondAlly);
         uint256 secondAllyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        uint256 allianceId = _joinAlliance(player, firstAlly);
+        vm.prank(player);
+        allianceSystem.inviteMember(allianceId, secondAlly);
+        vm.prank(secondAlly);
+        allianceSystem.acceptInvite(allianceId);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(firstAllyPlanetId, 1, 1, 2);
@@ -10024,6 +10663,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10092,6 +10733,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10152,6 +10795,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
@@ -10199,6 +10844,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -10247,6 +10894,8 @@ contract VeydriftGameTest is Test {
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        // ACS joins need the attack owner's consent (same alliance).
+        _joinAlliance(player, ally);
         _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
@@ -11513,7 +12162,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
-    function testRiftDepositAndLegacyWithdrawalIsDisabled() public {
+    function testRiftDepositWorksAndTheRetiredWithdrawalIsGone() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
@@ -11528,19 +12177,31 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(planetId).resources.metal, 1_100);
         assertEq(metalToken.balanceOf(player), 900);
 
-        vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.LegacyWithdrawalDisabled.selector);
-        game.requestMarketResourceWithdrawal(planetId, Resource.Metal, 50);
+        // The retired 30-day market withdrawal has no entry point left: request nor finish.
+        vm.startPrank(player);
+        (bool requested,) = address(game)
+            .call(
+                abi.encodeWithSignature(
+                    "requestMarketResourceWithdrawal(uint256,uint8,uint128)", planetId, 0, 50
+                )
+            );
+        (bool finished,) =
+            address(game).call(abi.encodeWithSignature("finishMarketResourceWithdrawal(uint8)", 0));
+        vm.stopPrank();
+        assertFalse(requested);
+        assertFalse(finished);
         (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
         assertFalse(active);
         assertEq(game.planet(planetId).resources.metal, 1_100);
     }
 
-    function testGrandfatheredLegacyWithdrawalRemainsFinishable() public {
+    function testLegacyWithdrawalFinishIsRemoved() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
         uint128 amount = 50;
 
+        // Seed an active pre-upgrade claim directly: even with one in storage, the removed
+        // `finishMarketResourceWithdrawal(uint8)` selector must not pay it out.
         bytes32 playerSlot = keccak256(abi.encode(player, uint256(18)));
         bytes32 withdrawalSlot = keccak256(abi.encode(uint256(Resource.Metal), playerSlot));
         vm.store(address(game), withdrawalSlot, bytes32(uint256(1)));
@@ -11550,11 +12211,15 @@ contract VeydriftGameTest is Test {
         metalToken.mint(address(game), amount);
 
         vm.prank(player);
-        game.finishMarketResourceWithdrawal(Resource.Metal);
+        (bool ok, bytes memory result) =
+            address(game).call(abi.encodeWithSelector(0xde0f208c, uint8(Resource.Metal)));
+        assertFalse(ok);
+        assertEq(result.length, 0);
 
         (bool active,,,,) = game.resourceWithdrawals(player, Resource.Metal);
-        assertFalse(active);
-        assertEq(metalToken.balanceOf(player), amount);
+        assertTrue(active);
+        assertEq(metalToken.balanceOf(player), 0);
+        assertEq(game.lockedWithdrawalResources().metal, amount);
     }
 
     function testRiftExtractionLocksFor28DaysAndFinalizesSurvivingResource() public {
@@ -13051,7 +13716,7 @@ contract VeydriftGameTest is Test {
         VeydriftColonizationModule colonizationModule =
             new VeydriftColonizationModule(address(new VeydriftShipProductionModule()));
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
+        VeydriftReferralSystem deployedReferralSystem = ReferralProxy.deploy(owner);
         VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule(
             address(deployedReferralSystem), address(new VeydriftCombatRaidModule())
         );
@@ -13060,7 +13725,9 @@ contract VeydriftGameTest is Test {
         );
         VeydriftGame deployedGame = VeydriftGame(
             payable(deployCode(
-                    "VeydriftGame.sol:VeydriftGame",
+                    // Explicit production artifact: the tests profile also emits an unoptimized
+                    // Game artifact, and name-only getCode can select it after other test builds.
+                    "VeydriftGame.sol:VeydriftGame:0.8.28:default",
                     abi.encode(
                         owner,
                         address(firstPlanetSettlementModule),

@@ -1,10 +1,11 @@
 import { afterAll, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { defenseQueueTimingSetTopic } from "./evm";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { defenseQueueTimingSetTopic, delegateProposedTopic } from "./evm";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { keccak256, toFunctionSelector, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -766,7 +767,8 @@ class MockChainReader implements ChainReader {
           unlocksAt: "2026-05-31T00:00:00.000Z",
           ready: false
         }
-      ]
+      ],
+      history: []
     };
   }
 
@@ -1028,9 +1030,12 @@ describe("Veydrift backend", () => {
       },
       chainSync: null,
       indexer: null,
+      eventLoopLag: null,
+      walCheckpoint: null,
       missionResolution: null,
       gameMaintenance: null,
       randomnessCommitter: null,
+      battleReferee: null,
       randomnessReadiness: {
         ready: true,
         reasons: [],
@@ -1187,6 +1192,61 @@ describe("Veydrift backend", () => {
     connected = false;
     expect((await handler(new Request("http://localhost/health"))).status).toBe(503);
   });
+
+  for (const failure of ["throws on construction", "errors before its first pass"] as const) {
+    test(`boots the writer with main-thread checkpoints when the WAL checkpoint worker ${failure}`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "veydrift-wal-worker-start-"));
+      const checkpoints: string[] = [];
+      const autoCheckpoint: number[] = [];
+      const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+      const moduleError = `ModuleNotFound resolving "${join(dir, "walCheckpointWorker.ts")}"`;
+      const worker = {
+        postMessage() {},
+        terminate() {},
+        onmessage: null as ((event: MessageEvent) => void) | null,
+        onerror: null as ((event: ErrorEvent) => void) | null
+      };
+      try {
+        const indexer = {
+          snapshot: () => ({ indexedState: "healthy", safeToServeIndexedState: true }),
+          checkpointWal: (mode: string) => {
+            checkpoints.push(mode);
+            return [{ busy: 0, log: 0, checkpointed: 0 }];
+          },
+          setWalAutoCheckpoint: (pages: number) => autoCheckpoint.push(pages)
+        } as unknown as SettlementIndexer;
+        const handler = createRequestHandler({
+          chainReader: new MockChainReader(),
+          chainSync: { start() {}, snapshot: () => ({ connected: true, subscribedToHeads: true, subscribedToLogs: true }) } as unknown as import("./chainSync").ChainSyncService,
+          config: { ...configuredTestConfig, indexDbPath: join(dir, "index.sqlite") },
+          indexer,
+          offThreadWalCheckpoint: true,
+          createWalCheckpointWorker: () => {
+            if (failure === "throws on construction") throw new Error(moduleError);
+            return worker;
+          }
+        });
+        if (failure === "errors before its first pass") {
+          expect(checkpoints).toEqual([]);
+          worker.onerror?.({ message: moduleError } as ErrorEvent);
+          worker.onerror?.({ message: moduleError } as ErrorEvent);
+        }
+        expect(checkpoints).toEqual(["PASSIVE"]);
+        expect(autoCheckpoint).toEqual([]);
+        expect(warn.mock.calls.filter(([message]) => /checkpoint worker failed (to start|before its first pass)/.test(String(message)))).toHaveLength(1);
+        const body = await (await handler(new Request("http://localhost/health"))).json();
+        if (failure === "throws on construction") {
+          expect(body.walCheckpoint).toBeNull();
+        } else {
+          expect(body.walCheckpoint.index).toMatchObject({ mode: "main-thread-fallback", failures: 2, lastError: "WAL checkpoint worker error" });
+          expect(JSON.stringify(body.walCheckpoint)).not.toContain(dir);
+        }
+      } finally {
+        warn.mockRestore();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
 
   test("returns 200 only when the backend readiness gate is satisfied", async () => {
     const chainSync = {
@@ -1410,7 +1470,7 @@ describe("Veydrift backend", () => {
     const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
     const sharedResponseCache = {
       get(cacheKey: string, _now?: number, includeStale?: boolean) {
-        if (!includeStale || !cacheKey.endsWith(":fleet=null")) return null;
+        if (!includeStale || !cacheKey.endsWith(":fleet=null:baseline=true")) return null;
         staleKeyUsed = true;
         return {
           body: staleBody,
@@ -1615,10 +1675,11 @@ describe("Veydrift backend", () => {
 
   test("returns uncached effective-player delegation state", async () => {
     const delegate = "0x3333333333333333333333333333333333333333" as Address;
+    const pendingDelegate = "0x6666666666666666666666666666666666666666" as Address;
     const chainReader = Object.assign(new MockChainReader(), {
       async getDelegationState(wallet: Address) {
         expect(wallet).toBe(delegate);
-        return { wallet, main: player, delegate, actingAsDelegate: true };
+        return { wallet, main: player, delegate, pendingDelegate, proposedBy: [], actingAsDelegate: true };
       },
     });
     const handler = createRequestHandler({
@@ -1634,8 +1695,36 @@ describe("Veydrift backend", () => {
       wallet: delegate,
       main: player,
       delegate,
+      pendingDelegate,
+      proposedBy: [],
       actingAsDelegate: true,
     });
+  });
+
+  test("passes indexed delegate proposals to the chain read as candidates for the proposed wallet", async () => {
+    const proposed = "0x7777777777777777777777777777777777777777" as Address;
+    const proposer = "0x8888888888888888888888888888888888888888" as Address;
+    const indexer = testIndexer();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: `0x${"81".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [delegateProposedTopic, `0x${proposer.slice(2).padStart(64, "0")}`, `0x${proposed.slice(2).padStart(64, "0")}`],
+      data: "0x",
+    });
+    const candidateCalls: Array<readonly Address[]> = [];
+    const chainReader = Object.assign(new MockChainReader(), {
+      async getDelegationState(wallet: Address, candidates: readonly Address[] = []) {
+        candidateCalls.push(candidates);
+        return { wallet, main: wallet, delegate: null, pendingDelegate: null, proposedBy: [...candidates], actingAsDelegate: false };
+      },
+    });
+    const handler = createRequestHandler({ chainReader, config: configuredTestConfig, indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${proposed}/delegation`));
+    expect(response.status).toBe(200);
+    expect((await response.json()).proposedBy).toEqual([proposer]);
+    expect(candidateCalls).toEqual([[proposer]]);
   });
 
   test("cold callers share one peer wait while unrelated keys load independently", async () => {
@@ -4816,7 +4905,7 @@ describe("Veydrift backend", () => {
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
       indexer
-    })(new Request("http://localhost/mission/51"));
+    })(nullableResourceRequest("http://localhost/mission/51"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -4848,7 +4937,7 @@ describe("Veydrift backend", () => {
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
       indexer
-    })(new Request("http://localhost/mission/52"));
+    })(nullableResourceRequest("http://localhost/mission/52"));
     const parentBody = await parentResponse.json();
     expect(parentResponse.status).toBe(200);
     expect(parentBody.targetCombatIntel).toMatchObject({
@@ -6033,7 +6122,7 @@ describe("Veydrift backend", () => {
       }()),
       config: configuredTestConfig
     });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6060,7 +6149,7 @@ describe("Veydrift backend", () => {
 
     const chainReader = new SlowMoonReader();
     const handler = createRequestHandler({ chainReader: withoutIndexLists(chainReader), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6090,7 +6179,7 @@ describe("Veydrift backend", () => {
     }
 
     const handler = createRequestHandler({ chainReader: withoutIndexLists(new RpcFailingMoonReader()), config: configuredTestConfig });
-    const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6297,7 +6386,7 @@ describe("Veydrift backend", () => {
     });
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader: protectionReader({ blockedReason: "score_protection" }), indexer });
 
-    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -6311,13 +6400,13 @@ describe("Veydrift backend", () => {
       scoreComparison: { protected: true }
     });
 
-    const rankings = await (await handler(new Request(
+    const rankings = await (await handler(nullableResourceRequest(
       `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
     ))).json();
     expect(rankings.rankings.total.find((row: { wallet: string }) => row.wallet === player).attackProtection)
       .toMatchObject({ allowed: true, blockedReason: "none" });
 
-    const moonResponse = await handler(new Request(
+    const moonResponse = await handler(nullableResourceRequest(
       `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
     ));
     const moonBody = await moonResponse.json();
@@ -6499,11 +6588,11 @@ describe("Veydrift backend", () => {
       }
       const reader = protectionReader({ blockedReason: "bashing_limit" });
       const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader, indexer });
-      const planetResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
-      const moonResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
+      const planetResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+      const moonResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`));
       expect(await planetResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
       expect(await moonResponse.json()).toMatchObject({ allowed: false, blockedReason: "bashing_limit" });
-      const rankingsResponse = await handler(new Request(
+      const rankingsResponse = await handler(nullableResourceRequest(
         `http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`
       ));
       const rankingsBody = await rankingsResponse.json();
@@ -6512,10 +6601,10 @@ describe("Veydrift backend", () => {
 
       setSystemTime(new Date((nowSeconds + 86_401) * 1_000));
       reader.getAttackProtectionStatus = new MockChainReader().getAttackProtectionStatus;
-      const expiredPlanetResponse = await handler(new Request(
+      const expiredPlanetResponse = await handler(nullableResourceRequest(
         `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`
       ));
-      const expiredMoonResponse = await handler(new Request(
+      const expiredMoonResponse = await handler(nullableResourceRequest(
         `http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7&targetIsMoon=true`
       ));
       expect(await expiredPlanetResponse.json()).toMatchObject({ allowed: true, blockedReason: "none" });
@@ -9777,6 +9866,7 @@ describe("Veydrift backend", () => {
     });
     indexer.applyLog({
       blockNumber: "0x86",
+      blockTimestamp: "0x69801c90",
       transactionHash: "0xdeposit",
       logIndex: "0x0",
       topics: [
@@ -9824,12 +9914,17 @@ describe("Veydrift backend", () => {
       resources: expect.arrayContaining([
         expect.objectContaining({
           key: "metal",
+          // Token addresses come from the deployment config, never from code.
+          tokenAddress: configuredTestConfig.resourceTokenAddresses.metal,
           // Rift bridge events are not a player's spendable mine balance. The
           // selected planet's indexed resources are the canonical amount shown
           // to the extractor.
           inGameBalance: "2200"
         })
-      ])
+      ]),
+      history: [
+        expect.objectContaining({ kind: "injected", planetId: "7", amounts: { metal: "1000", crystal: "0", deuterium: "0" }, transactionHash: "0xdeposit" })
+      ]
     });
   });
 
@@ -9981,7 +10076,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure?planetId=125`));
+    const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/infrastructure?planetId=125`));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -10176,7 +10271,7 @@ describe("Veydrift backend", () => {
       ["moon", "moon"],
       ["rift", "rift"]
     ] as const) {
-      const response = await handler(new Request(`http://localhost/wallet/${player}/${path}`));
+      const response = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/${path}`));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -10554,23 +10649,23 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const settlementResponse = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+    const settlementResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/settlement`));
     const settlementBody = await settlementResponse.json();
-    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/planets`));
     const planetsBody = await planetsResponse.json();
-    const queuesResponse = await handler(new Request(`http://localhost/wallet/${player}/queues`));
+    const queuesResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/queues`));
     const queuesBody = await queuesResponse.json();
-    const infrastructureResponse = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const infrastructureResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/infrastructure`));
     const infrastructureBody = await infrastructureResponse.json();
-    const shipyardResponse = await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
+    const shipyardResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/shipyard`));
     const shipyardBody = await shipyardResponse.json();
-    const defensesResponse = await handler(new Request(`http://localhost/wallet/${player}/defenses`));
+    const defensesResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/defenses`));
     const defensesBody = await defensesResponse.json();
-    const researchResponse = await handler(new Request(`http://localhost/wallet/${player}/research`));
+    const researchResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/research`));
     const researchBody = await researchResponse.json();
-    const moonResponse = await handler(new Request(`http://localhost/wallet/${player}/moon`));
+    const moonResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/moon`));
     const moonBody = await moonResponse.json();
-    const riftResponse = await handler(new Request(`http://localhost/wallet/${player}/rift`));
+    const riftResponse = await handler(nullableResourceRequest(`http://localhost/wallet/${player}/rift`));
     const riftBody = await riftResponse.json();
 
     expect(settlementResponse.status).toBe(200);
@@ -11396,6 +11491,7 @@ describe("Veydrift backend", () => {
     }) as SettlementIndexer["moonState"];
     indexer.hasMoon = (planetId: string) => planetId === "11";
     indexer.moonResources = () => ({ metal: "12", crystal: "34", deuterium: "56" });
+    indexer.moonResourcesAsOfNow = () => ({ metal: "12", crystal: "34", deuterium: "56" });
     indexer.stationedDefenderForecastTimelineForPlanet = (() => {
       throw new Error("highscore discovery rows must defer stationed-defender forecasts until target selection");
     }) as SettlementIndexer["stationedDefenderForecastTimelineForPlanet"];
@@ -11905,7 +12001,7 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const response = await handler(nullableResourceRequest("http://localhost/highscores?limit=10"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -12141,6 +12237,458 @@ describe("Veydrift backend", () => {
       ]
     });
     expect(response.status).toBe(400);
+  });
+});
+
+describe("building demolition lens (#121)", () => {
+  type FixtureResources = { metal: number; crystal: number; deuterium: number };
+  type FixtureStart = { startedAt: number; building: number; targetLevel: number; readyAt: number; cost: FixtureResources; resources: FixtureResources };
+  type FixtureCase = {
+    demolition: FixtureStart;
+    scoreBeforeSettle: number;
+    settledAt: number;
+    settled: FixtureResources;
+    scoreAfterSettle: number;
+    fieldsUsed: number;
+    energy: { produced: number; required: number; scaleBps: number };
+  };
+  // Produced by the contract itself: packages/contracts/test/VeydriftMoonSystem.t.sol testDemolitionParityFixture.
+  const fixture = JSON.parse(readFileSync(new URL("../../../packages/contracts/demolition-parity-fixture.json", import.meta.url), "utf8")) as {
+    levels: Record<"metalMine" | "crystalMine" | "deuteriumSynthesizer" | "solarPlant" | "roboticsFactory" | "metalStorage" | "crystalStorage" | "deuteriumTank" | "fusionReactor" | "shipyard" | "researchLab", number>;
+    technologies: { energy: number; combustionDrive: number };
+    planet: { fields: number; temperatureOffset: number; metalMultiplierBps: number; crystalMultiplierBps: number; deuteriumMultiplierBps: number };
+    solar: FixtureCase;
+    storage: FixtureCase;
+    fusion: FixtureCase;
+    followedByUpgrade: FixtureCase & { upgrade: FixtureStart & { crystalMineLevel: number } };
+    shipyard: { demolition: FixtureStart; ship: { startedAt: number; readyAt: number; shipyardLevel: number } };
+    researchLab: { demolition: FixtureStart; research: { startedAt: number; readyAt: number; targetLevel: number; labLevel: number } };
+    moon: { fields: number; demolition: Omit<FixtureStart, "resources">; upgrade: Omit<FixtureStart, "resources"> & { roboticsLevel: number }; settled: { roboticsLevel: number } };
+  };
+  const demolitionStartedTopic = keccak256(toHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const demolitionCancelledTopic = keccak256(toHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
+  const moonDemolitionStartedTopic = keccak256(toHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const moonBuildingStartedTopic = keccak256(toHex("MoonBuildingStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+  const moonBuildingCompletedTopic = keccak256(toHex("MoonBuildingCompleted(uint256,uint8,uint16)"));
+  const strings = (resources: FixtureResources) => ({
+    metal: resources.metal.toString(),
+    crystal: resources.crystal.toString(),
+    deuterium: resources.deuterium.toString()
+  });
+  const words = (resources: FixtureResources) => [BigInt(resources.metal), BigInt(resources.crystal), BigInt(resources.deuterium)];
+
+  function lensHarness() {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("the demolition lens must not read live infrastructure state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("the demolition lens must not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    let block = 0x100;
+    let tx = 0;
+    // One transaction's logs, in emission order.
+    const transaction = (...logs: Array<{ topics: string[]; data: string; at?: number }>) => {
+      const blockNumber = `0x${(block++).toString(16)}`;
+      const transactionHash = `0x${(++tx).toString(16).padStart(64, "0")}`;
+      logs.forEach((log, index) => indexer.applyLog({
+        blockNumber,
+        ...(log.at === undefined ? {} : { blockTimestamp: `0x${log.at.toString(16)}` }),
+        transactionHash,
+        logIndex: `0x${index.toString(16)}`,
+        topics: log.topics,
+        data: log.data
+      }));
+    };
+    const settled = (resources: FixtureResources, at: number) => ({
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(...words(resources), BigInt(at)),
+      at
+    });
+    const completed = (building: number, level: number) => ({
+      topics: [buildingCompletedTopic, topic(7n), topic(BigInt(building))],
+      data: abiWords(BigInt(level))
+    });
+    const demolitionStarted = (start: Omit<FixtureStart, "resources">) => ({
+      topics: [demolitionStartedTopic, topic(7n), topic(BigInt(start.building))],
+      data: abiWords(BigInt(start.targetLevel), BigInt(start.readyAt), ...words(start.cost)),
+      at: start.startedAt
+    });
+    const projectAt = async (at: number, path = "infrastructure") => {
+      indexer.recordResourceProjectionWatermark(`0x${(block++).toString(16)}`, at.toString(), resourceProjectionTestHash);
+      return (await handler(new Request(`http://localhost/wallet/${player}/${path}`))).json();
+    };
+    return { indexer, transaction, settled, completed, demolitionStarted, projectAt };
+  }
+
+  function seedFixturePlanet(harness: ReturnType<typeof lensHarness>) {
+    const { indexer, transaction, completed } = harness;
+    const start = fixture.solar.demolition;
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      fields: fixture.planet.fields,
+      temperature: fixture.planet.temperatureOffset - 1_000,
+      metalMultiplierBps: fixture.planet.metalMultiplierBps,
+      crystalMultiplierBps: fixture.planet.crystalMultiplierBps,
+      deuteriumMultiplierBps: fixture.planet.deuteriumMultiplierBps,
+      lastSettledAt: start.startedAt.toString(),
+      resources: strings(start.resources)
+    });
+    const { levels } = fixture;
+    transaction(
+      completed(0, levels.metalMine),
+      completed(1, levels.crystalMine),
+      completed(2, levels.deuteriumSynthesizer),
+      completed(3, levels.solarPlant),
+      completed(4, levels.roboticsFactory),
+      completed(7, levels.metalStorage),
+      completed(8, levels.crystalStorage),
+      completed(9, levels.deuteriumTank),
+      completed(10, levels.fusionReactor),
+      completed(5, levels.shipyard),
+      completed(6, levels.researchLab),
+      { topics: [researchCompletedTopic, addressTopic(player), topic(0n)], data: abiWords(BigInt(fixture.technologies.energy)) },
+      { topics: [researchCompletedTopic, addressTopic(player), topic(3n)], data: abiWords(BigInt(fixture.technologies.combustionDrive)) }
+    );
+  }
+
+  // Replays each fixture case through its demolition start and on-chain settlement.
+  function replaySettledCases(harness: ReturnType<typeof lensHarness>, cases: FixtureCase[]) {
+    const { transaction, settled, completed, demolitionStarted } = harness;
+    for (const step of cases) {
+      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
+    }
+  }
+
+  function level(body: { buildings: Array<{ id: number; level: number }> }, id: number): number | undefined {
+    return body.buildings.find((building) => building.id === id)?.level;
+  }
+
+  test("demolition parity fixture: the lazy lens reproduces the contract's next settlement", async () => {
+    const harness = lensHarness();
+    const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+
+    for (const step of [fixture.solar, fixture.storage, fixture.fusion]) {
+      transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+
+      // Due but unsettled: the lens already shows what the contract's next settlement writes.
+      const lazy = await projectAt(step.settledAt);
+      expect(lazy.queue).toBeNull();
+      expect(level(lazy, step.demolition.building)).toBe(step.demolition.targetLevel);
+      expect(lazy.resourcesAsOfNow).toEqual(strings(step.settled));
+      expect(lazy.energyBalance).toMatchObject({
+        produced: step.energy.produced.toString(),
+        required: step.energy.required.toString(),
+        scaleBps: step.energy.scaleBps.toString()
+      });
+      const planets = await projectAt(step.settledAt, "planets");
+      expect(planets.planets[0].fieldsUsed).toBe(step.fieldsUsed);
+      // Score mirrors the contract's canonical playerScore: the level's points go at settlement.
+      expect(indexer.highscoreForWallet(player).totalUserScore).toBe(step.scoreBeforeSettle.toString());
+
+      transaction(completed(step.demolition.building, step.demolition.targetLevel), settled(step.settled, step.settledAt));
+      const after = await projectAt(step.settledAt);
+      expect(after.resourcesAsOfNow).toEqual(strings(step.settled));
+      expect(level(after, step.demolition.building)).toBe(step.demolition.targetLevel);
+      expect(indexer.highscoreForWallet(player).totalUserScore).toBe(step.scoreAfterSettle.toString());
+    }
+
+    // Metal sits above the lowered Metal Storage cap: kept, with accrual stopped at the finish time.
+    const storageCap = (await projectAt(fixture.storage.settledAt)).storageCaps;
+    expect(Number(fixture.storage.settled.metal)).toBeGreaterThan(Number(storageCap.metal));
+    expect(fixture.storage.settled.metal).toBeGreaterThan(fixture.storage.demolition.resources.metal);
+  });
+
+  test("demolition parity fixture: a demolition settled by the next upgrade start, then that upgrade, both lazily", async () => {
+    const harness = lensHarness();
+    const { indexer, transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    replaySettledCases(harness, [fixture.solar, fixture.storage, fixture.fusion]);
+    const { demolition, upgrade } = fixture.followedByUpgrade;
+    transaction(settled(demolition.resources, demolition.startedAt), demolitionStarted(demolition));
+
+    // Just before the upgrade transaction the lens holds the lowered Crystal Mine and the
+    // balance the contract settles in that transaction (its post-spend balance plus the price).
+    const beforeUpgrade = await projectAt(upgrade.startedAt);
+    expect(level(beforeUpgrade, 1)).toBe(upgrade.crystalMineLevel);
+    expect(beforeUpgrade.queue).toBeNull();
+    expect(beforeUpgrade.resourcesAsOfNow).toEqual(strings({
+      metal: upgrade.resources.metal + upgrade.cost.metal,
+      crystal: upgrade.resources.crystal + upgrade.cost.crystal,
+      deuterium: upgrade.resources.deuterium + upgrade.cost.deuterium
+    }));
+    expect(beforeUpgrade.buildings.find((building: { id: number }) => building.id === 0)?.durationSeconds).toBe(upgrade.readyAt - upgrade.startedAt);
+
+    transaction(
+      completed(demolition.building, demolition.targetLevel),
+      settled(upgrade.resources, upgrade.startedAt),
+      {
+        topics: [buildingStartedTopic, topic(7n), topic(BigInt(upgrade.building))],
+        data: abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)),
+        at: upgrade.startedAt
+      }
+    );
+    const lazy = await projectAt(fixture.followedByUpgrade.settledAt);
+    expect(lazy.queue).toBeNull();
+    expect(level(lazy, 0)).toBe(upgrade.targetLevel);
+    expect(level(lazy, 1)).toBe(demolition.targetLevel);
+    expect(lazy.resourcesAsOfNow).toEqual(strings(fixture.followedByUpgrade.settled));
+    expect(lazy.energyBalance).toMatchObject({
+      required: fixture.followedByUpgrade.energy.required.toString(),
+      scaleBps: fixture.followedByUpgrade.energy.scaleBps.toString()
+    });
+    expect((await projectAt(fixture.followedByUpgrade.settledAt, "planets")).planets[0].fieldsUsed).toBe(fixture.followedByUpgrade.fieldsUsed);
+    expect(indexer.highscoreForWallet(player).totalUserScore).toBe(fixture.followedByUpgrade.scoreBeforeSettle.toString());
+  });
+
+  test("demolition parity fixture: lazily demolished Shipyard and Research Lab time the next order as the contract does", async () => {
+    const harness = lensHarness();
+    const { transaction, settled, completed, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    replaySettledCases(harness, [fixture.solar, fixture.storage, fixture.fusion]);
+    const { demolition, upgrade } = fixture.followedByUpgrade;
+    transaction(settled(demolition.resources, demolition.startedAt), demolitionStarted(demolition));
+    transaction(completed(demolition.building, demolition.targetLevel), settled(upgrade.resources, upgrade.startedAt), {
+      topics: [buildingStartedTopic, topic(7n), topic(BigInt(upgrade.building))],
+      data: abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)),
+      at: upgrade.startedAt
+    });
+    transaction(completed(upgrade.building, upgrade.targetLevel), settled(fixture.followedByUpgrade.settled, fixture.followedByUpgrade.settledAt));
+
+    const { shipyard, researchLab } = fixture;
+    transaction(settled(shipyard.demolition.resources, shipyard.demolition.startedAt), demolitionStarted(shipyard.demolition));
+    const ships = await projectAt(shipyard.ship.startedAt, "shipyard");
+    expect(ships.shipyardLevel).toBe(shipyard.ship.shipyardLevel);
+    // Light Fighter: the contract timed this one-unit order by the lowered Shipyard.
+    expect(ships.ships.find((ship: { id: number }) => ship.id === 1)?.durationSeconds).toBe(shipyard.ship.readyAt - shipyard.ship.startedAt);
+
+    transaction(completed(shipyard.demolition.building, shipyard.demolition.targetLevel));
+    transaction(settled(researchLab.demolition.resources, researchLab.demolition.startedAt), demolitionStarted(researchLab.demolition));
+    const research = await projectAt(researchLab.research.startedAt, "research");
+    expect(level(await projectAt(researchLab.research.startedAt), 6)).toBe(researchLab.research.labLevel);
+    // Energy Technology: the contract timed this research by the lowered Research Lab.
+    expect(research.technologies.find((technology: { id: number }) => technology.id === 0)?.durationSeconds).toBe(researchLab.research.readyAt - researchLab.research.startedAt);
+  });
+
+  test("demolition parity fixture: moon demolition lowers the level, frees a field and drives the next build time", () => {
+    const { indexer, transaction } = lensHarness();
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    const moonLog = (topic0: string, building: number, data: string) => ({ topics: [topic0, topic(7n), topic(BigInt(building))], data });
+    transaction({ topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 1n, 8777n) });
+    transaction(
+      moonLog(moonBuildingCompletedTopic, 0, abiWords(1n)),
+      moonLog(moonBuildingCompletedTopic, 1, abiWords(2n)),
+      moonLog(moonBuildingCompletedTopic, 3, abiWords(1n))
+    );
+    const { demolition, upgrade } = fixture.moon;
+    const usedFields = () => indexer.moonState(player, planet.planetId).buildings.reduce((sum, building) => sum + building.level, 0);
+    expect(indexer.moonState(player, planet.planetId).moon?.fields).toBe(fixture.moon.fields);
+    expect(usedFields()).toBe(fixture.moon.fields);
+
+    // Both readyAt values are before the test clock, so each queue is already due.
+    transaction(moonLog(moonDemolitionStartedTopic, demolition.building, abiWords(BigInt(demolition.targetLevel), BigInt(demolition.readyAt), ...words(demolition.cost))));
+    const lazy = indexer.moonState(player, planet.planetId);
+    expect(lazy.queue?.active ?? false).toBe(false);
+    expect(lazy.completionQueue).toMatchObject({ action: "demolish", targetLevel: demolition.targetLevel });
+    expect(lazy.buildings.find((building) => building.id === 1)?.level).toBe(upgrade.roboticsLevel);
+    expect(usedFields()).toBe(fixture.moon.fields - 1);
+    expect(lazy.moon?.fields).toBe(fixture.moon.fields);
+    // The rebuild's duration follows the lowered Robotics Factory, as the contract computed it.
+    expect(lazy.buildings.find((building) => building.id === 1)?.durationSeconds).toBe(upgrade.readyAt - upgrade.startedAt);
+
+    transaction(
+      moonLog(moonBuildingCompletedTopic, demolition.building, abiWords(BigInt(demolition.targetLevel))),
+      moonLog(moonBuildingStartedTopic, upgrade.building, abiWords(BigInt(upgrade.targetLevel), BigInt(upgrade.readyAt), ...words(upgrade.cost)))
+    );
+    const rebuilt = indexer.moonState(player, planet.planetId);
+    expect(rebuilt.buildings.find((building) => building.id === 1)?.level).toBe(fixture.moon.settled.roboticsLevel);
+    expect(usedFields()).toBe(fixture.moon.fields);
+  });
+
+  test("a Fusion Reactor burn carries the running store across a lazy building completion", async () => {
+    // Contract numbers: packages/contracts/test/audit/RiftAuditRegressions.t.sol
+    // testFusionBurnSpansALazyBuildingCompletion (Metal 20, Crystal 18, Fusion 15, Energy 8, no
+    // synthesizer, 300 deuterium; Solar Plant 0 -> 1 finishes 151 s into the hour).
+    const { indexer, transaction, settled, completed, projectAt } = lensHarness();
+    const startedAt = 1_769_700_000;
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      temperature: 0,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+      lastSettledAt: startedAt.toString(),
+      resources: { metal: "925", crystal: "970", deuterium: "300" }
+    });
+    transaction(
+      completed(0, 20),
+      completed(1, 18),
+      completed(7, 10),
+      completed(8, 10),
+      completed(9, 10),
+      completed(10, 15),
+      { topics: [researchCompletedTopic, addressTopic(player), topic(0n)], data: abiWords(8n) }
+    );
+    transaction(settled({ metal: 925, crystal: 970, deuterium: 300 }, startedAt), {
+      topics: [buildingStartedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n, BigInt(startedAt + 151), 75n, 30n, 0n),
+      at: startedAt
+    });
+
+    const burning = await projectAt(startedAt + 100);
+    expect(burning.productionPerHour).toMatchObject({ metal: "4036", deuterium: "-627" });
+    const lazy = await projectAt(startedAt + 3_600);
+    expect(level(lazy, 3)).toBe(1);
+    expect(lazy.resourcesAsOfNow).toEqual({ metal: "2869", crystal: "1932", deuterium: "0" });
+    // Dry store and no synthesizer: the reactor is off, Solar 1 powers the mines at 93 bps.
+    expect(lazy.productionPerHour).toEqual({ metal: "37", crystal: "18", deuterium: "0" });
+    expect(lazy.energyBalance).toMatchObject({
+      produced: "22",
+      scaleBps: "93",
+      sources: { fusionReactor: "0", fusionReactorDeuteriumConsumed: "0" }
+    });
+  });
+
+  test("a cancelled demolition is never applied by the lens, even after its finish time", async () => {
+    const harness = lensHarness();
+    const { transaction, settled, demolitionStarted, projectAt } = harness;
+    seedFixturePlanet(harness);
+    const step = fixture.solar;
+    const baseline = await projectAt(step.settledAt);
+    transaction(settled(step.demolition.resources, step.demolition.startedAt), demolitionStarted(step.demolition));
+    const cancelAt = step.demolition.startedAt + 60;
+    const refunded = await projectAt(cancelAt);
+    const balance = {
+      metal: Number(refunded.resourcesAsOfNow.metal) + step.demolition.cost.metal,
+      crystal: Number(refunded.resourcesAsOfNow.crystal) + step.demolition.cost.crystal,
+      deuterium: Number(refunded.resourcesAsOfNow.deuterium) + step.demolition.cost.deuterium
+    };
+    transaction(settled(balance, cancelAt), {
+      topics: [demolitionCancelledTopic, topic(7n), topic(BigInt(step.demolition.building))],
+      data: abiWords(BigInt(step.demolition.targetLevel), ...words(step.demolition.cost))
+    });
+
+    const later = await projectAt(step.settledAt);
+    expect(later.queue).toBeNull();
+    expect(level(later, step.demolition.building)).toBe(step.demolition.targetLevel + 1);
+    expect(later.energyBalance.scaleBps).toBe(baseline.energyBalance.scaleBps);
+    expect(later.productionPerHour).toEqual(baseline.productionPerHour);
+    expect(Number(later.resourcesAsOfNow.metal)).toBeGreaterThan(step.settled.metal);
+  });
+
+  test("a running planet demolition exposes its timing like an upgrade, then completes at readyAt with no transaction", async () => {
+    const { indexer, transaction, completed, demolitionStarted, projectAt } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    transaction(completed(3, 5));
+    const fieldsBefore = (await projectAt(now, "planets")).planets[0].fieldsUsed;
+    const start = { startedAt: now - 900, building: 3, targetLevel: 4, readyAt: now + 300, cost: { metal: 0, crystal: 0, deuterium: 0 } };
+    transaction(demolitionStarted(start));
+
+    const running = await projectAt(now);
+    expect(running.queue).toMatchObject({
+      active: true,
+      kind: "building",
+      itemId: 3,
+      targetLevel: 4,
+      action: "demolish",
+      startedAt: start.startedAt.toString(),
+      readyAt: start.readyAt.toString(),
+      asOfNow: { secondsRemaining: 300, complete: false }
+    });
+    // 900 of 1,200 seconds elapsed, derived from the exposed timeline exactly as for an upgrade.
+    expect((now - Number(running.queue.startedAt)) / (Number(running.queue.readyAt) - Number(running.queue.startedAt))).toBe(0.75);
+    expect(level(running, 3)).toBe(5);
+    expect((await projectAt(now, "queues")).building).toMatchObject({ action: "demolish", startedAt: start.startedAt.toString(), asOfNow: { complete: false } });
+
+    setSystemTime(new Date(start.readyAt * 1_000));
+    try {
+      const done = await projectAt(start.readyAt);
+      expect(done.queue).toBeNull();
+      expect(level(done, 3)).toBe(4);
+      expect((await projectAt(start.readyAt, "planets")).planets[0].fieldsUsed).toBe(fieldsBefore - 1);
+      expect((await projectAt(start.readyAt, "queues")).building).toBeNull();
+
+      // The next upgrade's queue carries the same fields, only with the other action.
+      transaction({
+        topics: [buildingStartedTopic, topic(7n), topic(3n)],
+        data: abiWords(5n, BigInt(start.readyAt + 1_200), 0n, 0n, 0n),
+        at: start.readyAt
+      });
+      const upgrade = (await projectAt(start.readyAt)).queue;
+      expect(upgrade).toMatchObject({ action: "upgrade", startedAt: start.readyAt.toString(), asOfNow: { secondsRemaining: 1_200, complete: false } });
+      expect(Object.keys(upgrade).sort()).toEqual(Object.keys(running.queue).sort());
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+    }
+  });
+
+  test("a running moon demolition exposes its start time and progress, then completes at readyAt with no transaction", () => {
+    const { indexer, transaction } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    const moonLog = (topic0: string, building: number, data: string, at?: number) => ({ topics: [topic0, topic(7n), topic(BigInt(building))], data, ...(at === undefined ? {} : { at }) });
+    transaction({ topics: [moonCreatedTopic, addressTopic(player), topic(7n)], data: abiWords(2n, 44n, 9n, 1n, 8777n) });
+    transaction(moonLog(moonBuildingCompletedTopic, 0, abiWords(1n)), moonLog(moonBuildingCompletedTopic, 1, abiWords(2n)));
+    const usedFields = () => indexer.moonState(player, planet.planetId).buildings.reduce((sum, building) => sum + building.level, 0);
+    expect(usedFields()).toBe(3);
+
+    const startedAt = now - 600;
+    const readyAt = now + 1_800;
+    transaction(moonLog(moonDemolitionStartedTopic, 1, abiWords(1n, BigInt(readyAt), 200n, 60n, 100n), startedAt));
+    const running = indexer.moonState(player, planet.planetId);
+    expect(running.queue).toMatchObject({
+      active: true,
+      kind: "moon-building",
+      itemId: 1,
+      targetLevel: 1,
+      action: "demolish",
+      startedAt: startedAt.toString(),
+      readyAt: readyAt.toString(),
+      asOfNow: { secondsRemaining: 1_800, complete: false }
+    });
+    expect(running.completionQueue).toBeUndefined();
+    expect(running.buildings.find((building) => building.id === 1)?.level).toBe(2);
+    expect(usedFields()).toBe(3);
+
+    setSystemTime(new Date(readyAt * 1_000));
+    try {
+      const done = indexer.moonState(player, planet.planetId);
+      expect(done.queue).toBeNull();
+      expect(done.completionQueue).toMatchObject({ action: "demolish", startedAt: startedAt.toString(), asOfNow: { secondsRemaining: 0, complete: true } });
+      expect(done.buildings.find((building) => building.id === 1)?.level).toBe(1);
+      expect(usedFields()).toBe(2);
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+    }
+  });
+
+  test("a queued Missile Silo demolition already lowers the missile capacity it reports", async () => {
+    const { indexer, transaction, completed, demolitionStarted, projectAt } = lensHarness();
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    transaction(completed(5, 1), completed(14, 3));
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
+    transaction(demolitionStarted({ startedAt: now - 60, building: 14, targetLevel: 2, readyAt: now + 3_600, cost: { metal: 0, crystal: 0, deuterium: 0 } }));
+    const defenses = await projectAt(now, "defenses");
+    expect(defenses.missileSiloLevel).toBe(3);
+    expect(defenses.missileSiloCapacity).toBe(20);
+
+    // Cancelled, then a queued silo upgrade: capacity grows only once that upgrade completes.
+    transaction({ topics: [demolitionCancelledTopic, topic(7n), topic(14n)], data: abiWords(2n, 0n, 0n, 0n) });
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
+    transaction({ topics: [buildingStartedTopic, topic(7n), topic(14n)], data: abiWords(4n, BigInt(now + 3_600), 0n, 0n, 0n) });
+    expect((await projectAt(now, "defenses")).missileSiloCapacity).toBe(30);
   });
 });
 
@@ -12898,6 +13446,79 @@ test("moon chance pending/terminal results converge in full system and watched p
 });
 
 
+test("moon supply batch capability is uncached and fails closed during rollout", async () => {
+  class MoonSupplyBatchReader extends MockChainReader {
+    version: number | null = 1;
+    fail = false;
+    calls = 0;
+    async getMoonSupplyBatchVersion() {
+      this.calls++;
+      if (this.fail) throw new Error("RPC unavailable");
+      return this.version;
+    }
+  }
+  const reader = new MoonSupplyBatchReader();
+  const handler = createRequestHandler({ config: configuredTestConfig, chainReader: reader,
+    indexer: new SettlementIndexer(reader, 100n), role: "reader", enableResponseCache: true,
+    prewarmResponseCache: false });
+  const versions = [null, 1, 0, 1, 2, 1, NaN, Infinity, -1, 1.5, 1];
+  for (const version of versions) {
+    reader.version = version;
+    const before = Date.now();
+    const response = await handler(new Request("https://api.veydrift.com/moon-supply-batch"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body = await response.json();
+    expect(body).toEqual({ version: version === 1 ? 1 : null, asOf: expect.any(Number),
+      gameContractAddress: configuredTestConfig.gameContractAddress, chainId: configuredTestConfig.chainId });
+    expect(body.asOf).toBeGreaterThanOrEqual(before);
+    expect(body.asOf).toBeLessThanOrEqual(Date.now());
+  }
+  reader.fail = true;
+  expect((await (await handler(new Request("https://api.veydrift.com/moon-supply-batch"))).json()).version).toBeNull();
+  reader.fail = false;
+  expect((await (await handler(new Request("https://api.veydrift.com/moon-supply-batch"))).json()).version).toBe(1);
+  expect(reader.calls).toBe(versions.length + 2);
+
+  const oldReader = new MockChainReader();
+  const old = createRequestHandler({ config: configuredTestConfig, chainReader: oldReader,
+    indexer: new SettlementIndexer(oldReader, 100n), role: "reader", enableResponseCache: true });
+  const response = await old(new Request("https://api.veydrift.com/moon-supply-batch"));
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect((await response.json()).version).toBeNull();
+});
+
+test("moon supply batch capability uses uncached production RPC rather than health metadata", async () => {
+  const previousFetch = globalThis.fetch;
+  let result = "0x" + "1".padStart(64, "0");
+  let calls = 0;
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    calls++;
+    const batch = JSON.parse(String(init?.body)) as Array<{ id: number; method: string; params: unknown[] }>;
+    expect(batch).toHaveLength(1);
+    expect(batch[0]!.method).toBe("eth_call");
+    expect(batch[0]!.params).toEqual([{
+      to: configuredTestConfig.gameContractAddress,
+      data: toFunctionSelector("moonSupplyBatchVersion()")
+    }, "latest"]);
+    return Response.json([{ jsonrpc: "2.0", id: batch[0]!.id, result }]);
+  }) as typeof fetch;
+  try {
+    const handler = createRequestHandler({ config: configuredTestConfig,
+      indexer: new SettlementIndexer(new MockChainReader(), 100n), role: "reader",
+      enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache: null });
+    for (const version of [1, 0, 1, 2, 1]) {
+      result = "0x" + version.toString(16).padStart(64, "0");
+      const response = await handler(new Request("https://api.veydrift.com/moon-supply-batch"));
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect((await response.json()).version).toBe(version === 1 ? 1 : null);
+    }
+    expect(calls).toBe(5);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("combat model capability is uncached and fails closed during rollout", async () => {
   class CombatModelReader extends MockChainReader {
     version: number | null = 2;
@@ -12988,3 +13609,10 @@ test("current state invalidates warm full-system and wallet caches at partial un
   setSystemTime(new Date((now+20)*1000));expect((await read()).defenses[0]?.count).toBe(2);
  } finally { setSystemTime(new Date(now*1000)); }
 });
+
+// These tests inspect the nullable contract, not the unsupported legacy-client boundary.
+function nullableResourceRequest(input: string, init?: RequestInit): Request {
+  const headers = new Headers(init?.headers);
+  headers.set("accept", "application/json; resource-view=nullable-v1");
+  return new Request(input, { ...init, headers });
+}

@@ -6,7 +6,7 @@ import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
-import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @notice Delegatecall target for ship production, FIFO backlog, and per-unit lazy settlement.
 contract VeydriftShipProductionModule is VeydriftResourceReserves {
@@ -48,12 +48,141 @@ contract VeydriftShipProductionModule is VeydriftResourceReserves {
         _recordShipQueueTiming(planetId, queued, baseReadyAt.toUint64(), unitCost);
     }
 
+    /// @notice OGame demolition: takes `building` one level down through the planet's single
+    ///         building slot, at the previous level's build price less 4% per Ion Technology level.
+    function startBuildingDemolition(uint256 planetId, Building building) external {
+        address player = _actingPlayer();
+        _touchPlayer(player);
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
+        if (buildingConstructions[planetId].active) revert ConstructionActive();
+
+        uint16 currentLevel = _buildingLevels[planetId][building];
+        // The Terraformer provides fields, so taking it down is never allowed (as in OGame).
+        if (currentLevel == 0 || building == Building.Terraformer) {
+            revert BuildingNotDemolishable(building);
+        }
+        uint16 targetLevel = currentLevel - 1;
+        _requireDemolitionIdle(planetId, building, player, targetLevel);
+
+        (uint128 metal, uint128 crystal, uint128 deuterium) =
+            VeydriftCatalog.buildingBaseCost(building);
+        uint16 ionLevel = _technologyLevels[player][Technology.Ion];
+        Resources memory cost;
+        Resources memory fullCost;
+        (cost.metal, fullCost.metal) = _demolitionCost(building, metal, currentLevel, ionLevel);
+        (cost.crystal, fullCost.crystal) =
+            _demolitionCost(building, crystal, currentLevel, ionLevel);
+        (cost.deuterium, fullCost.deuterium) =
+            _demolitionCost(building, deuterium, currentLevel, ionLevel);
+        _spend(planetId, cost);
+
+        // Ion Technology lowers the price only; the duration uses the undiscounted cost.
+        uint64 readyAt = (uint256(_currentTimestamp())
+                + VeydriftFormulas.buildingDuration(
+                    _buildingLevels[planetId][Building.RoboticsFactory],
+                    _buildingLevels[planetId][Building.NaniteFactory],
+                    fullCost.metal,
+                    fullCost.crystal,
+                    QUEUE_UNIVERSE_SPEED,
+                    MIN_QUEUE_SECONDS
+                ))
+        .toUint64();
+        buildingConstructions[planetId] = BuildingConstruction({
+            active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
+        });
+        emit BuildingDemolitionStarted(
+            planetId, building, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+        );
+    }
+
+    /// @notice Cancels a queued demolition before it completes and refunds its full price.
+    function cancelBuildingDemolition(uint256 planetId) external {
+        _touchPlayer(_actingPlayer());
+        _requirePlanetOwner(planetId);
+        _settleResources(planetId);
+        BuildingConstruction memory construction = buildingConstructions[planetId];
+        if (
+            !construction.active
+                || construction.targetLevel >= _buildingLevels[planetId][construction.building]
+        ) {
+            revert ConstructionInactive();
+        }
+
+        delete buildingConstructions[planetId];
+        Resources memory cost = construction.cost;
+        Resources storage available = _planets[planetId].resources;
+        available.metal += cost.metal;
+        available.crystal += cost.crystal;
+        available.deuterium += cost.deuterium;
+        _increaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
+        emit BuildingDemolitionCancelled(
+            planetId,
+            construction.building,
+            construction.targetLevel,
+            cost.metal,
+            cost.crystal,
+            cost.deuterium
+        );
+    }
+
+    /// @dev OGame busy guards: the Shipyard and Nanite Factory stay while this planet produces
+    ///      ships or defenses, the Research Lab stays while research runs, and the Missile Silo
+    ///      only shrinks when its stored and queued missiles fit the lower level.
+    function _requireDemolitionIdle(
+        uint256 planetId,
+        Building building,
+        address player,
+        uint16 targetLevel
+    ) private view {
+        if (building == Building.Shipyard || building == Building.NaniteFactory) {
+            if (shipQueues[planetId].active || defenseQueues[planetId].active) {
+                revert BuildingInUse(building);
+            }
+        } else if (building == Building.ResearchLab) {
+            if (researchQueues[player].active) revert BuildingInUse(building);
+        } else if (building == Building.MissileSilo) {
+            uint32 slots = _defenseCounts[planetId][Defense.AntiBallisticMissile]
+                + _defenseCounts[planetId][Defense.InterplanetaryMissile] * 2;
+            DefenseQueue memory queue = defenseQueues[planetId];
+            if (queue.active) {
+                slots += uint32(VeydriftCatalog.missileSlots(queue.defense)) * queue.quantity;
+            }
+            DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+            for (uint256 i = 0; i < backlog.length; ++i) {
+                slots += uint32(VeydriftCatalog.missileSlots(backlog[i].defense))
+                * backlog[i].quantity;
+            }
+            uint16 capacity = VeydriftCatalog.missileSiloCapacity(targetLevel);
+            if (slots > capacity) revert MissileSiloCapacityExceeded(slots, capacity);
+        }
+    }
+
+    function _demolitionCost(Building building, uint128 base, uint16 currentLevel, uint16 ionLevel)
+        private
+        pure
+        returns (uint128 cost, uint128 fullCost)
+    {
+        (uint8 numerator, uint8 denominator) = VeydriftCatalog.buildingCostFactor(building);
+        (uint256 discounted, uint256 full) =
+            VeydriftFormulas.demolitionCost(base, currentLevel, numerator, denominator, ionLevel);
+        return (discounted.toUint128(), full.toUint128());
+    }
+
     function finishShipProduction(uint256 planetId) external {
         _requirePlanetOwner(planetId);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         ShipQueue memory queue = shipQueues[planetId];
         if (!queue.active) revert QueueInactive();
-        if (_settleShipProductionUntil(planetId, _currentTimestamp()) == 0) {
+        // Production first, like every lazy settle: a satellite or crawler that lands here must
+        // not raise output for the unsettled window that elapsed before it existed.
+        _settleResources(planetId);
+        ShipQueue memory current = shipQueues[planetId];
+        if (
+            current.active && current.ship == queue.ship && current.readyAt == queue.readyAt
+                && current.quantity == queue.quantity
+        ) {
             ProductionQueueTiming memory timing = _shipQueueTimings[planetId][queue.readyAt];
             uint32 settledQuantity = timing.startedAt == 0
                 || timing.originalQuantity < queue.quantity

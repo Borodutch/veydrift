@@ -97,9 +97,10 @@ export function filesRequireUniverseChecks(files) {
 }
 
 export function filesRequireBackendChecks(files) {
-  return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types))\//)
-    // Backend tests read contract sources and storage layouts.
+  return anyMatch(files, /^(apps\/backend|packages\/(universe|api-types|battle-oracle))\//)
+    // Backend tests read contract sources, storage layouts and the demolition parity fixture.
     || anyMatch(files, /^packages\/contracts\/(src|storage-layout)\//)
+    || anyMatch(files, /^packages\/contracts\/demolition-parity-fixture\.json$/)
     || anyMatch(
       files,
       /^scripts\/(veydrift-api-(latency-report|route-benchmark)|veydrift-(redeploy-preflight|redeploy-readiness-probe|safe-diagnostics))(\.test)?\.mjs$/,
@@ -107,8 +108,8 @@ export function filesRequireBackendChecks(files) {
 }
 
 export function filesRequireFrontendChecks(files) {
-  return anyMatch(files, /^(apps\/frontend|packages\/(universe|api-types))\//)
-    || anyMatch(files, /^packages\/contracts\/combat-preview-catalog\.json$/)
+  return anyMatch(files, /^(apps\/frontend|packages\/(universe|api-types|battle-oracle))\//)
+    || anyMatch(files, /^packages\/contracts\/(combat-preview-catalog|demolition-parity-fixture)\.json$/)
     || anyMatch(files, /^scripts\/veydrift-test-frontend-config-check\.mjs$/);
 }
 
@@ -144,7 +145,16 @@ export function changedScriptTests(files, exists = existsSync) {
   const names = files
     .map((file) => /^scripts\/([^/]+?)(\.test)?\.mjs$/.exec(file)?.[1])
     .filter(Boolean);
-  return unique(names.map((name) => `scripts/${name}.test.mjs`)).filter((test) => exists(test));
+  const tests = names.map((name) => `scripts/${name}.test.mjs`);
+  if (files.some((file) => file.startsWith("scripts/base-node/"))) tests.push("scripts/base-node-reliability.test.mjs");
+  if (files.some((file) => file.startsWith("scripts/base-monitor/"))) tests.push("scripts/base-monitor.test.mjs");
+  if (files.some((file) => file.startsWith("scripts/host-build-io/"))) tests.push("scripts/host-build-io.test.mjs");
+  // Any app or package change may add or edit a Bun.serve call; keep them out of development mode.
+  if (files.some((file) => /^(apps|packages)\//.test(file))) tests.push("scripts/bun-serve-production-mode.test.mjs");
+  if (files.some((file) => /^(nixpacks\.toml|package\.json|bun\.lockb?|tsconfig\.base\.json|(apps|packages)\/[^/]+\/package\.json)$/.test(file))) {
+    tests.push("scripts/nixpacks-config.test.mjs");
+  }
+  return unique(tests).filter((test) => exists(test));
 }
 
 export function computeScope(options = {}) {

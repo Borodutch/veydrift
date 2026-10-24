@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { BackendDataStore } from "./backendDataStore";
+import { prepareMissionLaunchInventory, type MissionLaunchInventoryRequest } from "./PlayableMvpApp";
+import { emptyMissionShips } from "./galaxyActions";
 import { GameApiError } from "./gameApiError";
 import { transactionIsBusy, type WriteTransactionState } from "./transactionActionGate";
 import { storePaidAllianceInvite } from "./walletFlow";
@@ -629,4 +631,77 @@ describe("automatic transaction recovery", () => {
       expect(source).not.toContain("keepPendingTransactionRecovery");
     }
   });
+});
+
+for (const mission of ["transport", "deploy", "attack", "harvest", "defenseHold", "acsDefend", "joinAttack"]) {
+  for (const moon of mission === "transport" || mission === "deploy" || mission === "attack" || mission === "joinAttack" ? [false, true] : [false]) {
+    test("fresh resource decline aborts prepared " + mission + " moon=" + moon + " before wallet send", async () => {
+      browser();
+      const data = store();
+      const balances = { metal: "1000000", crystal: "1000000", deuterium: "1000000" };
+      let constrained: typeof balances | null = balances;
+      let reads = 0;
+      let depot = 10;
+      globalValue("fetch", async (url: string) => {
+        if (String(url).includes("fleet-visibility")) return Response.json({ incoming: [{ missionId: "99", status: "Outbound", arrivalAt: "100000", targetPlanet: { allianceDepotLevel: depot } }], joinableDefenses: [] });
+        if (String(url).includes("/universe/")) {
+          expect(new URL(String(url)).searchParams.get("fresh")).toBe("1");
+          return Response.json({ planets: [{ occupiedBy: { planetId: "8" }, publicState: { buildings: [{ id: 13, level: depot }] } }] });
+        }
+        reads++;
+        return Response.json({ wallet: "0xabc", homePlanetId: "7", planetId: "7", resources: balances, resourcesAsOfNow: balances,
+          technologyLevels: { "8": 6, "9": 5 }, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 16 },
+          ships: [{ id: 4, count: 6, cost: balances }], launchableShips: [{ id: 4, count: 6 }],
+          fleetLaunchConstraints: { ships: [{ id: 4, count: 6 }], resources: constrained, fleetSlots: { active: 0, limit: 16 } },
+          moon: { exists: true, planetId: "7" }, shipyardLevel: 1, naniteLevel: 0, queue: null });
+      });
+      const request: MissionLaunchInventoryRequest = { originPlanetId: "7", origin: { galaxy: 1, system: 1, position: 1 }, target: { galaxy: 1, system: 2, position: 1 }, targetPlanetId: "8",
+        originIsMoon: moon, ships: { ...emptyMissionShips(), largeCargo: 6 }, mission, speedPercent: 100,
+        ...(mission === "transport" || mission === "deploy" ? { cargo: { metal: "140000", deuterium: "10" } } : {}),
+        ...(mission === "defenseHold" ? { holdSeconds: 100000 } : {}), ...(mission === "acsDefend" ? { hostileMissionId: "99" } : {}),
+      };
+      // The initial enabled snapshot qualifies the identical captured request.
+      await prepareMissionLaunchInventory(data, "0xabc", request, () => 0);
+      const warmReads = reads;
+      for (const reduced of [{ metal: "0", crystal: "0", deuterium: "0" }, null]) {
+        constrained = reduced;
+        let sent = 0;
+        const result = await data.runWriteTransaction({ ...action(),
+          prepare: () => prepareMissionLaunchInventory(data, "0xabc", request, () => 0),
+          send: async () => { sent++; return "0xunexpected"; },
+        });
+        expect(result.outcome).toBe("not-submitted");
+        expect(sent).toBe(0);
+        expect(reads).toBeGreaterThan(warmReads);
+      }
+      if (mission === "defenseHold" || mission === "acsDefend") {
+        // Travel alone is funded. A freshly lost depot subsidy must also block.
+        constrained = { ...balances, deuterium: "500" };
+        depot = 10;
+        await prepareMissionLaunchInventory(data, "0xabc", request, () => 0);
+        depot = 0;
+        let sent = 0;
+        expect((await data.runWriteTransaction({ ...action(), prepare: () => prepareMissionLaunchInventory(data, "0xabc", request, () => 0), send: async () => { sent++; return "0xunexpected"; } })).outcome).toBe("not-submitted");
+        expect(sent).toBe(0);
+      }
+    });
+  }
+}
+
+test("fresh drive changes recalculate travel fuel for the captured fleet", async () => {
+  browser();
+  const data = store();
+  let impulse = 0;
+  const resources = { metal: "1000000", crystal: "1000000", deuterium: "5" };
+  globalValue("fetch", async () => Response.json({ wallet: "0xabc", homePlanetId: "7", resources, resourcesAsOfNow: resources,
+    technologyLevels: { "9": impulse }, fleetSlots: { active: 0, limit: 16 }, fleetLaunchAvailable: true,
+    ships: [{ id: 0, count: 1, cost: resources }], launchableShips: [{ id: 0, count: 1 }],
+    fleetLaunchConstraints: { ships: [{ id: 0, count: 1 }], resources, fleetSlots: { active: 0, limit: 16 } },
+    shipyardLevel: 1, naniteLevel: 0, queue: null }));
+  const request: MissionLaunchInventoryRequest = { originPlanetId: "7", origin: { galaxy: 1, system: 1, position: 1 }, target: { galaxy: 1, system: 2, position: 1 }, ships: { ...emptyMissionShips(), smallCargo: 1 }, mission: "transport", speedPercent: 100 };
+  await prepareMissionLaunchInventory(data, "0xabc", request);
+  impulse = 5;
+  let sent = 0;
+  expect((await data.runWriteTransaction({ ...action(), prepare: () => prepareMissionLaunchInventory(data, "0xabc", request), send: async () => { sent++; return "0xunexpected"; } })).outcome).toBe("not-submitted");
+  expect(sent).toBe(0);
 });

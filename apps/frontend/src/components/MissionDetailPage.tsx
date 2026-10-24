@@ -3,6 +3,7 @@ import { ArrowLeft, Share2, Swords, Undo2 } from "lucide-preact";
 
 import { ActionReasonNote } from "./ActionReasonNote";
 import { MissionBattleForecastPanel } from "./MissionBattleForecastPanel";
+import { RefereeBattleRounds } from "./RefereeBattleRounds";
 import { MissionDetailSkeleton } from "./LoadingSkeletons";
 import { galaxyActionIcon } from "./GalaxyActionIcon";
 import { formatDurationUntil } from "../durationFormat";
@@ -10,7 +11,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
+import { type BattleReport, type BattleReportParticipant, type RefereeBattleReport, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import {
   isFleetRecallable,
   isMissionQueued,
@@ -29,6 +30,7 @@ import {
 } from "./missionRoute";
 import { PageHeader } from "./PageHeader";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { AssetImage } from "./OptimizedImage";
 
 type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
 
@@ -40,6 +42,8 @@ export type MissionDetailActionState =
 
 interface MissionDetailPageProps {
   actionState: MissionDetailActionState;
+  /** The referee's published report for a settled battle; legacy battles show indexed rounds. */
+  refereeReport?: RefereeBattleReport | null | undefined;
   activePlanetId?: string | undefined;
   canTransact: boolean;
   detail?: MissionDetailResponse | undefined;
@@ -63,6 +67,7 @@ interface MissionDetailPageProps {
 
 export function MissionDetailPage({
   actionState,
+  refereeReport,
   activePlanetId,
   canTransact,
   detail,
@@ -168,6 +173,7 @@ export function MissionDetailPage({
           {detail ? <MissionBattleForecastPanel detail={detail} now={now} /> : null}
           <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
           <MissionBattleReport
+            refereeReport={refereeReport}
             defenderState={detail?.defenderPlanetState ?? undefined}
             materialization={detail?.battleReportMaterialization}
             mission={mission}
@@ -449,12 +455,14 @@ function RouteLegTiming({
 }
 
 function MissionBattleReport({
+  refereeReport,
   defenderState,
   materialization,
   mission,
   now,
   report,
 }: {
+  refereeReport?: RefereeBattleReport | null | undefined;
   defenderState?: DefenderPlanetState | undefined;
   materialization?: MissionDetailResponse["battleReportMaterialization"] | undefined;
   mission: FleetMissionSummary;
@@ -679,8 +687,13 @@ function MissionBattleReport({
         </Panel>
       </div>
 
-      {/* Only render the round-by-round block when the indexed log actually exposes snapshots. */}
-      {report.roundReports.length > 0 ? (
+      {/* Referee-settled battles publish per-unit rounds; legacy battles keep their indexed summaries. */}
+      {refereeReport && refereeReport.rounds.length > 0 ? (
+        <div className="mt-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round-by-round combat</p>
+          <RefereeBattleRounds report={refereeReport} />
+        </div>
+      ) : report.roundReports.length > 0 ? (
         <div className="mt-4">
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">Round-by-round combat</p>
           <div className="grid gap-2">
@@ -989,7 +1002,9 @@ function queueLabel(
   const item = catalog.find((entry, index) => (entry.id ?? index) === queue.itemId);
   const itemLabel = item?.label ?? (queue.itemId == null ? queue.kind ?? "Queue" : `ID ${queue.itemId}`);
   const quantity = queue.quantity ? ` x${queue.quantity.toLocaleString()}` : "";
-  const level = queue.targetLevel ? ` L${queue.targetLevel.toLocaleString()}` : "";
+  const level = queue.action === "demolish"
+    ? ` L${((queue.targetLevel ?? 0) + 1).toLocaleString()} → L${(queue.targetLevel ?? 0).toLocaleString()} demolishing`
+    : queue.targetLevel ? ` L${queue.targetLevel.toLocaleString()}` : "";
   const readiness = queue.asOfNow?.complete
     ? "Ready"
     : queue.readyAt
@@ -1066,7 +1081,7 @@ function UnitIcons({ units }: { units: UnitItem[] }) {
         return (
           <span className="inline-flex items-center gap-1 rounded surface-inset px-1 py-0.5" key={unit.key} title={label}>
             {unit.asset ? (
-              <img alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
+              <AssetImage alt="" className="h-5 w-5 shrink-0 rounded object-contain" loading="lazy" src={unit.asset} />
             ) : (
               <span className="text-[10px] text-slate-300">{unit.label}</span>
             )}

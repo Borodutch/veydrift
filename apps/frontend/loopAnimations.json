@@ -1,0 +1,350 @@
+{
+  "buildings/crystal-mine-mid": {
+    "version": "4a80e04ad260",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/crystal-storage-mid": {
+    "version": "8046c547ddc1",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/deuterium-synthesizer-mid": {
+    "version": "2783ec7ce595",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/deuterium-tank-mid": {
+    "version": "956317dd5d96",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/fusion-reactor-mid": {
+    "version": "635d59e5a6aa",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/interdimensional-rift-stabilizer-mid": {
+    "version": "e06c80dcfa71",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/jump-gate": {
+    "version": "1d489554568b",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/lunar-base": {
+    "version": "0a52a4533667",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/metal-mine-mid": {
+    "version": "d4d37e12c138",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/metal-storage-mid": {
+    "version": "ccab9e1657cb",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/missile-silo-mid": {
+    "version": "fcd047ee91cb",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/moon-robotics-factory": {
+    "version": "98f98245c239",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/moon-shipyard": {
+    "version": "7f553bb41bf9",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/research-lab-mid": {
+    "version": "0f23aed84925",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/robotics-factory-mid": {
+    "version": "ef3e4405c467",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/shipyard-mid": {
+    "version": "45b47c8d5711",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "buildings/solar-plant-mid": {
+    "version": "415124667c2a",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/anti-ballistic-missile": {
+    "version": "388e95383951",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/gauss-cannon": {
+    "version": "e1c3166210e7",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/heavy-laser": {
+    "version": "eb2eb07ada58",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/interplanetary-missile": {
+    "version": "374c8bf6de87",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/ion-cannon": {
+    "version": "ce12f28439f0",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/large-shield-dome": {
+    "version": "0177c3c4200f",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/light-laser": {
+    "version": "6441553aef0a",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/plasma-turret": {
+    "version": "ebf0f17c9166",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/rocket-launcher": {
+    "version": "8f97251e2399",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "defenses/small-shield-dome": {
+    "version": "a0f254821258",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/armor": {
+    "version": "442852eaba88",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/astrophysics": {
+    "version": "7f427a73e08d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/combustion-drive": {
+    "version": "b3e0fdc0091e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/computer": {
+    "version": "b041ecddcd4e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/energy": {
+    "version": "e6d4a13406e3",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/graviton": {
+    "version": "90885b1792fa",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/hyperspace": {
+    "version": "7b68408576b8",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/hyperspace-drive": {
+    "version": "cf9f87d495a1",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/impulse-drive": {
+    "version": "33731da6b00d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/intergalactic-research-network": {
+    "version": "cb4a5d014b6b",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/ion": {
+    "version": "9c398493039e",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/laser": {
+    "version": "1a5328217db5",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/plasma": {
+    "version": "d00f3f615c5c",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/shielding": {
+    "version": "a4e8fb0d452a",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "research/weapons": {
+    "version": "bb36d17d00d4",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/battlecruiser": {
+    "version": "2748c7ab9c34",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/battleship": {
+    "version": "49b9e131fb1b",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/bomber": {
+    "version": "21621009fb89",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/colony-ship": {
+    "version": "0e8a75364604",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/crawler-approved": {
+    "version": "a9027349b361",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/cruiser": {
+    "version": "93449b43731c",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/deathstar": {
+    "version": "45b613f3f2bc",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/destroyer": {
+    "version": "3615e6fbfcf2",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/heavy-fighter": {
+    "version": "2173207580a1",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/large-cargo": {
+    "version": "95d9f7400c97",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/light-fighter": {
+    "version": "6e176974091f",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/pathfinder": {
+    "version": "7888998ad8b6",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/reaper-symmetric": {
+    "version": "4d1816801b0d",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/recycler": {
+    "version": "92e93f8ba623",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/small-cargo": {
+    "version": "c26530468618",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  },
+  "ships/solar-satellite": {
+    "version": "46c36decea47",
+    "width": 720,
+    "frames": 84,
+    "fps": 24
+  }
+}

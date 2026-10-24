@@ -100,10 +100,8 @@ contract UpgradeGame is Script {
             sourceReferralAddress != referralSystemAddress && sourceReferralAddress.code.length > 0,
             "REFERRAL_REPLACEMENT_REQUIRED"
         );
-        require(sourceReferral.owner() == broadcaster, "BROADCASTER_NOT_SOURCE_REFERRAL_OWNER");
         require(sourceReferral.game() == address(0), "SOURCE_REFERRAL_NOT_FROZEN");
         require(sourceReferralAddress.balance == 0, "SOURCE_REFERRAL_ESCROW_NONZERO");
-        require(referralSystem.owner() == broadcaster, "BROADCASTER_NOT_REFERRAL_OWNER");
         require(referralSystem.referralMigrationFinalized(), "REFERRAL_MIGRATION_PENDING");
         require(
             referralSystem.referralRewardMigrationConfigured(), "REFERRAL_REWARD_MIGRATION_REQUIRED"
@@ -126,7 +124,12 @@ contract UpgradeGame is Script {
         if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
         else vm.startBroadcast(privateKey);
 
-        if (configuredReferralGame == address(0)) referralSystem.setGame(proxy);
+        // The referral systems' owner can never change (no transfer function), so it is only
+        // required for the one-time setGame wiring, not for every Game upgrade after a rotation.
+        if (configuredReferralGame == address(0)) {
+            require(referralSystem.owner() == broadcaster, "BROADCASTER_NOT_REFERRAL_OWNER");
+            referralSystem.setGame(proxy);
+        }
 
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
         VeydriftCombatModule combatModule = new VeydriftCombatModule(

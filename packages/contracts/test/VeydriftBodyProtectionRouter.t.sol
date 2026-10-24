@@ -17,6 +17,7 @@ import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol"
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
@@ -116,6 +117,17 @@ contract VeydriftBodyProtectionRouterTest is Test {
         uint256 originPlanetId = _startPlanet(PLAYER);
         uint256 targetPlanetId = _startPlanet(DEFENDER);
         uint256 allyPlanetId = _startPlanet(ALLY);
+        // ACS joins need the attack owner's consent (same alliance).
+        VeydriftAllianceSystem alliance =
+            new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
+        vm.prank(ADMIN);
+        game.setAllianceSystem(address(alliance));
+        vm.prank(PLAYER);
+        uint256 allianceId = alliance.createAlliance("ATK", "Attackers", "ipfs://attackers");
+        vm.prank(PLAYER);
+        alliance.inviteMember(allianceId, ALLY);
+        vm.prank(ALLY);
+        alliance.acceptInvite(allianceId);
         _setPlanetLocation(originPlanetId, PLAYER, 1, 100, 8);
         _setPlanetLocation(targetPlanetId, DEFENDER, 1, 100, 9);
         _setPlanetLocation(allyPlanetId, ALLY, 1, 100, 8);

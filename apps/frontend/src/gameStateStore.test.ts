@@ -193,3 +193,21 @@ describe("GameStateStore", () => {
   });
 
 });
+
+
+test.each(["clear", "clearWallet"] as const)("%s detaches old transport without forgetting its generation fence", async method => {
+  const store = new GameStateStore();
+  const old = deferred<string>();
+  const next = deferred<string>();
+  const oldRead = store.read("supply", () => old.promise, { wallet: "0xabc" });
+  await Promise.resolve();
+  if (method === "clear") store.clear("supply"); else store.clearWallet("0xabc");
+  expect(store.hasInFlight("supply")).toBe(false);
+  expect(store.forget("supply")).toBe(false);
+  const nextRead = store.read("supply", () => next.promise, { wallet: "0xabc" });
+  next.resolve("new chain"); await nextRead;
+  old.resolve("old chain"); await oldRead;
+  expect(store.value<string>("supply")).toBe("new chain");
+  expect(store.forget("supply")).toBe(true);
+  store.dispose();
+});

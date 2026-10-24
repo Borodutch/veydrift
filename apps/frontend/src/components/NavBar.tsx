@@ -2,7 +2,7 @@ import type { ComponentChildren, JSX } from "preact";
 import { createPortal, flushSync } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, ChevronDown, ChevronsUpDown, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Calculator, ChevronDown, ChevronsUpDown, Crosshair, Factory, FlaskConical, History, Mail, Menu, Moon, Orbit, PanelLeftClose, PanelLeftOpen, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, UserRound, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -15,6 +15,7 @@ import {
   type WalletDelegationState,
 } from "../walletFlow";
 import { buildInspectPath } from "../inspectRoutes";
+import { DelegationAcceptForm } from "./DelegationAcceptForm";
 import { Modal } from "./Modal";
 import { ModalHeader } from "./ModalHeader";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "../sidebarPreference";
@@ -46,6 +47,7 @@ interface NavBarProps {
   onNavigate: (page: Page) => void;
   onConnectWallet?: (() => void) | undefined;
   onOpenActivity?: (() => void) | undefined;
+  onAcceptDelegate?: ((main: string) => void) | undefined;
   onRevokeDelegate?: (() => void) | undefined;
   onSetDelegate?: ((delegate: string) => void) | undefined;
   onRefreshDelegation?: (() => void) | undefined;
@@ -100,6 +102,9 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "alliance-invites", label: "Earn $10", mobileLabel: "Earn $10", icon: Mail },
 ];
 
+// The public battle calculator opens in its own tab so the game keeps its state.
+const calculatorLink = { href: "/calculator", label: "Calculator", icon: Calculator, after: "raid-target-finder" as Page };
+
 // Mobile menu order: planet screens, then fleet, then the wider universe.
 const mobilePageOrder = ([
   "overview", "infrastructure", "defenses", "research", "shipyard", "moon",
@@ -114,6 +119,7 @@ export function NavBar({
   onConnectWallet,
   onNavigate,
   onOpenActivity,
+  onAcceptDelegate,
   onRevokeDelegate,
   onSetDelegate,
   onRefreshDelegation,
@@ -163,6 +169,15 @@ export function NavBar({
       && signerAccount.toLowerCase() === account.toLowerCase()
       && !delegation?.actingAsDelegate
       && onSetDelegate,
+  );
+  // A wallet with no delegate, proposal or main of its own may accept another wallet's proposal.
+  const canAcceptDelegate = Boolean(
+    signerAccount
+      && delegation
+      && !delegation.actingAsDelegate
+      && !delegation.delegate
+      && !delegation.pendingDelegate
+      && onAcceptDelegate,
   );
 
   const closeMobileMenu = () => {
@@ -400,12 +415,17 @@ export function NavBar({
                 : "No delegate is currently set."}
             </p>
           )}
+          {delegation?.pendingDelegate && !delegation.actingAsDelegate ? (
+            <p className="mt-1 text-[11px] leading-4 text-amber-200">
+              Pending: {shortAddress(delegation.pendingDelegate)} must accept from that wallet before the change takes effect.
+            </p>
+          ) : null}
         </div>
         <p className="text-[11px] leading-4 text-slate-300">
-          Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can set or replace a delegate.
+          Allow another wallet to perform gameplay actions on your behalf. Use with caution—useful for AI agents. This does not transfer wallet ownership. Only the main wallet can propose a delegate, and the delegate wallet must accept before it can act.
         </p>
         <p className="text-[11px] leading-4 text-slate-300">
-          Setting, replacing, or revoking a delegate is an on-chain transaction with network gas fees.
+          Proposing, accepting, or revoking a delegate is an on-chain transaction with network gas fees.
         </p>
         {canSetDelegate ? (
           <label className="grid gap-1 text-xs font-medium text-slate-200">
@@ -420,14 +440,14 @@ export function NavBar({
           </label>
         ) : null}
         <div className="flex flex-wrap justify-end gap-2">
-          {delegation?.delegate && onRevokeDelegate ? (
+          {(delegation?.delegate || delegation?.pendingDelegate) && onRevokeDelegate ? (
             <button
               className="h-8 rounded border border-rose-300/30 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={delegationBusy || playerProfileBusy}
               onClick={onRevokeDelegate}
               type="button"
             >
-              {delegation?.actingAsDelegate ? "Revoke my access" : "Revoke delegate"}
+              {delegation?.actingAsDelegate ? "Revoke my access" : delegation?.delegate ? "Revoke delegate" : "Cancel proposal"}
             </button>
           ) : null}
           {canSetDelegate ? (
@@ -437,10 +457,20 @@ export function NavBar({
               onClick={() => onSetDelegate?.(delegateDraft)}
               type="button"
             >
-              {delegation?.delegate ? "Replace delegate" : "Set delegate"}
+              {delegation?.delegate ? "Propose replacement" : "Propose delegate"}
             </button>
           ) : null}
         </div>
+        {canAcceptDelegate ? (
+          <div className="border-t border-cyan-300/10 pt-3">
+            <DelegationAcceptForm
+              busy={delegationBusy || playerProfileBusy}
+              key={signerAccount}
+              onAccept={(main) => onAcceptDelegate?.(main)}
+              proposedBy={delegation?.proposedBy}
+            />
+          </div>
+        ) : null}
         {delegationStatusLabel ? (
           <p role="status" className={`break-words text-[11px] leading-4 ${delegationStatusTone}`}>{delegationStatusLabel}</p>
         ) : null}
@@ -456,10 +486,10 @@ export function NavBar({
   return (
     <>
       {/* Desktop sidebar */}
-      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
+      <nav aria-label="Desktop app sections" className={`hidden h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))] shrink-0 flex-col border-r border-cyan-300/10 bg-[#091120] md:sticky md:top-[var(--topbar-h,2.75rem)] md:z-20 md:flex ${sidebarCollapsed ? "w-16" : "w-52"}`}>
         <div className={`flex min-h-0 flex-1 flex-col gap-2 ${sidebarCollapsed ? "p-2" : "p-2.5"}`}>
           <div id="desktop-navigation-links" className={`min-h-0 flex-1 space-y-0.5 overflow-y-auto ${sidebarCollapsed ? "" : "pr-1"}`}>
-            {pages.map((page) => (
+            {pages.flatMap((page) => [
               <NavItem
                 active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                 href={buildInspectPath({ kind: "page", page: page.key })}
@@ -468,8 +498,20 @@ export function NavBar({
                 label={page.label}
                 collapsed={sidebarCollapsed}
                 onClick={() => onNavigate(page.key)}
-              />
-            ))}
+              />,
+              page.key === calculatorLink.after ? (
+                <NavItem
+                  active={false}
+                  collapsed={sidebarCollapsed}
+                  external
+                  href={calculatorLink.href}
+                  icon={calculatorLink.icon}
+                  key={calculatorLink.href}
+                  label={calculatorLink.label}
+                  onClick={() => undefined}
+                />
+              ) : null,
+            ])}
           </div>
 
           <button
@@ -517,7 +559,7 @@ export function NavBar({
                 </>
               )}
             </summary>
-            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
+            <div className={`surface absolute z-30 w-64 max-h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px)-1rem)] overflow-y-auto rounded-lg p-3 shadow-2xl shadow-black/50 ${sidebarCollapsed ? "bottom-0 left-full ml-4" : "bottom-full left-0 mb-2"}`}>
               {accountSummary("")}
             </div>
           </details>
@@ -556,7 +598,7 @@ export function NavBar({
               id="mobile-navigation-menu"
             >
               <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1 min-[375px]:gap-1.5 sm:gap-2">
-                {mobilePageOrder.map((page) => (
+                {mobilePageOrder.flatMap((page) => [
                   <MobileTab
                     active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
                     href={buildInspectPath({ kind: "page", page: page.key })}
@@ -565,8 +607,19 @@ export function NavBar({
                     label={page.label}
                     onClick={() => handleMobileNavigate(page.key)}
                     shortLabel={page.key === "infrastructure" ? "Infra" : undefined}
-                  />
-                ))}
+                  />,
+                  page.key === calculatorLink.after ? (
+                    <MobileTab
+                      active={false}
+                      external
+                      href={calculatorLink.href}
+                      icon={calculatorLink.icon}
+                      key={calculatorLink.href}
+                      label={calculatorLink.label}
+                      onClick={closeMobileMenu}
+                    />
+                  ) : null,
+                ])}
               </nav>
               {account ? (
                 <div className="rounded-xl border border-cyan-300/15 bg-[linear-gradient(135deg,rgba(34,211,238,0.09),rgba(13,24,41,0.9)_60%)]">
@@ -960,6 +1013,19 @@ function handleSectionLinkPointerUp(
   if (view.location.href !== targetUrl) view.location.assign(targetUrl);
 }
 
+/** Section links route inside the app; an external link is a plain new-tab anchor (onClick still runs). */
+function sectionLinkHandlers(onClick: () => void, external: boolean) {
+  if (external) return { onClick, rel: "noopener", target: "_blank" };
+  return {
+    onClick: (event: JSX.TargetedMouseEvent<HTMLAnchorElement>) => handleSectionLinkClick(event, onClick),
+    onLostPointerCapture: clearSectionLinkPointerActivation,
+    onPointerCancel: clearSectionLinkPointerActivation,
+    onPointerDown: handleSectionLinkPointerDown,
+    onPointerMove: handleSectionLinkPointerMove,
+    onPointerUp: (event: JSX.TargetedPointerEvent<HTMLAnchorElement>) => handleSectionLinkPointerUp(event, onClick),
+  };
+}
+
 export function NavItem({
   active,
   href,
@@ -967,6 +1033,7 @@ export function NavItem({
   label,
   onClick,
   collapsed = false,
+  external = false,
 }: {
   active: boolean;
   href: string;
@@ -974,6 +1041,8 @@ export function NavItem({
   label: string;
   onClick: () => void;
   collapsed?: boolean;
+  /** A plain new-tab link outside the app's section routing. */
+  external?: boolean;
 }) {
   return (
     <a
@@ -984,12 +1053,7 @@ export function NavItem({
           : "text-slate-400 hover:bg-white/[0.04] hover:text-slate-100"
       }`}
       href={href}
-      onClick={(event) => handleSectionLinkClick(event, onClick)}
-      onLostPointerCapture={clearSectionLinkPointerActivation}
-      onPointerCancel={clearSectionLinkPointerActivation}
-      onPointerDown={handleSectionLinkPointerDown}
-      onPointerMove={handleSectionLinkPointerMove}
-      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
+      {...sectionLinkHandlers(onClick, external)}
       aria-current={active ? "page" : undefined}
     >
       <span className={active ? sidebarIconClassName.replace("text-slate-400", "text-cyan-200") : sidebarIconClassName}>
@@ -1072,6 +1136,7 @@ export function MobileTab({
   label,
   onClick,
   shortLabel,
+  external = false,
 }: {
   active: boolean;
   href: string;
@@ -1080,6 +1145,8 @@ export function MobileTab({
   onClick: () => void;
   /** Shown instead of the label on very narrow screens. */
   shortLabel?: string | undefined;
+  /** A plain new-tab link outside the app's section routing. */
+  external?: boolean;
 }) {
   return (
     <a
@@ -1089,12 +1156,7 @@ export function MobileTab({
           : "border border-cyan-300/[0.12] bg-cyan-400/[0.05] text-slate-200 hover:border-cyan-300/35 hover:bg-cyan-400/10 hover:text-white"
       }`}
       href={href}
-      onClick={(event) => handleSectionLinkClick(event, onClick)}
-      onLostPointerCapture={clearSectionLinkPointerActivation}
-      onPointerCancel={clearSectionLinkPointerActivation}
-      onPointerDown={handleSectionLinkPointerDown}
-      onPointerMove={handleSectionLinkPointerMove}
-      onPointerUp={(event) => handleSectionLinkPointerUp(event, onClick)}
+      {...sectionLinkHandlers(onClick, external)}
       aria-current={active ? "page" : undefined}
     >
       <Icon aria-hidden="true" className={`shrink-0 ${active ? "" : "text-cyan-300"}`} size={14} strokeWidth={1.9} />

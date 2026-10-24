@@ -4,6 +4,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { backendDataStoreFor, retainBackendDataStore } from "./backendDataStore";
 import { ComingSoonApp } from "./ComingSoonApp";
+import { DelegationAcceptForm } from "./components/DelegationAcceptForm";
 import { RankingCommanderLink, RankingsPagination, RankingsTable } from "./components/RankingsTable";
 import { Skeleton, SkeletonRegion } from "./components/Skeleton";
 import { SiteHeader } from "./components/SiteHeader";
@@ -49,6 +50,7 @@ import {
   referralCommitment,
   requestAccounts,
   requestReferralWalletSignature,
+  sendAcceptDelegateTransaction,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementContractConfigured,
@@ -326,6 +328,8 @@ export function FirstPlanetSettlementApp() {
   );
   const delegation = delegationQuery.snapshot?.freshness === "failed" ? undefined : delegationQuery.snapshot?.data;
   const playerAccount = delegation?.main;
+  const [delegationAccept, setDelegationAccept] = useState<{ status: "idle" | "pending" | "success" | "error"; label?: string }>({ status: "idle" });
+  useEffect(() => setDelegationAccept({ status: "idle" }), [account]);
   useEffect(() => {
     if (!referralData || !account) return;
     return referralData.startSignerDelegationSync(account);
@@ -1474,6 +1478,61 @@ export function FirstPlanetSettlementApp() {
     if (outcome.outcome === "not-submitted" && !terminalError) setReferralProgramPhase({ status: "idle" });
   }
 
+  // A wallet without a planet can accept its main wallet's delegate proposal here, then plays for it.
+  async function acceptDelegation(mainAddress: string) {
+    const main = mainAddress.trim();
+    const apiUrl = settlementConfigState.apiUrl;
+    const gameAddress = settlementConfig.address;
+    if (!provider || wallet.kind !== "connected" || !apiUrl || !gameAddress || delegationAccept.status === "pending") return;
+    const signer = wallet.account;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(main) || /^0x0{40}$/i.test(main) || main.toLowerCase() === signer.toLowerCase()) {
+      setDelegationAccept({ status: "error", label: "Enter the main wallet address that proposed this wallet." });
+      return;
+    }
+    const isCurrentSigner = () => currentAccount.current?.toLowerCase() === signer.toLowerCase();
+    const data = backendDataStoreFor(apiUrl);
+    // A confirmed acceptance makes this signer act for the main; wait (bounded) for the read to show it.
+    const openMainGame = async () => {
+      for (let read = 0; read < 4 && isCurrentSigner(); read++) {
+        if (read) await delay(1_000);
+        const next = await data.queries.delegation(signer, { fresh: true, timeoutMs: 5_000 }).read().catch(() => undefined);
+        if (!isCurrentSigner()) return;
+        if (next?.main.toLowerCase() === main.toLowerCase()) {
+          setDelegationAccept({ status: "success", label: "Delegation accepted. Opening your main wallet's game…" });
+          await refreshWallet(provider, signer);
+          return;
+        }
+      }
+      if (isCurrentSigner()) {
+        setDelegationAccept({ status: "error", label: "Delegation confirmed, but it is not visible yet. Reload in a moment; do not resend the transaction." });
+      }
+    };
+    setDelegationAccept({ status: "pending", label: "Confirm the delegation in your wallet." });
+    try {
+      const outcome = await data.runWriteTransaction({
+        key: "wallet-delegation:accept",
+        label: "Accept wallet delegation",
+        confirmRetry: confirmTransactionRetry,
+        waitForIndexing: false,
+        recoveryIdentity: isCurrentSigner,
+        send: beforeWalletSend => sendAcceptDelegateTransaction(transactionWalletProvider(provider, beforeWalletSend), signer, gameAddress, main),
+        chainId: requiredChain.chainIdHex,
+        invalidateTags: [`wallet:${signer.toLowerCase()}`],
+        errorLabel: (error) => (isUserRejected(error) ? "Delegation acceptance was rejected." : walletRequestErrorMessage(error)),
+        onStateChange: (state) => {
+          if (!isCurrentSigner()) return;
+          if (state.phase === "success") void openMainGame();
+          else if (state.phase === "error" || state.phase === "unknown") {
+            setDelegationAccept({ status: "error", label: state.label ?? "Accepting the delegation failed." });
+          } else setDelegationAccept({ status: "pending", label: state.label ?? "Accepting delegation…" });
+        },
+      });
+      if (outcome.outcome === "not-submitted" && isCurrentSigner()) setDelegationAccept({ status: "idle" });
+    } catch (error) {
+      if (isCurrentSigner()) setDelegationAccept({ status: "error", label: walletRequestErrorMessage(error) });
+    }
+  }
+
   async function refreshSettlementLaunchInfo(playerWallet: string, signerWallet: string, currentPlanet: PlanetState): Promise<SettlementFundingState | undefined> {
     const identityEpoch = settlementIdentityEpoch.current;
     const providerAtStart = provider;
@@ -1647,6 +1706,16 @@ export function FirstPlanetSettlementApp() {
                   miniAppMode={miniAppMode}
                   walletRecoveryDevice={walletRecoveryDeviceForNavigator()}
                   requiredChain={requiredChain}
+                />
+              ) : null}
+              {!paidAllianceInviteSecret && mode === "settle" && wallet.kind === "connected" && delegation
+                && !delegation.actingAsDelegate && !delegation.delegate && !delegation.pendingDelegate ? (
+                <DelegationInvitePanel
+                  busy={delegationAccept.status === "pending" || delegationAccept.status === "success"}
+                  key={wallet.account}
+                  onAccept={(main) => void acceptDelegation(main)}
+                  proposedBy={delegation.proposedBy ?? []}
+                  status={delegationAccept}
                 />
               ) : null}
             </>
@@ -2448,6 +2517,42 @@ function AllianceInviteWelcome() {
         <span>ETH gas on Base only — not Ethereum Mainnet</span>
       </div>
     </div>
+  );
+}
+
+function DelegationInvitePanel({
+  busy,
+  onAccept,
+  proposedBy,
+  status,
+}: {
+  busy: boolean;
+  onAccept: (main: string) => void;
+  proposedBy: readonly string[];
+  status: { status: "idle" | "pending" | "success" | "error"; label?: string };
+}) {
+  const statusTone = status.status === "error" ? "text-amber-200" : status.status === "success" ? "text-emerald-200" : "text-slate-300";
+  return (
+    <details aria-label="Delegation invitation" className="referral-code-disclosure mt-3" open={proposedBy.length > 0}>
+      <summary className="referral-code-summary">
+        <span className="referral-code-summary-chevron" aria-hidden="true">
+          <ChevronDown size={16} />
+        </span>
+        <span className="referral-code-summary-label">Playing for your main wallet?</span>
+        {proposedBy.length > 0 ? (
+          <span className="referral-code-summary-value">{proposedBy.length === 1 ? "1 proposal" : `${proposedBy.length} proposals`}</span>
+        ) : null}
+      </summary>
+      <div className="referral-code-editor">
+        <p className="referral-code-help">
+          If your main wallet proposed this wallet as its delegate, accept the proposal to play for that wallet instead of settling a planet here. Accepting is an on-chain transaction with network gas fees.
+        </p>
+        <DelegationAcceptForm busy={busy} onAccept={onAccept} proposedBy={proposedBy} />
+        {status.status !== "idle" && status.label ? (
+          <p className={`break-words text-[11px] leading-4 ${statusTone}`} role="status">{status.label}</p>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

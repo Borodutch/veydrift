@@ -424,7 +424,7 @@ async function timedJson(endpoint, timeoutMs) {
   const started = Date.now();
   try {
     const response = await fetch(`${apiUrl}${endpoint}`, {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json; resource-view=nullable-v1" },
       signal: controller.signal
     });
     const text = await response.text();

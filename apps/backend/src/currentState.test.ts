@@ -17,6 +17,7 @@ test.each(["ship", "defense", "moon-ship", "moon-defense"])("%s units appear onc
  const {indexer} = fixture(kind);
  for(const [at,count] of [[1009,0],[1010,1],[1020,2],[1030,3]]) {
   setSystemTime(new Date(at!*1000));
+  if (kind === "ship" || kind === "moon-ship") expect(indexer.fleetLaunchShipCounts("7", kind === "moon-ship")[0]?.count).toBe(count);
   if(kind.startsWith("moon")) {
    const state = indexer.moonState(owner,"7");
    const rows = kind === "moon-ship" ? state.ships : state.defenses;
@@ -190,4 +191,56 @@ test("historical queue replay preserves batch identity after queue removal and r
  (indexer as any).backfillPlayerActivityFeed();
  const after=indexer.playerActivity(owner,{page:1,pageSize:20,through:1040}).items.find(i=>i.kind==="ship-completed")!;
  expect(after.id).toBe(before.id);expect(after.occurredAt).toBe("1031");expect(after.metadata.quantity).toBe(3);
+});
+
+test("large due roster keeps projected quantities but cannot certify bounded lazy launch", () => {
+  const { indexer, db } = fixture("ship");
+  db.query("DELETE FROM contract_production_queues").run();
+  setSystemTime(new Date(1030000));
+  for (let id = 1; id <= 13; id++) {
+    const mission = storedMission(indexer, String(id), 0);
+    (indexer as any).upsertCanonicalFleetMission({ ...mission, statusId: 2, status: "Returning" });
+  }
+  indexer.recordResourceProjectionWatermark("2", "1030", "0x" + "a".repeat(64));
+  expect(indexer.displayedUnitCounts("7", "ship")[0]?.count).toBe(117);
+  expect(indexer.fleetLaunchShipCounts("7")[0]?.count).toBe(0);
+});
+
+test("one snapshot cannot cross a production boundary between inventory and remaining queue", () => {
+  const { indexer } = fixture("ship");
+  setSystemTime(new Date(1009000));
+  indexer.readConsistentSnapshot(() => {
+    const version = indexer.responseCacheVersion();
+    expect(indexer.shipRows("7")[0]?.count).toBe(0);
+    setSystemTime(new Date(1010000));
+    expect(indexer.planetQueue("7", "ship")?.quantity).toBe(3);
+    expect(indexer.launchableShipCounts("7")[0]?.count).toBe(0);
+    expect(indexer.responseCacheVersion()).toBe(version);
+  });
+  expect(indexer.shipRows("7")[0]?.count).toBe(1);
+  expect(indexer.planetQueue("7", "ship")?.quantity).toBe(2);
+});
+
+test("production fingerprints retract a warm completed projection after clock correction", () => {
+  const { indexer } = fixture("ship");
+  setSystemTime(new Date(1030000));
+  const warm = indexer.responseCacheVersion(), wallet = indexer.walletResponseCacheVersion(owner);
+  setSystemTime(new Date(1009000));
+  expect(indexer.responseCacheVersion()).not.toBe(warm);
+  expect(indexer.walletResponseCacheVersion(owner)).not.toBe(wallet);
+  expect(indexer.launchableShipCounts("7")[0]?.count).toBe(0);
+});
+
+test("paid production and unknown battle outcomes retain distinct proof boundaries", () => {
+  const { indexer } = fixture("ship");
+  storedMission(indexer); // unresolved attack: its launched ships cannot return
+  setSystemTime(new Date(1030000));
+  indexer.recordResourceProjectionWatermark("2", "1009", "0x" + "a".repeat(64));
+  indexer.readConsistentSnapshot(() => {
+    expect(indexer.shipRows("7")[0]?.count).toBe(3); // known funded production
+    expect(indexer.planetQueue("7", "ship")).toBeNull();
+    expect(indexer.fleetSlots(owner).active).toBe(1);
+    expect(indexer.currentFleetResourceCredits("7", false).metal).toBe("0");
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(owner).map(m => m.missionId)).toEqual(["1"]);
+  });
 });

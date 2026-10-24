@@ -7,18 +7,30 @@ import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 /// @notice Imports the independently verified referral migration manifest into a replacement
 /// referral contract while claims and redemptions remain disabled.
 /// @dev The script is resumable at manifest-section boundaries. It verifies the frozen source,
-/// target ownership/configuration and every expected/imported digest before finalizing.
+/// target ownership/configuration and every expected/imported digest before finalizing. The
+/// frozen source is only read, so its owner may differ from the replacement owner; it must still
+/// match the manifest's reviewed `sourceOwner`.
 ///
 /// Required env:
-///   PRIVATE_KEY                     owner of both source and replacement referral contracts
+///   PRIVATE_KEY                     replacement referral owner
+///   UPGRADE_DRY_RUN_OWNER           optional PUBLIC replacement owner for a signer-free
+///                                   rehearsal; when set, PRIVATE_KEY is never read. Do not use
+///                                   --broadcast.
 ///   REFERRAL_SYSTEM_ADDRESS         replacement referral contract (game must be unset)
 ///   REFERRAL_MIGRATION_MANIFEST_FILE path under packages/contracts/manifests
 /// Optional env:
 ///   REFERRAL_MIGRATION_BATCH_SIZE   rows per transaction; defaults to 20
 contract MigrateReferralSystem is Script {
+    address private _rehearsalOwner;
+    uint256 private _privateKey;
+
     function run() external {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address broadcaster = vm.addr(privateKey);
+        _rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        address broadcaster = _rehearsalOwner;
+        if (_rehearsalOwner == address(0)) {
+            _privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(_privateKey);
+        }
         VeydriftReferralSystem target =
             VeydriftReferralSystem(vm.envAddress("REFERRAL_SYSTEM_ADDRESS"));
         uint256 batchSize = vm.envOr("REFERRAL_MIGRATION_BATCH_SIZE", uint256(20));
@@ -44,7 +56,6 @@ contract MigrateReferralSystem is Script {
         address sourceAddress = vm.parseJsonAddress(manifest, ".sourceReferral");
         VeydriftReferralSystem source = VeydriftReferralSystem(sourceAddress);
         require(sourceAddress != address(target), "SOURCE_EQUALS_TARGET");
-        require(source.owner() == broadcaster, "BROADCASTER_NOT_SOURCE_OWNER");
         require(source.game() == address(0), "SOURCE_NOT_FROZEN");
         require(address(source).balance == 0, "SOURCE_BALANCE_NONZERO");
         require(target.owner() == broadcaster, "BROADCASTER_NOT_TARGET_OWNER");
@@ -166,7 +177,7 @@ contract MigrateReferralSystem is Script {
             redemptionInvitees
         );
 
-        vm.startBroadcast(privateKey);
+        _startBroadcast();
         if (!target.referralMigrationConfigured()) {
             target.configureReferralCodeMigration(
                 validDigest, validCount, hashOnlyDigest, hashOnlyCount
@@ -209,20 +220,11 @@ contract MigrateReferralSystem is Script {
         );
 
         _migrateValid(
-            target,
-            privateKey,
-            validInviters,
-            validCodes,
-            validActivatedAts,
-            validCommitments,
-            batchSize
+            target, validInviters, validCodes, validActivatedAts, validCommitments, batchSize
         );
-        _migrateHashOnly(
-            target, privateKey, hashOnlyInviters, hashOnlyCodes, hashOnlyCommitments, batchSize
-        );
+        _migrateHashOnly(target, hashOnlyInviters, hashOnlyCodes, hashOnlyCommitments, batchSize);
         _migrateRedemptions(
             target,
-            privateKey,
             redemptionInviters,
             redemptionInvitees,
             redemptionCommitments,
@@ -234,7 +236,6 @@ contract MigrateReferralSystem is Script {
         );
         _migrateRewardClaimHistory(
             target,
-            privateKey,
             rewardClaimInviters,
             rewardClaimInvitees,
             rewardClaimCommitments,
@@ -245,7 +246,7 @@ contract MigrateReferralSystem is Script {
         );
 
         _migrateRewardStats(
-            target, privateKey, rewardInviters, rewardAccrued, rewardPaid, rewardClaimed, batchSize
+            target, rewardInviters, rewardAccrued, rewardPaid, rewardClaimed, batchSize
         );
         _verifyFrozenRewards(
             source,
@@ -300,7 +301,7 @@ contract MigrateReferralSystem is Script {
             );
         }
         if (!target.referralMigrationFinalized()) {
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.finalizeReferralCodeMigration();
             vm.stopBroadcast();
         }
@@ -393,7 +394,6 @@ contract MigrateReferralSystem is Script {
 
     function _migrateRewardStats(
         VeydriftReferralSystem target,
-        uint256 privateKey,
         address[] memory inviters,
         uint256[] memory accrued,
         uint256[] memory paid,
@@ -404,7 +404,7 @@ contract MigrateReferralSystem is Script {
         require(offset <= inviters.length, "REWARD_OFFSET_INVALID");
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.migrateReferralRewardStats(
                 _sliceAddress(inviters, offset, end),
                 _sliceUint256(accrued, offset, end),
@@ -418,7 +418,6 @@ contract MigrateReferralSystem is Script {
 
     function _migrateValid(
         VeydriftReferralSystem target,
-        uint256 privateKey,
         address[] memory inviters,
         string[] memory codes,
         uint64[] memory activatedAts,
@@ -429,7 +428,7 @@ contract MigrateReferralSystem is Script {
         require(offset <= inviters.length, "VALID_OFFSET_INVALID");
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.migrateReferralCodes(
                 _sliceAddress(inviters, offset, end),
                 _sliceString(codes, offset, end),
@@ -443,7 +442,6 @@ contract MigrateReferralSystem is Script {
 
     function _migrateHashOnly(
         VeydriftReferralSystem target,
-        uint256 privateKey,
         address[] memory inviters,
         string[] memory codes,
         bytes32[] memory commitments,
@@ -453,7 +451,7 @@ contract MigrateReferralSystem is Script {
         require(offset <= inviters.length, "HASH_ONLY_OFFSET_INVALID");
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.migrateLegacyReferralCodeOwnership(
                 _sliceAddress(inviters, offset, end),
                 _sliceString(codes, offset, end),
@@ -466,7 +464,6 @@ contract MigrateReferralSystem is Script {
 
     function _migrateRedemptions(
         VeydriftReferralSystem target,
-        uint256 privateKey,
         address[] memory inviters,
         address[] memory invitees,
         bytes32[] memory commitments,
@@ -480,7 +477,7 @@ contract MigrateReferralSystem is Script {
         require(offset <= inviters.length, "REDEMPTION_OFFSET_INVALID");
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.migrateReferralRedemptionsWithHistory(
                 _sliceAddress(inviters, offset, end),
                 _sliceAddress(invitees, offset, end),
@@ -497,7 +494,6 @@ contract MigrateReferralSystem is Script {
 
     function _migrateRewardClaimHistory(
         VeydriftReferralSystem target,
-        uint256 privateKey,
         address[] memory inviters,
         address[] memory invitees,
         bytes32[] memory commitments,
@@ -510,7 +506,7 @@ contract MigrateReferralSystem is Script {
         require(offset <= inviters.length, "CLAIM_OFFSET_INVALID");
         while (offset < inviters.length) {
             uint256 end = _min(offset + batchSize, inviters.length);
-            vm.startBroadcast(privateKey);
+            _startBroadcast();
             target.migrateReferralRewardClaimHistory(
                 _sliceAddress(inviters, offset, end),
                 _sliceAddress(invitees, offset, end),
@@ -576,6 +572,11 @@ contract MigrateReferralSystem is Script {
             target.referralMigrationImportedRedemptionCount() == redemptionCount,
             "REDEMPTION_COUNT_IMPORTED"
         );
+    }
+
+    function _startBroadcast() private {
+        if (_rehearsalOwner != address(0)) vm.startBroadcast(_rehearsalOwner);
+        else vm.startBroadcast(_privateKey);
     }
 
     function _uint32(uint256 value) private pure returns (uint32) {

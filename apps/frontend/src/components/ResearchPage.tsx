@@ -3,7 +3,7 @@ import { LevelInfoModal } from "./LevelInfoModal";
 import type { LevelSupplyRequest } from "../levelSupply";
 import { playerNotice } from "../playerNotice";
 import { isActionBusy } from "../actionNoticeAutoDismiss";
-import { Info, PackagePlus } from "lucide-preact";
+import { Clock, Gauge, Info, ListChecks, PackagePlus } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
@@ -15,11 +15,11 @@ import type { PlayableState, ResearchKey, ResearchRequirement, Resources } from 
 import {
   buildingCatalog,
   canAfford,
-  energyBalance,
   researchCatalog,
   researchCost,
   researchDurationEstimate,
   researchEffectRows,
+  researchEnergyRequirement,
   researchLabRequirementFor,
   researchRequirementsFor,
   researchUnlockRows,
@@ -81,6 +81,10 @@ interface ResearchPageProps {
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
+  // Selected planet's chain-derived energy production (backend energyBalance),
+  // including Solar Satellites at the planet's max temperature. Graviton's
+  // requirement is checked against it; undefined until the backend reports it.
+  producedEnergy: number | undefined;
   productionRates?: Resources | undefined;
   progressState?: ConstructionProgress | undefined;
   researchState: ChainResearchState | null;
@@ -103,6 +107,7 @@ export function ResearchPage({
   onSelectResearch,
   onSupply,
   onSupplyLevel,
+  producedEnergy,
   productionRates,
   progressState,
   researchState,
@@ -173,6 +178,7 @@ export function ResearchPage({
                     key: research.key,
                     loading,
                     now,
+                    producedEnergy,
                     productionRates,
                     researchState,
                     spendableResources,
@@ -211,6 +217,7 @@ export function ResearchPage({
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
             onSupplyLevel={onSupplyLevel}
+            producedEnergy={producedEnergy}
             research={selectedResearch}
             researchState={researchState}
             productionRates={productionRates}
@@ -377,6 +384,7 @@ function ResearchDetailPanel({
   onOpenRequirement,
   onSupply,
   onSupplyLevel,
+  producedEnergy,
   research,
   researchState,
   productionRates,
@@ -394,6 +402,7 @@ function ResearchDetailPanel({
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
+  producedEnergy: number | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   productionRates?: Resources | undefined;
@@ -412,18 +421,19 @@ function ResearchDetailPanel({
     key: research.key,
     loading,
     now,
+    producedEnergy,
     productionRates,
     researchState,
     spendableResources,
     state,
     transactionUnavailableReason,
   });
-  const requirementStates = getResearchRequirementStates(state, research.key);
+  const requirementStates = getResearchRequirementStates(state, research.key, producedEnergy);
   const effectRows = researchEffectRows(state, research.key, {
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const unlockRows = researchUnlockRows(research.key);
-  const levelInfoRows = researchLevelInfoRows(state, research.key, {
+  const levelInfoRows = researchLevelInfoRows(state, research.key, producedEnergy, {
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
@@ -546,6 +556,7 @@ const MAX_RESEARCH_INFO_LEVEL = 12;
 export function researchLevelInfoRows(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
+  producedEnergy: number | undefined,
   options: {
     maxLevel?: number | undefined;
     researchNetworkLabLevels?: readonly number[] | undefined;
@@ -565,7 +576,7 @@ export function researchLevelInfoRows(
       research: preResearch,
     };
     const cost = researchCost(preResearch, key);
-    const requirementStatus = researchLevelRequirementStatus(targetState, key, level);
+    const requirementStatus = researchLevelRequirementStatus(targetState, key, producedEnergy);
     const durationSeconds = requirementStatus !== "Met"
       ? undefined
       : researchDurationEstimate(state.buildings, cost, {
@@ -613,22 +624,23 @@ export function ResearchLevelInfoModal({ currentLevel, onClose, researchLabel, r
   rows: ResearchLevelInfoRow[];
   onSupply?: ((level: number) => void) | undefined;
 }) {
-  return <LevelInfoModal currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
+  return <LevelInfoModal costLabel="Research cost" currentLevel={currentLevel} itemLabel={researchLabel} onClose={onClose}
     columns={[
-      { key: "cost", label: "Research cost" }, { key: "time", label: "Research time" },
-      { key: "requirements", label: "Requirements" }, { key: "effect", label: "Effect" },
+      { key: "time", label: "Research time", icon: Clock, width: "minmax(5rem,0.8fr)", wrap: true },
+      { key: "requirements", label: "Requirements", icon: ListChecks, width: "minmax(6.5rem,1.2fr)", wrap: true },
+      { key: "effect", label: "Effect", icon: Gauge, width: "minmax(8rem,2fr)", wrap: true },
     ]}
-    rows={rows.map(row => ({ key: row.level, level: row.level,
+    rows={rows.map(row => ({ key: row.level, level: row.level, cost: row.cost,
       status: row.current ? "current" : row.next ? "next" : "future",
       onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
-      cells: { cost: formatCost(row.cost), time: row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds), requirements: row.requirementStatus, effect: row.effect },
+      cells: { time: row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds), requirements: row.requirementStatus, effect: row.effect },
     }))} />;
 }
 
 function researchLevelRequirementStatus(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
-  targetLevel: number,
+  producedEnergy: number | undefined,
 ): string {
   const missing = researchRequirementsFor(key).flatMap((requirement) => {
     if (requirement.type === "building") {
@@ -638,13 +650,8 @@ function researchLevelRequirementStatus(
     }
 
     if (requirement.type === "energy") {
-      const produced = energyBalance(
-        state.buildings,
-        state.research.energy,
-        state.ships.solarSatellite,
-      ).produced;
-      const required = researchEnergyRequirementForLevel(key, targetLevel, requirement.produced);
-      return produced >= required
+      const required = researchEnergyRequirement(key, state.research[key], requirement.produced);
+      return producedEnergy !== undefined && producedEnergy >= required
         ? []
         : [`Requires Energy production ${required.toLocaleString()}`];
     }
@@ -655,15 +662,6 @@ function researchLevelRequirementStatus(
   });
 
   return missing.length > 0 ? missing.join(", ") : "Met";
-}
-
-function researchEnergyRequirementForLevel(
-  key: ResearchKey,
-  targetLevel: number,
-  baseRequirement: number,
-): number {
-  if (key !== "graviton") return baseRequirement;
-  return Math.floor(baseRequirement * (3 ** Math.max(0, targetLevel - 1)));
 }
 
 function researchLevelEffectSummary(
@@ -823,6 +821,7 @@ export function researchActionStatus({
   key,
   loading,
   now,
+  producedEnergy,
   productionRates,
   researchState,
   spendableResources,
@@ -839,6 +838,7 @@ export function researchActionStatus({
   key: ResearchKey;
   loading: boolean;
   now: number;
+  producedEnergy: number | undefined;
   productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   spendableResources?: Resources | undefined;
@@ -853,7 +853,7 @@ export function researchActionStatus({
   const activeQueueResearch = activeQueue?.itemId === undefined
     ? undefined
     : researchCatalog.find((research) => research.id === activeQueue.itemId);
-  const missingRequirement = unmetResearchRequirement(state, key);
+  const missingRequirement = unmetResearchRequirement(state, key, producedEnergy);
   const resourcesAvailable = Boolean(currentResources(researchState));
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
@@ -1016,10 +1016,10 @@ export function formatResearchRequirements(requirements: ResearchRequirement[]):
 export function getResearchRequirementStates(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
   key: ResearchKey,
+  producedEnergy: number | undefined,
 ): RequirementFlair[] {
   return researchRequirementsFor(key).map((requirement) => ({
-    label: formatRequirement(requirement),
-    met: researchRequirementMet(state, requirement),
+    ...researchRequirementState(state, key, requirement, producedEnergy),
     target: requirement.type === "building"
       ? { kind: "building", key: requirement.key }
       : requirement.type === "research"
@@ -1058,21 +1058,22 @@ function formatRequirement(requirement: ResearchRequirement): string {
   return `${research?.label ?? requirement.key} ${requirement.level}`;
 }
 
-function researchRequirementMet(
+function researchRequirementState(
   state: Pick<PlayableState, "buildings" | "research" | "ships">,
+  key: ResearchKey,
   requirement: ResearchRequirement,
-): boolean {
+  producedEnergy: number | undefined,
+): { label: string; met: boolean } {
   if (requirement.type === "building") {
-    return state.buildings[requirement.key] >= requirement.level;
+    return { label: formatRequirement(requirement), met: state.buildings[requirement.key] >= requirement.level };
   }
 
   if (requirement.type === "energy") {
-    return energyBalance(
-      state.buildings,
-      state.research.energy,
-      state.ships.solarSatellite,
-    ).produced >= requirement.produced;
+    const required = researchEnergyRequirement(key, state.research[key], requirement.produced);
+    const met = producedEnergy !== undefined && producedEnergy >= required;
+    const current = producedEnergy === undefined || met ? "" : ` (current ${producedEnergy.toLocaleString()})`;
+    return { label: `Energy production ${required.toLocaleString()}${current}`, met };
   }
 
-  return state.research[requirement.key] >= requirement.level;
+  return { label: formatRequirement(requirement), met: state.research[requirement.key] >= requirement.level };
 }

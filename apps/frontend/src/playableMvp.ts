@@ -145,6 +145,8 @@ export type MainQueueItem =
       readyAt: number;
       startedAt: number;
       targetLevel: number;
+      /** The building is coming down to `targetLevel` (one below its current level). */
+      demolish?: boolean | undefined;
     }
   | {
       kind: "ship";
@@ -717,7 +719,7 @@ export const defenseCatalog: Array<{
     id: 5,
     label: "Ion Cannon",
     group: "energy",
-    baseCost: { metal: 2_000, crystal: 6_000, deuterium: 0 },
+    baseCost: { metal: 5_000, crystal: 3_000, deuterium: 0 },
     description: "Charged ion bursts wash across hostile formations, punishing shielded ships with precise pulses from a compact surface installation.",
     requirements: [
       { kind: "building", key: "shipyard", label: "Shipyard", level: 4 },
@@ -810,8 +812,8 @@ const shipCargoCapacityByKey: Record<ShipKey, number> = {
   destroyer: 2_000,
   deathstar: 1_000_000,
   battlecruiser: 750,
-  reaper: 7_000,
-  pathfinder: 12_000,
+  reaper: 10_000,
+  pathfinder: 10_000,
   crawler: 0,
 };
 
@@ -843,12 +845,12 @@ const shipFuelConsumptionByKey: Record<ShipKey, number> = {
   heavyFighter: 75,
   cruiser: 300,
   battleship: 500,
-  bomber: 1_000,
+  bomber: 700,
   solarSatellite: 0,
   destroyer: 1_000,
   deathstar: 1,
   battlecruiser: 250,
-  reaper: 1_000,
+  reaper: 1_100,
   pathfinder: 300,
   crawler: 0,
 };
@@ -1373,8 +1375,8 @@ export function researchEffectRows(
   };
 
   if (key === "energy") {
-    const current = energyBalance(state.buildings, state.research.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
-    const next = energyBalance(state.buildings, nextResearch.energy, state.ships.solarSatellite).sources?.fusionReactor ?? 0;
+    const current = fusionReactorEnergyProduction(state.buildings.fusionReactor, state.research.energy);
+    const next = fusionReactorEnergyProduction(state.buildings.fusionReactor, nextResearch.energy);
     return [numberEffectRow("Fusion Reactor output", current, next, " produced")];
   }
 
@@ -1553,10 +1555,12 @@ export function productionPerHour(
 
   const capacity = productionCapacityPerHour(buildings, profile);
 
+  // The Fusion Reactor's draw is charged in full, never scaled by an energy shortage: a negative
+  // deuterium rate burns the store (VeydriftFormulas.productionRates).
   return {
     metal: scaleByBps(capacity.metal, energy.scaleBps),
     crystal: scaleByBps(capacity.crystal, energy.scaleBps),
-    deuterium: scaleByBps(Math.max(0, capacity.deuterium - energy.deuteriumConsumed), energy.scaleBps),
+    deuterium: scaleByBps(capacity.deuterium, energy.scaleBps) - energy.deuteriumConsumed,
   };
 }
 
@@ -1853,9 +1857,26 @@ export function unmetBuildingRequirement(
   });
 }
 
-export function unmetResearchRequirement(
-  state: Pick<PlayableState, "buildings" | "research" | "ships">,
+// Mirrors VeydriftCatalog.researchEnergyRequirement: Graviton's produced-energy
+// requirement triples with every level already researched.
+export function researchEnergyRequirement(
   key: ResearchKey,
+  currentLevel: number,
+  baseRequirement: number,
+): number {
+  if (key !== "graviton") return baseRequirement;
+  return Math.floor(baseRequirement * (3 ** Math.max(0, currentLevel)));
+}
+
+// `producedEnergy` is the selected planet's chain-derived energy production
+// (backend `energyBalance.produced`, the value the top bar shows). It includes
+// Solar Satellites at the planet's max temperature, exactly as the contract's
+// research gate counts them, so it is never recomputed here from local state.
+// Undefined until the backend has reported it: the requirement stays unmet.
+export function unmetResearchRequirement(
+  state: Pick<PlayableState, "buildings" | "research">,
+  key: ResearchKey,
+  producedEnergy: number | undefined,
 ): ResearchRequirement | undefined {
   return researchRequirementsFor(key).find((requirement) => {
     if (requirement.type === "building") {
@@ -1863,11 +1884,8 @@ export function unmetResearchRequirement(
     }
 
     if (requirement.type === "energy") {
-      return energyBalance(
-        state.buildings,
-        state.research.energy,
-        state.ships.solarSatellite,
-      ).produced < requirement.produced;
+      return producedEnergy === undefined
+        || producedEnergy < researchEnergyRequirement(key, state.research[key], requirement.produced);
     }
 
     return state.research[requirement.key] < requirement.level;
@@ -2085,8 +2103,10 @@ export function fusionReactorDeuteriumConsumption(level: number): number {
 
 export const solarSatelliteEnergy = universeSolarSatelliteEnergy;
 
+// Integer arithmetic like the contract: float powers drift by one at high levels (Fusion Reactor 50),
+// and the level table must match the Supply amounts exactly.
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
-  return Math.floor((value * (numerator ** exponent)) / (denominator ** exponent));
+  return Number((BigInt(value) * BigInt(numerator) ** BigInt(exponent)) / BigInt(denominator) ** BigInt(exponent));
 }
 
 function roundToNearestHundred(value: number): number {

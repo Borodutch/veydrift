@@ -1198,7 +1198,13 @@ test("direct Mission Control load hydrates before stalled history reads occupy t
 test("a stalled Supply inventory request does not block another planet or Shipyard", async () => {
   await loadInspectorFixture("/", 1280);
   await waitForExpression(`document.querySelector('button[aria-label="Supply this planet"]') !== null`);
-  await evaluate(`(() => {
+  await evaluate(`(async () => {
+    const moduleUrl = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
+    const { backendDataStoreFor } = await import(moduleUrl);
+    const store = backendDataStoreFor('/local-api');
+    const query = store.queries.supplySources(window.inspectorProof.account, '101');
+    await query.read();
+    store.state.clear(query.key);
     const originalFetch = globalThis.fetch;
     window.supplyInventoryBlocked = false;
     globalThis.fetch = (input, init) => {
@@ -1261,14 +1267,14 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
-  assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Opening Supply batches every origin into one request');
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 0, 'Opening Supply reuses the ready aggregated snapshot');
   assert.equal(await evaluate("window.supplyProof.shipyardReads"), 0, 'Opening Supply does not fan out into shipyard reads');
   const titleAlignment = await evaluate(`(() => {
     // The shared modal header places the icon beside the heading.
     const heading = document.querySelector('[role="dialog"] h2');
-    const parts = [heading.parentElement.previousElementSibling, heading].map(node => node.getBoundingClientRect());
+    const parts = [heading.parentElement.parentElement.firstElementChild, heading].map(node => node.getBoundingClientRect());
     return Math.abs((parts[0].top + parts[0].height / 2) - (parts[1].top + parts[1].height / 2));
   })()`);
   assert.ok(titleAlignment <= 1, `Supply title and icon differ by ${titleAlignment}px`);
@@ -1280,11 +1286,11 @@ test("Supply ignores old reload locks, closes after submission, and allows the n
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
   await waitForExpression(`window.supplyProof.release !== undefined && document.querySelector('[role="dialog"]') === null`);
-  assert.equal(await evaluate("window.supplyProof.sourceReads"), 2, 'Confirmation revalidates all origins with one request');
+  assert.equal(await evaluate("window.supplyProof.sourceReads"), 1, 'Confirmation revalidates all origins with one request');
   assert.equal(await evaluate(`window.supplyProof.store.pendingTransactions().length`), 1);
 
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
   await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] .skeleton-region') !== null`), false);
   assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true);
@@ -1324,12 +1330,13 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
       if (!String(input).includes('/supply-sources')) return response;
       proof.reads++;
       const body = await response.json();
-      for (const source of body.sources) source.launchableShips = [{ id: 4, count: proof.available ? 2 : 0 }];
+      for (const source of body.sources) source.launchableShips = [{ id: 0, count: proof.available ? 5 : 0 }];
       return Response.json(body);
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -1337,7 +1344,7 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
   })()`);
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
-  await waitForExpression(`window.supplyRejectionProof.reads === 3 && document.querySelector('[role="dialog"]')?.textContent?.includes('only 0 available') === true`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 2 && document.querySelector('[role="dialog"]')?.textContent?.includes('only 0 available') === true`);
   await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === true`);
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1);
   assert.equal(await evaluate(`window.supplyRejectionProof.shipyardReads`), 0);
@@ -1348,11 +1355,15 @@ test("Supply refreshes rejected batch inventory without fan-out or automatic res
     proof.available = true;
     await proof.store.queries.supplySources(window.inspectorProof.account, '101', { fresh: true }).read();
   })()`);
-  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
+  await waitForExpression(`[...document.querySelectorAll('[role="dialog"] button')].some(button => button.textContent === 'Review latest inventory')`);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"] footer button').disabled`), true, 'Recovery requires explicit review');
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '10');
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Recovery never resubmits automatically');
+  await clickExpression(`[...document.querySelectorAll('[role="dialog"] button')].find(button => button.textContent === 'Review latest inventory')`);
+  await waitForExpression(`document.querySelector('[role="dialog"] footer button')?.disabled === false`);
   await evaluate(`window.supplyRejectionProof.available = false`);
   await clickExpression(`document.querySelector('[role="dialog"] footer button')`);
-  await waitForExpression(`window.supplyRejectionProof.reads === 6 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
+  await waitForExpression(`window.supplyRejectionProof.reads === 5 && document.querySelector('[role="dialog"]')?.textContent?.includes('Supply inventory changed') === true`);
   assert.equal(await evaluate(`window.supplyRejectionProof.sends`), 1, 'Changed inventory is rejected before wallet submission');
   await clickExpression(`document.querySelector('[aria-label="Close supply resources"]')`);
   await clickExpression(`document.querySelector('nav.hidden a[href="/shipyard"]')`);
@@ -1366,20 +1377,22 @@ test("Supply preparation expires without locking the modal or submitting late", 
     const url = performance.getEntriesByType('resource').map(r => r.name).find(name => name.includes('/src/backendDataStore.ts'));
     const { backendDataStoreFor } = await import(url);
     const store = backendDataStoreFor('/local-api');
+    await store.queries.supplySources(window.inspectorProof.account, "101").read();
     const proof = window.supplyTimeoutProof = { reads: 0, sends: 0 };
     store.transactionForegroundTimeoutMs = 100;
     const originalWrite = store.runWriteTransaction.bind(store);
     store.runWriteTransaction = descriptor => originalWrite({ ...descriptor, send: async () => { proof.sends++; return '0xunexpected'; } });
     const originalFetch = window.fetch;
     window.fetch = async (input, init) => {
-      if (String(input).includes('/supply-sources') && ++proof.reads === 2) {
+      if (String(input).includes('/supply-sources') && ++proof.reads === 1) {
         await new Promise(resolve => { proof.release = resolve; });
       }
       return originalFetch(input, init);
     };
   })()`);
   await clickExpression(`document.querySelector('button[aria-label="Supply this planet"]')`);
-  await waitForExpression(`document.querySelector('[role="dialog"]')?.textContent?.includes('Planned fleet') === true`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [data-supply-source]') !== null`);
+  await waitForExpression(`document.querySelector('[role="dialog"] [aria-label="Source planets"] input[type="checkbox"]:checked') !== null`);
   await evaluate(`(() => {
     const input = document.querySelector('input[aria-label="metal to send"]');
     input.value = '10';
@@ -2975,35 +2988,34 @@ async function openInventoryComposer({ spareFighter = false } = {}) {
 const cargoQuantity = `document.querySelector('input[aria-label="Small Cargo quantity"]')`;
 const increaseCargo = `document.querySelector('button[aria-label="Increase Small Cargo"]')`;
 
-test("VEY-888 mounted canonical updates clamp drafts and isolate planet/moon inventory", async () => {
+test("VEY-888 mounted canonical updates preserve drafts and isolate planet/moon inventory", async () => {
   await openInventoryComposer();
   await clickExpression(increaseCargo);
   await waitForExpression(`${cargoQuantity}?.value === '1'`);
   await evaluate(`window.inventoryProof.planet = 0; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity} === null && document.querySelector('[data-mission-composer]')?.textContent.includes('Unavailable ship quantities were reduced')`);
+  await waitForExpression(`${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   await evaluate(`window.inventoryProof.planet = 1; window.inventoryProof.store.shipyard(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity}?.value === '0'`);
-  await clickExpression(increaseCargo);
+  await waitForExpression(`${cargoQuantity}?.value === '1' && ${missionConfirmExpression(false)} !== undefined`);
   await clickExpression(`document.querySelector('button[title="Origin moon"]')`);
   await waitForExpression(`${cargoQuantity}?.value === '0'`);
   await clickExpression(increaseCargo);
   await clickExpression(increaseCargo);
   await waitForExpression(`${cargoQuantity}?.value === '2'`);
   await evaluate(`window.inventoryProof.moon = 1; window.inventoryProof.store.moon(window.inspectorProof.account, '101', { fresh: true })`);
-  await waitForExpression(`${cargoQuantity}?.value === '1'`);
+  await waitForExpression(`${cargoQuantity}?.value === '2' && ${missionConfirmExpression(true)} !== undefined`);
   await clickExpression(`[...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Origin planet')`);
   await waitForExpression(`${cargoQuantity}?.value === '0'`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
 });
 
-test("VEY-888 final fresh preflight clamps the last cargo before any wallet send", async () => {
+test("VEY-888 final fresh preflight preserves and blocks the last cargo before any wallet send", async () => {
   await openInventoryComposer();
   await clickExpression(increaseCargo);
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
   await evaluate(`window.inventoryProof.planet = 0`);
   await clickExpression(missionConfirmExpression(false));
-  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 0);
   assert.ok(await evaluate(`document.querySelector('[data-mission-composer]')?.textContent.includes('only 0 available')`));
   assert.deepEqual(await evaluate("window.inspectorProof.errors"), []);
@@ -3016,7 +3028,7 @@ test("VEY-888 exact-origin revert recovery updates the mounted moon, not parent 
   await waitForExpression(`${missionConfirmExpression(false)} !== undefined`);
   await evaluate(`window.inventoryProof.mode = 'revert'; window.inventoryProof.reads = []`);
   await clickExpression(missionConfirmExpression(false));
-  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity} === null`);
+  await waitForExpression(`window.inventoryProof.result?.outcome === 'not-submitted' && ${cargoQuantity}?.value === '1' && ${missionConfirmExpression(true)} !== undefined`);
   assert.equal(await evaluate(`window.inventoryProof.sends`), 1);
   assert.ok(await evaluate(`window.inventoryProof.reads.filter(read => read.moon && read.planetId === '101').length >= 2`));
   assert.ok(await evaluate(`window.inventoryProof.reads.every(read => read.planetId === '101')`));
@@ -3112,12 +3124,12 @@ test("wallet delegation dialog separates profile form, keyboard actions and gas 
     await fillDelegate("0x3333333333333333333333333333333333333333");
     await enterKey(); await delay(100);
     assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => ['personal_sign','eth_sendTransaction'].includes(r.method)).length`), 0);
-    await evaluate(`${delegateButton("Set delegate")}.click(); ${delegateButton("Set delegate")}.click()`);
+    await evaluate(`${delegateButton("Propose delegate")}.click(); ${delegateButton("Propose delegate")}.click()`);
     await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
     assert.equal(await evaluate(`document.querySelector('[aria-label="Save player profile"]').disabled`), true);
     await evaluate(`window.inspectorProof.rejectWalletSend()`);
     await waitForExpression(`${delegateSection}.textContent.includes('rejected')`);
-    assert.equal(await evaluate(`${delegateButton("Set delegate")}.disabled`), false);
+    assert.equal(await evaluate(`${delegateButton("Propose delegate")}.disabled`), false);
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
     await evaluate(`document.querySelector('form[aria-labelledby="profile-details-title"] input').focus()`);
     await enterKey();
@@ -3127,30 +3139,83 @@ test("wallet delegation dialog separates profile form, keyboard actions and gas 
   }
 });
 
-test("wallet delegation set replace revoke refresh the open dialog only after canonical confirmation", { timeout: 60_000 }, async () => {
+test("wallet delegation propose replace revoke refresh the open dialog only after canonical confirmation", { timeout: 90_000 }, async () => {
   await openDelegationDialog();
   const first = "0x3333333333333333333333333333333333333333";
   const second = "0x4444444444444444444444444444444444444444";
   let sends = 0;
-  for (const [next, label] of [[first, "Set delegate"], [second, "Replace delegate"], [null, "Revoke delegate"]]) {
+  // [typed address, button, served [delegate, pending] before and after indexing, success notice]
+  for (const [next, label, [oldDelegate, oldPending], [newDelegate, newPending], notice] of [
+    [first, "Propose delegate", [null, null], [null, first], "Delegate proposed."],
+    [second, "Propose replacement", [first, null], [first, second], "Delegate proposed."],
+    [null, "Revoke delegate", [first, second], [null, null], "Current delegate updated."],
+  ]) {
     if (next) await fillDelegate(next);
     await clickExpression(delegateButton(label));
     await waitForExpression(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length === ${++sends}`);
-    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next === first ? null : first)}, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegate${sends}')`);
+    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(oldDelegate)}, 'confirmed', 0, ${JSON.stringify(oldPending)}); window.inspectorProof.resolveWalletSend('0xdelegate${sends}')`);
     await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
-    assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
-    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied', 2)`);
-    await waitForExpression(`${delegateSection}.textContent.includes('Current delegate updated.')`, 20_000);
-    assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), next ?? "");
+    assert.equal(await evaluate(`${delegateSection}.textContent.includes(${JSON.stringify(notice)})`), false);
+    await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(newDelegate)}, 'applied', 2, ${JSON.stringify(newPending)})`);
+    await waitForExpression(`${delegateSection}.textContent.includes(${JSON.stringify(notice)})`, 20_000);
+    // A proposal changes nothing until the proposed wallet itself accepts.
+    assert.equal(await evaluate(`${delegateSection}.textContent.includes('must accept from that wallet')`), Boolean(newPending));
     assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
     assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), sends);
+    if (newPending === first) {
+      // The first wallet accepts from its own wallet; the open dialog shows it once served.
+      await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(first)}, 'applied')`);
+      await waitForExpression(`${delegateButton("Propose replacement")} !== undefined`, 20_000);
+      assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), first);
+    }
   }
+  assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
+});
+
+test("wallet delegation accept form sends acceptDelegate and acts for the main only once served", { timeout: 40_000 }, async () => {
+  await openDelegationDialog();
+  const main = "0x9999999999999999999999999999999999999999";
+  await evaluate(`(() => { const input = ${delegateSection}.querySelectorAll('input')[1]; input.value = ${JSON.stringify(main)}; input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+  await clickExpression(delegateButton("Accept delegation"));
+  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
+  assert.equal(
+    await evaluate(`window.inspectorProof.walletRequests.find(r => r.method === 'eth_sendTransaction').params[0].data`),
+    `0xe2feb35c${main.slice(2).padStart(64, "0")}`,
+  );
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegateaccept')`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Processing')`);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('acting for')`), false);
+  await evaluate(`window.inspectorProof.setDelegation(window.inspectorProof.account, 'applied', 1)`);
+  await waitForExpression(`${delegateSection}.textContent.includes('Delegation accepted.')`, 15_000);
+  assert.match(await evaluate(`${delegateSection}.textContent`), /Connected as .*acting for/);
+  assert.equal(await evaluate(`${delegateSection}.querySelector('input')`), null);
+  assert.equal(await evaluate(`document.querySelector('[role="dialog"]') !== null`), true);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
+});
+
+test("wallet delegation invitation lets a planet-less wallet accept its main's proposal from the landing", { timeout: 60_000 }, async () => {
+  const main = "0x9999999999999999999999999999999999999999";
+  await loadInspectorFixture("/", 1280, { shell: "settlement", delegation: "main", delegationInvite: "true", waitForPlanetSelectors: "false" });
+  const invitation = `document.querySelector('[aria-label="Delegation invitation"]')`;
+  await waitForExpression(`${invitation}?.open === true && ${invitation}.textContent.includes('wants this wallet as its delegate')`, 20_000);
+  assert.equal(await evaluate(`document.querySelector('nav[aria-label="Desktop app sections"]')`), null);
+  await clickExpression(`${invitation}.querySelector('button[aria-label="Accept delegation from ${main}"]')`);
+  await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
+  assert.equal(
+    await evaluate(`window.inspectorProof.walletRequests.find(r => r.method === 'eth_sendTransaction').params[0].data`),
+    `0xe2feb35c${main.slice(2).padStart(64, "0")}`,
+  );
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed'); window.inspectorProof.resolveWalletSend('0xdelegatelanding')`);
+  await evaluate(`window.inspectorProof.setDelegation(window.inspectorProof.account, 'applied')`);
+  // The landing hands over to the main wallet's game once the signer is served as its delegate.
+  await waitForExpression(`${invitation} === null && document.querySelector('nav[aria-label="Desktop app sections"]') !== null`, 30_000);
+  assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
 for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcome} transaction stays failed after read-only retry`, async () => {
   await openDelegationDialog();
   await fillDelegate("0x3333333333333333333333333333333333333333");
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
   await evaluate(outcome === "reverted"
     ? `window.inspectorProof.setDelegation(null, 'reverted'); window.inspectorProof.resolveWalletSend('0xdelegatereverted')`
@@ -3160,9 +3225,9 @@ for (const outcome of ["reverted", "rejected"]) test(`wallet delegation ${outcom
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('Current delegate refreshed.')`);
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('${outcome}')`), true);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.ok(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`) > before);
-  assert.equal(await evaluate(`${delegateButton("Set delegate")}.disabled`), false);
+  assert.equal(await evaluate(`${delegateButton("Propose delegate")}.disabled`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
 
@@ -3170,22 +3235,22 @@ test("wallet delegation bounded lag offers read-only retry and fences a late rea
   await openDelegationDialog();
   const next = "0x3333333333333333333333333333333333333333";
   await fillDelegate(next);
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied', 100); window.inspectorProof.resolveWalletSend('0xdelegatelag')`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 100, ${JSON.stringify(next)}); window.inspectorProof.resolveWalletSend('0xdelegatelag')`);
   await waitForExpression(`${delegateSection}.textContent.includes('do not resend')`, 10_000);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   const count = await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`);
   await delay(500);
   assert.equal(await evaluate(`window.inspectorProof.requests.filter(r => r.includes('/delegation')).length`), count);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'applied'); window.inspectorProof.holdDelegationRead()`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'applied', 0, ${JSON.stringify(next)}); window.inspectorProof.holdDelegationRead()`);
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('Checking current delegate')`);
   await evaluate(`window.inspectorProof.emitWalletAccounts([window.inspectorProof.alternateAccount]); window.inspectorProof.setPlayableAccount(window.inspectorProof.alternateAccount)`);
   await delay(100);
   await evaluate(`window.inspectorProof.releaseDelegationRead()`);
   await delay(100);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.equal(await evaluate(`${delegateSection}.querySelector('input').value`), "");
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });
@@ -3241,14 +3306,14 @@ test("wallet delegation unknown wallet outcome stays unknown after a read-only r
   await openDelegationDialog();
   const next = "0x3333333333333333333333333333333333333333";
   await fillDelegate(next);
-  await clickExpression(delegateButton("Set delegate"));
+  await clickExpression(delegateButton("Propose delegate"));
   await waitForExpression(`window.inspectorProof.walletRequests.some(r => r.method === 'eth_sendTransaction')`);
   await evaluate(`window.inspectorProof.failWalletSend()`);
   await waitForExpression(`${delegateSection}.textContent.includes('may already have been sent')`);
-  await evaluate(`window.inspectorProof.setDelegation(${JSON.stringify(next)}, 'confirmed')`);
+  await evaluate(`window.inspectorProof.setDelegation(null, 'confirmed', 0, ${JSON.stringify(next)})`);
   await clickExpression(delegateButton("Refresh delegate status"));
   await waitForExpression(`${delegateSection}.textContent.includes('outcome is still unknown')`);
   assert.equal(await evaluate(`${delegateSection}.textContent.includes('Transaction confirmed')`), false);
-  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Current delegate updated.')`), false);
+  assert.equal(await evaluate(`${delegateSection}.textContent.includes('Delegate proposed.')`), false);
   assert.equal(await evaluate(`window.inspectorProof.walletRequests.filter(r => r.method === 'eth_sendTransaction').length`), 1);
 });

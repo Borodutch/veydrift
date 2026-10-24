@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-import {VeydriftBattleResearch} from "./libraries/VeydriftBattleResearch.sol";
+import {VeydriftRefereeBattle as Referee} from "./libraries/VeydriftRefereeBattle.sol";
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftGameStorage} from "./VeydriftGameStorage.sol";
@@ -30,7 +30,8 @@ interface IVeydriftDefenseHoldRandomnessEngine {
 interface IVeydriftRiftAttackProtection {
     function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
         external
-        view;
+        view
+        returns (bool scoreProtected);
 }
 
 interface IVeydriftDefenseHoldEventSettlement {
@@ -117,7 +118,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             ).defenseHoldFuelContext(player, targetPlanetId, ships, holdSeconds);
         if (!canCoordinate) revert DefenseHoldNotAuthorized(targetPlanetId);
         if (depotSupport != 0) {
-            _settleResources(targetPlanetId);
             _spend(targetPlanetId, Resources({metal: 0, crystal: 0, deuterium: depotSupport}));
         }
         fuelCost = _toUint128(uint256(fuelCost) + netHoldingFuelCost);
@@ -221,9 +221,10 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         bool isAttack = missionType == FleetMissionType.Attack;
         if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
         _requireOwnedBody(originPlanetId, originIsMoon, player);
+        bool scoreProtected;
         if (isAttack) {
             _requireAttackTargetBody(targetPlanetId, targetIsMoon);
-            IVeydriftRiftAttackProtection(address(this))
+            scoreProtected = IVeydriftRiftAttackProtection(address(this))
                 .enforceBodyAttackProtection(player, targetPlanetId, targetIsMoon);
         } else {
             _requireOwnedBody(targetPlanetId, targetIsMoon, player);
@@ -277,8 +278,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         missionId = nextFleetId++;
         uint256 randomnessRequestId;
         if (isAttack) {
-            VeydriftBattleResearch.markLaunchedAttack(missionId);
-            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+            randomnessRequestId = Referee.request(missionId, _randomnessEngine, scoreProtected);
         }
         activeFleetMissionCount[player] += 1;
         _fleetMissions[missionId] = FleetMission({
@@ -597,13 +597,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             quantity := calldataload(add(ships, shl(5, id)))
             if gt(quantity, 0xffffffff) { revert(0, 0) }
         }
-    }
-
-    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
-        address randomnessEngine = _randomnessEngine;
-        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
-        return IVeydriftDefenseHoldRandomnessEngine(randomnessEngine)
-            .requestRandomness(_attackBattlePurposeHash(missionId));
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)

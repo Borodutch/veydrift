@@ -479,6 +479,9 @@ abstract contract VeydriftGameStorage is Initializable {
     // Sticky per-mission generation: only new allocation writes this, never lifecycle settlement.
     mapping(uint256 missionId => bool registered) internal _chronologyRegistered;
     mapping(address player => uint256 cursor) internal _chronologyLegacyCursor;
+    // Append-only delegate consent: `setDelegate` only proposes. The binding in `_delegateOf` /
+    // `_delegatorOf` changes when the proposed wallet itself calls `acceptDelegate`.
+    mapping(address main => address delegate) internal _pendingDelegateOf;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -521,9 +524,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error RiftExtractionActive(uint256 planetId, Resource resource);
     error RiftExtractionInactive(uint256 planetId, Resource resource);
     error ResourceTokenNotConfigured(Resource resource);
-    error LegacyWithdrawalDisabled();
     error WithdrawalActive(Resource resource);
-    error WithdrawalInactive(Resource resource);
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
@@ -555,11 +556,14 @@ abstract contract VeydriftGameStorage is Initializable {
     error DelegatedWalletCannotDelegate(address wallet, address main);
     error DelegateHasDelegate(address delegate, address nestedDelegate);
     error NoDelegate(address account);
+    error DelegateNotProposed(address main, address delegate);
     error GameMustBePaused();
     error PlanetTemperatureMigrationPending();
     error PlanetTemperatureMigrationCompleted();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
+    error BuildingNotDemolishable(Building building);
+    error BuildingInUse(Building building);
     error InvalidMissileTarget(Defense defense);
     error InterplanetaryMissileOutOfRange(uint16 originSystem, uint16 targetSystem, uint256 range);
     error AttackBashingLimitReached();
@@ -571,6 +575,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error PlanetHasResources();
     error PlanetHasActiveFleetMissions();
     error AttackJoinCutoffPassed(uint64 cutoffAt);
+    error AttackJoinNotAuthorized(uint256 attackMissionId);
     error CannotJoinOwnAttackTarget();
     error RandomnessEngineUnset();
     error InvalidLootRatio();
@@ -614,6 +619,26 @@ abstract contract VeydriftGameStorage is Initializable {
         uint128 deuterium
     );
     event BuildingCompleted(uint256 indexed planetId, Building indexed building, uint16 level);
+    /// @notice A one-level demolition occupying the planet's building slot. It shares
+    ///         `buildingConstructions` with upgrades (`targetLevel` = current level - 1) and
+    ///         completes through the same `BuildingCompleted` event.
+    event BuildingDemolitionStarted(
+        uint256 indexed planetId,
+        Building indexed building,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event BuildingDemolitionCancelled(
+        uint256 indexed planetId,
+        Building indexed building,
+        uint16 targetLevel,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
     event DefenseQueued(
         uint256 indexed planetId,
         Defense indexed defense,
@@ -941,6 +966,8 @@ abstract contract VeydriftGameStorage is Initializable {
         address indexed delegate,
         address actor
     );
+    /// @dev `delegate == address(0)` means the main's pending proposal was cleared.
+    event DelegateProposed(address indexed main, address indexed delegate);
 
     constructor(address admin) {
         _initializeGameStorage(admin);

@@ -2,7 +2,7 @@
 
 GitHub: https://github.com/Borodutch/veydrift
 
-Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
+Use this guide in order if you are new: **Beginner Tutorial**, **Concepts And Mechanics**, **Action Mechanics**, then **Formulas**. [Contracts And Tokens](https://veydrift.com/docs/contracts) lists every contract address, its owner, and where every $VEYDRIFT and resource token is held. The in-app catalogs remain the quickest source for your current levels, costs, prerequisites, and availability.
 
 ## Beginner Tutorial
 
@@ -18,6 +18,16 @@ Every important game action is a transaction. Wait for the app to report success
 2. If the wallet has no planet, use the settlement flow to claim a home planet.
 3. Wait for the app to show your planet coordinates, resources, and starting infrastructure.
 4. Use the planet selector when you own multiple planets or switch between planet and moon bodies.
+
+### Wallet Delegates
+
+A main wallet can let one other wallet, such as an AI agent's wallet, perform gameplay actions on its behalf. Delegation never transfers wallet ownership or administrative rights.
+
+1. From the main wallet, open **Edit profile** and propose the delegate address. A proposal alone grants nothing.
+2. From the delegate wallet, accept the proposal. A wallet without its own planet sees the proposal on the start page under **Playing for your main wallet?**, a wallet with a planet finds **Accept delegation** in the profile editor, and an agent can call `acceptDelegate(mainWallet)` on the game contract.
+3. Once accepted, every game action from the delegate wallet plays for the main wallet instead of the delegate wallet's own planets.
+
+Proposing a replacement keeps the current delegate until the new wallet accepts. Either wallet can revoke at any time, and revoking also cancels a pending proposal. Proposing, accepting and revoking are on-chain transactions with network gas fees.
 
 ### Read Resources
 
@@ -132,6 +142,24 @@ Attack protection prevents invalid or abusive launches. The mission screen shows
 | Same alliance | Blocks hostile attacks against current allies. |
 | Bashing window | Tracks repeated attacks by attacker, defender, and planet in the 24 hour window. |
 | Inactive defender | May remove some protection gates when the defender is marked inactive. |
+| Live Rift extraction | A planet with resources locked in the Rift can be attacked through new or low-score protection and the bashing window, but never by its own alliance. When the attack is only allowed because of the lock, raiders can take only the locked resources. |
+
+### The Rift
+
+The Rift moves resources between your planets and your wallet. Metal, Crystal and Deuterium also exist as tokens, vMETAL, vCRYSTAL and vDEUT (their addresses are under [Contracts And Tokens](https://veydrift.com/docs/contracts)). One token equals one unit in the game, so extracting 500,000 Metal pays out 500,000 vMETAL.
+
+A planet uses the Rift once it has a Rift Stabilizer. The Stabilizer needs Robotics Factory 4, Research Lab 2, Energy Technology 5 and Hyperspace Technology 1, and every planet needs its own. Open the Rift page with that planet selected.
+
+**Injecting** is instant. You approve the game to take exactly the amount you inject, then inject it, and the planet's resources rise in the same transaction. Injected resources are spent like mined ones. You can only inject into your own planets; to help a friend, send them tokens and let them inject.
+
+**Extracting** is slow and public on purpose:
+
+1. Starting an extraction takes the amount from the planet and locks it there for 28 days. Each planet runs one extraction per resource at a time, and an extraction can't be cancelled.
+2. While it is locked, every player sees it in the Raid Finder under **Rifters**, and the planet can be attacked even when new or low-score protection or the bashing window would normally stop the attack. Your own alliance still can't attack you, and moon attacks can't reach a planet's Rift lock.
+3. A winning attack takes its normal loot first and then fills any spare cargo from the lock. The lock has no 50% raid ceiling, so a fleet with enough cargo can take all of it.
+4. After 28 days you finalize the extraction on the Rift page, and whatever survived is paid to the planet owner's wallet as tokens. Until you finalize, raiders can still take it.
+
+Extracted tokens are ordinary ERC-20 tokens that you can hold, send to another player, or inject into any of your planets with a Stabilizer. The Rift page lists the active extractions of all your planets with their countdowns, and its history shows every injection, extraction, payout and raid. A wallet delegate injects from its own wallet, while finalized tokens always go to the planet owner.
 
 ### Alliances And ACS Defend
 
@@ -159,12 +187,12 @@ All costs are base costs before level scaling unless noted.
 | Metal Storage | 1,000 metal | Raises metal storage cap. |
 | Crystal Storage | 1,000 metal, 500 crystal | Raises crystal storage cap. |
 | Deuterium Tank | 1,000 metal, 1,000 crystal | Raises deuterium storage cap. |
-| Fusion Reactor | 900 metal, 360 crystal, 180 deuterium | Produces energy and consumes deuterium production. |
+| Fusion Reactor | 900 metal, 360 crystal, 180 deuterium | Produces energy for a fixed deuterium upkeep, paid from stored deuterium when the synthesizer falls short. |
 | Nanite Factory | 1,000,000 metal, 500,000 crystal, 100,000 deuterium | Multiplies construction and production speed. |
 | Terraformer | 50,000 crystal, 100,000 deuterium | Adds planet fields. |
 | Alliance Depot | 20,000 metal, 40,000 crystal | Supports ACS Defend holding fuel. |
 | Missile Silo | 20,000 metal, 20,000 crystal, 1,000 deuterium | Stores anti-ballistic and interplanetary missiles. |
-| Rift Stabilizer | 8,000 metal, 8,000 crystal, 4,000 deuterium | Enables rift features where available. |
+| Rift Stabilizer | 8,000 metal, 8,000 crystal, 4,000 deuterium | Opens the Rift on this planet: inject resource tokens and extract resources as tokens. |
 
 ### Research
 
@@ -198,12 +226,12 @@ All costs are base costs before level scaling unless noted.
 | Heavy Fighter | 6,000 metal, 4,000 crystal | Shipyard 3, Impulse 2, Armor 2 | 100 | 75 | 150 attack, 25 shield, 1,000 hull |
 | Cruiser | 20,000 metal, 7,000 crystal, 2,000 deuterium | Shipyard 5, Impulse 4, Ion 2 | 800 | 300 | 400 attack, 50 shield, 2,700 hull |
 | Battleship | 45,000 metal, 15,000 crystal | Shipyard 7, Hyperspace Drive 4 | 1,500 | 500 | 1,000 attack, 200 shield, 6,000 hull |
-| Bomber | 50,000 metal, 25,000 crystal, 15,000 deuterium | Shipyard 8, Impulse 6, Plasma 5 | 500 | 1,000 | 1,000 attack, 500 shield, 7,500 hull |
+| Bomber | 50,000 metal, 25,000 crystal, 15,000 deuterium | Shipyard 8, Impulse 6, Plasma 5 | 500 | 700 | 1,000 attack, 500 shield, 7,500 hull |
 | Solar Satellite | 2,000 crystal, 500 deuterium | Shipyard 1 | 0 | 0 | Fragile stationary energy unit |
 | Destroyer | 60,000 metal, 50,000 crystal, 15,000 deuterium | Shipyard 9, Hyperspace Drive 6, Hyperspace 5 | 2,000 | 1,000 | 2,000 attack, 500 shield, 11,000 hull |
 | Dreadstar | 5,000,000 metal, 4,000,000 crystal, 1,000,000 deuterium | Shipyard 12, Hyperspace Drive 7, Hyperspace 6, Graviton 1 | 1,000,000 | 1 | 200,000 attack, 50,000 shield, 900,000 hull |
 | Battlecruiser | 30,000 metal, 40,000 crystal, 15,000 deuterium | Shipyard 8, Hyperspace Drive 5, Hyperspace 5, Laser 12 | 750 | 250 | 700 attack, 400 shield, 7,000 hull |
-| Reaper | 85,000 metal, 55,000 crystal, 20,000 deuterium | Shipyard 10, Hyperspace Drive 7, Hyperspace 6, Shielding 6, Energy 5 | 7,000 | 1,000 | 2,800 attack, 700 shield, 14,000 hull |
+| Reaper | 85,000 metal, 55,000 crystal, 20,000 deuterium | Shipyard 10, Hyperspace Drive 7, Hyperspace 6, Shielding 6, Energy 5 | 10,000 | 1,100 | 2,800 attack, 700 shield, 14,000 hull |
 | Crawler | 2,000 metal, 2,000 crystal, 1,000 deuterium | Shipyard 5, Combustion 4, Armor 4, Laser 4 | 0 | 0 | Stationary mine booster |
 
 ### Defenses And Missiles
@@ -215,7 +243,7 @@ All costs are base costs before level scaling unless noted.
 | Heavy Laser | 6,000 metal, 2,000 crystal | Shipyard 4, Energy 3, Laser 6 | 250 attack, 100 shield, 800 hull |
 | Small Shield Dome | 10,000 metal, 10,000 crystal | Shipyard 1, Shielding 2 | One per planet or moon body |
 | Gauss Cannon | 20,000 metal, 15,000 crystal, 2,000 deuterium | Shipyard 6, Energy 6, Weapons 3, Shielding 1 | 1,100 attack, 200 shield, 3,500 hull |
-| Ion Cannon | 2,000 metal, 6,000 crystal | Shipyard 4, Ion 4 | 150 attack, 500 shield, 800 hull |
+| Ion Cannon | 5,000 metal, 3,000 crystal | Shipyard 4, Ion 4 | 150 attack, 500 shield, 800 hull |
 | Plasma Turret | 50,000 metal, 50,000 crystal, 30,000 deuterium | Shipyard 8, Plasma 7 | 3,000 attack, 300 shield, 10,000 hull |
 | Large Shield Dome | 50,000 metal, 50,000 crystal | Shipyard 6, Shielding 6 | One per planet or moon body |
 | Anti-Ballistic Missile | 8,000 metal, 2,000 deuterium | Shipyard 1, Missile Silo 2 | Intercepts incoming missiles; uses one silo slot |
@@ -282,6 +310,10 @@ ACS Defend stations an allied fleet at the defended planet until the hostile att
 
 Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. For Chicken moon grants, the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for the moon to appear.
 
+### Use The Rift
+
+Injecting takes two wallet transactions: an ERC-20 `approve` for exactly the injected amount, then `depositMarketResource`, which moves the tokens into the game's reserve and credits the planet. Extracting starts with `startRiftExtraction`, which spends the planet's resources into the 28-day lock, and ends with `finalizeRiftExtraction`, which pays out what survived once the lock has run. Injecting and starting an extraction need the planet's Rift Stabilizer; finalizing does not, so you can finalize from the Rift page of any of your planets.
+
 ## Formulas
 
 This page lists the game formulas. `floor` rounds down, `ceil` rounds up, and bps means basis points where `10,000 bps = 100%`.
@@ -322,14 +354,42 @@ with modifiers applied in this order, rounding down after every basis-point scal
 crawler boost bps = min(effective crawlers * 2, 5,000)
 effective crawlers = min(crawler count, 8 * (metal level + crystal level + deuterium level))
 boosted mine output = floor(raw mine output * (10,000 + crawler boost bps) / 10,000)
+live effective output = floor(boosted mine output * energy scale bps / 10,000)
 fusion deuterium upkeep = ceil(10 * fusion level * 11 ^ fusion level / 10 ^ fusion level)
-post-upkeep deuterium = max(0, boosted deuterium - fusion deuterium upkeep)
-live effective output = floor(post-boost output * energy scale bps / 10,000)
+net deuterium = live effective deuterium output - fusion deuterium upkeep
 ```
 
-For Metal and Crystal, `post-boost output` is the boosted mine output. For
-Deuterium it is the post-upkeep value. If energy production is sufficient, the
-energy scale is 10,000 bps and output is not reduced.
+If energy production is sufficient, the energy scale is 10,000 bps and output
+is not reduced. The Fusion Reactor upkeep is always charged in full: an energy
+shortage never reduces it, and net deuterium is negative when the upkeep is
+larger than the synthesizer's output.
+
+#### Fusion Reactor Upkeep
+
+A negative net deuterium rate burns stored deuterium. The reactor runs at full
+power for as long as the store pays for it:
+
+```text
+deficit = fusion deuterium upkeep - live effective deuterium output
+seconds paid = floor(stored deuterium * 3,600 / deficit)
+deuterium burned = ceil(deficit * elapsed seconds / 3,600), or all stored deuterium once the seconds paid run out
+```
+
+Once the store is empty, the reactor runs only at the share of its upkeep the
+synthesizer covers on its own, so fusion energy is never free:
+
+```text
+unpowered deuterium = live effective deuterium output with no Fusion Reactor energy
+fusion share bps = floor(unpowered deuterium * 10,000 / fusion deuterium upkeep)
+fusion reactor energy = floor(full fusion reactor energy * fusion share bps / 10,000)
+fusion deuterium upkeep = ceil(full upkeep * fusion share bps / 10,000)
+```
+
+The energy scale and every mine's output then use that reduced fusion energy,
+and the synthesizer output left over after the reduced upkeep goes into
+storage, where the next settlement spends it at full power again. Without a
+synthesizer the reactor stops. The invite production boost doubles what a
+planet adds, never the deuterium burned.
 
 ### Energy
 
@@ -539,3 +599,63 @@ dreadstar destruction bps = min(floor(sqrt(moon diameter km)) * 50, 10000)
 ```
 
 Jump Gate transfers require both origin and destination moons to have a Jump Gate. A transfer moves ships only, carries no resources, and sets a cooldown on both gates.
+
+## Contracts And Tokens
+
+Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on October 21, 2026.
+
+### $VEYDRIFT
+
+[0x442E9Ba64899d6B0bD25DF2558d3E804427bF448](https://basescan.org/token/0x442E9Ba64899d6B0bD25DF2558d3E804427bF448) is the only $VEYDRIFT. Its supply is fixed at 1,000,000,000 (18 decimals): it has no owner, no minter, no proxy, no tax and no pause switch. The whole supply was minted once, at deployment.
+
+| Holder | Address | $VEYDRIFT | Share | Purpose |
+| --- | --- | --- | --- | --- |
+| Continuous clearing auction | [0xD06dC962191c591522C1243848012f9b0549df7a](https://basescan.org/address/0xD06dC962191c591522C1243848012f9b0549df7a) | 100,000,000 | 10% | Sold for ETH on [Uniswap](https://app.uniswap.org/explore/auctions/base/0xd06dc962191c591522c1243848012f9b0549df7a) from October 22 to November 5; any unsold tokens return to borodutch.eth |
+| Auction pool reserve (Uniswap launch strategy) | [0xf10124B01E9fa88b0a2eF3fA95a53B3310446000](https://basescan.org/address/0xf10124B01E9fa88b0a2eF3fA95a53B3310446000) | 100,000,000 | 10% | Goes into the $VEYDRIFT/ETH pool with all the ETH the auction raises; the pool position is locked until November 2027 in Uniswap's timelock [0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a](https://basescan.org/address/0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a) |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 150,000,000 | 15% | The $VEYDRIFT side of the vMETAL, vCRYSTAL and vDEUT pools (50M each) |
+| Development vesting | [0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4](https://basescan.org/address/0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4) | 250,000,000 | 25% | Locked; vests over 5 years |
+| Contributor vesting | [0x4A55cff3006e87360285969dD366acBd79445BeD](https://basescan.org/address/0x4A55cff3006e87360285969dD366acBd79445BeD) | 200,000,000 | 20% | Locked; 1-year cliff, then vests until year 4 |
+| Ecosystem vesting | [0x64C323e8ef7D6df9730E64627d7755c9A1050162](https://basescan.org/address/0x64C323e8ef7D6df9730E64627d7755c9A1050162) | 200,000,000 | 20% | Locked; vests over 6 years |
+
+### Vesting Schedules
+
+The three vesting wallets are OpenZeppelin `VestingWallet` contracts. All of them start on October 22, 2026 at 20:00 UTC, when the auction opens, and each year counts as 365 days.
+
+| Wallet | Locked | Schedule | Fully vested |
+| --- | --- | --- | --- |
+| Development | 250,000,000 | Linear from the start, about 136,986 per day | October 21, 2031 |
+| Contributor | 200,000,000 | Nothing until the cliff on October 22, 2027, when 50,000,000 (25%) vest at once; then linear | October 21, 2030 |
+| Ecosystem | 200,000,000 | Linear from the start, about 91,324 per day | October 20, 2032 |
+
+Unvested tokens cannot be moved by anyone. Once tokens vest, anyone can call `release(token)` on a vesting wallet, but the tokens always go to that wallet's owner: borodutch.eth, [0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE), for all three. Only the owner can name a different recipient. Tokens sent to a vesting wallet later vest on the same schedule.
+
+### Resource Tokens
+
+Metal, Crystal and Deuterium are ERC-20 tokens with a fixed supply of 50,000,000,000 each and no decimals. Like $VEYDRIFT, they have no owner, no minter and no proxy. One token equals one unit in the game, and every unit you hold in the game is backed by a token in the game contract's reserve.
+
+| Token | Address |
+| --- | --- |
+| vMETAL | [0x078b4EC3E7681D1A658c32eb806872FBCD922CFc](https://basescan.org/token/0x078b4EC3E7681D1A658c32eb806872FBCD922CFc) |
+| vCRYSTAL | [0x045627dc0b1A10289B53E23a5045aF7D470EF50f](https://basescan.org/token/0x045627dc0b1A10289B53E23a5045aF7D470EF50f) |
+| vDEUT | [0x99FF0a1e24c3171132912D4703dF2c67b4Da6698](https://basescan.org/token/0x99FF0a1e24c3171132912D4703dF2c67b4Da6698) |
+
+| Holder | Address | Of each token | Purpose |
+| --- | --- | --- | --- |
+| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 2,000,000,000 | Backs every resource in the game; players inject and extract tokens through the Rift |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 48,000,000,000 | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT, added after the auction; the rest tops up the game's reserve as players produce more resources |
+
+### Game Contracts And Owners
+
+One owner address, [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02), controls upgrades and settings of the game contracts below. It holds no tokens.
+
+| Contract | Address | Owner | Other roles |
+| --- | --- | --- | --- |
+| Game | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | Upgraded through the ProxyAdmin below. Battle referee and randomness server: [0xeC336742A19a9D0D046a83603491E4Ae08329788](https://basescan.org/address/0xeC336742A19a9D0D046a83603491E4Ae08329788) |
+| Game ProxyAdmin | [0xc81609E77b5ea79d0CdA9794b75B65D567535cb9](https://basescan.org/address/0xc81609E77b5ea79d0CdA9794b75B65D567535cb9) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | |
+| Moon system | [0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C](https://basescan.org/address/0x4935f1E0024F1Ea07877a583F89A51BF3d91Cf5C) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | Burning Chicken moon granter [0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC](https://basescan.org/address/0x735ac9Ec44B6Eb9010C61e3227631f37b39F6DDC), which can only grant moons for burned NFTs |
+| Alliance system | [0x0E5a6210482B15780cf5Ec036107031dcA702001](https://basescan.org/address/0x0E5a6210482B15780cf5Ec036107031dcA702001) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | |
+| Paid alliance invites | [0x01771E2608C35d1C5966FC8556584EEe7d4128f0](https://basescan.org/address/0x01771E2608C35d1C5966FC8556584EEe7d4128f0) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | Invite signer [0x45efFEF7dbef46D960479ac5893af3f11F23c46c](https://basescan.org/address/0x45efFEF7dbef46D960479ac5893af3f11F23c46c) |
+| Randomness engine | [0xdc7d3388bfb07E2cC8DD3Be265d7C1182D34d069](https://basescan.org/address/0xdc7d3388bfb07E2cC8DD3Be265d7C1182D34d069) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | Fulfiller [0xeC336742A19a9D0D046a83603491E4Ae08329788](https://basescan.org/address/0xeC336742A19a9D0D046a83603491E4Ae08329788) |
+| Migration settlement | [0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3](https://basescan.org/address/0x33A56B6f6354D32Edeef43baECC3C94a316bf7d3) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | State signer [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) |
+| Referral system | [0x2556784D1c5a66e7Cd83223702e3Ab613f28d3df](https://basescan.org/address/0x2556784D1c5a66e7Cd83223702e3Ab613f28d3df) | [0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02](https://basescan.org/address/0xc2ae8c98099E4B9BBB661D1B306e1C70915eFC02) | Referral signer [0xCA105d70136fFfa7bf4ED5fFf0Bc6909F985273D](https://basescan.org/address/0xCA105d70136fFfa7bf4ED5fFf0Bc6909F985273D) |
+| Alliance war protection | [0x255fD3212ef778C950cdB94cEA31CE2BBA529E07](https://basescan.org/address/0x255fD3212ef778C950cdB94cEA31CE2BBA529E07) | none | Not upgradeable |

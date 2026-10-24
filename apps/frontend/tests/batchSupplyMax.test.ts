@@ -65,9 +65,12 @@ describe("Supply Max preserves the actual shipment", () => {
     expect(replaced.plan.missing).toEqual(zero);
   });
 
-  test("finds the smaller launchable fleet instead of treating an oversized fuel-starved probe as zero", () => {
+  test("finds the smaller launchable fleet instead of treating an oversized fuel-starved request as zero", () => {
     const args = options([source("1", { resources: { metal: 100000, crystal: 0, deuterium: 2 }, ships: { smallCargo: 2 } })]);
-    expect(buildBatchSupplyPlan({ ...args, requested: { metal: 100000 } }).delivered.metal).toBe(0);
+    // An oversized request no longer blocks a fuel-starved source: it sends what an affordable fleet carries.
+    const oversized = buildBatchSupplyPlan({ ...args, requested: { metal: 100000 } });
+    expect(oversized.delivered.metal).toBe(4998);
+    expect(oversized.blockedSources).toEqual([]);
     expect(maxPlan(args, "metal").maximum).toBe(4998);
     const fuelBound = maxPlan(options([source("1", { resources: { metal: 1000, crystal: 1000, deuterium: 100 }, ships: { smallCargo: 2 } })], { metal: 500, crystal: 250 }), "deuterium");
     expect(fuelBound.maximum + fuelBound.plan.fuelCost).toBe(100);
@@ -125,8 +128,11 @@ describe("Supply Max preserves the actual shipment", () => {
     expect(deploy.maximum).toBe(transport.maximum);
     const many = options(Array.from({ length: 16 }, (_, i) => source(String(i), { resources: { metal: 10, crystal: 0, deuterium: 100 } })));
     const batch = maxPlan(many, "metal");
-    expect(batch.maximum).toBe(150);
-    expect(batch.plan.orders).toHaveLength(15);
+    expect(batch.maximum).toBe(0); // Never silently discard a sixteenth selected source.
+    expect(batch.plan.sourceLimitReached).toBe(true);
+    const bounded = maxPlan({ ...many, selectedPlanetIds: new Set(many.sources.slice(0, 15).map(source => source.planetId)) }, "metal");
+    expect(bounded.maximum).toBe(150);
+    expect(bounded.plan.orders).toHaveLength(15);
     const parent = source("1", { coordinates: target });
     const moon = maxPlan({ ...options([parent]), targetIsMoon: true }, "metal");
     expect(moon.plan.fuelCost).toBeGreaterThan(0);
@@ -202,6 +208,43 @@ describe("Supply Max preserves the actual shipment", () => {
       const offset = mission === "transport" ? 18 : 17;
       expect(words.slice(offset, offset + 3)).toEqual(keys.map(key => BigInt(plan.delivered[key])));
       expect(plan.delivered).toEqual(args.requested);
+    }
+  });
+
+  test("fuel-starved nine and fifteen source fleets skip unaffordable ship boundaries", () => {
+    for (const count of [9, 15]) {
+      const sources = Array.from({ length: count }, (_, i) => source(String(i), {
+        coordinates: { galaxy: 6, system: 10 + i, position: 14 },
+        resources: { metal: 250_000_000, crystal: 1_000_000, deuterium: 10 },
+        ships: { largeCargo: 10_000 }, driveLevels: {},
+      }));
+      const args = { ...options(sources), targetCoordinates: { galaxy: 6, system: 9, position: 12 }, maxOrders: 15 };
+      const started = performance.now();
+      for (const mission of ["transport", "deploy"] as const) for (const resource of keys) {
+        expect(maximumBatchSupplyResource({ ...args, mission }, resource)).toBe(0);
+      }
+      // A generous CI ceiling catches the old multi-second boundary scan without
+      // treating shared-runner scheduling as a representative desktop benchmark.
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+  });
+
+  test("homogeneous fuel bounds retain exact maxima and other cargo for both missions", () => {
+    for (const mission of ["transport", "deploy"] as const) for (const resource of keys) {
+      for (const fuel of [0, 1, 2, 3, 20, 100]) {
+        const sources = [source("1", { resources: { metal: 150, crystal: 150, deuterium: fuel }, ships: { smallCargo: 10000 } })];
+        const requested = { metal: 10, crystal: 10, deuterium: 0, [resource]: 0 };
+        const args = { ...options(sources, requested), mission };
+        const baseline = buildBatchSupplyPlan(args);
+        let expected = requested[resource];
+        if (keys.every(key => key === resource || baseline.missing[key] === 0)) {
+          for (let value = 0; value <= sources[0]!.resources[resource]; value++) {
+            const plan = buildBatchSupplyPlan({ ...args, requested: { ...requested, [resource]: value } });
+            if (plan.orders.length && !plan.blockedSources.length && keys.every(key => plan.missing[key] === 0)) expected = value;
+          }
+        }
+        expect(maximumBatchSupplyResource(args, resource)).toBe(expected);
+      }
     }
   });
 

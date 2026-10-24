@@ -46,10 +46,10 @@ function Fixture() {
     moonStructureLevelInfoRows({ id: 1, key: "roboticsFactory", label, level: 8, cost: cost as any }, { exists: true, planetId: "7" } as any, null), open)
     : buildingLevelInfoTable(currentLevel, kind === "binary" ? rows.slice(0, 1) : rows, open);
   return <>
-    {kind === "research" ? <ResearchLevelInfoModal currentLevel={8} researchLabel={label} rows={researchLevelInfoRows(state, "energy")} onClose={() => {}} onSupply={open} />
+    {kind === "research" ? <ResearchLevelInfoModal currentLevel={8} researchLabel={label} rows={researchLevelInfoRows(state, "energy", undefined)} onClose={() => {}} onSupply={open} />
       : <LevelInfoModal {...table} itemLabel={label} onClose={() => {}} />}
-    {selected ? <BatchSupplyModal target={target} targetIsMoon={selected.kind === "moon"} upgrade={selected} preview={preview} error={error}
-      initialRequested={preview?.missing} maxSources={kind === "moon" ? 1 : 3}
+    {selected ? <BatchSupplyModal moonBatchSupported target={target} targetIsMoon={selected.kind === "moon"} upgrade={selected} preview={preview} error={error}
+      initialRequested={preview?.missing} maxSources={3}
       sources={[{ planetId: "1", label: "Source", coordinates: { galaxy: 1, system: 1, position: 1 }, resources: { metal: 10000000, crystal: 10000000, deuterium: 10000000 }, ships: { largeCargo: 1000, recycler: 10 }, driveLevels: { combustionDrive: 6, impulseDrive: 4, hyperspaceDrive: 0 } }]}
       onClose={() => setSelected(undefined)} onRefresh={() => open(selected.level)} onConfirm={() => { launches++; }} /> : null}
   </>;

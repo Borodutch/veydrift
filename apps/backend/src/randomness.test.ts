@@ -287,6 +287,36 @@ describe("Randomness commitment worker", () => {
     ]);
   });
 
+  test("waits for an unsealed battle snapshot without failing or alerting", async () => {
+    const engine = new FakeRandomnessEngine();
+    const store = new InMemoryRandomnessCommitmentStore();
+    const gated = new Set(["42"]);
+    Object.assign(engine, {
+      isAwaitingBattleSnapshot: async (requestId: bigint) => gated.has(requestId.toString())
+    });
+    const words = [100n, 200n];
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => words.shift() ?? 0n,
+      targetCommitments: 1
+    });
+    engine.block = 1;
+    await worker.tick();
+    engine.block = 2;
+    engine.consume("42", 1_000);
+
+    let status = await worker.tick();
+    expect(engine.fulfillCalls).toBe(0);
+    expect(status.pendingRequests).toBe(0);
+    expect(status.failed).toBe(0);
+    expect(status.oldestPendingRequestAgeSeconds).toBeNull();
+
+    gated.delete("42");
+    status = await worker.tick();
+    expect(engine.requestFulfilledWith("42")).toBe(100n);
+    expect(status.fulfilled).toBe(1);
+  });
+
   test("does not post a second commitment while one is still pending", async () => {
     const engine = new FakeRandomnessEngine();
     const store = new InMemoryRandomnessCommitmentStore();

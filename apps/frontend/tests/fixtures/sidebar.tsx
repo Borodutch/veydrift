@@ -8,7 +8,7 @@ const wallet = "0x1111111111111111111111111111111111111111";
 let active: Page = "overview", connected = true, activity = 0, connects = 0;
 function show() {
   render(<><header style={{ height: 44 }}>Resources</header>
-    <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem))] md:flex-row">
+    <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-x-clip md:h-[calc(100dvh-var(--topbar-h,2.75rem)-var(--auction-banner-h,0px))] md:flex-row">
       <NavBar active={active} account={connected ? wallet : undefined} signerAccount={wallet}
         coordinates="1:2:3" canEditPlayerProfile onUpdatePlayerProfile={() => {}}
         onConnectWallet={() => { connects++; }} onOpenActivity={() => { activity++; }}

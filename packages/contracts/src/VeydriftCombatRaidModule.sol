@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {VeydriftRefereeSettlementModule} from "./VeydriftRefereeSettlementModule.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftRaidStorage} from "./libraries/VeydriftRaidStorage.sol";
@@ -11,7 +12,17 @@ import {Ship} from "./libraries/VeydriftTypes.sol";
 contract VeydriftCombatRaidModule is VeydriftResourceReserves {
     error MissingRaidProtectionSnapshot(uint256 missionId);
 
+    address private immutable _refereeSettlement = address(new VeydriftRefereeSettlementModule());
     constructor() VeydriftResourceReserves(address(0)) {}
+
+    fallback() external {
+        (bool ok, bytes memory data) = _refereeSettlement.delegatecall(msg.data);
+        assembly ("memory-safe") {
+            switch ok
+            case 0 { revert(add(data, 32), mload(data)) }
+            default { return(add(data, 32), mload(data)) }
+        }
+    }
 
     function settleAttackGroupRaid(uint256 attackMissionId) external {
         // The combat module calls this through `address(this).call(...)` only after resolving an
@@ -85,9 +96,14 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
             if (b.returnCursor < b.missions.length) {
                 uint256 memberId = b.missions[b.returnCursor++];
                 FleetMission storage member = _fleetMissions[memberId];
-                if (memberId == id || member.missionType == FleetMissionType.AcsAttack) {
-                    uint256 capacity =
-                        _remainingCargoCapacity(member.ships, member.cargo, member.fuelCost);
+                if (
+                    memberId == id
+                        || (member.missionType == FleetMissionType.AcsAttack
+                            && !_joinsDefenderAlliance(member.owner, attack.targetPlanetId))
+                ) {
+                    uint256 capacity = _remainingCargoCapacity(
+                        member.ships, member.cargo, member.fuelCost
+                    );
                     b.capacities[memberId] = capacity;
                     b.totalCapacity += capacity;
                 }
@@ -295,6 +311,19 @@ contract VeydriftCombatRaidModule is VeydriftResourceReserves {
         return joined.status == FleetMissionStatus.Outbound && joined.arrivalAt <= attack.arrivalAt
             && joined.randomnessRequestId == attackMissionId
             && joined.targetPlanetId == attack.targetPlanetId
-            && joined.missionType == FleetMissionType.AcsAttack;
+            && joined.missionType == FleetMissionType.AcsAttack
+            && !_joinsDefenderAlliance(joined.owner, attack.targetPlanetId);
+    }
+
+    /// @dev A joiner that is in the defender's alliance by the raid (it hopped in after joining)
+    ///      takes no loot: same-alliance protection covers every attacker, not just the leader.
+    function _joinsDefenderAlliance(address joiner, uint256 targetPlanetId)
+        private
+        view
+        returns (bool)
+    {
+        address defender = _planets[targetPlanetId].owner;
+        (bool same,,) = _attackProtectionAllianceContext(joiner, defender);
+        return same && !_isAttackProtectionExempt(joiner, defender);
     }
 }

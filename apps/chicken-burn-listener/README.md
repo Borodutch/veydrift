@@ -17,7 +17,8 @@ transactions with the configured admin key.
 - `CHICKEN_CONTRACT_ADDRESS`: Base mainnet Chicken NFT contract.
 - `VEYDRIFT_RPC_URL`: HTTP RPC endpoint for the verified Veydrift target chain.
 - `VEYDRIFT_MOON_SYSTEM_ADDRESS`: `VeydriftMoonSystem` address on that target chain.
-- `VEYDRIFT_GRANT_PRIVATE_KEY`: EOA authorized as the moon system owner/admin.
+- `VEYDRIFT_GRANT_PRIVATE_KEY`: the moon system's `chickenBurnGranter` EOA. It can only call
+  `grantMoonFromChickenBurn`; keep the moon system owner a separate, cold key.
 
 Optional env is illustrated in [.env.example](.env.example); [config.ts](src/config.ts) defines
 supported variables and defaults, including `CONFIRMATION_BLOCKS` (20 source-chain blocks by default).

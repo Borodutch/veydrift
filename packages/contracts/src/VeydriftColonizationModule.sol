@@ -91,6 +91,14 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _delegateToShipProductionModule();
     }
 
+    function startBuildingDemolition(uint256, Building) external {
+        _delegateToShipProductionModule();
+    }
+
+    function cancelBuildingDemolition(uint256) external {
+        _delegateToShipProductionModule();
+    }
+
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
         // Lazy on-chain reconciliation (VEY-KANEO-468): settle the planet owner's due research and
         // this planet's due ship queues, then fan out to the defense-production module for defenses.

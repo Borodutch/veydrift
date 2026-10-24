@@ -126,6 +126,17 @@ describe("indexedPlanetTacticalSummary LOOT vs gross resources (VEY-KANEO-454)",
     expect(tactical.grossResourceTotal).toBe("1600");
     // LOOT = 50% plunder of the unprotected (all, since protected storage = 0) accrued base.
     expect(tactical.raidableResourceTotal).toBe("800");
-    expect(BigInt(tactical.raidableResourceTotal) * 2n).toBe(BigInt(tactical.grossResourceTotal));
+    expect(BigInt(tactical.raidableResourceTotal!) * 2n).toBe(BigInt(tactical.grossResourceTotal!));
   });
+});
+
+for (const buildings of [[], deriveBuildingRows(() => 1)]) test("unknown resources preserve units and never become zero loot", () => {
+  const tactical = indexedPlanetTacticalSummary({ ...testPlanet(), resources: null }, buildings, deriveShipRows(id => id === 0 ? 3 : 0), deriveDefenseRows(id => id === 0 ? 2 : 0), {});
+  expect(tactical.currentResources).toBeNull();
+  expect(tactical.raidableResources).toBeNull();
+  expect(tactical.raidableResourceTotal).toBeNull();
+  expect(tactical.grossResourceTotal).toBeNull();
+  expect(tactical.ships.count).toBe(3);
+  expect(tactical.defenses.count).toBe(2);
+  expect(BigInt(tactical.combatPower)).toBeGreaterThan(0n);
 });

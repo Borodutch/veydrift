@@ -377,13 +377,13 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   } | null;
   tactical?:
     | {
-        currentResources?: OnChainResources;
-        raidableResources: OnChainResources;
-        raidableResourceTotal: string;
+        currentResources?: OnChainResources | null;
+        raidableResources: OnChainResources | null;
+        raidableResourceTotal: string | null;
         // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
         // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
         // math instead of looking like it under-reports. (VEY-KANEO-454)
-        grossResourceTotal?: string;
+        grossResourceTotal?: string | null;
         productionPerHour?: OnChainResources | null;
         storageCaps?: OnChainResources | null;
         ships: {
@@ -750,6 +750,13 @@ export type MissionDetailResponse = {
 
 export type BattleOutcomeName = "Draw" | "AttackerWin" | "DefenderWin";
 
+/** Units per side and type at the start (rows) and after each round, with shots fired per side. */
+export type RefereeBattleReport = {
+  format: "veydrift.referee-battle.report.v1";
+  rows: Array<{ side: 0 | 1; unit: number; count: number; lost: number; survivors: number }>;
+  rounds: Array<{ round: number; shots: [string, string]; survivors: Array<{ side: 0 | 1; unit: number; count: number }> }>;
+};
+
 export type CombatRoundReport = {
   round: number;
   attackerUnits: string;
@@ -833,7 +840,31 @@ export type BattleReport = {
   participants?: BattleReportParticipant[];
 };
 
-export type ChainShipyardState = {
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: OnChainResources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
+export type InventoryReadiness = {
+  stale?: boolean;
+  degraded?: boolean;
+  indexedNotReady?: boolean;
+  safeToProject?: boolean;
+  indexer?: (BackendIndexerState & { safeToProject?: boolean }) | null;
+};
+
+/** Missing metadata is legacy-compatible; explicit unsafe metadata is never authority. */
+export function inventoryReadinessBlocker(state: InventoryReadiness | null | undefined): string | undefined {
+  return state && (state.stale === true || state.degraded === true || state.indexedNotReady === true
+    || state.safeToProject === false || state.indexer?.safeToProject === false
+    || state.indexer?.safeToServeIndexedState === false
+    || state.indexer?.indexedState === "stale" || state.indexer?.indexedState === "reconciling")
+    ? "Current fleet inventory is unavailable. Refresh and retry." : undefined;
+}
+
+export type ChainShipyardState = InventoryReadiness & {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
   wallet: string;
   homePlanetId: string | null;
   planetId?: string | null;
@@ -858,26 +889,49 @@ export type ChainShipyardState = {
     // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
     durationSeconds?: number;
   }>;
-  // Canonical `ships` plus due production that the next fleet launch can
-  // settle atomically. Mission composition uses this; inventory displays use
-  // canonical `ships`.
-  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>>;
+  // Backend-authoritative effective inventory; fleetLaunchConstraints qualifies
+  // selected launch requirements. Null is unknown; omission supports old responses.
+  launchableShips?: Array<Pick<ChainShipyardState["ships"][number], "id" | "count"> & Partial<ChainShipyardState["ships"][number]>> | null;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
-/** Mission controls and submission validation must use the same launchable inventory. */
-export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips">>(state: T): T {
-  if (!state.launchableShips) return state;
-  const counts = new Map(state.launchableShips.map(ship => [ship.id, ship.count]));
+/** Compare only the selected requirements; never replace the effective display. */
+export function fleetLaunchRequirementBlocker(
+  constraints: FleetLaunchConstraints | null | undefined,
+  ships: ReadonlyArray<{ id: number; count: number }>,
+  resources?: Partial<Record<keyof OnChainResources, number>>,
+): string | undefined {
+  if (constraints === undefined) return undefined; // Older backend compatibility.
+  if (!constraints) return "Current launch inventory is unavailable. Refresh and retry.";
+  if (constraints.fleetSlots.active >= constraints.fleetSlots.limit) return "Fleet slots are not yet ready for launch. Refresh before launching.";
+  if (ships.some(ship => ship.count > (constraints.ships.find(row => row.id === ship.id)?.count ?? 0))) {
+    return "Some selected ships are not yet ready for launch. Reduce the fleet or refresh shortly.";
+  }
+  if (resources && (!constraints.resources || (["metal", "crystal", "deuterium"] as const).some(key => BigInt(Math.ceil(Math.max(0, resources[key] ?? 0))) > BigInt(constraints.resources![key])))) {
+    return "Selected cargo or fuel is not yet ready for launch. Reduce the shipment or refresh shortly.";
+  }
+  return undefined;
+}
+
+/** Mission controls and submission validation share authoritative effective inventory. */
+export function missionInventory<T extends Pick<ChainShipyardState, "ships" | "launchableShips"> & InventoryReadiness>(state: T): T {
+  const blocker = inventoryReadinessBlocker(state);
+  if (blocker) state = { ...state, fleetLaunchAvailable: false, fleetLaunchUnavailableReason: blocker };
+  if (state.launchableShips === undefined) return state;
+  const counts = new Map((state.launchableShips ?? []).map(ship => [ship.id, ship.count]));
   return { ...state, ships: state.ships.map(ship => ({ ...ship, count: counts.get(ship.id) ?? 0 })) };
 }
 
-export type SupplySourcesResponse = Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+export type SupplySourcesResponse = InventoryReadiness & Pick<ChainShipyardState, "fleetSlots" | "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "technologyLevels"> & {
+  /** Batch entrypoints check slots before lazy reconciliation; display slots remain effective. */
+  batchFleetSlots?: ChainShipyardState["fleetSlots"] | null;
   wallet: string;
-  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates" | "resources"> & {
+  sources: Array<Pick<ManagedPlanetResponse, "planetId" | "name" | "galaxy" | "system" | "position" | "coordinates"> & {
+    resources: OnChainResources | null;
     launchableShips: Array<{ id: number; count: number }>;
+    fleetLaunchConstraints?: FleetLaunchConstraints | null;
   }>;
 };
 
@@ -890,6 +944,8 @@ export type ChainDefenseState = {
   shipyardLevel: number;
   naniteLevel: number;
   missileSiloLevel: number;
+  /** Missile slots open to new production; a queued silo demolition already reserves its lower level. */
+  missileSiloCapacity?: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;
@@ -959,7 +1015,11 @@ export type ChainInfrastructureState = {
   queue: QueueStateResponse | null;
 };
 
-export type ChainMoonState = {
+export type ChainMoonState = InventoryReadiness & {
+  fleetLaunchConstraints?: FleetLaunchConstraints | null;
+  fleetSlots?: ChainShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   wallet: string;
   bodyKind?: "moon";
   homePlanetId: string | null;
@@ -976,7 +1036,7 @@ export type ChainMoonState = {
   resourcesAsOfNow?: OnChainResources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships?: ChainShipyardState["ships"];
-  launchableShips?: ChainShipyardState["ships"];
+  launchableShips?: ChainShipyardState["ships"] | null;
   moon: {
     exists: boolean;
     planetId: string;
@@ -1071,13 +1131,26 @@ export type RiftResourceState = {
 
 export type PendingWithdrawal = {
   id: string;
-  kind?: "riftExtraction" | "legacyMarketWithdrawal";
+  kind?: "riftExtraction";
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;
+  // Amount locked at the start; `amount` is what survived raids so far.
+  startedAmount?: string;
   requestedAt: string;
   unlocksAt: string;
   ready: boolean;
+};
+
+export type RiftHistoryEntry = {
+  id: string;
+  kind: "injected" | "extractionStarted" | "extracted" | "raided" | "raid";
+  planetId: string;
+  amounts: OnChainResources;
+  counterparty: string | null;
+  unlocksAt: string | null;
+  occurredAt: string;
+  transactionHash: string | null;
 };
 
 export type ChainRiftState = {
@@ -1089,7 +1162,10 @@ export type ChainRiftState = {
   withdrawalDelaySeconds: string;
   requirements: RiftRequirement[];
   resources: RiftResourceState[];
+  // Active claims on every planet of the wallet.
   pendingWithdrawals: PendingWithdrawal[];
+  // Absent on backends older than the Rift launch.
+  history?: RiftHistoryEntry[];
 };
 
 export type MissionShips = {
@@ -1278,13 +1354,13 @@ export type HighscorePlanet = {
   stationedDefenderForecastTimeline?: PublicStationedDefender[] | null;
   stationedDefenderTimelineComplete?: boolean;
   tactical?: {
-    currentResources?: OnChainResources;
-    raidableResources: OnChainResources;
-    raidableResourceTotal: string;
+    currentResources?: OnChainResources | null;
+    raidableResources: OnChainResources | null;
+    raidableResourceTotal: string | null;
     // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
     // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
     // math instead of looking like it under-reports. (VEY-KANEO-454)
-    grossResourceTotal?: string;
+    grossResourceTotal?: string | null;
     productionPerHour?: OnChainResources | null;
     storageCaps?: OnChainResources | null;
     ships: {
@@ -1452,7 +1528,6 @@ const GAME_SELECTORS = {
   finalizeRiftExtraction: "0xe2f2de34",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
-  finishResourceWithdrawal: "0xde0f208c",
   joinAttackMission: "0x28260eb6",
   joinBodyAttackMission: "0xdd3e1279",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
@@ -1465,12 +1540,14 @@ const GAME_SELECTORS = {
   launchFleetMission: "0x60eac16f",
   launchTransportBatch: "0x9c26e0be",
   launchDeployBatch: "0xc47915ea",
+  launchBodyTransportBatch: toFunctionSelector("launchBodyTransportBatch(uint256,(uint256,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16)[])"),
+  launchBodyDeployBatch: toFunctionSelector("launchBodyDeployBatch(uint256,(uint256,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16)[])"),
+  moonSupplyBatchVersion: toFunctionSelector("moonSupplyBatchVersion()"),
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
   renamePlanet: "0xa74c0906",
-  requestResourceWithdrawal: "0x62a10a46",
   startRiftExtraction: "0x0870c082",
   recallFleetMission: "0x1cbc460c",
   startDefenseProduction: "0xfec06283",
@@ -1479,6 +1556,7 @@ const GAME_SELECTORS = {
 } as const;
 const DELEGATION_SELECTORS = {
   setDelegate: "0xca5eb5e1",
+  acceptDelegate: "0xe2feb35c",
   revokeDelegate: "0x55d1ef38",
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
@@ -1511,7 +1589,9 @@ const ALLIANCE_SELECTORS = {
   transferAllianceOwnership: "0xb1d3b1e4",
 } as const;
 const ERC20_SELECTORS = {
+  allowance: "0xdd62ed3e",
   approve: "0x095ea7b3",
+  balanceOf: "0x70a08231",
 } as const;
 const ERC721_SELECTORS = {
   ownerOf: "0x6352211e",
@@ -1892,6 +1972,13 @@ type FleetMissionRevertContext = {
 };
 
 const contractRevertReasons: Record<string, string> = {
+  // Building demolition: BuildingNotDemolishable / BuildingInUse and the moon equivalents.
+  "0xfc5dcf51": "This building can't be demolished.",
+  "0x6d0bee4f": "This building is in use. Wait for its production or research to finish, then try again.",
+  "0x9ede1ebb": "This moon building can't be demolished.",
+  "0xde2ac91b": "The moon shipyard is in use. Wait for moon production to finish, then try again.",
+  // MissileSiloCapacityExceeded: building missiles past capacity, or demolishing a silo whose missiles need the level.
+  "0x6a038940": "The Missile Silo is too full. Its stored missiles need more room than this would leave.",
   "0x2ab0f96f":
     "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh resources and queues before retrying; your balance may still be updating after recent spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
@@ -1919,6 +2006,8 @@ const contractRevertReasons: Record<string, string> = {
   "0xb85299a2": "This fleet action is too late because the target mission has already arrived or cannot be joined in time.",
   "0xbee20108": "The recall cutoff has passed for this mission. Wait for the mission to finish automatically.",
   "0x4ba3e176": "You cannot join an attack against your own planet.",
+  "0x2463e846": "Only the attack's owner and members of their alliance can join this attack.",
+  "0x6c5511a3": "This moon's defense queue is full. Wait for queued defenses to finish, then retry.",
   "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
   "0x1f38cd02": "Attacks are temporarily unavailable. Please try again later.",
 };
@@ -1933,6 +2022,8 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.launchTransportBatch,
   GAME_SELECTORS.launchDeployBatch,
+  GAME_SELECTORS.launchBodyTransportBatch,
+  GAME_SELECTORS.launchBodyDeployBatch,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
 ]);
@@ -2262,6 +2353,19 @@ async function sendWalletTransaction(
     simulateThroughAppRpc
       ? (blockTag: "pending" | "latest") => simulateTransactionFromRpc(simulationRpcUrl ?? "", transaction, blockTag)
       : (blockTag: "pending" | "latest") => provider.request<string>({ method: "eth_call", params: [transaction, blockTag] });
+  // Verify the exact destination through the same chain-read authority. Empty
+  // fallback success is NOT selector support; old proxies fail closed here.
+  const moonBatch = [GAME_SELECTORS.launchBodyTransportBatch, GAME_SELECTORS.launchBodyDeployBatch].some(selector => transaction.data.startsWith(selector));
+  if (moonBatch) {
+    const probe = { from: account, to: transaction.to, data: GAME_SELECTORS.moonSupplyBatchVersion };
+    let version: string;
+    try {
+      version = simulateThroughAppRpc
+        ? await transactionRpcRequest<string>(simulationRpcUrl ?? "", "eth_call", [probe, "latest"])
+        : await provider.request<string>({ method: "eth_call", params: [probe, "latest"] });
+    } catch { throw new Error(MOON_SUPPLY_BATCH_UNAVAILABLE); }
+    if (version !== `0x${"0".repeat(63)}1`) throw new Error(MOON_SUPPLY_BATCH_UNAVAILABLE);
+  }
   try {
     await simulate("pending");
   } catch (error) {
@@ -2292,7 +2396,7 @@ async function sendWalletTransaction(
   // A source-count limit is not a gas bound: mixed manifests and due settlement
   // can exceed Base's transaction ceiling even below 15 origins. Fail closed on
   // the exact atomic call, through the same chain-read authority as simulation.
-  const supplyBatch = [GAME_SELECTORS.launchTransportBatch, GAME_SELECTORS.launchDeployBatch].some(selector => transaction.data.startsWith(selector));
+  const supplyBatch = [GAME_SELECTORS.launchTransportBatch, GAME_SELECTORS.launchDeployBatch, GAME_SELECTORS.launchBodyTransportBatch, GAME_SELECTORS.launchBodyDeployBatch].some(selector => transaction.data.startsWith(selector));
   if (supplyBatch) {
     const boundedTransaction = { ...transaction, gas: FLEET_MISSION_RESOLUTION_GAS };
     let estimate: string;
@@ -2770,6 +2874,16 @@ export function encodeLaunchTransportBatchCall({ targetPlanetId, orders }: { tar
 
 export function encodeLaunchDeployBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
   return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchDeployBatch, params);
+}
+
+export const MOON_SUPPLY_BATCH_UNAVAILABLE = "Multi-source moon Supply is not available on the current network. Try again after the game update, or select one source.";
+
+export function encodeLaunchBodyTransportBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchBodyTransportBatch, params);
+}
+
+export function encodeLaunchBodyDeployBatchCall(params: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
+  return encodeLaunchFleetBatchCall(GAME_SELECTORS.launchBodyDeployBatch, params);
 }
 
 function encodeLaunchFleetBatchCall(selector: string, { targetPlanetId, orders }: Parameters<typeof encodeLaunchTransportBatchCall>[0]): string {
@@ -3647,6 +3761,29 @@ export async function sendProductionBatchTransaction(
   }, { maxEstimatedGas: 12_000_000n });
 }
 
+export type RiftTokenWallet = { balance: bigint; allowance: bigint };
+
+/** A wallet's resource tokens and its allowance to the Game, read through the app's Base RPC
+ * rather than the wallet (which may sit on another network). Unconfigured tokens are omitted. */
+export async function fetchRiftTokenWallet(
+  rpcUrl: string,
+  owner: string,
+  spender: string,
+  tokens: Partial<Record<RiftResourceKey, string | null>>,
+): Promise<Partial<Record<RiftResourceKey, RiftTokenWallet>>> {
+  const word = (address: string) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  const read = async (to: string, data: string) => decodeUintResult(await transactionRpcRequest<string>(rpcUrl, "eth_call", [{ to, data }, "latest"]));
+  const entries = await Promise.all(Object.entries(tokens).map(async ([key, token]) => {
+    if (!token) return [];
+    const [balance, allowance] = await Promise.all([
+      read(token, ERC20_SELECTORS.balanceOf + word(owner)),
+      read(token, ERC20_SELECTORS.allowance + word(owner) + word(spender)),
+    ]);
+    return [[key, { balance, allowance }] as const];
+  }));
+  return Object.fromEntries(entries.flat());
+}
+
 export async function sendApproveResourceTokenTransaction(provider: Eip1193Provider, account: string, tokenAddress: string, spenderAddress: string, amount: bigint | number | string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -3667,29 +3804,6 @@ export async function sendDepositResourceTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount]),
-  });
-}
-
-export async function sendRequestResourceWithdrawalTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-  resourceId: number,
-  amount: bigint | number | string,
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.requestResourceWithdrawal, [planetId, resourceId, amount]),
-  });
-}
-
-export async function sendFinishResourceWithdrawalTransaction(provider: Eip1193Provider, account: string, contractAddress: string, resourceId: number): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishResourceWithdrawal, [resourceId]),
   });
 }
 
@@ -3916,6 +4030,38 @@ export async function sendStartBuildingUpgradeTransaction(provider: Eip1193Provi
   });
 }
 
+export async function sendStartBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("startBuildingDemolition(uint256,uint8)"), [planetId, buildingId]),
+  });
+}
+
+export async function sendCancelBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("cancelBuildingDemolition(uint256)"), [planetId]),
+  });
+}
+
+export async function sendStartMoonBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, buildingId: number): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("startMoonBuildingDemolition(uint256,uint8)"), [planetId, buildingId]),
+  });
+}
+
+export async function sendCancelMoonBuildingDemolitionTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(toFunctionSelector("cancelMoonBuildingDemolition(uint256)"), [planetId]),
+  });
+}
+
 export async function sendRenamePlanetTransaction(provider: Eip1193Provider, account: string, contractAddress: string, planetId: string, name: string): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -4113,6 +4259,18 @@ export async function sendLaunchDeployBatchTransaction(
     from: account,
     to: contractAddress,
     data: encodeLaunchDeployBatchCall(params),
+  });
+}
+
+export async function sendLaunchBodySupplyBatchTransaction(
+  provider: Eip1193Provider, account: string, contractAddress: string,
+  params: Parameters<typeof encodeLaunchTransportBatchCall>[0], mission: "transport" | "deploy",
+): Promise<string> {
+  if (params.orders.length < 1 || params.orders.length > 15) throw new Error("Supply requires between 1 and 15 missions.");
+  if (new Set(params.orders.map(order => String(BigInt(order.originPlanetId)))).size !== params.orders.length) throw new Error("Supply origins must be unique.");
+  return sendWalletTransaction(provider, account, {
+    from: account, to: contractAddress,
+    data: (mission === "deploy" ? encodeLaunchBodyDeployBatchCall : encodeLaunchBodyTransportBatchCall)(params),
   });
 }
 
@@ -4780,6 +4938,17 @@ export async function fetchMission(apiUrl: string, missionId: string, signal?: A
   return fetchGameApiJson<MissionDetailResponse>(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`, "Mission", { cache: "no-store", signal });
 }
 
+/** The referee's published report (GET /battles/:id/report); legacy battles have none (null). */
+export async function fetchRefereeBattleReport(apiUrl: string, battleId: string, signal?: AbortSignal): Promise<RefereeBattleReport | null> {
+  try {
+    const report = await fetchGameApiJson<RefereeBattleReport>(`${apiUrl.replace(/\/+$/, "")}/battles/${encodeURIComponent(battleId)}/report`, "Battle report", { signal });
+    return report.format === "veydrift.referee-battle.report.v1" && Array.isArray(report.rows) && Array.isArray(report.rounds) ? report : null;
+  } catch (error) {
+    if (error instanceof GameApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
 export async function fetchBattleReports(apiUrl: string, signal?: AbortSignal): Promise<BattleReportSummary[]> {
   return fetchGameApiJson<BattleReportSummary[]>(`${apiUrl.replace(/\/+$/, "")}/battle-reports?view=summary`, "Battle reports", { signal });
 }
@@ -4836,6 +5005,7 @@ export async function fetchWalletDelegation(
   );
 }
 
+/** Only proposes `delegate`; it can act for `account` after it calls acceptDelegate(account). */
 export async function sendSetDelegateTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -4846,6 +5016,20 @@ export async function sendSetDelegateTransaction(
     from: account,
     to: contractAddress,
     data: encodeAddressCall(DELEGATION_SELECTORS.setDelegate, delegate),
+  });
+}
+
+/** Sent by the proposed delegate wallet `account` to start acting for `main`. */
+export async function sendAcceptDelegateTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  main: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeAddressCall(DELEGATION_SELECTORS.acceptDelegate, main),
   });
 }
 
@@ -4970,9 +5154,12 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   return message || "Rankings could not be loaded.";
 }
 
-export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; signal?: AbortSignal } = {}): Promise<unknown> {
-  const detail = options.detail ? `?detail=${options.detail}` : "";
-  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${detail}`;
+export async function fetchSystemData(apiUrl: string, galaxy: number, system: number, options: { detail?: "full"; fresh?: boolean; signal?: AbortSignal } = {}): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (options.detail) params.set("detail", options.detail);
+  if (options.fresh) params.set("fresh", "1");
+  const query = params.size ? `?${params}` : "";
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}${query}`;
   return fetchGameApiJson<unknown>(url, "System", {
     httpErrorMessage: async () => "Galaxy could not be loaded. Please retry.",
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -5066,7 +5253,8 @@ async function requestGameApiJson<T>(
       ...(options.cache !== undefined ? { cache: options.cache } : {}),
       ...(options.method ? { method: options.method } : {}),
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-      headers: { accept: "application/json", ...(options.body ? { "content-type": "application/json" } : {}) },
+      // Accept is CORS-safelisted: older backends ignore this additive capability.
+      headers: { accept: "application/json; resource-view=nullable-v1", ...(options.body ? { "content-type": "application/json" } : {}) },
       signal: controller.signal,
     });
     if (!response.ok) {

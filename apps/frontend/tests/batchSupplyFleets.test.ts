@@ -187,7 +187,7 @@ describe("Opt-in Supply fleets", () => {
       expect(words.slice(offset + 1, offset + 15)).toEqual(supplyShipKeys.map(key => BigInt(order.ships[key])));
       expect(words.slice(offset + 15, offset + 19)).toEqual([0n, 0n, 0n, 100n]);
     }
-    expect(() => launchBatchSupplyTransaction(provider, "a", "b", target, plan.orders, true, "deploy")).toThrow("Moon Supply");
+    await expect(launchBatchSupplyTransaction(provider, "a", "b", target, plan.orders, true, "deploy")).rejects.toThrow("not available");
     expect(() => launchBatchSupplyTransaction(provider, "a", "b", target, [], false, "deploy")).toThrow("1 and 15");
     expect(() => launchBatchSupplyTransaction(provider, "a", "b", target, Array(16).fill(plan.orders[0]), false, "deploy")).toThrow("1 and 15");
   });

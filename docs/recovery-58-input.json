@@ -1,0 +1,99 @@
+{
+  "chainId": 8453,
+  "address": "0xec336742a19a9d0d046a83603491e4ae08329788",
+  "nonce": 186225,
+  "originalHash": "0x9a5173dcaaab65ef248fa34eba6014b7a718a0021c4826ac77fb9f8dcf218a09",
+  "operationId": "mission-batch:0xf397910f005151b09644228573a4353818d3755d:0x728104bf76d2919f30934f5f92c5d79e5c67556682ef96bafc7d2ac9a9a58ba4",
+  "membership": "[{\"missionId\":\"99306\",\"leg\":\"return\",\"dueAt\":1791480343}]",
+  "game": "0xf397910f005151b09644228573a4353818d3755d",
+  "calldataHash": "0x728104bf76d2919f30934f5f92c5d79e5c67556682ef96bafc7d2ac9a9a58ba4",
+  "identities": [
+    {
+      "address": "0x0d575031ac98c41d0bc48e2d460b47f41c39737c",
+      "codeHash": "0x9d6ea79e7d6be6429f3321d60ba2616e7a4c730de3f0f9c541a8e38e5a7e53ee"
+    },
+    {
+      "address": "0x367351ed8cc0a4de85b17fc794652ce3f90b167c",
+      "codeHash": "0xc32346f140ae3ed1ff9fe63ead2182ffc49f1804bfba28c816d8d2c6eb54ead0"
+    },
+    {
+      "address": "0xa1a5048317965f097b61756231fc6ade8c79fba3",
+      "codeHash": "0x32ff3eefceecadd7d2e7dc117a44d347197342ef89ebe8fc0c0128ea278ad503"
+    },
+    {
+      "address": "0x4a6078154a7a48f51b78867d35d2f11f47b13c04",
+      "codeHash": "0x0a30e3cafab2e59e21d1f0f1768ccc0576f7e963d840a63298525198aff621cd"
+    },
+    {
+      "address": "0xaecc8f03d6917367954d4e2fa7120840725025d1",
+      "codeHash": "0xb38540417742dc35461cf37927cbdd52e06c9dcd907001af3f54b1bc22dc0af8"
+    },
+    {
+      "address": "0x841150445d82d4d86654f9cb1f050c9b4e676703",
+      "codeHash": "0x78121dfd735d4afe3987c8e7a1acce6ebd0e26401a1b3da44f70597cfc1d59b1"
+    },
+    {
+      "address": "0xc6e3ab2a9b2716251abd6f4ac2b250082a0e6f97",
+      "codeHash": "0x82036489bb5e0fff1203bda6f701b25e70204d46c06b915a29a34487de00a1fa"
+    },
+    {
+      "address": "0x4d744700a9c3156f29920f85132c564f6f072a9e",
+      "codeHash": "0x9fb4619967c16f402d1f1b0e2b03c1d42762e1bfd376448b9f85e9257ddcdf7e"
+    },
+    {
+      "address": "0xa8687be0525fa4877b74a8d552b656353b214016",
+      "codeHash": "0xc7d9fbda4e8eef532a7addbd641b68c7fc7b2eed1ecc57d1270371e2048dc26e"
+    },
+    {
+      "address": "0xa2e712f77d9453f568c922f76f39a166cf46ede1",
+      "codeHash": "0x78d1f71f8d1cd6401214b4905a6384b3593d2c6c6c0a0aa6f7cd8ccfc324f6d9"
+    },
+    {
+      "address": "0x287fa1969e953cef5d39f1c0906fbd9f54ffd499",
+      "codeHash": "0x7940b06992bbf4d0e3cf55cb6d6c73a204f985e3ffed71df9dc89a9a38d70b06"
+    },
+    {
+      "address": "0x7486d5cb07f20896644df8e037b17ef51a02b5a6",
+      "codeHash": "0xa92ea4762d94e766f8fc8adcda8e32f4c3c3d2c639cc3cd83d13bd78059b8fcc"
+    },
+    {
+      "address": "0x6a984c1e2d9cf6ab34716b23cd56b6401fab7532",
+      "codeHash": "0xe178b8270118d1e7547ea2c828daf6f50c14407c07e8391583dc7b48cf232afd"
+    },
+    {
+      "address": "0xe8c5a244e286c9ba455878d81d98636b04d7e740",
+      "codeHash": "0x5fe1b94bb1b04a74e8276d20918c60c755a746d8dc1a1168ad9d974c0894154e"
+    },
+    {
+      "address": "0x794074209dca54a96a17fcd5271dec7550eb8088",
+      "codeHash": "0x78117f0e83b56817f8a0bddb6fda0dc740aac02a9765e80e8c332db5c641a363"
+    }
+  ],
+  "implementation": "0x0d575031ac98c41d0bc48e2d460b47f41c39737c",
+  "originalFee": {
+    "gas": "10414604",
+    "totalWei": "199999983326886",
+    "l1ReserveWei": "77724806734",
+    "operatorReserveWei": "0",
+    "maxFeePerGas": "19196338",
+    "priority": null,
+    "source": "ticket58:prepared-log:2026-10-08T17:25:45.788Z:broadcast-failure.txt",
+    "sourceDigest": "0x6a76732669e79dcdd0d8cfb26c7c721986b873694e6243646ed9d28a4979e929"
+  },
+  "gas": "1000000",
+  "allowAlreadySettled": true,
+  "recoveryId": "ticket58-base-186225-return99306",
+  "maxFeeWei": "200000000000000",
+  "referenceRpcUrl": "https://mainnet.base.org",
+  "mission": {
+    "owner": "0xdfb278e8fb81918b546db6daaf53f6a8d636c820",
+    "origin": "783",
+    "target": "210",
+    "returnAt": "1791480343",
+    "shipsWords": [
+      "0x000000000000000000000000000000000000000000000000000000000000000d",
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "bodyFlags": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

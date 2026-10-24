@@ -1,4 +1,5 @@
 import type { LevelSupplyRequest } from "../levelSupply";
+import { Clock, Gauge } from "lucide-preact";
 import { useEffect, useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
@@ -16,6 +17,7 @@ import {
   buildingLevelInfoRows,
   type BuildingUpgradeStatus,
   buildingUpgradeStatus,
+  demolitionQueueLabel,
   formatCost,
   formatDuration,
   formatFrontendOnlyBuildingRequirement,
@@ -26,13 +28,20 @@ import {
   missingFrontendOnlyBuildingRequirementFor,
 } from "../buildingDetails";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
+import {
+  buildingDemolitionConsequences,
+  buildingDemolitionDurationSeconds,
+  buildingDemolitionPrice,
+  planetDemolitionUnavailableReason,
+} from "../demolition";
+import { DemolitionDialog } from "./DemolitionDialog";
 import { InspectInfoBlock } from "./InspectProgressLayout";
 import { refreshButtonState } from "./PageHeader";
 import { QueueProgressPanel } from "./QueueProgressPanel";
 import { constructionQueueForDisplay, type ConstructionProgress } from "../constructionProgress";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
-import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
+import { formatLevelAmount, LevelInfoButton, LevelInfoModal, levelInfoValue, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
+import { StructureCatalog, StructureDetail, structureDemolitionProgress, type StructureDemolition, type StructureLevelInfo } from "./StructureCatalog";
 import { supplyResourceShortfall, type SupplyResources } from "../batchSupplyPlanner";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
@@ -48,6 +57,15 @@ const fullResourceLabels: Record<keyof Resources, string> = {
 };
 
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
+
+/** Planet activity that blocks demolishing the buildings it runs on. */
+export type PlanetDemolitionActivity = {
+  /** Stored plus queued missile slots. */
+  missileSlotsUsed: number;
+  /** Ship or defense production is running on this planet. */
+  productionActive: boolean;
+  researchActive: boolean;
+};
 
 const buildingDescriptions: Record<BuildingKey, string> = {
   metalMine: "Extracts metal from the planet crust. Metal is the core material for construction and early ship production.",
@@ -75,9 +93,12 @@ interface InfrastructurePageProps {
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
   chainDurations?: Partial<Record<BuildingKey, number>> | undefined;
   constructionProgress?: ConstructionProgress | undefined;
+  demolitionActivity?: PlanetDemolitionActivity | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
   loading?: boolean | undefined;
   loadError?: string | undefined;
+  onCancelDemolition?: (() => void) | undefined;
+  onDemolish?: ((key: BuildingKey) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
@@ -102,9 +123,12 @@ export function InfrastructurePage({
   chainCosts,
   chainDurations,
   constructionProgress,
+  demolitionActivity,
   hasLoadedInfrastructureState = false,
   loadError,
   now = Date.now(),
+  onCancelDemolition,
+  onDemolish,
   onOpenRequirement,
   onSelectBuilding,
   onSupply,
@@ -133,6 +157,24 @@ export function InfrastructurePage({
     loadError,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
+  const transactionBlockedReason = transactionUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel;
+  const demolitionCancel = activeBuildingQueue?.demolish && onCancelDemolition ? {
+    disabled: Boolean(transactionBlockedReason) || activeBuildingQueue.readyAt <= now,
+    onClick: onCancelDemolition,
+  } : undefined;
+  const demolitionProgress = activeBuildingQueue?.demolish
+    ? structureDemolitionProgress(
+      demolitionQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel),
+      constructionProgress,
+      activeBuildingQueue,
+      now,
+    )
+    : undefined;
+  // The detail reads the same display queue as the panel and card, so a queue the
+  // backend already reports complete can't linger in its status line.
+  const detailState = settledState.queue?.kind === "building" && !activeBuildingQueue
+    ? { ...settledState, queue: undefined }
+    : settledState;
   const handleSelectBuilding = (key: BuildingKey) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
@@ -153,7 +195,7 @@ export function InfrastructurePage({
   return (
     <div className="grid gap-4">
       {activeBuildingQueue ? (
-        <ActiveBuildingQueuePanel now={now} progressState={constructionProgress} queue={activeBuildingQueue} />
+        <ActiveBuildingQueuePanel cancel={demolitionCancel} now={now} progressState={constructionProgress} queue={activeBuildingQueue} />
       ) : null}
 
       {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
@@ -172,6 +214,17 @@ export function InfrastructurePage({
             spendableResources,
             starterPlanet,
           });
+
+          if (demolitionProgress && activeBuildingQueue?.key === building.key) {
+            return {
+              asset: building.asset,
+              currentText: `Demolishing ${currentLevel} → ${activeBuildingQueue.targetLevel}`,
+              demolition: demolitionProgress,
+              isDimmed: false,
+              key: building.key,
+              label: building.label,
+            };
+          }
 
           return {
             asset: building.asset,
@@ -194,6 +247,13 @@ export function InfrastructurePage({
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
             chainDuration={chainDurations?.[selectedBuilding.key]}
+            demolition={demolitionProgress && activeBuildingQueue?.key === selectedBuilding.key ? {
+              ...demolitionProgress,
+              cancelDisabled: demolitionCancel?.disabled,
+              onCancel: demolitionCancel?.onClick,
+            } : undefined}
+            demolitionActivity={demolitionActivity}
+            onDemolish={onDemolish ? () => onDemolish(selectedBuilding.key) : undefined}
             onOpenRequirement={onOpenRequirement}
             onSupply={onSupply}
             onSupplyLevel={onSupplyLevel}
@@ -203,7 +263,7 @@ export function InfrastructurePage({
             productionRates={productionRates}
             spendableResources={spendableResources}
             starterPlanet={starterPlanet}
-            state={settledState}
+            state={detailState}
           />
         )}
       />
@@ -283,6 +343,9 @@ function BuildingDetailPanel({
   building,
   chainCost,
   chainDuration,
+  demolition,
+  demolitionActivity,
+  onDemolish,
   onOpenRequirement,
   onSupply,
   onSupplyLevel,
@@ -300,7 +363,10 @@ function BuildingDetailPanel({
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
   chainDuration?: number | undefined;
+  demolition?: StructureDemolition | undefined;
+  demolitionActivity?: PlanetDemolitionActivity | undefined;
   now: number;
+  onDemolish?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onSupply?: ((resources: SupplyResources) => void) | undefined;
   onSupplyLevel?: ((request: LevelSupplyRequest) => void) | undefined;
@@ -376,8 +442,25 @@ function BuildingDetailPanel({
   // local playable fallback is useful for disconnected previews, but must never
   // fabricate a transport request before indexed state is known.
   const supplyShortfall = supplyResourceShortfall(spendableResources, chainCost);
+  const [isDemolitionOpen, setIsDemolitionOpen] = useState(false);
+  const demolitionPrice = built ? buildingDemolitionPrice(building.key, currentLevel, state.research.ion) : undefined;
+  const demolitionReason = demolitionPrice
+    ? planetDemolitionUnavailableReason(building.key, currentLevel, demolitionPrice.cost, {
+      actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
+      buildingQueueBusy: state.queue?.kind === "building",
+      missileSlotsUsed: demolitionActivity?.missileSlotsUsed ?? 0,
+      productionActive: demolitionActivity?.productionActive ?? false,
+      researchActive: demolitionActivity?.researchActive ?? false,
+      resources: displayedResources,
+    })
+    : undefined;
+
+  useEffect(() => {
+    setIsDemolitionOpen(false);
+  }, [building.key]);
 
   return (
+    <>
     <StructureDetail
       action={!isSelectedBuildingQueued && !(binary && built) ? {
         ariaLabel: binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`,
@@ -388,6 +471,10 @@ function BuildingDetailPanel({
       active={built}
       asset={building.asset}
       cacheKey={`building:${building.key}`}
+      demolishAction={demolitionPrice && onDemolish && !demolitionReason ? {
+        onClick: () => setIsDemolitionOpen(true),
+      } : undefined}
+      demolition={demolition}
       description={buildingDescriptions[building.key]}
       effectContent={<dl className="mt-4 grid gap-2">
         {effectRows.map((row) => (
@@ -418,7 +505,7 @@ function BuildingDetailPanel({
       </>}
       isDimmed={!built}
       label={building.label}
-      levelInfo={buildingLevelInfoTable(currentLevel, binary ? levelInfoRows.slice(0, 1) : levelInfoRows, onSupplyLevel ? level => onSupplyLevel({ kind: "building", key: building.key, label: building.label, level }) : undefined)}
+      levelInfo={buildingLevelInfoTable(currentLevel, binary ? levelInfoRows.slice(0, 1) : levelInfoRows, onSupplyLevel ? level => onSupplyLevel({ kind: "building", key: building.key, label: building.label, level }) : undefined, binary ? "Build cost" : undefined)}
       notice={visibleActionNotice ? { label: visibleActionNotice.label, tone: "error" } : undefined}
       statusReason={{
         disabled: status.disabled,
@@ -431,6 +518,22 @@ function BuildingDetailPanel({
       } : undefined}
       summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
     />
+    {isDemolitionOpen && demolitionPrice && onDemolish ? (
+      <DemolitionDialog
+        buildingLabel={building.label}
+        consequences={buildingDemolitionConsequences(state.buildings, building.key, planetProductionProfile, energyTechnologyLevel)}
+        cost={demolitionPrice.cost}
+        currentLevel={currentLevel}
+        discountPercent={demolitionPrice.discountPercent}
+        durationSeconds={buildingDemolitionDurationSeconds(state.buildings, demolitionPrice.fullCost)}
+        onCancel={() => setIsDemolitionOpen(false)}
+        onConfirm={() => {
+          setIsDemolitionOpen(false);
+          onDemolish();
+        }}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -502,19 +605,23 @@ function normalizeInfrastructureNotice(label: string | undefined): string | unde
 }
 
 export function ActiveBuildingQueuePanel({
+  cancel,
   now,
   progressState,
   queue,
 }: {
+  /** Cancel control for a queued demolition. */
+  cancel?: { disabled: boolean; onClick: () => void } | undefined;
   now: number;
   progressState?: ConstructionProgress | undefined;
   queue: BuildingQueueItem;
 }) {
-  const queueLabel = `${queue.label} ${queue.targetLevel}`;
+  const queueLabel = queue.demolish ? demolitionQueueLabel(queue.label, queue.targetLevel) : `${queue.label} ${queue.targetLevel}`;
   const asset = buildingCatalog.find((building) => building.key === queue.key)?.asset;
 
   return (
     <QueueProgressPanel
+      action={queue.demolish && cancel ? { disabled: cancel.disabled, label: "Cancel", onClick: cancel.onClick } : undefined}
       asset={asset}
       itemText={queueLabel}
       label={queueLabel}
@@ -522,8 +629,8 @@ export function ActiveBuildingQueuePanel({
       progressState={progressState}
       readyAt={queue.readyAt}
       startedAt={queue.startedAt}
-      title="Construction"
-      tone="amber"
+      title={queue.demolish ? "Demolition" : "Construction"}
+      tone={queue.demolish ? "rose" : "amber"}
     />
   );
 }
@@ -557,47 +664,60 @@ export function BuildingLevelInfoModal({
   });
 }
 
+// "x4 construction speed (+100% faster)" keeps the gain as a subtle "+100%" delta.
+function levelEffectCell(effect: string) {
+  const match = /^(.*) \((\+[\d,]+%) faster\)$/.exec(effect);
+  return match ? levelInfoValue(match[1]!, { note: match[2] }) : effect;
+}
+
 export function buildingLevelInfoTable(
   currentLevel: number,
   rows: ReturnType<typeof buildingLevelInfoRows>,
   onSupply?: ((level: number) => void) | undefined,
+  costLabel?: string | undefined,
 ): StructureLevelInfo {
   const columns = buildingLevelInfoColumns(rows);
   const modalColumns: LevelInfoColumn[] = [
-    { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
-    ...(columns.constructionTime ? [{ key: "constructionTime", label: "Build time", headerClassName: "min-w-32" }] : []),
-    ...(columns.storage ? [{ key: "storage", label: "Storage", headerClassName: "min-w-40" }] : []),
-    ...(columns.effect ? [{ key: "effect", label: "Effect", headerClassName: "min-w-44" }] : []),
-    ...(columns.production ? [{ key: "production", label: "Production output", headerClassName: "min-w-44" }] : []),
-    ...(columns.energyRequired ? [{ key: "energyRequired", label: "Energy use", headerClassName: "min-w-36" }] : []),
-    ...(columns.energyProduced ? [{ key: "energyProduced", label: "Energy output", headerClassName: "min-w-40" }] : []),
-    ...(columns.deuteriumConsumed ? [{ key: "deuteriumConsumed", label: "Deuterium use", headerClassName: "min-w-44" }] : []),
+    ...(columns.constructionTime ? [{ key: "constructionTime", label: "Build time", icon: Clock, width: "minmax(4.75rem,0.8fr)" }] : []),
+    // Resource stats carry their own M/C/D/E glyph, so only time and effect need an icon on phones.
+    ...(columns.storage ? [{ key: "storage", label: "Storage" }] : []),
+    ...(columns.effect ? [{ key: "effect", label: "Effect", icon: Gauge, shrink: true, width: "minmax(11rem,2fr)" }] : []),
+    ...(columns.production ? [{ key: "production", label: "Production", shrink: true }] : []),
+    ...(columns.energyRequired ? [{ key: "energyRequired", label: "Energy use", shrink: true }] : []),
+    ...(columns.energyProduced ? [{ key: "energyProduced", label: "Energy output", shrink: true }] : []),
+    ...(columns.deuteriumConsumed ? [{ key: "deuteriumConsumed", label: "Deuterium use", shrink: true }] : []),
   ];
-  const modalRows: LevelInfoRow[] = rows.map((row) => ({
-    cells: {
-      cost: formatCost(row.cost),
-      constructionTime: formatDuration(row.durationSeconds),
-      storage: row.storage
-        ? `${formatNumber(row.storage.capacity)} ${fullResourceLabels[row.storage.resource]}`
-        : "N/A",
-      effect: row.effect ?? "N/A",
-      production: row.production
-        ? `${formatNumber(row.production.value)} ${fullResourceLabels[row.production.resource]}/h${row.production.deltaFromPrevious !== 0 ? ` (${formatSigned(row.production.deltaFromPrevious)}/h)` : ""}`
-        : "N/A",
-      energyRequired: row.energyRequired === undefined ? "N/A" : `${formatNumber(row.energyRequired)} required`,
-      energyProduced: row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`,
-      deuteriumConsumed: row.deuteriumConsumed === undefined
-        ? "N/A"
-        : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`,
-    },
-    onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
-    key: row.level,
-    level: row.level,
-    status: row.current ? "current" : row.next ? "next" : "future",
-  }));
+  const modalRows: LevelInfoRow[] = rows.map((row, index) => {
+    const previous = rows[index - 1];
+    return {
+      cells: {
+        constructionTime: formatDuration(row.durationSeconds),
+        storage: row.storage ? levelInfoValue(formatLevelAmount(row.storage.capacity), { resource: row.storage.resource }) : undefined,
+        effect: row.effect === undefined ? undefined : levelEffectCell(row.effect),
+        production: row.production
+          ? levelInfoValue(formatLevelAmount(row.production.value), { delta: row.production.deltaFromPrevious, resource: row.production.resource, suffix: "/h" })
+          : undefined,
+        energyRequired: row.energyRequired === undefined
+          ? undefined
+          : levelInfoValue(formatLevelAmount(row.energyRequired), { delta: row.energyRequired - (previous?.energyRequired ?? 0), resource: "energy", tone: "warning" }),
+        energyProduced: row.energyProduced === undefined
+          ? undefined
+          : levelInfoValue(formatLevelAmount(row.energyProduced), { delta: row.energyProduced - (previous?.energyProduced ?? 0), resource: "energy" }),
+        deuteriumConsumed: row.deuteriumConsumed === undefined
+          ? undefined
+          : levelInfoValue(formatLevelAmount(row.deuteriumConsumed), { delta: row.deuteriumConsumed - (previous?.deuteriumConsumed ?? 0), resource: "deuterium", suffix: "/h", tone: "warning" }),
+      },
+      cost: row.cost,
+      onSupply: onSupply && row.level > currentLevel ? () => onSupply(row.level) : undefined,
+      key: row.level,
+      level: row.level,
+      status: row.current ? "current" : row.next ? "next" : "future",
+    };
+  });
 
   return {
     columns: modalColumns,
+    costLabel,
     currentLevel,
     rows: modalRows,
   };

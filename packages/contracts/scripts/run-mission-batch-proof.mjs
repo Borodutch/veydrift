@@ -2,7 +2,7 @@ import {spawnSync} from "node:child_process";
 import {rmSync} from "node:fs";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
-import {parseShard} from "./run-tests-separately.mjs";
+import {FORGE, parseShard} from "./run-tests-separately.mjs";
 
 // Run once in the normal contract gate, not independently on every CI shard.
 const shard = parseShard(process.env.CONTRACT_TEST_SHARD);
@@ -12,16 +12,18 @@ if (!shard || shard.index === 1) {
   // Never let a skipped exporter validate stale generated state: delete the outputs so
   // the exporter must regenerate them. (Forge's content-hash cache recompiles changed sources;
   // --force here recompiled the whole via-IR project for one fixture.)
-  for (const name of ["vey918-mixed-alloc.json", "vey918-mixed-meta.json"]) {
+  for (const name of ["vey918-mixed-alloc.json", "vey918-mixed-meta.json", "ticket44-referee-alloc.json", "ticket44-referee-meta.json"]) {
     rmSync(join(contracts, "manifests", name), {force: true});
   }
-  const env = {...process.env, VEY918_EXPORT_FIXTURE: "true"};
+  const env = {...process.env, VEY918_EXPORT_FIXTURE: "true", VEY44_EXPORT_FIXTURE: "true"};
   for (const key of ["NO_PROXY", "no_proxy"]) {
     env[key] = [env[key], "127.0.0.1", "localhost"].filter(Boolean).join(",");
   }
   for (const [command, args, cwd] of [
-    ["forge", ["test", "--match-path", "test/VeydriftBatchFixtureExport.t.sol", "--match-test", "testExportMixedProxyFixture", "-vv"], contracts],
-    ["bun", ["scripts/mission-batch-mixed-proxy-proof.ts"], root]
+    [FORGE, ["test", "--match-path", "test/VeydriftBatchFixtureExport.t.sol", "--match-test", "testExportMixedProxyFixture", "-vv"], contracts],
+    ["bun", ["scripts/mission-batch-mixed-proxy-proof.ts"], root],
+    [FORGE, ["test", "--match-path", "test/VeydriftRefereeFixtureExport.t.sol", "--match-test", "testExportRefereeFixture", "-vv"], contracts],
+    ["bun", ["scripts/battle-referee-anvil-proof.ts"], root]
   ]) {
     const result = spawnSync(command, args, {cwd, env, stdio: "inherit", timeout: 180_000});
     if (result.error) throw result.error;

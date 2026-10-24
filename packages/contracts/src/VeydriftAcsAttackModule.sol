@@ -4,13 +4,13 @@ pragma solidity ^0.8.28;
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+import {VeydriftBodyAttackWindow} from "./libraries/VeydriftBodyAttackWindow.sol";
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
+import {VeydriftMoonIncarnation} from "./libraries/VeydriftMoonIncarnation.sol";
 import {Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftAcsAttackProtection {
-    function enforceBodyAttackProtection(address attacker, uint256 planetId, bool targetIsMoon)
-        external
-        view;
+    function enforceJoinAttackProtection(address joiner, uint256 attackMissionId) external view;
 }
 
 /// @notice Delegatecall target for joining an outbound ACS attack from either a planet or moon.
@@ -85,6 +85,12 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
             revert InvalidMissionType(FleetMissionType.AcsAttack);
         }
         if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
+        // Consent: only the attack's owner or a member of the owner's alliance may join (and share
+        // its loot), mirroring ACS Defend's same-alliance rule.
+        if (attack.owner != _actingPlayer()) {
+            (bool allied,,) = _attackProtectionAllianceContext(_actingPlayer(), attack.owner);
+            if (!allied) revert AttackJoinNotAuthorized(attackMissionId);
+        }
 
         _settleDueColonizeArrivals(_actingPlayer());
         _settleDueCombatArrivals(_actingPlayer());
@@ -104,10 +110,9 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
                     false
                 )
         ) revert InvalidId();
+        // A joiner only the live Rift lock admits may join a Rift-only battle alone (Rift module).
         IVeydriftAcsAttackProtection(address(this))
-            .enforceBodyAttackProtection(
-                _actingPlayer(), attack.targetPlanetId, attack.targetIsMoon
-            );
+            .enforceJoinAttackProtection(_actingPlayer(), attackMissionId);
     }
 
     function _prepareJoinFleet(
@@ -207,6 +212,20 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
         );
         _fleetCounterplayMissions[attackMissionId].push(missionId);
         _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);
+        // An ally's joined fleet is an attack on the defender, counted exactly like a launch. The
+        // owner's own launch already counted this battle.
+        if (attack.owner != _actingPlayer()) {
+            VeydriftBodyAttackWindow.record(
+                _planets,
+                _attackWindows,
+                _attackProtectionExemptions,
+                playerLastActiveAt,
+                _moonAttackParityActivatedAt,
+                _actingPlayer(),
+                attack.targetPlanetId,
+                attack.targetIsMoon
+            );
+        }
 
         emit AttackMissionJoined(
             attackMissionId, missionId, _actingPlayer(), originPlanetId, attack.targetPlanetId
@@ -243,12 +262,8 @@ contract VeydriftAcsAttackModule is VeydriftResourceReserves {
     }
 
     function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
-        (bool ok, bytes memory data) =
-            _moonSystem.staticcall(abi.encodeWithSignature("moon(uint256)", planetId));
-        if (!ok || data.length < 96) return false;
-        (bool exists,, address moonOwner,,,,) =
-            abi.decode(data, (bool, uint256, address, uint16, uint16, uint64, uint64));
-        return exists && moonOwner == owner_;
+        // Same moon(uint256) owner check, kept in the linked library for EIP-170 headroom.
+        return VeydriftMoonIncarnation.existsForOwner(_moonSystem, planetId, owner_);
     }
 
     function _requireBodyMissionShips(uint256 planetId, bool isMoon, MissionShips calldata ships)

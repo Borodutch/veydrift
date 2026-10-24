@@ -51,8 +51,10 @@ export function deterministicFleetEffects(
     const transport = m.missionType === "Transport";
     const deploy = m.missionType === "Deploy";
     const arrival = leg.kind === 0 && m.status === "Outbound" && (transport || deploy);
-    const peaceful = transport || deploy || m.missionType === "Harvest" || m.missionType === "Colonize";
-    const knownReturn = leg.kind === 1 && (aborted.has(m.missionId) || arrived.has(m.missionId) || ((m.status === "Returning" || m.status === "Recalled") && (peaceful || !!m.survivingShips) && m.returnCargo !== null));
+    // Even peaceful/recall scalar transitions can retain an obsolete launch
+    // manifest (e.g. a consumed colony ship). Only a qualified composition or a
+    // deterministic arrival in this same graph proves what actually returns.
+    const knownReturn = leg.kind === 1 && (aborted.has(m.missionId) || arrived.has(m.missionId) || ((m.status === "Returning" || m.status === "Recalled") && m.survivingShips != null && m.returnCargo != null));
     // Missing body provenance is not permission to assume a planet. Replaced
     // moons cannot be proven from boolean flags alone; reject arrivals to them.
     const provenBody = leg.kind === 1 ? typeof m.originIsMoon === "boolean" : typeof m.targetIsMoon === "boolean";

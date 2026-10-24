@@ -1,3 +1,4 @@
+import { currentResources } from "../currentResources";
 import type { ComponentChildren } from "preact";
 import { ArrowLeft, Crown, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
@@ -778,7 +779,7 @@ export function playerPlanetTacticalSignals(
 
   return [
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
-    { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
+    { label: "Resources", value: formatResources(planet.tactical?.raidableResources === undefined ? currentResources(planet) : planet.tactical.raidableResources) },
     ...protectionSignal,
     ...scoreSignal,
     ...warSignal,
@@ -798,7 +799,8 @@ function coordinateLabel(coordinates: Coordinates): string {
   return `[${coordinates.galaxy}:${coordinates.system}:${coordinates.position}]`;
 }
 
-function formatResources(resources: OnChainResources): string {
+function formatResources(resources: OnChainResources | null | undefined): string {
+  if (!resources) return "Resources unavailable";
   return `${formatShortNumber(resources.metal)} M / ${formatShortNumber(resources.crystal)} C / ${formatShortNumber(resources.deuterium)} D`;
 }
 

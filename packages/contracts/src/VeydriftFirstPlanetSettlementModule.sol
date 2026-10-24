@@ -60,13 +60,59 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         return main == address(0) ? actor : main;
     }
 
+    function pendingDelegateOf(address main) external view returns (address) {
+        return _pendingDelegateOf[main];
+    }
+
+    /// @notice Proposes `delegate` for the caller. Nothing binds (and any current delegate stays)
+    ///         until `delegate` itself calls `acceptDelegate(caller)`.
     function setDelegate(address delegate) external {
-        address main = msg.sender;
+        _requireAssignableDelegate(msg.sender, delegate);
+        _pendingDelegateOf[msg.sender] = delegate;
+        emit DelegateProposed(msg.sender, delegate);
+    }
+
+    /// @notice Accepts `main`'s pending proposal for the caller, replacing any previous delegate.
+    function acceptDelegate(address main) external {
+        address delegate = msg.sender;
+        if (_pendingDelegateOf[main] != delegate) revert DelegateNotProposed(main, delegate);
+        // Bindings may have changed since the proposal; re-check them for the binding itself.
+        _requireAssignableDelegate(main, delegate);
+
+        delete _pendingDelegateOf[main];
+        address previous = _delegateOf[main];
+        if (previous != address(0)) delete _delegatorOf[previous];
+        _delegateOf[main] = delegate;
+        _delegatorOf[delegate] = main;
+        emit DelegateUpdated(main, previous, delegate, delegate);
+    }
+
+    /// @notice Main or delegate removes the binding; also withdraws the main's pending proposal.
+    function revokeDelegate() external {
+        address main = _delegatorOf[msg.sender];
+        if (main == address(0)) main = msg.sender;
+        address delegate = _delegateOf[main];
+        bool proposed = _pendingDelegateOf[main] != address(0);
+        if (delegate == address(0) && !proposed) revert NoDelegate(msg.sender);
+        if (proposed) {
+            delete _pendingDelegateOf[main];
+            emit DelegateProposed(main, address(0));
+        }
+        if (delegate == address(0)) return;
+        delete _delegateOf[main];
+        delete _delegatorOf[delegate];
+        emit DelegateUpdated(main, delegate, address(0), msg.sender);
+    }
+
+    function _requireAssignableDelegate(address main, address delegate) private view {
         address delegatedMain = _delegatorOf[main];
         if (delegatedMain != address(0)) {
             revert DelegatedWalletCannotDelegate(main, delegatedMain);
         }
-        if (delegate == address(0) || delegate == main) revert InvalidDelegate(delegate);
+        // The Game must never act for a player: calls it makes itself would resolve to them.
+        if (delegate == address(0) || delegate == main || delegate == address(this)) {
+            revert InvalidDelegate(delegate);
+        }
         address assignedMain = _delegatorOf[delegate];
         if (assignedMain != address(0) && assignedMain != main) {
             revert DelegateAlreadyAssigned(delegate, assignedMain);
@@ -75,23 +121,7 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         if (nestedDelegate != address(0)) {
             revert DelegateHasDelegate(delegate, nestedDelegate);
         }
-
-        address previous = _delegateOf[main];
-        if (previous == delegate) revert DelegateAlreadyAssigned(delegate, main);
-        if (previous != address(0)) delete _delegatorOf[previous];
-        _delegateOf[main] = delegate;
-        _delegatorOf[delegate] = main;
-        emit DelegateUpdated(main, previous, delegate, main);
-    }
-
-    function revokeDelegate() external {
-        address main = _delegatorOf[msg.sender];
-        if (main == address(0)) main = msg.sender;
-        address delegate = _delegateOf[main];
-        if (delegate == address(0)) revert NoDelegate(msg.sender);
-        delete _delegateOf[main];
-        delete _delegatorOf[delegate];
-        emit DelegateUpdated(main, delegate, address(0), msg.sender);
+        if (_delegateOf[main] == delegate) revert DelegateAlreadyAssigned(delegate, main);
     }
 
     function startBuildingUpgrade(uint256 planetId, Building building) external {
@@ -234,9 +264,10 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         uint64 nowAt = uint64(block.timestamp);
         if (nowAt <= planetRef.lastSettledAt) return resources;
 
-        (, Resources memory added) = _cappedResourceIncrease(
-            planetId, resources, _productionForInterval(planetId, planetRef.lastSettledAt, nowAt)
-        );
+        (Resources memory produced, uint128 burned) =
+            _productionForInterval(planetId, planetRef.lastSettledAt, nowAt);
+        resources.deuterium -= burned;
+        (, Resources memory added) = _cappedResourceIncrease(planetId, resources, produced);
         return _add(resources, _reserveLimitedIncrease(added));
     }
 
@@ -271,12 +302,20 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         );
     }
 
+    /// @notice Hourly rates with the Fusion Reactor fully paid; deuterium is the net rate floored at
+    ///         zero. Settlement (and `previewResources`) burns stored deuterium for a larger draw
+    ///         and throttles the reactor once the store is empty.
     function productionPerHour(uint256 planetId)
         external
         view
         returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
     {
-        (metalPerHour, crystalPerHour, deuteriumPerHour) = _baseProductionPerHour(planetId);
+        uint256 fusionDeuteriumPerHour;
+        (metalPerHour, crystalPerHour, deuteriumPerHour, fusionDeuteriumPerHour) =
+            VeydriftFormulas.productionRates(_productionInputs(planetId), BPS);
+        deuteriumPerHour = deuteriumPerHour > fusionDeuteriumPerHour
+            ? deuteriumPerHour - fusionDeuteriumPerHour
+            : 0;
         // forge-lint: disable-next-line(block-timestamp) -- boost duration is intentionally time-based.
         if (block.timestamp < _inviteeProductionBoostExpiresAt[_planets[planetId].owner]) {
             metalPerHour *= 2;
@@ -294,12 +333,14 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         Planet storage planetRef = _planets[planetId];
         if (settledAt <= planetRef.lastSettledAt) return;
 
-        (Resources memory capped, Resources memory added) = _cappedResourceIncrease(
-            planetId,
-            planetRef.resources,
-            _productionForInterval(planetId, planetRef.lastSettledAt, settledAt)
-        );
+        (Resources memory produced, uint128 burned) =
+            _productionForInterval(planetId, planetRef.lastSettledAt, settledAt);
+        if (burned != 0) planetRef.resources.deuterium -= burned;
+        (Resources memory capped, Resources memory added) =
+            _cappedResourceIncrease(planetId, planetRef.resources, produced);
+        // Limited against the pre-burn reserve, exactly as `previewResources` sees it.
         added = _reserveLimitedIncrease(added);
+        if (burned != 0) _totalInternalResources.deuterium -= burned;
         _increaseInternalResources(added);
         planetRef.resources = _add(planetRef.resources, added);
         _creditAllianceProductionBonus(planetId, added);
@@ -312,13 +353,13 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         planetRef.lastSettledAt = settledAt;
     }
 
-    function _baseProductionPerHour(uint256 planetId)
+    function _productionInputs(uint256 planetId)
         private
         view
-        returns (uint256 metalPerHour, uint256 crystalPerHour, uint256 deuteriumPerHour)
+        returns (VeydriftFormulas.ProductionInputs memory)
     {
         Planet storage planetRef = _planets[planetId];
-        return VeydriftFormulas.productionPerHour(
+        return VeydriftFormulas.ProductionInputs(
             _buildingLevels[planetId][Building.MetalMine],
             _buildingLevels[planetId][Building.CrystalMine],
             _buildingLevels[planetId][Building.DeuteriumSynthesizer],
@@ -334,29 +375,25 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         );
     }
 
+    /// @dev `burned` (the Fusion Reactor draw the synthesizer did not cover) never exceeds the
+    ///      planet's stored deuterium; `produced` is what the window adds before storage caps.
     function _productionForInterval(uint256 planetId, uint64 fromAt, uint64 toAt)
         private
         view
-        returns (Resources memory)
+        returns (Resources memory produced, uint128 burned)
     {
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-            _baseProductionPerHour(planetId);
-        uint256 weightedElapsed = uint256(toAt) - fromAt;
-        address player = _planets[planetId].owner;
-        uint64 expiresAt = _inviteeProductionBoostExpiresAt[player];
-        if (expiresAt > fromAt) {
-            uint64 startsAt = expiresAt - INVITEE_PRODUCTION_BOOST_DURATION;
-            uint64 boostFromAt = startsAt > fromAt ? startsAt : fromAt;
-            uint64 boostToAt = expiresAt < toAt ? expiresAt : toAt;
-            if (boostToAt > boostFromAt) {
-                weightedElapsed += uint256(boostToAt) - boostFromAt;
-            }
-        }
-        return Resources({
-            metal: _toUint128((metalPerHour * weightedElapsed) / 1 hours),
-            crystal: _toUint128((crystalPerHour * weightedElapsed) / 1 hours),
-            deuterium: _toUint128((deutPerHour * weightedElapsed) / 1 hours)
-        });
+        Planet storage planetRef = _planets[planetId];
+        uint64 expiresAt = _inviteeProductionBoostExpiresAt[planetRef.owner];
+        (uint256 metal, uint256 crystal, uint256 deuterium, uint256 deuteriumBurned) = VeydriftFormulas.productionForWindow(
+            _productionInputs(planetId),
+            planetRef.resources.deuterium,
+            fromAt,
+            toAt,
+            expiresAt == 0 ? 0 : expiresAt - INVITEE_PRODUCTION_BOOST_DURATION,
+            expiresAt
+        );
+        produced = Resources(_toUint128(metal), _toUint128(crystal), _toUint128(deuterium));
+        burned = _toUint128(deuteriumBurned);
     }
 
     function _cappedResourceIncrease(

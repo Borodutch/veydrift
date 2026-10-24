@@ -35,7 +35,7 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
     },
     waitForTransactionReceipt: async () => receipt(),
     getTransaction: async () => { throw new TransactionNotFoundError({}); },
-    getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return receipt(); }
+    getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return { ...receipt(), transactionHash: hash, from: account.address, to: game }; }
   };
   const coordinator = new ResolverTransactionCoordinator(":memory:");
   const client = new ViemMissionResolutionChainClient({
@@ -79,4 +79,27 @@ test("reverted receipt consumes nonce without inventing per-leg success; noncano
   await expect(reorg.client.resolveMissionBatch(reorg.items)).rejects.toThrow("not canonical");
   await expect(reorg.client.resolveMissionBatch([])).rejects.toThrow("not canonical");
   expect(reorg.broadcasts()).toBe(1);
+});
+test("referee-wait attacks are excluded as unpaid waits before any signing", async () => {
+  const f = fixture();
+  const now = Math.floor(Date.now() / 1000);
+  const mission = { status: "Outbound", missionType: "Attack", arrivalAt: String(now - 5), returnAt: String(now + 5) };
+  const asked: bigint[][] = [];
+  Object.assign((f.client as unknown as { reader: object }).reader, {
+    getCanonicalFleetMissionBatch: async (ids: readonly bigint[]) => ids.map(() => ({ mission, orderingReady: true })),
+    getRefereeWaitBattles: async (ids: readonly bigint[]) => { asked.push([...ids]); return new Set(["1"]); }
+  });
+  const result = await f.client.resolveMissionBatch(f.items);
+  expect(asked).toEqual([[1n]]);
+  expect(result.hash).toBeNull();
+  expect(result.exclusions).toEqual([{ item: f.items[0]!, reason: "referee-wait", unproductive: true }]);
+  expect(f.broadcasts()).toBe(0);
+});
+test("single-call resolve refuses referee-wait battles before signing", async () => {
+  const f = fixture();
+  const internals = f.client as unknown as { reader: object; publicClient: object };
+  Object.assign(internals.publicClient, { getBlockNumber: async () => 7n });
+  Object.assign(internals.reader, { getRefereeWaitBattles: async () => new Set(["1"]) });
+  await expect(f.client.resolveFleetMission("1")).rejects.toThrow("awaits the referee");
+  expect(f.broadcasts()).toBe(0);
 });

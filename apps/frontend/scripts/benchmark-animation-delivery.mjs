@@ -5,7 +5,8 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { animationVariants, animationRoot, animationFilename, assertAnimationVariantsReady } from "./animation-variants.mjs";
+import { mediaFileForPathname, mediaSourceRoot } from "./media.mjs";
+import { animationVariants, animationRoot, animationFilename, assertAnimationVariantsReady, imageAnimationVariants, loopAnimationVariants, probeVideo } from "./animation-variants.mjs";
 
 // Local fixture traffic must stay on loopback even in an HTTP-proxy shell.
 process.env.NO_PROXY = [process.env.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",");
@@ -68,11 +69,18 @@ try {
           }
           return { path, ttfbMs, totalMs, bytes };
         };
-        const assets = animationVariants.map((r) => r.base + "/" + r.assetType + ".webp?size=" + r.size + "&v=" + r.version);
-        // All 60 canonical variants in one page fan-out, beyond a normal sidebar/detail view.
+        const assets = animationVariants.map((r) => r.base + "/" + r.assetType + "." + (r.format ?? "webp") + "?size=" + r.size + "&v=" + r.version);
+        // Every canonical planet/moon and loop variant in one page fan-out, beyond a normal catalog/detail view.
         // Control HTML + real frontend metadata/API fetch run during that same burst.
         const controls = ["/", "/infrastructure", round === "cold" ? "/mission/1" : "/mission/2"];
-        const all = await Promise.all([...assets.map((p) => request(p, true)), ...controls.map((p) => request(p))]);
+        // At most 64 requests in flight (the pre-loop fan-out size): a larger burst overflows the
+        // local listen backlog, and browsers multiplex far fewer connections per origin anyway.
+        const queue = [...assets.map((p) => () => request(p, true)), ...controls.map((p) => () => request(p))];
+        const all = new Array(queue.length);
+        let next = 0;
+        await Promise.all(Array.from({ length: 64 }, async () => {
+          while (next < queue.length) { const index = next++; all[index] = await queue[index](); }
+        }));
         rounds.push({ round, assets: all.slice(0, assets.length), controls: all.slice(assets.length) });
         sample();
       }
@@ -88,9 +96,16 @@ try {
   }
   // Decode ALL frames sequentially after latency measurement, never flatten animations.
   sharp.cache(false);
-  for (const route of animationVariants) {
+  for (const route of loopAnimationVariants()) {
+    const video = await probeVideo(join(animationRoot, animationFilename(route)));
+    assert.deepEqual([video.width, video.height, video.frames, video.fps], [route.size, route.size, route.frames, route.fps]);
+    report.decoded++;
+  }
+  for (const route of imageAnimationVariants) {
     const path = join(animationRoot, animationFilename(route));
-    const original = await sharp(join(cwd, "public", route.base, route.assetType + ".webp"), { animated: true }).metadata();
+    // Served masters are in the synced media view; publish-only (moon) masters need `media.mjs checkout`.
+    const master = route.base + "/" + route.assetType + ".webp";
+    const original = await sharp(mediaFileForPathname(master) ?? join(mediaSourceRoot, master), { animated: true }).metadata();
     const metadata = await sharp(path, { animated: true }).metadata();
     assert.equal(metadata.width, route.size);
     assert.equal(metadata.pageHeight, route.size);

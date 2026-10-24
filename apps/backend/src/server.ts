@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { gzipSync } from "node:zlib";
+import { gzipSync, gunzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { createPublicClient, encodeFunctionData, webSocket, type Address as ViemAddress, type Log as ViemLog } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -59,10 +59,13 @@ import {
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import { loadRandomnessReadinessSnapshot, type RandomnessReadinessSnapshot } from "./randomness";
 import { MissionResolutionService } from "./missionResolution";
+import { BattleRefereeService, BattleReportStore } from "./battleReferee";
 import { applyMissionEligibility, missionEligibilityPath } from "./missionEligibility";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { createRequestLoggingFetch } from "./observability";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import { EventLoopLagMonitor } from "./eventLoopLag";
+import { WalCheckpointer, type WalCheckpointTarget, type WalCheckpointWorker } from "./walCheckpointer";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -84,7 +87,7 @@ import {
   type ReferralHistoryResponse,
   type ReferralResolveResult
 } from "./referrals";
-import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
+import { accrueProductionWindow, deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import {
   buildPaidAllianceInviteAuthorization,
   createPaidAllianceInviteReader,
@@ -96,7 +99,7 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
-import { notifyPactInterest, PactInterestStore, pactInterestStorePath, validatePactInterest } from "./pactInterest";
+import { CcaInterestStore, ccaInterestStorePath, notifyCcaInterest, validateCcaInterest } from "./ccaInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -349,6 +352,7 @@ export type ServerDependencies = {
   chainReader?: ChainReader;
   missionResolution?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
+  battleReferee?: BattleRefereeService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
   // ingestion, the cold-start rebuild, bounded reconciles, and the on-chain committers — those must
@@ -367,12 +371,15 @@ export type ServerDependencies = {
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
-  pactInterestStore?: PactInterestStore;
+  ccaInterestStore?: CcaInterestStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
   walletMessageVerifier?: WalletMessageVerifier;
   // Test seam for the narrowly scoped WalletConnect read-only RPC proxy.
   walletConnectRpc?: Pick<HttpJsonRpcTransport, "request">;
+  // Production default: index WAL checkpoints run on a worker thread, not the writer's event loop.
+  offThreadWalCheckpoint?: boolean;
+  createWalCheckpointWorker?: () => WalCheckpointWorker;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -522,9 +529,30 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       })
       : undefined);
 
+  const battleReferee =
+    dependencies.battleReferee ??
+    (isWriter && loaded.problems.length === 0 && loaded.config.battleRefereePrivateKey
+      ? new BattleRefereeService(loaded.config, {
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
+      })
+      : undefined);
+  let battleReportReader: BattleReportStore | undefined;
+  const battleReports = (): BattleReportStore | undefined => {
+    if (battleReportReader) return battleReportReader;
+    const path = loaded.config.battleRefereeStorePath;
+    if (!path || path === ":memory:") return undefined;
+    try {
+      battleReportReader = new BattleReportStore(path, true);
+    } catch {
+      // The writer creates the store on its first referee tick.
+    }
+    return battleReportReader;
+  };
+
   chainSync?.start();
   missionResolution?.start();
   randomnessCommitter?.start();
+  battleReferee?.start();
   const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
     // Explicit operator/test rebuild only. This path performs canonical eth_call reads and therefore must
@@ -612,7 +640,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift alliance-state heal failed", safeDiagnosticText(error));
       });
   }
-  if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
+  // Writer stalls block chain sync, the mission tick and lease renewals; measure them (#74).
+  const eventLoopLag = usesProductionDependencies && isWriter && loaded.problems.length === 0 ? new EventLoopLagMonitor() : null;
+  eventLoopLag?.start();
+  let walCheckpointer: WalCheckpointer | null = null;
+  let mainThreadWalMaintenance: ReturnType<typeof setInterval> | undefined;
+  const startMainThreadWalCheckpoints = () => {
+    if (mainThreadWalMaintenance || !isWriter || !indexer || typeof indexer.checkpointWal !== "function" || loaded.problems.length > 0) return;
     const checkpointWal = () => {
       try {
         const result = indexer.checkpointWal("PASSIVE");
@@ -625,8 +659,50 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     };
     checkpointWal();
-    const walMaintenance = setInterval(checkpointWal, 60_000);
-    walMaintenance.unref?.();
+    mainThreadWalMaintenance = setInterval(checkpointWal, 60_000);
+    mainThreadWalMaintenance.unref?.();
+  };
+  const offThreadWalCheckpoint = (dependencies.offThreadWalCheckpoint ?? usesProductionDependencies)
+    && isWriter
+    && loaded.problems.length === 0
+    && loaded.config.indexDbPath !== ":memory:"
+    && typeof indexer?.setWalAutoCheckpoint === "function";
+  if (offThreadWalCheckpoint && indexer) {
+    // Checkpoint copies and fsyncs took the writer's event loop for 0.9 s+ at a time on the shared
+    // disk. Run them on a worker thread and stop the writer connections' commit-time checkpoints.
+    // The small lease/journal stores add a few frames per tick, so they checkpoint every 5 min.
+    const targets: WalCheckpointTarget[] = [{
+      name: "index",
+      databasePath: loaded.config.indexDbPath,
+      setAutoCheckpoint: (pages) => indexer.setWalAutoCheckpoint(pages)
+    }];
+    const stores = {
+      resolverTransactions: resolverTransactions?.walCheckpointTarget?.(),
+      randomnessCommitments: randomnessCommitter?.walCheckpointTarget?.(),
+      battleReports: battleReferee?.walCheckpointTarget?.()
+    };
+    for (const [name, target] of Object.entries(stores)) {
+      if (target) targets.push({ name, ...target, intervalMs: 300_000 });
+    }
+    // If the worker cannot start, every writer connection still autocheckpoints (that is only
+    // switched off after a worker pass), so keep booting and checkpoint the index on the writer
+    // thread as before. Bun 1.1 throws synchronously for a missing worker module; newer Bun
+    // reports it through the worker's error event.
+    try {
+      walCheckpointer = new WalCheckpointer({
+        targets,
+        onWorkerFailed: () => {
+          console.warn("Veydrift SQLite WAL checkpoint worker failed before its first pass; checkpointing on the writer thread");
+          startMainThreadWalCheckpoints();
+        },
+        ...(dependencies.createWalCheckpointWorker ? { createWorker: dependencies.createWalCheckpointWorker } : {})
+      });
+    } catch (error) {
+      console.warn("Veydrift SQLite WAL checkpoint worker failed to start; checkpointing on the writer thread", safeDiagnosticText(error));
+      startMainThreadWalCheckpoints();
+    }
+  } else {
+    startMainThreadWalCheckpoints();
   }
 
   const responseCache = new Map<string, CachedJsonResponse>();
@@ -644,8 +720,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
-  let pactInterestStore = dependencies.pactInterestStore;
-  const pactInterestRateLimits = new Map<string, { count: number; resetAt: number }>();
+  let ccaInterestStore = dependencies.ccaInterestStore;
+  const ccaInterestRateLimits = new Map<string, { count: number; resetAt: number }>();
   const directWalletMessageVerifier = dependencies.walletMessageVerifier ?? (
     usesProductionDependencies && loaded.problems.length === 0
       ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
@@ -669,6 +745,165 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
     process.env.VEYDRIFT_PREWARM_RESPONSE_CACHE === "true" && isWriter && enableResponseCache
   );
+
+  const routeHighscores = (url: URL): Response => {
+      const startedAt = Date.now();
+      try {
+        const pagination = highscorePagination(url);
+        const view = url.searchParams.get("view");
+        if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
+        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
+        let entries: HighscoreEntry[];
+        const source = "contract-state-indexer";
+
+        if (indexer) {
+          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
+          if (indexNotReady) return indexNotReady;
+          // Memoized against the indexer state version: the full leaderboard is recomputed only
+          // when integrated events change state, not on every request (VEY-KANEO-467).
+          const leaderboard = indexer.highscoreLeaderboard();
+          planetsByOwner = leaderboard.planetsByOwner;
+          entries = leaderboard.entries;
+        } else {
+          return indexedReadNotReadyResponse("highscores", indexer, {
+            page: url.searchParams.get("page"),
+            pageSize: url.searchParams.get("pageSize")
+          });
+        }
+
+        const totalEntries = entries.length;
+        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
+        const page = Math.min(pagination.page, totalPages);
+        const offset = (page - 1) * pagination.pageSize;
+        const requestedCategories = highscoreRequestedCategories(url);
+        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
+        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
+        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
+        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
+        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
+        const rankedRows = highscoreRows(
+          visibleEntries,
+          planetsByOwner,
+          profiles,
+          allianceIntel,
+          indexer,
+          view !== "scoreboard"
+        );
+        const rankings = highscoreRankings(
+          sortedRankings,
+          requestedCategories,
+          pagination.pageSize,
+          offset,
+          rankedRows
+        );
+        const protection = rankedHighscoreIndexedProtectionLookup(
+          highscoreRankingRows(rankings),
+          entries,
+          allianceIntel,
+          url.searchParams.get("currentWallet"),
+          highscoreAttackProtectionRequested(url),
+          indexer
+        );
+        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
+        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
+
+        return Response.json(
+          {
+            generatedAt: new Date().toISOString(),
+            durationMs: Date.now() - startedAt,
+            formula: highscoreFormula,
+            pagination: {
+              page,
+              pageSize: pagination.pageSize,
+              totalEntries,
+              totalPages,
+              hasPreviousPage: page > 1,
+              hasNextPage: page < totalPages
+            },
+            currentPlayer,
+            rankings: protectedRankings,
+            source
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return highscoreFailureResponse(error);
+      }
+  };
+
+  const routeGalaxySystems = (request: Request, url: URL): Response => {
+    if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
+      const parts = url.pathname.split("/");
+      const galaxy = Number.parseInt(parts[3] ?? "", 10);
+      const system = Number.parseInt(parts[5] ?? "", 10);
+      const detail = galaxySystemDetail(url);
+      let payload;
+      try {
+        payload = cachedGalaxySystemPayload(
+          galaxySystemCache,
+          {
+            chainId: loaded.config.chainId,
+            settlementContractAddress: universeContractAddress(loaded.config),
+            detail,
+            galaxy,
+            system,
+            indexer
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+
+      return Response.json(payload, {
+        headers: corsHeaders
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/universe/systems") {
+      const galaxy = parseIntegerQuery(url, "galaxy", 1);
+      const center = parseIntegerQuery(url, "center", 1);
+      const requestedRadius = parseIntegerQuery(url, "radius", 1);
+      if (galaxy === null || galaxy < 1 || galaxy > maxGalaxy) return badRequest(`galaxy must be an integer from 1 to ${maxGalaxy}.`);
+      if (center === null || center < 1 || center > maxSystem) return badRequest(`center must be an integer from 1 to ${maxSystem}.`);
+      if (requestedRadius === null || requestedRadius < 0) return badRequest("radius must be a non-negative integer.");
+      const radius = Math.min(requestedRadius, 10);
+      const from = Math.max(center - radius, 1);
+      const to = Math.min(center + radius, maxSystem);
+
+      try {
+        return Response.json(
+          {
+            galaxy,
+            center,
+            radius,
+            systems: Array.from({ length: to - from + 1 }, (_, index) => {
+              const system = from + index;
+              return cachedGalaxySystemPayload(
+                galaxySystemCache,
+                {
+                  chainId: loaded.config.chainId,
+                  settlementContractAddress: universeContractAddress(loaded.config),
+                  detail: galaxySystemDetail(url),
+                  galaxy,
+                  system,
+                  indexer
+                }
+              );
+            })
+          },
+          {
+            headers: corsHeaders
+          }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    return badRequest("Unsupported galaxy system request.");
+  };
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -714,7 +949,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           missionResolution: missionResolutionSnapshot,
           gameMaintenance: gameMaintenanceSnapshot,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
+          battleReferee: battleReferee?.snapshot() ?? null,
           indexer: indexerSnapshot,
+          eventLoopLag: eventLoopLag?.snapshot() ?? null,
+          walCheckpoint: walCheckpointer?.snapshot() ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null,
           chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null,
           paidAllianceRpc: paidAllianceInviteReader?.rpcMetrics?.() ?? null,
@@ -741,10 +979,44 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       });
     }
 
+    // Ticket #44: referee battle reports are immutable; the hash is committed onchain with the result.
+    const battleReportMatch = request.method === "GET"
+      ? url.pathname.match(/^\/battle-reports\/(0x[0-9a-fA-F]{64})$/) ?? url.pathname.match(/^\/battles\/([0-9]{1,78})\/report$/)
+      : null;
+    if (battleReportMatch) {
+      const key = battleReportMatch[1]!;
+      const store = battleReports();
+      const found = key.startsWith("0x")
+        ? (() => { const report = store?.report(key); return report ? { reportHash: key.toLowerCase(), report } : null; })()
+        : store?.reportForBattle(key) ?? null;
+      if (!found) return Response.json({ error: "battle report not found" }, { headers: corsHeaders, status: 404 });
+      return new Response(found.report, {
+        headers: {
+          ...corsHeaders,
+          "content-type": "application/json",
+          "x-veydrift-report-hash": found.reportHash
+        }
+      });
+    }
+
     if (request.method === "GET" && url.pathname === "/combat-model") {
       let version: number | null = null;
       try { version = await missionEligibilityReader?.getCombatModelVersion?.() ?? null; } catch { /* Fail closed. */ }
       return Response.json({ version, asOf: Date.now() }, { headers: { "cache-control": "no-store" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/moon-supply-batch") {
+      let version: number | null = null;
+      try {
+        // The eligibility reader bypasses both projection and RPC caches.
+        const liveVersion = await missionEligibilityReader?.getMoonSupplyBatchVersion?.();
+        version = liveVersion === 1 ? 1 : null;
+      } catch { /* Fail closed, including on pre-upgrade deployments. */ }
+      return Response.json({
+        version, asOf: Date.now(),
+        gameContractAddress: loaded.config.gameContractAddress ?? null,
+        chainId: loaded.config.chainId
+      }, { headers: { "cache-control": "no-store" } });
     }
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
@@ -779,23 +1051,23 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
     }
 
-    if (request.method === "POST" && url.pathname === "/pact/interest") {
+    if (request.method === "POST" && url.pathname === "/cca/interest") {
       const now = Date.now();
-      if (pactInterestRateLimits.size > 2_048) pactInterestRateLimits.clear();
+      if (ccaInterestRateLimits.size > 2_048) ccaInterestRateLimits.clear();
       const clientKey = requestClientKey(request) ?? "unknown";
-      const limit = pactInterestRateLimits.get(clientKey);
+      const limit = ccaInterestRateLimits.get(clientKey);
       if (limit && limit.resetAt > now && ++limit.count > 10) {
         return Response.json({ error: "rate_limited", message: "Too many submissions. Try again later." }, { headers: corsHeaders, status: 429 });
       }
-      if (!limit || limit.resetAt <= now) pactInterestRateLimits.set(clientKey, { count: 1, resetAt: now + 600_000 });
+      if (!limit || limit.resetAt <= now) ccaInterestRateLimits.set(clientKey, { count: 1, resetAt: now + 600_000 });
       try {
-        const interest = validatePactInterest(await readJsonBody(request));
+        const interest = validateCcaInterest(await readJsonBody(request));
         if (typeof interest === "string") {
-          return Response.json({ error: "invalid_pact_interest", message: interest }, { headers: corsHeaders, status: 400 });
+          return Response.json({ error: "invalid_cca_interest", message: interest }, { headers: corsHeaders, status: 400 });
         }
-        pactInterestStore ??= new PactInterestStore(pactInterestStorePath(loaded.config.indexDbPath));
-        pactInterestStore.save(interest);
-        void notifyPactInterest(interest);
+        ccaInterestStore ??= new CcaInterestStore(ccaInterestStorePath(loaded.config.indexDbPath));
+        ccaInterestStore.save(interest);
+        void notifyCcaInterest(interest);
         return Response.json({ ok: true }, { headers: corsHeaders });
       } catch (error) {
         return errorResponse(error, 400);
@@ -984,7 +1256,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             message: "Wallet delegation state is temporarily unavailable."
           }, { headers: corsHeaders, status: 503 });
         }
-        const delegation: WalletDelegationState = await rawChainReader.getDelegationState(wallet);
+        let proposedByCandidates: Address[] = [];
+        try {
+          proposedByCandidates = indexer?.delegateProposalsFor(wallet) ?? [];
+        } catch {
+          // Indexed proposals are optional candidates; the chain read below stays authoritative.
+        }
+        const delegation: WalletDelegationState = await rawChainReader.getDelegationState(wallet, proposedByCandidates);
         return Response.json(delegation, {
           headers: { ...corsHeaders, "cache-control": "no-store" }
         });
@@ -1692,63 +1970,65 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         parseMissionId(missionId);
         if (!indexer) return indexedReadNotReadyResponse("mission", indexer, { missionId });
-        const snapshot = indexer.snapshot();
-        const mission = indexer.fleetMission(missionId);
-        if (!mission) {
+        return indexer.readConsistentSnapshot(() => {
+          const snapshot = indexer.snapshot();
+          const mission = indexer.fleetMission(missionId);
+          if (!mission) {
+            return Response.json(
+              {
+                error: "mission_not_found",
+                detail: "That mission is not available in the indexed mission read model.",
+                source: indexedSource
+              },
+              { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+            );
+          }
+          const expectsReport = expectsBattleReport(mission);
+          // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
+          // main attack mission. When this mission has no report of its own but belongs to an attack
+          // group, fall back to the group's report so a joiner's mission detail still shows the shared
+          // outcome and the per-participant loot split (VEY-KANEO-432). Non-report missions skip this
+          // entirely so a cold Transport/DefenseHold detail cannot warm the battle-report read model.
+          const battleReportMaterialization = expectsReport
+            ? battleReportMaterializationStatusForMission(indexer, mission)
+            : { status: "missing" as const };
+          const battleReport = expectsReport
+            ? (
+              indexer.battleReport(missionId, { includeRawFallback: false })
+              ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: false }) : null)
+            )
+            : null;
+          const reportedBattleReportMaterialization = battleReport
+            ? { status: "ready" as const }
+            : battleReportMaterialization.status === "ready"
+              ? {
+                  status: "failed" as const,
+                  attempts: battleReportMaterialization.attempts,
+                  durationMs: battleReportMaterialization.durationMs,
+                  error: battleReportMaterialization.error ?? "Persisted battle report read model did not match this mission.",
+                  updatedAt: battleReportMaterialization.updatedAt
+                }
+              : battleReportMaterialization;
           return Response.json(
             {
-              error: "mission_not_found",
-              detail: "That mission is not available in the indexed mission read model.",
+              mission,
+              battleReport,
+              battleReportMaterialization: reportedBattleReportMaterialization,
+              targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
+              battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
+              // Current target state remains useful alongside the persisted battle-time snapshot and
+              // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
+              // this mutable projection.
+              defenderPlanetState: defenderPlanetStateForReport(
+                indexer,
+                battleReport,
+                battleReport ? indexer.fleetMission(battleReport.missionId) : mission
+              ),
               source: indexedSource
             },
-            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
           );
-        }
-        const expectsReport = expectsBattleReport(mission);
-        // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
-        // main attack mission. When this mission has no report of its own but belongs to an attack
-        // group, fall back to the group's report so a joiner's mission detail still shows the shared
-        // outcome and the per-participant loot split (VEY-KANEO-432). Non-report missions skip this
-        // entirely so a cold Transport/DefenseHold detail cannot warm the battle-report read model.
-        const battleReportMaterialization = expectsReport
-          ? battleReportMaterializationStatusForMission(indexer, mission)
-          : { status: "missing" as const };
-        const battleReport = expectsReport
-          ? (
-            indexer.battleReport(missionId, { includeRawFallback: false })
-            ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: false }) : null)
-          )
-          : null;
-        const reportedBattleReportMaterialization = battleReport
-          ? { status: "ready" as const }
-          : battleReportMaterialization.status === "ready"
-            ? {
-                status: "failed" as const,
-                attempts: battleReportMaterialization.attempts,
-                durationMs: battleReportMaterialization.durationMs,
-                error: battleReportMaterialization.error ?? "Persisted battle report read model did not match this mission.",
-                updatedAt: battleReportMaterialization.updatedAt
-              }
-            : battleReportMaterialization;
-        return Response.json(
-          {
-            mission,
-            battleReport,
-            battleReportMaterialization: reportedBattleReportMaterialization,
-            targetCombatIntel: targetCombatIntelForMission(indexer, mission, battleReport),
-            battleForecast: battleReport ? null : missionBattleForecastResponse(indexer, mission, snapshot.safeToServeIndexedState),
-            // Current target state remains useful alongside the persisted battle-time snapshot and
-            // loss breakdown. Historical loss rendering never infers destroyed/restored counts from
-            // this mutable projection.
-            defenderPlanetState: defenderPlanetStateForReport(
-              indexer,
-              battleReport,
-              battleReport ? indexer.fleetMission(battleReport.missionId) : mission
-            ),
-            source: indexedSource
-          },
-          { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
-        );
+        });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2010,96 +2290,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/highscores") {
-      const startedAt = Date.now();
-      try {
-        const pagination = highscorePagination(url);
-        const view = url.searchParams.get("view");
-        if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
-        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
-        let entries: HighscoreEntry[];
-        const source = "contract-state-indexer";
-
-        if (indexer) {
-          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
-          if (indexNotReady) return indexNotReady;
-          // Memoized against the indexer state version: the full leaderboard is recomputed only
-          // when integrated events change state, not on every request (VEY-KANEO-467).
-          const leaderboard = indexer.highscoreLeaderboard();
-          planetsByOwner = leaderboard.planetsByOwner;
-          entries = leaderboard.entries;
-        } else {
-          return indexedReadNotReadyResponse("highscores", indexer, {
-            page: url.searchParams.get("page"),
-            pageSize: url.searchParams.get("pageSize")
-          });
-        }
-
-        const totalEntries = entries.length;
-        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
-        const page = Math.min(pagination.page, totalPages);
-        const offset = (page - 1) * pagination.pageSize;
-        const requestedCategories = highscoreRequestedCategories(url);
-        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
-        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
-        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
-        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
-        const rankedRows = highscoreRows(
-          visibleEntries,
-          planetsByOwner,
-          profiles,
-          allianceIntel,
-          indexer,
-          view !== "scoreboard"
-        );
-        const rankings = highscoreRankings(
-          sortedRankings,
-          requestedCategories,
-          pagination.pageSize,
-          offset,
-          rankedRows
-        );
-        const protection = rankedHighscoreIndexedProtectionLookup(
-          highscoreRankingRows(rankings),
-          entries,
-          allianceIntel,
-          url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url),
-          indexer
-        );
-        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
-        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
-
-        return Response.json(
-          {
-            generatedAt: new Date().toISOString(),
-            durationMs: Date.now() - startedAt,
-            formula: highscoreFormula,
-            pagination: {
-              page,
-              pageSize: pagination.pageSize,
-              totalEntries,
-              totalPages,
-              hasPreviousPage: page > 1,
-              hasNextPage: page < totalPages
-            },
-            currentPlayer,
-            rankings: protectedRankings,
-            source
-          },
-          {
-            headers: corsHeaders
-          }
-        );
-      } catch (error) {
-        return highscoreFailureResponse(error);
-      }
+      return indexer ? indexer.readConsistentSnapshot(() => routeHighscores(url)) : routeHighscores(url);
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
         if (indexer && hasWarmPlanetIndex(indexer)) {
-        const planet = indexedCurrentPlanetState(indexer, indexer.planet(planetId.toString()), { allowPendingResources: true });
+        const planet = indexedCurrentPlanetState(indexer, indexer.planet(planetId.toString()));
         return Response.json(planet, {
           headers: corsHeaders
         });
@@ -2107,72 +2304,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return indexedReadNotReadyResponse("planet detail", indexer, { planetId: planetId.toString() });
     }
 
-    if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
-      const parts = url.pathname.split("/");
-      const galaxy = Number.parseInt(parts[3] ?? "", 10);
-      const system = Number.parseInt(parts[5] ?? "", 10);
-      const detail = galaxySystemDetail(url);
-      let payload;
-      try {
-        payload = cachedGalaxySystemPayload(
-          galaxySystemCache,
-          {
-            chainId: loaded.config.chainId,
-            settlementContractAddress: universeContractAddress(loaded.config),
-            detail,
-            galaxy,
-            system,
-            indexer
-          }
-        );
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
-
-      return Response.json(payload, {
-        headers: corsHeaders
-      });
-    }
-
-    if (request.method === "GET" && url.pathname === "/universe/systems") {
-      const galaxy = parseIntegerQuery(url, "galaxy", 1);
-      const center = parseIntegerQuery(url, "center", 1);
-      const requestedRadius = parseIntegerQuery(url, "radius", 1);
-      if (galaxy === null || galaxy < 1 || galaxy > maxGalaxy) return badRequest(`galaxy must be an integer from 1 to ${maxGalaxy}.`);
-      if (center === null || center < 1 || center > maxSystem) return badRequest(`center must be an integer from 1 to ${maxSystem}.`);
-      if (requestedRadius === null || requestedRadius < 0) return badRequest("radius must be a non-negative integer.");
-      const radius = Math.min(requestedRadius, 10);
-      const from = Math.max(center - radius, 1);
-      const to = Math.min(center + radius, maxSystem);
-
-      try {
-        return Response.json(
-          {
-            galaxy,
-            center,
-            radius,
-            systems: Array.from({ length: to - from + 1 }, (_, index) => {
-              const system = from + index;
-              return cachedGalaxySystemPayload(
-                galaxySystemCache,
-                {
-                  chainId: loaded.config.chainId,
-                  settlementContractAddress: universeContractAddress(loaded.config),
-                  detail: galaxySystemDetail(url),
-                  galaxy,
-                  system,
-                  indexer
-                }
-              );
-            })
-          },
-          {
-            headers: corsHeaders
-          }
-        );
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
+    if (isGalaxySystemRequest(request, url)) {
+      return indexer
+        ? indexer.readConsistentSnapshot(() => routeGalaxySystems(request, url))
+        : routeGalaxySystems(request, url);
     }
 
     if (request.method === "GET" && url.pathname === "/universe/system") {
@@ -2274,6 +2409,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               if (!owner) return null;
             }
             try {
+              if (indexer && (isGalaxySystemRequest(request, url) || url.pathname === "/highscores")) {
+                // Refresh ownership can await a peer. Reselect the key together with the
+                // synchronous payload, never publish a newer snapshot under the old key.
+                const refresh = indexer.readConsistentSnapshot(() => ({
+                  key: cacheableJsonRequestKey(request, url, indexer),
+                  response: url.pathname === "/highscores" ? routeHighscores(url) : routeGalaxySystems(request, url)
+                }));
+                return await refreshCachedJsonResponse(request, url, async () => refresh.response,
+                  responseCache, sharedResponseCache, refresh.key, cacheTtlMs);
+              }
               return await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
             } finally {
               if (owner) sharedResponseCache?.releaseRefresh(cacheKey, owner);
@@ -2320,7 +2465,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     };
 
     try {
-      return await Promise.race([serve(), aborted]);
+      // Fence after every cache path, including a response warmed by a capable client.
+      return withRequestCors(request, await resourceViewResponse(request, await Promise.race([serve(), aborted])));
     } catch (error) {
       return withRequestCors(request, errorResponse(error, isSqliteBusyError(error) ? 503 : 500));
     } finally {
@@ -2330,6 +2476,36 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
   return logRequests ? createRequestLoggingFetch(serveWithResponseCache, workerRole) : serveWithResponseCache;
+}
+
+/** Already-open legacy consumers must not receive nullable current stock and revive raw balances. */
+export async function resourceViewResponse(request: Request, response: Response): Promise<Response> {
+  if (request.method !== "GET" || !response.ok || !jsonContentType(response.headers.get("content-type"))) return response;
+  const headers = new Headers(response.headers);
+  const vary = headers.get("vary");
+  headers.set("vary", vary ? vary + ", Accept" : "Accept");
+  const capable = request.headers.get("accept")?.split(",").some(type => type.trim().toLowerCase() === "application/json; resource-view=nullable-v1");
+  const legacyBody = !capable ? response.clone() : null;
+  // Match cachedJsonResponse's zlib codec: Bun 1.1.42 has no DecompressionStream global.
+  const payload = legacyBody?.headers.get("content-encoding") === "gzip"
+    ? JSON.parse(gunzipSync(new Uint8Array(await legacyBody.arrayBuffer())).toString("utf8"))
+    : await legacyBody?.json();
+  if (!capable && requiresNullableResourceView(payload)) {
+    headers.set("cache-control", "no-store");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    headers.delete("etag");
+    return Response.json({ error: "resource_view_upgrade_required", message: "Refresh the app to load current inventory safely." },
+      { status: 503, headers });
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function requiresNullableResourceView(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value).some(([key, child]) =>
+    (["resources", "resourcesAsOfNow", "currentResources", "raidableResources"].includes(key) && child === null)
+    || requiresNullableResourceView(child));
 }
 
 /**
@@ -2932,6 +3108,11 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   return 0;
 }
 
+function isGalaxySystemRequest(request: Request, url: URL): boolean {
+  return request.method === "GET" && (url.pathname === "/universe/systems"
+    || new RegExp("^/universe/galaxies/[0-9]+/systems/[0-9]+$").test(url.pathname));
+}
+
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
   const version = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${version}`;
@@ -3285,7 +3466,7 @@ function indexedWalletPlanetsWarmResponse(
   return indexer.readConsistentSnapshot(() => {
     if (!hasWarmPlanetIndex(indexer)) return null;
     const projection = indexer.resourceProjectionContext();
-    if (projection.timestamp !== null && !projection.safeToProject) {
+    if (!projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse("wallet planets", indexer, {
         wallet,
         reason: "resource_projection_not_ready"
@@ -3311,7 +3492,7 @@ async function indexedWalletOverviewWarmResponse(
 
   return indexer.readConsistentSnapshot(() => {
     const projection = indexer.resourceProjectionContext();
-    if (projection.timestamp !== null && !projection.safeToProject) {
+    if (!projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse("overview snapshot", indexer, {
         wallet,
         ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
@@ -3441,7 +3622,7 @@ function indexedWarmResponse<T extends object>(
   return indexer.readConsistentSnapshot(() => {
     if (!hasWarmPlanetIndex(indexer)) return null;
     const projection = indexer.resourceProjectionContext();
-    if (requiresSafeResources && projection.timestamp !== null && !projection.safeToProject) {
+    if (requiresSafeResources && !projection.canonicalBaseline && !projection.safeToProject) {
       return indexedReadNotReadyResponse(surface, indexer, {
         wallet,
         ...(selectedPlanetId !== undefined ? { selectedPlanetId: selectedPlanetId.toString() } : {}),
@@ -3536,7 +3717,7 @@ function indexedMoonNotReadyResponse(
     moonAvailable: false,
     unavailableReason: detail,
     resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
-    resourcesAsOfNow: indexedState?.resourcesAsOfNow === undefined ? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" } : indexedState.resourcesAsOfNow,
+    resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? null,
     ships: indexedState?.ships ?? [],
     moon: null,
     fleet: indexedState?.fleet ?? [],
@@ -3603,10 +3784,10 @@ function indexedWalletSettlementPlanetState(
   planet: SettledPlanetEvent | null
 ): SettledPlanetEvent | null {
   if (!planet) return null;
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   return {
     ...planet,
-    resourcesAsOfNow: currentPlanet.resources,
+    resourcesAsOfNow: currentPlanet?.resources ?? null,
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet)
   };
 }
@@ -3753,7 +3934,7 @@ function indexedWalletPlanetState(
   const ships = indexer.shipRows(planet.planetId);
   const defenses = indexer.defenseRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   const moonState = indexer.moonState(planet.owner, planet.planetId);
 
   // The planet roster is a settled-snapshot surface: the external contract<->DB watchdog
@@ -3768,10 +3949,10 @@ function indexedWalletPlanetState(
   return {
     ...planet,
     bodyKind: "planet",
-    resourcesAsOfNow: currentPlanet.resources,
+    resourcesAsOfNow: currentPlanet?.resources ?? null,
     resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     moon: moonSummary,
-    tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels, indexer)
+    tactical: indexedPlanetTacticalSummary({ ...planet, resources: currentPlanet?.resources ?? null }, buildings, ships, defenses, technologyLevels, indexer)
   };
 }
 
@@ -3791,7 +3972,8 @@ function resourceSnapshotMetadataForPlanet(planet: PlanetState | null): Resource
 function accruedPlanetState<T extends PlanetState | null>(
   indexer: SettlementIndexer,
   planet: T,
-  projectionTimeMs: number
+  projectionTimeMs: number,
+  includeFleetEffects = true
 ): T {
   if (!planet) return planet;
 
@@ -3804,7 +3986,7 @@ function accruedPlanetState<T extends PlanetState | null>(
       const cutoff = indexer.resourceAccrualCutoff(planet.planetId, through);
       let current = { ...planet };
       let productionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
-      for (const effect of indexer.currentFleetResourceEffects(planet.planetId, through)) {
+      for (const effect of includeFleetEffects ? indexer.currentFleetResourceEffects(planet.planetId, through) : []) {
         // Arrival preparation settles the target through arrivalAt; returns only
         // add cargo. Accruing before every return would invent storage headroom.
         const balance = effect.leg === "arrival"
@@ -3823,33 +4005,33 @@ function accruedPlanetState<T extends PlanetState | null>(
 // Single current-resource source of truth for wallet, public, and intel resource surfaces (VEY-KANEO-517):
 // canonical settled `resources` projected forward to the latest fully indexed block timestamp,
 // capped at storage. Every endpoint serving "current resources" should call this helper
-// instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
+// instead of re-running `accrueProductionWindow` locally, so endpoint values cannot
 // diverge or accidentally project an already-current balance a second time.
 function indexedCurrentResourcesForPlanet(
   indexer: SettlementIndexer,
-  planet: SettledPlanetEvent | null,
-  options: { allowPendingResources?: boolean } = {}
+  planet: SettledPlanetEvent | null
 ): Resources | null {
-  return indexedCurrentPlanetState(indexer, planet, options)?.resources ?? null;
+  return indexedCurrentPlanetState(indexer, planet)?.resources ?? null;
 }
 
 function indexedCurrentPlanetState<T extends PlanetState>(
   indexer: SettlementIndexer,
   planet: T | null,
-  options: { allowPendingResources?: boolean } = {}
+  includeFleetEffects = true
 ): T | null {
   if (!planet) return null;
   return indexer.readConsistentSnapshot(() => {
     const canonicalPlanet = indexer.planet(planet.planetId);
     if (!canonicalPlanet) return null;
-    if (!options.allowPendingResources && indexer.hasPendingPlanetResources(planet.planetId)) return null;
+    if (indexer.hasPendingPlanetResources(planet.planetId)) return null;
     const projection = indexer.resourceProjectionContext();
     const projectionTimestamp = projection.timestamp === null ? Number.NaN : Number(projection.timestamp);
-    if (projection.timestamp === null) {
+    if (projection.canonicalBaseline) {
       return accruedPlanetState(
         indexer,
         { ...planet, ...canonicalPlanet } as T,
-        Number(canonicalPlanet.lastSettledAt) * 1_000
+        Number(canonicalPlanet.lastSettledAt) * 1_000,
+        includeFleetEffects
       );
     }
     if (!projection.safeToProject || !Number.isSafeInteger(projectionTimestamp) || projectionTimestamp < 0) {
@@ -3858,7 +4040,8 @@ function indexedCurrentPlanetState<T extends PlanetState>(
     return accruedPlanetState(
       indexer,
       { ...planet, ...canonicalPlanet } as T,
-      projectionTimestamp * 1_000
+      projectionTimestamp * 1_000,
+      includeFleetEffects
     );
   });
 }
@@ -4134,12 +4317,14 @@ function indexedInfrastructureState(
   };
 }
 
-function multiplyResources(resources: Resources | null, multiplier: number): Resources | null {
+// The invite boost doubles what a planet adds; a Fusion Reactor burn (a negative rate) is never boosted.
+function doubleProduction(resources: Resources | null): Resources | null {
   if (!resources) return null;
+  const doubled = (value: string) => (BigInt(value) > 0n ? BigInt(value) * 2n : BigInt(value)).toString();
   return {
-    metal: (BigInt(resources.metal) * BigInt(multiplier)).toString(),
-    crystal: (BigInt(resources.crystal) * BigInt(multiplier)).toString(),
-    deuterium: (BigInt(resources.deuterium) * BigInt(multiplier)).toString()
+    metal: doubled(resources.metal),
+    crystal: doubled(resources.crystal),
+    deuterium: doubled(resources.deuterium)
   };
 }
 
@@ -4153,7 +4338,7 @@ function effectiveProductionPerHour(
   productionPerHour: Resources | null
 ): Resources | null {
   return isInviteeProductionBoostActive(indexer.inviteeProductionBoostExpiresAt(owner))
-    ? multiplyResources(productionPerHour, 2)
+    ? doubleProduction(productionPerHour)
     : productionPerHour;
 }
 
@@ -4164,7 +4349,11 @@ function indexedMoonState(
   _unavailableReason: string,
   indexer: SettlementIndexer
 ): MoonState {
-  return indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId);
+  return {
+    ...indexer.moonState(wallet, planet?.planetId ?? settlement.homePlanetId),
+    ...indexedFleetLaunchContext(wallet, indexer),
+    fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, true)
+  };
 }
 
 function indexedProductionContext(
@@ -4192,14 +4381,31 @@ function indexedProductionContext(
 }
 
 function indexedFleetLaunchContext(wallet: `0x${string}`, indexer: SettlementIndexer) {
+  const projection = indexer.resourceProjectionContext();
+  const unsafe = !projection.canonicalBaseline && !projection.safeToProject;
   const slotSettlementBlocker = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet)[0];
   return {
     fleetSlots: indexer.fleetSlots(wallet),
-    fleetLaunchAvailable: !slotSettlementBlocker,
+    fleetLaunchAvailable: !unsafe && !slotSettlementBlocker,
+    ...(unsafe ? { fleetLaunchUnavailableReason: "Current fleet inventory is unavailable. Refresh and retry.", stale: true } : {}),
     ...(slotSettlementBlocker ? {
       fleetLaunchUnavailableReason: "A fleet operation is still in progress. Try again shortly.",
       stale: true
     } : {})
+  };
+}
+
+// No cursor proof is indexed: exclude fleet credits, but retain independently
+// settled production/accrual. Do not reject a wallet merely for having a credit.
+function indexedFleetLaunchConstraints(wallet: Address, planet: SettledPlanetEvent | null, indexer: SettlementIndexer, isMoon = false, currentResources?: Resources | null) {
+  return {
+    ships: planet ? indexer.fleetLaunchShipCounts(planet.planetId, isMoon) : [],
+    resources: isMoon
+      ? (planet && indexer.moonResourcesAsOfNow(planet.planetId) !== null ? indexer.moonResources(planet.planetId) : null)
+      : currentResources !== undefined && planet && indexer.currentFleetResourceEffects(planet.planetId, Number.MAX_SAFE_INTEGER).length === 0
+        ? currentResources
+        : indexedCurrentPlanetState(indexer, planet, false)?.resources ?? null,
+    fleetSlots: indexer.batchFleetSlots(wallet)
   };
 }
 
@@ -4214,9 +4420,11 @@ function indexedSupplySources(
     wallet,
     technologyLevels: indexer.technologyLevels(wallet),
     ...indexedFleetLaunchContext(wallet, indexer),
+    batchFleetSlots: indexer.batchFleetSlots(wallet),
     sources: indexer.settledPlanetsForOwner(wallet)
       .filter(planet => planet.planetId !== target?.planetId)
       .map(planet => {
+        const resources = indexedCurrentResourcesForPlanet(indexer, planet);
         return {
           planetId: planet.planetId,
           name: planet.name,
@@ -4224,8 +4432,9 @@ function indexedSupplySources(
           system: planet.system,
           position: planet.position,
           coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-          resources: indexedCurrentResourcesForPlanet(indexer, planet) ?? planet.resources,
-          launchableShips: indexer.launchableShipCounts(planet.planetId)
+          resources,
+          launchableShips: indexer.launchableShipCounts(planet.planetId),
+          fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, false, resources)
         };
       })
   };
@@ -4256,6 +4465,7 @@ function indexedShipyardState(
     // between queue progress and the next lazy on-chain settlement transaction.
     ships: inventory.rows,
     launchableShips: inventory.launchable,
+    fleetLaunchConstraints: indexedFleetLaunchConstraints(wallet, planet, indexer, false, state.resourcesAsOfNow),
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }
@@ -4269,13 +4479,15 @@ function indexedDefenseState(
 ): DefenseState {
   const { state, buildings, levels } = indexedProductionContext(wallet, settlement, planet, indexer);
   const inventory = planet ? indexer.productionInventory(planet.planetId, "defense", levels) : { rows: [], launchable: [] };
+  const missileSiloLevel = buildings.find((building) => building.id === 14)?.level ?? 0;
 
   return {
     ...state,
     productionAvailable: true,
     unavailableReason,
     ...levels,
-    missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
+    missileSiloLevel,
+    missileSiloCapacity: missileSiloCapacityWithQueue(missileSiloLevel, planet ? indexer.planetQueue(planet.planetId, "building") : null),
     defenses: inventory.rows,
     launchableDefenses: inventory.launchable,
     // Retain raw queue provenance for compatibility; effective counts above
@@ -4283,6 +4495,14 @@ function indexedDefenseState(
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null,
     unsettledQueue: planet ? indexer.unsettledDefenseQueue(planet.planetId) : null
   };
+}
+
+// Contract parity: missile production already counts a queued (not yet due) silo demolition's lower level.
+function missileSiloCapacityWithQueue(level: number, buildingQueue: QueueState | null): number {
+  const target = buildingQueue?.active && buildingQueue.itemId === 14 && buildingQueue.action === "demolish"
+    ? buildingQueue.targetLevel
+    : undefined;
+  return (target === undefined ? level : Math.min(level, target)) * 10;
 }
 
 function indexedResearchState(
@@ -4616,10 +4836,10 @@ function migrationReservationRef(planet: MigrationReservedPlanet | undefined):
     : null;
 }
 
-// The defender side of a battle report: the target planet's current indexed ship/defense
-// composition (the surviving force right after a freshly-resolved battle). Only zero-count rows
-// are dropped so the frontend can show "None" when the planet had no fleet/defenses. Returns null
-// when the target planet is not charted in the indexed read model, in which case the composition
+// The defender side of a battle report: the target body's current indexed ship/defense
+// composition (not its immutable battle-time roster). Only zero-count rows
+// are dropped so the frontend can show "None" when the body has no fleet/defenses. Returns null
+// when the target planet or moon is no longer indexed, in which case the composition
 // genuinely cannot be derived and the frontend keeps a precise caveat instead of fabricating data.
 function defenderPlanetStateForReport(
   indexer: SettlementIndexer,
@@ -4633,9 +4853,14 @@ function defenderPlanetStateForReport(
   if (!report) return null;
   const planet = indexer.planet(report.targetPlanetId);
   if (!planet) return null;
+  const targetIsMoon = report.targetIsMoon ?? mission?.targetIsMoon ?? false;
+  const moon = targetIsMoon ? indexer.moonState(planet.owner, planet.planetId) : null;
+  if (targetIsMoon && !moon?.moon) return null;
+  const units = (rows: Array<{ id: number; count: number }>) => rows
+    .filter((row) => row.count > 0).map(({ id, count }) => ({ id, count }));
   return {
-    fleet: indexer.displayedUnitCounts(planet.planetId, "ship").filter((row) => row.count > 0),
-    defenses: indexer.displayedUnitCounts(planet.planetId, "defense").filter((row) => row.count > 0),
+    fleet: units(moon ? moon.ships : indexer.displayedUnitCounts(planet.planetId, "ship")),
+    defenses: units(moon ? moon.defenses : indexer.displayedUnitCounts(planet.planetId, "defense")),
     stationedDefenders: report.stationedDefenders ?? indexer.stationedDefendersForBattle(mission, report)
   };
 }
@@ -4695,8 +4920,8 @@ function targetCombatIntelForMission(
   const moon = targetIsMoon ? indexer.moonState(planet.owner, planet.planetId) : null;
   if (targetIsMoon && !moon?.moon) return null;
 
-  const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
-  const targetState = moon ? { ...accrued, resources: moon.resourcesAsOfNow ?? moon.resources } : accrued;
+  const currentResources = moon ? moon.resourcesAsOfNow ?? null : indexedCurrentResourcesForPlanet(indexer, planet);
+  const targetState = { ...planet, resources: currentResources };
   const tactical = indexedPlanetTacticalSummary(
     targetState,
     targetIsMoon ? [] : indexer.infrastructureRows(planet.planetId),
@@ -4725,7 +4950,7 @@ function publicPlanetStateRef(
   planet: SettledPlanetEvent | undefined,
   indexer: SettlementIndexer | undefined
 ): {
-  resources: SettledPlanetEvent["resources"];
+  resources: SettledPlanetEvent["resources"] | null;
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
@@ -4747,13 +4972,13 @@ function publicPlanetStateRef(
   const buildings = indexer.infrastructureRows(planet.planetId);
   const ships = indexer.shipRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
   const derived = buildings.length > 0
-    ? deriveInfrastructureFields(currentPlanet, buildings, ships, technologyLevels)
+    ? deriveInfrastructureFields(currentPlanet ?? planet, buildings, ships, technologyLevels)
     : null;
 
   return {
-    resources: currentPlanet.resources,
+    resources: currentPlanet?.resources ?? null,
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
@@ -4784,7 +5009,7 @@ function publicMoonStateRef(
   fields: number;
   diameterKm: number;
   createdAt: string;
-  resources: Resources;
+  resources: Resources | null;
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
@@ -4801,7 +5026,7 @@ function publicMoonStateRef(
     fields: moonState.moon.fields,
     diameterKm: moonState.moon.diameterKm,
     createdAt: moonState.moon.createdAt,
-    resources: moonState.resourcesAsOfNow ?? moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resources: moonState.resourcesAsOfNow ?? null,
     buildings: moonState.buildings.map(({ id, level }) => ({ id, level })),
     fleet: (moonState.fleet ?? []).map(({ id, count }) => ({ id, count })),
     defenses: moonState.defenses.map(({ id, count }) => ({ id, count })),
@@ -4810,63 +5035,6 @@ function publicMoonStateRef(
       defense: moonState.defenseQueue ?? null
     }
   };
-}
-
-function resourcesWithClaimableAccrual(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  lastSettledAt: string,
-  now: number,
-  inviteeProductionBoostExpiresAt?: string | null
-): Resources {
-  if (!productionPerHour || !storageCaps) return current;
-
-  const lastSettledAtSeconds = Number(lastSettledAt);
-  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return current;
-
-  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
-  const boostedElapsedSeconds = boostedProductionSeconds(
-    lastSettledAtSeconds,
-    Math.floor(now / 1_000),
-    inviteeProductionBoostExpiresAt
-  );
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
-  };
-}
-
-function resourceWithClaimableAccrual(
-  current: string,
-  productionPerHour: string,
-  storageCap: string,
-  elapsedSeconds: number,
-  boostedElapsedSeconds = 0
-): string {
-  const currentValue = Number(current);
-  const rate = Math.max(0, Number(productionPerHour));
-  const cap = Number(storageCap);
-  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
-
-  const produced = Math.floor((rate * (elapsedSeconds + boostedElapsedSeconds)) / 3_600);
-  const remainingCapacity = Math.max(0, cap - currentValue);
-  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
-}
-
-function boostedProductionSeconds(
-  fromAt: number,
-  toAt: number,
-  inviteeProductionBoostExpiresAt?: string | null
-): number {
-  const expiresAt = Number(inviteeProductionBoostExpiresAt ?? "0");
-  // The activation event stores its exact end. Production boosts are contractually fixed at
-  // seven days, so derive the matching start boundary here as well as on-chain. This matters
-  // for migration snapshots whose lastSettledAt predates the claim transaction.
-  const startsAt = expiresAt - 7 * 24 * 60 * 60;
-  if (!Number.isFinite(expiresAt) || startsAt >= toAt || expiresAt <= fromAt) return 0;
-  return Math.max(0, Math.min(toAt, expiresAt) - Math.max(fromAt, startsAt));
 }
 
 function accruedResourcesWithBuildingQueue(
@@ -4898,13 +5066,14 @@ function accruedResourcesWithBuildingQueue(
 
   if (completed.length === 0) {
     const { buildings, ships, technologyLevels } = rowsOverride ?? indexer.resourceProjectionRows(planet.planetId, planet.owner);
-    const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
-    return resourcesWithClaimableAccrual(
+    return accrueProductionWindow(
       planet.resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      planet.lastSettledAt,
-      now,
+      planet,
+      buildings,
+      ships,
+      technologyLevels,
+      lastSettledAtSeconds,
+      nowSeconds,
       inviteeProductionBoostExpiresAt
     );
   }
@@ -4919,51 +5088,36 @@ function accruedResourcesWithBuildingQueue(
     if (!Number.isFinite(readyAt) || readyAt > nowSeconds) continue;
 
     if (readyAt > cursor) {
-      const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
-      resources = resourcesWithClaimableAccrualByElapsed(
+      resources = accrueProductionWindow(
         resources,
-        derived.productionPerHour,
-        derived.storageCaps,
-        Math.floor(readyAt - cursor),
-        boostedProductionSeconds(cursor, readyAt, inviteeProductionBoostExpiresAt)
+        planet,
+        buildings,
+        projectionRows.ships,
+        projectionRows.technologyLevels,
+        cursor,
+        readyAt,
+        inviteeProductionBoostExpiresAt
       );
       cursor = readyAt;
     }
 
     buildings = buildings.map((building) => (
       building.id === queue.itemId && typeof queue.targetLevel === "number"
-        ? { ...building, level: Math.max(building.level, queue.targetLevel) }
+        ? { ...building, level: queue.action === "demolish" ? queue.targetLevel : Math.max(building.level, queue.targetLevel) }
         : building
     ));
   }
 
-  if (nowSeconds > cursor) {
-    const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
-    resources = resourcesWithClaimableAccrualByElapsed(
-      resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      Math.floor(nowSeconds - cursor),
-      boostedProductionSeconds(cursor, nowSeconds, inviteeProductionBoostExpiresAt)
-    );
-  }
-
-  return resources;
-}
-
-function resourcesWithClaimableAccrualByElapsed(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  elapsedSeconds: number,
-  boostedElapsedSeconds = 0
-): Resources {
-  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, boostedElapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, boostedElapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, boostedElapsedSeconds)
-  };
+  return accrueProductionWindow(
+    resources,
+    planet,
+    buildings,
+    projectionRows.ships,
+    projectionRows.technologyLevels,
+    cursor,
+    nowSeconds,
+    inviteeProductionBoostExpiresAt
+  );
 }
 
 function compareQueueReadyAt(left: QueueState, right: QueueState): number {
@@ -5395,15 +5549,15 @@ type RankedHighscorePlanet = {
   // targets are hydrated from the public system endpoint before an attack preview.
   stationedDefenderTimelineComplete: boolean;
   tactical: {
-    currentResources: Resources;
-    raidableResources: Resources;
-    raidableResourceTotal: string;
+    currentResources: Resources | null;
+    raidableResources: Resources | null;
+    raidableResourceTotal: string | null;
     // Full production-accrued public resources (metal + crystal + deuterium) the planet
     // currently holds — the same figure the public universe/planet surface exposes. LOOT
     // (`raidableResourceTotal`) is the ~50% on-chain plunder of this base, so surfacing the
     // gross total lets the UI show why LOOT reads lower than the planet's full stockpile and
     // stops it from being misread as missing accrual. (VEY-KANEO-454)
-    grossResourceTotal: string;
+    grossResourceTotal: string | null;
     productionPerHour: Resources | null;
     storageCaps: Resources | null;
     ships: {
@@ -5970,9 +6124,7 @@ function rankedHighscorePlanets(
     // tactical intel matches the resources the public planet read (`GET /planets/{id}`) shows.
     // Without this the snapshot's stored resources under-report LOOT versus the planet's live,
     // accrued public resources. (VEY-KANEO-454)
-    const accrued = indexer
-      ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
-      : planet;
+    const accrued = { ...planet, resources: indexer ? indexedCurrentResourcesForPlanet(indexer, planet) : null };
     const tactical = indexedPlanetTacticalSummary(
       accrued,
       buildings,
@@ -6020,18 +6172,20 @@ function rankedHighscorePlanets(
 }
 
 export function indexedPlanetTacticalSummary(
-  planet: PlanetState,
+  planet: Omit<PlanetState, "resources"> & { resources: Resources | null },
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   defenses: DefenseState["defenses"],
   technologyLevels: Record<string, number>,
   indexer?: SettlementIndexer
 ): RankedHighscorePlanet["tactical"] {
-  const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
+  const currentResources = planet.resources;
+  // Rates/caps and unit counts remain useful when balances are unknown. The zero
+  // input is only for resource-independent derivation, never a served balance.
   const derived = buildings.length > 0
-    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
+    ? deriveInfrastructureFields({ ...planet, resources: currentResources ?? zeroResources() }, buildings, ships, technologyLevels)
     : null;
-  const raidableResources = derived?.raidableResources ?? fallbackResources;
+  const raidableResources = currentResources === null ? null : derived?.raidableResources ?? currentResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
   // COMBAT is a fighting-strength figure, not a raw inventory value: stationary
@@ -6041,13 +6195,13 @@ export function indexedPlanetTacticalSummary(
   const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
-    currentResources: fallbackResources,
+    currentResources,
     raidableResources,
-    raidableResourceTotal: resourceTotal(raidableResources).toString(),
+    raidableResourceTotal: raidableResources === null ? null : resourceTotal(raidableResources).toString(),
     // `planet` here is already production-accrued (see `accruedPlanetState` at the Finder/
     // Rankings call sites), so its resources match the public universe surface. This is the
     // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
-    grossResourceTotal: resourceTotal(fallbackResources).toString(),
+    grossResourceTotal: currentResources === null ? null : resourceTotal(currentResources).toString(),
     productionPerHour: indexer
       ? effectiveProductionPerHour(indexer, planet.owner, derived?.productionPerHour ?? null)
       : derived?.productionPerHour ?? null,

@@ -62,7 +62,7 @@ export type PlanetState = Coordinates & {
   // because the canonical settled snapshot is the load-bearing value; serializers
   // that expose a live balance populate it alongside `resources` rather than
   // overwriting the settled snapshot (VEY-KANEO-488).
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
@@ -97,15 +97,15 @@ export type ManagedPlanet = PlanetState & {
     planetId: string;
     coordinates: string;
     resources: Resources;
-    resourcesAsOfNow?: Resources;
+    resourcesAsOfNow?: Resources | null;
     ships: ShipyardState["ships"];
     defenses: DefenseState["defenses"];
     buildings?: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label" | "level">>;
     queues?: { building: QueueState | null; ship: QueueState | null; defense: QueueState | null };
   } | null;
   tactical?: {
-    raidableResources: Resources;
-    raidableResourceTotal: string;
+    raidableResources: Resources | null;
+    raidableResourceTotal: string | null;
     ships: {
       count: number;
       power: string;
@@ -174,7 +174,7 @@ export type QueueState = Api.QueueState;
 export type PlayerQueues = Api.PlayerQueues<Address>;
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonDefenseQueued" | "MoonShipQueued";
+  eventName: "BuildingStarted" | "BuildingDemolitionStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "ResearchQueuedV2" | "MoonBuildingStarted" | "MoonBuildingDemolitionStarted" | "MoonDefenseQueued" | "MoonShipQueued";
   transactionHash: string;
   blockNumber: string;
   queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense" | "moon-ship";
@@ -182,10 +182,24 @@ export type IndexedQueueStartedEvent = {
   owner?: Address;
   itemId: number;
   targetLevel?: number;
+  /** Building-slot work only; absent means an upgrade. */
+  action?: QueueState["action"];
   quantity?: number;
   readyAt: string;
   startedAt?: string;
   productionTiming?: QueueState["productionTiming"];
+  cost: Resources;
+};
+
+/** A queued demolition withdrawn before completion; its full cost is refunded to the body. */
+export type IndexedBuildingDemolitionCancelledEvent = {
+  eventName: "BuildingDemolitionCancelled" | "MoonBuildingDemolitionCancelled";
+  transactionHash: string;
+  blockNumber: string;
+  queueKind: "building" | "moon-building";
+  planetId: string;
+  itemId: number;
+  targetLevel: number;
   cost: Resources;
 };
 
@@ -242,14 +256,13 @@ export type IndexedMoonJumpGateEvent = {
 };
 
 export type IndexedRiftResourceEvent = {
-  eventName: "MarketResourceDeposited" | "MarketResourceWithdrawalRequested" | "MarketResourceWithdrawalFinished";
+  eventName: "MarketResourceDeposited";
   transactionHash: string;
   blockNumber: string;
   owner: Address;
   planetId: string;
   resourceId: number;
   amount: string;
-  unlocksAt?: string;
 };
 
 // Rift V2 locks mined planet resources for a public 28-day extraction window.
@@ -845,7 +858,15 @@ export type BattleReport = {
   stagedEvidence?: StagedBattleEvidence;
 };
 
+export type FleetLaunchConstraints = {
+  ships: Array<{ id: number; count: number }>;
+  resources: Resources | null;
+  fleetSlots: { active: number; limit: number };
+};
+
 export type ShipyardState = {
+  /** Conservative requirements for this body; effective display stays separate. */
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   homePlanetId: string | null;
   planetId: string | null;
@@ -879,8 +900,7 @@ export type ShipyardState = {
     // Shipyard detail payload, omitted on count-only projections.
     durationSeconds?: number;
   }>;
-  // Inventory the next fleet-launch transaction can use after the contract's
-  // deterministic lazy production settlement prologue.
+  // Effective display inventory; fleetLaunchConstraints qualifies next-launch use.
   launchableShips?: Array<Pick<ShipyardState["ships"][number], "id" | "count">>;
   queue: QueueState | null;
 };
@@ -912,6 +932,8 @@ export type DefenseState = {
   shipyardLevel: number;
   naniteLevel: number;
   missileSiloLevel: number;
+  /** Missile slots open to new production; a queued silo demolition already reserves its lower level (#121). */
+  missileSiloCapacity?: number;
   technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;
@@ -967,6 +989,7 @@ export type InfrastructureState = {
 };
 
 export type MoonState = {
+  fleetLaunchConstraints?: FleetLaunchConstraints;
   wallet: Address;
   bodyKind: "moon";
   homePlanetId: string | null;
@@ -974,13 +997,15 @@ export type MoonState = {
   moonAvailable: boolean;
   unavailableReason?: string;
   resources: Resources;
-  resourcesAsOfNow?: Resources;
+  resourcesAsOfNow?: Resources | null;
   resourceSnapshot?: ResourceSnapshotMetadata | null;
   ships: ShipyardState["ships"];
-  // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival
-  // settlement prologue runs. This can be ahead of `ships` while an arrived Deploy is still stored
-  // as Outbound and has not emitted its MoonShipCountChanged credit yet.
+  // Same authoritative effective inventory as ships; launch eligibility is a
+  // separate guard because the deployed lazy sweep is bounded.
   launchableShips?: ShipyardState["ships"];
+  fleetSlots?: ShipyardState["fleetSlots"];
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
   defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;
@@ -1068,13 +1093,28 @@ export type RiftResourceState = {
 
 export type PendingWithdrawal = {
   id: string;
-  kind?: "riftExtraction" | "legacyMarketWithdrawal";
+  kind?: "riftExtraction";
   planetId?: string;
   resource: RiftResourceKey;
   amount: string;
+  // Amount locked when the extraction started; `amount` is what survived raids so far.
+  startedAmount?: string;
   requestedAt: string;
   unlocksAt: string;
   ready: boolean;
+};
+
+// One Rift event in a wallet's history: tokens injected, an extraction started or finalized,
+// a raid on this wallet's lock (`raided`, counterparty = raider) or by this wallet (`raid`).
+export type RiftHistoryEntry = {
+  id: string;
+  kind: "injected" | "extractionStarted" | "extracted" | "raided" | "raid";
+  planetId: string;
+  amounts: Resources;
+  counterparty: Address | null;
+  unlocksAt: string | null;
+  occurredAt: string;
+  transactionHash: string | null;
 };
 
 export type RiftState = {
@@ -1086,7 +1126,9 @@ export type RiftState = {
   withdrawalDelaySeconds: string;
   requirements: RiftRequirement[];
   resources: RiftResourceState[];
+  // Every active extraction of the wallet, on any planet; `resources[].lockedBalance` covers homePlanetId only.
   pendingWithdrawals: PendingWithdrawal[];
+  history: RiftHistoryEntry[];
 };
 
 export type AllianceState = {
@@ -1414,8 +1456,9 @@ export type DebrisFieldEvent = {
 
 export interface ChainReader {
   getCombatModelVersion?(): Promise<number | null>;
+  getMoonSupplyBatchVersion?(): Promise<number | null>;
   canResolveFleetMission?(missionId: bigint, leg: "arrival" | "return"): Promise<boolean>;
-  getDelegationState?(wallet: Address): Promise<WalletDelegationState>;
+  getDelegationState?(wallet: Address, proposedByCandidates?: readonly Address[]): Promise<WalletDelegationState>;
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
   getStartPrice(): Promise<string | null>;
   getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
@@ -1479,6 +1522,10 @@ export type WalletDelegationState = {
   wallet: Address;
   main: Address;
   delegate: Address | null;
+  /** Proposed by `main`; it gains no authority until that wallet accepts on-chain. */
+  pendingDelegate: Address | null;
+  /** Mains whose pending proposal names `wallet`, i.e. delegations this wallet can accept. */
+  proposedBy: Address[];
   actingAsDelegate: boolean;
 };
 
@@ -1560,6 +1607,10 @@ export type RpcBlock = {
   timestamp: string;
 };
 
+export class RpcRetryAfterError extends Error {
+  constructor(readonly retryAtMs: number) { super("RPC retry-after cooldown"); }
+}
+
 class RpcEndpointError extends Error {
   constructor(message: string, readonly retryReason: string | null, readonly failoverOnly = false) { super(message); }
 }
@@ -1599,6 +1650,7 @@ export class HttpJsonRpcTransport {
   private readonly minRequestIntervalMs: number;
   private readonly requestTimeoutMs: number;
   private nextRequestAt = 0;
+  private retryAfterMs = 0;
   private requestQueue: Promise<void> = Promise.resolve();
   private readonly rpcUrls: string[];
   private activeRpcIndex = 0;
@@ -1715,6 +1767,31 @@ export class HttpJsonRpcTransport {
             body: JSON.stringify(batch ? items : items[0])
           }, rpcUrl);
           const bodies = Array.isArray(body) ? body : [body];
+          // Quota is a logical-attempt failure, even when another item reports a
+          // batch limit, application error or pruned history first.
+          if (bodies.some(entry => isRpcQuotaError(entry?.error))) {
+            throw this.quotaCooldown();
+          }
+          if (batch) {
+            const ids = new Set<number>();
+            for (const entry of bodies) {
+              if (!entry || typeof entry !== "object" || Array.isArray(entry)
+                || (entry as { jsonrpc?: unknown }).jsonrpc !== "2.0"
+                || !Number.isInteger(entry.id) || entry.id! < 1 || entry.id! > requests.length
+                || ids.has(entry.id!)
+                || Object.hasOwn(entry, "result") === Object.hasOwn(entry, "error")
+                || (Object.hasOwn(entry, "error") && (!entry.error || typeof entry.error !== "object"
+                  || !Number.isInteger(entry.error.code) || typeof entry.error.message !== "string"))) {
+                throw new Error("RPC batch response invalid envelope or identity.");
+              }
+              ids.add(entry.id!);
+            }
+            // A server may reject the entire batch with one error object.
+            // Successful arrays must be complete before any item is interpreted.
+            if (Array.isArray(body) && ids.size !== requests.length) {
+              throw new Error("RPC batch response missing item.");
+            }
+          }
           for (const entry of bodies) {
             if (!entry.error) continue;
             const error = entry.error;
@@ -1722,7 +1799,7 @@ export class HttpJsonRpcTransport {
             const pruned = error.code === 4444 && method === "eth_getLogs";
             throw new RpcEndpointError(
               "RPC " + error.code + ": " + error.message,
-              pruned ? "pruned_history" : isRetryableRpcError(error) ? "rpc_" + error.code : null,
+              pruned ? "pruned_history" : null,
               pruned
             );
           }
@@ -1798,11 +1875,20 @@ export class HttpJsonRpcTransport {
     this.metrics.callsBySource[this.requestSource] = sourceMethods;
   }
 
+  private quotaCooldown(until = 0): RpcRetryAfterError {
+    // Missing, invalid or elapsed Retry-After never authorizes a quota retry or
+    // provider rotation. One minute is a shared minimum, not a freshness extension.
+    this.retryAfterMs = Math.max(this.retryAfterMs, Date.now() + 60_000, until);
+    return new RpcRetryAfterError(this.retryAfterMs);
+  }
+
   private fetchRpc<T>(init: RequestInit, rpcUrl: string): Promise<T> {
     // Serialize start slots, never response completion. Independent reads can overlap.
     const start = this.requestQueue.then(async () => {
+      if (Date.now() < this.retryAfterMs) throw new RpcRetryAfterError(this.retryAfterMs);
       const waitMs = Math.max(0, this.nextRequestAt - Date.now());
       if (waitMs > 0) await retryDelayMs(waitMs);
+      if (Date.now() < this.retryAfterMs) throw new RpcRetryAfterError(this.retryAfterMs);
       this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
     });
     this.requestQueue = start.catch(() => {});
@@ -1836,6 +1922,18 @@ export class HttpJsonRpcTransport {
       catch (error) { throw new RpcTransportError(error); }
       if (!response.ok) {
         void response.body?.cancel().catch(() => {});
+        if (response.status === 429 || response.status === 503) {
+          const value = response.headers.get("retry-after");
+          const until = value === null ? NaN : /^[0-9]+([.][0-9]+)?$/.test(value)
+            ? Date.now() + Number(value) * 1000 : Date.parse(value);
+          if (response.status === 429) {
+            throw this.quotaCooldown(Number.isFinite(until) ? until : 0);
+          }
+          if (Number.isFinite(until) && until > Date.now()) {
+            this.retryAfterMs = Math.max(this.retryAfterMs, until);
+            throw new RpcRetryAfterError(this.retryAfterMs);
+          }
+        }
         throw new RpcEndpointError("RPC HTTP " + response.status, isRetryableRpcHttpStatus(response.status) ? "http_" + response.status : null);
       }
       return readRpcJson<T>(response);
@@ -1997,18 +2095,33 @@ export class VeydriftGameReader implements ChainReader {
     return this.transport.failoverRpc?.(reason) ?? false;
   }
 
-  async getDelegationState(wallet: Address): Promise<WalletDelegationState> {
+  /** `proposedByCandidates` (e.g. indexed proposals) are kept only if the chain still records them. */
+  async getDelegationState(wallet: Address, proposedByCandidates: readonly Address[] = []): Promise<WalletDelegationState> {
     assertAddress(wallet);
     const main = decodeAddressWord(
       wordAt(splitWords(await this.call("0x6d3498d8", [encodeAddress(wallet)])), 0)
     );
-    const delegateAddress = decodeAddressWord(
-      wordAt(splitWords(await this.call("0x8d22ea2a", [encodeAddress(main)])), 0)
-    );
+    const pendingDelegateOf = (account: Address) => this.call("0xa070d0e0", [encodeAddress(account)]);
+    const [delegateWord, pendingWord, ...candidateWords] = await Promise.all([
+      this.call("0x8d22ea2a", [encodeAddress(main)]),
+      // A Game from before delegate consent reverts pendingDelegateOf and has no proposals.
+      pendingDelegateOf(main).catch((error: unknown) => {
+        if (isRpcRevert(error)) return zeroAddress;
+        throw error;
+      }),
+      // Candidates are a convenience: a failed check drops one instead of failing the read.
+      ...proposedByCandidates.map((candidate) => pendingDelegateOf(candidate).catch(() => zeroAddress))
+    ]);
+    const delegateAddress = decodeAddressWord(wordAt(splitWords(delegateWord), 0));
+    const pendingDelegate = decodeAddressWord(wordAt(splitWords(pendingWord), 0));
     return {
       wallet,
       main,
       delegate: delegateAddress === zeroAddress ? null : delegateAddress,
+      pendingDelegate: pendingDelegate === zeroAddress ? null : pendingDelegate,
+      proposedBy: proposedByCandidates.filter((_, index) =>
+        decodeAddressWord(wordAt(splitWords(candidateWords[index] ?? zeroAddress), 0)).toLowerCase() === wallet.toLowerCase()
+      ),
       actingAsDelegate: main.toLowerCase() !== wallet.toLowerCase()
     };
   }
@@ -2365,6 +2478,62 @@ export class VeydriftGameReader implements ChainReader {
     }
   }
 
+  async getMoonSupplyBatchVersion(): Promise<number | null> {
+    try {
+      const [result] = await this.batchCallContract(this.gameContractAddress, [{
+        selector: toFunctionSelector("moonSupplyBatchVersion()"), args: []
+      }]);
+      // One exact ABI uint256 word; unknown versions must not enable batch sends.
+      if (typeof result !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(result)) return null;
+      return BigInt(result) === 1n ? 1 : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolver preflight: sequential <=50-call waves retain pacing/backoff, paid per wave. */
+  async getCanonicalFleetMissionBatch(missionIds: readonly bigint[], blockNumber: bigint, assertActive: () => void) {
+    if (missionIds.length > 100) throw new Error("canonical mission batch exceeds 100 candidates");
+    const snapshots: Array<{ mission: CanonicalFleetMissionSnapshot | null; orderingReady: boolean }> = [];
+    for (let offset = 0; offset < missionIds.length; offset += 25) {
+      assertActive();
+      const wave = missionIds.slice(offset, offset + 25);
+      const values = await this.batchCallContract(this.gameContractAddress, wave.flatMap(id => [
+        { selector: "0xf158c946", args: [encodeUint(id)] },
+        { selector: "0xce02abe2", args: [encodeUint(id)] }
+      ]), "0x" + blockNumber.toString(16), assertActive);
+      assertActive();
+      for (let i = 0; i < wave.length; i++) {
+        let mission = this.decodeCanonicalFleetMission(wave[i]!, values[2 * i] ?? "0x");
+        // Hold deadlines use the existing pinned slot reader, never latest UI enrichment.
+        if (mission?.missionType === "DefenseHold") mission = await this.getCanonicalFleetMission(wave[i]!, blockNumber, assertActive);
+        assertActive();
+        const proof = values[2 * i + 1] ?? "0x";
+        snapshots.push({ mission, orderingReady: /^0x[0-9a-fA-F]{192}$/.test(proof)
+          && decodeUintWord(wordAt(splitWords(proof), 2)) === 1n });
+      }
+    }
+    return snapshots;
+  }
+
+  /** Ticket #44: attacks at staged phase 16 (awaiting seed) or 17 (awaiting referee result). */
+  async getRefereeWaitBattles(missionIds: readonly bigint[], blockNumber: bigint, assertActive: () => void): Promise<Set<string>> {
+    const waiting = new Set<string>();
+    const selector = toFunctionSelector("stagedBattleProgress(uint256)");
+    for (let offset = 0; offset < missionIds.length; offset += 50) {
+      assertActive();
+      const wave = missionIds.slice(offset, offset + 50);
+      const values = await this.batchCallContract(this.gameContractAddress,
+        wave.map(id => ({ selector, args: [encodeUint(id)] })), "0x" + blockNumber.toString(16), assertActive);
+      wave.forEach((id, index) => {
+        const staged = values[index] ?? "0x";
+        const phase = /^0x[0-9a-fA-F]{192}$/.test(staged) ? decodeUintWord(wordAt(splitWords(staged), 0)) : 0n;
+        if (phase === 16n || phase === 17n) waiting.add(id.toString());
+      });
+    }
+    return waiting;
+  }
+
   async getCanonicalFleetMission(missionId: bigint, blockNumber?: bigint, assertActive?: () => void): Promise<CanonicalFleetMissionSnapshot | null> {
     assertActive?.();
     const [result] = await this.batchCallContract(this.gameContractAddress, [{
@@ -2512,7 +2681,7 @@ export class VeydriftGameReader implements ChainReader {
       raidableResources,
       technologyLevels,
       buildings,
-      queue
+      queue: withBuildingQueueAction(queue, buildings)
     };
   }
 
@@ -2581,7 +2750,7 @@ export class VeydriftGameReader implements ChainReader {
         moon,
         fleet: manufacturingShips,
         buildings,
-        queue,
+        queue: withBuildingQueueAction(queue, buildings),
         technologyLevels,
         defenseQueue,
         shipQueue
@@ -2868,11 +3037,7 @@ export class VeydriftGameReader implements ChainReader {
     );
     const unlocked = bridgeBuilt === true;
     const tokenAddressesConfigured = riftResourceCatalog.every((resource) => this.resourceTokenAddresses[resource.key]);
-    const [legacyWithdrawals, extractions] = await Promise.all([
-      this.readLegacyRiftWithdrawals(wallet, planetId),
-      this.readRiftExtractions(planetId)
-    ]);
-    const pendingWithdrawals = [...legacyWithdrawals, ...extractions];
+    const pendingWithdrawals = await this.readRiftExtractions(planetId);
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
       ? "This deployment does not expose the Rift Stabilizer building yet."
@@ -2891,7 +3056,8 @@ export class VeydriftGameReader implements ChainReader {
       withdrawalDelaySeconds: riftExtractionDelaySeconds.toString(),
       requirements,
       resources,
-      pendingWithdrawals
+      pendingWithdrawals,
+      history: []
     };
   }
 
@@ -3572,7 +3738,7 @@ export class VeydriftGameReader implements ChainReader {
       buildings,
       defenses,
       ships,
-      queues: { building, defense, ship }
+      queues: { building: withBuildingQueueAction(building, buildings), defense, ship }
     };
   }
 
@@ -4310,7 +4476,7 @@ export class VeydriftGameReader implements ChainReader {
           fromBlock: toQuantity(this.indexFromBlock),
           toBlock: "latest",
           topics: [
-            buildingStartedTopic,
+            [buildingStartedTopic, buildingDemolitionStartedTopic],
             toTopic(planetId),
             toTopic(BigInt(queue.itemId))
           ]
@@ -4830,47 +4996,6 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
-  private async readLegacyRiftWithdrawals(
-    wallet: Address,
-    planetId: bigint
-  ): Promise<PendingWithdrawal[]> {
-    const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
-    const withdrawals = await Promise.all(
-      riftResourceCatalog.map(async (resource) => {
-        const words = splitWords(await this.call("0x91f8dfce", [encodeAddress(wallet), encodeUint(BigInt(resource.resourceId))]));
-        const active = decodeBoolWord(wordAt(words, 0));
-        if (!active) {
-          return null;
-        }
-
-        const withdrawalPlanetId = decodeUintWord(wordAt(words, 1));
-        if (withdrawalPlanetId !== planetId) {
-          return null;
-        }
-        const amount = decodeUintWord(wordAt(words, 3));
-        const unlocksAt = decodeUintWord(wordAt(words, 4));
-        const requestedAt = unlocksAt > BigInt(legacyMarketWithdrawalDelaySeconds)
-          ? unlocksAt - BigInt(legacyMarketWithdrawalDelaySeconds)
-          : 0n;
-
-        const withdrawal: PendingWithdrawal = {
-          id: `legacy:${withdrawalPlanetId}:${resource.key}`,
-          kind: "legacyMarketWithdrawal",
-          planetId: withdrawalPlanetId.toString(),
-          resource: resource.key,
-          amount: amount.toString(),
-          requestedAt: new Date(Number(requestedAt) * 1000).toISOString(),
-          unlocksAt: new Date(Number(unlocksAt) * 1000).toISOString(),
-          ready: nowSeconds >= unlocksAt
-        };
-
-        return withdrawal;
-      })
-    );
-
-    return withdrawals.filter((withdrawal): withdrawal is PendingWithdrawal => withdrawal !== null);
-  }
-
   private async readRiftExtractions(planetId: bigint): Promise<PendingWithdrawal[]> {
     const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
     const extractions: Array<PendingWithdrawal | null> = await Promise.all(
@@ -4933,7 +5058,7 @@ export class VeydriftGameReader implements ChainReader {
         terraformer: level(12)
       },
       queues: {
-        building,
+        building: withBuildingQueueAction(building, buildings),
         defense,
         ship
       },
@@ -6003,7 +6128,6 @@ const missionShipKeys = [
 const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftExtractionDelaySeconds = 28 * 24 * 60 * 60;
-const legacyMarketWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
 const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
   { key: "metal", label: "Metal", resourceId: 0 },
   { key: "crystal", label: "Crystal", resourceId: 1 },
@@ -6029,6 +6153,8 @@ const planetTemperatureChangedTopic = "0x41f73695c2664b2bf09d0ffdfe2f0eae7ef9927
 const planetTemperatureGenerationMigratedTopic = "0x3803de58665f5a31a1fb4f3bcf20c64fd9ffea33d3b2725507f336c46942dfcd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
+const buildingDemolitionStartedTopic = keccak256(stringToHex("BuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+const buildingDemolitionCancelledTopic = keccak256(stringToHex("BuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
 export const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
 export const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe225beff1693a903aa6";
 export const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
@@ -6085,6 +6211,8 @@ export const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8
 export const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const moonBuildingDemolitionStartedTopic = keccak256(stringToHex("MoonBuildingDemolitionStarted(uint256,uint8,uint16,uint64,uint128,uint128,uint128)"));
+const moonBuildingDemolitionCancelledTopic = keccak256(stringToHex("MoonBuildingDemolitionCancelled(uint256,uint8,uint16,uint128,uint128,uint128)"));
 const MOON_SHIP_ACTIVE_SELECTOR = toFunctionSelector("activeMoonShipQueue(uint256)");
 const MOON_SHIP_BACKLOG_SELECTOR = toFunctionSelector("moonShipQueueBacklog(uint256)");
 const moonShipQueuedTopic = keccak256(stringToHex("MoonShipQueued(uint256,uint8,uint32,uint64,uint128,uint128,uint128)"));
@@ -6114,11 +6242,11 @@ export const allianceProductionBonusAccruedTopic = "0xc5911d6b2b795502459a9b1187
 export const allianceProductionBonusDeferredTopic = "0xe82def1976a6ab42c25df00bb3785db8815a556342aa738c1302f4da975c54c1";
 export const allianceBonusWithdrawnTopic = "0x369bd7e76fd86a155ec571e2d405665938d7c74cc9b7fd3f5a6bef80d7b0cccb";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
-const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
-const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 const riftExtractionStartedTopic = "0xe5c09fec813f00f51c26dceaa5c361061a323d98bd0b1cac790167587a3dc512";
 const riftExtractionLootedTopic = "0x3f079e80fdea64b4c1bc83bafe580eda55ab7724bb9344b1e13a4c2c780784fb";
 const riftExtractionFinalizedTopic = "0x31186e4a61fef32b3f8d7dcad582f862fbf906a37888ae53b7131ba2d60207a2";
+export const delegateUpdatedTopic = keccak256(stringToHex("DelegateUpdated(address,address,address,address)"));
+export const delegateProposedTopic = keccak256(stringToHex("DelegateProposed(address,address)"));
 
 const eventNamesByTopic = new Map<string, string>([
   [planetStartedTopic, "PlanetStarted"],
@@ -6135,6 +6263,8 @@ const eventNamesByTopic = new Map<string, string>([
   [planetTemperatureGenerationMigratedTopic, "PlanetTemperatureGenerationMigrated"],
   [buildingStartedTopic, "BuildingStarted"],
   [buildingCompletedTopic, "BuildingCompleted"],
+  [buildingDemolitionStartedTopic, "BuildingDemolitionStarted"],
+  [buildingDemolitionCancelledTopic, "BuildingDemolitionCancelled"],
   [defenseQueuedTopic, "DefenseQueued"],
   [defenseCompletedTopic, "DefenseCompleted"],
   [shipQueuedTopic, "ShipQueued"],
@@ -6188,6 +6318,8 @@ const eventNamesByTopic = new Map<string, string>([
   [moonCreatedTopic, "MoonCreated"],
   [moonBuildingStartedTopic, "MoonBuildingStarted"],
   [moonBuildingCompletedTopic, "MoonBuildingCompleted"],
+  [moonBuildingDemolitionStartedTopic, "MoonBuildingDemolitionStarted"],
+  [moonBuildingDemolitionCancelledTopic, "MoonBuildingDemolitionCancelled"],
   [moonDefenseQueuedTopic, "MoonDefenseQueued"],
   [moonShipQueuedTopic, "MoonShipQueued"],
   [moonShipCompletedTopic, "MoonShipCompleted"],
@@ -6213,11 +6345,11 @@ const eventNamesByTopic = new Map<string, string>([
   [allianceProductionBonusDeferredTopic, "AllianceProductionBonusDeferred"],
   [allianceBonusWithdrawnTopic, "AllianceBonusWithdrawn"],
   [marketResourceDepositedTopic, "MarketResourceDeposited"],
-  [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
-  [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"],
   [riftExtractionStartedTopic, "RiftExtractionStarted"],
   [riftExtractionLootedTopic, "RiftExtractionLooted"],
-  [riftExtractionFinalizedTopic, "RiftExtractionFinalized"]
+  [riftExtractionFinalizedTopic, "RiftExtractionFinalized"],
+  [delegateUpdatedTopic, "DelegateUpdated"],
+  [delegateProposedTopic, "DelegateProposed"]
 ]);
 
 export function eventNameForTopic(topic: string | null | undefined): string | null {
@@ -6247,7 +6379,8 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
       inGameBalance: "0",
       lockedBalance: "0"
     })),
-    pendingWithdrawals: []
+    pendingWithdrawals: [],
+    history: []
   };
 }
 
@@ -6407,6 +6540,8 @@ export function isReferralRewardClaimLog(log: RpcLog): boolean {
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === buildingStartedTopic
+    || topic === buildingDemolitionStartedTopic
+    || topic === moonBuildingDemolitionStartedTopic
     || topic === defenseQueuedTopic
     || topic === shipQueuedTopic
     || topic === researchQueuedTopic
@@ -6414,6 +6549,26 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
     || topic === moonBuildingStartedTopic
     || topic === moonDefenseQueuedTopic
     || topic === moonShipQueuedTopic;
+}
+
+export function isBuildingDemolitionCancelledLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === buildingDemolitionCancelledTopic || topic === moonBuildingDemolitionCancelledTopic;
+}
+
+export function decodeBuildingDemolitionCancelledLog(log: RpcLog): IndexedBuildingDemolitionCancelledEvent {
+  const moon = topicAt(log.topics, 0) === moonBuildingDemolitionCancelledTopic;
+  const words = splitWords(log.data);
+  return {
+    eventName: moon ? "MoonBuildingDemolitionCancelled" : "BuildingDemolitionCancelled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    queueKind: moon ? "moon-building" : "building",
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    itemId: Number(decodeUint(topicAt(log.topics, 2))),
+    targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+    cost: decodeResources(words.slice(1, 4))
+  };
 }
 
 export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
@@ -6441,10 +6596,7 @@ export function isMoonJumpGateLog(log: RpcLog): boolean {
 }
 
 export function isRiftResourceLog(log: RpcLog): boolean {
-  const topic = topicAt(log.topics, 0);
-  return topic === marketResourceDepositedTopic
-    || topic === marketResourceWithdrawalRequestedTopic
-    || topic === marketResourceWithdrawalFinishedTopic;
+  return topicAt(log.topics, 0) === marketResourceDepositedTopic;
 }
 
 export function isRiftExtractionLog(log: RpcLog): boolean {
@@ -6847,6 +6999,22 @@ export function decodePlanetRenamedLog(log: RpcLog): PlanetRenamedEvent {
   };
 }
 
+export function isDelegationLog(log: RpcLog): boolean {
+  const topic = log.topics[0]?.toLowerCase();
+  return topic === delegateProposedTopic || topic === delegateUpdatedTopic;
+}
+
+/**
+ * The main's pending delegate proposal after this log. DelegateProposed sets it (zero clears it);
+ * every DelegateUpdated clears it, because both acceptDelegate and revokeDelegate delete it.
+ */
+export function decodeDelegateProposalLog(log: RpcLog): { main: Address; pendingDelegate: Address | null } {
+  const main = decodeAddressWord(topicAt(log.topics, 1));
+  if (log.topics[0]?.toLowerCase() !== delegateProposedTopic) return { main, pendingDelegate: null };
+  const delegate = decodeAddressWord(topicAt(log.topics, 2));
+  return { main, pendingDelegate: delegate === zeroAddress ? null : delegate };
+}
+
 export function decodePlanetTemperatureChangedLog(log: RpcLog): PlanetTemperatureChangedEvent {
   const words = splitWords(log.data);
   return {
@@ -6900,14 +7068,16 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     };
   }
 
-  if (topic === moonBuildingStartedTopic) {
+  if (topic === moonBuildingStartedTopic || topic === moonBuildingDemolitionStartedTopic) {
+    const demolish = topic === moonBuildingDemolitionStartedTopic;
     return {
       ...base,
-      eventName: "MoonBuildingStarted",
+      eventName: demolish ? "MoonBuildingDemolitionStarted" : "MoonBuildingStarted",
       queueKind: "moon-building",
       planetId: decodeUint(topicAt(log.topics, 1)).toString(),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
-      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+      targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+      ...(demolish ? { action: "demolish" as const } : {})
     };
   }
 
@@ -6924,14 +7094,16 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
 
   const planetId = decodeUint(topicAt(log.topics, 1)).toString();
   const itemId = Number(decodeUint(topicAt(log.topics, 2)));
-  if (topic === buildingStartedTopic) {
+  if (topic === buildingStartedTopic || topic === buildingDemolitionStartedTopic) {
+    const demolish = topic === buildingDemolitionStartedTopic;
     return {
       ...base,
-      eventName: "BuildingStarted",
+      eventName: demolish ? "BuildingDemolitionStarted" : "BuildingStarted",
       queueKind: "building",
       planetId,
       itemId,
-      targetLevel: Number(decodeUintWord(wordAt(words, 0)))
+      targetLevel: Number(decodeUintWord(wordAt(words, 0))),
+      ...(demolish ? { action: "demolish" as const } : {})
     };
   }
 
@@ -7085,30 +7257,15 @@ export function decodeMoonJumpGateLog(log: RpcLog): IndexedMoonJumpGateEvent {
 }
 
 export function decodeRiftResourceLog(log: RpcLog): IndexedRiftResourceEvent {
-  const topic = topicAt(log.topics, 0);
   const words = splitWords(log.data);
-  const base = {
+  return {
+    eventName: "MarketResourceDeposited",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     owner: decodeAddressWord(topicAt(log.topics, 1)),
     planetId: decodeUint(topicAt(log.topics, 2)).toString(),
     resourceId: Number(decodeUint(topicAt(log.topics, 3))),
     amount: decodeUintWord(wordAt(words, 0)).toString()
-  };
-
-  if (topic === marketResourceWithdrawalRequestedTopic) {
-    return {
-      ...base,
-      eventName: "MarketResourceWithdrawalRequested",
-      unlocksAt: decodeUintWord(wordAt(words, 1)).toString()
-    };
-  }
-
-  return {
-    ...base,
-    eventName: topic === marketResourceDepositedTopic
-      ? "MarketResourceDeposited"
-      : "MarketResourceWithdrawalFinished"
   };
 }
 
@@ -7900,8 +8057,11 @@ function isRetryableRpcHttpStatus(status: number): boolean {
   return status === 429 || status === 503;
 }
 
-function isRetryableRpcError(error: { code: number; message: string }): boolean {
-  return /over rate limit|rate limit|too many requests/i.test(error.message);
+function isRpcQuotaError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  return code === 429 || (typeof message === "string"
+    && /rate limit|too many requests|quota.*(?:exceeded|exhausted|limit)/i.test(message));
 }
 
 function retryDelay(attempt: number): Promise<void> {
@@ -7912,4 +8072,11 @@ function retryDelayMs(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
+}
+
+/** The building slot holds upgrades and demolitions alike; a target below the built level is a demolition. */
+function withBuildingQueueAction(queue: QueueState, buildings: ReadonlyArray<{ id: number; level: number }>): QueueState {
+  if (!queue.active || queue.itemId === undefined || queue.targetLevel === undefined) return queue;
+  const level = buildings.find((building) => building.id === queue.itemId)?.level ?? 0;
+  return { ...queue, action: queue.targetLevel < level ? "demolish" : "upgrade" };
 }

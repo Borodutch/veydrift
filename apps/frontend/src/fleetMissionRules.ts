@@ -40,7 +40,7 @@ export function interplanetaryMissileSystemDistance(origin: Coordinates, target:
 export const ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
 const ACS_HOLDING_FUEL_WINDOW_SECONDS = 36_000; // 10 hours, the contract's per-tenth amortization window
 const ACS_HOLDING_FUEL_TENTHS_PER_HOUR: Record<(typeof missionShipKeys)[number], number> = {
-  smallCargo: 50,
+  smallCargo: 10,
   lightFighter: 20,
   recycler: 300,
   colonyShip: 1_000,
@@ -48,11 +48,11 @@ const ACS_HOLDING_FUEL_TENTHS_PER_HOUR: Record<(typeof missionShipKeys)[number],
   heavyFighter: 75,
   cruiser: 300,
   battleship: 500,
-  bomber: 1_000,
+  bomber: 700,
   destroyer: 1_000,
   deathstar: 1,
   battlecruiser: 250,
-  reaper: 1_000,
+  reaper: 1_100,
   pathfinder: 300,
 };
 

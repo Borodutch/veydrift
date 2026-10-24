@@ -1,4 +1,5 @@
 import { isActionBusy } from "../actionNoticeAutoDismiss";
+import { demolitionQueueLabel } from "../buildingDetails";
 import { formatIntegerAmount as resourceValue } from "../numberFormat";
 import {
   Building2,
@@ -13,6 +14,7 @@ import { useMemo } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { planetsFromSystemResponse, type ApiSystemResponse } from "../data/mockUniverse";
 import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
+import { simulateHref } from "../battleCalculatorState";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
 import { formatAttackBlockReason, type AttackProtectionStatus, type GalaxyActionState } from "./GalaxyView";
@@ -51,6 +53,8 @@ type PublicMoonDetailProps = {
   coords: Coordinates;
   defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
+  /** The mission origin is the moon at `homeCoords`. */
+  originIsMoon?: boolean | undefined;
   homePlanetId?: string | null | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
@@ -66,6 +70,7 @@ export function PublicMoonDetail({
   coords,
   defenseState = null,
   homeCoords,
+  originIsMoon = false,
   homePlanetId,
   onAction,
   onBack,
@@ -120,6 +125,7 @@ export function PublicMoonDetail({
         account,
         actionState,
         attackProtection,
+        attackProtectionLoading: attackProtectionQuery.isInitialLoading,
         attackProtectionUnavailable: protectionRequired && (
           attackProtectionUnavailable || attackProtection?.targetPlanetId !== visibleTargetPlanetId
         ),
@@ -133,7 +139,9 @@ export function PublicMoonDetail({
         transactionUnavailableReason,
       })
     : [];
-  const visibleActions = actions.filter((action) => Boolean(action.onClick && !action.disabledReason));
+  // Keep Attack discoverable even when its guard blocks launch; omit unrelated
+  // placeholder actions (Inspect/Defend) and unavailable non-attack missions.
+  const visibleActions = actions.filter((action) => action.kind === "attack" || Boolean(action.onClick && !action.disabledReason));
 
   if (source === "loading" && !planet) {
     return <MoonDetailSkeleton />;
@@ -192,13 +200,20 @@ export function PublicMoonDetail({
 
             <div className={`${isHome ? "mt-3" : ""} flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2`}>
               <h2 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl lg:text-4xl">{planet.moonName ?? "Moon"}</h2>
-              {isActionBusy(actionState) ? (
-                <SkeletonRegion className="flex gap-2" label="Loading moon actions">
-                  {skeletonList(2, (index) => <Skeleton className="h-11 w-11 rounded" key={index} />)}
-                </SkeletonRegion>
-              ) : visibleActions.length > 0 ? (
-                <MoonActionStrip actions={visibleActions} />
-              ) : null}
+              <div className="flex flex-col items-start gap-2 sm:items-end">
+                <MoonActionStrip actions={visibleActions} showUnavailable />
+                {visibleActions.some((action) => action.kind === "attack") ? (
+                  // The calculator loads the moon's and the origin's public forces when it opens.
+                  <a
+                    className="text-xs font-medium text-slate-400 transition hover:text-white"
+                    href={simulateHref({ ...coords, moon: true }, homeCoords && { ...homeCoords, moon: originIsMoon })}
+                    rel="noopener"
+                    target="_blank"
+                  >
+                    Simulate <span aria-hidden="true">↗</span>
+                  </a>
+                ) : null}
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap gap-1.5 sm:mt-4 sm:gap-2">
@@ -426,7 +441,9 @@ function moonQueueRow(
     ? queue.targetLevel === undefined ? "" : ` Level ${queue.targetLevel}`
     : queue.quantity === undefined ? "" : ` x${queue.quantity.toLocaleString("en-US")}`;
   const readyAt = queue.readyAt ? ` ready ${formatUserTimestamp(timestampToMs(queue.readyAt))}` : "";
-  return { label, value: `${item?.label ?? queue.kind ?? "Queue item"}${quantity}${readyAt}` };
+  const itemLabel = item?.label ?? queue.kind ?? "Queue item";
+  if (queue.action === "demolish") return { label, value: `${demolitionQueueLabel(itemLabel, queue.targetLevel)}${readyAt}` };
+  return { label, value: `${itemLabel}${quantity}${readyAt}` };
 }
 
 export function publicMoonActions({
@@ -434,6 +451,7 @@ export function publicMoonActions({
   actionState,
   attackProtection,
   attackProtectionUnavailable,
+  attackProtectionLoading = false,
   coords,
   defenseState,
   homeCoords,
@@ -447,6 +465,7 @@ export function publicMoonActions({
   actionState: GalaxyActionState;
   attackProtection: AttackProtectionStatus | null;
   attackProtectionUnavailable: boolean;
+  attackProtectionLoading?: boolean;
   coords: Coordinates;
   defenseState: ChainDefenseState | null | undefined;
   homeCoords: Coordinates | undefined;
@@ -456,9 +475,14 @@ export function publicMoonActions({
   shipyardState: ChainShipyardState | null;
   transactionUnavailableReason?: string | undefined;
 }): MoonOverviewAction[] {
+  const isOwnMoon = Boolean(account && planet.occupiedBy?.owner.toLowerCase() === account.toLowerCase());
+  const protectionUnavailable = attackProtectionUnavailable || Boolean(
+    account && !isOwnMoon && attackProtection && attackProtection.targetPlanetId !== planet.occupiedBy?.planetId
+  );
+  const matchingProtection = protectionUnavailable ? null : attackProtection;
   const targetActions = galaxyActionsForSlot({
     account,
-    attackProtection,
+    attackProtection: matchingProtection,
     defenseState,
     homePlanetId,
     isOrigin: false,
@@ -478,15 +502,23 @@ export function publicMoonActions({
     moonMissionAction({
       action: actionsByKind.get("attack"),
       coords,
-      fallbackReason: attackMoonUnavailableReason(attackProtection),
+      fallbackReason: isOwnMoon
+        ? "You cannot attack your own moon."
+        : attackMoonUnavailableReason(matchingProtection),
       kind: "attack",
       label: "Attack",
       onAction,
       planet,
       unavailableReason: unavailableReason
-        ?? (attackProtectionUnavailable
-          ? "Attack protection is unavailable. Refresh before attacking."
-          : undefined),
+        ?? (protectionUnavailable
+          ? attackProtectionLoading
+            ? "Checking attack protection…"
+            : "Attack protection is unavailable. Refresh before attacking."
+          // A known target denial is useful even while origin inventory loads.
+          // This only adds a blocker; all origin/launch guards remain in force.
+          : account && homePlanetId && !isOwnMoon
+            ? formatAttackBlockReason(matchingProtection ?? undefined)
+            : undefined),
     }),
     moonMissionAction({
       action: actionsByKind.get("transport"),

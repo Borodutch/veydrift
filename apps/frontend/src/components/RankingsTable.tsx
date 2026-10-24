@@ -457,7 +457,7 @@ export function RankingRow({
                       </span>
                       <span className="text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
                         <span className="text-slate-500">Loot </span>
-                        {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+                        {planet.tactical?.raidableResourceTotal == null ? "Unknown" : compactScore(planet.tactical.raidableResourceTotal)}
                       </span>
                       <span className="text-rose-100" title={planetCombatLabel(planet)}>
                         <span className="text-slate-500">Combat </span>
@@ -468,7 +468,7 @@ export function RankingRow({
                       {planetDistanceLabel(originCoordinates, planet.coordinates)}
                     </span>
                     <span className="hidden min-w-0 truncate font-mono text-emerald-100 sm:block sm:text-right" title={planetRaidableResourcesLabel(planet)}>
-                      {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+                      {planet.tactical?.raidableResourceTotal == null ? "Unknown" : compactScore(planet.tactical.raidableResourceTotal)}
                     </span>
                     <span className="hidden min-w-0 truncate text-right font-mono text-rose-100 sm:block" title={planetCombatLabel(planet)}>
                       {compactScore(planet.tactical?.combatPower ?? "0")}

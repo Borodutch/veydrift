@@ -175,12 +175,12 @@ contract VeydriftStagedReviewRegressionTest is VeydriftMoonSystemTestBase {
         assertEq(uint8(afterStatus), uint8(before));
     }
 
-    function testScoreProtectedBounceDoesNotWaitForOracle() public {
+    function testProtectionBlockedBounceDoesNotWaitForOracle() public {
         (uint256 origin, uint256 target, address defender) = _fixture();
         uint256 id = _launch(origin, target, false);
-        _setTechnologyLevel(defender, Technology.IntergalacticResearchNetwork, 0);
-        (G.AttackBlockReason reason,,) = _attackBodyProtectionStatus(player, target, false);
-        assertEq(uint8(reason), uint8(G.AttackBlockReason.ScoreProtection));
+        // Score protection is the launch verdict now; joining the attacker's alliance in flight
+        // still blocks the battle at preparation.
+        _allyWithAttacker(defender);
         _assertUnfulfilledBounce(id);
     }
 

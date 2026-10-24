@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mediaManifest, syncMedia } from "../scripts/media.mjs";
 import { frontendResponse, responseHeadersFor } from "../scripts/serve.mjs";
 
 const landingSource = new URL("../src/ComingSoonApp.tsx", import.meta.url);
 const playerSource = new URL("../src/components/TrailerPlayer.tsx", import.meta.url);
-const pactSource = new URL("../src/components/PactPage.tsx", import.meta.url);
 const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}`, import.meta.url);
 const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
 
@@ -18,26 +18,14 @@ describe("landing trailer", () => {
     expect(source).toContain('<TrailerPlayer />');
   });
 
-  test("ships the referenced video, poster and captions under the repository file limit", async () => {
+  test("ships the referenced poster and captions, and pins the video as external media", async () => {
     const source = await Bun.file(playerSource).text();
-    for (const name of trailerFiles) {
-      expect(source).toContain(`/assets/landing/${name}`);
-      expect(existsSync(landingAsset(name))).toBe(true);
-    }
-    // GitHub rejects files over 100 MB; keep the web cut well below it.
-    expect(statSync(landingAsset("veydrift-trailer-v1.mp4")).size).toBeLessThan(90 * 1024 * 1024);
+    for (const name of trailerFiles) expect(source).toContain(`/assets/landing/${name}`);
+    for (const name of trailerFiles.slice(1)) expect(existsSync(landingAsset(name))).toBe(true);
+    // The video is media.json-pinned, not in git or the image; keep the web cut light.
+    expect(existsSync(landingAsset("veydrift-trailer-v1.mp4"))).toBe(false);
+    expect(mediaManifest.files["assets/landing/veydrift-trailer-v1.mp4"].bytes).toBeLessThan(90 * 1024 * 1024);
     expect(await Bun.file(landingAsset("veydrift-trailer-v1.vtt")).text()).toStartWith("WEBVTT\n");
-  });
-
-  test("Pact shares the player below its hero and links to it without leaving the page", async () => {
-    const source = await Bun.file(pactSource).text();
-    expect(source).toContain('import { TrailerPlayer } from "./TrailerPlayer"');
-    expect(source).toContain('<TrailerPlayer />');
-    expect(source.indexOf('<TrailerPlayer />')).toBeLessThan(source.indexOf('<Section eyebrow="Traction"'));
-    expect(source).toContain('id="trailer" tabIndex={-1}');
-    expect(source).toContain('href="#trailer">Watch the trailer</a>');
-    expect(source).not.toContain('href="/">Watch the trailer');
-    for (const name of trailerFiles) expect(source).not.toContain(name);
   });
 
   test("keeps the shared player lightweight, inline, accessible and captioned", async () => {
@@ -89,4 +77,15 @@ describe("landing trailer", () => {
       rmSync(file);
     }
   });
+
+  test("serves the pinned trailer from the media root with byte ranges and immutable caching", async () => {
+    await syncMedia();
+    const { bytes } = mediaManifest.files["assets/landing/veydrift-trailer-v1.mp4"];
+    const response = await frontendResponse(new Request("http://localhost/assets/landing/veydrift-trailer-v1.mp4", { headers: { range: "bytes=0-9" } }));
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe(`bytes 0-9/${bytes}`);
+    expect(response.headers.get("content-type")).toBe("video/mp4");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect((await response.arrayBuffer()).byteLength).toBe(10);
+  }, 600_000);
 });

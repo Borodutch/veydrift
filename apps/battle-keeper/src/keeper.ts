@@ -7,7 +7,7 @@ import {
 } from "./events";
 import { MinedRevertError } from "./transaction";
 import type { KeeperJournal } from "./journal";
-import { progressAdvanced, guardAllows, consumeProgress, type MissionProgress, type ProgressGuard } from "./progress";
+import { progressAdvanced, guardAllows, consumeProgress, refereeWait, type MissionProgress, type ProgressGuard } from "./progress";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
 export type KeeperLogger = {
@@ -507,6 +507,8 @@ export class BattleKeeper {
       const checkProgress = async (): Promise<MissionProgress | void> => {
         if (!this.resolver.missionProgress) return;
         before = await this.resolver.missionProgress(missionId);
+        // Expected healthy wait: the backend referee owns phases 16/17 (reveal, result, leaves).
+        if (refereeWait(before)) throw new MissionNotResolvableError(missionId, "battle awaits the referee");
         if (!guardAllows(this.progressGuards.get(progressKey), before)) {
           throw new Error(before.arrivalCapability === false || (before.arrivalOrderCursor !== undefined && before.arrivalGeneration === undefined)
             ? "arrival progress runtime unverified: configure the reviewed implementation/runtime hash after Game upgrade"

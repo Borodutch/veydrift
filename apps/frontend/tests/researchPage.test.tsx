@@ -146,6 +146,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 0, crystal: 800, deuterium: 400 },
@@ -210,7 +211,7 @@ describe("Research page load-error display", () => {
       },
     };
 
-    expect(getResearchRequirementStates(state, "laser")).toEqual([
+    expect(getResearchRequirementStates(state, "laser", undefined)).toEqual([
       { label: "Research Lab 1", met: true, target: { kind: "building", key: "researchLab" } },
       { label: "Energy Technology 2", met: false, target: { kind: "research", key: "energy" } },
     ]);
@@ -230,7 +231,7 @@ describe("Research page load-error display", () => {
       },
     };
 
-    expect(getResearchRequirementStates(state, "hyperspace")).toEqual([
+    expect(getResearchRequirementStates(state, "hyperspace", undefined)).toEqual([
       { label: "Research Lab 7", met: false, target: { kind: "building", key: "researchLab" } },
       { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },
       { label: "Shielding Technology 5", met: false, target: { kind: "research", key: "shielding" } },
@@ -261,10 +262,52 @@ describe("Research page load-error display", () => {
       },
     };
 
-    expect(getResearchRequirementStates(state, "graviton")).toEqual([
+    expect(getResearchRequirementStates(state, "graviton", undefined)).toEqual([
       { label: "Research Lab 12", met: true, target: { kind: "building", key: "researchLab" } },
       { label: "Energy production 300,000", met: false, target: { kind: "ship", key: "solarSatellite" } },
     ]);
+  });
+
+  test("gates Graviton on the selected planet's backend energy production (#135)", () => {
+    const base = createInitialPlayableState(1_000);
+    const state = {
+      ...base,
+      buildings: { ...base.buildings, researchLab: 12, solarPlant: 0 },
+    };
+    const gravitonStatus = (producedEnergy: number | undefined) => researchActionStatus({
+      producedEnergy,
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 0, deuterium: 0 },
+      error: undefined,
+      key: "graviton",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState(),
+      state,
+    });
+
+    // 5,047 Solar Satellites at -12°C vs at Planet Andy's 223°C.
+    expect(getResearchRequirementStates(state, "graviton", 105_987)[1]).toEqual({
+      label: "Energy production 300,000 (current 105,987)",
+      met: false,
+      target: { kind: "ship", key: "solarSatellite" },
+    });
+    expect(gravitonStatus(105_987)).toMatchObject({ disabled: true, reason: "Locked by unmet prerequisites" });
+
+    expect(getResearchRequirementStates(state, "graviton", 302_820)[1]).toEqual({
+      label: "Energy production 300,000",
+      met: true,
+      target: { kind: "ship", key: "solarSatellite" },
+    });
+    expect(gravitonStatus(302_820)).toMatchObject({ disabled: false, reason: "Ready for Level 1" });
+    expect(researchLevelInfoRows(state, "graviton", 302_820, { maxLevel: 2 }).map((row) => row.requirementStatus)).toEqual([
+      "Met",
+      "Requires Energy production 900,000",
+    ]);
+
+    // Without the planet's energy the requirement cannot be confirmed, so it stays locked.
+    expect(gravitonStatus(undefined)).toMatchObject({ disabled: true, reason: "Locked by unmet prerequisites" });
   });
 
   test("renders concrete requirement states as accessible navigation buttons", () => {
@@ -408,7 +451,7 @@ describe("Research page load-error display", () => {
       },
     };
 
-    const rows = researchLevelInfoRows(state, "energy", { maxLevel: 3 });
+    const rows = researchLevelInfoRows(state, "energy", undefined, { maxLevel: 3 });
 
     expect(rows).toMatchObject([
       {
@@ -444,7 +487,7 @@ describe("Research page load-error display", () => {
   test("marks locked research level rows with unmet prerequisites", () => {
     const state = createInitialPlayableState(10_000);
 
-    expect(researchLevelInfoRows(state, "laser", { maxLevel: 1 })[0]).toMatchObject({
+    expect(researchLevelInfoRows(state, "laser", undefined, { maxLevel: 1 })[0]).toMatchObject({
       requirementStatus: "Requires Research Lab 1, Requires Energy Technology 2",
     });
   });
@@ -467,7 +510,7 @@ describe("Research page load-error display", () => {
           ...createInitialPlayableState(10_000).buildings,
           researchLab: 1,
         },
-      }, "energy", { maxLevel: 2 }),
+      }, "energy", undefined, { maxLevel: 2 }),
     });
     const text = visibleText(modal);
 
@@ -482,11 +525,14 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Level 2");
     expect(text).toContain("Current");
     expect(text).toContain("Next");
-    expect(text).toContain("Crystal 800, Deut. 400");
+    // Exact cost for screen readers; the visible cost is the compact resource-glyph line.
+    expect(text).toContain("Crystal 800, Deuterium 400");
+    expect(text).toContain("C 800 D 400");
   });
 
   test("keeps selected queued research disabled before the authoritative ready time", () => {
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
@@ -522,6 +568,7 @@ describe("Research page load-error display", () => {
 
   test("uses transaction sync copy instead of wallet unavailable copy when shared action gate is busy", () => {
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: false,
       chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
@@ -547,6 +594,7 @@ describe("Research page load-error display", () => {
   test("keeps active research disabled when display queue normalization is incomplete", () => {
     const state = createInitialPlayableState(10_000);
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 400, crystal: 800, deuterium: 200 },
@@ -595,6 +643,7 @@ describe("Research page load-error display", () => {
 
   test("shows a ready-but-unsettled research level as completing, not manually actionable (VEY-KANEO-468)", () => {
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
@@ -643,6 +692,7 @@ describe("Research page load-error display", () => {
       resources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
     };
     const ready = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 0, crystal: 800, deuterium: 400 },
@@ -654,6 +704,7 @@ describe("Research page load-error display", () => {
       state,
     });
     const locked = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
@@ -665,6 +716,7 @@ describe("Research page load-error display", () => {
       state,
     });
     const active = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
@@ -689,6 +741,7 @@ describe("Research page load-error display", () => {
       }),
     });
     const insufficientResources = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
@@ -705,6 +758,7 @@ describe("Research page load-error display", () => {
       },
     });
     const insufficientResourcesDuringActiveResearch = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
@@ -789,6 +843,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 200, crystal: 600, deuterium: 0 },
@@ -833,6 +888,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 200, crystal: 600, deuterium: 0 },
@@ -871,6 +927,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
@@ -902,6 +959,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
@@ -932,6 +990,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
@@ -964,6 +1023,7 @@ describe("Research page load-error display", () => {
     };
 
     expect(researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 900, crystal: 2_100, deuterium: 1_000 },
@@ -982,6 +1042,7 @@ describe("Research page load-error display", () => {
     });
 
     expect(researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
@@ -1011,6 +1072,7 @@ describe("Research page load-error display", () => {
     };
 
     const status = researchActionStatus({
+      producedEnergy: undefined,
       actionPending: false,
       canTransact: true,
       chainCost: { metal: 1_600, crystal: 3_000, deuterium: 2_000 },

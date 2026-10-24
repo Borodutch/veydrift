@@ -24,6 +24,7 @@ import {
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
+  decodeBuildingDemolitionCancelledLog,
   decodeProductionQueueTimingLog,
   decodeInterplanetaryMissileAttackLog,
   decodeMoonDefenseCountChangedLog,
@@ -35,6 +36,7 @@ import {
   decodeMoonResourcesChangedLog,
   decodePlanetSettledLog,
   decodeInviteeProductionBoostLog,
+  decodeDelegateProposalLog,
   decodePlanetRenamedLog,
   decodePlanetTemperatureChangedLog,
   decodeFleetMissionLogs,
@@ -58,6 +60,8 @@ import {
   fleetMissionLootRatioTopic,
   interplanetaryMissileLaunchedTopic,
   inviteeProductionBoostActivatedTopic,
+  delegateProposedTopic,
+  delegateUpdatedTopic,
   jumpGateJumpedTopic,
   missionBattleRandomnessRequestId,
   isDebrisFieldLog,
@@ -69,6 +73,7 @@ import {
   isFirstPlanetSettledLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isBuildingDemolitionCancelledLog,
   isProductionQueueTimingLog,
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
@@ -81,6 +86,7 @@ import {
   isMoonShipCountChangedLog,
   isPlanetSettledLog,
   isInviteeProductionBoostLog,
+  isDelegationLog,
   isPlanetRenamedLog,
   isPlanetTemperatureChangedLog,
   isPlayerMigrationLog,
@@ -117,6 +123,7 @@ import {
   type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedBuildingDemolitionCancelledEvent,
   type IndexedProductionQueueTimingEvent,
   type IndexedReferralClaimEvent,
   type IndexedReferralRedemptionEvent,
@@ -149,6 +156,7 @@ import {
   type ResourceSnapshotMetadata,
   type Resources,
   riftRequirements,
+  type RiftHistoryEntry,
   type RiftState,
   type RpcLog,
   type SettledPlanetEvent,
@@ -178,8 +186,8 @@ import {
 } from "./evm";
 import type { RandomnessRequestCandidates } from "./randomness";
 import {
+  accrueProductionWindow,
   calculateIndexedHighscore,
-  deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
   deriveMoonBuildingRows,
@@ -195,6 +203,7 @@ import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 import { emitObservabilityEvent } from "./observability";
+import { setWalAutoCheckpoint } from "./sqliteCommitSync";
 import type { EntityMedia, EntityMediaKind, YouTubeMedia } from "./entityMedia";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -317,6 +326,7 @@ type ResourceProjectionContext = {
   indexedRevision: string;
   projectionRevision: string | null;
   safeToProject: boolean;
+  canonicalBaseline: boolean;
   timestamp: string | null;
 };
 
@@ -616,14 +626,6 @@ type RiftBalanceRow = {
   resource_id: number;
 };
 
-type PendingWithdrawalRow = {
-  amount: string;
-  planet_id: string;
-  resource_id: number;
-  unlocks_at: string;
-  withdrawal_key: string;
-};
-
 type RiftExtractionRow = {
   owner: string;
   planet_id: string;
@@ -631,6 +633,7 @@ type RiftExtractionRow = {
   amount: string;
   started_at: string;
   unlocks_at: string;
+  event_json: string;
   planet_json: string;
 };
 
@@ -940,14 +943,14 @@ export class SettlementIndexer {
   // cost as much as a full queue projection under live polling. Cache the projection fingerprint until
   // either indexed state changes or the next queue completion boundary is reached.
   private productionQueueProjectionVersionCache:
-    | { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    | { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
     | null = null;
   // Wallet snapshot routes include that wallet's queues, not every production queue in the
   // universe. Keep their time-bound fingerprint scoped accordingly so an unrelated queue
   // completion cannot evict every player's overview cache.
   private readonly walletProductionQueueProjectionVersionCaches = new Map<
     string,
-    { indexedStateVersion: string; validThroughSecond: number | null; value: string }
+    { indexedStateVersion: string; evaluatedAtSecond: number; validThroughSecond: number | null; value: string }
   >();
   private technologyLevelsCache: TechnologyLevelsCache | null = null;
   private allianceIntelCache: AllianceIntelCache | null = null;
@@ -1038,6 +1041,11 @@ export class SettlementIndexer {
   private readSnapshotDepth = 0;
   private readSnapshotResourceProjectionContext: ResourceProjectionContext | null = null;
   private readSnapshotStateVersion: string | null = null;
+  private readSnapshotProductionSecond: number | null = null;
+
+  private productionReadSecond(): number {
+    return this.readSnapshotProductionSecond ?? nowSeconds();
+  }
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -1188,6 +1196,7 @@ export class SettlementIndexer {
       }
     }
     return this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       // Websocket ingestion and the HTTP safety poll intentionally overlap. If websocket delivery
       // has already applied a later block, publishing this older poll head would couple its timestamp
       // to state from the future block. Leave projections frozen until a poll catches that head.
@@ -1216,6 +1225,7 @@ export class SettlementIndexer {
 
   invalidateResourceProjectionWatermark(cause: keyof typeof projectionInvalidationReasons): void {
     this.db.transaction(() => {
+      this.setMetadata("resourceProjectionInitialized", "1");
       const pendingReconciliationReason = this.metadata("pendingReconciliationReason");
       if (pendingReconciliationReason === null && cause !== "removedLog") {
         const block = this.metadata(resourceProjectionBlockMetadataKey);
@@ -1262,6 +1272,10 @@ export class SettlementIndexer {
       && value("transportStaleReason") === null
       && pendingReconciliationReason === null
       && (lastReconciliationError === null || lastReconciledAt !== null);
+    const baselineStateSafe = !reconciliationInProgress
+      && value("transportStaleReason") === null
+      && (pendingReconciliationReason === null || (lastReconciledAt !== null && isPlanetHydrationPendingReason(pendingReconciliationReason)))
+      && (lastReconciliationError === null || lastReconciledAt !== null);
     const block = value(resourceProjectionBlockMetadataKey);
     const hash = value(resourceProjectionHashMetadataKey);
     const timestamp = value(resourceProjectionTimestampMetadataKey);
@@ -1270,6 +1284,9 @@ export class SettlementIndexer {
       hash,
       indexedRevision,
       projectionRevision,
+      // Only a genuinely unanchored, healthy legacy index may expose settled balances.
+      // Deleted anchors during reconciliation must never regain that privilege.
+      canonicalBaseline: baselineStateSafe && value("resourceProjectionInitialized") === null && block === null && hash === null && timestamp === null && projectionRevision === null,
       safeToProject: projectionStateSafe
         && block !== null
         && hash !== null
@@ -1289,6 +1306,7 @@ export class SettlementIndexer {
     if (outermost) {
       this.readSnapshotResourceProjectionContext = null;
       this.readSnapshotStateVersion = null;
+      this.readSnapshotProductionSecond = nowSeconds();
     }
     this.readSnapshotDepth += 1;
     try {
@@ -1298,6 +1316,7 @@ export class SettlementIndexer {
       if (outermost) {
         this.readSnapshotResourceProjectionContext = null;
         this.readSnapshotStateVersion = null;
+        this.readSnapshotProductionSecond = null;
       }
     }
   }
@@ -2004,7 +2023,7 @@ export class SettlementIndexer {
             category: queueActivityCategory(completion.kind ?? row.queue_kind),
             kind: `${completion.kind ?? row.queue_kind}-completed`,
             direction: "personal",
-            title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity),
+            title: queueCompletedTitle(completion.kind ?? row.queue_kind, label, completion.quantity === undefined ? undefined : quantity, completion.action),
             detail: completion.targetLevel !== undefined
               ? `Level ${completion.targetLevel}`
               : completion.quantity !== undefined
@@ -3738,14 +3757,17 @@ export class SettlementIndexer {
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     const completedLevels = new Map<number, number>();
+    // A due demolition lowers the level; upgrades keep the monotonic projection.
+    const demolishedLevels = new Map<number, number>();
     for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
       if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
-        completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
+        if (queue.action === "demolish") demolishedLevels.set(queue.itemId, queue.targetLevel);
+        else completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
       }
     }
     const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
 
-    return deriveBuildingRows((id) => Math.max(
+    return deriveBuildingRows((id) => demolishedLevels.get(id) ?? Math.max(
       levels.get(id) ?? 0,
       completedLevels.get(id) ?? 0
     ));
@@ -3878,8 +3900,16 @@ export class SettlementIndexer {
     return this.currentFleetEffects(planetId, asOfSeconds).filter((effect) => !effect.isMoon);
   }
 
-  moonResourcesAsOfNow(planetId: string): Resources {
-    return sumCurrentResources(this.moonResources(planetId), this.currentFleetResourceCredits(planetId, true));
+  moonResourcesAsOfNow(planetId: string): Resources | null {
+    const snapshot = this.moonResourceSnapshot(planetId);
+    if (!snapshot) return null;
+    const projection = this.resourceProjectionContext();
+    if (!projection.canonicalBaseline && (!projection.safeToProject
+      || !Number.isSafeInteger(Number(projection.timestamp)) || Number(projection.timestamp) < 0)) return null;
+    return sumCurrentResources(
+      { metal: snapshot.metal, crystal: snapshot.crystal, deuterium: snapshot.deuterium },
+      this.currentFleetResourceCredits(planetId, true)
+    );
   }
 
   currentFleetResourceCredits(planetId: string, isMoon: boolean, asOfSeconds?: number): Resources {
@@ -4071,6 +4101,24 @@ export class SettlementIndexer {
     return { ...levels };
   }
 
+  // Batch slots are checked before the first per-order lazy sweep.
+  batchFleetSlots(wallet: Address): ShipyardState["fleetSlots"] {
+    return {
+      active: this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
+        .filter(mission => mission.missionType !== "MissileAttack").length,
+      limit: 1 + (this.contractTechnologyLevels(wallet)["4"] ?? 0)
+    };
+  }
+
+  // The indexed mission graph does not prove the on-chain player/body cursors,
+  // retained inactive entries or incoming-owner roster. Never certify any fleet
+  // credit from its size. Production is settled independently of that sweep.
+  fleetLaunchShipCounts(planetId: string, isMoon = false): Array<{ id: number; count: number }> {
+    const counts = this.indexedLevelsById(isMoon ? "contract_moon_ship_counts" : "contract_ship_counts", "ship_id", "count", planetId);
+    const completed = this.completedQueueQuantities((isMoon ? "moon-ship:" : "ship:") + planetId);
+    return supportedShipIds.map(id => ({ id, count: (counts.get(id) ?? 0) + (completed.get(id) ?? 0) }));
+  }
+
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
     const terminal = new Set(this.settledPlanetsForOwner(wallet).flatMap((planet) => this.currentFleetEffects(planet.planetId)).filter((effect) => effect.terminal).map((effect) => effect.missionId));
@@ -4116,7 +4164,7 @@ export class SettlementIndexer {
     );
   }
 
-  private queueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
+  private queueSettlement(queueKeyValue: string, nowSec = this.productionReadSecond()) {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
@@ -4148,7 +4196,9 @@ export class SettlementIndexer {
     let projectedLevel = canonicalLevel;
     for (const queue of this.queueSettlement(`moon-building:${planetId}`).completed) {
       if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
-        projectedLevel = Math.max(projectedLevel, queue.targetLevel);
+        projectedLevel = queue.action === "demolish"
+          ? queue.targetLevel
+          : Math.max(projectedLevel, queue.targetLevel);
       }
     }
     return projectedLevel;
@@ -4273,20 +4323,20 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   walletResponseCacheVersion(wallet: `0x${string}`): string {
     // Overview includes fleet visibility, so retain the mission/report generations. Its queue
     // projection is wallet-scoped: a due queue belonging to a different player must not force a
     // cold rebuild of this wallet's response.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.walletProductionQueueProjectionCacheVersion(wallet)}:fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`;
   }
 
   universeSystemSummaryVersion(galaxy: number, system: number): string {
     return [
       this.productionQueueProjectionCacheVersion(),
-      `fleet=${this.fleetProjectionHorizon()}`,
+      `fleet=${this.fleetProjectionHorizon()}:baseline=${this.resourceProjectionContext().canonicalBaseline}`,
       this.universeSystemFingerprint(galaxy, system, "planets", `
         SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
         FROM contract_planets planet
@@ -4376,11 +4426,12 @@ export class SettlementIndexer {
     return version;
   }
 
-  private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+  private productionQueueProjectionCacheVersion(nowSec = this.productionReadSecond()): string {
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.productionQueueProjectionVersionCache;
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4421,6 +4472,7 @@ export class SettlementIndexer {
     const value = `pq:${completed}:${nextReadyAt ?? "none"}`;
     this.productionQueueProjectionVersionCache = {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       // The fingerprint can change only when a queue becomes due. A subsequent indexed mutation
       // changes `indexedStateVersion` and invalidates this cache immediately.
       validThroughSecond: nextReadyAt,
@@ -4429,12 +4481,13 @@ export class SettlementIndexer {
     return value;
   }
 
-  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = nowSeconds()): string {
+  private walletProductionQueueProjectionCacheVersion(wallet: `0x${string}`, nowSec = this.productionReadSecond()): string {
     const normalizedWallet = wallet.toLowerCase();
     const indexedStateVersion = this.indexedStateCacheVersion();
     const cached = this.walletProductionQueueProjectionVersionCaches.get(normalizedWallet);
     if (
       cached
+      && nowSec >= cached.evaluatedAtSecond
       && cached.indexedStateVersion === indexedStateVersion
       && (cached.validThroughSecond === null || nowSec < cached.validThroughSecond)
     ) {
@@ -4477,6 +4530,7 @@ export class SettlementIndexer {
     const value = `wallet-pq:${completed}:${nextReadyAt ?? "none"}:${global}`;
     this.walletProductionQueueProjectionVersionCaches.set(normalizedWallet, {
       indexedStateVersion,
+      evaluatedAtSecond: nowSec,
       validThroughSecond: nowSec + 1,
       value
     });
@@ -4485,6 +4539,11 @@ export class SettlementIndexer {
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
     return this.db.query(`PRAGMA wal_checkpoint(${mode})`).all() as Array<{ busy: number; log: number; checkpointed: number }>;
+  }
+
+  /** 0 hands checkpoints to the off-thread WalCheckpointer; 1000 restores SQLite's default. */
+  setWalAutoCheckpoint(pages: number): void {
+    setWalAutoCheckpoint(this.db, pages);
   }
 
   private indexedPlanetLevelRows(
@@ -4714,20 +4773,13 @@ export class SettlementIndexer {
       : null;
     const balances = this.riftBalances(wallet, planetId);
     const balanceById = new Map(balances.map((row) => [row.resource_id, row]));
-    const pending = this.pendingWithdrawals(wallet, planetId);
-    const extractions = this.riftExtractions(wallet, planetId);
+    // Claims on every planet of the wallet, so one page can finalize them all; the
+    // per-resource locked balance stays scoped to the selected planet.
+    const extractions = this.riftExtractions(wallet);
     const lockedByResource = new Map<number, bigint>();
-    for (const withdrawal of pending) {
-      lockedByResource.set(
-        withdrawal.resource_id,
-        (lockedByResource.get(withdrawal.resource_id) ?? 0n) + BigInt(withdrawal.amount)
-      );
-    }
-    for (const extraction of extractions) {
-      lockedByResource.set(
-        extraction.resource_id,
-        (lockedByResource.get(extraction.resource_id) ?? 0n) + BigInt(extraction.amount)
-      );
+    for (const row of extractions) {
+      if (row.planet_id !== planetId) continue;
+      lockedByResource.set(row.resource_id, (lockedByResource.get(row.resource_id) ?? 0n) + BigInt(row.amount));
     }
     return {
       wallet,
@@ -4758,26 +4810,42 @@ export class SettlementIndexer {
         };
       }),
       pendingWithdrawals: [
-        ...pending.map((row) => riftPendingWithdrawal(
-          row.withdrawal_key,
-          "legacyMarketWithdrawal",
-          row.planet_id,
-          row.resource_id,
-          row.amount,
-          "0",
-          row.unlocks_at
-        )),
-        ...extractions.map((extraction) => riftPendingWithdrawal(
-          `extraction:${extraction.planet_id}:${extraction.resource_id}`,
-          "riftExtraction",
-          extraction.planet_id,
-          extraction.resource_id,
-          extraction.amount,
-          extraction.started_at,
-          extraction.unlocks_at
-        ))
-      ]
+        ...extractions.map((extraction) => ({
+          ...riftPendingWithdrawal(
+            `extraction:${extraction.planet_id}:${extraction.resource_id}`,
+            extraction.planet_id,
+            extraction.resource_id,
+            extraction.amount,
+            extraction.started_at,
+            extraction.unlocks_at
+          ),
+          // The row keeps its RiftExtractionStarted event while raids shrink `amount`.
+          startedAmount: parseEvent<{ amount?: string }>(extraction.event_json).amount ?? extraction.amount
+        }))
+      ],
+      history: this.riftHistory(wallet)
     };
+  }
+
+  /**
+   * The wallet's newest Rift events across all of its planets, read from the player activity
+   * feed: it is already backfilled, keyed by wallet, and drops rows for reorged logs.
+   */
+  riftHistory(wallet: `0x${string}`, limit = 50): RiftHistoryEntry[] {
+    // The ORDER BY matches indexed_player_activity_feed_wallet_category_idx, so a busy wallet's
+    // other activity is never scanned (the time-order index made this ~300x slower).
+    const rows = this.db.query(`
+      SELECT activity_json
+      FROM indexed_player_activity_feed
+      WHERE wallet = lower(?) AND json_extract(activity_json, '$.category') = 'rift'
+      ORDER BY CAST(transaction_at AS INTEGER) DESC, CAST(occurred_at AS INTEGER) DESC
+      LIMIT ?
+    `).all(wallet, limit) as Array<{ activity_json: string }>;
+    return rows.flatMap((row) => {
+      const activity = parseEvent<PlayerActivityItem>(row.activity_json);
+      const entry = riftHistoryEntry(activity);
+      return entry ? [entry] : [];
+    });
   }
 
   applyEvent(event: SettledPlanetEvent): IndexerSnapshot {
@@ -4817,6 +4885,54 @@ export class SettlementIndexer {
     // The removed event may not be the player's latest boost. Rebuild its small projection from
     // the canonical raw ledger instead of deleting a still-valid later window.
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
+  }
+
+  /** Mains whose indexed pending proposal names `wallet`, newest first. Candidates for a chain check. */
+  delegateProposalsFor(wallet: string): Address[] {
+    const rows = this.db.query(`
+      SELECT main
+      FROM contract_delegate_proposals
+      WHERE delegate = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) DESC, CAST(log_index AS INTEGER) DESC
+      LIMIT 5
+    `).all(wallet) as Array<{ main: Address }>;
+    return rows.map((row) => row.main);
+  }
+
+  private applyDelegateProposalLog(log: IndexedRpcLog): void {
+    const { main, pendingDelegate } = decodeDelegateProposalLog(log);
+    const blockNumber = BigInt(blockNumberToDecimal(log.blockNumber));
+    const logIndex = BigInt(log.logIndex ?? "0x0");
+    const existing = this.db.query(`
+      SELECT block_number, log_index FROM contract_delegate_proposals WHERE main = lower(?)
+    `).get(main) as { block_number: string; log_index: string } | null;
+    // Out-of-order delivery must never resurrect a proposal that a later log changed.
+    if (existing) {
+      const existingBlock = BigInt(existing.block_number);
+      if (existingBlock > blockNumber || (existingBlock === blockNumber && BigInt(existing.log_index) >= logIndex)) return;
+    }
+    this.db.query(`
+      INSERT INTO contract_delegate_proposals (main, delegate, block_number, log_index)
+      VALUES (lower(?), lower(?), ?, ?)
+      ON CONFLICT(main) DO UPDATE SET
+        delegate = excluded.delegate,
+        block_number = excluded.block_number,
+        log_index = excluded.log_index
+    `).run(main, pendingDelegate, blockNumber.toString(), logIndex.toString());
+  }
+
+  private repairDelegateProposalsFromEventLogs(): void {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) IN (lower(?), lower(?))
+    `).all(delegateProposedTopic, delegateUpdatedTopic) as EventRow[];
+    this.db.transaction(() => {
+      // The raw ledger is canonical, so this also recovers proposals journaled by an older writer.
+      this.db.query("DELETE FROM contract_delegate_proposals").run();
+      for (const log of sortedEventRows(rows)) this.applyDelegateProposalLog(log);
+    })();
   }
 
   applyMoonResourcesSettledEvent(event: MoonResourcesSettledEvent): IndexerSnapshot {
@@ -4961,10 +5077,12 @@ export class SettlementIndexer {
     toBlock: bigint
   ): IndexedRpcLog[] {
     if (toBlock < fromBlock) return [];
+    // `removed` is only ever 0 or 1. `!= 0` cannot seek the (removed, numeric block) index, so the
+    // writer scanned the whole ledger on the main thread every 16-block replay (~1 s freezes, #74).
     return (this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
-      WHERE removed != 0
+      WHERE removed = 1
         AND CAST(block_number AS INTEGER) BETWEEN ? AND ?
         AND lower(json_extract(event_json, '$.address')) = ?
         AND lower(json_extract(event_json, '$.topics[0]')) IN (?, ?, ?)
@@ -5004,6 +5122,9 @@ export class SettlementIndexer {
         }
         if (isInviteeProductionBoostLog(log)) {
           this.removeInviteeProductionBoostEvent(log);
+        }
+        if (isDelegationLog(log)) {
+          this.repairDelegateProposalsFromEventLogs();
         }
         if (isBattleReportLog(log)) {
           if (this.reconcileCombatResolutionProgress(battleLogMissionId(log)) > 0) this.touch();
@@ -5084,6 +5205,17 @@ export class SettlementIndexer {
         this.applyInviteeProductionBoostEvent(decodeInviteeProductionBoostLog(log));
         this.recordLatestBlock(log.blockNumber);
         return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
+      if (existing.removed && isDelegationLog(log)) {
+        this.advanceIndexedRevision();
+        this.db.query(`
+          UPDATE indexed_event_logs
+          SET removed = 0, event_json = ?, block_number = ?, received_at = ?
+          WHERE event_id = ?
+        `).run(JSON.stringify(log), blockNumberToDecimal(log.blockNumber), new Date().toISOString(), eventId);
+        this.applyDelegateProposalLog(log);
+        this.recordLatestBlock(log.blockNumber);
+        return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
       }
       if (existing.removed && this.isMoonStateProjectionLog(log)) {
         this.advanceIndexedRevision();
@@ -5304,6 +5436,10 @@ export class SettlementIndexer {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -5347,6 +5483,9 @@ export class SettlementIndexer {
       this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    // Delegate proposals only back the uncached, client-polled delegation endpoint. Still report the
+    // log as ignored so it does not fan out an unscoped chain event that refreshes every client.
+    if (isDelegationLog(log)) this.applyDelegateProposalLog(log);
 
     return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
   }
@@ -6430,6 +6569,16 @@ export class SettlementIndexer {
         expires_at TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      -- One row per main: its pending delegate proposal (NULL once accepted, revoked or cleared)
+      -- and the position of the delegation log that last changed it.
+      CREATE TABLE IF NOT EXISTS contract_delegate_proposals (
+        main TEXT PRIMARY KEY,
+        delegate TEXT,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_delegate_proposals_delegate_idx
+        ON contract_delegate_proposals (delegate);
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -6632,15 +6781,6 @@ export class SettlementIndexer {
         in_game_balance TEXT NOT NULL,
         locked_balance TEXT NOT NULL,
         PRIMARY KEY (owner, planet_id, resource_id)
-      );
-      CREATE TABLE IF NOT EXISTS indexed_rift_withdrawals (
-        withdrawal_key TEXT PRIMARY KEY,
-        owner TEXT NOT NULL,
-        planet_id TEXT NOT NULL,
-        resource_id INTEGER NOT NULL,
-        amount TEXT NOT NULL,
-        unlocks_at TEXT NOT NULL,
-        event_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_rift_extractions (
         owner TEXT NOT NULL,
@@ -7001,6 +7141,7 @@ export class SettlementIndexer {
     this.backfillMoonStateEventLedger();
     this.repairDestroyedMoonStateFromEventLogs();
     this.repairInviteeProductionBoostProjectionsFromEventLogs();
+    this.repairDelegateProposalsFromEventLogs();
     this.backfillPlayerActivityFeed();
     this.queueDefenderLossBreakdownBackfill();
   }
@@ -7318,6 +7459,9 @@ export class SettlementIndexer {
     if (isIndexedQueueCompletedLog(log)) {
       return decodeIndexedQueueCompletedLog(log).queueKind.startsWith("moon-");
     }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      return decodeBuildingDemolitionCancelledLog(log).queueKind === "moon-building";
+    }
     return false;
   }
 
@@ -7348,6 +7492,10 @@ export class SettlementIndexer {
     if (isIndexedQueueCompletedLog(log)) {
       const event = decodeIndexedQueueCompletedLog(log);
       return event.queueKind.startsWith("moon-") && event.planetId ? [event.planetId] : [];
+    }
+    if (isBuildingDemolitionCancelledLog(log)) {
+      const event = decodeBuildingDemolitionCancelledLog(log);
+      return event.queueKind === "moon-building" ? [event.planetId] : [];
     }
     return [];
   }
@@ -7412,6 +7560,8 @@ export class SettlementIndexer {
         this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), { settleResources: false });
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
       }
     }
     this.touch();
@@ -8201,6 +8351,8 @@ export class SettlementIndexer {
         this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
       } else if (isIndexedQueueCompletedLog(log)) {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       } else if (isMoonResourcesChangedLog(log)) {
@@ -8245,7 +8397,6 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_moons").run();
     this.db.query("DELETE FROM indexed_moon_building_levels").run();
     this.db.query("DELETE FROM indexed_rift_balances").run();
-    this.db.query("DELETE FROM indexed_rift_withdrawals").run();
     this.db.query("DELETE FROM indexed_rift_extractions").run();
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
@@ -8304,6 +8455,8 @@ export class SettlementIndexer {
       this.applyProductionQueueTimingEvent(decodeProductionQueueTimingLog(log));
     } else if (isIndexedQueueCompletedLog(log)) {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+    } else if (isBuildingDemolitionCancelledLog(log)) {
+      this.applyBuildingDemolitionCancelledEvent(decodeBuildingDemolitionCancelledLog(log));
     } else if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
     } else if (isMoonJumpGateLog(log)) {
@@ -8331,6 +8484,9 @@ export class SettlementIndexer {
 
   private replayEventDerivedQueueStateFromEventLogs(canonicalState?: CanonicalReconciliationState): void {
     const activeEventQueues = new Set<string>();
+    // Latest started demolition per building queue, kept even when the start is skipped below, so its
+    // completion lowers the level exactly instead of going through the monotonic upgrade write.
+    const demolitionTargets = new Map<string, number>();
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
@@ -8340,6 +8496,11 @@ export class SettlementIndexer {
     for (const log of sortedEventRows(rows)) {
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
+        if (event.action === "demolish" && event.targetLevel !== undefined) {
+          demolitionTargets.set(queueKey(event), event.targetLevel);
+        } else {
+          demolitionTargets.delete(queueKey(event));
+        }
         if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
           activeEventQueues.delete(queueKey(event));
           continue;
@@ -8355,12 +8516,18 @@ export class SettlementIndexer {
       } else if (isIndexedQueueCompletedLog(log)) {
         const event = decodeIndexedQueueCompletedLog(log);
         const key = queueKey(event);
+        const demolition = event.level !== undefined && demolitionTargets.get(key) === event.level;
+        demolitionTargets.delete(key);
         if (activeEventQueues.has(key)) {
           this.applyQueueCompletedEvent(event);
           activeEventQueues.delete(key);
         } else {
-          this.applyQueueCompletionEffects(event);
+          this.applyQueueCompletionEffects(event, demolition);
         }
+      } else if (isBuildingDemolitionCancelledLog(log)) {
+        const event = decodeBuildingDemolitionCancelledLog(log);
+        demolitionTargets.delete(queueKey(event));
+        if (activeEventQueues.delete(queueKey(event))) this.applyBuildingDemolitionCancelledEvent(event);
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -8368,11 +8535,9 @@ export class SettlementIndexer {
   }
 
   private queueStartProvenCompleted(event: IndexedQueueStartedEvent): boolean {
-    if (event.queueKind === "building" && event.planetId && event.targetLevel !== undefined) {
-      return this.indexedLevel("contract_building_levels", "building_id", event.planetId, event.itemId) >= event.targetLevel;
-    }
-    if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
-      return this.indexedLevel("contract_moon_building_levels", "moon_building_id", event.planetId, event.itemId) >= event.targetLevel;
+    if ((event.queueKind === "building" || event.queueKind === "moon-building") && event.planetId && event.targetLevel !== undefined) {
+      const level = this.buildingSlotLevel(event.queueKind, event.planetId, event.itemId);
+      return event.action === "demolish" ? level <= event.targetLevel : level >= event.targetLevel;
     }
     if (event.queueKind === "research" && event.owner && event.targetLevel !== undefined) {
       const row = this.db.query(`
@@ -10398,6 +10563,13 @@ export class SettlementIndexer {
     }
     const queue = this.queueState(queueKey(event));
     const matchesActiveQueue = queueMatchesCompletion(event, queue);
+    // A matched completion below the indexed level is a demolition (L -> L-1); it must lower the
+    // level exactly instead of going through the monotonic upgrade write.
+    const demolition = matchesActiveQueue
+      && event.level !== undefined
+      && event.planetId !== undefined
+      && (event.queueKind === "building" || event.queueKind === "moon-building")
+      && event.level < this.buildingSlotLevel(event.queueKind, event.planetId, event.itemId);
     if (event.queueKind === "building" && event.planetId && matchesActiveQueue) {
       this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
     }
@@ -10438,8 +10610,37 @@ export class SettlementIndexer {
         this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
       }
     }
-    if (options.applyEffects !== false) this.applyQueueCompletionEffects(event);
+    if (options.applyEffects !== false) this.applyQueueCompletionEffects(event, demolition);
     this.touch();
+  }
+
+  /** The refund itself arrives through the body's PlanetSettled / MoonResourcesSettled log. */
+  private applyBuildingDemolitionCancelledEvent(event: IndexedBuildingDemolitionCancelledEvent): void {
+    const key = queueKey(event);
+    const queue = this.queueState(key);
+    if (!queue?.active || queue.itemId !== event.itemId || queue.targetLevel !== event.targetLevel) return;
+    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+    if (event.queueKind === "moon-building") {
+      this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
+    }
+    this.touch();
+  }
+
+  /** The building slot never changes a level while queued, so a lower target means demolition. */
+  private buildingQueueAction(
+    queueKind: "building" | "moon-building",
+    planetId: string,
+    itemId: number,
+    targetLevel: number
+  ): "upgrade" | "demolish" {
+    return targetLevel < this.buildingSlotLevel(queueKind, planetId, itemId) ? "demolish" : "upgrade";
+  }
+
+  private buildingSlotLevel(queueKind: "building" | "moon-building", planetId: string, itemId: number): number {
+    return queueKind === "building"
+      ? this.indexedLevel("contract_building_levels", "building_id", planetId, itemId)
+      : this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, itemId);
   }
 
   private promoteProductionBacklogAfterCompletion(
@@ -10503,10 +10704,13 @@ export class SettlementIndexer {
     });
   }
 
-  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
+  private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent, demolition = false): void {
+    const writeLevel = demolition
+      ? this.upsertIndexedLevel.bind(this)
+      : this.upsertIndexedLevelAtLeast.bind(this);
     if (event.queueKind === "building" && event.planetId && event.level !== undefined) {
-      this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
       if (event.itemId === 0) {
         const currentLevel = this.indexedLevel(
@@ -10518,8 +10722,8 @@ export class SettlementIndexer {
         this.incrementMoonFields(event.planetId, Math.max(0, event.level - currentLevel) * 3);
       }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
-      this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
-      this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
+      writeLevel("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-ship" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("contract_moon_ship_counts", "ship_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "moon-defense" && event.planetId && event.total !== undefined) {
@@ -10849,17 +11053,14 @@ export class SettlementIndexer {
       return planet.resources;
     }
 
-    const derived = deriveInfrastructureFields(
+    return accrueProductionWindow(
+      planet.resources,
       planet,
       this.contractInfrastructureRows(planet.planetId),
       this.contractShipRows(planet.planetId),
-      this.contractTechnologyLevels(planet.owner)
-    );
-    return resourcesWithClaimableAccrual(
-      planet.resources,
-      derived.productionPerHour,
-      derived.storageCaps,
-      Math.floor(nextSettledAt - previousSettledAt)
+      this.contractTechnologyLevels(planet.owner),
+      previousSettledAt,
+      nextSettledAt
     );
   }
 
@@ -10886,7 +11087,8 @@ export class SettlementIndexer {
             metal: row.metal_cost,
             crystal: row.crystal_cost,
             deuterium: row.deuterium_cost
-          }
+          },
+          action: this.buildingQueueAction("moon-building", row.planet_id, row.moon_building_id, row.target_level)
         };
         cache.values.set(queueKeyValue, queue);
         return cloneQueueState(queue);
@@ -10906,6 +11108,9 @@ export class SettlementIndexer {
     }
 
     const queue = this.productionQueueFromRow(row);
+    if (row.queue_kind === "building" && queue.planetId && queue.itemId !== undefined && queue.targetLevel !== undefined) {
+      queue.action = this.buildingQueueAction("building", queue.planetId, queue.itemId, queue.targetLevel);
+    }
     this.hydrateRetainedProductionQueueTiming(queue);
     if (row.backlog_json) {
       const backlog = parseEvent<QueueState[]>(row.backlog_json);
@@ -11397,27 +11602,7 @@ export class SettlementIndexer {
     const current = this.riftBalance(owner, event.planetId, event.resourceId);
     const inGameBalance = BigInt(current?.in_game_balance ?? "0");
     const lockedBalance = BigInt(current?.locked_balance ?? "0");
-    const amount = BigInt(event.amount);
-
-    if (event.eventName === "MarketResourceDeposited") {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance + amount, lockedBalance);
-    } else if (event.eventName === "MarketResourceWithdrawalRequested") {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, subtractNonNegative(inGameBalance, amount), lockedBalance + amount);
-      this.db.query(`
-        INSERT INTO indexed_rift_withdrawals (withdrawal_key, owner, planet_id, resource_id, amount, unlocks_at, event_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(withdrawal_key) DO UPDATE SET
-          amount = excluded.amount,
-          unlocks_at = excluded.unlocks_at,
-          event_json = excluded.event_json
-      `).run(riftWithdrawalKey(event), owner, event.planetId, event.resourceId, event.amount, event.unlocksAt ?? "0", JSON.stringify(event));
-    } else {
-      this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance, subtractNonNegative(lockedBalance, amount));
-      this.db.query(`
-        DELETE FROM indexed_rift_withdrawals
-        WHERE owner = ? AND planet_id = ? AND resource_id = ? AND amount = ?
-      `).run(owner, event.planetId, event.resourceId, event.amount);
-    }
+    this.upsertRiftBalance(owner, event.planetId, event.resourceId, inGameBalance + BigInt(event.amount), lockedBalance);
     this.touch();
   }
 
@@ -12543,7 +12728,7 @@ export class SettlementIndexer {
           category: queueActivityCategory(event.queueKind),
           kind: `${event.queueKind}-started`,
           direction: "personal",
-          title: queueStartedTitle(event.queueKind, label),
+          title: queueStartedTitle(event.queueKind, label, event.action),
           detail: queueActivityDetail(event),
           occurredAt: event.startedAt ?? transactionAt,
           metadata: queueActivityMetadata(event)
@@ -12559,7 +12744,7 @@ export class SettlementIndexer {
           category: queueActivityCategory(event.queueKind),
           kind: `${event.queueKind}-completed`,
           direction: "personal",
-          title: queueCompletedTitle(event.queueKind, label, event.quantity === undefined ? undefined : occurrence?.quantity ?? event.quantity),
+          title: queueCompletedTitle(event.queueKind, label, event.quantity === undefined ? undefined : occurrence?.quantity ?? event.quantity, queue?.itemId === event.itemId ? queue.action : undefined),
           detail: event.quantity === undefined ? queueCompletionDetail(event) : (occurrence?.quantity ?? event.quantity) + " completed",
           occurredAt: occurrence?.at ?? indexedQueueCompletionAt(queue, event, transactionAt),
           metadata: { ...queueActivityMetadata(event), quantity: event.quantity === undefined ? null : occurrence?.quantity ?? event.quantity, occurrenceId: occurrence?.id ?? null }
@@ -12725,8 +12910,8 @@ export class SettlementIndexer {
           category: "rift",
           kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
           direction: "personal",
-          title: humanizeContractName(event.eventName.replace(/^MarketResource/, "Rift ")),
-          detail: null,
+          title: "Tokens injected through the Rift",
+          detail: riftActivityDetail(event.planetId, riftAmounts(event.resourceId, event.amount)),
           occurredAt: transactionAt,
           metadata: activityPrimitiveMetadata(event)
         });
@@ -12734,34 +12919,38 @@ export class SettlementIndexer {
         const event = decodeRiftExtractionLog(log);
         if (event.eventName === "RiftExtractionLooted") {
           const owner = this.ownerForPlanetActivity(event.planetId);
+          // Flatten the looted amounts and the victim into primitives the Rift history can read.
+          const metadata = activityPrimitiveMetadata({ ...event, ...event.resources, defender: owner });
+          const detail = riftActivityDetail(event.planetId, event.resources);
           add(event.attacker, {
             category: "rift",
             kind: "rift-extraction-looted",
             direction: "outgoing",
             title: "Rift extraction looted",
-            detail: `Planet #${event.planetId}`,
+            detail,
             occurredAt: transactionAt,
-            metadata: activityPrimitiveMetadata(event)
+            metadata
           });
           if (owner?.toLowerCase() !== event.attacker.toLowerCase()) {
             add(owner, {
               category: "rift",
               kind: "rift-extraction-looted",
               direction: "incoming",
-              title: "Rift extraction was looted",
-              detail: `Planet #${event.planetId}`,
+              title: "Your Rift extraction was raided",
+              detail,
               occurredAt: transactionAt,
-              metadata: activityPrimitiveMetadata(event)
+              metadata
             });
           }
         } else {
+          const started = event.eventName === "RiftExtractionStarted";
           add(event.owner, {
             category: "rift",
             kind: event.eventName.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
             direction: "personal",
-            title: humanizeContractName(event.eventName),
-            detail: `Planet #${event.planetId}`,
-            occurredAt: "startedAt" in event ? event.startedAt : transactionAt,
+            title: started ? "Rift extraction started" : "Rift extraction finished",
+            detail: riftActivityDetail(event.planetId, riftAmounts(event.resourceId, event.amount)),
+            occurredAt: started ? event.startedAt : transactionAt,
             metadata: activityPrimitiveMetadata(event)
           });
         }
@@ -12971,24 +13160,13 @@ export class SettlementIndexer {
     `).run(owner, planetId, resourceId, inGameBalance.toString(), lockedBalance.toString());
   }
 
-  private pendingWithdrawals(wallet: `0x${string}`, planetId: string | null): PendingWithdrawalRow[] {
-    if (!planetId) return [];
+  private riftExtractions(wallet: `0x${string}`): RiftExtractionRow[] {
     return this.db.query(`
-      SELECT withdrawal_key, planet_id, resource_id, amount, unlocks_at
-      FROM indexed_rift_withdrawals
-      WHERE owner = lower(?) AND planet_id = ?
-      ORDER BY CAST(unlocks_at AS INTEGER) ASC
-    `).all(wallet, planetId) as PendingWithdrawalRow[];
-  }
-
-  private riftExtractions(wallet: `0x${string}`, planetId: string | null): RiftExtractionRow[] {
-    if (!planetId) return [];
-    return this.db.query(`
-      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at
+      SELECT owner, planet_id, resource_id, amount, started_at, unlocks_at, event_json
       FROM indexed_rift_extractions
-      WHERE owner = lower(?) AND planet_id = ?
-      ORDER BY CAST(unlocks_at AS INTEGER) ASC
-    `).all(wallet, planetId) as RiftExtractionRow[];
+      WHERE owner = lower(?)
+      ORDER BY CAST(unlocks_at AS INTEGER) ASC, CAST(planet_id AS INTEGER) ASC, resource_id ASC
+    `).all(wallet) as RiftExtractionRow[];
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
@@ -14665,7 +14843,7 @@ export class SettlementIndexer {
     let level = this.indexedLevel("contract_building_levels", "building_id", planetId, buildingId);
     for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
       if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
-        level = Math.max(level, queue.targetLevel);
+        level = queue.action === "demolish" ? queue.targetLevel : Math.max(level, queue.targetLevel);
       }
     }
     return level;
@@ -15113,14 +15291,16 @@ function queueActivityLabel(kind: string, itemId: number): string {
   return contractName ? humanizeContractName(contractName) : `Item #${itemId}`;
 }
 
-function queueStartedTitle(kind: string, label: string): string {
-  if (kind === "building" || kind === "moon-building") return `${label} upgrade started`;
+function queueStartedTitle(kind: string, label: string, action?: QueueState["action"]): string {
+  if (kind === "building" || kind === "moon-building") {
+    return action === "demolish" ? `${label} demolition started` : `${label} upgrade started`;
+  }
   if (kind === "research") return `${label} research started`;
   return `${label} production started`;
 }
 
-function queueCompletedTitle(kind: string, label: string, quantity?: number): string {
-  if (kind === "building" || kind === "moon-building") return `${label} completed`;
+function queueCompletedTitle(kind: string, label: string, quantity?: number, action?: QueueState["action"]): string {
+  if (kind === "building" || kind === "moon-building") return action === "demolish" ? `${label} demolished` : `${label} completed`;
   if (kind === "research") return `${label} research completed`;
   return `${quantity ?? 0} ${label}${quantity === 1 ? "" : "s"} built`;
 }
@@ -16045,37 +16225,6 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
   };
 }
 
-function resourcesWithClaimableAccrual(
-  current: Resources,
-  productionPerHour: Resources | null,
-  storageCaps: Resources | null,
-  elapsedSeconds: number
-): Resources {
-  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
-
-  return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
-  };
-}
-
-function resourceWithClaimableAccrual(
-  current: string,
-  productionPerHour: string,
-  storageCap: string,
-  elapsedSeconds: number
-): string {
-  const currentValue = Number(current);
-  const rate = Math.max(0, Number(productionPerHour));
-  const cap = Number(storageCap);
-  if (!Number.isFinite(currentValue) || !Number.isFinite(rate) || !Number.isFinite(cap)) return current;
-
-  const produced = Math.floor((rate * elapsedSeconds) / 3_600);
-  const remainingCapacity = Math.max(0, cap - currentValue);
-  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
-}
-
 function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
   const queue: QueueState = {
     active: true,
@@ -16621,13 +16770,51 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
-  return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+const riftHistoryKinds: Record<string, RiftHistoryEntry["kind"]> = {
+  "market-resource-deposited": "injected",
+  "rift-extraction-started": "extractionStarted",
+  "rift-extraction-finalized": "extracted"
+};
+
+function riftAmounts(resourceId: unknown, amount: string): Resources {
+  const key = riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key;
+  return { metal: "0", crystal: "0", deuterium: "0", ...(key ? { [key]: amount } : {}) };
+}
+
+function riftActivityDetail(planetId: string, amounts: Resources): string {
+  const moved = riftResourceRows
+    .filter((resource) => /^\d+$/.test(amounts[resource.key]) && BigInt(amounts[resource.key]) > 0n)
+    .map((resource) => `${BigInt(amounts[resource.key]).toLocaleString("en-US")} ${resource.label}`);
+  return [...moved, `Planet #${planetId}`].join(" · ");
+}
+
+function riftHistoryEntry(activity: PlayerActivityItem): RiftHistoryEntry | null {
+  const meta = activity.metadata;
+  const kind = activity.kind === "rift-extraction-looted"
+    ? activity.direction === "incoming" ? "raided" : "raid"
+    : riftHistoryKinds[activity.kind];
+  if (!kind || typeof meta.planetId !== "string") return null;
+  const text = (key: string) => (typeof meta[key] === "string" ? meta[key] : null);
+  const iso = (seconds: string | null) => (seconds && /^\d+$/.test(seconds) ? new Date(Number(seconds) * 1_000).toISOString() : null);
+  // Single-resource events carry resourceId + amount; raids carry all three amounts.
+  const amounts = typeof meta.resourceId === "number"
+    ? riftAmounts(meta.resourceId, text("amount") ?? "0")
+    : { metal: text("metal") ?? "0", crystal: text("crystal") ?? "0", deuterium: text("deuterium") ?? "0" };
+  const counterparty = kind === "raided" ? text("attacker") : kind === "raid" ? text("defender") : null;
+  return {
+    id: activity.id,
+    kind,
+    planetId: meta.planetId,
+    amounts,
+    counterparty: counterparty as Address | null,
+    unlocksAt: kind === "extractionStarted" ? iso(text("unlocksAt")) : null,
+    occurredAt: iso(activity.occurredAt) ?? iso(activity.transactionAt) ?? new Date(0).toISOString(),
+    transactionHash: activity.transactionHash
+  };
 }
 
 function riftPendingWithdrawal(
   id: string,
-  kind: "riftExtraction" | "legacyMarketWithdrawal",
   planetId: string,
   resourceId: number,
   amount: string,
@@ -16638,7 +16825,7 @@ function riftPendingWithdrawal(
   const unlocksAtSeconds = BigInt(unlocksAt);
   return {
     id,
-    kind,
+    kind: "riftExtraction" as const,
     planetId,
     resource: riftResourceRows.find((resource) => resource.resourceId === resourceId)?.key ?? "metal",
     amount,

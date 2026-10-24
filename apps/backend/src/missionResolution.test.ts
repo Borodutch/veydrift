@@ -9,7 +9,7 @@ import {
   type MissionResolutionChainClient,
   type MissionResolutionLogger
 } from "./missionResolution";
-import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator } from "./resolverTransactions";
 
 const config: BackendConfig = {
   chainId: 84532,
@@ -49,6 +49,58 @@ function addResolverFeeReads<T extends object>(client: T): T {
 }
 
 describe("MissionResolutionService", () => {
+  test("admission blocking degrades health even with zero lastError", () => {
+    const client = fakeClient({ calls: [], resolvable: [], returnable: [] });
+    client.admissionSnapshot = () => ({ active: 0, retainedConfirmed: 4096, activeLimit: 32, retainedLimit: 4096,
+      countsCapped: false, journalBytes: 1024, lastCanonicalSettlementAt: "2026-10-08T00:00:00.000Z", blockedReason: "confirmed-retention-full" });
+    const service = new MissionResolutionService(config, { chainClient: client, logger: silentLogger() });
+    expect(service.snapshot().lastError).toBeNull();
+    expect(service.snapshot().healthStatus).toBe("degraded");
+    expect(service.snapshot().healthWarnings).toContain("mission_resolver_admission_blocked");
+    expect(service.snapshot().admission?.retainedConfirmed).toBe(4096);
+  });
+  test("shared admission errors never poison 47 mission retries or wait for a 300-second candidate cooldown", async () => {
+    let now=1_000_000, fail=true;
+    const lengths:number[]=[];
+    const client=fakeClient({calls:[],resolvable:Array.from({length:43},(_,i)=>String(i+1)),returnable:Array.from({length:4},(_,i)=>String(i+44))});
+    client.resolveMissionBatch=async items=>{
+      lengths.push(items.length);
+      if(fail)throw new ResolverAdmissionBlockedError(new Error("resolver reconciliation backpressure: read deadline exceeded"));
+      return {hash:null,items,exclusions:[]};
+    };
+    client.isMissionLegComplete=async()=>true;
+    const service=new MissionResolutionService({...config,missionBatch:{enabled:true,maxItems:16,maxFeeWei:200_000_000_000_000n}},
+      {chainClient:client,now:()=>now,logger:silentLogger()});
+    for(const wait of [30_000,60_000,120_000,240_000]){await service.tick();now+=wait;}
+    await service.tick();
+    expect(service.snapshot().sharedAdmission?.blocked).toBe(true);
+    expect(service.snapshot().healthWarnings).toContain("mission_resolver_admission_blocked");
+    // Sub-interval ticks do not hammer RPC; due candidates remain visible.
+    now+=1000;await service.tick();expect(lengths).toHaveLength(5);
+    expect(service.snapshot().dueArrivals.count).toBe(43);expect(service.snapshot().dueReturns.count).toBe(4);
+    fail=false;now+=4000;await service.tick();
+    expect(lengths).toEqual([47,47,47,47,47,47]);
+    expect(service.snapshot().resolvedCount).toBe(43);expect(service.snapshot().returnedCount).toBe(4);
+    expect(service.snapshot().sharedAdmission).toEqual({blocked:false,nextRetryAt:null});
+  });
+
+  test("mission-specific batch outcomes retain their own backoff across a shared admission interruption", async()=>{
+    let now=1_000_000, stage=0;const seen:string[][]=[];
+    const client=fakeClient({calls:[],resolvable:["1","2"],returnable:[]});
+    client.resolveMissionBatch=async items=>{
+      seen.push(items.map(i=>i.missionId));
+      if(stage===0){stage++;return {hash:null,items:[],exclusions:[{item:items[0]!,reason:"specific-failure",terminal:false}]};}
+      if(stage===1){stage++;throw new ResolverAdmissionBlockedError(new Error("shared RPC unavailable"));}
+      return {hash:null,items};
+    };
+    client.isMissionLegComplete=async()=>true;
+    const service=new MissionResolutionService({...config,missionBatch:{enabled:true,maxItems:16,maxFeeWei:200_000_000_000_000n}},
+      {chainClient:client,now:()=>now,logger:silentLogger()});
+    await service.tick();now+=5000;await service.tick();now+=5000;await service.tick();
+    expect(seen).toEqual([["1","2"],["2"],["2"]]);
+    expect(service.snapshot().resolvedCount).toBe(1); // genuine candidate-1 hold is not cleared
+  });
+
   test("batch receipt counts only canonically settled legs, never falls back to singles", async () => {
     const calls: string[] = [];
     const client = fakeClient({ calls, resolvable: ["1", "2"], returnable: ["3"] });
@@ -1450,6 +1502,44 @@ describe("moon chance resolution", () => {
     // Re-created client / old indexed request: canonical finalization avoids any resubmission.
     expect(await client().finalizeMoonChance("8")).toBe("finalized");
     expect(writes).toHaveLength(2);
+  });
+
+  test("re-requests randomness for a battle moon chance that could not reserve it", async () => {
+    const account = privateKeyToAccount(`0x${"11".repeat(32)}`);
+    const writes: string[] = [];
+    let requestId = 0n;
+    let outcomePurpose: string = purpose;
+    const publicClient = {
+      async call() { return { data: "0x" }; },
+      readContract: async ({ functionName }: { functionName: string }) => functionName === "moonChanceRandomness"
+        ? [requestId, outcomePurpose, false, 0n]
+        : { requester: moon, purposeHash: purpose, createdAt: 1n, fulfilledAt: 0n, randomWord: 0n },
+      getStorageAt: async () => "0x00",
+      getTransactionCount: async () => 4,
+      waitForTransactionReceipt: async () => ({ status: "success" }),
+      getTransactionReceipt: async () => ({ status: "success" })
+    } as unknown as PublicClient;
+    addResolverFeeReads(publicClient);
+    const walletClient = {
+      writeContract: async (call: { address: string; functionName: string; nonce: number }) => {
+        writes.push(`${call.address}:${call.functionName}`);
+        requestId = 17n;
+        return `0x${call.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = () => new ViemMissionResolutionChainClient(
+      { isFleetChronologyOrderingReady: async () => true, listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [] },
+      config.gameContractAddress!, account, publicClient, walletClient,
+      { id: config.chainId } as never, config.rpcUrl, new ResolverTransactionCoordinator(":memory:"), moon, engine
+    );
+    expect(await client().finalizeMoonChance("8")).toBe("pending");
+    expect(writes).toEqual([`${moon}:retryMoonChanceRandomness`]);
+    // Once requested, it waits for the reveal like any other moon chance.
+    expect(await client().finalizeMoonChance("8")).toBe("pending");
+    expect(writes).toHaveLength(1);
+    requestId = 0n;
+    outcomePurpose = `0x${"00".repeat(32)}`;
+    await expect(client().finalizeMoonChance("9")).rejects.toThrow("unknown moon chance outcome");
   });
 
   test("rotates bounded indexed candidates, catches existing pending on restart, backs off failures and honors pause/disable", async () => {

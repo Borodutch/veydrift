@@ -4,9 +4,10 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  animationFilename, animationKey, animationVariants, assertAnimationVariantsReady,
+  animationFilename, animationKey, animationVariants, assertAnimationVariantsReady, imageAnimationVariants,
   prepareAnimationVariants,
 } from "../scripts/animation-variants.mjs";
+import { LOOP_ANIMATIONS } from "../loopAnimationConfig";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "veydrift-animation-"));
@@ -23,12 +24,12 @@ async function fixture() {
   return { root, source, path, route, options: { root: output, sourceRoot, variants: [route] } };
 }
 
-describe("bounded build-time animation variants", () => {
-  test("excludes generated frontend artifacts from the final Nixpacks source copy", async () => {
+describe("bounded publish-time animation variants", () => {
+  test("keeps generated output and pinned media out of every Nixpacks source copy", async () => {
     const rules = (await readFile(new URL("../../../.dockerignore", import.meta.url), "utf8"))
       .split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
     expect(rules).toContain("apps/frontend/dist/");
-    expect(rules).toContain("apps/frontend/.animation-variants/");
+    expect(rules).toContain("apps/frontend/.media/");
     // Later negations must not reintroduce cached variants or their manifest.
     expect(rules.some((line) => line.startsWith("!"))).toBe(false);
   });
@@ -98,8 +99,10 @@ describe("bounded build-time animation variants", () => {
       await prepareAnimationVariants({ ...f.options, variants: [next] });
       expect(Object.keys(await manifest())).toEqual([animationKey(next)]);
       await expect(stat(join(f.options.root, animationFilename(f.route)))).rejects.toThrow();
-      expect(animationVariants.length).toBe(60);
-      expect(new Set(animationVariants.map(animationFilename)).size).toBe(60);
+      expect(imageAnimationVariants.length).toBe(60);
+      // Plus four sizes in two formats per building/ship loop.
+      expect(animationVariants.length).toBe(60 + Object.keys(LOOP_ANIMATIONS).length * 8);
+      expect(new Set(animationVariants.map(animationFilename)).size).toBe(animationVariants.length);
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 });

@@ -26,6 +26,7 @@ import {
   shipSpecRows,
   storageCaps,
   unmetResearchRequirement,
+  researchEnergyRequirement,
 } from "../src/playableMvp";
 import { infrastructurePlayableState } from "../src/chainState";
 import { shouldShowTopBarEnergy } from "../src/overviewData";
@@ -255,8 +256,8 @@ describe("playable MVP contract display helpers", () => {
 	      deuterium: 0,
 	    });
 	    expect(defenseCatalog.find((defense) => defense.key === "ionCannon")?.baseCost).toEqual({
-	      metal: 2_000,
-	      crystal: 6_000,
+	      metal: 5_000,
+	      crystal: 3_000,
 	      deuterium: 0,
 	    });
 	    expect(defenseCatalog.map((defense) => defense.asset)).toEqual(defenseAssetManifest.map((asset) => asset.src));
@@ -332,17 +333,56 @@ describe("playable MVP contract display helpers", () => {
       },
     };
 
-    expect(unmetResearchRequirement(unlockedLab, "graviton")).toEqual({
+    expect(unmetResearchRequirement(unlockedLab, "graviton", 0)).toEqual({
       type: "energy",
       produced: 300_000,
     });
-    expect(unmetResearchRequirement({
-      ...unlockedLab,
-      buildings: {
-        ...unlockedLab.buildings,
-        solarPlant: 10_000,
-      },
-    }, "graviton")).toBeUndefined();
+    expect(unmetResearchRequirement(unlockedLab, "graviton", 300_000)).toBeUndefined();
+  });
+
+  test("counts Solar Satellite energy at the planet's max temperature for Graviton (#135)", () => {
+    const state = createInitialPlayableState(1_000);
+    // Planet Andy: 5,047 satellites give 21 energy each at -12°C but 60 at 223°C.
+    // The backend's energyBalance (what the gate reads) uses the planet's temperature.
+    const andy = {
+      ...state,
+      buildings: { ...state.buildings, researchLab: 12, solarPlant: 0 },
+      ships: { ...state.ships, solarSatellite: 5_047 },
+    };
+    const producedAt = (maxTemperature: number) => energyBalance(andy.buildings, andy.research.energy, andy.ships.solarSatellite, {
+      maxTemperature,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 10_000,
+    }).produced;
+
+    expect(producedAt(-12)).toBe(105_987);
+    expect(unmetResearchRequirement(andy, "graviton", producedAt(-12))).toEqual({ type: "energy", produced: 300_000 });
+    expect(producedAt(223)).toBe(302_820);
+    expect(unmetResearchRequirement(andy, "graviton", producedAt(223))).toBeUndefined();
+  });
+
+  test("keeps Graviton's energy requirement unmet until the planet's energy is known", () => {
+    const state = createInitialPlayableState(1_000);
+    const unlockedLab = { ...state, buildings: { ...state.buildings, researchLab: 12, solarPlant: 10_000 } };
+
+    expect(unmetResearchRequirement(unlockedLab, "graviton", undefined)).toEqual({ type: "energy", produced: 300_000 });
+  });
+
+  test("triples Graviton's energy requirement per researched level like the contract", () => {
+    expect(researchEnergyRequirement("graviton", 0, 300_000)).toBe(300_000);
+    expect(researchEnergyRequirement("graviton", 1, 300_000)).toBe(900_000);
+    expect(researchEnergyRequirement("graviton", 2, 300_000)).toBe(2_700_000);
+
+    const state = createInitialPlayableState(1_000);
+    const levelOne = {
+      ...state,
+      buildings: { ...state.buildings, researchLab: 12 },
+      research: { ...state.research, graviton: 1 },
+    };
+
+    expect(unmetResearchRequirement(levelOne, "graviton", 302_820)).toEqual({ type: "energy", produced: 300_000 });
+    expect(unmetResearchRequirement(levelOne, "graviton", 900_000)).toBeUndefined();
   });
 
   test("mirrors the contract research catalog and prerequisites", () => {

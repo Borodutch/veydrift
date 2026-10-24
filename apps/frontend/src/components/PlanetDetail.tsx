@@ -1,4 +1,5 @@
 import { isActionBusy } from "../actionNoticeAutoDismiss";
+import { demolitionQueueLabel } from "../buildingDetails";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -34,6 +35,7 @@ import { formatScore } from "../numberFormat";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
+import { simulateHref as calculatorSimulateHref } from "../battleCalculatorState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -56,6 +58,8 @@ interface Props {
   defenseState?: ChainDefenseState | null | undefined;
   homeCoords?: Coordinates | undefined;
   originCoords?: Coordinates | undefined;
+  /** The mission origin is the moon at `originCoords`. */
+  originIsMoon?: boolean | undefined;
   homePlanetId?: string | null | undefined;
   homePlanet?: Planet | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
@@ -105,8 +109,8 @@ export function planetDetailRefreshResultPlanet({
   const matchingApiPlanet = apiPlanet && sameCoordinates(apiPlanet, coords) ? apiPlanet : null;
   if (matchingTrustedPlanet && matchingApiPlanet) {
     const moonName = matchingTrustedPlanet.moonName ?? matchingApiPlanet.moonName;
-    const publicMoonState = matchingApiPlanet.publicMoonState ?? matchingTrustedPlanet.publicMoonState;
-    const publicState = matchingApiPlanet.publicState ?? matchingTrustedPlanet.publicState;
+    const publicMoonState = matchingApiPlanet.publicMoonState === undefined ? matchingTrustedPlanet.publicMoonState : matchingApiPlanet.publicMoonState;
+    const publicState = matchingApiPlanet.publicState === undefined ? matchingTrustedPlanet.publicState : matchingApiPlanet.publicState;
     return {
       ...matchingApiPlanet,
       ...matchingTrustedPlanet,
@@ -155,6 +159,7 @@ export function PlanetDetail({
   defenseState = null,
   homeCoords,
   originCoords = homeCoords,
+  originIsMoon = false,
   homePlanetId,
   homePlanet,
   onAction,
@@ -355,6 +360,8 @@ export function PlanetDetail({
                   busy={isActionBusy(actionState)}
                   coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
                   onAction={onAction}
+                  originCoords={originCoords}
+                  originIsMoon={originIsMoon}
                   planet={planet}
                 />
               ) : null}
@@ -535,15 +542,23 @@ function PlanetMissionControls({
   busy,
   coords,
   onAction,
+  originCoords,
+  originIsMoon = false,
   planet,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  originCoords?: Coordinates | undefined;
+  originIsMoon?: boolean | undefined;
   planet: Planet | undefined;
 }) {
   if (actions.length === 0) return null;
+  // The calculator loads both bodies' public forces when it opens.
+  const simulateHref = planet && actions.some((action) => action.kind === "attack")
+    ? calculatorSimulateHref({ ...coords, moon: false }, originCoords && { ...originCoords, moon: originIsMoon })
+    : null;
 
   return (
     <div className="flex flex-col items-start gap-2 sm:items-end">
@@ -554,6 +569,11 @@ function PlanetMissionControls({
         onAction={onAction}
         planet={planet}
       />
+      {simulateHref ? (
+        <a className="text-xs font-medium text-slate-400 transition hover:text-white" href={simulateHref} rel="noopener" target="_blank">
+          Simulate <span aria-hidden="true">↗</span>
+        </a>
+      ) : null}
     </div>
   );
 }
@@ -1280,6 +1300,7 @@ export function publicQueueView(
     ? undefined
     : catalog.find((candidate, index) => (candidate.id ?? index) === queue.itemId);
   const label = item?.label ?? queue.kind ?? "Queue";
+  const demolish = queue.action === "demolish";
   const detail = valueKind === "level"
     ? queue.targetLevel ? `Level ${queue.targetLevel}` : null
     : queue.quantity ? `×${queue.quantity.toLocaleString()}` : null;
@@ -1302,13 +1323,13 @@ export function publicQueueView(
     ...(queue.asOfNow?.remainingQuantity !== undefined
       ? { remainingQuantity: queue.asOfNow.remainingQuantity }
       : {}),
-    itemText: detail ? `${label} · ${detail}` : label,
+    itemText: demolish ? demolitionQueueLabel(label, queue.targetLevel) : detail ? `${label} · ${detail}` : label,
     key,
     label,
     readyAt: queue.readyAt,
     startedAt: queue.startedAt ?? queue.productionTiming?.startedAt,
-    title,
-    tone,
+    title: demolish ? "Demolition" : title,
+    tone: demolish ? "rose" : tone,
   };
 }
 
@@ -1407,7 +1428,9 @@ function queueRow(
     : queue.quantity ? ` ${suffix}${queue.quantity}` : "";
   return {
     label,
-    value: `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
+    value: queue.action === "demolish"
+      ? demolitionQueueLabel(item?.label ?? queue.kind ?? "Queue", queue.targetLevel)
+      : `${item?.label ?? queue.kind ?? "Queue"}${quantity}`,
     tone: "accent",
   };
 }

@@ -6,6 +6,7 @@ import { currentResources } from "../currentResources";
 import { planetFromSettlementPlanet } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { moonBuildingAsset, moonImageForType } from "../gameAssets";
+import { demolitionQueueLabel } from "../buildingDetails";
 import { buildingQueuePreview } from "../overviewData";
 import { buildingCatalog, buildingContractIds, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
 import { useBackendDataQuery } from "../useBackendDataQuery";
@@ -96,7 +97,10 @@ export function queueLine(
   if (kind === "building") {
     const moonBuilding = moonBuildings?.find((building) => building.id === queue.itemId);
     if (moonBuilding) {
-      return { kind, label: `${moonBuilding.label} ${queue.targetLevel ?? ""}`.trim(), asset: moonBuildingAsset(moonBuilding.key), ...timing };
+      const label = queue.action === "demolish"
+        ? demolitionQueueLabel(moonBuilding.label, queue.targetLevel)
+        : `${moonBuilding.label} ${queue.targetLevel ?? ""}`.trim();
+      return { kind, label, asset: moonBuildingAsset(moonBuilding.key), ...timing };
     }
     const preview = buildingQueuePreview(queue);
     const building = buildingCatalog.find((item) => buildingContractIds[item.key] === queue.itemId);
@@ -665,7 +669,7 @@ function ResourceCells({
               <span className={`mr-1 text-[10px] font-bold ${color}`}>{abbr}</span>
               {value === undefined ? "—" : formatCompactResource(value)}
             </span>
-            {rate > 0 ? <span className={`block truncate text-[10px] ${rateColor}`}>+{formatCompactResource(rate)}/h</span> : null}
+            {rate !== 0 ? <span className={`block truncate text-[10px] ${rate < 0 ? "text-red-300" : rateColor}`}>{rate < 0 ? "-" : "+"}{formatCompactResource(Math.abs(rate))}/h</span> : null}
           </span>
         );
       })}

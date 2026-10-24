@@ -1,0 +1,549 @@
+{
+  "description": "Referee combat catalog: classic attack, shield, hull (structural integrity / 10) and rapidfire for Veydrift unit types (0-15 ships, 16-23 defenses). order is the technical id that orders firing within a fleet. Pinned onchain by keccak256 of this file.",
+  "units": [
+    {
+      "type": 0,
+      "key": "smallCargo",
+      "order": 202,
+      "attack": 5,
+      "shield": 10,
+      "hull": 400
+    },
+    {
+      "type": 1,
+      "key": "lightFighter",
+      "order": 204,
+      "attack": 50,
+      "shield": 10,
+      "hull": 400
+    },
+    {
+      "type": 2,
+      "key": "recycler",
+      "order": 209,
+      "attack": 1,
+      "shield": 10,
+      "hull": 1600
+    },
+    {
+      "type": 3,
+      "key": "colonyShip",
+      "order": 208,
+      "attack": 50,
+      "shield": 100,
+      "hull": 3000
+    },
+    {
+      "type": 4,
+      "key": "largeCargo",
+      "order": 203,
+      "attack": 5,
+      "shield": 25,
+      "hull": 1200
+    },
+    {
+      "type": 5,
+      "key": "heavyFighter",
+      "order": 205,
+      "attack": 150,
+      "shield": 25,
+      "hull": 1000
+    },
+    {
+      "type": 6,
+      "key": "cruiser",
+      "order": 206,
+      "attack": 400,
+      "shield": 50,
+      "hull": 2700
+    },
+    {
+      "type": 7,
+      "key": "battleship",
+      "order": 207,
+      "attack": 1000,
+      "shield": 200,
+      "hull": 6000
+    },
+    {
+      "type": 8,
+      "key": "bomber",
+      "order": 211,
+      "attack": 1000,
+      "shield": 500,
+      "hull": 7500
+    },
+    {
+      "type": 9,
+      "key": "solarSatellite",
+      "order": 212,
+      "attack": 1,
+      "shield": 1,
+      "hull": 200
+    },
+    {
+      "type": 10,
+      "key": "destroyer",
+      "order": 213,
+      "attack": 2000,
+      "shield": 500,
+      "hull": 11000
+    },
+    {
+      "type": 11,
+      "key": "deathstar",
+      "order": 214,
+      "attack": 200000,
+      "shield": 50000,
+      "hull": 900000
+    },
+    {
+      "type": 12,
+      "key": "battlecruiser",
+      "order": 215,
+      "attack": 700,
+      "shield": 400,
+      "hull": 7000
+    },
+    {
+      "type": 13,
+      "key": "reaper",
+      "order": 218,
+      "attack": 2800,
+      "shield": 700,
+      "hull": 14000
+    },
+    {
+      "type": 14,
+      "key": "pathfinder",
+      "order": 219,
+      "attack": 200,
+      "shield": 100,
+      "hull": 2300
+    },
+    {
+      "type": 15,
+      "key": "crawler",
+      "order": 217,
+      "attack": 1,
+      "shield": 1,
+      "hull": 400
+    },
+    {
+      "type": 16,
+      "key": "rocketLauncher",
+      "order": 401,
+      "attack": 80,
+      "shield": 20,
+      "hull": 200
+    },
+    {
+      "type": 17,
+      "key": "lightLaser",
+      "order": 402,
+      "attack": 100,
+      "shield": 25,
+      "hull": 200
+    },
+    {
+      "type": 18,
+      "key": "heavyLaser",
+      "order": 403,
+      "attack": 250,
+      "shield": 100,
+      "hull": 800
+    },
+    {
+      "type": 19,
+      "key": "smallShieldDome",
+      "order": 407,
+      "attack": 1,
+      "shield": 2000,
+      "hull": 2000
+    },
+    {
+      "type": 20,
+      "key": "gaussCannon",
+      "order": 404,
+      "attack": 1100,
+      "shield": 200,
+      "hull": 3500
+    },
+    {
+      "type": 21,
+      "key": "ionCannon",
+      "order": 405,
+      "attack": 150,
+      "shield": 500,
+      "hull": 800
+    },
+    {
+      "type": 22,
+      "key": "plasmaTurret",
+      "order": 406,
+      "attack": 3000,
+      "shield": 300,
+      "hull": 10000
+    },
+    {
+      "type": 23,
+      "key": "largeShieldDome",
+      "order": 408,
+      "attack": 1,
+      "shield": 10000,
+      "hull": 10000
+    }
+  ],
+  "rapidfire": [
+    {
+      "shooter": 0,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 0,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 1,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 1,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 2,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 2,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 3,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 3,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 4,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 4,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 5,
+      "target": 0,
+      "value": 3
+    },
+    {
+      "shooter": 5,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 5,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 6,
+      "target": 1,
+      "value": 6
+    },
+    {
+      "shooter": 6,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 6,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 6,
+      "target": 16,
+      "value": 10
+    },
+    {
+      "shooter": 7,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 7,
+      "target": 14,
+      "value": 5
+    },
+    {
+      "shooter": 7,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 8,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 8,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 8,
+      "target": 16,
+      "value": 20
+    },
+    {
+      "shooter": 8,
+      "target": 17,
+      "value": 20
+    },
+    {
+      "shooter": 8,
+      "target": 18,
+      "value": 10
+    },
+    {
+      "shooter": 8,
+      "target": 20,
+      "value": 5
+    },
+    {
+      "shooter": 8,
+      "target": 21,
+      "value": 10
+    },
+    {
+      "shooter": 8,
+      "target": 22,
+      "value": 5
+    },
+    {
+      "shooter": 10,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 10,
+      "target": 12,
+      "value": 2
+    },
+    {
+      "shooter": 10,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 10,
+      "target": 17,
+      "value": 10
+    },
+    {
+      "shooter": 11,
+      "target": 0,
+      "value": 250
+    },
+    {
+      "shooter": 11,
+      "target": 1,
+      "value": 200
+    },
+    {
+      "shooter": 11,
+      "target": 2,
+      "value": 250
+    },
+    {
+      "shooter": 11,
+      "target": 3,
+      "value": 250
+    },
+    {
+      "shooter": 11,
+      "target": 4,
+      "value": 250
+    },
+    {
+      "shooter": 11,
+      "target": 5,
+      "value": 100
+    },
+    {
+      "shooter": 11,
+      "target": 6,
+      "value": 33
+    },
+    {
+      "shooter": 11,
+      "target": 7,
+      "value": 30
+    },
+    {
+      "shooter": 11,
+      "target": 8,
+      "value": 25
+    },
+    {
+      "shooter": 11,
+      "target": 9,
+      "value": 1250
+    },
+    {
+      "shooter": 11,
+      "target": 10,
+      "value": 5
+    },
+    {
+      "shooter": 11,
+      "target": 12,
+      "value": 15
+    },
+    {
+      "shooter": 11,
+      "target": 13,
+      "value": 10
+    },
+    {
+      "shooter": 11,
+      "target": 14,
+      "value": 30
+    },
+    {
+      "shooter": 11,
+      "target": 15,
+      "value": 1250
+    },
+    {
+      "shooter": 11,
+      "target": 16,
+      "value": 200
+    },
+    {
+      "shooter": 11,
+      "target": 17,
+      "value": 200
+    },
+    {
+      "shooter": 11,
+      "target": 18,
+      "value": 100
+    },
+    {
+      "shooter": 11,
+      "target": 20,
+      "value": 50
+    },
+    {
+      "shooter": 11,
+      "target": 21,
+      "value": 100
+    },
+    {
+      "shooter": 12,
+      "target": 0,
+      "value": 3
+    },
+    {
+      "shooter": 12,
+      "target": 4,
+      "value": 3
+    },
+    {
+      "shooter": 12,
+      "target": 5,
+      "value": 4
+    },
+    {
+      "shooter": 12,
+      "target": 6,
+      "value": 4
+    },
+    {
+      "shooter": 12,
+      "target": 7,
+      "value": 7
+    },
+    {
+      "shooter": 12,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 12,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 13,
+      "target": 7,
+      "value": 7
+    },
+    {
+      "shooter": 13,
+      "target": 8,
+      "value": 4
+    },
+    {
+      "shooter": 13,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 13,
+      "target": 10,
+      "value": 3
+    },
+    {
+      "shooter": 13,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 14,
+      "target": 1,
+      "value": 3
+    },
+    {
+      "shooter": 14,
+      "target": 5,
+      "value": 2
+    },
+    {
+      "shooter": 14,
+      "target": 6,
+      "value": 3
+    },
+    {
+      "shooter": 14,
+      "target": 9,
+      "value": 5
+    },
+    {
+      "shooter": 14,
+      "target": 15,
+      "value": 5
+    },
+    {
+      "shooter": 21,
+      "target": 13,
+      "value": 2
+    }
+  ]
+}

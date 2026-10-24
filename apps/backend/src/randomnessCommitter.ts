@@ -1,5 +1,8 @@
 import { cancelResolverTransaction } from "./resolverCancellation";
 import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   createPublicClient,
   createWalletClient,
   defineChain,
@@ -27,6 +30,7 @@ import {
 import { resolverReplacementFees, resolverTransactionNeedsReplacement } from "./resolverReplacementFees";
 import { ResolverTransactionCoordinator } from "./resolverTransactions";
 import { safeDiagnosticText } from "./safeDiagnostics";
+import type { WalCheckpointTarget } from "./walCheckpointer";
 
 /**
  * Minimal RandomnessEngine ABI: the commit-reveal surface the backend fulfiller drives. Keeping it
@@ -77,6 +81,13 @@ const randomnessEngineAbi = [
         ]
       }
     ]
+  },
+  {
+    type: "function",
+    name: "battleRequestPolicy",
+    stateMutability: "view",
+    inputs: [{ type: "uint256", name: "requestId" }],
+    outputs: [{ type: "bool", name: "gated" }, { type: "bytes32", name: "snapshot" }]
   },
   {
     type: "function",
@@ -243,6 +254,23 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     });
   }
 
+  async isAwaitingBattleSnapshot(requestId: bigint): Promise<boolean> {
+    try {
+      const [gated, snapshot] = await this.publicClient.readContract({
+        abi: randomnessEngineAbi,
+        address: this.engineAddress,
+        functionName: "battleRequestPolicy",
+        args: [requestId]
+      });
+      return gated && /^0x0+$/.test(snapshot);
+    } catch (error) {
+      // Engines deployed before the battle gate revert (no policy) and never gate a request. Any
+      // other failure (RPC, timeout) fails closed: never reveal a word that may still be gated.
+      return !(error instanceof BaseError && error.walk((cause) =>
+        cause instanceof ContractFunctionRevertedError || cause instanceof ContractFunctionZeroDataError) !== null);
+    }
+  }
+
   async getRequestFulfillment(requestId: bigint, blockTag: "latest" | "finalized") {
     const request = await this.publicClient.readContract({
       abi: randomnessEngineAbi,
@@ -397,6 +425,7 @@ export class RandomnessCommitterService {
   private readonly fulfillerAddress: string | null;
   private readonly logger: RandomnessCommitterLogger;
   private readonly readinessSnapshotEnabled: boolean;
+  private readonly store: RandomnessCommitmentStore;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
@@ -439,6 +468,7 @@ export class RandomnessCommitterService {
     // Unit/integration callers often inject an in-memory store and run in parallel. Only the
     // production-selected durable store is allowed to publish the cross-process readiness file.
     this.readinessSnapshotEnabled = options.store === undefined;
+    this.store = store;
     this.worker = chainClient
       ? new RandomnessCommitmentWorker(
           chainClient,
@@ -447,6 +477,11 @@ export class RandomnessCommitterService {
         )
       : undefined;
     this.enabled = Boolean(this.worker);
+  }
+
+  /** The durable SQLite store's WAL for the writer's off-thread checkpointer (#74). */
+  walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
+    return this.store instanceof SqliteRandomnessCommitmentStore ? this.store.walCheckpointTarget() : null;
   }
 
   start(): void {

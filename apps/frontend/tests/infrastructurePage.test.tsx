@@ -6,6 +6,7 @@ import {
   ActiveBuildingQueuePanel,
   BuildingLevelInfoButton,
   BuildingLevelInfoModal,
+  buildingLevelInfoTable,
   InfrastructureLoadErrorPanel,
   InfrastructureRefreshErrorPanel,
   MetricDeltaSubtext,
@@ -21,6 +22,7 @@ import {
   selectedInfrastructureBuildingKey,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
+import { formatLevelAmount, LevelInfoModal } from "../src/components/LevelInfoModal";
 import { QueueProgressPanel } from "../src/components/QueueProgressPanel";
 import { buildingCatalog, buildingEffectMetrics, buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
@@ -419,13 +421,48 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
     expect(text).toContain("Level 2 Next");
-    expect(text).toContain("Metal 90, Crystal 22");
-    expect(text).toContain("24 required");
+    // Exact cost for screen readers, then the compact glyph line that is shown.
+    expect(text).toContain("Metal 90, Crystal 22 M 90 C 22");
+    expect(text).toContain("E 24 +13");
     expect(text).toContain("Build time");
-    expect(text).toContain("Production output");
-    expect(text).toContain("32 Metal/h (+32/h)");
-    expect(text).toContain("70 Metal/h (+38/h)");
-    expect(text).toContain("116 Metal/h (+46/h)");
+    expect(text).toContain("2m 41s");
+    expect(text).toContain("Production");
+    expect(text).toContain("M 32 /h +32");
+    expect(text).toContain("M 70 /h +38");
+    expect(text).toContain("M 116 /h +46");
+  });
+
+  test("lays out each level as one compact row with an icon Supply action on future levels only", () => {
+    const state = { ...createInitialPlayableState(1_000), buildings: { ...createInitialPlayableState(1_000).buildings, crystalMine: 8 } };
+    const supplied: number[] = [];
+    const table = buildingLevelInfoTable(8, buildingLevelInfoRows(state.buildings, "crystalMine", undefined, 12), (level) => supplied.push(level));
+    const modal = LevelInfoModal({ ...table, itemLabel: "Crystal Mine", onClose: () => undefined });
+    const nodes = elementNodes(modal);
+    const rows = nodes.filter((node) => node.props?.role === "row" && node.props?.["data-level-status"]);
+    const supplyButtons = nodes.filter((node) => node.type === "button" && String(node.props["aria-label"]).startsWith("Supply resources up to Level"));
+
+    expect(rows.map((row) => row.props["data-level-status"])).toEqual(["past", "past", "past", "past", "past", "past", "past", "current", "next", "future", "future", "future"]);
+    expect(rows.every((row) => String(row.props.className).includes("level-info-row"))).toBe(true);
+    expect(supplyButtons.map((button) => button.props["aria-label"])).toEqual([9, 10, 11, 12].map((level) => `Supply resources up to Level ${level}`));
+    expect(supplyButtons.every((button) => button.props.title === button.props["aria-label"] && visibleText(button) === "")).toBe(true);
+    (supplyButtons[2]!.props.onClick as () => void)();
+    expect(supplied).toEqual([11]);
+    expect(visibleText(modal)).toContain("Metal 5,277, Crystal 2,638 M 5,277 C 2,638");
+    expect(visibleText(modal)).not.toContain("N/A");
+  });
+
+  test("formats level amounts exactly when short and compactly when large", () => {
+    expect(formatLevelAmount(9_999)).toBe("9,999");
+    expect(formatLevelAmount(10_636)).toBe("10.6K");
+    expect(formatLevelAmount(409_600)).toBe("410K");
+    expect(formatLevelAmount(999_960)).toBe("1M");
+    expect(formatLevelAmount(2_400_000)).toBe("2.4M");
+    expect(formatLevelAmount(56_294_995_342_131)).toBe("56.3T");
+    expect(formatLevelAmount(562_949_953_421_312_000)).toBe("563Qa");
+    expect(formatLevelAmount(5.6e21)).toBe("5.6e21");
+    expect(formatLevelAmount(-1_950)).toBe("-1,950");
+    expect(formatLevelAmount(1_950, 1_000)).toBe("2K");
+    expect(formatLevelAmount(-12_340, 1_000)).toBe("-12.3K");
   });
 
   test("keeps double-digit level labels separate from current and next badges", () => {
@@ -442,15 +479,14 @@ describe("Infrastructure page display helpers", () => {
       rows: buildingLevelInfoRows(state.buildings, "metalMine", undefined, 12),
       onClose: () => undefined,
     });
-    const cells = elementNodes(modal).filter((node) => node.type === "td");
-    const level10Cell = cells.find((cell) => visibleText(cell) === "Level 10");
-    const level11Cell = cells.find((cell) => visibleText(cell) === "Level 11");
+    const levelCells = elementNodes(modal).filter((node) => node.props?.role === "rowheader");
+    const level10Number = elementNodes(levelCells.find((cell) => visibleText(cell) === "Level 10 Current")).find((node) => node.type === "span" && visibleText(node) === "Level 10");
+    const level11Number = elementNodes(levelCells.find((cell) => visibleText(cell) === "Level 11 Next")).find((node) => node.type === "span" && visibleText(node) === "Level 11");
     const currentPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Current");
     const nextPill = elementNodes(modal).find((node) => node.type === "span" && visibleText(node) === "Next");
 
-    expect(visibleText(modal)).toContain("Status");
-    expect(level10Cell?.props.className).toContain("whitespace-nowrap");
-    expect(level11Cell?.props.className).toContain("whitespace-nowrap");
+    expect(level10Number?.props.className).toContain("whitespace-nowrap");
+    expect(level11Number?.props.className).toContain("whitespace-nowrap");
     expect(currentPill?.props.className).toContain("whitespace-nowrap");
     expect(nextPill?.props.className).toContain("whitespace-nowrap");
   });
@@ -468,8 +504,8 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Energy output");
     expect(text).toContain("Level 1 Next");
     expect(text).toContain("Metal 75, Crystal 30");
-    expect(text).toContain("22 produced");
-    expect(text).toContain("48 produced");
+    expect(text).toContain("E 22 +22");
+    expect(text).toContain("E 48 +26");
   });
 
   test("renders Fusion Reactor modal rows with energy output and deuterium use", () => {
@@ -484,10 +520,8 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Fusion Reactor levels");
     expect(text).toContain("Energy output");
     expect(text).toContain("Deuterium use");
-    expect(text).toContain("32 produced");
-    expect(text).toContain("11 Deuterium/h");
-    expect(text).toContain("69 produced");
-    expect(text).toContain("25 Deuterium/h");
+    expect(text).toContain("E 32 +32 D 11 /h +11");
+    expect(text).toContain("E 69 +37 D 25 /h +14");
     expect(text).not.toContain("construction speed");
   });
 
@@ -524,7 +558,8 @@ describe("Infrastructure page display helpers", () => {
 
     expect(text).toContain("Metal Storage levels");
     expect(text).toContain("Storage");
-    expect(text).toContain("20,000 Metal");
+    expect(text).toContain("M 20K");
+    expect(text).toContain("M 40K");
     expect(text).not.toContain("Production");
     expect(text).not.toContain("Energy use");
     expect(text).not.toContain("Energy output");
@@ -866,8 +901,9 @@ describe("Infrastructure page display helpers", () => {
     expect(infrastructureCatalogStatusText({ ...state, buildings }, "shipyard")).toBe("x2");
     expect(modalText).toContain("Shipyard levels");
     expect(modalText).toContain("Effect");
-    expect(modalText).toContain("x2 ship speed (+100% faster)");
-    expect(modalText).toContain("x3 ship speed (+50% faster)");
+    // The gain is a subtle delta next to the multiplier.
+    expect(modalText).toContain("x2 ship speed +100%");
+    expect(modalText).toContain("x3 ship speed +50%");
   });
 
   test("shows Nanite Factory as construction-speed deltas outside compact cards", () => {
@@ -895,8 +931,8 @@ describe("Infrastructure page display helpers", () => {
     expect(infrastructureCatalogStatusText({ ...state, buildings }, "naniteFactory")).toBe("x2");
     expect(modalText).toContain("Nanite Factory levels");
     expect(modalText).toContain("Effect");
-    expect(modalText).toContain("x2 construction speed (+100% faster)");
-    expect(modalText).toContain("x4 construction speed (+100% faster)");
+    expect(modalText).toContain("x2 construction speed +100%");
+    expect(modalText).toContain("x4 construction speed +100%");
     expect(modalText).not.toContain("Level 1Level 2");
   });
 

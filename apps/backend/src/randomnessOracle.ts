@@ -25,6 +25,7 @@ if (!service.snapshot().enabled) {
 service.start();
 
 Bun.serve({
+  development: false,
   port,
   fetch(request) {
     const url = new URL(request.url);

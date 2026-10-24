@@ -64,7 +64,7 @@ library VeydriftCatalog {
         if (defense == Defense.HeavyLaser) return (6_000, 2_000, 0);
         if (defense == Defense.SmallShieldDome) return (10_000, 10_000, 0);
         if (defense == Defense.GaussCannon) return (20_000, 15_000, 2_000);
-        if (defense == Defense.IonCannon) return (2_000, 6_000, 0);
+        if (defense == Defense.IonCannon) return (5_000, 3_000, 0);
         if (defense == Defense.PlasmaTurret) return (50_000, 50_000, 30_000);
         if (defense == Defense.LargeShieldDome) return (50_000, 50_000, 0);
         if (defense == Defense.AntiBallisticMissile) return (8_000, 0, 2_000);
@@ -113,8 +113,14 @@ library VeydriftCatalog {
             // forge-lint: disable-next-line(unsafe-typecast)
             uint32 destroyed = uint32(destroyedDefenses >> (uint256(i) * 32));
             if (destroyed != 0) {
-                uint32 repaired =
-                    destroyed == 1 ? ((seed + i) % 10 < 7 ? 1 : 0) : (destroyed * 7) / 10;
+                uint256 choice;
+                // Seed selection intentionally wraps modulo 2^256; count multiplication does not.
+                unchecked {
+                    choice = seed + i;
+                }
+                uint32 repaired = destroyed == 1
+                    ? (choice % 10 < 7 ? 1 : 0)
+                    : uint32((uint256(destroyed) * 7) / 10);
                 repairedDefenses |= uint256(repaired) << (uint256(i) * 32);
             }
             unchecked {
@@ -157,8 +163,8 @@ library VeydriftCatalog {
         if (ship == Ship.Destroyer) return 2_000;
         if (ship == Ship.Deathstar) return 1_000_000;
         if (ship == Ship.Battlecruiser) return 750;
-        if (ship == Ship.Reaper) return 7_000;
-        if (ship == Ship.Pathfinder) return 12_000;
+        if (ship == Ship.Reaper) return 10_000;
+        if (ship == Ship.Pathfinder) return 10_000;
         if (ship == Ship.Crawler) return 0;
         revert InvalidId();
     }
@@ -188,11 +194,11 @@ library VeydriftCatalog {
         if (ship == Ship.HeavyFighter) return 75;
         if (ship == Ship.Cruiser) return 300;
         if (ship == Ship.Battleship) return 500;
-        if (ship == Ship.Bomber) return 1_000;
+        if (ship == Ship.Bomber) return 700;
         if (ship == Ship.Destroyer) return 1_000;
         if (ship == Ship.Deathstar) return 1;
         if (ship == Ship.Battlecruiser) return 250;
-        if (ship == Ship.Reaper) return 1_000;
+        if (ship == Ship.Reaper) return 1_100;
         if (ship == Ship.Pathfinder) return 300;
         revert InvalidId();
     }

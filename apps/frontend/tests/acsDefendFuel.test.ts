@@ -30,9 +30,11 @@ describe("acs defend holding fuel", () => {
     expect(acsHoldingFuelCost(ships({ battleship: 1 }), 3_600)).toBe(50);
     // Tiny holds round up rather than truncating to zero: 500 * 36 / 36000 = 0.5 => 1.
     expect(acsHoldingFuelCost(ships({ battleship: 1 }), 36)).toBe(1);
-    // deathstar coefficient is 1; small cargo is 50.
+    // Coefficients are the ships' base fuel use: deathstar 1, small cargo 10, bomber 700, reaper 1,100.
     expect(acsHoldingFuelCost(ships({ deathstar: 1 }), 36_000)).toBe(1);
-    expect(acsHoldingFuelCost(ships({ smallCargo: 1 }), 36_000)).toBe(50);
+    expect(acsHoldingFuelCost(ships({ smallCargo: 1 }), 36_000)).toBe(10);
+    expect(acsHoldingFuelCost(ships({ bomber: 1 }), 36_000)).toBe(700);
+    expect(acsHoldingFuelCost(ships({ reaper: 1 }), 36_000)).toBe(1_100);
   });
 
   test("sums coefficients across a mixed fleet", () => {
@@ -63,8 +65,8 @@ describe("acs defend holding fuel", () => {
     expect(acsHoldingFuelRatePerHour(emptyMissionShips())).toBe(0);
     // battleship: 500 tenths/hour => 50 deuterium/hour.
     expect(acsHoldingFuelRatePerHour(ships({ battleship: 1 }))).toBe(50);
-    // smallCargo: 50 tenths/hour => 5 deuterium/hour.
-    expect(acsHoldingFuelRatePerHour(ships({ smallCargo: 1 }))).toBe(5);
+    // smallCargo: 10 tenths/hour => 1 deuterium/hour.
+    expect(acsHoldingFuelRatePerHour(ships({ smallCargo: 1 }))).toBe(1);
     // Mixed fleet sums coefficients: 820 tenths/hour => 82 deuterium/hour.
     expect(acsHoldingFuelRatePerHour(ships({ battleship: 1, cruiser: 1, lightFighter: 1 }))).toBe(82);
   });

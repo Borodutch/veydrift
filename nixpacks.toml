@@ -1,18 +1,74 @@
+# Nixpacks config shared by every Veydrift Easypanel app: they all build from the
+# repo root and only override the install/build/start commands. The layout is
+# chosen for layer caching; docs/deployment.md#nixpacks-build-caching explains
+# the Easypanel/Nixpacks constraints behind it before you change anything here.
+
 [phases.setup]
-nixPkgs = ["nodejs_22", "bun"]
+# Only this phase runs before the ARG/ENV line Easypanel's per-commit GIT_SHA
+# build arg invalidates, so it is the one build step that stays cached.
+# nixPkgs entries are Nix expressions: the last one adds a login-shell profile
+# script (the base image's /root/.profile sources the Nix profile's
+# etc/profile.d/*.sh) that points fontconfig at the Nix fonts for the OG-card
+# renderer (sharp) and sets the NIXPACKS_PATH that the run image below no
+# longer gets from the build-stage ENV (/root/.profile prepends it to PATH, and
+# unset it would leave an empty PATH entry, i.e. the working directory).
+nixPkgs = [
+  "fontconfig",
+  "dejavu_fonts",
+  "(writeTextDir \"etc/profile.d/veydrift-runtime.sh\" \"export NIXPACKS_PATH=/app/node_modules/.bin FONTCONFIG_FILE=${makeFontsConf { fontDirectories = [ dejavu_fonts ]; }}\\n\")",
+]
 nixLibs = ["gcc-unwrapped"]
 
-[phases.install]
-cmds = [
-  "sudo find /etc/apt -type f \\( -name '*.list' -o -name '*.sources' \\) -exec sed -i 's|http://|https://|g' {} + && sudo apt-get update && sudo apt-get install -y --no-install-recommends libstdc++6 fontconfig fonts-dejavu-core",
-  "NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix",
+# Node.js and Bun come from their own nixpkgs pin so they can take security
+# releases without moving the rest of the setup (Node.js Oct 2026 security
+# release: 22.23.4). nixpkgs only has Bun 1.3.13 at this pin, so its bun package
+# is pointed at the official Bun 1.4.4 release (Oct 2026 security fixes); drop
+# the override once nixpkgs has bun >= 1.4.4.
+[phases.node]
+nixPkgs = [
+  "nodejs_22",
+  "(bun.overrideAttrs { version = \"1.4.4\"; src = fetchurl { url = \"https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip\"; hash = \"sha256-v4zL+ysLgBWeD5ptFcVTF63YB3U028YTCj7bUvzLOVw=\"; }; })",
 ]
+nixpkgsArchive = "da6dc0e7b26060f2f71ce3ef7088fb56ee44fa36"
+
+[phases.install]
+# Copy only the manifests, not the whole source tree, so the install step does
+# not add another full source copy. Keep this list equal to the root
+# workspaces (scripts/nixpacks-config.test.mjs checks it).
+onlyIncludeFiles = [
+  "package.json",
+  "bun.lockb",
+  "apps/backend/package.json",
+  "apps/battle-keeper/package.json",
+  "apps/chicken-burn-listener/package.json",
+  "apps/frontend/package.json",
+  "apps/stats/package.json",
+  "packages/battle-oracle/package.json",
+  "packages/contracts/package.json",
+  "packages/universe/package.json",
+]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile"]
 
 [phases.build]
 cmds = ["cd apps/frontend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
 
 [start]
 cmd = "cd apps/frontend && bun run serve"
+# Run in a second stage with no build-arg ARG/ENV lines: service env reaches the
+# container from Easypanel at runtime, so secrets are not baked into the image
+# config, and each COPY below is cached whenever its content is unchanged. Keep
+# the tag equal to the build image of the Easypanel nixpacksVersion (1.34.1).
+# Order: rarely changing layers first, the per-commit source last.
+runImage = "ghcr.io/railwayapp/nixpacks:ubuntu-1741046653"
+onlyIncludeFiles = [
+  "/nix",
+  "/root/.profile",
+  "node_modules",
+  "package.json",
+  "tsconfig.base.json",
+  "packages",
+  "apps",
+]
 
 [variables]
 NODE_ENV = "production"

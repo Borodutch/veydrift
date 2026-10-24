@@ -13,7 +13,12 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-batch-supply-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({
+    // These fixtures render level tables/cargo controls, not animated planets.
+    plugins: [{ name: "level-supply-no-animation-precompute", configResolved(config) {
+      const animations = config.plugins.find(plugin => plugin.name === "veydrift-planet-animations");
+      if (animations) animations.configureServer = undefined;
+    } }], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.LEVEL_SUPPLY_ARTIFACTS;
@@ -62,7 +67,7 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
       for (const kind of ['building', 'moon', 'research', 'binary']) {
         const label = kind === 'research' ? 'Energy Technology' : kind === 'binary' ? 'Rift Stabilizer' : 'Robotics Factory';
         const level = kind === 'binary' ? 1 : 9;
-        const selector = 'button[aria-label="Supply ' + label + ' Level ' + level + '"]';
+        const selector = 'button[aria-label="Supply resources up to Level ' + level + '"]';
         await send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
         await send('Page.navigate', { url: url + '?kind=' + kind });
         const deadline = Date.now() + 20000;
@@ -71,6 +76,22 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
           await new Promise(resolve => setTimeout(resolve, 50));
         }
         if (level === 9) assert.equal(await evaluate('Boolean(document.querySelector(' + JSON.stringify(selector.replace('Level 9', 'Level 8')) + '))'), false);
+        // Compact popup: equal-height single-purpose rows, no horizontal overflow, icon-only Supply on future levels.
+        const layout = await evaluate(`(() => {
+          const rows = Array.from(document.querySelectorAll('[role=row][data-level-status]'));
+          const heights = rows.map(row => row.offsetHeight);
+          const scroller = document.querySelector('[data-level-info-layer] [role=table]').parentElement;
+          const button = document.querySelector(${JSON.stringify(selector)});
+          return { rows: rows.length, minHeight: Math.min(...heights), maxHeight: Math.max(...heights), overflow: scroller.scrollWidth > scroller.clientWidth + 1,
+            buttonText: button.textContent, title: button.title, buttons: document.querySelectorAll('button[aria-label^="Supply resources up to Level"]').length, debug: rows.map(r => [r.dataset.levelStatus, r.offsetHeight, getComputedStyle(r).minHeight, getComputedStyle(r).gridTemplateColumns]).filter((_, i) => i < 3 || i > 6 && i < 10) };
+        })()`);
+        measurements.push({ width, kind, ...layout });
+        assert.equal(layout.overflow, false, kind + ' popup overflows horizontally at ' + width);
+        assert.equal(layout.buttonText, '');
+        assert.equal(layout.title, 'Supply resources up to Level ' + level);
+        if (kind !== 'research') assert.ok(layout.maxHeight - layout.minHeight <= 1, kind + ' rows have uneven heights ' + JSON.stringify(layout));
+        // Robotics Factory 8: levels 9–42. Beyond 42 the summed cost passes the planner's safe limit, so no icon.
+        if (kind === 'building') assert.equal(layout.buttons, 42 - 8);
         await evaluate('document.querySelector(' + JSON.stringify(selector) + ').scrollIntoView({block:"center"}); document.querySelector(' + JSON.stringify(selector) + ').focus()');
         if (kind === 'building' && artifacts) { const shot = await send('Page.captureScreenshot', { format: 'png' }); writeFileSync(join(artifacts, 'level-table-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
         await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' });
@@ -84,7 +105,8 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         const text = await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent`);
         assert.ok(text.includes(label) && text.includes('Level ' + level) && text.includes('1:1:2'));
         assert.ok(text.includes(kind === 'moon' ? 'Moon' : 'Planet'));
-        assert.ok(text.includes('this level only'));
+        assert.ok(text.includes('Level cost:'));
+        assert.equal(await evaluate('document.querySelectorAll("[role=dialog] details").length'), 0);
         assert.equal(await evaluate('document.activeElement.getAttribute("aria-label")'), 'Close supply resources');
         assert.equal(await evaluate('document.documentElement.scrollWidth > innerWidth'), false);
         assert.equal(await evaluate('Array.from(document.querySelectorAll("input")).some(el => el.getBoundingClientRect().right > innerWidth)'), false);
@@ -101,18 +123,22 @@ test("Upgrade rows open the existing Supply planner without launch on desktop/mo
         await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
         await settle();
         assert.equal(await evaluate('document.querySelectorAll("[role=dialog]").length'), 1);
-        assert.equal(await evaluate('document.activeElement.getAttribute("aria-label")'), 'Supply ' + label + ' Level ' + level);
+        assert.equal(await evaluate('document.activeElement.getAttribute("aria-label")'), 'Supply resources up to Level ' + level);
         assert.equal(await evaluate('window.levelFixture.launches()'), 0);
         if (kind === 'building') {
           const later = selector.replace('Level 9', 'Level 10');
-          await evaluate('document.querySelector(' + JSON.stringify(later) + ').click()');
+          await evaluate('window.levelFixture.spend(); document.querySelector(' + JSON.stringify(later) + ').click()');
           await settle();
-          assert.equal(await evaluate('Array.from(document.querySelectorAll("input")).find(el=>el.getAttribute("aria-label")==="metal to send").value'), '102400');
-          assert.ok(await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent.includes("204,800")`));
+          // Cumulative: Level 10 from Level 8 prefills levels 9 + 10 for an empty destination.
+          assert.deepEqual(await evaluate('["metal","crystal","deuterium"].map(r=>Array.from(document.querySelectorAll("input")).find(el=>el.getAttribute("aria-label")===r+" to send").value)'), ['307200', '92160', '153600']);
+          const requirement = await evaluate(`document.querySelector('section[aria-label="Upgrade requirement"]').textContent`);
+          assert.ok(requirement.includes('Levels 9–10') && requirement.includes('Total cost for levels 9–10') && requirement.includes('307,200'), requirement);
+          if (artifacts) { const shot = await send('Page.captureScreenshot', { format: 'png' }); writeFileSync(join(artifacts, 'level-supply-cumulative-' + width + '.png'), Buffer.from(shot.data, 'base64')); }
         }
         console.log('PASS level-to-Supply handoff', kind, width);
       }
     }
+    if (artifacts) writeFileSync(join(artifacts, 'level-popup-layout.json'), JSON.stringify(measurements, null, 2));
     await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);

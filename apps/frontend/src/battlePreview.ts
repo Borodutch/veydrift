@@ -1,5 +1,8 @@
 import { encodeAbiParameters, keccak256, stringToHex, type Hex } from "viem";
 import combatCatalogArtifact from "../../../packages/contracts/combat-preview-catalog.json";
+import { advance, initialize, type Group, type State } from "../../../packages/battle-oracle/oracle";
+import { catalog as refereeCatalog, rapidfire as refereeRapidfire } from "../../../packages/battle-oracle/catalog";
+import { refereeRandom } from "./refereeRandom";
 
 const BPS = 10_000n;
 const BATTLE_MAX_ROUNDS = 6;
@@ -7,8 +10,25 @@ const MAX_RAPIDFIRE_CHAIN = 64;
 const COMBAT_STREAM_DOMAIN = keccak256(stringToHex("veydrift.cohort-combat-random-stream.v1"));
 const PREVIEW_SAMPLE_DOMAIN = keccak256(stringToHex("veydrift.attack-preview-sample.v1"));
 
-export const CONTRACT_BATTLE_SAMPLE_COUNT = 128;
 export const CONTRACT_COMBAT_MODEL_VERSION = 2;
+// Ticket #44: attacks launched while the trusted referee is active use classic per-shot combat rules.
+export const REFEREE_COMBAT_MODEL_VERSION = 3;
+// Host memory guard for one simulated battle (about 25 bytes per unit); not a gameplay cap.
+const REFEREE_FORECAST_MAX_UNITS = 1_000_000;
+
+export function isSupportedCombatModel(version: unknown): version is 2 | 3 {
+  return version === CONTRACT_COMBAT_MODEL_VERSION || version === REFEREE_COMBAT_MODEL_VERSION;
+}
+
+// The backend-verified model for newly launched attacks; workers receive it with each request.
+let activeModel: 2 | 3 = CONTRACT_COMBAT_MODEL_VERSION;
+export function activeCombatModel(): 2 | 3 {
+  return activeModel;
+}
+export function setActiveCombatModel(version: unknown): void {
+  if (!isSupportedCombatModel(version)) throw new Error("This battle preview is out of date. Please refresh.");
+  activeModel = version;
+}
 
 export type CombatTechnology = {
   weapons: number;
@@ -67,7 +87,11 @@ export type BattleParticipantReport = {
 
 export type BattleDefenderReport = BattleParticipantReport & {
   startingDefenses: BattleCompositionRow[];
+  /** Destroyed in battle, before repair. */
   lostDefenses: BattleCompositionRow[];
+  /** Rebuilt after the battle (empty in round reports). */
+  repairedDefenses: BattleCompositionRow[];
+  /** After repair in the final report: start - lost + repaired. */
   survivingDefenses: BattleCompositionRow[];
   counterplay: BattleParticipantReport[];
 };
@@ -93,34 +117,27 @@ export type ContractBattleResult = {
   defenderLosses: CombatResources;
   attackerSurvivors: number;
   defenderSurvivors: number;
+  roundCount: number;
+  /** Debris before reserve limits; the contract may clip it to available reserves. */
+  debris: { metal: number; crystal: number };
+  moonChancePercent: number;
   rapidfireExtraShots: {
     attacker: number;
     defender: number;
   };
 };
 
-export type ContractBattleForecast = {
-  samples: ContractBattleResult[];
-  sampleReport: ContractBattleResult;
-  outcomeCounts: Record<BattleOutcome, number>;
-  probableOutcome: BattleOutcome;
-  attackerLosses: {
-    average: CombatResources;
-    best: CombatResources;
-    worst: CombatResources;
-  };
-  attackerSurvivorRange: {
-    min: number;
-    max: number;
-  };
-};
+/** Contract debris: 30% of destroyed ships' metal and crystal (defenses leave none), and the
+ * moon chance: 1% per full 100,000 debris, at most 20% (VeydriftMoonMath.chanceBps). */
+export function debrisAndMoonChance(attackerLosses: BigResources, defenderLosses: BigResources) {
+  const metal = (attackerLosses.metal + defenderLosses.metal) * 3_000n / 10_000n;
+  const crystal = (attackerLosses.crystal + defenderLosses.crystal) * 3_000n / 10_000n;
+  const percent = (metal + crystal) / 100_000n;
+  return { debris: { metal: safeNumber(metal), crystal: safeNumber(crystal) }, moonChancePercent: Number(percent > 20n ? 20n : percent) };
+}
 
-export type ContractBattleReportSeed = Pick<ContractBattleResult, "sampleId" | "randomWord">;
-
-export type ContractBattleForecastSummary = Omit<ContractBattleForecast, "samples" | "sampleReport"> & {
-  sampleCount: number;
-  sampleReport: ContractBattleReportSeed;
-};
+/** `fast` samples come from the simulation draw source, not the referee's SHA-256 stream. */
+export type ContractBattleReportSeed = Pick<ContractBattleResult, "sampleId" | "randomWord"> & { fast?: boolean };
 
 type CatalogUnit = (typeof combatCatalogArtifact.ships)[number];
 type MutableFleet = Omit<BattleFleetParticipant, "ships" | "technology"> & {
@@ -183,65 +200,12 @@ export function deterministicBattleSampleWord(index: number): Hex {
   return keccak256(encoded);
 }
 
-export function forecastContractBattle(
-  input: ContractBattleInput,
-  sampleCount = CONTRACT_BATTLE_SAMPLE_COUNT,
-  includeRoundReports = true,
-): ContractBattleForecast {
-  const count = Math.max(1, Math.trunc(sampleCount));
-  const samples = Array.from({ length: count }, (_, index) =>
-    runContractBattle(input, deterministicBattleSampleWord(index), index + 1, includeRoundReports),
-  );
-  const outcomeCounts: Record<BattleOutcome, number> = { win: 0, draw: 0, defeat: 0 };
-  for (const sample of samples) outcomeCounts[sample.outcome] += 1;
-  const probableOutcome = (["win", "draw", "defeat"] as const).reduce((best, outcome) =>
-    outcomeCounts[outcome] > outcomeCounts[best] ? outcome : best,
-  );
-  const losses = samples.map((sample) => sample.attackerLosses);
-  const firstLoss = losses[0] ?? zeroResources();
-  const sum = losses.reduce(addResources, zeroResources());
-  const survivorCounts = samples.map((sample) => sample.attackerSurvivors);
-
-  return {
-    samples,
-    sampleReport: selectIllustrativeSample(samples, probableOutcome),
-    outcomeCounts,
-    probableOutcome,
-    attackerLosses: {
-      average: {
-        metal: Math.round(sum.metal / samples.length),
-        crystal: Math.round(sum.crystal / samples.length),
-        deuterium: Math.round(sum.deuterium / samples.length),
-      },
-      best: losses.reduce((best, value) => resourceValue(value) < resourceValue(best) ? value : best, firstLoss),
-      worst: losses.reduce((worst, value) => resourceValue(value) > resourceValue(worst) ? value : worst, firstLoss),
-    },
-    attackerSurvivorRange: {
-      min: Math.min(...survivorCounts),
-      max: Math.max(...survivorCounts),
-    },
-  };
-}
-
-export function summarizeContractBattleForecast(
-  forecast: ContractBattleForecast,
-): ContractBattleForecastSummary {
-  const { samples: _samples, sampleReport, ...summary } = forecast;
-  return {
-    ...summary,
-    sampleCount: forecast.samples.length,
-    sampleReport: {
-      sampleId: sampleReport.sampleId,
-      randomWord: sampleReport.randomWord,
-    },
-  };
-}
-
 export function runContractBattle(
   input: ContractBattleInput,
   randomWord: Hex,
   sampleId = 1,
   includeRoundReports = true,
+  fast = false,
 ): ContractBattleResult {
   const battle = mutableBattle(input);
   const initial = cloneBattle(battle);
@@ -252,14 +216,18 @@ export function runContractBattle(
   let attackerRapidfireExtraShots = 0n;
   let defenderRapidfireExtraShots = 0n;
   const destroyedDefenses = Array.from({ length: 8 }, () => 0);
+  const refereeRounds = activeModel === REFEREE_COMBAT_MODEL_VERSION ? refereeRoundLosses(battle, randomWord, fast) : null;
+  let roundCount = 0;
 
   for (let round = 1; round <= BATTLE_MAX_ROUNDS; round += 1) {
     const snapshot = cloneBattle(battle);
     const attackerStartingUnits = attackerUnitTotal(snapshot.attackers);
     const defenderStartingUnits = defenderUnitTotal(snapshot.defender);
     if (attackerStartingUnits === 0 || defenderStartingUnits === 0) break;
+    if (refereeRounds && !refereeRounds[round - 1]) break;
 
-    const losses = battleRoundLosses(snapshot, seed, round);
+    const losses = refereeRounds ? refereeRounds[round - 1]! : battleRoundLosses(snapshot, seed, round);
+    roundCount = round;
     applyRoundLosses(battle, losses);
     attackerLosses = addBigResources(attackerLosses, losses.attackerResources);
     defenderLosses = addBigResources(defenderLosses, losses.defenderResources);
@@ -279,8 +247,9 @@ export function runContractBattle(
       ? "defeat"
       : "draw";
 
-  repairDefenses(battle.defender.defenses, destroyedDefenses, seed);
-  if (outcome === "win") {
+  const repairedDefenses = repairDefenses(battle.defender.defenses, destroyedDefenses, seed);
+  // Staged model 2 only: referee battles (model 3) lose exactly the units the combat destroyed.
+  if (outcome === "win" && !refereeRounds) {
     const solarSatellites = battle.defender.ships[9] ?? 0;
     if (solarSatellites > 0) {
       defenderLosses.crystal += BigInt(solarSatellites) * 2_000n;
@@ -309,16 +278,86 @@ export function runContractBattle(
       initial.defender.counterplay.map((participant, index) =>
         countDifferences(participant.ships, battle.defender.counterplay[index]?.ships ?? participant.ships),
       ),
+      repairedDefenses,
     ),
     attackerLosses: resourcesToNumber(attackerLosses),
     defenderLosses: resourcesToNumber(defenderLosses),
+    ...debrisAndMoonChance(attackerLosses, defenderLosses),
     attackerSurvivors,
     defenderSurvivors: defenderUnitTotal(battle.defender),
+    roundCount,
     rapidfireExtraShots: {
       attacker: safeNumber(attackerRapidfireExtraShots),
       defender: safeNumber(defenderRapidfireExtraShots),
     },
   };
+}
+
+type RefereeMember = { side: 0 | 1; group: number; unit: number; count: number };
+
+/** One oracle replay of the whole battle (the backend referee's exact rules), split into the
+ * per-round losses the shared report builder consumes. The engine tracks every unit per fleet, so
+ * per-fleet losses are exact, as in the referee's final result. */
+function refereeRoundLosses(initial: MutableBattle, randomWord: Hex, fast: boolean): RoundLosses[] {
+  const members = new Map<string, RefereeMember>();
+  const groups: Group[] = [];
+  const add = (side: 0 | 1, group: number, source: number, unit: number, count: number, technology: CombatTechnology) => {
+    if (count <= 0) return;
+    members.set(`${source}:${unit}`, { side, group, unit, count });
+    // Synthetic owners keep each preview fleet independent of real addresses.
+    groups.push({ side, owner: `0x${source.toString(16).padStart(40, "0")}`, source: String(source), type: unit, count, technology });
+  };
+  initial.attackers.forEach((fleet, group) => {
+    for (let unit = 0; unit <= 14; unit++) if (unit !== 9) add(0, group, group + 1, unit, fleet.ships[unit] ?? 0, fleet.technology);
+  });
+  for (let unit = 0; unit < 16; unit++) add(1, -1, 0, unit, initial.defender.ships[unit] ?? 0, initial.defender.technology);
+  for (let unit = 0; unit < 8; unit++) add(1, -1, 0, unit + 16, initial.defender.defenses[unit] ?? 0, initial.defender.technology);
+  initial.defender.counterplay.forEach((fleet, group) => {
+    const source = initial.attackers.length + 1 + group;
+    for (let unit = 0; unit <= 14; unit++) if (unit !== 9) add(1, group, source, unit, fleet.ships[unit] ?? 0, fleet.technology);
+  });
+  let state: State;
+  try {
+    state = initialize({ seed: randomWord, catalog: refereeCatalog, rapidfire: refereeRapidfire, groups }, REFEREE_FORECAST_MAX_UNITS);
+  } catch {
+    throw new Error("This battle is too large to estimate here.");
+  }
+  // Either way the oracle's draw source is replaced: refereeRandom is its exact stream, only faster.
+  state.random = fast ? fastRandom(randomWord) : refereeRandom(randomWord);
+  while (!state.done) advance(state, 100_000);
+
+  // The engine tracks every unit per fleet, so each round's per-fleet losses are exact.
+  let before = state.groups.map((group) => group.count);
+  return state.rounds.map((round) => {
+    const lost = new Map<string, number>();
+    state.groups.forEach((group, index) => lost.set(`${group.source}:${group.type}`, (before[index] ?? 0) - (round.survivors[index] ?? 0)));
+    const losses: RoundLosses = {
+      attackers: initial.attackers.map(() => zeroShipCounts()),
+      defenderShips: zeroShipCounts(), defenderDefenses: zeroDefenseCounts(),
+      counterplay: initial.defender.counterplay.map(() => zeroShipCounts()),
+      attackerResources: zeroBigResources(), defenderResources: zeroBigResources(),
+      attackerRapidfireExtraShots: 0n, defenderRapidfireExtraShots: 0n,
+    };
+    const startingUnits = [0n, 0n];
+    state.groups.forEach((group, index) => { startingUnits[group.side]! += BigInt(before[index] ?? 0); });
+    losses.attackerRapidfireExtraShots = round.shots[0] - startingUnits[0]!;
+    losses.defenderRapidfireExtraShots = round.shots[1] - startingUnits[1]!;
+    for (const [key, member] of members) {
+      const count = lost.get(key) ?? 0;
+      if (count <= 0) continue;
+      if (member.side === 0) {
+        addShipLoss(losses.attackers[member.group]!, initial.attackers[member.group]!.ships, member.unit, count, losses.attackerResources);
+      } else if (member.group >= 0) {
+        addShipLoss(losses.counterplay[member.group]!, initial.defender.counterplay[member.group]!.ships, member.unit, count, losses.defenderResources);
+      } else if (member.unit >= 16) {
+        addUnitLoss(losses.defenderDefenses, initial.defender.defenses, member.unit - 16, count);
+      } else {
+        addShipLoss(losses.defenderShips, initial.defender.ships, member.unit, count, losses.defenderResources);
+      }
+    }
+    before = round.survivors;
+    return losses;
+  });
 }
 
 function battleRoundLosses(snapshot: MutableBattle, seed: bigint, round: number): RoundLosses {
@@ -633,6 +672,7 @@ function defenderReport(
   shipLosses: readonly number[],
   defenseLosses: readonly number[],
   counterplayLosses: readonly number[][],
+  repairedDefenses: readonly number[] = [],
 ): BattleDefenderReport {
   return {
     id: start.id,
@@ -644,6 +684,7 @@ function defenderReport(
     survivingShips: shipRows(after.ships),
     startingDefenses: defenseRows(start.defenses),
     lostDefenses: defenseRows(defenseLosses),
+    repairedDefenses: defenseRows(repairedDefenses),
     survivingDefenses: defenseRows(after.defenses),
     counterplay: start.counterplay.map((participant, index) =>
       participantReport(
@@ -698,13 +739,18 @@ function cloneBattle(battle: MutableBattle): MutableBattle {
   };
 }
 
-function repairDefenses(defenses: number[], destroyed: readonly number[], seed: bigint) {
+/** VeydriftCatalog.repairedDefenseCounts: floor(70%) of each destroyed defense type is rebuilt; a single
+ * destroyed unit (always the case for shield domes) comes back on a 70% seed roll. Returns the counts. */
+function repairDefenses(defenses: number[], destroyed: readonly number[], seed: bigint): number[] {
+  const repairedCounts = zeroDefenseCounts();
   for (let id = 0; id < 8; id += 1) {
     const count = destroyed[id] ?? 0;
     if (count === 0) continue;
     const repaired = count > 1 ? Math.floor((count * 7) / 10) : (seed + BigInt(id)) % 10n < 7n ? 1 : 0;
     defenses[id] = (defenses[id] ?? 0) + repaired;
+    repairedCounts[id] = repaired;
   }
+  return repairedCounts;
 }
 
 function attackerUnitTotal(attackers: readonly MutableFleet[]): number {
@@ -839,10 +885,131 @@ function safeNumber(value: bigint): number {
   return Number.isSafeInteger(number) ? number : Number.MAX_SAFE_INTEGER;
 }
 
-function resourceValue(resources: CombatResources): number {
-  return resources.metal + resources.crystal + resources.deuterium;
+/** Seeded sfc32 draws uniform over [0, bound): the same rules as the referee, ~30x faster than its
+ * SHA-256 stream, so simulations get many runs. A fast run is not the referee's replay of `word`. */
+export function fastRandom(word: Hex): (bound: number) => number {
+  const hex = word.slice(2).padStart(64, "0");
+  let a = parseInt(hex.slice(0, 8), 16) | 0, b = parseInt(hex.slice(8, 16), 16) | 0;
+  let c = parseInt(hex.slice(16, 24), 16) | 0, d = parseInt(hex.slice(24, 32), 16) | 0;
+  const next = () => {
+    const t = (((a + b) | 0) + d) | 0;
+    d = (d + 1) | 0;
+    a = b ^ (b >>> 9);
+    b = (c + (c << 3)) | 0;
+    c = (c << 21) | (c >>> 11);
+    c = (c + t) | 0;
+    return t >>> 0;
+  };
+  for (let i = 0; i < 12; i++) next();
+  return (bound) => Math.floor((next() / 4_294_967_296) * bound);
 }
 
-function selectIllustrativeSample(samples: readonly ContractBattleResult[], probableOutcome: BattleOutcome): ContractBattleResult {
-  return samples.find((sample) => sample.outcome === probableOutcome) ?? samples[0]!;
+/** Totals over `runs` simulated battles; divide by `runs` for averages. Survivors are per unit id. */
+export type BattleStats = {
+  runs: number;
+  /** Every run used the referee's exact draw stream (false: the fast simulation stream). */
+  exact: boolean;
+  /** Stopped at the hard time limit before reaching the minimum number of runs. */
+  timeLimited: boolean;
+  outcomes: Record<BattleOutcome, number>;
+  rounds: number;
+  attackerLosses: CombatResources;
+  /** Destroyed ships plus defenses that were not rebuilt. */
+  defenderLosses: CombatResources;
+  /** Destroyed ships only: defenses never leave debris, repaired or not (_battleDebris). */
+  debris: { metal: number; crystal: number };
+  moonChance: number;
+  attackers: number[][];
+  defenderShips: number[];
+  /** Defenses left after repair; per run, start - destroyed + repaired. */
+  defenderDefenses: number[];
+  defenderDefensesDestroyed: number[];
+  defenderDefensesRepaired: number[];
+  counterplay: number[][];
+  samples: Partial<Record<BattleOutcome, ContractBattleReportSeed>>;
+};
+
+export function emptyBattleStats(input: ContractBattleInput, fast: boolean): BattleStats {
+  return {
+    runs: 0, exact: !fast, timeLimited: false, outcomes: { win: 0, draw: 0, defeat: 0 }, rounds: 0,
+    attackerLosses: zeroResources(), defenderLosses: zeroResources(), debris: { metal: 0, crystal: 0 }, moonChance: 0,
+    attackers: input.attackers.map(zeroShipCounts), defenderShips: zeroShipCounts(), defenderDefenses: zeroDefenseCounts(),
+    defenderDefensesDestroyed: zeroDefenseCounts(), defenderDefensesRepaired: zeroDefenseCounts(),
+    counterplay: input.defender.counterplay.map(zeroShipCounts), samples: {},
+  };
+}
+
+/** `run` must come from the draw stream `stats` was created for. */
+export function addBattleRun(stats: BattleStats, run: ContractBattleResult): void {
+  const add = (totals: number[], rows: readonly BattleCompositionRow[]) => { for (const row of rows) totals[row.id] = (totals[row.id] ?? 0) + row.count; };
+  stats.runs += 1;
+  stats.outcomes[run.outcome] += 1;
+  stats.rounds += run.roundCount;
+  stats.attackerLosses = addResources(stats.attackerLosses, run.attackerLosses);
+  const defenses = run.defender.startingDefenses.reduce((total, row) => {
+    const lost = row.count - (run.defender.survivingDefenses.find((survivor) => survivor.id === row.id)?.count ?? 0);
+    const unit = defenseStats(row.id);
+    return lost > 0 ? addResources(total, { metal: unit.metal * lost, crystal: unit.crystal * lost, deuterium: unit.deuterium * lost }) : total;
+  }, zeroResources());
+  stats.defenderLosses = addResources(stats.defenderLosses, addResources(run.defenderLosses, defenses));
+  stats.debris.metal += run.debris.metal;
+  stats.debris.crystal += run.debris.crystal;
+  stats.moonChance += run.moonChancePercent;
+  run.attackers.forEach((fleet, index) => add(stats.attackers[index]!, fleet.survivingShips));
+  add(stats.defenderShips, run.defender.survivingShips);
+  add(stats.defenderDefenses, run.defender.survivingDefenses);
+  add(stats.defenderDefensesDestroyed, run.defender.lostDefenses);
+  add(stats.defenderDefensesRepaired, run.defender.repairedDefenses);
+  run.defender.counterplay.forEach((fleet, index) => add(stats.counterplay[index]!, fleet.survivingShips));
+  stats.samples[run.outcome] ??= { sampleId: run.sampleId, randomWord: run.randomWord, fast: !stats.exact };
+}
+
+/** The most frequent outcome, ties broken in attacker-win, draw, defeat order. */
+export function likeliestOutcome(stats: Pick<BattleStats, "outcomes">): BattleOutcome {
+  return (["win", "draw", "defeat"] as const).reduce((best, outcome) => stats.outcomes[outcome] > stats.outcomes[best] ? outcome : best);
+}
+
+/** Identifies one preview input under the active combat model (report and simulation keys). */
+export function battlePreviewInputKey(input: ContractBattleInput): string {
+  return JSON.stringify({ model: activeModel, input });
+}
+
+/** `fast`: the seeded sfc32 stream instead of the referee's exact SHA-256 draws (same rules). */
+export type BattleSimulationLimits = { runs: number; minRuns: number; budgetMs: number; maxMs: number; fast: boolean };
+
+/** Runs fixed seeds in order, so the first N runs are identical everywhere; only the run count can
+ * differ. Stops after `runs`, after `budgetMs` once `minRuns` are done, and after `maxMs` regardless,
+ * so huge battles never hold a (mobile) CPU for minutes just to reach `minRuns` (`timeLimited`). */
+export function runBattleSimulation(
+  input: ContractBattleInput,
+  limits: BattleSimulationLimits,
+  onProgress: (stats: BattleStats) => void = () => undefined,
+  now: () => number = () => performance.now(),
+): BattleStats {
+  const stats = emptyBattleStats(input, limits.fast);
+  const started = now();
+  let posted = started;
+  for (let index = 0; index < limits.runs; index++) {
+    addBattleRun(stats, runContractBattle(input, deterministicBattleSampleWord(index), index + 1, false, limits.fast));
+    const at = now(), elapsed = at - started;
+    if (elapsed > limits.maxMs && stats.runs < limits.runs) {
+      stats.timeLimited = stats.runs < limits.minRuns;
+      break;
+    }
+    if (stats.runs >= limits.minRuns && elapsed > limits.budgetMs) break;
+    if (at - posted > 200) {
+      onProgress(stats);
+      posted = at;
+    }
+  }
+  return stats;
+}
+
+/** Synchronous `runs` fast simulations (tests and tiny inputs); UIs use battleSimulation.worker. */
+export function simulateBattleStats(input: ContractBattleInput, runs: number): BattleStats {
+  const stats = emptyBattleStats(input, true);
+  for (let index = 0; index < runs; index++) {
+    addBattleRun(stats, runContractBattle(input, deterministicBattleSampleWord(index), index + 1, false, true));
+  }
+  return stats;
 }

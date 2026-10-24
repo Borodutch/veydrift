@@ -1,12 +1,12 @@
 import preact from "@preact/preset-vite";
-import { prepareAnimationVariants } from "./scripts/animation-variants.mjs";
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mediaFileForPathname, syncMedia } from "./scripts/media.mjs";
+import { cpSync, mkdirSync, openAsBlob, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream } from "node:stream/web";
 import { defineConfig, type Plugin, type ResolvedConfig, type ViteDevServer } from "vite";
-import { hiddenWhitepaperPath, planetAnimationResponse } from "./scripts/serve.mjs";
+import { hiddenWhitepaperPath, loopAnimationResponse, planetAnimationResponse, rangeResponseFor } from "./scripts/serve.mjs";
 import {
   assertAccountAssociationDomain,
   buildMiniAppEmbed,
@@ -121,12 +121,27 @@ function hideWhitepaper(): Plugin {
   };
 }
 
+// Pinned media is not in public/: sync it into the media root and serve it
+// (animation sizes, byte-ranged loops and the trailer) like the production server.
+async function mediaResponse(url: URL, range: string | undefined) {
+  const loop = await loopAnimationResponse(url, range);
+  if (loop) return loop;
+  const animation = await planetAnimationResponse(url);
+  if (animation) return animation;
+  let pathname = url.pathname;
+  try { pathname = decodeURIComponent(pathname); } catch { return null; }
+  const path = mediaFileForPathname(pathname);
+  if (!path) return null;
+  const file = typeof Bun === "undefined" ? await openAsBlob(path) : Bun.file(path);
+  return rangeResponseFor(file, pathname, range);
+}
+
 function planetAnimations(): Plugin {
   const configureServer = async (server: Pick<ViteDevServer, "middlewares">) => {
-    await prepareAnimationVariants();
+    await syncMedia();
     server.middlewares.use(async (request, response, next) => {
       try {
-        const result = await planetAnimationResponse(new URL(request.url ?? "/", "http://localhost"));
+        const result = await mediaResponse(new URL(request.url ?? "/", "http://localhost"), request.headers.range);
         if (!result) return next();
         response.statusCode = result.status;
         result.headers.forEach((value, name) => response.setHeader(name, value));
@@ -144,7 +159,6 @@ function planetAnimations(): Plugin {
   };
   return {
     name: "veydrift-planet-animations",
-    async buildStart() { await prepareAnimationVariants(); },
     configureServer, configurePreviewServer: configureServer,
   };
 }

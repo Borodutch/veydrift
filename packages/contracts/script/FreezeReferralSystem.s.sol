@@ -10,14 +10,21 @@ import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 ///
 /// Required env:
 ///   PRIVATE_KEY                   source referral owner
+///   UPGRADE_DRY_RUN_OWNER         optional PUBLIC source owner for a signer-free rehearsal; when
+///                                 set, PRIVATE_KEY is never read. Do not use --broadcast.
 ///   GAME_PROXY_ADDRESS            paused Veydrift Game proxy
 ///   SOURCE_REFERRAL_SYSTEM_ADDRESS current referral contract
 contract FreezeReferralSystem is Script {
     bytes32 private constant GAME_PAUSED_SLOT = bytes32(uint256(52));
 
     function run() external {
-        uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address broadcaster = vm.addr(privateKey);
+        address rehearsalOwner = vm.envOr("UPGRADE_DRY_RUN_OWNER", address(0));
+        uint256 privateKey;
+        address broadcaster = rehearsalOwner;
+        if (rehearsalOwner == address(0)) {
+            privateKey = vm.envUint("PRIVATE_KEY");
+            broadcaster = vm.addr(privateKey);
+        }
         address gameProxy = vm.envAddress("GAME_PROXY_ADDRESS");
         VeydriftReferralSystem source =
             VeydriftReferralSystem(vm.envAddress("SOURCE_REFERRAL_SYSTEM_ADDRESS"));
@@ -26,7 +33,8 @@ contract FreezeReferralSystem is Script {
         require(source.owner() == broadcaster, "BROADCASTER_NOT_REFERRAL_OWNER");
         require(source.game() == gameProxy, "SOURCE_GAME_MISMATCH");
 
-        vm.startBroadcast(privateKey);
+        if (rehearsalOwner != address(0)) vm.startBroadcast(rehearsalOwner);
+        else vm.startBroadcast(privateKey);
         source.setGame(address(0));
         vm.stopBroadcast();
 

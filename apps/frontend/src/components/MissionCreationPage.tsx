@@ -3,23 +3,21 @@ import { battleForecastUnavailableNotice } from "../playerNotice";
 import { useVerifiedCombatModel } from "../combatModel";
 import { playerNotice } from "../playerNotice";
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useMemo, useState } from "preact/hooks";
 import {
-  CONTRACT_COMBAT_MODEL_VERSION,
+  activeCombatModel,
   contractCombatPower,
-  forecastContractBattle,
-  summarizeContractBattleForecast,
-  type BattleOutcome,
-  type CombatResources,
-  type ContractBattleForecastSummary,
+  likeliestOutcome,
+  runContractBattle,
+  simulateBattleStats,
+  type BattleStats,
   type ContractBattleInput,
   type ContractBattleReportSeed,
   type ContractBattleResult,
 } from "../battlePreview";
-import {
-  ATTACK_BATTLE_PREVIEW_TIMEOUT_MS,
-  battlePreviewInputKey,
-} from "../battlePreviewScheduler";
+import { FAST_SIMULATION, useBattleSimulation, type BattleSimulation } from "../battleSimulation";
+import { BattleResults, outcomePercents } from "./BattleResults";
+import { CompactFactRow, formatCompactResources, SimulatedBattleReportControl } from "./SimulatedBattleReport";
 import { planetArtTypeFromArchetypeOrCoords } from "../data/mockUniverse";
 import { formatDuration } from "../durationFormat";
 import {
@@ -52,12 +50,12 @@ import {
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import { getSizedImageSrc } from "../utils/imageSizes";
-import { missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
+import { fleetLaunchRequirementBlocker, missionInventory, shortAddress, type ChainShipyardState } from "../walletFlow";
 import { ActionReasonNote } from "./ActionReasonNote";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
-import { Skeleton, SkeletonRegion } from "./Skeleton";
 import { emptyMissionCargoDraft, normalizeMissionCargoDraft, resourceDraftNumber, type MissionCargoDraft } from "./missionCargoModel";
 import { MissionRouteCell, type MissionEndpoint } from "./missionRoute";
+import { AssetImage } from "./OptimizedImage";
 export { emptyMissionCargoDraft, normalizeMissionCargoDraft, type MissionCargoDraft } from "./missionCargoModel";
 
 export type CombatTechLevels = {
@@ -169,6 +167,7 @@ export type BattleForecastState =
       reportInput?: ContractBattleInput;
       reportSeed?: ContractBattleReportSeed;
       sampleReport?: ContractBattleResult | null;
+      simulation?: undefined;
     })
   | ({
       kind: "win" | "defeat" | "draw";
@@ -185,7 +184,11 @@ export type BattleForecastState =
       reportInput?: ContractBattleInput;
       reportSeed?: ContractBattleReportSeed;
       sampleReport?: ContractBattleResult;
+      simulation?: ForecastSimulation;
     });
+
+/** The simulated battle behind a forecast; `running` while newer runs are still arriving. */
+export type ForecastSimulation = { input: ContractBattleInput; stats: BattleStats; running: boolean };
 
 export type BattleForecastLossRange = {
   average: MissionResourceSnapshot;
@@ -197,10 +200,6 @@ export type BattleForecastRandomness = {
   outcomeRange: Array<"win" | "defeat" | "draw">;
   sampleCount: number;
   outcomeCounts: Record<"win" | "defeat" | "draw", number>;
-  attackerSurvivorRange: {
-    min: number;
-    max: number;
-  };
 };
 
 export type JoinAttackForecastParticipant = {
@@ -542,15 +541,9 @@ export function MissionCreationPage({
   const effectiveTargetIsMoon = targetIsMoon;
   const originInventory = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const effectiveShipyardState = useMemo(() => originInventory && missionInventory(originInventory), [originInventory]);
-  // Derive before rendering/submission, then persist reductions so a later return
-  // cannot silently resurrect a quantity the player no longer sees selected.
-  const ships = useMemo(() => reconcileMissionShips(shipDraft, effectiveShipyardState), [shipDraft, effectiveShipyardState]);
-  const [inventoryAdjusted, setInventoryAdjusted] = useState(false);
-  useLayoutEffect(() => {
-    if (ships === shipDraft) return;
-    setShips(ships);
-    setInventoryAdjusted(true);
-  }, [ships, shipDraft]);
+  // A refresh changes availability, never the user's requested fleet. The
+  // stale-quantity blocker requires an explicit edit before a smaller launch.
+  const ships = shipDraft;
   const distance = originCoords
     ? action.mode === "mission"
       ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
@@ -584,7 +577,7 @@ export function MissionCreationPage({
   const selectedMissileTarget = missileTargetOptions.find((defense) => defense.id === primaryTargetId) ?? missileTargetOptions[0];
   const selectedMissileTargetCount = target?.publicState?.defenses?.find((defense) => defense.id === primaryTargetId)?.count ?? 0;
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
-  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
+  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState, ships), [action, effectiveShipyardState, ships]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeMissionCargoDraft(cargo) : undefined;
@@ -752,7 +745,11 @@ export function MissionCreationPage({
     quantity,
     resources: effectiveResources,
     selectedShipCount,
-    staleShipQuantityBlocker,
+    staleShipQuantityBlocker: staleShipQuantityBlocker ?? (action.mode === "mission" ? fleetLaunchRequirementBlocker(
+      effectiveShipyardState?.fleetLaunchConstraints,
+      missionShipOptions.map(row => ({ id: row.id, count: ships[row.key] ?? 0 })),
+      { metal: Number(normalizedCargo?.metal ?? 0), crystal: Number(normalizedCargo?.crystal ?? 0), deuterium: Number(normalizedCargo?.deuterium ?? 0) + effectiveFuelCost },
+    ) : undefined),
     submitBlocker: moonAttackNeedsUpgrade
       ? "Moon attacks are temporarily unavailable. Refresh shortly before launching."
       : effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
@@ -848,7 +845,6 @@ export function MissionCreationPage({
         {timingRows.length > 0 ? <MissionTimingGrid rows={timingRows} /> : null}
       </section>
 
-      {inventoryAdjusted ? <p role="status" className="text-sm text-amber-200">Fleet inventory changed. Unavailable ship quantities were reduced; review your fleet and cargo before confirming again.</p> : null}
       <div className="grid gap-3">
         <section className="grid gap-3">
           {bodySelectionVisibility.sectionVisible ? (
@@ -983,6 +979,7 @@ export function MissionCreationPage({
                   cargo={cargo}
                   cargoCapacity={cargoCapacity}
                   maxCargoResources={maxCargoResources}
+                  unavailable={effectiveShipyardState?.fleetLaunchAvailable === false}
                   onCargoChange={setCargo}
                 />
               </MissionFormSection>
@@ -1127,52 +1124,33 @@ export function MissionCreationPage({
   );
 }
 
-const OUTCOME_PREVIEW_SAMPLE_COUNT = 16;
-const OUTCOME_PREVIEW_CACHE_LIMIT = 64;
-let outcomePreviewCache = new Map<string, ContractBattleForecastSummary>();
-
 export function useDeferredPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
 ): BattleForecastState {
   const verified = useVerifiedCombatModel();
-  return resolveVerifiedPublicTargetBattleForecast(prepared, verified);
+  const simulation = useBattleSimulation(prepared.status === "simulate" && verified ? prepared.input : null, activeCombatModel(), FAST_SIMULATION);
+  return resolveVerifiedPublicTargetBattleForecast(prepared, verified, simulation);
 }
 
+/** Simulations run in a worker (useBattleSimulation); until results arrive the forecast is pending.
+ * While newer runs are computing, the previous result stays visible and is marked running. */
 export function resolveVerifiedPublicTargetBattleForecast(
   prepared: PreparedPublicTargetBattleForecast,
   verified: boolean,
+  simulation: BattleSimulation = { status: "idle" },
 ): BattleForecastState {
   if (prepared.status === "complete") return prepared.forecast;
   if (!verified) {
-    outcomePreviewCache = new Map();
     return {
-      ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false,
+      ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false, simulation: undefined,
       detail: "Battle estimates are temporarily unavailable. Try again shortly.",
     };
   }
-  const previewKey = battlePreviewInputKey(prepared.input);
-  try {
-    let simulation = outcomePreviewCache.get(previewKey);
-    if (!simulation) {
-      simulation = summarizeContractBattleForecast(
-        forecastContractBattle(prepared.input, OUTCOME_PREVIEW_SAMPLE_COUNT, false),
-      );
-      outcomePreviewCache.set(previewKey, simulation);
-      if (outcomePreviewCache.size > OUTCOME_PREVIEW_CACHE_LIMIT) {
-        const oldestKey = outcomePreviewCache.keys().next().value;
-        if (oldestKey !== undefined) outcomePreviewCache.delete(oldestKey);
-      }
-    }
-    return resolvePreparedPublicTargetBattleForecast(prepared, simulation);
-  } catch (error) {
-    return {
-      ...prepared.pending,
-      detail: `Outcome preview unavailable: ${
-        error instanceof Error ? error.message : "Battle simulation failed."
-      }`,
-      loading: false,
-    };
+  if (simulation.status === "error") {
+    return { ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false, simulation: undefined, detail: `Outcome preview unavailable: ${simulation.error}` };
   }
+  if (simulation.status === "idle" || !simulation.stats) return prepared.pending;
+  return resolvePreparedPublicTargetBattleForecast(prepared, simulation.stats, simulation.status === "running", simulation.input);
 }
 
 export function BodySelectionRow({
@@ -1359,6 +1337,7 @@ export function missionCargoMaxForResource(
 }
 
 export function MissionCargoPicker({
+  unavailable,
   cargo,
   cargoCapacity,
   maxCargoResources,
@@ -1367,6 +1346,7 @@ export function MissionCargoPicker({
   cargo: MissionCargoDraft;
   cargoCapacity: number;
   maxCargoResources: MissionResourceSnapshot;
+  unavailable?: boolean;
   onCargoChange: (updater: (current: MissionCargoDraft) => MissionCargoDraft) => void;
 }) {
   const fields: Array<{ key: ResourceKey; label: string }> = [
@@ -1386,6 +1366,7 @@ export function MissionCargoPicker({
               label={label}
               max={maxCargoResources[key]}
               maxAction={{
+                disabled: unavailable,
                 value: maxValue,
                 onSelect: () => onCargoChange((current) => ({
                   ...current,
@@ -1664,20 +1645,6 @@ function cargoResourceOverdraft(
   return `Cargo exceeds available resources: ${missing.join(", ")}.`;
 }
 
-/** Reconcile only player quantities; inventory stays owned by BackendDataStore. */
-export function reconcileMissionShips(ships: MissionShips, inventory: MissionShipInventorySnapshot | null): MissionShips {
-  if (!inventory) return ships;
-  let next = ships;
-  for (const ship of missionShipOptions) {
-    const available = Math.max(0, Math.trunc(inventory.ships.find(row => row.id === ship.id)?.count ?? 0));
-    const count = Math.min(Math.max(0, Math.trunc(ships[ship.key] ?? 0)), available);
-    if (count === ships[ship.key]) continue;
-    if (next === ships) next = { ...ships };
-    next[ship.key] = count;
-  }
-  return next;
-}
-
 export function staleSelectedShipQuantityBlocker(
   action: EnabledGalaxyAction,
   ships: MissionShips,
@@ -1791,10 +1758,10 @@ export function initialMissionShips(
   return emptyMissionShips();
 }
 
-function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null): ShipOption[] {
+function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null, selected?: MissionShips): ShipOption[] {
   if (action.mode === "missile") return [];
   const allowed = allowedShipKeysForAction(action);
-  return missionShipOptions.filter((ship) => allowed.has(ship.key) && (shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0);
+  return missionShipOptions.filter((ship) => allowed.has(ship.key) && ((shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0 || (selected?.[ship.key] ?? 0) > 0));
 }
 
 export function stationedDefenderAttackWarningRows(
@@ -2144,58 +2111,53 @@ export function preparePublicTargetBattleForecast(
   // an unnecessary worker request during the brief zero-selection state while
   // the user is composing a fleet.
   if (input.attackers.every((attacker) => attacker.ships.every((count) => count <= 0))) {
-    return complete(resolvePreparedPublicTargetBattleForecast(
-      prepared,
-      summarizeContractBattleForecast(forecastContractBattle(input, 1, false)),
-    ));
+    // This runs during render: a target too large for the local engine throws, which must not escape.
+    try {
+      return complete(resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(input, 1)));
+    } catch (error) {
+      return complete({
+        ...prepared.pending, kind: "uncertain", label: "Uncertain", loading: false, simulation: undefined,
+        detail: `Outcome preview unavailable: ${error instanceof Error ? error.message : "the battle could not be estimated."}`,
+      });
+    }
   }
   return prepared;
 }
 
 export function resolvePreparedPublicTargetBattleForecast(
   prepared: Extract<PreparedPublicTargetBattleForecast, { status: "simulate" }>,
-  simulation: ContractBattleForecastSummary,
+  stats: BattleStats,
+  running = false,
+  input: ContractBattleInput = prepared.input,
 ): BattleForecastState {
-  const kind = simulation.probableOutcome;
-  const outcomes = (["win", "draw", "defeat"] as const)
-    .filter((outcome) => simulation.outcomeCounts[outcome] > 0)
-    .map((outcome, index) => {
-      const exactPercentage = simulation.outcomeCounts[outcome] / simulation.sampleCount * 100;
-      return { outcome, index, percentage: Math.floor(exactPercentage), remainder: exactPercentage % 1 };
-    });
-  let percentagePointsRemaining = 100 - outcomes.reduce((total, outcome) => total + outcome.percentage, 0);
-  for (const outcome of [...outcomes].sort((left, right) => right.remainder - left.remainder || left.index - right.index)) {
-    if (percentagePointsRemaining <= 0) break;
-    outcome.percentage += 1;
-    percentagePointsRemaining -= 1;
-  }
-  const label = outcomes.map(({ outcome, percentage }) => `${percentage}% ${outcome}`).join(" · ");
+  const kind = likeliestOutcome(stats);
+  const percents = outcomePercents(stats.outcomes, stats.runs);
+  const outcomeRange = (["win", "draw", "defeat"] as const).filter((outcome) => stats.outcomes[outcome] > 0);
+  const label = outcomeRange.filter((outcome) => percents[outcome] > 0).map((outcome) => `${percents[outcome]}% ${outcome}`).join(" · ");
+  const average = {
+    metal: Math.round(stats.attackerLosses.metal / Math.max(1, stats.runs)),
+    crystal: Math.round(stats.attackerLosses.crystal / Math.max(1, stats.runs)),
+    deuterium: Math.round(stats.attackerLosses.deuterium / Math.max(1, stats.runs)),
+  };
   return {
     kind,
     label,
-    detail: battleForecastDetail(
-      kind,
-      simulation,
-      prepared.context.stationedDefendersPresent,
-      prepared.context.targetIsMoon,
-    ),
+    detail: prepared.context.targetIsMoon ? "Based on current public moon intel." : "Based on current public intel.",
     attackerPower: prepared.context.attackerPower,
     defenderPower: prepared.context.defenderPower,
-    attackerLosses: simulation.attackerLosses,
-    randomness: {
-      outcomeRange: (["win", "draw", "defeat"] as const).filter((outcome) => simulation.outcomeCounts[outcome] > 0),
-      sampleCount: simulation.sampleCount,
-      outcomeCounts: simulation.outcomeCounts,
-      attackerSurvivorRange: simulation.attackerSurvivorRange,
-    },
-    reportInput: prepared.input,
-    reportSeed: simulation.sampleReport,
+    attackerLosses: { average, best: average, worst: average },
+    randomness: { outcomeRange, sampleCount: stats.runs, outcomeCounts: stats.outcomes },
+    reportInput: input,
+    ...(stats.samples[kind] ? { reportSeed: stats.samples[kind] } : {}),
     attackerTechLevels: prepared.context.attackerTechLevels,
     defenderTechLevels: prepared.context.defenderTechLevels,
     defenderTechKnown: prepared.context.defenderTechKnown,
+    simulation: { input, stats, running },
   };
 }
 
+/** Synchronous forecast with SYNC_FORECAST_RUNS fast simulations (tests and non-UI callers). */
+const SYNC_FORECAST_RUNS = 128;
 export function publicTargetBattleForecast(
   ships: MissionShips,
   target: Planet | undefined,
@@ -2213,14 +2175,9 @@ export function publicTargetBattleForecast(
     timing,
   );
   if (prepared.status === "complete") return prepared.forecast;
-  const simulation = forecastContractBattle(prepared.input);
-  return {
-    ...resolvePreparedPublicTargetBattleForecast(
-      prepared,
-      summarizeContractBattleForecast(simulation),
-    ),
-    sampleReport: simulation.sampleReport,
-  };
+  const forecast = resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(prepared.input, SYNC_FORECAST_RUNS));
+  const seed = forecast.reportSeed;
+  return seed ? { ...forecast, sampleReport: runContractBattle(prepared.input, seed.randomWord, seed.sampleId, true, seed.fast === true) } : forecast;
 }
 
 export function ShipQuantityRow({
@@ -2239,7 +2196,7 @@ export function ShipQuantityRow({
   return (
     <label className="grid gap-2 rounded surface-inset px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <span className="flex min-w-0 items-center gap-2">
-        <img alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
+        <AssetImage alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
         <span className="min-w-0">
           <span className="block truncate text-sm font-medium text-slate-200">{ship.label}</span>
           <span className="block text-xs text-slate-500">Fleet unit</span>
@@ -2496,86 +2453,34 @@ function AttackOutcomeContent({
   if (battleForecast.loading) {
     return <AttackOutcomeSkeleton battleForecast={battleForecast} compact={compact} />;
   }
-
-  if (compact) {
-    return (
-      <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
-        <div className="flex min-w-0 items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
-              <SimulatedBattleReportControl battleForecast={battleForecast} />
-            </div>
-            <p className={`text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
-              {battleForecast.label}
-            </p>
-          </div>
-          <div className="grid shrink-0 gap-1 text-right text-[11px] text-slate-500">
-            <span>ATK <span className="font-semibold tabular-nums text-slate-200">{battleForecast.attackerPower.toLocaleString()}</span></span>
-            <span>DEF <span className="font-semibold tabular-nums text-slate-200">{battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</span></span>
-          </div>
-        </div>
-        <div className="grid gap-1 rounded surface-inset p-2">
-          <CompactFactRow label="Estimated losses" value={formatLossRangeLong(battleForecast.attackerLosses)} />
-          {battleForecast.randomness ? (
-            <>
-              <CompactFactRow label="Simulated outcomes" value={formatSimulationOutcomes(battleForecast.randomness)} />
-              <CompactFactRow label="Attacker survivors" value={`${formatAttackerSurvivors(battleForecast.randomness)} ships`} />
-            </>
-          ) : null}
-          <CompactFactRow
-            label="Your technology"
-            value={formatTechLevelsLong(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)}
-          />
-          <CompactFactRow
-            label="Defender technology"
-            value={battleForecast.defenderTechKnown
-              ? formatTechLevelsLong(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS)
-              : <SkeletonRegion className="inline-block" label="Loading defender technology"><Skeleton className="h-3 w-24" /></SkeletonRegion>}
-          />
-        </div>
-      </div>
-    );
-  }
-
+  const simulation = battleForecast.simulation;
+  const tech = (levels: CombatTechLevels) => `W${levels.weapons} S${levels.shielding} A${levels.armor}`;
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-1">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Outcome</h3>
-            <SimulatedBattleReportControl battleForecast={battleForecast} />
+    <div className={`grid content-start gap-2 ${compact ? "bg-signal/[0.04] p-3" : ""}`}>
+      <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
+      {simulation ? (
+        <BattleResults
+          calculatorLink
+          input={simulation.input}
+          report={battleForecast.sampleReport ?? null}
+          running={simulation.running}
+          stats={simulation.stats}
+        />
+      ) : (
+        <>
+          <div className="flex items-center gap-1.5">
+            <p className="text-base font-semibold text-slate-300">{battleForecast.label}</p>
+            <SimulatedBattleReportControl />
           </div>
-          <p className={`mt-0.5 text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
-            {battleForecast.label}
-          </p>
-        </div>
-        <div className="grid min-w-[8.5rem] grid-cols-2 gap-x-3 gap-y-0.5 text-right text-[11px] text-slate-500">
-          <span>Attack</span>
-          <span className="font-medium tabular-nums text-slate-300">{battleForecast.attackerPower.toLocaleString()}</span>
-          <span>Defense</span>
-          <span className="font-medium tabular-nums text-slate-300">{battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</span>
-        </div>
-      </div>
-      <p className="text-xs text-slate-500">{battleForecast.detail}</p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <ResourceSummary title="Probable attacker losses" resources={battleForecast.attackerLosses?.average ?? null} />
-        {battleForecast.randomness ? (
-          <ResourceSummary title="Attacker loss range" resources={lossRangeSpread(battleForecast.attackerLosses)} />
-        ) : null}
-      </div>
-      {battleForecast.randomness ? (
-        <p className="text-xs text-amber-200">
-          {formatSimulationOutcomes(battleForecast.randomness)}
-          {" · "}
-          {formatAttackerSurvivors(battleForecast.randomness)} attacker survivors
+          <p className="text-xs text-slate-500">{battleForecast.detail}</p>
+        </>
+      )}
+      {battleForecast.kind !== "uncertain" && battleForecast.attackerTechLevels ? (
+        <p className="text-[11px] text-slate-500">
+          Attacker tech {tech(battleForecast.attackerTechLevels)}
+          {battleForecast.defenderTechKnown && battleForecast.defenderTechLevels ? ` · Defender tech ${tech(battleForecast.defenderTechLevels)}` : ""}
         </p>
       ) : null}
-      <CombatTechSummary
-        attackerLevels={battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
-        defenderKnown={battleForecast.defenderTechKnown ?? false}
-        defenderLevels={battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
-      />
     </div>
   );
 }
@@ -2607,356 +2512,6 @@ function AttackOutcomeSkeleton({
       <span className="h-3 w-2/3 rounded bg-white/[0.07]" />
     </div>
   );
-}
-
-type LazyBattleReportState =
-  | { status: "idle" }
-  | { status: "loading" }
-  | { status: "ready"; report: ContractBattleResult }
-  | { status: "error"; message: string };
-
-function SimulatedBattleReportControl({ battleForecast }: { battleForecast: BattleForecastState }) {
-  const eagerReport = battleForecast.sampleReport ?? null;
-  const reportInput = battleForecast.reportInput;
-  const reportSeed = battleForecast.reportSeed;
-  if (eagerReport) {
-    return (
-      <SimulatedBattleReportDetails
-        generateReport={() => undefined}
-        report={eagerReport}
-        sourceKey="eager-report"
-        state={{ status: "ready", report: eagerReport }}
-      />
-    );
-  }
-  if (!reportInput || !reportSeed) {
-    return (
-      <button
-        aria-label="Open simulated battle report"
-        className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-white/15 bg-white/[0.04] text-[11px] font-semibold normal-case text-slate-300 transition hover:border-signal/50 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-        disabled
-        title="A report is available when required public combat intel is known"
-        type="button"
-      >
-        i
-      </button>
-    );
-  }
-
-  const sourceKey = `${battlePreviewInputKey(reportInput)}:${reportSeed.sampleId}:${reportSeed.randomWord}`;
-  return (
-    <LazySimulatedBattleReportControl
-      key={sourceKey}
-      reportInput={reportInput}
-      reportSeed={reportSeed}
-      sourceKey={sourceKey}
-    />
-  );
-}
-
-function LazySimulatedBattleReportControl({
-  reportInput,
-  reportSeed,
-  sourceKey,
-}: {
-  reportInput: ContractBattleInput;
-  reportSeed: ContractBattleReportSeed;
-  sourceKey: string;
-}) {
-  const [state, setState] = useState<LazyBattleReportState>({ status: "idle" });
-  const workerRef = useRef<Worker | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
-  const requestIdRef = useRef(0);
-  const stopWorker = useCallback(() => {
-    clearTimeout(timeoutRef.current);
-    timeoutRef.current = undefined;
-    workerRef.current?.terminate();
-    workerRef.current = null;
-  }, []);
-
-  // sourceKey keys this component: no mount-time reset that can cancel a
-  // report opened before passive effects finish.
-  useEffect(() => () => {
-    requestIdRef.current += 1;
-    stopWorker();
-  }, [sourceKey, stopWorker]);
-
-  const generateReport = useCallback(() => {
-    if (state.status === "loading" || state.status === "ready") return;
-    requestIdRef.current += 1;
-    const requestId = requestIdRef.current;
-    stopWorker();
-    setState({ status: "loading" });
-    const fail = (message: string) => {
-      if (requestIdRef.current !== requestId) return;
-      stopWorker();
-      setState({ status: "error", message });
-    };
-    try {
-      const worker = new Worker(new URL("../battleReport.worker.ts", import.meta.url), { type: "module" });
-      workerRef.current = worker;
-      worker.onmessage = (event: MessageEvent<
-        | { report: ContractBattleResult; requestId: number; modelVersion: number }
-        | { error: string; requestId: number; modelVersion: number }
-      >) => {
-        if (event.data.requestId !== requestId || requestIdRef.current !== requestId) return;
-        stopWorker();
-        if (event.data.modelVersion !== CONTRACT_COMBAT_MODEL_VERSION) {
-          fail("This battle report is out of date. Please refresh.");
-          return;
-        }
-        if ("report" in event.data) setState({ status: "ready", report: event.data.report });
-        else setState({ status: "error", message: event.data.error });
-      };
-      worker.onerror = () => fail("The battle report failed. Please retry.");
-      worker.onmessageerror = () => fail("The battle report could not be read.");
-      timeoutRef.current = setTimeout(() => fail("The battle report took too long. Please retry."), ATTACK_BATTLE_PREVIEW_TIMEOUT_MS);
-      worker.postMessage({
-        input: reportInput,
-        modelVersion: CONTRACT_COMBAT_MODEL_VERSION,
-        randomWord: reportSeed.randomWord,
-        requestId,
-        sampleId: reportSeed.sampleId,
-      });
-    } catch {
-      fail("The battle report could not start. Please retry.");
-    }
-  }, [reportInput, reportSeed, state.status, stopWorker]);
-
-  return (
-    <SimulatedBattleReportDetails
-      generateReport={generateReport}
-      report={state.status === "ready" ? state.report : null}
-      sourceKey={sourceKey}
-      state={state}
-    />
-  );
-}
-
-function SimulatedBattleReportDetails({
-  generateReport,
-  report,
-  sourceKey,
-  state,
-}: {
-  generateReport: () => void;
-  report: ContractBattleResult | null;
-  sourceKey: string;
-  state: LazyBattleReportState;
-}) {
-  return (
-    <details
-      className="group/report"
-      key={sourceKey}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") event.currentTarget.open = false;
-      }}
-      onToggle={(event) => {
-        if (event.currentTarget.open) generateReport();
-      }}
-    >
-      <summary
-        aria-label="Open simulated battle report"
-        className="grid h-5 w-5 cursor-pointer list-none place-items-center rounded-full border border-white/15 bg-white/[0.04] text-[11px] font-semibold normal-case text-slate-300 transition hover:border-signal/50 hover:text-white [&::-webkit-details-marker]:hidden"
-        role="button"
-        title="Open simulated battle report"
-      >
-        i
-      </summary>
-      <div className="hidden group-open/report:block">
-        <div
-          aria-label="Simulated battle report"
-          aria-modal="true"
-          className="fixed inset-0 z-[100] overflow-y-auto bg-black/75 p-3 backdrop-blur-sm sm:p-6"
-          role="dialog"
-        >
-          <div
-            className="mx-auto grid max-h-[calc(100dvh-1.5rem)] w-full max-w-3xl gap-4 overflow-y-auto rounded-lg border border-white/15 bg-[#0b101c] p-4 shadow-2xl shadow-black/60 sm:max-h-[calc(100dvh-3rem)] sm:p-5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-semibold text-white">Possible battle</h2>
-                <p className="mt-1 text-xs text-slate-400">
-                  One possible outcome from the battle preview. The future on-chain result may differ.
-                </p>
-              </div>
-              <button
-                aria-label="Close simulated battle report"
-                className="inline-grid h-9 w-9 shrink-0 place-items-center rounded border border-white/15 text-slate-300 transition hover:border-white/30 hover:bg-white/[0.05] hover:text-white"
-                onClick={(event) => {
-                  const details = event.currentTarget.closest("details");
-                  if (details) details.open = false;
-                }}
-                title="Close"
-                type="button"
-              >
-                <svg aria-hidden="true" fill="none" height="16" viewBox="0 0 24 24" width="16">
-                  <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
-                </svg>
-              </button>
-            </div>
-
-            {report ? (
-              <>
-                <div className="grid gap-1 rounded surface-inset p-3 text-xs">
-                  <CompactFactRow label="Final outcome" value={battleOutcomeLabel(report.outcome)} />
-                  <CompactFactRow label="Attacker losses" value={formatCompactResources(report.attackerLosses)} />
-                  <CompactFactRow label="Defender losses" value={formatCompactResources(report.defenderLosses)} />
-                </div>
-
-                <section className="grid gap-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Inputs and technology owners</h3>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {report.attackers.map((participant) => (
-                      <BattleParticipantCard key={participant.id} participant={participant} />
-                    ))}
-                    <BattleParticipantCard participant={report.defender} showDefenses />
-                    {report.defender.counterplay.map((participant) => (
-                      <BattleParticipantCard key={participant.id} participant={participant} />
-                    ))}
-                  </div>
-                </section>
-
-                <section className="grid gap-2">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Combat rounds</h3>
-                  {report.rounds.length === 0 ? (
-                    <p className="rounded surface-inset p-3 text-xs text-slate-400">
-                      Combat ended before round 1 because one side had no battlefield units.
-                    </p>
-                  ) : report.rounds.map((round) => (
-                    <article className="grid gap-2 rounded surface-inset p-3" key={round.round}>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h4 className="text-sm font-semibold text-white">Round {round.round}</h4>
-                        <span className="text-xs tabular-nums text-slate-400">
-                          {round.attackerStartingUnits.toLocaleString()} attackers / {round.defenderStartingUnits.toLocaleString()} defenders at start
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400">
-                        Rapidfire extra shots: {round.attackerRapidfireExtraShots.toLocaleString()} attacker / {round.defenderRapidfireExtraShots.toLocaleString()} defender
-                      </p>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <RoundSideReport title="Attackers" participants={round.attackers} />
-                        <RoundSideReport
-                          defenses={round.defender}
-                          participants={[round.defender, ...round.defender.counterplay]}
-                          title="Defenders"
-                        />
-                      </div>
-                    </article>
-                  ))}
-                </section>
-              </>
-            ) : state.status === "error" ? (
-              <div className="grid gap-3 rounded border border-red-300/20 bg-red-300/10 p-4 text-sm text-red-100">
-                <p>{state.message}</p>
-                <button
-                  className="w-fit rounded border border-white/15 px-3 py-2 text-sm font-medium text-slate-100"
-                  onClick={generateReport}
-                  type="button"
-                >
-                  Retry
-                </button>
-              </div>
-            ) : (
-              <BattleReportSkeleton />
-            )}
-          </div>
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function BattleParticipantCard({
-  participant,
-  showDefenses = false,
-}: {
-  participant: ContractBattleResult["attackers"][number] | ContractBattleResult["defender"];
-  showDefenses?: boolean | undefined;
-}) {
-  const defenses = "startingDefenses" in participant ? participant.startingDefenses : [];
-  return (
-    <article className="rounded surface-inset p-2 text-xs">
-      <p className="font-medium text-slate-200">{participant.label}</p>
-      {participant.owner !== "Connected commander" ? (
-        <p className="mt-0.5 break-all text-[11px] text-slate-500">{participant.owner}</p>
-      ) : null}
-      <p className="mt-1 text-slate-400">{formatTechLevels(participant.technology)}</p>
-      <p className="mt-1 text-slate-300">
-        <span className="font-medium text-slate-400">Fleet: </span>
-        {formatBattleComposition(participant.startingShips)}
-      </p>
-      {showDefenses ? (
-        <p className="mt-1 text-slate-300">
-          <span className="font-medium text-slate-400">Defenses: </span>
-          {formatBattleComposition(defenses)}
-        </p>
-      ) : null}
-    </article>
-  );
-}
-
-function BattleReportSkeleton() {
-  return (
-    <div aria-busy="true" aria-label="Generating simulated battle report" className="grid animate-pulse gap-4">
-      <div className="grid gap-2 rounded surface-inset p-3">
-        <span className="h-3 w-24 rounded bg-white/10" />
-        <span className="h-3 w-full rounded bg-white/[0.07]" />
-        <span className="h-3 w-2/3 rounded bg-white/[0.07]" />
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <span className="h-24 rounded surface-inset" />
-        <span className="h-24 rounded surface-inset" />
-      </div>
-      <span className="h-36 rounded surface-inset" />
-    </div>
-  );
-}
-
-function RoundSideReport({
-  defenses,
-  participants,
-  title,
-}: {
-  defenses?: ContractBattleResult["defender"] | undefined;
-  participants: ContractBattleResult["attackers"];
-  title: string;
-}) {
-  const shipLosses = participants.flatMap((participant) =>
-    participant.lostShips.map((row) => ({ ...row, label: `${participant.label}: ${row.label}` })),
-  );
-  return (
-    <div className="rounded surface-inset p-2 text-xs">
-      <p className="font-medium text-slate-300">{title}</p>
-      <p className="mt-1 text-slate-500">Losses</p>
-      <p className="text-slate-300">
-        {formatBattleComposition([
-          ...shipLosses,
-          ...(defenses?.lostDefenses.map((row) => ({ ...row, label: `Defense: ${row.label}` })) ?? []),
-        ])}
-      </p>
-      <p className="mt-1 text-slate-500">Survivors</p>
-      <p className="text-slate-300">
-        {formatBattleComposition([
-          ...participants.flatMap((participant) =>
-            participant.survivingShips.map((row) => ({ ...row, label: `${participant.label}: ${row.label}` })),
-          ),
-          ...(defenses?.survivingDefenses.map((row) => ({ ...row, label: `Defense: ${row.label}` })) ?? []),
-        ])}
-      </p>
-    </div>
-  );
-}
-
-function formatBattleComposition(rows: Array<{ label: string; count: number }>): string {
-  return rows.length > 0
-    ? rows.map((row) => `${row.count.toLocaleString()} ${row.label}`).join(", ")
-    : "None";
-}
-
-function battleOutcomeLabel(outcome: BattleOutcome): string {
-  return outcome === "win" ? "Attacker win" : outcome === "defeat" ? "Defender win" : "Draw";
 }
 
 function ResourceIntelTable({
@@ -3024,47 +2579,6 @@ function ForceIntelTable({
           <UnitSection emptyLabel="None" title="Held" units={stationedDefenderUnits} />
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function CombatTechSummary({
-  attackerLevels,
-  defenderKnown,
-  defenderLevels,
-}: {
-  attackerLevels: CombatTechLevels;
-  defenderKnown: boolean;
-  defenderLevels: CombatTechLevels;
-}) {
-  return (
-    <div className="grid gap-1 rounded surface-inset px-2 py-1.5 text-[11px] text-slate-400 sm:grid-cols-2">
-      <CombatTechLine label="Attacker tech" levels={attackerLevels} />
-      <CombatTechLine
-        label={defenderKnown ? "Defender tech" : "Defender tech unknown"}
-        levels={defenderLevels}
-        suffix={defenderKnown ? undefined : "base shown"}
-      />
-    </div>
-  );
-}
-
-function CombatTechLine({
-  label,
-  levels,
-  suffix,
-}: {
-  label: string;
-  levels: CombatTechLevels;
-  suffix?: string | undefined;
-}) {
-  return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-      <span className="font-medium text-slate-300">{label}</span>
-      <span className="tabular-nums">W {levels.weapons}</span>
-      <span className="tabular-nums">S {levels.shielding}</span>
-      <span className="tabular-nums">A {levels.armor}</span>
-      {suffix ? <span className="text-slate-500">{suffix}</span> : null}
     </div>
   );
 }
@@ -3324,15 +2838,6 @@ function TargetFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CompactFactRow({ label, value }: { label: string; value: ComponentChildren }) {
-  return (
-    <div className="grid min-w-0 gap-0.5 text-[11px] min-[360px]:grid-cols-[8rem_minmax(0,1fr)] min-[360px]:items-baseline min-[360px]:gap-2">
-      <span className="text-slate-500">{label}</span>
-      <div className="break-words text-right tabular-nums text-slate-200">{value}</div>
-    </div>
-  );
-}
-
 function UnitSection({ emptyLabel, title, units }: { emptyLabel: string; title: string; units: UnitItem[] }) {
   return (
     <section className="grid gap-1.5 rounded border border-white/10 bg-[#070913]/60 p-2">
@@ -3352,7 +2857,7 @@ function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[
           key={unit.key}
           title={`${unit.label} x${unit.count.toLocaleString()}`}
         >
-          {unit.asset ? <img alt="" className="h-6 w-6 rounded object-contain" loading="lazy" src={unit.asset} /> : null}
+          {unit.asset ? <AssetImage alt="" className="h-6 w-6 rounded object-contain" loading="lazy" src={unit.asset} /> : null}
           <span className="text-[11px] text-slate-300">{unit.label}</span>
           <span className="text-[11px] font-semibold tabular-nums text-slate-100">x{unit.count.toLocaleString()}</span>
         </span>
@@ -3368,10 +2873,6 @@ function ResourceSummary({ resources, title }: { resources: MissionResourceSnaps
       <p className="mt-1 text-sm font-medium text-slate-200">{formatCompactResources(resources)}</p>
     </section>
   );
-}
-
-function formatTechLevels(levels: CombatTechLevels): string {
-  return `W${levels.weapons} S${levels.shielding} A${levels.armor}`;
 }
 
 function compositionUnits(
@@ -3426,6 +2927,7 @@ export function stationedDefenderCompositionUnits(
 
 function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
   const publicResources = target?.publicState?.resources;
+  if (publicResources === null || target?.publicState === null) return null;
   if (publicResources) {
     return {
       metal: safeResourceNumber(publicResources.metal),
@@ -3500,9 +3002,13 @@ function publicProductionProjection(
   current: MissionResourceSnapshot,
   travelSeconds: number,
 ): { resources: MissionResourceSnapshot; detail: string } | null {
-  const production = resourceSnapshotFromPublicState(target?.publicState?.productionPerHour);
+  const rates = target?.publicState?.productionPerHour;
+  const production = resourceSnapshotFromPublicState(rates);
   const caps = resourceSnapshotFromPublicState(target?.publicState?.storageCaps);
   if (!production || !caps) return null;
+  // A negative deuterium rate is a Fusion Reactor draw burning the store.
+  const deuteriumRate = Math.trunc(Number(rates?.deuterium));
+  if (deuteriumRate < 0) production.deuterium = deuteriumRate;
 
   return {
     resources: projectResourcesForTravel(current, production, caps, travelSeconds),
@@ -3520,7 +3026,7 @@ function projectResourcesForTravel(
   return {
     metal: Math.min(caps.metal, current.metal + Math.floor(production.metal * hours)),
     crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
-    deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
+    deuterium: Math.max(0, Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours))),
   };
 }
 
@@ -3656,28 +3162,6 @@ function combatShipRecordCounts(ships: Record<string, string>): number[] {
   return counts;
 }
 
-function battleForecastDetail(
-  kind: BattleOutcome,
-  simulation: ContractBattleForecastSummary,
-  hasStationedDefenders: boolean,
-  targetIsMoon: boolean,
-): string {
-  const outcomeKinds = (["win", "draw", "defeat"] as const).filter((outcome) => simulation.outcomeCounts[outcome] > 0);
-  const varies = outcomeKinds.length > 1
-    || !resourceSnapshotsEqual(simulation.attackerLosses.best, simulation.attackerLosses.worst);
-  const targetLabel = targetIsMoon ? "moon" : "destination";
-  const defenders = hasStationedDefenders ? " and visible owner-specific stationed fleets" : "";
-  if (varies) {
-    return `Estimated from current public ${targetLabel} intel${defenders}. Simulated outcomes or losses vary; the actual battle may differ.`;
-  }
-  const result = kind === "win" ? "win" : kind === "defeat" ? "loss" : "draw";
-  return `Estimated from current public ${targetLabel} intel${defenders}. All ${simulation.sampleCount} simulations produced the same ${result}, but the actual battle may differ.`;
-}
-
-function resourceSnapshotsEqual(left: CombatResources, right: CombatResources): boolean {
-  return left.metal === right.metal && left.crystal === right.crystal && left.deuterium === right.deuterium;
-}
-
 function commanderLabel(target: Planet | undefined): string {
   return target?.occupiedBy?.ownerDisplayName
     ?? target?.occupiedBy?.owner
@@ -3693,59 +3177,6 @@ function allianceLabel(target: Planet | undefined): string {
 
 function resourceLabel(key: ResourceKey): string {
   return key === "metal" ? "Metal" : key === "crystal" ? "Crystal" : "Deuterium";
-}
-
-function formatCompactResources(resources: MissionResourceSnapshot | null): string {
-  if (!resources) return "Unknown";
-  return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C / ${formatResourceAmount(resources.deuterium)} D`;
-}
-
-function formatLossRange(losses: BattleForecastLossRange | undefined): string {
-  if (!losses) return "Unknown";
-  if (resourceSnapshotsEqual(losses.best, losses.worst)) return formatCompactResources(losses.average);
-  return `${formatCompactResources(losses.average)} avg`;
-}
-
-function formatLossRangeLong(losses: BattleForecastLossRange | undefined): string {
-  if (!losses) return "Unknown";
-  const average = `Metal ${formatResourceAmount(losses.average.metal)} · Crystal ${formatResourceAmount(losses.average.crystal)} · Deuterium ${formatResourceAmount(losses.average.deuterium)}`;
-  return resourceSnapshotsEqual(losses.best, losses.worst) ? average : `${average} average`;
-}
-
-function lossRangeSpread(losses: BattleForecastLossRange | undefined): MissionResourceSnapshot | null {
-  if (!losses) return null;
-  return {
-    metal: losses.worst.metal - losses.best.metal,
-    crystal: losses.worst.crystal - losses.best.crystal,
-    deuterium: losses.worst.deuterium - losses.best.deuterium,
-  };
-}
-
-function formatSimulationOutcomes(randomness: BattleForecastRandomness): string {
-  const outcomes = [
-    ["win", "win", "wins"],
-    ["draw", "draw", "draws"],
-    ["defeat", "defeat", "defeats"],
-  ] as const;
-  const present = outcomes.filter(([kind]) => randomness.outcomeCounts[kind] > 0);
-  if (present.length === 1) {
-    const [, singular] = present[0]!;
-    const outcome = `${singular[0]?.toUpperCase() ?? ""}${singular.slice(1)}`;
-    return randomness.sampleCount === 1
-      ? `${outcome} in 1 simulation`
-      : `${outcome} in all ${randomness.sampleCount.toLocaleString()} simulations`;
-  }
-  return `${randomness.outcomeCounts.win.toLocaleString()} wins · ${randomness.outcomeCounts.draw.toLocaleString()} draws · ${randomness.outcomeCounts.defeat.toLocaleString()} defeats (${randomness.sampleCount.toLocaleString()} runs)`;
-}
-
-function formatAttackerSurvivors(randomness: BattleForecastRandomness): string {
-  return randomness.attackerSurvivorRange.min === randomness.attackerSurvivorRange.max
-    ? randomness.attackerSurvivorRange.min.toLocaleString()
-    : `${randomness.attackerSurvivorRange.min.toLocaleString()}–${randomness.attackerSurvivorRange.max.toLocaleString()}`;
-}
-
-function formatTechLevelsLong(levels: CombatTechLevels): string {
-  return `Weapons ${levels.weapons} · Shields ${levels.shielding} · Armor ${levels.armor}`;
 }
 
 function formatResourceAmount(value: number): string {
@@ -3767,6 +3198,7 @@ function ResourceField({
   label: string;
   max: number;
   maxAction?: {
+    disabled?: boolean | undefined;
     onSelect: () => void;
     value: number;
   } | undefined;
@@ -3783,6 +3215,7 @@ function ResourceField({
           <button
             aria-label={`Set ${label.toLowerCase()} cargo to maximum (${maxAction.value.toLocaleString()})`}
             className="rounded border border-signal/30 bg-signal/10 px-2 py-0.5 text-[11px] font-semibold text-signal hover:border-signal/50 hover:bg-signal/15"
+            disabled={maxAction.disabled}
             onClick={maxAction.onSelect}
             type="button"
           >

@@ -59,6 +59,7 @@ async function main(): Promise<void> {
   }, config.backfillIntervalMs);
 
   const server = Bun.serve({
+    development: false,
     port: config.port,
     fetch: createHandler(source, processor, store, Date.now())
   });

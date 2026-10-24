@@ -26,7 +26,7 @@ node --test tests/batchSupply.browser.mjs
 bunx tsc --project tsconfig.json --noEmit
 ```
 
-The browser fixture is isolated, wallet-free and exercises desktop/mobile pointer interactions. Its normal Vite startup prepares animation variants, which can take several minutes on a cold worktree.
+The browser fixture is isolated, wallet-free and exercises desktop/mobile pointer interactions. Its normal Vite startup syncs the pinned frontend media (`apps/frontend/media.json`), which downloads about 420 MiB once on a cold worktree.
 
 From `packages/contracts`, run `forge test --match-path test/VeydriftGame.t.sol -vv` (including `testLaunchDeployBatch*`), storage-layout and production size gates. Tests cover zero-resource mixed fleets, 15 orders, ownership, slots, pause/delegation, atomic rollback and actual arrival stationing.
 

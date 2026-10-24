@@ -64,6 +64,41 @@ test("a changed script runs its own tests", async () => {
   assert.deepEqual(changedScriptTests(["scripts/a.mjs", "scripts/a.test.mjs", "scripts/b.mjs", "docs/a.mjs"], exists), ["scripts/a.test.mjs"]);
 });
 
+test("nested Base node changes select the fault harness", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/base-node-reliability.test.mjs";
+  assert.deepEqual(changedScriptTests(["scripts/base-node/health.py", "scripts/base-node/test_relay.py"], exists), ["scripts/base-node-reliability.test.mjs"]);
+});
+
+test("nested Base monitor changes select scheduled custody tests", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/base-monitor.test.mjs";
+  assert.deepEqual(changedScriptTests(["scripts/base-monitor/monitor.py", "scripts/base-monitor/job.js"], exists), ["scripts/base-monitor.test.mjs"]);
+});
+
+test("host build I/O throttle changes select its tests", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/host-build-io.test.mjs";
+  assert.deepEqual(changedScriptTests(["scripts/host-build-io/build-io-throttle"], exists), ["scripts/host-build-io.test.mjs"]);
+});
+
+test("app and package changes select the Bun.serve production-mode guard", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/bun-serve-production-mode.test.mjs";
+  assert.deepEqual(changedScriptTests(["apps/stats/scripts/serve.mjs"], exists), ["scripts/bun-serve-production-mode.test.mjs"]);
+  assert.deepEqual(changedScriptTests(["packages/universe/src/index.ts"], exists), ["scripts/bun-serve-production-mode.test.mjs"]);
+  assert.deepEqual(changedScriptTests(["docs/README.md"], exists), []);
+});
+
+test("Nixpacks config and workspace manifest changes select the Nixpacks layout test", async () => {
+  const { changedScriptTests } = await import("./ci-scope.mjs");
+  const exists = (path) => path === "scripts/nixpacks-config.test.mjs";
+  for (const file of ["nixpacks.toml", "package.json", "bun.lockb", "bun.lock", "tsconfig.base.json", "apps/frontend/package.json", "packages/universe/package.json"]) {
+    assert.deepEqual(changedScriptTests([file], exists), ["scripts/nixpacks-config.test.mjs"]);
+  }
+  assert.deepEqual(changedScriptTests(["apps/frontend/src/package.json", "nixpacks.test.toml"], exists), []);
+});
+
 test("documentation checks run when no package checks are selected", () => {
   const env = { ...process.env };
   // This child runs its own node:test process, rather than joining the parent's test context.
@@ -92,6 +127,14 @@ test("shared JSON contracts require both frontend and backend validation", () =>
   assert.equal(filesRequireFrontendChecks(files), true);
   assert.equal(filesRequireBackendChecks(files), true);
   assert.equal(filesRequireContractChecks(files), false);
+});
+
+test("the contract-generated demolition parity fixture requires backend, frontend and contract validation", () => {
+  const files = ["packages/contracts/demolition-parity-fixture.json"];
+  assert.equal(filesRequireBackendChecks(files), true);
+  assert.equal(filesRequireFrontendChecks(files), true);
+  assert.equal(filesRequireContractChecks(files), true);
+  assert.equal(filesRequireBackendChecks(["packages/contracts/README.md"]), false);
 });
 
 test("flushes a large failure log to a pipe before exiting", () => {

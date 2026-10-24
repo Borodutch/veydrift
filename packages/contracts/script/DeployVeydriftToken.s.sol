@@ -12,7 +12,8 @@ import {
 /// @notice Deploys the fixed-supply token and immutable release wallets from explicit inputs.
 /// @dev This script does not deploy liquidity, move resource reserves, or create pools.
 contract DeployVeydriftToken is Script {
-    address internal constant APPROVED_LAUNCH_EOA = 0xca6C67515aa9aa21DA37e07C7469Fd2C5880e2F4;
+    // Token treasury since the 2026-10 redeploy (Vaultwarden "Veydrift Mainnet Token Treasury (2026-10)").
+    address internal constant APPROVED_LAUNCH_EOA = 0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7;
     uint256 internal constant MAX_VESTING_START_LEAD = 30 days;
 
     function run()

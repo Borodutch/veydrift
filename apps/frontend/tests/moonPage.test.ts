@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, MoonStructureLevelInfoModal, moonBuildingRequirementRows, moonDefenseProductionItems, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonShipProductionItems, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureQueueProgress, moonStructureStatus, queueReady } from "../src/components/MoonPage";
+import { MoonPage, MoonStructureLevelInfoModal, MoonStructuresSection, moonDemolitionCancelDisabled, moonDemolitionUnavailableReason, moonBuildingRequirementRows, moonDefenseProductionItems, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonShipProductionItems, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureQueueProgress, moonStructureStatus, queueReady } from "../src/components/MoonPage";
 import { defenseProductionItems } from "../src/components/DefensePage";
 import { shipProductionItems } from "../src/components/ShipyardPage";
 import type { ChainMoonState } from "../src/walletFlow";
@@ -723,11 +723,12 @@ describe("Moon page helpers", () => {
     }) as VNode;
     const closeButton = componentNodes(modal).find((node) => node.props?.closeLabel === "Close level table");
 
+    // The cost is the popup's fixed primary column; these are the secondary stats.
     expect(moonStructureLevelInfoColumns("lunarBase").map((column) => column.label)).toEqual([
-      "Upgrade cost",
       "Build time",
       "Effect",
     ]);
+    expect(visibleText(modal)).toContain("Upgrade cost");
     expect(visibleText(modal)).not.toContain("Requirements");
     expect(modal.props?.layerAttributes?.["data-level-info-layer"]).toBe("viewport");
     expect(closeButton).toBeDefined();
@@ -1056,6 +1057,86 @@ describe("Moon page helpers", () => {
       cost: { metal: "2000", crystal: "0", deuterium: "0" },
       asOfNow: { secondsRemaining: 12, complete: false },
     })).toBe(false);
+  });
+
+  test("treats a moon queue item the backend reports complete as free for demolition, like Upgrade (#125)", () => {
+    const building = { id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } } as Parameters<typeof moonDemolitionUnavailableReason>[0];
+    const queue: NonNullable<ChainMoonState["queue"]> = {
+      active: true,
+      kind: "moon-building",
+      action: "upgrade",
+      itemId: 0,
+      targetLevel: 2,
+      startedAt: "1770000000",
+      readyAt: "1770000300",
+      cost: { metal: "0", crystal: "0", deuterium: "0" },
+      asOfNow: { secondsRemaining: 12, complete: false },
+    };
+    const reason = (q: typeof queue) => moonDemolitionUnavailableReason(building, { metal: 0, crystal: 0, deuterium: 0 }, loadedMoonState({ queue: q }), { canTransact: true, pending: false });
+    expect(reason(queue)).toBe("Building queue busy");
+    // The contract settles the due item before starting the demolition.
+    expect(reason({ ...queue, asOfNow: { secondsRemaining: 0, complete: true } })).toBeUndefined();
+  });
+
+  test("disables moon demolition Cancel once readyAt passes, before the backend reports completion", () => {
+    const readyAtMs = 1_770_000_300_000;
+    const queue: NonNullable<ChainMoonState["queue"]> = {
+      active: true,
+      kind: "moon-building",
+      action: "demolish",
+      itemId: 0,
+      targetLevel: 1,
+      startedAt: "1770000000",
+      readyAt: "1770000300",
+      cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+      asOfNow: { secondsRemaining: 0, complete: false },
+    };
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 2,
+        cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+      }],
+      queue,
+    });
+    const cancelStates = (now: number) => {
+      const section = MoonStructuresSection({
+        canTransact: true,
+        moon: moonState.moon!,
+        moonState,
+        now,
+        onDemolishBuilding: () => undefined,
+        onSelectBuilding: () => undefined,
+        pending: false,
+        selectedBuildingKey: "lunarBase",
+      });
+      const nodes = componentNodes(section);
+      const queuePanel = nodes.find((node) => typeof node.type === "function" && node.type.name === "QueueProgressPanel");
+      const catalog = nodes.find((node) => typeof node.type === "function" && node.type.name === "StructureCatalog");
+      const detail = componentNodes(catalog?.props?.detail(() => undefined))
+        .find((node) => typeof node.type === "function" && node.type.name === "MoonStructureDetailPanel");
+      return { detail: detail?.props?.demolition?.cancelDisabled, queuePanel: queuePanel?.props?.action?.disabled };
+    };
+
+    expect(cancelStates(readyAtMs - 1_000)).toEqual({ detail: false, queuePanel: false });
+    expect(cancelStates(readyAtMs)).toEqual({ detail: true, queuePanel: true });
+    expect(cancelStates(readyAtMs + 60_000)).toEqual({ detail: true, queuePanel: true });
+
+    expect(moonDemolitionCancelDisabled(queue, readyAtMs - 1_000, { canTransact: true, pending: false })).toBe(false);
+    expect(moonDemolitionCancelDisabled({ ...queue, asOfNow: { secondsRemaining: 0, complete: true } }, readyAtMs - 1_000, { canTransact: true, pending: false })).toBe(true);
+    expect(moonDemolitionCancelDisabled(queue, readyAtMs - 1_000, { canTransact: false, pending: false })).toBe(true);
+    expect(moonDemolitionCancelDisabled(queue, readyAtMs - 1_000, { canTransact: true, pending: true })).toBe(true);
   });
 
   test("passes transaction sync copy into loaded moon systems while actions are gated", () => {

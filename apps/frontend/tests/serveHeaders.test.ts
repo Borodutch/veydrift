@@ -1,10 +1,11 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { animationFilename, animationRoot, animationVariants, prepareAnimationVariants } from "../scripts/animation-variants.mjs";
+import { animationFilename, animationRoot, animationVariants } from "../scripts/animation-variants.mjs";
+import { syncMedia } from "../scripts/media.mjs";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 
-// Same build artifacts as Nixpacks; no request may perform an encode.
-beforeAll(() => prepareAnimationVariants(), 1_800_000);
+// Same pinned media as the production server; no request may perform an encode.
+beforeAll(() => syncMedia(), 1_800_000);
 import sharp from "sharp";
 import { MOON_ANIMATION_VERSION, PLANET_ANIMATION_VERSION } from "../planetAnimationConfig";
 import { planetArtTypeForCoordinates } from "../src/data/mockUniverse";

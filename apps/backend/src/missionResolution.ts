@@ -1,3 +1,4 @@
+import { acquireRecoveryHead, assertRecoveryNonce, recoveryCandidateReceipt, RecoveryTrace, RecoveryReadinessError } from "./recoveryReadiness";
 import {
   decodeEventLog,
   TransactionNotFoundError,
@@ -9,6 +10,7 @@ import {
   http,
   keccak256,
   parseAbi,
+  serializeTransaction,
   toHex,
   type Hex,
   type PublicClient,
@@ -18,19 +20,20 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { BackendConfig } from "./config";
 import type { Address, GameMaintenanceState, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
-import { VeydriftGameReader } from "./evm";
+import { VeydriftGameReader, RpcRetryAfterError } from "./evm";
 import { emitObservabilityEvent } from "./observability";
 import {
   resolverReplacementFees,
   resolverTransactionNeedsReplacement,
   type ResolverReplacementFees
 } from "./resolverReplacementFees";
-import { ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass } from "./resolverTransactions";
+import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
+import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { validateMissionBatchReplay, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
+import { validateMissionBatchReplay, BatchQuoteExpiredError, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -72,6 +75,13 @@ const veydriftGameResolutionAbi = [
   },
   {
     type: "function",
+    name: "retryMoonChanceRandomness",
+    stateMutability: "nonpayable",
+    inputs: [{ type: "uint256", name: "outcomeId" }],
+    outputs: [{ type: "uint256" }]
+  },
+  {
+    type: "function",
     name: "resolveFleetMission",
     stateMutability: "nonpayable",
     inputs: [{ type: "uint256", name: "missionId" }],
@@ -87,6 +97,7 @@ const veydriftGameResolutionAbi = [
 ] as const;
 
 export type MissionResolutionChainClient = {
+  admissionSnapshot?(): ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions(): Promise<ReturnableFleetMission[]>;
   resolveFleetMission(missionId: string): Promise<string>;
@@ -161,6 +172,8 @@ type MoonChanceResolutionSnapshot = {
 };
 
 export type MissionResolutionSnapshot = {
+  sharedAdmission?: { blocked: boolean; nextRetryAt: string | null };
+  admission?: ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   enabled: boolean;
   resolverConfigured: boolean;
   resolverAddress: Address | null;
@@ -242,6 +255,8 @@ export class MissionResolutionService {
   private moonChanceLastError: string | null = null;
   private moonChanceRetryReconciliationOffset = 0;
   private lastError: string | null = null;
+  private sharedAdmissionRetryAtMs = 0;
+  private sharedAdmissionBlocked = false;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
@@ -290,6 +305,8 @@ export class MissionResolutionService {
     const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
     const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
     const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
+    const admission = this.chainClient?.admissionSnapshot?.() ?? null;
+    if (admission?.blockedReason || this.sharedAdmissionBlocked) healthWarnings.push("mission_resolver_admission_blocked");
     const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
@@ -300,6 +317,8 @@ export class MissionResolutionService {
       promptnessTargetSeconds: Math.ceil(this.promptnessTargetMs / 1_000),
       healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
       healthWarnings,
+      admission,
+      sharedAdmission: { blocked: this.sharedAdmissionBlocked, nextRetryAt: this.sharedAdmissionBlocked ? new Date(this.sharedAdmissionRetryAtMs).toISOString() : null },
       gamePaused: this.gamePaused,
       gamePauseObservedAt: this.gamePauseObservedAt,
       gamePausedSince: this.gamePausedSince,
@@ -533,9 +552,12 @@ export class MissionResolutionService {
       .slice(0, this.maxMissionsPerTick * 5);
     if (this.config.missionBatch?.enabled) {
       if (!this.chainClient?.resolveMissionBatch) throw new Error("batch rollout enabled without supported durable batch client");
+      if (this.now() < this.sharedAdmissionRetryAtMs) return;
       const candidates = attemptable.slice(0, this.maxMissionsPerTick);
       try {
         const result = await this.chainClient.resolveMissionBatch(candidates.map((c) => ({ missionId: c.mission.missionId, leg: c.leg, dueAt: c.dueAt })));
+        this.sharedAdmissionBlocked = false;
+        this.sharedAdmissionRetryAtMs = 0;
         for (const excluded of result.exclusions ?? []) {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
           const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
@@ -575,7 +597,10 @@ export class MissionResolutionService {
       } catch (error) {
         // A concurrent settlement or fresh block only invalidates this packing: repack next tick.
         const transient = error instanceof Error && /membership changed|block changed or expired/.test(error.message);
-        if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
+        if (error instanceof ResolverAdmissionBlockedError || error instanceof BatchQuoteExpiredError || error instanceof RpcRetryAfterError) {
+          this.sharedAdmissionBlocked = true;
+          this.sharedAdmissionRetryAtMs = Math.max(this.now() + this.intervalMs, error instanceof RpcRetryAfterError ? error.retryAtMs : 0);
+        } else if (!transient) for (const candidate of candidates) this.scheduleRetry(candidateRetryKey(candidate));
         this.logger.warn("[mission-resolution] batch blocked: " + conciseReasonText(error));
         emitObservabilityEvent({ kind: "mission_batch_blocked", reason: conciseReasonText(error) }, "warn");
       }
@@ -788,10 +813,13 @@ export class MissionResolutionService {
   }
 }
 
-// FleetMissionNotResolved(uint64), PendingRandomness(uint256), or chronology ordering not ready.
+// FleetMissionNotResolved(uint64), PendingRandomness(uint256), an empty randomness FIFO when a
+// referee battle reserves its gated request (NoRandomnessCommitment(),
+// RandomnessCommitmentNotActive(bytes32,uint64)), or chronology ordering not ready.
 function isOrderingOrOracleWait(error: unknown): boolean {
   const reason = reasonText(error);
-  return reason.includes("0xb3439205") || reason.includes("0x6eb4f8ed") || /ordering is not ready/i.test(reason);
+  return ["0xb3439205", "0x6eb4f8ed", "0x564417cb", "0x7421d432"].some((selector) => reason.includes(selector))
+    || /ordering is not ready|awaits the referee|NoRandomnessCommitment|RandomnessCommitmentNotActive/i.test(reason);
 }
 
 function needsCanonicalMissionReconciliation(error: unknown): boolean {
@@ -810,7 +838,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     private readonly reader: Pick<
       VeydriftGameReader,
       "listResolvableFleetMissions" | "listReturnableFleetMissions"
-    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "isFleetChronologyOrderingReady">>,
+    > & Partial<Pick<VeydriftGameReader, "getCanonicalFleetMission" | "getCanonicalFleetMissionBatch" | "getRefereeWaitBattles" | "isFleetChronologyOrderingReady">>,
     private readonly gameAddress: Address,
     private readonly sender: Address | ReturnType<typeof privateKeyToAccount>,
     private readonly publicClient?: PublicClient,
@@ -826,13 +854,20 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       const address = typeof this.sender === "string" ? this.sender : this.sender.address;
       this.transactionCoordinator.setPreparedReconciler(this.chain.id, address,
         (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass));
+      this.transactionCoordinator.setRecoveryObserver(this.chain.id, address, {
+        verifyFinalized: (binding, winner, receipt, candidates, pass) => this.verifyFinalizedRecovery(binding, winner, receipt, candidates, pass),
+        invalidate: (hash) => { this.batchReceiptOutcomes.delete(hash); },
+        observe: (binding, hash, pass) => this.observeRecoveryCandidate(binding, hash, pass),
+        assertUnconsumed: (binding, pass) => assertRecoveryNonce(this.publicClient!,binding,pass)
+      });
       this.transactionCoordinator.setPreparedReplayer(this.chain.id, address, {
         getTransaction: async (hash) => {
           try { return await this.publicClient!.getTransaction({ hash }); }
-          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new Error("replay transaction lookup unavailable"); }
+          catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new RecoveryReadinessError("rpc-unavailable"); }
         },
         validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
-          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new Error("mission replay disabled or paused");
+          if(pass.recoveryTrace)pass.recoveryTrace.stage="pause";
+          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");
           const items: BatchLeg[] = JSON.parse(membership);
           if (!Array.isArray(items) || items.length < 1 || items.length > 32
             || operationId !== "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(batchCalldata(items)))
@@ -840,12 +875,117 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           if (!originalMaxFeeWei || !/^[0-9]{1,18}$/.test(originalMaxFeeWei) || BigInt(originalMaxFeeWei) <= 0n)
             throw new Error("original replay fee policy unavailable");
           const maxFeeWei = BigInt(originalMaxFeeWei) < this.batchPolicy.maxFeeWei ? BigInt(originalMaxFeeWei) : this.batchPolicy.maxFeeWei;
-          return validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
-            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei } }, pass);
+          const recovery = this.transactionCoordinator.getRecoveryBinding(this.chain!.id, address, raw);
+          let allowRecoveryNoop = false;
+          let identity: Awaited<ReturnType<typeof verifyRecoveryIdentity>> | undefined;
+          if (recovery) {
+            const head=await acquireRecoveryHead(this.publicClient!,pass,pass.recoveryTrace);
+            if(pass.recoveryTrace)pass.recoveryTrace.stage="proof";
+            identity = await verifyRecoveryIdentity(this.publicClient!, JSON.parse(recovery.evidence), pass,head.number!);
+            if(identity.hash!==head.hash)throw new Error("recovery acquired block changed");
+            allowRecoveryNoop = JSON.parse(recovery.evidence).allowAlreadySettled === true && identity.recoveryComplete;
+            const balance = await pass.read(() => this.publicClient!.getBalance({address,blockNumber:identity!.number!}));
+            if (balance < (maxFeeWei < 200_000_000_000_000n ? maxFeeWei : 200_000_000_000_000n)) throw new Error("recovery balance below capped budget");
+
+          }
+          const feeGuard = await validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
+            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop,
+            recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
+          return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard,pass.recoveryTrace) : feeGuard;
         },
         broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
       });
     }
+  }
+
+  async recoverLegacyMission(input: MissionRecoveryInput, trace = new RecoveryTrace()): Promise<void> {
+    const binding = recoveryBinding(input);
+    if (typeof this.sender === "string" || !this.publicClient || !this.chain || !this.batchPolicy.enabled
+      || binding.chainId !== this.chain.id || binding.address !== this.sender.address.toLowerCase()
+      || binding.to !== this.gameAddress.toLowerCase()) throw new Error("recovery configured signer/deployment mismatch");
+    const account = this.sender, client = this.publicClient;
+    await this.transactionCoordinator.recoverLegacySameNonce(binding, async (sign, assertLease) => {
+      const pass = trace.wrap({ read: async (operation) => { assertLease(); const result = await operation(); assertLease(); return result; }, assertActive: assertLease });
+      trace.stage="pause";
+      if (await pass.read(()=>this.gamePaused())) throw new RecoveryReadinessError("paused","recovery game paused");
+      const head=await acquireRecoveryHead(client,pass,trace);
+      const {transaction, guard, evidence} = await prepareRecoveryEnvelope(client, input, this.batchPolicy, pass,head,trace);
+      this.transactionCoordinator.recordRecoveryQuote(binding,evidence,assertLease);
+      await sign(() => account.signTransaction(transaction), serializeTransaction(transaction), guard);
+    }, (BigInt(input.maxFeeWei)<this.batchPolicy.maxFeeWei ? BigInt(input.maxFeeWei):this.batchPolicy.maxFeeWei).toString(),trace);
+  }
+
+  private async verifyFinalizedRecovery(binding: LegacyRecoveryBinding, winner: Hex, stored: PreparedReceipt,
+    candidates: Hex[], pass: PreparedReconciliationPass): Promise<void> {
+    const client = this.publicClient!;
+    const contradiction = () => new Error("finalized recovery contradiction; fail closed");
+    if (JSON.stringify(recoveryBinding(JSON.parse(binding.evidence))) !== JSON.stringify(binding)) throw contradiction();
+    // Initial finalization already proved full transaction/domain/reference identity.
+    // Never repeat historical transaction/state/fee hydration to admit new traffic.
+    const identity = await (pass.finalizedRecoveryIdentity ??= (async () => ({
+      chainId: await pass.read(() => client.getChainId()),
+      nonce: await pass.read(() => client.getTransactionCount({ address: binding.address, blockTag: "latest" }))
+    }))());
+    if (identity.chainId !== binding.chainId || !Number.isSafeInteger(identity.nonce) || identity.nonce <= binding.nonce)
+      throw contradiction();
+    const blockNumber = BigInt(stored.blockNumber);
+    const losers: Array<{ blockNumber: bigint; blockHash: Hex }> = [];
+    for (const hash of candidates) {
+      let receipt;
+      try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
+      catch (error) {
+        pass.assertActive();
+        // Explicit absence may be pruning. The durable finalized anchor and consumed
+        // nonce remain authoritative; transport errors are NEVER absence evidence.
+        if (error instanceof TransactionReceiptNotFoundError) continue;
+        throw new RecoveryReadinessError("rpc-unavailable");
+      }
+      if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw contradiction();
+      if (hash === winner) {
+        if (receipt.blockNumber !== blockNumber || receipt.blockHash !== stored.blockHash) throw contradiction();
+      } else losers.push({ blockNumber: receipt.blockNumber, blockHash: receipt.blockHash });
+    }
+    // Validate the immutable finalized anchor AFTER candidate observations. The
+    // common two-candidate path costs three reads/group plus two shared identity
+    // reads, so all 32 retained groups fit the unchanged 128-read pass budget.
+    const canonical = await pass.read(() => client.getBlock({ blockNumber }));
+    if (canonical.number !== blockNumber || canonical.hash !== stored.blockHash) throw contradiction();
+    for (const loser of losers) {
+      const loserBlock = loser.blockNumber === blockNumber ? canonical
+        : await pass.read(() => client.getBlock({ blockNumber: loser.blockNumber }));
+      if (loserBlock.hash === loser.blockHash) throw new Error("conflicting canonical recovery winners; fail closed");
+    }
+  }
+
+  private async observeRecoveryCandidate(binding: LegacyRecoveryBinding, hash: Hex,
+    pass: PreparedReconciliationPass): Promise<PreparedReceipt | null> {
+    const client = this.publicClient!;
+    const receipt=await recoveryCandidateReceipt(client,hash,pass);
+    if(!receipt)return null;
+    if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw new Error("recovery receipt hash mismatch");
+    const block = await pass.read(() => client.getBlock({blockNumber:receipt.blockNumber}));
+    if (block.hash !== receipt.blockHash) return null; // orphan observation, not a winner
+    const tx = await pass.read(() => client.getTransaction({hash}));
+    if (tx.hash.toLowerCase() !== hash.toLowerCase() || tx.chainId !== binding.chainId
+      || tx.from.toLowerCase() !== binding.address.toLowerCase() || tx.nonce !== binding.nonce
+      || tx.to?.toLowerCase() !== binding.to.toLowerCase() || tx.value !== 0n || tx.input !== binding.data
+      || tx.blockHash !== receipt.blockHash || tx.blockNumber !== receipt.blockNumber)
+      throw new Error("recovery canonical full transaction mismatch");
+    // Bind finality to one coherent finalized snapshot, not an independently cached height.
+    const finalized = await pass.read(() => client.getBlock({blockTag:"finalized"}));
+    if (finalized.number === null || !finalized.hash) throw new Error("recovery finalized block unavailable");
+    await verifyRecoveryReference(client,JSON.parse(binding.evidence),receipt.blockNumber,receipt.blockHash,pass,receipt.blockNumber<=finalized.number);
+    pass.finalizedHead = Promise.resolve(finalized.number);
+    // Never reuse a sibling's receipt or a stale derived projection.
+    const result = await this.reconcileBatchReceipt(hash, binding.membership, undefined, pass);
+    if (!result || result.blockHash !== receipt.blockHash || result.blockNumber !== receipt.blockNumber.toString())
+      throw new Error("recovery receipt changed during hydration");
+    const finalCanonical = await pass.read(() => client.getBlock({blockNumber:finalized.number!}));
+    const receiptCanonical = await pass.read(() => client.getBlock({blockNumber:receipt.blockNumber}));
+    const finalAgain = await pass.read(() => client.getBlock({blockTag:"finalized"}));
+    if (finalCanonical.hash !== finalized.hash || receiptCanonical.hash !== receipt.blockHash
+      || finalAgain.number !== finalized.number || finalAgain.hash !== finalized.hash) throw new Error("recovery finality snapshot changed; retry");
+    return result;
   }
 
   listResolvableFleetMissions(): Promise<ResolvableFleetMission[]> {
@@ -856,7 +996,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return this.reader.listReturnableFleetMissions();
   }
 
-  resolveFleetMission(missionId: string): Promise<string> {
+  async resolveFleetMission(missionId: string): Promise<string> {
+    // Ticket #44: the referee owns staged phases 16/17; an ordinary resolve there is a paid no-op.
+    // A failed read falls through to the ordinary preflight rather than blocking resolution.
+    const waiting = this.reader.getRefereeWaitBattles && typeof this.publicClient?.getBlockNumber === "function"
+      ? await this.publicClient.getBlockNumber()
+        .then((block) => this.reader.getRefereeWaitBattles!([BigInt(missionId)], block, () => {}))
+        .catch(() => new Set<string>())
+      : new Set<string>();
+    if (waiting.has(missionId)) throw new Error("battle awaits the referee");
     return this.write("resolveFleetMission", missionId);
   }
 
@@ -882,18 +1030,22 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       || this.batchPolicy.maxFeeWei <= 0n || this.batchPolicy.maxFeeWei > 400_000_000_000_000n)
       throw new Error("invalid batch limits; signer guard cannot exceed provisional cap");
     const exclusions: BatchExclusion[] = [];
+    // Empty ticks still reconcile above, but require no fee snapshot or candidate proof.
+    if (!candidates.length) return { hash: null, items: [], exclusions };
     const initialBlock = await client.getBlock({ blockTag: "latest" });
     if (initialBlock.number === null) throw new Error("canonical batch block unavailable");
-    const fresh = await this.freshBatchCandidates(candidates.slice(0, 100), initialBlock.number, exclusions);
+    const initialGuard = () => assertBatchQuoteFresh({ blockNumber: initialBlock.number!, blockHash: initialBlock.hash!, blockTimestamp: initialBlock.timestamp });
+    const fresh = await this.batchPhase("candidates", candidates.length, initialBlock.timestamp,
+      () => this.freshBatchCandidates(candidates.slice(0, 100), initialBlock.number!, exclusions, initialGuard));
     if (!fresh.length) return { hash: null, items: [], exclusions };
     const nonce = await client.getTransactionCount({ address: account.address, blockTag: "pending" });
     const quote = (items: BatchLeg[], currentNonce = nonce, blockNumber = initialBlock.number!) => quoteMissionBatch(client, {
       items, blockNumber, nonce: currentNonce, account: account.address, game: this.gameAddress, chainId, policy: this.batchPolicy
     });
-    const packed = await packMissionBatch(fresh, this.batchPolicy.maxItems, quote, (item, reason) => {
+    const packed = await this.batchPhase("packing", fresh.length, initialBlock.timestamp, () => packMissionBatch(fresh, this.batchPolicy.maxItems, quote, (item, reason) => {
       emitObservabilityEvent({ kind: "mission_batch_indivisible_blocker", ...item, reason,
         action: "review contract gas/prerequisites; do not raise cap or bypass batching" }, "warn");
-    });
+    }));
     exclusions.push(...packed.exclusions);
     if (!packed.items.length) return { hash: null, items: [], exclusions };
     const items = packed.items;
@@ -907,19 +1059,21 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         if (await this.gamePaused()) throw new GamePausedBeforeResolverAllocationError();
         const block = await client.getBlock({ blockTag: "latest" });
         if (block.number === null) throw new Error("canonical batch block unavailable");
-        const current = await this.freshBatchCandidates(items, block.number);
+        const currentGuard = () => assertBatchQuoteFresh({ blockNumber: block.number!, blockHash: block.hash!, blockTimestamp: block.timestamp });
+        const current = await this.batchPhase("leased-candidates", items.length, block.timestamp,
+          () => this.freshBatchCandidates(items, block.number!, [], currentGuard));
         if (JSON.stringify(current) !== JSON.stringify(items)) throw new Error("batch canonical membership changed; repack next tick");
-        const fees = await quote(items, currentNonce, block.number); // exact signed-gas productive simulation under lease
-        const canonical = await client.getBlock({ blockNumber: block.number });
+        const fees = await this.batchPhase("leased-quote", items.length, block.timestamp, () => quote(items, currentNonce, block.number!)); // exact signed-gas productive simulation under lease
+        const canonical = await this.batchPhase("presign-header", items.length, block.timestamp, () => client.getBlock({ blockNumber: block.number! }));
         if (fees.provenance.blockNumber !== block.number || fees.provenance.blockHash !== block.hash
           || fees.provenance.blockTimestamp !== block.timestamp || canonical.hash !== fees.provenance.blockHash)
           throw new Error("batch quote block changed before signing");
         assertBatchQuoteFresh(fees.provenance);
-        const signed = await signing.sign(JSON.stringify(items), () => {
+        const signed = await this.batchPhase("signing", items.length, fees.provenance.blockTimestamp, () => signing.sign(JSON.stringify(items), () => {
           assertBatchQuoteFresh(fees.provenance);
           return account.signTransaction({ type: "eip1559", chainId, to: this.gameAddress, data,
             nonce: currentNonce, value: 0n, gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas });
-        });
+        }));
         emitObservabilityEvent({ kind: "mission_batch_prepared", legs: items.length, estimates: packed.estimates + 1,
           fillLimit: items.length === this.batchPolicy.maxItems ? "max-items" : items.length < fresh.length ? "fee/gas" : "queue",
           queueAgeSeconds: Math.max(0, Math.floor(Date.now() / 1000) - items[0]!.dueAt),
@@ -928,7 +1082,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         return { hash: keccak256(signed), membership: JSON.stringify(items), serializedTransaction: signed,
           replayMaxFeeWei: this.batchPolicy.maxFeeWei.toString(),
           validateBeforeBroadcast: async () => {
-            const canonical = await client.getBlock({ blockNumber: fees.provenance.blockNumber });
+            const canonical = await this.batchPhase("presend-header", items.length, fees.provenance.blockTimestamp, () => client.getBlock({ blockNumber: fees.provenance.blockNumber }));
             if (canonical.hash !== fees.provenance.blockHash) throw new Error("batch quote block changed before broadcast");
             assertBatchQuoteFresh(fees.provenance);
           },
@@ -939,16 +1093,40 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       reconcilePrepared: (hash, membership, stored, pass) => this.reconcileBatchReceipt(hash, membership, stored, pass),
       isConfirmedCanonical: (hash) => this.isConfirmedCanonical(hash),
       isOperationComplete: async () => false, // partial progress may require another bounded tx
-      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000 }); }
+      // Post-broadcast inclusion wait; poll near Base's 2s block time, not the 4s client default.
+      confirm: async (hash) => { await client.waitForTransactionReceipt({ hash, timeout: 30_000, pollingInterval: 500 }); }
       // No replacements/cancellation: unknown receipt blocks the shared signer, never uncapped fees.
     });
     return { hash, items, exclusions, outcomes: this.batchReceiptOutcomes.get(hash) ?? [] };
   }
 
-  private async freshBatchCandidates(items: BatchLeg[], blockNumber?: bigint, exclusions: BatchExclusion[] = []): Promise<BatchLeg[]> {
+  private async batchPhase<T>(phase: string, candidates: number, blockTimestamp: bigint, work: () => Promise<T>): Promise<T> {
+    const started = Date.now();
+    let outcome = "ready";
+    try { return await work(); }
+    catch (error) { outcome = error instanceof BatchQuoteExpiredError ? "quote-expired" : "blocked"; throw error; }
+    finally { emitObservabilityEvent({ kind: "mission_batch_phase", phase, candidates, outcome,
+      durationMs: Math.max(0, Date.now() - started), blockAgeMs: Date.now() - Number(blockTimestamp) * 1000 }); }
+  }
+
+  private async freshBatchCandidates(items: BatchLeg[], blockNumber?: bigint, exclusions: BatchExclusion[] = [], assertActive = () => {}): Promise<BatchLeg[]> {
     const fresh: BatchLeg[] = [];
-    for (const item of items) {
-      const mission = await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), blockNumber);
+    assertActive();
+    const snapshots = blockNumber !== undefined && this.reader.getCanonicalFleetMissionBatch
+      ? await this.reader.getCanonicalFleetMissionBatch(items.map(item => BigInt(item.missionId)), blockNumber, assertActive) : undefined;
+    if (snapshots && snapshots.length !== items.length) throw new Error("canonical mission batch length mismatch");
+    // Only Attack leaders can enter the referee pipeline; other legs never pay this read.
+    const attackArrivals = snapshots && blockNumber !== undefined && this.reader.getRefereeWaitBattles
+      ? items.filter((item, index) => item.leg === "arrival" && snapshots[index]!.mission?.missionType === "Attack")
+      : [];
+    const refereeWait = attackArrivals.length
+      ? await this.reader.getRefereeWaitBattles!(attackArrivals.map(item => BigInt(item.missionId)), blockNumber!, assertActive)
+      : new Set<string>();
+    for (let index = 0; index < items.length; index++) {
+      assertActive();
+      const item = items[index]!;
+      const mission = snapshots ? snapshots[index]!.mission : await this.reader.getCanonicalFleetMission?.(BigInt(item.missionId), blockNumber);
+      assertActive();
       if (!mission) throw new Error("canonical batch candidate unavailable: " + item.missionId);
       const complete = item.leg === "arrival" ? ["Returning", "Recalled", "Resolved", "Returned"].includes(mission.status)
         : ["Resolved", "Returned"].includes(mission.status);
@@ -962,9 +1140,17 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: complete ? "settled" : "not-due-or-stale" });
         continue;
       }
-      if (!await this.reader.isFleetChronologyOrderingReady?.(BigInt(item.missionId), blockNumber)) {
+      const orderingReady = snapshots ? snapshots[index]!.orderingReady
+        : await this.reader.isFleetChronologyOrderingReady?.(BigInt(item.missionId), blockNumber);
+      assertActive();
+      if (!orderingReady) {
         exclusions.push({ item, reason: "ordering-unavailable" });
         emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: "ordering-unavailable" }, "warn");
+        continue;
+      }
+      if (item.leg === "arrival" && refereeWait.has(item.missionId)) {
+        // The backend referee advances these battles; an ordinary resolve would be a paid no-op.
+        exclusions.push({ item, reason: "referee-wait", unproductive: true });
         continue;
       }
       fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
@@ -972,22 +1158,62 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return fresh.sort(compareBatchLegs);
   }
 
+  admissionSnapshot() {
+    if (!this.chain) return null;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    return this.transactionCoordinator.admissionSnapshot(this.chain.id, address);
+  }
+
+  private async proveConsumedNonce(blockNumber: bigint, blockHash: Hex, pass: PreparedReconciliationPass) {
+    const identity = pass.intentIdentity!;
+    const address = typeof this.sender === "string" ? this.sender : this.sender.address;
+    if (identity.chainId !== this.chain?.id || identity.address.toLowerCase() !== address.toLowerCase())
+      throw new Error("batch confirmation signer/chain mismatch");
+    const consumed = await pass.read(() => this.publicClient!.getTransactionCount({ address, blockNumber }));
+    const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber }));
+    if (!Number.isSafeInteger(consumed) || consumed <= identity.nonce) throw new Error("batch confirmation nonce not consumed");
+    if (!canonical.hash || canonical.hash !== blockHash || canonical.number !== blockNumber)
+      throw new Error("batch receipt is not canonical after nonce proof");
+  }
+
+  private async archiveFinality(pass: PreparedReconciliationPass): Promise<bigint | null> {
+    // Ordinary admission never depends on this tag. Missing/failed archival reads
+    // retain bytes; malformed or contradictory canonical identity remains a fault.
+    return pass.archivalFinalizedHead ??= (async () => {
+      let block;
+      try { block = await pass.read(() => this.publicClient!.getBlock({ blockTag: "finalized" })); }
+      catch { pass.assertActive(); return null; }
+      if (block.number === null || !block.hash) return null;
+      const canonical = await pass.read(() => this.publicClient!.getBlock({ blockNumber: block.number! }));
+      if (canonical.number !== block.number || canonical.hash !== block.hash)
+        throw new Error("archival finalized identity contradiction");
+      return block.number;
+    })();
+  }
+
   private readonly batchReceiptOutcomes = new Map<string, BatchLegOutcome[]>();
 
   private async reconcileBatchReceipt(hash: Hex, membership: string, stored: PreparedReceipt | undefined,
     pass: PreparedReconciliationPass): Promise<PreparedReceipt | void> {
     const client = this.publicClient!;
-    // Durable inclusion/outcomes need only a fresh containing-block hash, not logs/state/fees.
-    const finalized = await (pass.finalizedHead ??= pass.read(async () => {
+    // Reuse durable domain outcomes; ordinary admission adds a pinned consumed-nonce proof.
+    let finalized = pass.intentIdentity ? null : await (pass.finalizedHead ??= pass.read(async () => {
       const block = await client.getBlock({ blockTag: "finalized" });
       if (block.number === null) throw new Error("explicit finalized block unavailable");
       return block.number;
     }));
     if (stored) {
+      // Retirement needs a containing-header observation AFTER finalized identity.
+      // Otherwise an ordinary reorg during the finality reads can promote an old
+      // branch receipt and irreversibly discard both signed envelopes.
+      if (pass.intentIdentity && pass.archive) finalized = await this.archiveFinality(pass);
       const block = await pass.read(() => client.getBlock({ blockNumber: BigInt(stored.blockNumber) }));
-      if (!block.hash || block.hash !== stored.blockHash) throw new Error("batch receipt is not canonical");
+      if (!block.hash || block.hash !== stored.blockHash || block.number !== BigInt(stored.blockNumber)) throw new Error("batch receipt is not canonical");
       pass.assertActive();
-      return { ...stored, finalized: BigInt(stored.blockNumber) <= finalized };
+      // Historical archival rows inherit the checked frontier ancestry; only the
+      // active frontier needs a fresh nonce read (old state may already be pruned).
+      if (pass.intentIdentity && !stored.finalized && !pass.archive) await this.proveConsumedNonce(BigInt(stored.blockNumber), stored.blockHash, pass);
+      return { ...stored, finalized: stored.finalized || (finalized !== null && BigInt(stored.blockNumber) <= finalized) };
     }
     let receipt;
     try { receipt = await pass.read(() => client.getTransactionReceipt({ hash })); }
@@ -997,6 +1223,9 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     }
     const block = await pass.read(() => client.getBlock({ blockNumber: receipt.blockNumber }));
     if (!block.hash || block.hash !== receipt.blockHash) throw new Error("batch receipt is not canonical");
+    if (pass.intentIdentity && (receipt.transactionHash?.toLowerCase() !== hash.toLowerCase()
+      || receipt.from?.toLowerCase() !== pass.intentIdentity.address.toLowerCase()
+      || receipt.to?.toLowerCase() !== this.gameAddress.toLowerCase())) throw new Error("batch canonical receipt identity mismatch");
     const items: BatchLeg[] = JSON.parse(membership);
     if (!Array.isArray(items) || items.length > 32) throw new Error("invalid persisted batch membership");
     const events = (receipt.logs ?? []).flatMap((log) => {
@@ -1033,6 +1262,8 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       } catch { /* unknown is NOT zero; actual total remains unavailable */ }
     }
     pass.assertActive();
+    if (pass.intentIdentity) await this.proveConsumedNonce(receipt.blockNumber, receipt.blockHash, pass);
+    pass.assertActive();
     const executionFee = receipt.gasUsed * receipt.effectiveGasPrice;
     emitObservabilityEvent({ kind: "mission_batch_receipt", hash, status: receipt.status, outcomes,
       gasUsed: receipt.gasUsed.toString(), executionFeeWei: executionFee.toString(),
@@ -1041,7 +1272,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     this.batchReceiptOutcomes.set(hash, outcomes);
     // Bounded in-memory reporting cache; immutable membership/outcomes remain in SQLite.
     if (this.batchReceiptOutcomes.size > 128) this.batchReceiptOutcomes.delete(this.batchReceiptOutcomes.keys().next().value!);
-    return { finalized: receipt.blockNumber <= finalized, blockNumber: receipt.blockNumber.toString(),
+    return { finalized: finalized !== null && receipt.blockNumber <= finalized, admissionProven: Boolean(pass.intentIdentity), blockNumber: receipt.blockNumber.toString(),
       blockHash: receipt.blockHash, outcomes: JSON.stringify(outcomes) };
   }
 
@@ -1054,7 +1285,12 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       functionName: "moonChanceRandomness", args: [BigInt(outcomeId)]
     });
     if (finalized) return "finalized";
-    if (requestId === 0n) throw new Error(`unknown moon chance outcome ${outcomeId}`);
+    if (requestId === 0n) {
+      if (/^0x0+$/.test(purposeHash)) throw new Error(`unknown moon chance outcome ${outcomeId}`);
+      // The battle could not reserve randomness (empty FIFO): request it now, finalize later.
+      await this.write("retryMoonChanceRandomness", outcomeId);
+      return "pending";
+    }
     const request = await this.publicClient.readContract({
       abi: moonReadAbi, address: this.randomnessEngineAddress,
       functionName: "request", args: [requestId]
@@ -1077,11 +1313,14 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     return value !== undefined && BigInt(value) !== 0n;
   }
 
-  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance", missionId: string): Promise<string> {
-    const targetAddress = functionName === "finalizeMoonChance" ? this.moonAddress! : this.gameAddress;
+  private async write(functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance" | "retryMoonChanceRandomness", missionId: string): Promise<string> {
+    const moonCall = functionName === "finalizeMoonChance" || functionName === "retryMoonChanceRandomness";
+    const targetAddress = moonCall ? this.moonAddress! : this.gameAddress;
     const operationId = functionName === "finalizeMoonChance"
       ? `moon-chance:${targetAddress.toLowerCase()}:${missionId}`
-      : `mission:${functionName}:${missionId}`;
+      : functionName === "retryMoonChanceRandomness"
+        ? `moon-chance-retry:${targetAddress.toLowerCase()}:${missionId}`
+        : `mission:${functionName}:${missionId}`;
     const data = encodeFunctionData({
       abi: veydriftGameResolutionAbi,
       functionName,
@@ -1090,7 +1329,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     const from = typeof this.sender === "string" ? this.sender : this.sender.address;
     const preflight = async (gas: bigint, nonce: number, fees: ResolverReplacementFees) => {
       if (!this.publicClient?.call) throw new Error("mission resolver is missing RPC simulation client");
-      if (functionName !== "finalizeMoonChance" && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
+      if (!moonCall && !await this.reader.isFleetChronologyOrderingReady?.(BigInt(missionId))) {
         throw new Error(`fleet chronology ordering is not ready for ${missionId}; ordering support unavailable`);
       }
       // Ordering support alone does not exclude a chronological/randomness revert. Simulate
@@ -1184,15 +1423,15 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
   }
 
   private async isResolutionOperationComplete(
-    functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance",
+    functionName: "resolveFleetMission" | "completeFleetMissionReturn" | "finalizeMoonChance" | "retryMoonChanceRandomness",
     missionId: string
   ): Promise<boolean> {
-    if (functionName === "finalizeMoonChance") {
+    if (functionName === "finalizeMoonChance" || functionName === "retryMoonChanceRandomness") {
       const state = await this.publicClient!.readContract({
         abi: moonReadAbi, address: this.moonAddress!,
         functionName: "moonChanceRandomness", args: [BigInt(missionId)]
       });
-      return state[2];
+      return functionName === "finalizeMoonChance" ? state[2] : state[0] !== 0n || state[2];
     }
     const mission = await this.reader.getCanonicalFleetMission?.(BigInt(missionId));
     if (!mission) throw new Error(`canonical mission status unavailable for ${missionId}`);

@@ -116,7 +116,9 @@ describe("production Supply confirmation and launch handlers", () => {
     expect(plan(1, Number.MAX_SAFE_INTEGER).delivered.metal).toBe(24999);
     const replanned = replanBatchSupplyForConfirmation({ target, targetIsMoon: true, sources: [src], orders: preview.orders, maxOrders: 1, shipTypesBySource: {} });
     expect(batchSupplyPlanMatchesOrders(preview.orders, replanned.orders)).toBe(true);
-    const h = harness(moon);
+    // This route/fuel fixture ships only metal; match the live destination deficit
+    // instead of implicitly permitting an underfunded upgrade shipment.
+    const h = harness({ ...moon, resources: { metal: "77401", crystal: cost.crystal, deuterium: cost.deuterium } });
     const selected = withUpgrade ? { ...request, kind: "moon" as const } : undefined;
     const levelPreview = selected ? await readLevelSupplyPreview(h.queries, "wallet", "7", selected) : undefined;
     const args = { queries: h.queries, account: "wallet", target, orders: preview.orders, shipTypesBySource: {}, targetIsMoon: true, levelSupply: selected, levelPreview, isCurrent: () => true, onPreview: () => {}, onShortfall: () => {} };
@@ -144,14 +146,22 @@ describe("production Supply confirmation and launch handlers", () => {
     expect(deployWords.slice(0, 3)).toEqual([7n, 7n, 1n]);
     expect(deployWords.slice(17)).toEqual([24999n, 0n, 0n, 100n, 0n, 1n]);
     const multiple = [preview.orders[0]!, { ...preview.orders[0]!, originPlanetId: "1" }];
-    const readsBefore = h.calls.length;
-    await expect(prepareBatchSupplyConfirmation({ ...args, orders: multiple })).rejects.toThrow("Moon Supply requires exactly one source");
-    expect(h.calls).toHaveLength(readsBefore);
+    await expect(prepareBatchSupplyConfirmation({ ...args, orders: multiple })).rejects.toThrow("inventory changed");
     const blockedWallet = mockWallet();
-    expect(() => launchBatchSupplyTransaction(blockedWallet.provider, account, contract, target, multiple, true)).toThrow("Moon Supply requires exactly one source");
+    await expect(launchBatchSupplyTransaction(blockedWallet.provider, account, contract, target, multiple, true)).rejects.toThrow("not available");
     expect(blockedWallet.sent).toHaveLength(0);
     h.setParentFuel("0");
     await expect(prepareBatchSupplyConfirmation({ ...args, mission: "deploy" })).rejects.toThrow("inventory changed");
     await expect(prepareBatchSupplyConfirmation(args)).rejects.toThrow("inventory changed");
   });
+});
+
+test("an increased level shortfall rejects every unchanged retry, not only the first preview change", async () => {
+  const h = harness({ ...infrastructure, resources: {metal:"500",crystal:"500",deuterium:"0"} });
+  let preview = await readLevelSupplyPreview(h.queries,"wallet","7",request);
+  const orders = buildBatchSupplyPlan({ sources:[batchSupplySourceForPlanet(origin,origin)], targetCoordinates:target, requested:preview.missing, selectedPlanetIds:new Set(["1"]) }).orders;
+  h.setDestination(infrastructure);
+  for (let attempt=0;attempt<2;attempt++) {
+    await expect(prepareBatchSupplyConfirmation({queries:h.queries,account:"wallet",target,orders,shipTypesBySource:{},levelSupply:request,levelPreview:preview,isCurrent:()=>true,onPreview:value=>{preview=value},onShortfall:()=>{}})).rejects.toThrow("review the updated plan");
+  }
 });

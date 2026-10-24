@@ -13,8 +13,7 @@ import {VeydriftMoonShipProduction} from "./libraries/VeydriftMoonShipProduction
 import {VeydriftMoonDefenseProduction} from "./libraries/VeydriftMoonDefenseProduction.sol";
 import {VeydriftMoonGateShips} from "./libraries/VeydriftMoonGateShips.sol";
 import {VeydriftMoonMath} from "./libraries/VeydriftMoonMath.sol";
-import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
-import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
+import {VeydriftMoonBuildings} from "./libraries/VeydriftMoonBuildings.sol";
 import {
     Defense,
     MoonBuilding,
@@ -26,6 +25,10 @@ import {
 interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function technologyLevel(address player, Technology technology) external view returns (uint16);
+    function researchQueue(address player)
+        external
+        view
+        returns (VeydriftGameStorage.ResearchQueue memory);
     function moonResources(uint256 planetId)
         external
         view
@@ -154,6 +157,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     // Append-only incarnation counter. Existing live moons are generation zero; every creation
     // after this upgrade advances the counter, so in-flight missions cannot bind to a replacement.
     mapping(uint256 planetId => uint64 generation) internal _moonGenerations;
+    // Append-only. The chicken-burn listener's hot key: it may only grant burn moons, so the
+    // owner (who can mint moon state and upgrade this contract) stays a cold key.
+    address public chickenBurnGranter;
     error ChickenBurnAlreadyGranted(bytes32 burnId);
     error ConstructionActive();
     error ConstructionInactive();
@@ -163,6 +169,8 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     error MissingDependency(bytes32 dependency);
     error MoonAlreadyExists(uint256 planetId);
     error MoonFieldCapacityReached();
+    error MoonBuildingNotDemolishable(MoonBuilding building);
+    error MoonBuildingInUse(MoonBuilding building);
     error NoMoon(uint256 planetId);
     error NoPlanet();
     error NotMoonOwner();
@@ -210,6 +218,25 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     event MoonBuildingCompleted(
         uint256 indexed planetId, MoonBuilding indexed building, uint16 level
     );
+    /// @notice A one-level moon demolition sharing the moon's building slot with upgrades
+    ///         (`targetLevel` = current level - 1); it completes via `MoonBuildingCompleted`.
+    event MoonBuildingDemolitionStarted(
+        uint256 indexed planetId,
+        MoonBuilding indexed building,
+        uint16 targetLevel,
+        uint64 readyAt,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
+    event MoonBuildingDemolitionCancelled(
+        uint256 indexed planetId,
+        MoonBuilding indexed building,
+        uint16 targetLevel,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    );
     event MoonDefenseQueued(
         uint256 indexed planetId,
         Defense indexed defense,
@@ -250,6 +277,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint64 nextReadyAt
     );
     event MoonChanceReporterUpdated(address indexed oldReporter, address indexed newReporter);
+    event ChickenBurnGranterUpdated(address indexed oldGranter, address indexed newGranter);
     event MoonChanceSkippedExistingMoon(
         uint256 indexed battleId,
         uint256 indexed targetPlanetId,
@@ -332,16 +360,14 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         onlyOwner
     {
         _requireMoonExists(planetId);
-        game.requireNoPendingMoonAttackResolution(planetId);
-        _settleMoonStateDue(planetId);
+        _settleMoonStateDue(planetId); // includes the pending-battle guard
         game.grantMoonResources(planetId, amount);
         _emitMoonResourcesSettled(planetId);
     }
 
     function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external onlyOwner {
         _requireMoonExists(planetId);
-        game.requireNoPendingMoonAttackResolution(planetId);
-        _settleMoonStateDue(planetId);
+        _settleMoonStateDue(planetId); // includes the pending-battle guard
         game.setMoonShipCount(planetId, ship, total);
     }
 
@@ -365,6 +391,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             _settleMoonDefenseDue(planetId);
         }
         VeydriftMoonDefenseBacklog.applyChanges(_moonDefenseCounts, planetId, changes, repair);
+    }
+
+    function setChickenBurnGranter(address granter) external onlyOwner {
+        emit ChickenBurnGranterUpdated(chickenBurnGranter, granter);
+        chickenBurnGranter = granter;
     }
 
     function setMoonChanceReporter(address nextReporter) external onlyOwner {
@@ -470,15 +501,28 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                 readyAt: buildingQueue.readyAt,
                 cost: buildingQueue.cost
             });
-            emit MoonBuildingStarted(
-                planetId,
-                buildingQueue.building,
-                buildingQueue.targetLevel,
-                buildingQueue.readyAt,
-                buildingQueue.cost.metal,
-                buildingQueue.cost.crystal,
-                buildingQueue.cost.deuterium
-            );
+            // A target below the imported level is an in-flight demolition.
+            if (buildingQueue.targetLevel < _moonBuildingLevels[planetId][buildingQueue.building]) {
+                emit VeydriftMoonBuildings.MoonBuildingDemolitionStarted(
+                    planetId,
+                    buildingQueue.building,
+                    buildingQueue.targetLevel,
+                    buildingQueue.readyAt,
+                    buildingQueue.cost.metal,
+                    buildingQueue.cost.crystal,
+                    buildingQueue.cost.deuterium
+                );
+            } else {
+                emit MoonBuildingStarted(
+                    planetId,
+                    buildingQueue.building,
+                    buildingQueue.targetLevel,
+                    buildingQueue.readyAt,
+                    buildingQueue.cost.metal,
+                    buildingQueue.cost.crystal,
+                    buildingQueue.cost.deuterium
+                );
+            }
         }
 
         if (defenseQueue.active) {
@@ -503,9 +547,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function grantMoonFromChickenBurn(bytes32 burnId, address player, uint256 planetId)
         external
-        onlyOwner
         returns (Moon memory createdMoon)
     {
+        if (msg.sender != owner && msg.sender != chickenBurnGranter) {
+            revert NotOwner(msg.sender);
+        }
         if (burnId == bytes32(0) || player == address(0)) revert ZeroAddress();
         if (chickenBurnMoonGranted[burnId]) revert ChickenBurnAlreadyGranted(burnId);
 
@@ -581,7 +627,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         bytes32 purposeHash = moonChancePurposeHash(
             outcomeId, battleId, targetPlanetId, metalDebris, crystalDebris, chanceBps
         );
-        requestId = randomness.requestRandomness(purposeHash);
+        // A drained or paused engine must not drop the chance: the outcome keeps requestId 0
+        // until anyone calls retryMoonChanceRandomness.
+        try randomness.requestRandomness(purposeHash) returns (uint256 id) {
+            requestId = id;
+        } catch {}
 
         _moonChanceOutcomes[outcomeId] = MoonChanceOutcome({
             active: true,
@@ -601,7 +651,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             requestedAt: _currentTimestamp(),
             finalizedAt: 0
         });
-        moonChanceOutcomeByRequestId[requestId] = outcomeId;
+        // moonChanceOutcomeByRequestId is write-only (no reader) and requestId may be 0 here.
         moonChanceOutcomeByBattle[battleKey] = outcomeId;
 
         emit MoonChanceRequested(
@@ -686,6 +736,17 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         );
     }
 
+    /// @notice Permissionless: requests randomness for a recorded battle moon chance whose
+    /// battle-time request failed (requestId 0). Reverts once the outcome has a request.
+    function retryMoonChanceRandomness(uint256 outcomeId) external returns (uint256 requestId) {
+        MoonChanceOutcome storage outcome = _moonChanceOutcomes[outcomeId];
+        if (!outcome.active || outcome.randomnessRequestId != 0) {
+            revert UnknownMoonChanceOutcome(outcomeId);
+        }
+        requestId = randomness.requestRandomness(outcome.purposeHash);
+        outcome.randomnessRequestId = requestId;
+    }
+
     function finalizeMoonChance(uint256 outcomeId) external returns (bool moonCreated) {
         _requireGameActive();
         MoonChanceOutcome storage outcome = _moonChanceOutcomes[outcomeId];
@@ -762,31 +823,41 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _requireMoonOwner(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
         _settleMoonStateDue(planetId);
-        if (moonBuildingConstructions[planetId].active) revert ConstructionActive();
+        VeydriftMoonBuildings.startUpgrade(
+            moonBuildingConstructions,
+            _moonBuildingLevels,
+            _moons,
+            game,
+            _actingPlayer(),
+            planetId,
+            building,
+            _currentTimestamp()
+        );
+    }
 
-        uint16 currentLevel = _moonBuildingLevels[planetId][building];
-        if (currentLevel >= MAX_LEVEL) revert LevelTooHigh();
-        if (_moonUsedFields(planetId) >= _moons[planetId].fields) {
-            revert MoonFieldCapacityReached();
-        }
+    /// @notice OGame demolition: takes a moon building one level down through the moon's single
+    ///         building slot, at the previous level's build price less 4% per Ion Technology level.
+    function startMoonBuildingDemolition(uint256 planetId, MoonBuilding building) external {
+        _requireMoonOwner(planetId);
+        _settleMoonStateDue(planetId);
+        VeydriftMoonBuildings.startDemolition(
+            moonBuildingConstructions,
+            _moonBuildingLevels,
+            moonDefenseQueues,
+            game,
+            _actingPlayer(),
+            planetId,
+            building,
+            _currentTimestamp()
+        );
+    }
 
-        _requireMoonBuildingDependencies(planetId, building);
-        VeydriftGameStorage.Resources memory cost = moonBuildingUpgradeCost(planetId, building);
-        _spendMoonResources(planetId, cost);
-
-        uint64 readyAt =
-            (uint256(_currentTimestamp()) + _moonBuildingDuration(planetId, cost)).toUint64();
-        uint16 targetLevel;
-        // currentLevel is checked against MAX_LEVEL above.
-        unchecked {
-            targetLevel = currentLevel + 1;
-        }
-        moonBuildingConstructions[planetId] = MoonBuildingConstruction({
-            active: true, building: building, targetLevel: targetLevel, readyAt: readyAt, cost: cost
-        });
-
-        emit MoonBuildingStarted(
-            planetId, building, targetLevel, readyAt, cost.metal, cost.crystal, cost.deuterium
+    /// @notice Cancels a queued moon demolition before it completes and refunds its full price.
+    function cancelMoonBuildingDemolition(uint256 planetId) external {
+        _requireMoonOwner(planetId);
+        _settleMoonStateDue(planetId);
+        VeydriftMoonBuildings.cancelDemolition(
+            moonBuildingConstructions, _moonBuildingLevels, game, planetId, _currentTimestamp()
         );
     }
 
@@ -1227,22 +1298,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (moonRef.owner != _actingPlayer()) revert NotMoonOwner();
     }
 
-    function _spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources memory cost)
-        private
-    {
-        VeydriftGameStorage.Resources memory available = game.moonResources(planetId);
-        if (
-            available.metal < cost.metal || available.crystal < cost.crystal
-                || available.deuterium < cost.deuterium
-        ) {
-            revert VeydriftGameStorage.InsufficientResources(
-                available.metal, available.crystal, available.deuterium
-            );
-        }
-        game.spendMoonResources(planetId, cost);
-        _emitMoonResourcesSettled(planetId);
-    }
-
     function _setMoonDefenseCount(uint256 planetId, Defense defense, uint32 total) private {
         _moonDefenseCounts[planetId][defense] = total;
         emit MoonDefenseCountChanged(planetId, defense, total);
@@ -1258,40 +1313,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function _requireJumpGate(uint256 planetId) private view {
         if (_moonBuildingLevels[planetId][MoonBuilding.JumpGate] == 0) {
             revert JumpGateMissing(planetId);
-        }
-    }
-
-    function _requireMoonBuildingDependencies(uint256 planetId, MoonBuilding building)
-        private
-        view
-    {
-        // The linked library already uses the same MissingDependency(bytes32) ABI error.
-        VeydriftDependencies.requireMoonBuilding(
-            building,
-            _moonBuildingLevels[planetId][MoonBuilding.LunarBase],
-            _moonBuildingLevels[planetId][MoonBuilding.RoboticsFactory],
-            game.technologyLevel(_actingPlayer(), Technology.Hyperspace)
-        );
-    }
-
-    function _moonBuildingDuration(uint256 planetId, VeydriftGameStorage.Resources memory cost)
-        private
-        view
-        returns (uint256)
-    {
-        return VeydriftFormulas.buildingDuration(
-            _moonBuildingLevels[planetId][MoonBuilding.RoboticsFactory],
-            0,
-            cost.metal,
-            cost.crystal,
-            QUEUE_UNIVERSE_SPEED,
-            MIN_QUEUE_SECONDS
-        );
-    }
-
-    function _moonUsedFields(uint256 planetId) private view returns (uint256 used) {
-        for (uint8 i = 0; i <= uint8(type(MoonBuilding).max); i++) {
-            used += _moonBuildingLevels[planetId][MoonBuilding(i)];
         }
     }
 

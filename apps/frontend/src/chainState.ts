@@ -203,6 +203,7 @@ export function buildingQueueItemForDisplay(
     readyAt,
     startedAt,
     targetLevel: queue.targetLevel ?? 0,
+    ...(queue.action === "demolish" ? { demolish: true } : {}),
   };
 }
 

@@ -29,13 +29,20 @@ cache-sizes/
 apps/frontend/public/assets/game/sizes/
 apps/frontend/.animation-variants/
 
+# Pinned external media (apps/frontend/media.json), synced at runtime
+apps/frontend/.media/
+apps/frontend/.media-src/
+
 # Blockchain / zk generated artifacts
 broadcast/
 artifacts/
 packages/contracts/manifests/private-paid-invite-migration.json
+packages/contracts/manifests/private-referral-*.json
 # Regenerated local-only mission batch EVM fixture state.
 packages/contracts/manifests/vey918-mixed-alloc.json
 packages/contracts/manifests/vey918-mixed-meta.json
+packages/contracts/manifests/ticket44-referee-alloc.json
+packages/contracts/manifests/ticket44-referee-meta.json
 typechain-types/
 proofs/
 !packages/circuits/proofs/
