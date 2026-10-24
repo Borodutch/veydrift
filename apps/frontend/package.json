@@ -15,7 +15,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "serve": "bun scripts/serve.mjs",
     "start": "bun run serve",
-    "test": "bun test tests src/*.test.ts",
+    "test": "bun test --timeout 30000 tests src/*.test.ts",
     "test:touch-browser": "node scripts/touch-browser.mjs"
   },
   "dependencies": {

@@ -101,9 +101,11 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
       db.query('INSERT INTO resolver_signing_reservations VALUES(?,?,?,?,?,?,1)').run('fixture-reservation',8453,input.address,input.operationId,input.nonce,input.membership);
       db.query('INSERT INTO resolver_signing_results VALUES(?,?,?)').run('fixture-reservation',alternative,raw);
       db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,serialized_transaction,replay_state,replay_max_fee_wei) VALUES(?,?,?,?,?,?,'pending',?,'unvalidated',?)").run(8453,input.address,input.operationId,input.nonce,alternative,input.membership,raw,input.maxFeeWei);
+      // Holds are wall-clock deadlines; the coordinator's sleep is virtual, so early-wait's 1.5s costs no
+      // real time and still holds after a loaded runner's slow setup (250ms had sometimes expired).
       if(['cooldown','early-wait','early-deadline','expired-hold'].includes(failure))
         db.query("UPDATE resolver_prepared_intents SET replay_state='retryable',send_attempts=?,next_retry_ms=? WHERE transaction_hash=?")
-          .run(failure.startsWith('early')?1:3,Date.now()+(failure==='cooldown'?60000:failure==='early-wait'?250:failure==='early-deadline'?6000:-1),alternative);
+          .run(failure.startsWith('early')?1:3,Date.now()+(failure==='cooldown'?60000:failure==='early-wait'?1500:failure==='early-deadline'?6000:-1),alternative);
       // Stop after the production synchronous pre-dispatch guard, before even entering sendPrepared.
       (coordinator as any).sendPrepared=async (...args:any[])=>{args[5]();throw new Error('SAFE_DISPATCH_SENTINEL');};
     }

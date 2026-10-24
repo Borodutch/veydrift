@@ -48,7 +48,8 @@ function ownerTopic(address: string): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+// Returns as soon as the condition holds; the bound only has to outlast a loaded CI runner.
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;

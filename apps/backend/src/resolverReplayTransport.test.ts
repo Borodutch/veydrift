@@ -64,7 +64,7 @@ test.each([false, true])("timed-out production replay retains cross-instance sen
         return keccak256(raw);
       } finally { active--; }
     };
-    const first = replayMissionFixture(path, send, clock, () => mined);
+    const first = replayMissionFixture(path, send, clock, () => mined, 500);
     await expect(first.resolveMissionBatch(replayItems)).rejects.toThrow("deadline");
     expect(active).toBe(1); expect(sends).toBe(2); expect(state(path).fences.length).toBe(1);
     clock.now += 1000000; // even far beyond the owner lease and retry timestamp
@@ -88,7 +88,7 @@ test("late wrapped deterministic result is retained before outstanding fence rel
       if (++sends === 1) throw { code: -32603, message: "internal error" };
       return new Promise<Hex>((_resolve, r) => { reject = r; });
     };
-    await expect(replayMissionFixture(path, send, clock).resolveMissionBatch(replayItems)).rejects.toThrow("deadline");
+    await expect(replayMissionFixture(path, send, clock, undefined, 500).resolveMissionBatch(replayItems)).rejects.toThrow("deadline");
     reject({ code: -32000, message: "invalid sender" }); await new Promise((r) => setTimeout(r, 5));
     clock.now += 60000;
     await expect(replayMissionFixture(path, send, clock).resolveMissionBatch([])).rejects.toThrow("deterministic send rejection");

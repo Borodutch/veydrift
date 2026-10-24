@@ -208,7 +208,7 @@ export function planChecks(scope, group = "all") {
   const selected = plan.filter(({ label }) => (HEAVY[label] || "rest") === group);
   // Groups with a browser lane repeat the cheap frontend asset preparation it relies on.
   const precheck = plan.find(({ label }) => label === "frontend-precheck");
-  if (precheck && selected.some(({ label }) => label.startsWith("frontend-touch-browser-"))) selected.unshift(precheck);
+  if (precheck && !selected.includes(precheck) && selected.some(({ label }) => label.startsWith("frontend-touch-browser-"))) selected.unshift(precheck);
   return selected;
 }
 

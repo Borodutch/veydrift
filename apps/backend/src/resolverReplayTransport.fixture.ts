@@ -12,7 +12,9 @@ const chain = { id: 8453, name: "fixture", nativeCurrency: { name: "Ether", symb
   rpcUrls: { default: { http: ["http://invalid.test"] } } };
 export const replayItems = [{ missionId: "1", leg: "arrival" as const, dueAt: Math.floor(Date.now() / 1000) - 5 }];
 export function replayMissionFixture(path: string, send: (raw: Hex) => Promise<Hex>, clock: { now: number },
-  mined = () => false, timeout = 100) {
+  // A real-time pass deadline: generous by default (a loaded runner overran 100ms on ordinary passes);
+  // tests whose send never answers pass a short one.
+  mined = () => false, timeout = 5000) {
   // Actual viem request wrapping and sendRawTransaction, never a plain-error callback surrogate.
   const transportClient = createPublicClient({ transport: custom({ request: async ({ method, params }) => {
     if (method !== "eth_sendRawTransaction") throw new Error("unexpected fixture RPC");
@@ -52,7 +54,7 @@ if (import.meta.main) {
       if (++sends === 1) throw { code: -32603, message: "transport internal error" };
       process.stdout.write("outstanding\n");
       return new Promise<Hex>(() => {});
-    }, { now: 1000 }).resolveMissionBatch(replayItems);
+    }, { now: 1000 }, undefined, 500).resolveMissionBatch(replayItems);
   } catch { process.stdout.write("deadline\n"); }
   // Keep the live unresolved transport owner observable until the parent kills it.
   await new Promise(() => { void keepAlive; });
