@@ -1,8 +1,8 @@
 #!/bin/sh
 # Installs plain <version> (https://getplain.org) into <dir> from its GitHub release, after checking the
 # download against the release's SHA256SUMS. GitHub-hosted CI runners run this on every job; the Mac
-# runners get it once, at ~/.plain/versions/<version> (see .forgejo/workflows/ci.yml).
-#   scripts/install-plain.sh 0.4.0 ~/.plain/versions/0.4.0
+# runners get it once per runner tool cache, at $RUNNER_TOOL_CACHE/plain/<version> (see .forgejo/workflows/ci.yml).
+#   scripts/install-plain.sh 0.4.0 "$RUNNER_TOOL_CACHE/plain/0.4.0"
 set -eu
 
 version="$1"

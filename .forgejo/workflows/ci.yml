@@ -46,6 +46,8 @@ jobs:
         with:
           fetch-depth: 2
           clean: false
+          # packages/contracts/lib (OpenZeppelin, forge-std); fresh runner workspaces don't have them.
+          submodules: recursive
 
       - name: Remove untracked files from previous runs
         run: git clean -ffd -q && git submodule foreach --recursive git clean -ffd -q
@@ -94,13 +96,27 @@ jobs:
         with:
           version: v1.7.1
 
-      # The Mac runners share one ~/.foundry; installing it from concurrent jobs races.
-      - name: Use the Mac's Foundry
+      # Each Mac runner instance has its own tool cache and runs one job at a time, so a missing
+      # Foundry is installed there once (checked against the release's .sha256) without racing.
+      - name: Use the runner's Foundry
         if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
         run: |
-          echo "$HOME/.foundry/bin" >> "$GITHUB_PATH"
-          "$HOME/.foundry/bin/forge" --version | grep -q 'Version: 1.7.1' \
-            || { echo "::error::Install Foundry 1.7.1 on this runner: foundryup --install 1.7.1"; exit 1; }
+          dir="$RUNNER_TOOL_CACHE/foundry/1.7.1"
+          if ! "$dir/forge" --version 2>/dev/null | grep -q 'Version: 1.7.1'; then
+            case "$(uname -s)/$(uname -m)" in
+              Darwin/arm64) target=darwin_arm64 ;;
+              Linux/x86_64) target=linux_amd64 ;;
+              *) echo "::error::No Foundry release for $(uname -s) $(uname -m)"; exit 1 ;;
+            esac
+            base="https://github.com/foundry-rs/foundry/releases/download/v1.7.1/foundry_v1.7.1_$target"
+            curl -fsSL -o "$RUNNER_TEMP/foundry.tar.gz" "$base.tar.gz"
+            want="$(curl -fsSL "$base.sha256" | cut -d' ' -f1)"
+            got="$( (sha256sum "$RUNNER_TEMP/foundry.tar.gz" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/foundry.tar.gz") | cut -d' ' -f1)"
+            [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::Foundry 1.7.1 doesn't match its .sha256"; exit 1; }
+            rm -rf "$dir" && mkdir -p "$dir" && tar -xzf "$RUNNER_TEMP/foundry.tar.gz" -C "$dir"
+          fi
+          echo "$dir" >> "$GITHUB_PATH"
+          "$dir/forge" --version
 
       # plain (getplain.org) runs the contract tests and the size and storage-layout checks; Foundry
       # still formats, builds out/ and runs anvil.
@@ -110,17 +126,33 @@ jobs:
           scripts/install-plain.sh "$PLAIN_VERSION" "$RUNNER_TEMP/plain"
           echo "$RUNNER_TEMP/plain" >> "$GITHUB_PATH"
 
-      # Like Foundry, the Mac's plain is installed once, at a path per version: jobs never install it.
+      # Like Foundry, plain is installed once per runner tool cache, at a path per version.
       # CI keeps its own PLAIN_HOME (solc, test-result cache) so local and dev builds on this Mac never
       # feed results into CI.
-      - name: Use the Mac's plain
+      - name: Use the runner's plain
         if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
         run: |
-          dir="$HOME/.plain/versions/$PLAIN_VERSION"
+          dir="$RUNNER_TOOL_CACHE/plain/$PLAIN_VERSION"
+          "$dir/plain" --version 2>/dev/null | grep -qx "plain $PLAIN_VERSION" \
+            || { rm -rf "$dir" && scripts/install-plain.sh "$PLAIN_VERSION" "$dir"; }
           echo "$dir" >> "$GITHUB_PATH"
           echo "PLAIN_HOME=$HOME/.plain-ci" >> "$GITHUB_ENV"
-          "$dir/plain" --version | grep -qx "plain $PLAIN_VERSION" \
-            || { echo "::error::Install plain $PLAIN_VERSION on this runner: scripts/install-plain.sh $PLAIN_VERSION $dir"; exit 1; }
+
+      # Full Chrome crashes at launch (SIGTRAP) under the runners' hidden daemon user, which has no
+      # GUI session. The browser tests take CHROME_PATH, so point them at Chrome for Testing's
+      # headless-only build, installed once per runner tool cache.
+      - name: Use the runner's headless Chrome
+        if: steps.plan.outputs.frontend == 'true' && runner.environment != 'github-hosted' && runner.os == 'macOS'
+        run: |
+          version=155.0.8059.86
+          dir="$RUNNER_TOOL_CACHE/chrome-headless-shell/$version"
+          bin="$dir/chrome-headless-shell-mac-arm64/chrome-headless-shell"
+          if [ ! -x "$bin" ]; then
+            curl -fsSL -o "$RUNNER_TEMP/chs.zip" "https://storage.googleapis.com/chrome-for-testing-public/$version/mac-arm64/chrome-headless-shell-mac-arm64.zip"
+            rm -rf "$dir" && mkdir -p "$dir" && unzip -q "$RUNNER_TEMP/chs.zip" -d "$dir"
+          fi
+          "$bin" --version
+          echo "CHROME_PATH=$bin" >> "$GITHUB_ENV"
 
       # Hosted runners only (fork PRs). Keyed per job: a key shared with jobs that compile less
       # once let a near-empty cache win for everyone.
