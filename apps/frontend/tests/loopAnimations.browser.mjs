@@ -76,7 +76,9 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     async function open() {
       await send("Page.navigate", { url });
       await until("Boolean(window.loopFixture && document.querySelector('[data-catalog] img, [data-catalog] video'))", "fixture did not render");
-      await evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+      // Boxes are compared across loads: measure after web fonts settle the layout (a slow CI load
+      // measured the reduced-motion stills one text line higher than the loops).
+      await evaluate("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
     }
     // Every element in the still's box, by stable key: tiles, icons, catalog thumbnails.
     const boxes = `Object.fromEntries([
