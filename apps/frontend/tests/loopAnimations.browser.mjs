@@ -246,6 +246,21 @@ test("building/ship loops play lazily at a bounded size, in the still's exact bo
     await open();
     assert.equal(await evaluate("document.querySelectorAll('video').length"), 0);
     assert.deepEqual(await evaluate(loopRequests), []);
+    console.log("DIAG", JSON.stringify(await evaluate(`(() => {
+      const out = {};
+      const walk = (rules, media, el, acc) => { for (const r of rules) {
+        if (r.cssRules && r.media) { walk(r.cssRules, media + ' ' + r.media.mediaText + '=' + matchMedia(r.media.mediaText).matches, el, acc); continue; }
+        if (r.cssRules && !r.selectorText) { walk(r.cssRules, media + ' ' + r.constructor.name, el, acc); continue; }
+        if (!r.selectorText) continue;
+        let m = false; try { m = el.matches(r.selectorText); } catch (e) { m = 'ERR'; }
+        if (m && /border|margin/.test(r.style.cssText)) acc.push([media, r.selectorText.slice(0, 80), r.style.cssText.slice(0, 140)]);
+      } };
+      for (const q of ['html', 'body']) { const acc = []; for (const sh of document.styleSheets) walk(sh.cssRules, '', document.querySelector(q), acc); out[q] = acc; }
+      const c = getComputedStyle(document.body); out.computed = [c.margin, c.borderTopWidth, c.borderTopStyle, c.boxSizing, c.color, c.backgroundColor, c.fontFamily.slice(0, 40), c.minHeight];
+      out.html = [out.html, getComputedStyle(document.documentElement).borderTopStyle, getComputedStyle(document.documentElement).color];
+      out.sheets = Array.from(document.styleSheets).map(s => [s.href, s.ownerNode && s.ownerNode.tagName, s.disabled, s.media.mediaText, s.cssRules.length]);
+      out.ua = navigator.userAgent; out.mode = document.compatMode;
+      return out; })()`)));
     const still = await evaluate(boxes);
     assert.deepEqual(Object.keys(still), Object.keys(animated));
     for (const [key, box] of Object.entries(animated)) {
