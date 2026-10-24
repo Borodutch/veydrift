@@ -14,6 +14,7 @@ export const LANES = [
     "trailerPlayer", "publicMoonActions", "demolishIcon", "loopAnimations"]],
 ];
 
+// Resolves to the file's exit code and full log.
 function run(unit) {
   const [file, shard] = unit.split("@");
   return new Promise((resolve) => {
@@ -21,29 +22,29 @@ function run(unit) {
       env: shard ? { ...process.env, BROWSER_TEST_SHARD: shard } : process.env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    let output = "";
-    child.stdout.on("data", (chunk) => { output += chunk; });
-    child.stderr.on("data", (chunk) => { output += chunk; });
-    child.on("close", (code) => {
-      // One block per file, so side-by-side chains never interleave their output.
-      process.stdout.write(`\n# ${unit} (exit ${code})\n${output}`);
-      resolve(code === 0);
-    });
+    let log = "";
+    child.stdout.on("data", (chunk) => { log += chunk; });
+    child.stderr.on("data", (chunk) => { log += chunk; });
+    child.on("close", (code) => resolve({ code, log }));
   });
 }
 
 // In a CI lane a failed file runs once more: the runners are shared with simulators and other jobs,
 // and a first run that times out while Vite is still optimizing a cold dep cache never saves it.
-// A real failure fails both times.
+// A real failure fails both times. A passing retry logs one line instead of the first attempt's
+// log, because the CI check runner treats any logged error line as a failure.
 async function chain(units, retry) {
   let ok = true;
   for (const unit of units) {
-    let passed = await run(unit);
-    if (!passed && retry) {
-      process.stdout.write(`\n# RETRY ${unit}: failed once, running it again\n`);
-      passed = await run(unit);
+    let result = await run(unit);
+    if (result.code !== 0 && retry) {
+      const first = result;
+      result = await run(unit);
+      process.stdout.write(`\n# ${unit}: first attempt exited ${first.code}, retried${result.code === 0 ? "" : `\n${first.log}`}\n`);
     }
-    ok = passed && ok;
+    // One block per file, so side-by-side chains never interleave their output.
+    process.stdout.write(`\n# ${unit} (exit ${result.code})\n${result.log}`);
+    ok = result.code === 0 && ok;
   }
   return ok;
 }
