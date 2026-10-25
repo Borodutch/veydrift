@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsc-stats.tsbuildinfo",
     "target": "ES2022",
     "useDefineForClassFields": true,
     "module": "ESNext",
