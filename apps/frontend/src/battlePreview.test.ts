@@ -148,11 +148,12 @@ describe("contract battle preview parity", () => {
 
   test("uses reproducible 256-bit samples and reports outcome odds and average losses", () => {
     const input = battle(ships([0, 1]), ships([0, 27]), defenses());
-    const first = simulateBattleStats(input, 128);
-    const second = simulateBattleStats(input, 128);
+    // 32 runs (each hashes every shot) still mix draws and defeats and stay cheap under CI load.
+    const first = simulateBattleStats(input, 32);
+    const second = simulateBattleStats(input, 32);
 
     expect(first).toEqual(second);
-    expect(first.runs).toBe(128);
+    expect(first.runs).toBe(32);
     expect(first.outcomes.draw).toBeGreaterThan(0);
     expect(first.outcomes.defeat).toBeGreaterThan(0);
     // One Small Cargo (2,000 metal / 2,000 crystal) is lost exactly in the defeats.

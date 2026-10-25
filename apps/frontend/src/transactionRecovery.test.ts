@@ -57,6 +57,8 @@ const action = (hash = "0xnew", planetId = "7", wallet = "0xabc") => ({
   invalidateTags: [`wallet:${wallet}`, `planet:${planetId}`] as const,
   send: async (beforeSend: () => void) => { beforeSend(); return hash; },
 });
+// Only the foreground timer (a macrotask) may expire an attempt, never wall-clock drift on a loaded runner.
+const frozenClock = () => 0;
 afterEach(() => {
   for (const data of stores.splice(0)) data.dispose();
   for (const restore of restorers.splice(0).reverse()) restore();
@@ -105,7 +107,7 @@ describe("automatic transaction recovery", () => {
     browser();
     const wallet = deferred<string>();
     const observed: string[] = [];
-    const data = store({ transactionForegroundTimeoutMs: 5, transactionStatusReader: async hash => { observed.push(hash); return status(hash); } });
+    const data = store({ now: frozenClock, transactionForegroundTimeoutMs: 5, transactionStatusReader: async hash => { observed.push(hash); return status(hash); } });
     const oldPhases: string[] = [];
     await expect(data.runWriteTransaction({ ...action(), send: beforeSend => { beforeSend(); return wallet.promise; }, onStateChange: state => oldPhases.push(state.phase) })).resolves.toMatchObject({ outcome: "unknown" });
     // Only the first send should time out; on a loaded runner the retries' preparation alone outlasted 5ms.
@@ -131,7 +133,7 @@ describe("automatic transaction recovery", () => {
   test("expired preparation cannot ask the wallet to send later", async () => {
     browser();
     const prepare = deferred<void>();
-    const data = store({ transactionForegroundTimeoutMs: 5 });
+    const data = store({ now: frozenClock, transactionForegroundTimeoutMs: 5 });
     let sends = 0;
     await expect(data.runWriteTransaction({ ...action(), prepare: () => prepare.promise, send: async beforeSend => { beforeSend(); sends++; return "0xlate"; } })).resolves.toMatchObject({ outcome: "not-submitted" });
     prepare.resolve();
@@ -167,7 +169,7 @@ describe("automatic transaction recovery", () => {
       writes.push(JSON.parse(String(init.body)));
       return Response.json({ recorded: true });
     });
-    const data = store({ transactionForegroundTimeoutMs: 5 });
+    const data = store({ now: frozenClock, transactionForegroundTimeoutMs: 5 });
     await expect(data.runWriteTransaction({ ...action(), key: "settlement:first-planet",
       indexing: data.indexing.settledPlanet("0xabc", () => "refcode"),
       send: beforeSend => { beforeSend(); return wallet.promise; },

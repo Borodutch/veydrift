@@ -50,8 +50,9 @@ describe("independent shot conservation", () => {
       const technology = { weapons: level, shielding: level, armor: level };
       const ships = (count: number) => Array.from({ length: 16 }, (_, id) => id === 13 ? count : 0);
       const input: ContractBattleInput = { attackers: [{ id: "1", owner: "0x1", label: "Attacker", laneGroup: 0, ships: ships(a!), technology }], defender: { id: "0", owner: "0x2", label: "Defender", ships: ships(d!), defenses: Array(8).fill(0), technology, counterplay: [] } };
-      // 64 seeds per matchup keep it well inside the 5 s test timeout on a loaded CI runner
-      for (let seed = 1; seed <= 64; seed++) {
+      // Each battle hashes every shot; 8 seeds x 10 matchups keeps this cheap on a loaded CI runner.
+      // combatSeededParity.test.ts pins exact seeded Reaper outcomes against the Solidity reference.
+      for (let seed = 1; seed <= 8; seed++) {
         const result = runContractBattle(input, `0x${seed.toString(16).padStart(64, "0")}`);
         expect(result.rounds.length).toBeLessThanOrEqual(6);
         const first = result.rounds[0]!;

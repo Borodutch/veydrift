@@ -1579,7 +1579,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     const attempt = { id: ++this.nextTransactionAttempt, unknown: false };
     this.submissionAttempts.set(identity, attempt);
     let expired = false;
-    const deadline = Date.now() + this.transactionForegroundTimeoutMs;
+    const deadline = this.now() + this.transactionForegroundTimeoutMs;
     let walletSendStarted = false;
     let entry: PendingTransaction | undefined;
     const isCurrent = () => !this.transactionAbort.signal.aborted
@@ -1622,7 +1622,7 @@ private createIndexingPlan(keys: readonly string[], prepare?: () => Promise<Pend
     const work = (async (): Promise<WriteTransactionOutcome> => {
       try {
         const assertSubmissionContext = () => {
-          if (expired || Date.now() >= deadline) throw new Error("This preparation attempt has expired. Please try again.");
+          if (expired || this.now() >= deadline) throw new Error("This preparation attempt has expired. Please try again.");
           if (this.transactionAbort.signal.aborted || descriptor.recoveryIdentity?.() === false || (this.hasContext && this.contextWallet !== walletScope)) {
             throw new Error("Wallet changed before submission. Please try again.");
           }

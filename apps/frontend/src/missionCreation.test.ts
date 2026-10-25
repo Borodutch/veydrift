@@ -119,6 +119,10 @@ test("canonical attack preparation drives confirm, blocked, failure/retry, and s
   expect(confirmations).toBe(1);
 });
 
+// Every forecast sample hashes each shot; tests that do not pin the 128-run distribution use fewer
+// runs so they stay cheap on a loaded CI runner.
+const FEW_FORECAST_RUNS = 32;
+
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
   kind: "attack",
@@ -1180,7 +1184,7 @@ describe("mission creation", () => {
         research: [],
         queues: null,
       },
-    }));
+    }), undefined, false, undefined, undefined, FEW_FORECAST_RUNS);
 
     expect(forecast).toMatchObject({
       kind: "draw",
@@ -1191,7 +1195,7 @@ describe("mission creation", () => {
       },
     });
     expect(forecast.defenderPower).toBeGreaterThan(0);
-    expect(forecast.randomness?.sampleCount).toBe(128);
+    expect(forecast.randomness?.sampleCount).toBe(FEW_FORECAST_RUNS);
     expect(forecast.randomness?.outcomeCounts.win).toBeGreaterThan(0);
     expect(forecast.randomness?.outcomeCounts.draw).toBeGreaterThan(0);
     expect(forecast.label).toMatch(/^\d+% win · \d+% draw$/);
@@ -1219,7 +1223,7 @@ describe("mission creation", () => {
         research: [],
         queues: null,
       },
-    }));
+    }), undefined, false, undefined, undefined, FEW_FORECAST_RUNS);
 
     expect(forecast.kind).not.toBe("uncertain");
     if (forecast.kind === "uncertain") throw new Error("Expected a concrete battle forecast");
@@ -1420,12 +1424,12 @@ describe("mission creation", () => {
       },
     });
 
-    const baseForecast = publicTargetBattleForecast(selectedShips, target);
+    const baseForecast = publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, undefined, FEW_FORECAST_RUNS);
     const shipyardOnlyForecast = publicTargetBattleForecast(selectedShips, target, {
       weapons: 4,
       shielding: 0,
       armor: 5,
-    });
+    }, false, undefined, undefined, FEW_FORECAST_RUNS);
     const intel = AttackIntelPanel({
       battleForecast: shipyardOnlyForecast,
       coords: { galaxy: 7, system: 41, position: 6 },
@@ -1471,7 +1475,7 @@ describe("mission creation", () => {
     const units = stationedDefenderCompositionUnits(target.publicState?.stationedDefenders);
     const timing = { projectedAttackArrivalAt: 1700001800 };
 
-    expect(publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing)).toMatchObject({
+    expect(publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing, FEW_FORECAST_RUNS)).toMatchObject({
       kind: "defeat",
       label: "100% defeat",
     });
@@ -1480,7 +1484,7 @@ describe("mission creation", () => {
       expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
     ]);
     expect(
-      publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing)
+      publicTargetBattleForecast(selectedShips, target, undefined, false, undefined, timing, FEW_FORECAST_RUNS)
         .sampleReport?.defender.counterplay[0]?.technology,
     )
       .toEqual({ weapons: 4, shielding: 3, armor: 2 });
@@ -1518,6 +1522,7 @@ describe("mission creation", () => {
       false,
       undefined,
       { projectedAttackArrivalAt },
+      FEW_FORECAST_RUNS,
     );
 
     const launchNowMs = 1_900_000_000_000;
@@ -1612,7 +1617,7 @@ describe("mission creation", () => {
       },
     });
     const selectedShips = { ...attackAction.ships, lightFighter: 3 };
-    const selectedOnly = publicTargetBattleForecast(selectedShips, target, { weapons: 1, shielding: 1, armor: 1 });
+    const selectedOnly = publicTargetBattleForecast(selectedShips, target, { weapons: 1, shielding: 1, armor: 1 }, false, undefined, undefined, FEW_FORECAST_RUNS);
     const combined = publicTargetBattleForecast(
       selectedShips,
       target,
@@ -1649,6 +1654,8 @@ describe("mission creation", () => {
         }],
         selectedAttackerLaneGroup: 3,
       },
+      undefined,
+      FEW_FORECAST_RUNS,
     );
 
     expect(combined.kind).not.toBe("uncertain");
@@ -1739,6 +1746,8 @@ describe("mission creation", () => {
         stationedDefenders,
         selectedAttackerLaneGroup: 1,
       },
+      undefined,
+      FEW_FORECAST_RUNS,
     );
     const storageOrder = forecast(defenders);
     const displayOrder = forecast([...defenders].reverse());

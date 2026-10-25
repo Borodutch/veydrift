@@ -63,9 +63,10 @@ describe("Chicken browser RPC", () => {
       transportSignal = init?.signal;
       return new Promise<Response>((_resolve, reject) => transportSignal?.addEventListener("abort", () => reject(transportSignal?.reason), { once: true }));
     }) as unknown as typeof fetch;
-    await expect(fetchBurningChickenForOwner(owner, "90331", config)).rejects.toThrow(unavailable);
+    // A 20 ms transport timeout stands in for the production 10 s one.
+    await expect(fetchBurningChickenForOwner(owner, "90331", config, undefined, 20)).rejects.toThrow(unavailable);
     expect(transportSignal?.aborted).toBe(true);
-  }, 15_000);
+  });
 
   test("preserves subscriber cancellation and aborts the transport", async () => {
     const controller = new AbortController();

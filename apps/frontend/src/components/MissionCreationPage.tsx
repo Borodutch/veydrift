@@ -2156,7 +2156,7 @@ export function resolvePreparedPublicTargetBattleForecast(
   };
 }
 
-/** Synchronous forecast with SYNC_FORECAST_RUNS fast simulations (tests and non-UI callers). */
+/** Synchronous forecast with `runs` (default SYNC_FORECAST_RUNS) fast simulations (tests and non-UI callers). */
 const SYNC_FORECAST_RUNS = 128;
 export function publicTargetBattleForecast(
   ships: MissionShips,
@@ -2165,6 +2165,7 @@ export function publicTargetBattleForecast(
   targetIsMoon = false,
   joinAttackContext?: JoinAttackForecastContext,
   timing?: BattleForecastTiming,
+  runs = SYNC_FORECAST_RUNS,
 ): BattleForecastState {
   const prepared = preparePublicTargetBattleForecast(
     ships,
@@ -2175,7 +2176,7 @@ export function publicTargetBattleForecast(
     timing,
   );
   if (prepared.status === "complete") return prepared.forecast;
-  const forecast = resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(prepared.input, SYNC_FORECAST_RUNS));
+  const forecast = resolvePreparedPublicTargetBattleForecast(prepared, simulateBattleStats(prepared.input, runs));
   const seed = forecast.reportSeed;
   return seed ? { ...forecast, sampleReport: runContractBattle(prepared.input, seed.randomWord, seed.sampleId, true, seed.fast === true) } : forecast;
 }

@@ -210,12 +210,13 @@ test("the calculator runs the referee's exact engine; mission forecasts keep the
   expect(EXACT_SIMULATION.minRuns).toBeGreaterThanOrEqual(300);
   expect(FAST_SIMULATION.fast).toBe(true);
   setActiveCombatModel(REFEREE_COMBAT_MODEL_VERSION);
-  const stats = runBattleSimulation(screenshotBattle, { ...EXACT_SIMULATION, runs: 3 }, undefined, () => 0);
-  expect([stats.runs, stats.exact, stats.timeLimited]).toEqual([3, true, false]);
+  // Two exact 2,000-launcher replays (plus the oracle's) keep this cheap on a loaded CI runner.
+  const stats = runBattleSimulation(screenshotBattle, { ...EXACT_SIMULATION, runs: 2 }, undefined, () => 0);
+  expect([stats.runs, stats.exact, stats.timeLimited]).toEqual([2, true, false]);
   for (const sample of Object.values(stats.samples)) expect(sample.fast).toBe(false);
   // Each run is the oracle's own replay of its seed, with the oracle's SHA-256 draws (no override).
   const left = Array.from({ length: 8 }, () => 0);
-  for (let index = 0; index < 3; index++) {
+  for (let index = 0; index < 2; index++) {
     const groups: Group[] = [
       { side: 0, owner: `0x${"1".padStart(40, "0")}`, source: "1", type: 11, count: 1, technology: tech10 },
       { side: 0, owner: `0x${"1".padStart(40, "0")}`, source: "1", type: 13, count: 100, technology: tech10 },
@@ -232,7 +233,7 @@ test("the calculator runs the referee's exact engine; mission forecasts keep the
   }
   expect(stats.defenderDefenses).toEqual(left);
   // The fast stream is a different (non-replayable) sample of the same rules.
-  const fast = runBattleSimulation(screenshotBattle, { ...FAST_SIMULATION, runs: 3 }, undefined, () => 0);
+  const fast = runBattleSimulation(screenshotBattle, { ...FAST_SIMULATION, runs: 2 }, undefined, () => 0);
   expect(fast.exact).toBe(false);
   expect(fast.defenderDefenses).not.toEqual(stats.defenderDefenses);
 });

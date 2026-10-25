@@ -4118,7 +4118,7 @@ export async function sendStartMoonDefenseProductionTransaction(
   });
 }
 
-export async function fetchBurningChickenForOwner(account: string, tokenId: string, config: BurningChickenConfig, signal?: AbortSignal): Promise<BurningChickenNft> {
+export async function fetchBurningChickenForOwner(account: string, tokenId: string, config: BurningChickenConfig, signal?: AbortSignal, timeoutMs?: number): Promise<BurningChickenNft> {
   const normalizedTokenId = tokenId.trim();
   if (!/^\d+$/.test(normalizedTokenId) || BigInt(normalizedTokenId) <= 0n) {
     throw new Error("Enter a valid Chicken token ID.");
@@ -4126,7 +4126,7 @@ export async function fetchBurningChickenForOwner(account: string, tokenId: stri
 
   let ownerHex: string;
   try {
-    ownerHex = await callBaseMainnetContract(config, config.nftContractAddress, encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId), signal);
+    ownerHex = await callBaseMainnetContract(config, config.nftContractAddress, encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId), signal, timeoutMs);
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
     // ERC721NonexistentToken(uint256), verified on the deployed Chicken collection.
@@ -4156,9 +4156,9 @@ function burningChickenRpcUrl(config: BurningChickenConfig): string {
   return BASE_MAINNET.rpcUrls[0];
 }
 
-async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal): Promise<string> {
+async function callBaseMainnetContract(config: BurningChickenConfig, contractAddress: string, data: string, signal?: AbortSignal, timeoutMs?: number): Promise<string> {
   const result = await transactionRpcRequest<unknown>(burningChickenRpcUrl(config), "eth_call",
-    [{ to: contractAddress, data }, "latest"], { ...(signal ? { signal } : {}) });
+    [{ to: contractAddress, data }, "latest"], { ...(signal ? { signal } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) });
   // ownerOf returns one ABI-encoded, nonzero address, not arbitrary hex or empty data.
   if (typeof result !== "string" || !/^0x0{24}[a-fA-F0-9]{40}$/.test(result) || BigInt(result) === 0n) {
     throw new Error("Chicken ownership could not be checked. Please try again later.");

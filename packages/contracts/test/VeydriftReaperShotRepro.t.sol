@@ -128,6 +128,19 @@ contract VeydriftReaperShotReproTest is Test {
         }
     }
 
+    function fixtureDigest(
+        string memory set,
+        uint32 a,
+        uint32 d,
+        uint16[3] memory at,
+        uint16[3] memory dt
+    ) private view returns (bytes32) {
+        return vm.parseJsonBytes32(
+            vm.readFile("./combat-shot-fixtures.json"),
+            string.concat(".", set, ".case", vm.toString(keccak256(abi.encode(a, d, at, dt))))
+        );
+    }
+
     function caseResult(uint32 a, uint32 d, uint16[3] memory at, uint16[3] memory dt) private {
         uint256[3] memory outcomes; // attacker win, defender win, draw
         uint256 minA = type(uint256).max;
@@ -135,6 +148,8 @@ contract VeydriftReaperShotReproTest is Test {
         uint256 minD = type(uint256).max;
         uint256 maxD;
         bytes32 digest;
+        uint256 prefixLastSeed =
+            vm.parseJsonUint(vm.readFile("./combat-shot-fixtures.json"), ".prefixLastSeed");
         for (uint256 seed = 1; seed <= 256; ++seed) {
             Reference.BattleResult memory result = this.simulate(a, d, at, dt, seed);
             uint256 leftA = result.attackerShips[uint8(Ship.Reaper)];
@@ -144,6 +159,14 @@ contract VeydriftReaperShotReproTest is Test {
                     digest, seed, leftA, leftD, uint256(result.rounds), uint8(result.outcome)
                 )
             );
+            // The frontend parity test replays only this prefix of the same digest chain.
+            if (seed == prefixLastSeed) {
+                assertEq(
+                    digest,
+                    fixtureDigest("prefixCases", a, d, at, dt),
+                    "reviewed cross-language seeded prefix fixture drift"
+                );
+            }
             assertLe(leftA, a);
             assertLe(leftD, d);
             assertLe(result.rounds, 6);
@@ -161,10 +184,7 @@ contract VeydriftReaperShotReproTest is Test {
         );
         assertEq(
             digest,
-            vm.parseJsonBytes32(
-                vm.readFile("./combat-shot-fixtures.json"),
-                string.concat(".cases.case", vm.toString(keccak256(abi.encode(a, d, at, dt))))
-            ),
+            fixtureDigest("cases", a, d, at, dt),
             "reviewed cross-language seeded fixture drift"
         );
         emit log_named_bytes32("seeded outcomes digest", digest);
