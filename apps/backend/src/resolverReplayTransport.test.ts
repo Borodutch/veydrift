@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keccak256, parseTransaction, type Hex } from "viem";
-import { replayMissionFixture, replayItems } from "./resolverReplayTransport.fixture";
+import { expireReconciliation, replayMissionFixture, replayItems } from "./resolverReplayTransport.fixture";
 
 async function fixture(run: (path: string) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), "replay-transport-"));
@@ -59,7 +59,9 @@ test.each([false, true])("timed-out production replay retains cross-instance sen
             const db = new Database(path);
             db.exec("UPDATE resolver_transaction_leases SET holder = 'expired-owner', expires_at_ms = 0"); db.close();
           }
-          await new Promise<void>((resolve) => { release = resolve; });
+          const released = new Promise<void>((resolve) => { release = resolve; });
+          expireReconciliation();
+          await released;
         } else mined = true;
         return keccak256(raw);
       } finally { active--; }
@@ -86,7 +88,9 @@ test("late wrapped deterministic result is retained before outstanding fence rel
     let reject!: (error: unknown) => void;
     const send = async (): Promise<Hex> => {
       if (++sends === 1) throw { code: -32603, message: "internal error" };
-      return new Promise<Hex>((_resolve, r) => { reject = r; });
+      const outstanding = new Promise<Hex>((_resolve, r) => { reject = r; });
+      expireReconciliation();
+      return outstanding;
     };
     await expect(replayMissionFixture(path, send, clock).resolveMissionBatch(replayItems)).rejects.toThrow("deadline");
     reject({ code: -32000, message: "invalid sender" }); await new Promise((r) => setTimeout(r, 5));
@@ -102,11 +106,10 @@ test("real crashed process cannot overlap; verified same-namespace exit resumes 
       { stdout: "pipe", stderr: "pipe" });
     try {
       const reader = child.stdout.getReader(); let output = "";
-      const ready = (async () => { while (!output.includes("outstanding")) {
+      while (!output.includes("outstanding")) {
         const next = await reader.read(); if (next.done) throw new Error("fixture exited before send");
         output += new TextDecoder().decode(next.value);
-      } })();
-      await Promise.race([ready, new Promise((_, reject) => setTimeout(() => reject(new Error("fixture timeout")), 3000))]);
+      }
       const db = new Database(path);
       const original = db.query("SELECT serialized_transaction AS raw, transaction_hash AS hash, nonce FROM resolver_prepared_intents").get() as { raw: Hex; hash: Hex; nonce: number };
       db.close();

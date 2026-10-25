@@ -28,6 +28,12 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
   const mission=encodeFunctionResult({abi,functionName:'fleetMission',result:[2,0,input.mission.owner,BigInt(input.mission.origin),BigInt(input.mission.target),1n,2n,BigInt(input.mission.returnAt),16n,{metal:0n,crystal:0n,deuterium:0n},0n]});
   const base=BigInt(keccak256(encodeAbiParameters([{type:'uint256'},{type:'uint256'}],[99306n,24n])));
   let reads=0, active=0, peak=0, clock=phase, signs=0, sends=0, waits=0;
+  // Retry holds are wall-clock deadlines; read them on the virtual clock so a loaded runner's slow
+  // setup cannot expire a hold before the coordinator (or the dry path) checks it.
+  const wallStart=Date.now(), now=()=>wallStart+clock-phase;
+  // The coordinator's pass deadline fires on the virtual clock or on demand, never by wall clock.
+  const armedDeadlines=new Set<()=>void>();
+  const reconciliationTimer=(expire:()=>void)=>{armedDeadlines.add(expire);return()=>{armedDeadlines.delete(expire);};};
   const events:any[]=[];
   const realPerformanceNow=performance.now.bind(performance);
   const originalFetch=globalThis.fetch;
@@ -44,7 +50,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
    const q=JSON.parse(init!.body as string);reads++;active++;peak=Math.max(peak,active);
    const end=clock+40;
    try {
-    await new Promise(resolve=>setTimeout(resolve,1));clock=Math.max(clock,end);
+    await new Promise(resolve=>setImmediate(resolve));clock=Math.max(clock,end);
     let result:unknown;
     const reference=new URL(String(url)).origin===new URL(input.referenceRpcUrl).origin;
     const injected=(failure==='acquisition-rpc'&&trace.stage==='fresh-head')
@@ -61,7 +67,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
     else if(q.method==='eth_getTransactionCount') result=toHex(input.nonce+((simulated&&failure==='nonce') || (simulated&&failure==='reference'&&new URL(String(url)).origin===new URL(input.referenceRpcUrl).origin)?1:0));
     else if(q.method==='eth_getTransactionReceipt'||q.method==='eth_getTransactionByHash') {
       if(simulated&&failure==='lease')db?.exec('UPDATE resolver_transaction_leases SET expires_at_ms=0');
-      if(simulated&&failure==='deadline') { if(path.startsWith('persisted'))clock+=5001; else await new Promise(resolve=>setTimeout(resolve,600)); }
+      if(simulated&&failure==='deadline') { if(path.startsWith('persisted'))clock+=5001; else for(const expire of [...armedDeadlines])expire(); }
       if(simulated&&failure==='rpc')return new Response(JSON.stringify({jsonrpc:'2.0',id:q.id,error:{code:-32000,message:'DO_NOT_PRINT_SECRET_RAW_ENVELOPE'}}),{headers:{'content-type':'application/json'}});
       result=null;
     }
@@ -89,7 +95,7 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
    if(path==='dry') {
     try{await recoveryReadiness(client,input,{...defaultMissionBatchPolicy,enabled:true},trace);}catch(e){error=trace.diagnostic(e).reason;}
    } else {
-    const coordinator=new ResolverTransactionCoordinator(':memory:',{reconciliationTimeoutMs:failure==='deadline'&&!path.startsWith('persisted')?500:5000,reconciliationReadLimit:failure==='budget'?5:128,sleep:async ms=>{waits++;expect(ms).toBeGreaterThan(0);clock+=ms;}});
+    const coordinator=new ResolverTransactionCoordinator(':memory:',{now,reconciliationTimer,reconciliationTimeoutMs:5000,reconciliationReadLimit:failure==='budget'?5:128,sleep:async ms=>{waits++;expect(ms).toBeGreaterThan(0);clock+=ms;}});
     db=(coordinator as any).database as Database;
     const binding=recoveryBinding(input);
     db.query('INSERT INTO resolver_transaction_attempts VALUES(?,?,?,?,?,?,?)').run(8453,input.address,input.operationId,input.nonce,input.originalHash,'submitted','fixture');
@@ -101,11 +107,11 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
       db.query('INSERT INTO resolver_signing_reservations VALUES(?,?,?,?,?,?,1)').run('fixture-reservation',8453,input.address,input.operationId,input.nonce,input.membership);
       db.query('INSERT INTO resolver_signing_results VALUES(?,?,?)').run('fixture-reservation',alternative,raw);
       db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,serialized_transaction,replay_state,replay_max_fee_wei) VALUES(?,?,?,?,?,?,'pending',?,'unvalidated',?)").run(8453,input.address,input.operationId,input.nonce,alternative,input.membership,raw,input.maxFeeWei);
-      // Holds are wall-clock deadlines; the coordinator's sleep is virtual, so early-wait's 1.5s costs no
-      // real time and still holds after a loaded runner's slow setup (250ms had sometimes expired).
+      // Holds are on the virtual clock; the coordinator's sleep advances it, so early-wait's 1.5s costs no
+      // real time and holds however slow a loaded runner's setup is.
       if(['cooldown','early-wait','early-deadline','expired-hold'].includes(failure))
         db.query("UPDATE resolver_prepared_intents SET replay_state='retryable',send_attempts=?,next_retry_ms=? WHERE transaction_hash=?")
-          .run(failure.startsWith('early')?1:3,Date.now()+(failure==='cooldown'?60000:failure==='early-wait'?1500:failure==='early-deadline'?6000:-1),alternative);
+          .run(failure.startsWith('early')?1:3,now()+(failure==='cooldown'?60000:failure==='early-wait'?1500:failure==='early-deadline'?6000:-1),alternative);
       // Stop after the production synchronous pre-dispatch guard, before even entering sendPrepared.
       (coordinator as any).sendPrepared=async (...args:any[])=>{args[5]();throw new Error('SAFE_DISPATCH_SENTINEL');};
     }
@@ -131,10 +137,10 @@ for (const phase of [800,1500]) for (const path of ['dry', 'complete', 'persiste
         const before=dump();
         const persisted=assertRecoveryJournalReadiness(db,binding,input.maxFeeWei);
         expect(persisted).toBeDefined();
-        try { await recoveryReadiness(client,input,{...defaultMissionBatchPolicy,enabled:true},trace,persisted); } finally { expect(dump()).toBe(before); }
+        try { await recoveryReadiness(client,input,{...defaultMissionBatchPolicy,enabled:true},trace,persisted,now); } finally { expect(dump()).toBe(before); }
       } else await service.recoverLegacyMission(input,trace);
     }catch(e){error=['SAFE_SIGNER_SENTINEL','SAFE_DISPATCH_SENTINEL'].includes((e as Error).message)?(e as Error).message:trace.diagnostic(e).reason;}
-    if(failure==='deadline')await new Promise(resolve=>setTimeout(resolve,200));
+    if(failure==='deadline')await new Promise(resolve=>setTimeout(resolve,20));
     history=db.query('SELECT event FROM resolver_nonce_recovery_history').all();
     reservationCount=(db.query('SELECT count(*) n FROM resolver_signing_reservations').get() as any).n;
     expect(db.query('SELECT count(*) n FROM resolver_signing_results').get()).toEqual({n:path.startsWith('persisted')?1:0});

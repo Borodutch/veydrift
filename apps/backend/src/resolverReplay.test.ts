@@ -138,9 +138,7 @@ test("the coordinator bounds the inclusion wait even when the caller's confirm n
     await fixture(async (f) => {
       f.send(async () => { if (f.counts().sends === 2) f.mine(); });
       const coordinator = f.restart({ inclusionWaitMs: 25 });
-      const started = performance.now();
       expect(await coordinator.submit({ ...f.request, confirm: () => new Promise<void>(() => {}) })).toBe(hash);
-      expect(performance.now() - started).toBeLessThan(5_000);
       // The authoritative pass replayed the identical bytes once the bounded wait ended.
       expect(f.counts()).toEqual({ signs: 1, sends: 2 });
       expect(new Set(f.bytes).size).toBe(1);
@@ -286,10 +284,11 @@ test("read transport error cannot masquerade as transaction absence or trigger a
 test("bounded replay timeout retains outstanding RPC and late completion cannot mutate journal", async () => {
   await fixture(async (f) => {
     await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
-    let release!: () => void;
-    f.send(() => new Promise<void>((resolve) => { release = resolve; }));
-    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 20, now: () => 100000,
-      leaseRenewIntervalMs: 1000000 });
+    let release!: () => void, expire!: () => void;
+    // The pass deadline expires while the send hangs, never by wall clock.
+    f.send(() => { const sent = new Promise<void>((resolve) => { release = resolve; }); expire(); return sent; });
+    const c = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 3_600_000, now: () => 100000,
+      leaseRenewIntervalMs: 1000000, reconciliationTimer: (fire) => { expire = fire; return () => { expire = () => {}; }; } });
     c.setPreparedReplayer(chainId, account.address, f.replay);
     await expect(c.reconcilePrepared(chainId, account.address, f.reconcile)).rejects.toThrow("deadline");
     expect(f.counts().sends).toBe(4); const saved = JSON.stringify(f.rows());

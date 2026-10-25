@@ -17,8 +17,8 @@ for (const mode of ["base-paced", "reference", "implementation", "head", "canoni
       BigInt(input.mission.origin), BigInt(input.mission.target), 1n, 2n, BigInt(input.mission.returnAt), 16n,
       { metal: 0n, crystal: 0n, deuterium: 0n }, 0n] });
     const base = BigInt(keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [99306n, 24n])));
-    let simulated = false, reads = 0, active = 0, peak = 0;
-    const started = performance.now();
+    // Virtual clock: each parallel wave of reads costs 40ms of it, however loaded the runner is.
+    let simulated = false, reads = 0, active = 0, peak = 0, clock = 0;
     // Real HTTP encoding/decoding with synthetic responses only, never real network/signing.
     globalThis.fetch = (async (url, init) => {
       expect(["https://local.invalid", new URL(input.referenceRpcUrl).origin]).toContain(new URL(String(url)).origin);
@@ -26,14 +26,14 @@ for (const mode of ["base-paced", "reference", "implementation", "head", "canoni
       const reference = new URL(String(url)).origin === new URL(input.referenceRpcUrl).origin;
       reads++; active++; peak = Math.max(peak, active);
       try {
-        if (mode === "base-paced") await new Promise(resolve => setTimeout(resolve, 40));
+        if (mode === "base-paced") { const end = clock + 40; await new Promise(resolve => setImmediate(resolve)); clock = Math.max(clock, end); }
         let result: unknown;
         if (q.method === "eth_chainId") result = "0x2105";
         else if (q.method === "eth_getTransactionCount") {
           expect(q.params[1]).toBe("0x1");
           result = toHex(reference && simulated && mode === "reference" ? input.nonce + 1 : input.nonce);
         } else if (q.method === "eth_getBlockByNumber") {
-          const moved = q.params[0] === "latest" && ((simulated && mode === "head") || (mode === "base-paced" && performance.now() - started >= 2000));
+          const moved = q.params[0] === "latest" && ((simulated && mode === "head") || (mode === "base-paced" && clock >= 2000));
           result = { number: moved ? "0x2" : "0x1", hash: moved || (simulated && mode === "canonical") ? otherHash : hash,
             timestamp: toHex(Math.floor(Date.now() / 1000)), baseFeePerGas: "0x64", gasLimit: "0x1c9c380", transactions: [] };
         } else if (q.method === "eth_getStorageAt") {
@@ -59,7 +59,7 @@ for (const mode of ["base-paced", "reference", "implementation", "head", "canoni
     try {
       const client = createPublicClient({ transport: http("https://local.invalid", { retryCount: 0 }) });
       let charged = 0;
-      const pass = { assertActive: () => { if (performance.now() - started >= 5000) throw new Error("deadline"); },
+      const pass = { assertActive: () => { if (clock >= 5000) throw new Error("deadline"); },
         read: async <T>(operation: () => Promise<T>) => { if (++charged > 128) throw new Error("budget"); return operation(); } };
       const proof = async () => {
         const prepared = await prepareRecoveryEnvelope(client, input, defaultMissionBatchPolicy, pass);
@@ -68,7 +68,7 @@ for (const mode of ["base-paced", "reference", "implementation", "head", "canoni
       if (mode === "base-paced") {
         await proof();
         expect(reads).toBe(63); expect(charged).toBe(63); expect(peak).toBe(8);
-        expect(performance.now() - started).toBeLessThan(2000);
+        expect(clock).toBeLessThan(2000);
       } else await expect(proof()).rejects.toThrow(mode === "reference" ? "nonce disagreement" : mode === "implementation" ? "implementation changed" : mode === "canonical" ? "block changed" : "head moved");
       expect(active).toBe(0); expect(peak).toBeLessThanOrEqual(8);
     } finally { globalThis.fetch = originalFetch; }

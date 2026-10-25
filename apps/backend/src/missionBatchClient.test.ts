@@ -37,7 +37,9 @@ function fixture(options: { ambiguous?: boolean; stale?: boolean; revert?: boole
     getTransaction: async () => { throw new TransactionNotFoundError({}); },
     getTransactionReceipt: async ({ hash }: { hash: `0x${string}` }) => { if (!mined) throw new TransactionReceiptNotFoundError({ hash }); return { ...receipt(), transactionHash: hash, from: account.address, to: game }; }
   };
-  const coordinator = new ResolverTransactionCoordinator(":memory:");
+  // Retry backoff runs on a virtual clock: no real sleeps inside the bounded reconciliation pass.
+  let clock = Date.now();
+  const coordinator = new ResolverTransactionCoordinator(":memory:", { now: () => clock, sleep: async (ms) => { clock += ms; } });
   const client = new ViemMissionResolutionChainClient({
     listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [],
     isFleetChronologyOrderingReady: async () => true,

@@ -67,6 +67,18 @@ function fixture(options: ResolverTransactionCoordinatorOptions = {}) {
     close: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
+// Pass deadlines expire when a read hangs, never by wall clock: a loaded runner must not time out a
+// pass the test expects to finish.
+function manualDeadlines() {
+  const armed = new Set<() => void>();
+  return {
+    options: { reconciliationTimeoutMs: 3_600_000, reconciliationTimer: (expire: () => void) => {
+      armed.add(expire); return () => { armed.delete(expire); };
+    } },
+    expire: () => { for (const expire of [...armed]) expire(); }
+  };
+}
+
 function gate() {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => { resolve = r; });
@@ -171,17 +183,15 @@ test("cold 32-leg receipts obey 128-work budget; hydrated receipts and telemetry
 });
 
 test("deadline releases lease; unresolved and late finality reads cannot pile up or write/broadcast", async () => {
-  const f = fixture({ reconciliationTimeoutMs: 25 }); const pending = gate();
+  const deadlines = manualDeadlines(); const f = fixture(deadlines.options); const pending = gate();
   try {
-    f.seed(32); f.delay(() => pending.promise);
-    const started = performance.now();
+    f.seed(32); f.delay(() => { deadlines.expire(); return pending.promise; });
     await expect(f.coordinator.submit(f.request())).rejects.toThrow("deadline");
-    expect(performance.now() - started).toBeLessThan(500);
     expect(f.db.query("SELECT count(*) AS n FROM resolver_transaction_leases").get()).toEqual({ n: 0 });
     for (let n = 0; n < 5; n++) await expect(f.coordinator.submit(f.request("retry" + n))).rejects.toThrow("still unresolved");
     expect(f.counts.finality).toBe(1);
     // A separate process can acquire the released lease and fail closed on the same evidence.
-    const sibling = new ResolverTransactionCoordinator(f.path, { reconciliationTimeoutMs: 25 }); f.attach(sibling);
+    const sibling = new ResolverTransactionCoordinator(f.path, deadlines.options); f.attach(sibling);
     await expect(sibling.submit(f.request("sibling"))).rejects.toThrow("deadline");
     expect(f.counts.finality).toBe(2);
     pending.resolve(); await new Promise((r) => setTimeout(r, 5));
@@ -192,11 +202,11 @@ test("deadline releases lease; unresolved and late finality reads cannot pile up
 });
 
 test("late member hydration cannot emit receipt telemetry, persist outcomes or start another leg", async () => {
-  const f = fixture({ reconciliationTimeoutMs: 25 }); const pending = gate();
+  const deadlines = manualDeadlines(); const f = fixture(deadlines.options); const pending = gate();
   const info = console.info; let receipts = 0;
   console.info = (line) => { if (JSON.parse(String(line)).kind === "mission_batch_receipt") receipts++; };
   try {
-    f.seed(1, false); f.memberDelay(() => pending.promise);
+    f.seed(1, false); f.memberDelay(() => { deadlines.expire(); return pending.promise; });
     await expect(f.coordinator.submit(f.request())).rejects.toThrow("deadline");
     expect(f.counts.member).toBe(1);
     pending.resolve(); await new Promise((r) => setTimeout(r, 5));

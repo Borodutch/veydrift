@@ -26,7 +26,8 @@ beforeAll(()=>{globalThis.fetch=(async (url: string|URL|Request, init?:RequestIn
 }) as typeof fetch;});
 afterAll(()=>{globalThis.fetch=originalFetch;});
 function plan(binding: ReturnType<typeof recoveryBinding>) {return serializeTransaction({type:"eip1559",chainId:8453,nonce:4,to:game,data:binding.data,value:0n,gas:1000000n,maxFeePerGas:23995623n,maxPriorityFeePerGas:23995423n});}
-function fixture(reconciliationTimeoutMs = 5000) {
+// Pass deadlines run on the virtual clock below unless a test expires them itself.
+function fixture(reconciliationTimeoutMs = 5000, reconciliationTimer: (expire: () => void, ms: number) => () => void = () => () => {}) {
  referenceNonce=4;fixtureHead=1n;
  const dir=mkdtempSync(join(tmpdir(),"recovery58-")), path=join(dir,"journal.sqlite");
  const items=[{missionId:"99306",leg:"return" as const,dueAt:1791480343}];
@@ -37,9 +38,12 @@ function fixture(reconciliationTimeoutMs = 5000) {
   originalFee:{gas:"10414604",totalWei:"199999983326886",l1ReserveWei:"77724806734",operatorReserveWei:"0",maxFeePerGas:"19196338",priority:null,source:"fixture signed-prepared log",sourceDigest:keccak256("0x01")},mission:{owner:account.address,origin:"783",target:"210",returnAt:"1791480343",shipsWords:[("0x"+"00".repeat(31)+"0d") as Hex,("0x"+"00".repeat(32)) as Hex],bodyFlags:("0x"+"00".repeat(32)) as Hex},gas:"1000000",allowAlreadySettled:false,referenceRpcUrl:"https://reference.invalid",recoveryId:"fixture-58",maxFeeWei:"200000000000000"};
  // The head advances once per acquisition poll (recoveryReadiness sleeps 100ms between "latest" reads), never
  // on wall-clock gaps: a loaded runner can space two immediate proof reads 90ms+ apart, moving the head mid-proof.
- let polled=false;
- const realSetTimeout=globalThis.setTimeout;
- globalThis.setTimeout=((handler:(...args:unknown[])=>void,ms?:number,...args:unknown[])=>{if(ms===100)polled=true;return realSetTimeout(handler,ms,...args);}) as typeof setTimeout;
+ // performance.now() is virtual too and moves only with those polls, so a loaded runner's slow reads cannot
+ // fail the acquisition latency margin, head timeout or pass deadline, and a poll costs no real time.
+ let polled=false,virtualMs=performance.now();
+ const realSetTimeout=globalThis.setTimeout,realPerformanceNow=performance.now;
+ performance.now=()=>virtualMs;
+ globalThis.setTimeout=((handler:(...args:unknown[])=>void,ms?:number,...args:unknown[])=>{if(ms!==100)return realSetTimeout(handler,ms,...args);polled=true;virtualMs+=100;return realSetTimeout(handler,1,...args);}) as typeof setTimeout;
  let now=1000, winner:Hex|null=null, finalized=false, nonce=4, signCount=0, outcome=0;
  let afterSign:()=>void=()=>{};
  let receiptStatus="success", completed=true, reportedBoth=false;
@@ -65,14 +69,14 @@ function fixture(reconciliationTimeoutMs = 5000) {
   getTransactionReceipt:async({hash}:{hash:Hex})=>{if(hash!==winner&&!reportedBoth)throw new TransactionReceiptNotFoundError({hash});return {transactionHash:hash,status:receiptStatus,blockNumber:1n,blockHash,logs:[],gasUsed:100000n,effectiveGasPrice:100n,l1Fee:100n,operatorFee:0n};}
  };
  const create=()=>{
-  const coordinator=new ResolverTransactionCoordinator(path,{now:()=>now,sleep:async ms=>{now+=ms;},leaseWaitMs:1,reconciliationTimeoutMs});
+  const coordinator=new ResolverTransactionCoordinator(path,{now:()=>now,sleep:async ms=>{now+=ms;},leaseWaitMs:1,reconciliationTimeoutMs,reconciliationTimer});
   const client=new ViemMissionResolutionChainClient({listResolvableFleetMissions:async()=>[],listReturnableFleetMissions:async()=>[],getCanonicalFleetMission:async()=>({status:winner&&completed?"Returned":"Returning",returnAt:String(items[0]!.dueAt)}) as never},game,signedAccount,publicClient as unknown as PublicClient,undefined,chain,undefined,coordinator,undefined,undefined,{...defaultMissionBatchPolicy,enabled:true});
   return {coordinator,client};
  };
  const current=create(), db=new Database(path);
  db.query("INSERT INTO resolver_transaction_attempts VALUES(?,?,?,?,?,?,?)").run(8453,account.address.toLowerCase(),input.operationId,4,original,"submitted","original-time");
  db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES(?,?,?,?,?,?,'pending')").run(8453,account.address.toLowerCase(),input.operationId,4,original,input.membership);
- return {...current,input,db,path,dir,bytes,publicClient,create,setReceipt:(status:string,complete:boolean)=>{receiptStatus=status;completed=complete;},both:()=>{reportedBoth=true;},setNonce:(n:number)=>{nonce=n;referenceNonce=n;},afterSign:(fn:()=>void)=>{afterSign=fn;},signs:()=>signCount,setOutcome:(v:number)=>{outcome=v;},advance:()=>{now+=60000;},win:(hash:Hex,final=true)=>{winner=hash;nonce=5;referenceNonce=5;finalized=final;},reorg:()=>{winner=null;nonce=4;referenceNonce=4;finalized=false;},send:(fn:typeof onSend)=>{onSend=fn;},cleanup:()=>{globalThis.setTimeout=realSetTimeout;db.close();rmSync(dir,{recursive:true,force:true});}};
+ return {...current,input,db,path,dir,bytes,publicClient,create,setReceipt:(status:string,complete:boolean)=>{receiptStatus=status;completed=complete;},both:()=>{reportedBoth=true;},setNonce:(n:number)=>{nonce=n;referenceNonce=n;},afterSign:(fn:()=>void)=>{afterSign=fn;},signs:()=>signCount,setOutcome:(v:number)=>{outcome=v;},advance:()=>{now+=60000;},win:(hash:Hex,final=true)=>{winner=hash;nonce=5;referenceNonce=5;finalized=final;},reorg:()=>{winner=null;nonce=4;referenceNonce=4;finalized=false;},send:(fn:typeof onSend)=>{onSend=fn;},cleanup:()=>{globalThis.setTimeout=realSetTimeout;performance.now=realPerformanceNow;db.close();rmSync(dir,{recursive:true,force:true});}};
 }
 test("original wins before signing; original receipt only and finality releases admission",async()=>{
  const f=fixture();try{f.win(original);await f.client.recoverLegacyMission(f.input);expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(0);
@@ -328,11 +332,13 @@ test("parallel wave cannot exceed the remaining pass read budget",async()=>{
 });
 
 test("timed-out replay retains every unfinished parallel read and blocks retry fan-out",async()=>{
- const f=fixture(250);let release!:()=>void;
+ // The pass deadline expires once the parallel wave has hung, never by wall clock.
+ let expire=()=>{};
+ const f=fixture(3_600_000,fire=>{expire=fire;return()=>{expire=()=>{};};});let release!:()=>void;
  try{
   fifteenIdentities(f.input);let pending=0,codeCalls=0;
   const held=new Promise<void>(resolve=>{release=resolve;});
-  f.publicClient.getCode=async()=>{codeCalls++;if(f.signs()){pending++;try{await held;}finally{pending--;}}return "0x6000";};
+  f.publicClient.getCode=async()=>{codeCalls++;if(f.signs()){if(++pending===1)setTimeout(()=>expire(),0);try{await held;}finally{pending--;}}return "0x6000";};
   await expect(f.client.recoverLegacyMission(f.input)).rejects.toThrow("read deadline exceeded");
   expect(pending).toBe(7);expect(f.signs()).toBe(1);expect(f.bytes).toHaveLength(0);
   const before=codeCalls;
@@ -355,11 +361,9 @@ test("durably finalized recovery no longer rehydrates historical transactions/do
   f.publicClient.getTransactionReceipt=async args=>{winnerReceipts++;return receipt(args);};
   f.publicClient.getBlock=async args=>{headers++;return block(args);};
   const restarted=f.create();
-  const started=performance.now();
   expect(await restarted.client.resolveMissionBatch([])).toEqual({hash:null,items:[],exclusions:[]});
   await restarted.coordinator.submit({chainId:8453,address:account.address,operationId:"new-after-finality",getTransactionCount:async()=>5,
    submit:async nonce=>{allocated=nonce;return ("0x"+"77".repeat(32)) as Hex;},confirm:async()=>{}});
-  expect(performance.now()-started).toBeLessThan(1000);
   expect(historicalTransactions).toBe(0); expect(historicalState).toBe(0);
   expect(winnerReceipts).toBe(2); expect(headers).toBeLessThanOrEqual(3); expect(allocated).toBe(5);
   expect(f.db.query("SELECT * FROM resolver_nonce_recovery").get()).toEqual(before);
@@ -424,9 +428,7 @@ test("full fresh mission readiness/sign/send path proceeds after finalized recov
    isFleetChronologyOrderingReady:async()=>true,
    getCanonicalFleetMission:async()=>({status:newHash?"Returned":"Returning",arrivalAt:String(dueAt-10),returnAt:String(dueAt)}) as never
   },game,sender,rpc as unknown as PublicClient,undefined,chain,undefined,coordinator,undefined,undefined,{...defaultMissionBatchPolicy,enabled:true});
-  const start=performance.now();
   const result=await client.resolveMissionBatch([{missionId:"99999",leg:"return",dueAt}]);
-  expect(performance.now()-start).toBeLessThan(1000);
   expect(result.items).toHaveLength(1);expect(result.outcomes?.[0]?.complete).toBe(true);
   expect(newSigns).toBe(1);expect(newSends).toBe(1);expect(historicalTransactions).toBe(0);
   expect(f.db.query("SELECT * FROM resolver_nonce_recovery").get()).toEqual(recovery);

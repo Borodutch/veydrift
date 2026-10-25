@@ -48,9 +48,10 @@ function ownerTopic(address: string): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+// Bounded by event-loop turns, not wall time: a loaded runner slows the service and the wait alike,
+// and tests that freeze Date.now() with setSystemTime cannot stall it.
+async function waitFor(predicate: () => boolean, turns = 100): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -1071,8 +1072,8 @@ describe("ChainSyncService (polling)", () => {
     };
     const indexer = {
       applyLog: () => {
-        const deadline = Date.now() + 320;
-        while (Date.now() < deadline) {}
+        // A 320ms handler on the service's clock, without burning 320ms of CPU.
+        setSystemTime(new Date(Date.now() + 320));
         return {
           applied: true,
           duplicate: false,
@@ -1119,6 +1120,7 @@ describe("ChainSyncService (polling)", () => {
         sideEffects: { canonicalHealQueued: false }
       });
     } finally {
+      setSystemTime();
       console.warn = originalWarn;
       service.stop();
     }

@@ -116,6 +116,8 @@ export type ResolverTransactionCoordinatorOptions = {
   inclusionWaitMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Arms a reconciliation pass deadline; returns its cancel. Tests inject one to expire a pass on demand. */
+  reconciliationTimer?: (expire: () => void, ms: number) => () => void;
 };
 
 type StoredAttempt = {
@@ -183,6 +185,7 @@ export class ResolverTransactionCoordinator {
   private readonly unfinishedReconciliations = new Map<string, Set<Promise<unknown>>>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly reconciliationTimer: (expire: () => void, ms: number) => () => void;
   private readonly localTails = new Map<string, Promise<void>>();
   private readonly recoveryObservers = new Map<string, RecoveryObserver>();
   private readonly preparedReplayers = new Map<string, PreparedReplay>();
@@ -210,6 +213,10 @@ export class ResolverTransactionCoordinator {
     }
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.reconciliationTimer = options.reconciliationTimer ?? ((expire, ms) => {
+      const timer = setTimeout(expire, ms);
+      return () => clearTimeout(timer);
+    });
 
     if (databasePath !== ":memory:") {
       mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
@@ -739,9 +746,9 @@ export class ResolverTransactionCoordinator {
     const groups = this.recoveryGroups(chainId, address);
     if (groups.length>32) throw blocked("recovery history window exceeded; explicit review required");
     if (!intents.length && !groups.length && !frontier) { this.admissionBlocks.delete(key); return; }
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelDeadline = () => {};
     const expired = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
+      cancelDeadline = this.reconciliationTimer(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
     });
     // Recovery identity reads use bounded parallel waves; a timeout releases the lease,
     // not permission to hydrate/write late. Retain every unresolved handle so retries
@@ -896,7 +903,7 @@ export class ResolverTransactionCoordinator {
       throw error;
     } finally {
       active = false;
-      clearTimeout(timer);
+      cancelDeadline();
     }
   }
 

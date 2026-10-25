@@ -11,8 +11,12 @@ export const replayBlockHash = ("0x" + "aa".repeat(32)) as Hex;
 const chain = { id: 8453, name: "fixture", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: ["http://invalid.test"] } } };
 export const replayItems = [{ missionId: "1", leg: "arrival" as const, dueAt: Math.floor(Date.now() / 1000) - 5 }];
+// Pass deadlines expire only when a test's send hangs, never by wall clock: a loaded runner must not
+// time out a pass the test expects to finish.
+const armedDeadlines = new Set<() => void>();
+export function expireReconciliation() { for (const expire of [...armedDeadlines]) expire(); }
 export function replayMissionFixture(path: string, send: (raw: Hex) => Promise<Hex>, clock: { now: number },
-  mined = () => false, timeout = 100) {
+  mined = () => false) {
   // Actual viem request wrapping and sendRawTransaction, never a plain-error callback surrogate.
   const transportClient = createPublicClient({ transport: custom({ request: async ({ method, params }) => {
     if (method !== "eth_sendRawTransaction") throw new Error("unexpected fixture RPC");
@@ -33,7 +37,8 @@ export function replayMissionFixture(path: string, send: (raw: Hex) => Promise<H
     }
   };
   const coordinator = new ResolverTransactionCoordinator(path, { now: () => clock.now,
-    sleep: async (ms) => { clock.now += ms; }, reconciliationTimeoutMs: timeout, leaseRenewIntervalMs: 1000000 });
+    sleep: async (ms) => { clock.now += ms; }, reconciliationTimeoutMs: 3_600_000, leaseRenewIntervalMs: 1000000,
+    reconciliationTimer: (expire) => { armedDeadlines.add(expire); return () => { armedDeadlines.delete(expire); }; } });
   return new ViemMissionResolutionChainClient({ listResolvableFleetMissions: async () => [], listReturnableFleetMissions: async () => [],
     isFleetChronologyOrderingReady: async () => true,
     getCanonicalFleetMission: async () => ({ status: mined() ? "Returned" : "Outbound", arrivalAt: String(replayItems[0]!.dueAt),
@@ -51,6 +56,7 @@ if (import.meta.main) {
     await replayMissionFixture(path, async () => {
       if (++sends === 1) throw { code: -32603, message: "transport internal error" };
       process.stdout.write("outstanding\n");
+      expireReconciliation();
       return new Promise<Hex>(() => {});
     }, { now: 1000 }).resolveMissionBatch(replayItems);
   } catch { process.stdout.write("deadline\n"); }
