@@ -6,13 +6,15 @@ configuration; historical addresses and service names are not deployment evidenc
 
 ## Build from the workspace root
 
-Use the repository root as the EasyPanel/Nixpacks build context. A context limited
+Use the repository root as the build context. A context limited
 to `apps/frontend` or `apps/backend` omits workspace packages.
 
 Use committed recipes rather than copying diverging build commands into service
 settings:
 
-- [Backend Nixpacks](../apps/backend/nixpacks.test.toml) and
+- The [Dockerfile](../Dockerfile) every production service builds from on
+  Tugport ([Docker builds](#docker-builds)).
+- Test surfaces: [backend Nixpacks](../apps/backend/nixpacks.test.toml) and
   [backend Dockerfile](../apps/backend/Dockerfile.test).
 - [Frontend package scripts](../apps/frontend/package.json) and
   [test frontend Dockerfile](../apps/frontend/Dockerfile.test).
@@ -58,11 +60,11 @@ repoint or delete production to roll back a test deployment.
 [write-build-sha.sh](../apps/backend/scripts/write-build-sha.sh) records the source
 SHA in the image. The backend uses this artifact for application build identity
 in health/runtime configuration. Do not set stale custom `GIT_SHA` or
-`VEYDRIFT_BUILD_GIT_SHA` overrides in EasyPanel. Contract deployment manifest
+`VEYDRIFT_BUILD_GIT_SHA` overrides in the service environment. Contract deployment manifest
 metadata (`VEYDRIFT_DEPLOYMENT_COMMIT`, ABI hash and timestamp) is separate.
 `.dockerignore` excludes `.git/`, so the script's local-Git fallback is unavailable
 inside image builds: backend builds require the `GIT_SHA` build argument, which
-EasyPanel injects automatically.
+Tugport passes automatically (the deployed commit).
 
 ## Backend readiness
 
@@ -95,65 +97,46 @@ node scripts/veydrift-redeploy-readiness-probe.mjs --api-url <api-origin> --dura
 
 Retain its results as release evidence. Do not bypass readiness to shorten a deploy.
 
-## Nixpacks build caching
+## Docker builds
 
-All six EasyPanel apps (backend, mission-report-generator, frontend, stats,
-stats-api, chicken-burn-listener) build with Nixpacks 1.34.1 from the repo root,
-so they share [nixpacks.toml](../nixpacks.toml) and only override its
-install/build/start commands in their service settings. Its layout follows from
-how EasyPanel 2.30.1 drives Nixpacks:
+The six Tugport services build the root [Dockerfile](../Dockerfile), each with
+its own target:
 
-- EasyPanel passes the project and service environment, plus `GIT_SHA` set to
-  the deployed commit, to `nixpacks build --env` and again as
-  `docker build --build-arg`. At build time `GIT_SHA` comes last, so a service
-  variable cannot override it.
-- Nixpacks writes those variables as one `ARG …`/`ENV …` pair. Only the setup
-  phase (the Nix packages and `aptPkgs`) comes before it. The install, build and
-  start phases all come after it, so with a new `GIT_SHA` on every commit their
-  `RUN` steps can never be cache hits. No `NIXPACKS_*` setting, phase order or
-  EasyPanel option moves that line.
-- `aptPkgs` would run before the line, but the host cannot reach the Ubuntu
-  mirrors over plain HTTP (#1445), and apt in a later phase reruns on every
-  deploy. Fonts therefore come from Nix.
-- A deploy with `forceRebuild: true` adds `--no-cache` to both commands, so it
-  rebuilds every layer. Trigger routine deploys with `forceRebuild: false`.
+| Service | Target |
+|---|---|
+| backend | `backend` |
+| mission-report-generator | `mission-report-generator` |
+| frontend | `frontend` |
+| stats, stats-api | `stats` |
+| chicken-burn-listener | `chicken-burn-listener` |
 
-So the config caches what it can:
+Builds use the host's BuildKit, so layers and cache mounts persist between
+deploys, and writing layers to disk is the slow part on the shared host (see
+below). The layout keeps a code-only deploy to the code layers:
 
-- **Setup (cached):** Node, Bun, fontconfig and the DejaVu fonts come from Nix. A
-  Nix profile script, `etc/profile.d/veydrift-runtime.sh`, sets `FONTCONFIG_FILE`
-  for the OG-card renderer (sharp) and `NIXPACKS_PATH`. The base image's login
-  shell sources that script, and every start command runs in a login shell.
-- **Install (reruns):** only the root and workspace `package.json` files and
-  `bun.lockb` are copied, not the source tree. One frozen `bun install` with
-  dev dependencies installs every workspace. The Bun package cache mount keeps
-  the download to seconds, but the step still writes `node_modules` (about
-  455 MB) into a build-stage snapshot on every deploy. That snapshot is not
-  exported. `scripts/nixpacks-config.test.mjs` checks the manifest list against
-  the workspaces.
-- **Build (reruns):** the source is copied once and the service's build command runs.
-- **Start (cached by content):** `runImage` starts a second stage from the
-  same Nixpacks base image and copies `/nix`, `/root/.profile`,
-  `node_modules`, `package.json`, `tsconfig.base.json`, `packages/` and `apps/`
-  from the build stage, in that order. Runtime reads must stay inside those
-  paths: repo-root files such as `scripts/` are not in the image. BuildKit
-  keys these copies by content, so `/nix` and `node_modules` are reused
-  whenever the Nix packages and lockfile are unchanged. A source-only deploy
-  then exports only the `packages/` and `apps/` layers. When bumping
-  EasyPanel's `nixpacksVersion`, set `runImage` (and the tag in
-  `scripts/nixpacks-config.test.mjs`) to that version's build image, which is
-  the first `FROM` line in the generated `.nixpacks/Dockerfile`.
-- **Routine deploys:** use `forceRebuild: false`. The first deploy after a
-  lockfile or Nix package change rebuilds those layers once.
+- **Base (cached):** pinned Node.js 22.23.4 image, Bun 1.4.4 copied from the
+  official Bun image, and `fontconfig` with the DejaVu fonts for the OG-card
+  renderer (sharp). Bump runtimes by changing the pinned tags and digests.
+- **Dependencies (cached until the lockfile or a workspace `package.json`
+  changes):** one frozen `bun install` with dev dependencies for every workspace,
+  with the Bun package cache in a cache mount. `scripts/dockerfile.test.mjs`
+  checks that its manifest globs match the workspaces.
+- **Code:** each target copies only the apps it runs (`packages/` is shared).
+  Bun runs the TypeScript sources directly; type checks run in CI, not in the
+  image build. The backend writes its build SHA last: `GIT_SHA` is declared only
+  there, so the commit changes nothing before it.
+- **Frontend:** image variants (the `prebuild` step) depend only on `public/` and
+  run in their own cached stage, so the frontend build runs `vite build` alone.
+  The `VITE_*` variables are build `ARG`s, which Tugport fills from the service
+  environment; `scripts/dockerfile.test.mjs` checks every `import.meta.env.VITE_*`
+  the frontend reads is declared. The image adds the game art (`public/` and
+  `dist/assets/game`) as layers ahead of the code, so they are reused by content.
+- Service environment reaches containers at runtime and as BuildKit secrets
+  during the build; only the declared `ARG`s become build arguments, so secrets
+  never land in an image.
 
-The run stage has no `ARG`/`ENV` lines, so build arguments (including private
-keys) no longer end up in the image config. Services get their environment
-from EasyPanel at runtime, as before. The build stage still receives every
-variable as a build argument while it builds; keeping secrets out of
-build-time entirely would need EasyPanel to pass them as BuildKit secrets,
-which its Nixpacks builder does not do. The backend's build-time `GIT_SHA` is
-still written by `write-build-sha.sh` into
-`apps/backend/.veydrift-backend-build-sha`, which the run stage copies.
+`.dockerignore` keeps `.git`, `node_modules`, docs, local build output, pinned
+media and the Solidity submodules out of the context.
 
 ## Build disk-write limits on the shared host
 

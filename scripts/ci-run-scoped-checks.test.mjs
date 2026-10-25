@@ -99,13 +99,13 @@ test("app and package changes select the Bun.serve production-mode guard", async
   assert.deepEqual(changedScriptTests(["docs/README.md"], exists), []);
 });
 
-test("Nixpacks config and workspace manifest changes select the Nixpacks layout test", async () => {
+test("Dockerfile, workspace manifest and frontend source changes select the Dockerfile test", async () => {
   const { changedScriptTests } = await import("./ci-scope.mjs");
-  const exists = (path) => path === "scripts/nixpacks-config.test.mjs";
-  for (const file of ["nixpacks.toml", "package.json", "bun.lockb", "bun.lock", "tsconfig.base.json", "apps/frontend/package.json", "packages/universe/package.json"]) {
-    assert.deepEqual(changedScriptTests([file], exists), ["scripts/nixpacks-config.test.mjs"]);
+  const exists = (path) => path === "scripts/dockerfile.test.mjs";
+  for (const file of ["Dockerfile", "package.json", "bun.lockb", "bun.lock", "apps/frontend/package.json", "packages/universe/package.json", "apps/frontend/src/config.ts"]) {
+    assert.deepEqual(changedScriptTests([file], exists), ["scripts/dockerfile.test.mjs"]);
   }
-  assert.deepEqual(changedScriptTests(["apps/frontend/src/package.json", "nixpacks.test.toml"], exists), []);
+  assert.deepEqual(changedScriptTests(["apps/backend/src/package.json", "nixpacks.test.toml"], exists), []);
 });
 
 test("documentation checks run when no package checks are selected", () => {

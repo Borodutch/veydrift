@@ -14,3 +14,5 @@ docs/
 .github/
 .forgejo/
 /*.md
+# Solidity submodules: nothing in an image reads them.
+packages/contracts/lib/

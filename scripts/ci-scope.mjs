@@ -137,7 +137,7 @@ export function filesRequireContractChecks(files) {
 }
 
 // Changes that affect every package (toolchain, lockfile, CI itself) run the full suite.
-const REPO_WIDE = /^(\.github\/workflows\/ci\.yml|package\.json|bun\.lockb|tsconfig\.base\.json|nixpacks(\.[a-z]+)?\.toml)$/;
+const REPO_WIDE = /^(\.github\/workflows\/ci\.yml|package\.json|bun\.lockb|tsconfig\.base\.json)$/;
 // Paths no check reads (beyond the docs checks, which always run).
 const NO_CHECKS = /^(docs\/|[^/]+\.md$|\.dockerignore$|\.gitignore$|LICENSE$|\.github\/(?!workflows\/ci\.yml))/;
 const AREA_PATHS = /^(apps\/(backend|frontend|stats|battle-keeper|chicken-burn-listener)|packages\/(universe|api-types|contracts))\//;
@@ -153,8 +153,8 @@ export function changedScriptTests(files, exists = existsSync) {
   if (files.some((file) => file.startsWith("scripts/host-build-io/"))) tests.push("scripts/host-build-io.test.mjs");
   // Any app or package change may add or edit a Bun.serve call; keep them out of development mode.
   if (files.some((file) => /^(apps|packages)\//.test(file))) tests.push("scripts/bun-serve-production-mode.test.mjs");
-  if (files.some((file) => /^(nixpacks\.toml|package\.json|bun\.lockb?|tsconfig\.base\.json|(apps|packages)\/[^/]+\/package\.json)$/.test(file))) {
-    tests.push("scripts/nixpacks-config.test.mjs");
+  if (files.some((file) => /^(Dockerfile|package\.json|bun\.lockb?|(apps|packages)\/[^/]+\/package\.json)$|^apps\/frontend\/src\//.test(file))) {
+    tests.push("scripts/dockerfile.test.mjs");
   }
   return unique(tests).filter((test) => exists(test));
 }

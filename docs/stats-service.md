@@ -96,8 +96,8 @@ truncate production data to repair stats.
 ## Parent-owned Easypanel rollout
 
 Deploy **only the existing Easypanel-managed `veydrift/stats-api` and `veydrift/stats`
-services**, as identified in the parent's production baseline. Use the existing Nixpacks stats
-configuration. No game backend/frontend, indexer, contract, Docker/Swarm management,
+services**, as identified in the parent's production baseline. Both build the `stats` target of the
+root Dockerfile. No game backend/frontend, indexer, contract, Docker/Swarm management,
 or production DB mutation is required by this change. Keep the canonical ticket
 `in-review` for review/deploy readiness; parent moves it to `testing` after rollout
 and leaves it there until live UI QA passes.
