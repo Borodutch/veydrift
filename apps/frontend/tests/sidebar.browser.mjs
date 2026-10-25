@@ -14,7 +14,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-sidebar-"));
-  const server = await createServer({ configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/sidebar`, configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.SIDEBAR_ARTIFACTS;
@@ -73,7 +73,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       await frame();
     }
     async function click(selector) {
-      const point = await evaluate('(() => {const n=document.querySelector('+JSON.stringify(selector)+'); n.scrollIntoView({block:"nearest"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button,summary,a")===n};})()');
+      const locate = () => evaluate('(() => {const n=document.querySelector('+JSON.stringify(selector)+'); n.scrollIntoView({block:"nearest"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button,summary,a")===n};})()');
+      // Wait out a closing popover or transition over the target before the trusted click.
+      let point = await locate();
+      for (const deadline = Date.now() + 5_000; !point.hit && Date.now() < deadline; point = await locate()) await frame();
       assert.ok(point.hit, selector + ': unobstructed');
       await send('Input.dispatchMouseEvent', { type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1 });
       await send('Input.dispatchMouseEvent', { type:'mouseReleased',x:point.x,y:point.y,button:'left',clickCount:1 });
@@ -191,8 +194,12 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...point}); await frame();
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:500,y:20});
-    await new Promise(resolve=>setTimeout(resolve,200));
-    assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'leaving the hover target dismisses its label');
+    // The label hides 150ms after leaving; poll instead of one fixed 200ms wait, which a loaded runner overran.
+    const hideDeadline=Date.now()+5_000;
+    while(await evaluate('Boolean(document.querySelector("[role=tooltip]"))')){
+      assert.ok(Date.now()<hideDeadline,'leaving the hover target dismisses its label');
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
     // Real Tab navigation must retain labels when focus auto-scrolls the rail.
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
     const overview=desktop+' a[aria-label="Empire"]';

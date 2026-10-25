@@ -33,7 +33,9 @@ const node = Bun.spawn(["anvil", "--host", "127.0.0.1", "--port", "18519", "--in
   "--chain-id", "8453", "--gas-limit", "16777216", "--base-fee", "100", "--silent"], { stdout: "ignore", stderr: "inherit" });
 const chain = defineChain({ id: 8453, name: "anvil-8453", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [url] } } });
 const transport = http(url, { retryCount: 0, timeout: 30_000 });
-const publicClient = createPublicClient({ chain, transport });
+// No block-number cache: viem reuses a block number for 4s by default, so a tick right after the
+// sealing transaction could scan logs only up to an earlier block and miss RefereeBattleSealed.
+const publicClient = createPublicClient({ chain, transport, cacheTime: 0 });
 const walletClient = createWalletClient({ account, chain, transport });
 const randomnessAbi = parseAbi(["function fulfillRandomness(uint256 requestId, uint256 randomWord)"]);
 const gameAbi = parseAbi([

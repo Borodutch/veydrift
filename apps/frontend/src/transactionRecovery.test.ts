@@ -108,6 +108,8 @@ describe("automatic transaction recovery", () => {
     const data = store({ transactionForegroundTimeoutMs: 5, transactionStatusReader: async hash => { observed.push(hash); return status(hash); } });
     const oldPhases: string[] = [];
     await expect(data.runWriteTransaction({ ...action(), send: beforeSend => { beforeSend(); return wallet.promise; }, onStateChange: state => oldPhases.push(state.phase) })).resolves.toMatchObject({ outcome: "unknown" });
+    // Only the first send should time out; on a loaded runner the retries' preparation alone outlasted 5ms.
+    Object.assign(data, { transactionForegroundTimeoutMs: 60_000 });
     let sends = 0;
     const retry = { ...action("0xnext"), send: async () => { sends++; return "0xnext"; } };
     const key = data.writeTransactionKey("building:start:mine", "0xabc", "7");
@@ -135,6 +137,8 @@ describe("automatic transaction recovery", () => {
     prepare.resolve();
     await Bun.sleep(2);
     expect(sends).toBe(0);
+    // The next action gets the normal budget: 5ms also expired it on a loaded runner.
+    Object.assign(data, { transactionForegroundTimeoutMs: 60_000 });
     await expect(data.runWriteTransaction(action())).resolves.toMatchObject({ outcome: "indexed" });
   });
 

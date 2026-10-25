@@ -68,6 +68,8 @@
 
       planet.addEventListener("pointerdown", () => {
         clearTimeout(activationTimer);
+        // ?noHold: a swipe that a loaded machine stretches past the hold time still tests the inactive guard.
+        if (location.search.includes("noHold")) return;
         activationTimer = setTimeout(() => {
           window.touchProof.activations += 1;
           guard.setActive(true);

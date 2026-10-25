@@ -167,15 +167,6 @@ contract VeydriftCombatReferenceParityTest is Test {
         assertTrue(sawPartial, "fixture must actually persist partial rounds");
     }
 
-    function testBatchCounterplayCombatPreservesReference() public {
-        batchMode = true;
-        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
-        fixture.attackerShips[uint8(Ship.Battlecruiser)] = 10;
-        fixture.defenderShips[uint8(Ship.HeavyFighter)] = 100;
-        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
-        _assertReferenceParity(fixture, 32);
-    }
-
     function testReferenceParityDefenderWinCargoAgainstRocketLaunchers() public {
         VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
         fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;

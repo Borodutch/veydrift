@@ -13,7 +13,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
-  const server = await createServer({ logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/productionQueueSizing`, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
   const pending = new Map();
   const artifacts = process.env.QUEUE_SIZING_ARTIFACTS;
@@ -134,7 +134,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
         writeFileSync(join(artifacts, label + '.png'), Buffer.from(screenshot.data, 'base64'));
       }
     }
-    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 390, 320]) for (const count of [1, 4]) {
+    for (const body of ['planet', 'moon']) for (const kind of ['ship', 'defense']) for (const width of [1280, 320]) for (const count of [1, 4]) { // 390 behaves as 320 (<640) and runs below
       await load(new URLSearchParams({ body, kind, count: String(count) }), width);
       assert.equal(await evaluate('document.querySelectorAll("[data-build-plan] button[aria-label^=Remove]").length'), count);
       await record(body + '-' + kind + '-' + width + (count === 1 ? '-one' : ''), width);

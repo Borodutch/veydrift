@@ -1,7 +1,8 @@
 name: CI
 
-# PRs only. Branch protection requires this check and up-to-date branches (strict), so a PR
-# merges only after passing on the exact tree that lands on main; a main run would repeat it.
+# PRs only. Branch protection requires the three `checks (<area>)` statuses and up-to-date
+# branches (strict), so a PR merges only after passing on the exact tree that lands on main;
+# a main run would repeat it.
 on:
   pull_request:
 
@@ -11,17 +12,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Check groups run as parallel jobs (one per Mac runner instance), so a run takes as long
-  # as its slowest group instead of the sum of every check.
+  # One job per area (contracts, backend, frontend), side by side on the Mac runners. A job whose
+  # area the change doesn't touch plans no checks and finishes in seconds.
   # The job id must stay `check`: the Mac runners' job-started hook only authorizes job `check`
   # of this workflow, on pull_request events, for PRs authored by backmeupplz.
   check:
     name: checks (${{ matrix.group }})
-    # Same rule as that hook, so other PRs (forks, other authors) use GitHub-hosted runners
-    # instead of being denied on the Mac.
-    # Each group has its own Mac runner (label veydrift-ci-<group>), so it always lands in the
-    # workspace it warmed last time: node_modules, Foundry artifacts, pinned frontend media.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && fromJSON(format('["veydrift-backmeupplz-ci","veydrift-ci-{0}"]', matrix.group)) || 'ubuntu-latest' }}
+    # Same rule as that hook, so other PRs (forks, other authors) use the Linux runner instead
+    # of being denied on the Mac.
+    # Any of the Mac runners takes any group; each keeps its own warm workspace (node_modules,
+    # Foundry artifacts, pinned frontend media) in its tool cache.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && 'veydrift-backmeupplz-ci' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 60
@@ -29,28 +30,57 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - group: rest
-          - group: browser
           - group: contracts
-          - group: contracts-checks
+          - group: backend
+          - group: frontend
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      BASE_REF: ${{ github.base_ref }}
-      HEAD_REF: ${{ github.sha }}
+      # The PR's base commit: ci-scope.mjs checks what changed since its merge base with the head.
+      BASE_REF: ${{ github.event.pull_request.base.sha }}
+      HEAD_REF: ${{ github.event.pull_request.head.sha }}
       PLAIN_VERSION: 0.4.0
     steps:
-      # Self-hosted workspaces persist between runs: keep ignored build outputs (node_modules,
-      # Foundry out/cache, pinned frontend media) warm, but drop any other untracked leftovers.
+      # The Mac runners (host mode) give every job a new, empty workspace, so actions/checkout
+      # re-downloaded ~60 MiB of blobs plus the contract submodules each time, and every ignored
+      # build output was lost (full Foundry rebuilds, 420 MiB of frontend media). Instead each
+      # runner instance keeps one blobless clone in its own tool cache (it runs one job at a time)
+      # and the job workspace becomes a link to it: fetches are incremental, and node_modules,
+      # Foundry out/cache and pinned frontend media stay warm. Other untracked leftovers are removed.
+      - name: Check out repository (persistent Mac workspace)
+        if: runner.os == 'macOS'
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ws="$RUNNER_TOOL_CACHE/veydrift-workspace"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"
+          if [ ! -d "$ws/.git" ]; then
+            rm -rf "$ws" && git init -q "$ws"
+            git -C "$ws" remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+            git -C "$ws" config remote.origin.promisor true
+            git -C "$ws" config remote.origin.partialclonefilter blob:none
+          fi
+          cd "$ws"
+          rm -f .git/index.lock
+          git fetch -q --no-tags --filter=blob:none origin "+$HEAD_REF:refs/ci/head" "+$BASE_REF:refs/ci/base"
+          git checkout -q --force --detach "$HEAD_REF"
+          git clean -ffdq
+          git submodule sync -q --recursive
+          git submodule update -q --init --force --recursive --depth=1
+          git submodule foreach -q --recursive git clean -ffdq
+          git log -1 --format='%H %s'
+          rm -rf "$GITHUB_WORKSPACE" && ln -s "$ws" "$GITHUB_WORKSPACE"
+
+      # Other runners (fork PRs) start from a fresh workspace.
       - name: Check out repository
+        if: runner.os != 'macOS'
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
-          clean: false
-          # packages/contracts/lib (OpenZeppelin, forge-std); fresh runner workspaces don't have them.
+          fetch-depth: 0
+          filter: blob:none
+          # packages/contracts/lib (OpenZeppelin, forge-std)
           submodules: recursive
-
-      - name: Remove untracked files from previous runs
-        run: git clean -ffd -q && git submodule foreach --recursive git clean -ffd -q
 
       - name: Set up Node
         uses: actions/setup-node@v7
@@ -58,7 +88,7 @@ jobs:
           node-version: 24
 
       - name: Test CI scope and output guards
-        if: matrix.group == 'rest'
+        if: matrix.group == 'backend'
         run: node --test scripts/ci-run-scoped-checks.test.mjs
 
       # Only the areas a change touches (plus what depends on them) are checked;
@@ -81,25 +111,10 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      - name: Cache Bun packages
-        if: steps.plan.outputs.work == 'true' && runner.environment == 'github-hosted'
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('bun.lockb') }}
-          restore-keys: |
-            bun-${{ runner.os }}-
-
-      - name: Set up Foundry
-        if: steps.plan.outputs.foundry == 'true' && runner.environment == 'github-hosted'
-        uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.7.1
-
-      # Each Mac runner instance has its own tool cache and runs one job at a time, so a missing
+      # Each runner instance has its own tool cache and runs one job at a time, so a missing
       # Foundry is installed there once (checked against the release's .sha256) without racing.
       - name: Use the runner's Foundry
-        if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
+        if: steps.plan.outputs.foundry == 'true'
         run: |
           dir="$RUNNER_TOOL_CACHE/foundry/1.7.1"
           if ! "$dir/forge" --version 2>/dev/null | grep -q 'Version: 1.7.1'; then
@@ -120,17 +135,11 @@ jobs:
 
       # plain (getplain.org) runs the contract tests and the size and storage-layout checks; Foundry
       # still formats, builds out/ and runs anvil.
-      - name: Set up plain
-        if: steps.plan.outputs.foundry == 'true' && runner.environment == 'github-hosted'
-        run: |
-          scripts/install-plain.sh "$PLAIN_VERSION" "$RUNNER_TEMP/plain"
-          echo "$RUNNER_TEMP/plain" >> "$GITHUB_PATH"
-
       # Like Foundry, plain is installed once per runner tool cache, at a path per version.
       # CI keeps its own PLAIN_HOME (solc, test-result cache) so local and dev builds on this Mac never
       # feed results into CI.
       - name: Use the runner's plain
-        if: steps.plan.outputs.foundry == 'true' && runner.environment != 'github-hosted'
+        if: steps.plan.outputs.foundry == 'true'
         run: |
           dir="$RUNNER_TOOL_CACHE/plain/$PLAIN_VERSION"
           "$dir/plain" --version 2>/dev/null | grep -qx "plain $PLAIN_VERSION" \
@@ -142,7 +151,7 @@ jobs:
       # GUI session. The browser tests take CHROME_PATH, so point them at Chrome for Testing's
       # headless-only build, installed once per runner tool cache.
       - name: Use the runner's headless Chrome
-        if: steps.plan.outputs.frontend == 'true' && runner.environment != 'github-hosted' && runner.os == 'macOS'
+        if: steps.plan.outputs.frontend == 'true' && runner.os == 'macOS'
         run: |
           version=155.0.8059.86
           dir="$RUNNER_TOOL_CACHE/chrome-headless-shell/$version"
@@ -154,44 +163,14 @@ jobs:
           "$bin" --version
           echo "CHROME_PATH=$bin" >> "$GITHUB_ENV"
 
-      # Hosted runners only (fork PRs). Keyed per job: a key shared with jobs that compile less
-      # once let a near-empty cache win for everyone.
-      - name: Cache Foundry build artifacts
-        if: steps.plan.outputs.foundry == 'true' && matrix.group == 'contracts' && runner.environment == 'github-hosted'
-        uses: actions/cache@v4
-        with:
-          path: |
-            packages/contracts/cache
-            packages/contracts/out
-          key: foundry-${{ runner.os }}-${{ matrix.group }}-${{ hashFiles('packages/contracts/src/**/*.sol', 'packages/contracts/test/**/*.sol', 'packages/contracts/script/**/*.sol', 'packages/contracts/foundry.toml') }}
-          restore-keys: |
-            foundry-${{ runner.os }}-${{ matrix.group }}-
-
-      # Pinned frontend media (~420 MiB served, apps/frontend/media.json) is downloaded once per pin set.
-      - name: Cache pinned frontend media
-        if: steps.plan.outputs.frontend == 'true' && runner.environment == 'github-hosted'
-        uses: actions/cache@v4
-        with:
-          path: apps/frontend/.media
-          key: frontend-media-${{ hashFiles('apps/frontend/media.json') }}
-          restore-keys: |
-            frontend-media-
-
       - name: Install dependencies
         if: steps.plan.outputs.work == 'true'
         run: bun install --frozen-lockfile
 
+      # The Mac runner daemons get launchd's default light resource limits (no ProcessType), which
+      # made browser tests ~5x slower than in a login session and time out under load. taskpolicy -a
+      # gives the checks (and their children) the resource policies of an app.
       - name: Run scoped checks
         if: steps.plan.outputs.docs == 'true'
         run: |
-          node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"
-
-  # Branch protection requires this single "check" status; it passes only if every group passed.
-  all-checks:
-    name: check
-    needs: check
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: All check groups passed
-        run: test "${{ needs.check.result }}" = success
+          ${{ runner.os == 'macOS' && 'taskpolicy -a' || '' }} node scripts/ci-run-scoped-checks.mjs --group "${{ matrix.group }}"

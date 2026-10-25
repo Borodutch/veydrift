@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { AREAS, computeScope } from "./ci-scope.mjs";
 
@@ -69,49 +69,71 @@ export async function writeCheckOutput(output) {
   });
 }
 
-async function runLogged(label, command, args) {
-  console.log(`\n== ${label} ==`);
-  console.log(`$ ${[command, ...args].join(" ")}`);
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 64,
-    stdio: ["ignore", "pipe", "pipe"],
+function runCaptured(command, args) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.on("error", (error) => resolve({ status: null, signal: null, error, output }));
+    child.on("close", (status, signal) => resolve({ status, signal, error: undefined, output }));
   });
-  const output = `${result.stdout || ""}${result.stderr || ""}`;
+}
+
+// Runs one check and logs it as one block. Returns false (after logging the full output) on failure.
+async function runLogged(label, command, args) {
+  const started = Date.now();
+  const result = await runCaptured(command, args);
+  const header = `\n== ${label} ==\n$ ${[command, ...args].join(" ")}\n`;
+  const seconds = `${((Date.now() - started) / 1000).toFixed(1)}s`;
 
   if (result.status !== 0) {
-    // Flush the complete failure before exiting; an async pipe write followed
-    // by process.exit truncated large test logs before their failing assertions.
-    await writeCheckOutput(output);
+    // Flush the complete failure; an async pipe write followed by process.exit truncated
+    // large test logs before their failing assertions.
+    await writeCheckOutput(header + result.output);
     if (result.signal) console.error(`${label} terminated by ${result.signal}.`);
     if (result.error) console.error(result.error);
-    process.exit(result.status || 1);
+    console.error(`::error::${label} failed after ${seconds}.`);
+    return false;
   }
 
-  if (outputContainsFlaggedOutput(output)) {
-    await writeCheckOutput(output);
+  if (outputContainsFlaggedOutput(result.output)) {
+    await writeCheckOutput(header + result.output);
     console.error(`::error::${label} output contains flagged output.`);
-    process.exit(1);
+    return false;
   }
 
   // Bun's backend suite deliberately exercises many negative read paths and emits
   // structured diagnostics for them. Keeping that entire successful stream in the
-  // GitHub Actions log can throttle the runner before later contract checks begin;
-  // retain it on any failure, but record a concise success marker otherwise.
-  console.log(`${label} passed.`);
+  // Actions log can throttle the runner; retain it on any failure, but record a
+  // concise success marker otherwise.
+  console.log(`${header}${label} passed in ${seconds}.`);
+  return true;
 }
 
-// Heavy checks get their own parallel CI job; everything else runs in the "rest" group.
-// Without a group (local preflight) every applicable check runs in one process, as before.
-export const CHECK_GROUPS = ["all", "rest", "browser", "contracts", "contracts-checks"];
-const HEAVY = {
-  "frontend-touch-browser": "browser",
-  "contracts-build": "contracts",
-  "contracts-test": "contracts",
-  // Both build into their own out dirs (src only), so they run in parallel with the main build.
-  "contracts-fast-check": "contracts-checks",
-  "contracts-storage-check": "contracts-checks",
+// One CI job per area: contracts, backend (also the shared packages' and repo-wide tooling checks) and frontend.
+// A job whose area a change doesn't touch plans nothing and finishes in seconds. The group names are fixed
+// (they are required statuses). Within a group the checks run as a few side-by-side chains, each chain in
+// order; `pre` steps run first, before the chains. Without a group (local preflight) everything runs in order.
+export const CHECK_GROUPS = ["all", "contracts", "backend", "frontend"];
+const PLACE = {
+  "frontend-precheck": ["frontend", "pre"],
+  "frontend-test": ["frontend", 0],
+  "frontend-typecheck": ["frontend", 1],
+  "frontend-build": ["frontend", 1],
+  "frontend-browser": ["frontend", 2],
+  // contracts-build and contracts-test share plain's compile cache, so they run in order; the manifest
+  // tests and the fast/storage checks build into their own out dirs (src only), so they run next to them.
+  "contracts-build": ["contracts", 0],
+  "contracts-test": ["contracts", 0],
+  "deployment-manifest-test": ["contracts", 1],
+  "referral-migration-manifest-test": ["contracts", 1],
+  "contracts-fast-check": ["contracts", 1],
+  "contracts-storage-check": ["contracts", 1],
+  "backend-test": ["backend", 0],
 };
+// Everything else (backend typecheck, universe, stats, keeper, chicken, docs and script tests) is backend chain 1.
+const place = (label) => PLACE[label] ?? ["backend", 1];
 
 export function planChecks(scope, group = "all") {
   if (!CHECK_GROUPS.includes(group)) throw new Error(`unknown check group "${group}" (use ${CHECK_GROUPS.join(", ")})`);
@@ -123,6 +145,8 @@ export function planChecks(scope, group = "all") {
   add("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
   add("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
   for (const testFile of scope.script_tests ?? []) {
+    // The CI workflow already runs this one first, in the rest job, on every PR.
+    if (group !== "all" && testFile === "scripts/ci-run-scoped-checks.test.mjs") continue;
     add(`script-test ${testFile}`, "node", ["--test", testFile]);
   }
 
@@ -144,7 +168,7 @@ export function planChecks(scope, group = "all") {
     add("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
     add("frontend-test", "bun", ["run", "test:frontend"]);
     add("frontend-build", "bun", ["run", "build:frontend"]);
-    add("frontend-touch-browser", "bash", ["-lc", "cd apps/frontend && bun run test:touch-browser"]);
+    add("frontend-browser", "bash", ["-lc", "cd apps/frontend && node scripts/touch-browser.mjs"]);
   }
 
   if (scope.stats) add("stats-check", "bun", ["run", "check:stats"]);
@@ -171,7 +195,12 @@ export function planChecks(scope, group = "all") {
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",
     ]);
-    add("contracts-build", "bun", ["run", "build:contracts"]);
+    // Compile check of src, test and script on plain (getplain.org), plus the two out/ artifacts the
+    // mixed-proxy proof reads (in contracts-test). plain's compile cache is shared by every runner, so
+    // this is near-free after the first build; forge build was a cold via-IR compile (~7 min) on each
+    // runner. (plain 0.4.0's whole-project --out stops at lib/ files, hence the two named sources.)
+    add("contracts-build", "bash", ["-lc",
+      "cd packages/contracts && plain build && plain build src/VeydriftGame.sol src/VeydriftBatchTransportModule.sol --out out"]);
     add("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     add("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {
@@ -182,11 +211,21 @@ export function planChecks(scope, group = "all") {
   }
 
   if (group === "all") return plan;
-  const selected = plan.filter(({ label }) => (HEAVY[label] || "rest") === group);
-  // The browser job repeats the cheap frontend asset preparation it relies on.
-  const precheck = plan.find(({ label }) => label === "frontend-precheck");
-  if (precheck && group === "browser" && selected.length) selected.unshift(precheck);
-  return selected;
+  return plan.filter(({ label }) => place(label)[0] === group);
+}
+
+// In a CI group the `pre` steps run first, then each chain in order with the chains side by side;
+// the local preflight ("all") runs every step in order.
+async function runPlan(plan, concurrent) {
+  const steps = plan.filter((step) => !step.note);
+  const serial = async (chain) => {
+    for (const step of chain) if (!(await runLogged(step.label, step.command, step.args))) return false;
+    return true;
+  };
+  if (!concurrent) return serial(steps);
+  if (!(await serial(steps.filter((step) => place(step.label)[1] === "pre")))) return false;
+  const chains = [0, 1, 2].map((chain) => steps.filter((step) => place(step.label)[1] === chain));
+  return (await Promise.all(chains.map(serial))).every(Boolean);
 }
 
 async function main() {
@@ -199,10 +238,8 @@ async function main() {
     for (const step of plan) console.log(step.note ? `${step.label} (${step.note})` : step.label);
     return;
   }
-  for (const step of plan) {
-    if (step.note) console.log(`\n== ${step.label} ==\n${step.note}`);
-    else await runLogged(step.label, step.command, step.args);
-  }
+  for (const step of plan) if (step.note) console.log(`\n== ${step.label} ==\n${step.note}`);
+  if (!(await runPlan(plan, group !== "all"))) process.exit(1);
   if (!plan.some((step) => !step.note && !step.label.startsWith("docs-"))) {
     console.log(group === "all" ? "No package checks needed for this change." : `No ${group} checks needed for this change.`);
   }

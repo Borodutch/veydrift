@@ -35,7 +35,11 @@ function fixture(reconciliationTimeoutMs = 5000) {
   operationId:"mission-batch:"+game+":"+keccak256(data),membership:JSON.stringify(items),game,calldataHash:keccak256(data),implementation,
   identities:[implementation,game,("0x"+"55".repeat(20)) as Hex].map(address=>({address,codeHash:keccak256("0x6000")})),
   originalFee:{gas:"10414604",totalWei:"199999983326886",l1ReserveWei:"77724806734",operatorReserveWei:"0",maxFeePerGas:"19196338",priority:null,source:"fixture signed-prepared log",sourceDigest:keccak256("0x01")},mission:{owner:account.address,origin:"783",target:"210",returnAt:"1791480343",shipsWords:[("0x"+"00".repeat(31)+"0d") as Hex,("0x"+"00".repeat(32)) as Hex],bodyFlags:("0x"+"00".repeat(32)) as Hex},gas:"1000000",allowAlreadySettled:false,referenceRpcUrl:"https://reference.invalid",recoveryId:"fixture-58",maxFeeWei:"200000000000000"};
- let previousLatestAt=0;
+ // The head advances once per acquisition poll (recoveryReadiness sleeps 100ms between "latest" reads), never
+ // on wall-clock gaps: a loaded runner can space two immediate proof reads 90ms+ apart, moving the head mid-proof.
+ let polled=false;
+ const realSetTimeout=globalThis.setTimeout;
+ globalThis.setTimeout=((handler:(...args:unknown[])=>void,ms?:number,...args:unknown[])=>{if(ms===100)polled=true;return realSetTimeout(handler,ms,...args);}) as typeof setTimeout;
  let now=1000, winner:Hex|null=null, finalized=false, nonce=4, signCount=0, outcome=0;
  let afterSign:()=>void=()=>{};
  let receiptStatus="success", completed=true, reportedBoth=false;
@@ -49,8 +53,7 @@ function fixture(reconciliationTimeoutMs = 5000) {
   getStorageAt:async({slot}:{slot:Hex})=>slot.startsWith("0x360894")?"0x"+"0".repeat(24)+implementation.slice(2):slot==="0x"+"0".repeat(62)+"34"?"0x00": BigInt(slot)===missionSlot+7n?input.mission.shipsWords[0]:input.mission.bodyFlags,
   getTransactionCount:async()=>nonce,
   getBlock:async({blockTag,blockNumber}:{blockTag?:string;blockNumber?:bigint})=>{
-   // Acquisition polls 100ms apart; immediate proof reads stay on the selected head.
-   if(blockTag==="latest") {const t=performance.now();if(previousLatestAt&&t-previousLatestAt>=90)fixtureHead++;previousLatestAt=t;}
+   if(blockTag==="latest"&&polled) {fixtureHead++;polled=false;}
    const number=blockNumber??(blockTag==="finalized"?(finalized?1n:0n):fixtureHead);
    return {number,hash:fixtureHash(number),timestamp:BigInt(Math.floor(Date.now()/1000)),baseFeePerGas:100n,gasLimit:30000000n};
   },
@@ -69,7 +72,7 @@ function fixture(reconciliationTimeoutMs = 5000) {
  const current=create(), db=new Database(path);
  db.query("INSERT INTO resolver_transaction_attempts VALUES(?,?,?,?,?,?,?)").run(8453,account.address.toLowerCase(),input.operationId,4,original,"submitted","original-time");
  db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES(?,?,?,?,?,?,'pending')").run(8453,account.address.toLowerCase(),input.operationId,4,original,input.membership);
- return {...current,input,db,path,dir,bytes,publicClient,create,setReceipt:(status:string,complete:boolean)=>{receiptStatus=status;completed=complete;},both:()=>{reportedBoth=true;},setNonce:(n:number)=>{nonce=n;referenceNonce=n;},afterSign:(fn:()=>void)=>{afterSign=fn;},signs:()=>signCount,setOutcome:(v:number)=>{outcome=v;},advance:()=>{now+=60000;},win:(hash:Hex,final=true)=>{winner=hash;nonce=5;referenceNonce=5;finalized=final;},reorg:()=>{winner=null;nonce=4;referenceNonce=4;finalized=false;},send:(fn:typeof onSend)=>{onSend=fn;},cleanup:()=>{db.close();rmSync(dir,{recursive:true,force:true});}};
+ return {...current,input,db,path,dir,bytes,publicClient,create,setReceipt:(status:string,complete:boolean)=>{receiptStatus=status;completed=complete;},both:()=>{reportedBoth=true;},setNonce:(n:number)=>{nonce=n;referenceNonce=n;},afterSign:(fn:()=>void)=>{afterSign=fn;},signs:()=>signCount,setOutcome:(v:number)=>{outcome=v;},advance:()=>{now+=60000;},win:(hash:Hex,final=true)=>{winner=hash;nonce=5;referenceNonce=5;finalized=final;},reorg:()=>{winner=null;nonce=4;referenceNonce=4;finalized=false;},send:(fn:typeof onSend)=>{onSend=fn;},cleanup:()=>{globalThis.setTimeout=realSetTimeout;db.close();rmSync(dir,{recursive:true,force:true});}};
 }
 test("original wins before signing; original receipt only and finality releases admission",async()=>{
  const f=fixture();try{f.win(original);await f.client.recoverLegacyMission(f.input);expect(f.signs()).toBe(0);expect(f.bytes).toHaveLength(0);

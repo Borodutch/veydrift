@@ -14,7 +14,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
   // Local component proof does not need production animation baking or API proxies.
-  const server = await createServer({ configFile: false, esbuild: { jsx: "automatic", jsxImportSource: "preact" }, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
+  const server = await createServer({ cacheDir: `node_modules/.vite-browser/currentState`, configFile: false, esbuild: { jsx: "automatic", jsxImportSource: "preact" }, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome, backend;
   const pending = new Map();
   const artifacts = process.env.CURRENT_STATE_ARTIFACTS;
@@ -78,7 +78,8 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       assert.equal(await evaluate('document.querySelector(\'input[aria-label="Large Cargo quantity"]\').value'), '6', 'refresh preserves explicit fleet');
       assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected \/ 0 available/);
       assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), true);
-      for (const [body, kind] of ["planet", "moon"].flatMap(body => ["transport", "deploy", "attack", "acs", ...(body === "planet" ? ["defend"] : [])].map(kind => [body, kind]))) {
+      // Inventory readiness logic is width-independent: its body × mission matrix runs at one width.
+      if (width === 390) for (const [body, kind] of ["planet", "moon"].flatMap(body => ["transport", "deploy", "attack", "acs", ...(body === "planet" ? ["defend"] : [])].map(kind => [body, kind]))) {
         const label = body + " " + kind + " at " + width;
         await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-" + kind) + '); new Promise(resolve => setTimeout(resolve, 150))');
         await evaluate(`(() => { const input = document.querySelector('input[aria-label="Large Cargo quantity"]'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)`);
@@ -165,7 +166,8 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     // Actual cache-enabled HTTP handler + ordinary subscribed store + mounted controls.
     // Its deleted anchor has timestamp:null, while six canonical ships remain populated.
     await evaluate('fixture.realApi(' + JSON.stringify(apiBase) + ')');
-    for (const width of [390, 1280]) {
+    // Width-independent too (and covered at unit level by inventoryReadiness65.test.ts): one width.
+    for (const width of [390]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       for (const body of ["planet", "moon"]) {
         await fetch(apiBase + "/__fixture/recover");

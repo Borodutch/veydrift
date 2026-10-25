@@ -17,7 +17,7 @@
     "randomness:oracle": "bun src/randomnessOracle.ts",
     "resolver:recover-nonce-gap": "bun src/resolverNonceRecovery.ts",
     "start": "bun src/index.ts",
-    "test": "bun test"
+    "test": "node ../../scripts/bun-test-parallel.mjs 4 src"
   },
   "dependencies": {
     "@veydrift/battle-oracle": "workspace:*",

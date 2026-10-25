@@ -228,9 +228,13 @@ async function main() {
   }
 
   // Write manifest for potential future use (component currently uses convention-based paths)
+  // Rewrite only on change: running Vite dev servers (parallel browser tests) full-reload on public/ writes.
   const manifestPath = join(SIZES_DIR, "manifest.json");
-  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-  console.log(`\n📝 Wrote manifest: ${relative(join(SCRIPT_DIR, ".."), manifestPath)}`);
+  const manifestJson = JSON.stringify(manifest, null, 2);
+  if (manifestJson !== JSON.stringify(await readExistingManifest(), null, 2)) {
+    await writeFile(manifestPath, manifestJson);
+    console.log(`\n📝 Wrote manifest: ${relative(join(SCRIPT_DIR, ".."), manifestPath)}`);
+  }
 
   console.log(
     `\n✅ Done: ${generated} variants generated, ${skipped} already up-to-date, ${images.length} source images.`

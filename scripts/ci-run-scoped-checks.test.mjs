@@ -51,6 +51,15 @@ test("PR and push CI select the same scoped checks for the same change", () => {
       assert.deepEqual(pr, push, file);
       assert.deepEqual(areas(pr).sort(), [...want].sort(), file);
     }
+    // A PR checks every commit since its merge base, not just its last commit.
+    git("reset", "--hard", base);
+    for (const file of ["apps/stats/src/example.ts", "apps/battle-keeper/src/example.ts"]) {
+      mkdirSync(join(dir, file, ".."), { recursive: true });
+      writeFileSync(join(dir, file), "second fixture\n");
+      git("add", file);
+      git("commit", "-m", `change ${file}`);
+    }
+    assert.deepEqual(areas(scope("pull_request", "main")), ["stats", "keeper"]);
     // A push whose previous tip is unknown checks everything.
     assert.equal(scope("push", "0000000000000000000000000000000000000000").full, true);
   } finally {
@@ -216,30 +225,38 @@ import { shardTestFiles, parseShard } from "../packages/contracts/scripts/run-te
 const FULL_SCOPE = { universe: true, backend: true, frontend: true, stats: true, keeper: true, chicken: true, contracts: true, storage_layout: true };
 const labels = (plan) => plan.map((step) => step.label);
 
-test("parallel check groups partition the full sequential plan", () => {
+test("area check groups partition the full sequential plan", () => {
   const all = labels(planChecks(FULL_SCOPE));
-  const grouped = CHECK_GROUPS.filter((group) => group !== "all")
-    .flatMap((group) => labels(planChecks(FULL_SCOPE, group)))
-    .filter((label, index, list) => label !== "frontend-precheck" || list.indexOf(label) === index);
+  const grouped = CHECK_GROUPS.filter((group) => group !== "all").flatMap((group) => labels(planChecks(FULL_SCOPE, group)));
   assert.deepEqual([...grouped].sort(), [...all].sort());
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["contracts-build", "contracts-test"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts-checks")), ["contracts-fast-check", "contracts-storage-check"]);
-  assert.deepEqual(labels(planChecks(FULL_SCOPE, "browser")), ["frontend-precheck", "frontend-touch-browser"]);
-  assert.ok(!labels(planChecks(FULL_SCOPE, "rest")).some((label) => label.startsWith("contracts-") || label === "frontend-touch-browser"));
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["deployment-manifest-test", "referral-migration-manifest-test",
+    "contracts-build", "contracts-fast-check", "contracts-test", "contracts-storage-check"]);
+  assert.deepEqual(labels(planChecks(FULL_SCOPE, "frontend")), ["frontend-precheck", "frontend-typecheck", "frontend-test",
+    "frontend-build", "frontend-browser"]);
+  const backend = labels(planChecks(FULL_SCOPE, "backend"));
+  assert.ok(!backend.some((label) => label.startsWith("contracts-") || label.startsWith("frontend-")));
+  assert.ok(backend.includes("backend-test") && backend.includes("universe-test") && backend.includes("stats-check"));
   assert.throws(() => planChecks(FULL_SCOPE, "nope"), /unknown check group/);
 });
 
 test("groups with nothing in scope plan no checks", () => {
   const docsOnly = Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false]));
-  assert.deepEqual(labels(planChecks(docsOnly, "rest")), ["docs-link-tests", "docs-check"]);
-  for (const group of ["browser", "contracts", "contracts-checks"]) assert.deepEqual(planChecks(docsOnly, group), []);
+  assert.deepEqual(labels(planChecks(docsOnly, "backend")), ["docs-link-tests", "docs-check"]);
+  for (const group of ["contracts", "frontend"]) assert.deepEqual(planChecks(docsOnly, group), []);
 });
 
-test("a backend-only change plans only cheap backend checks", () => {
+test("a backend-only change plans only backend checks", () => {
   const backend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), backend: true };
-  assert.deepEqual(labels(planChecks(backend, "rest")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
+  assert.deepEqual(labels(planChecks(backend, "backend")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
     "backend-performance-tool-test", "release-diagnostics-test"]);
-  for (const group of ["browser", "contracts", "contracts-checks"]) assert.deepEqual(planChecks(backend, group), []);
+  for (const group of ["contracts", "frontend"]) assert.deepEqual(planChecks(backend, group), []);
+});
+
+test("a frontend-only change plans only frontend checks (plus the docs checks in backend)", () => {
+  const frontend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), frontend: true };
+  assert.deepEqual(labels(planChecks(frontend, "backend")), ["docs-link-tests", "docs-check"]);
+  assert.deepEqual(planChecks(frontend, "contracts"), []);
+  assert.equal(labels(planChecks(frontend, "frontend")).length, 5);
 });
 
 test("contract test shards cover every file exactly once and isolate the largest file", () => {
@@ -268,4 +285,12 @@ test("unoptimized contract test list rejects files that carry src logic or fork 
   assert.deepEqual(profileProblems("test/B.t.sol", "contract Harness is VeydriftGame {}", src), ["Harness inherits src VeydriftGame"]);
   assert.deepEqual(profileProblems("test/C.t.sol", 'import {Deploy} from "../script/Deploy.s.sol";', src), ["imports a deploy script"]);
   assert.deepEqual(profileProblems("test/DFork.t.sol", "", src), ["is a mainnet-fork test"]);
+});
+
+test("the browser smoke chains run every browser test file exactly once", async () => {
+  const { readdirSync } = await import("node:fs");
+  const { CHAINS } = await import("../apps/frontend/scripts/touch-browser.mjs");
+  const files = readdirSync(new URL("../apps/frontend/tests/", import.meta.url)).filter((file) => file.endsWith(".browser.mjs"))
+    .map((file) => file.replace(/\.browser\.mjs$/, "")).sort();
+  assert.deepEqual(CHAINS.flat().sort(), files);
 });

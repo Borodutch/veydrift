@@ -147,16 +147,18 @@ Backend payload changes require frontend consumer tests too. Contract/event
 changes require contract/indexer tests and a state-preservation review.
 Workspace-wide `bun run test`, `bun run check`, and `bun run build` are for broad changes.
 
-GitHub Actions remains the CI entry point. PRs authored by `backmeupplz` from this repository's
-branches run on the self-hosted Mac runners (the runners' job-started hook enforces the same
-rule). Each check group has its own runner (labels `veydrift-backmeupplz-ci` plus
-`veydrift-ci-<group>`), so its persistent workspace keeps `node_modules`, Foundry artifacts and
-pinned frontend media warm from one PR to the next. Other
-PRs run on GitHub-hosted runners. CI runs on PRs only: branch protection requires the `check`
-status on an up-to-date branch, so the tree that lands on main is exactly the one the PR passed.
+Forgejo Actions is the CI entry point. PRs authored by `backmeupplz` from this repository's
+branches run on the self-hosted Mac runners. Each check group has its own runner (labels
+`veydrift-backmeupplz-ci` plus `veydrift-ci-<group>`) with a persistent clone in its tool cache,
+so `node_modules`, Foundry artifacts and pinned frontend media stay warm from one PR to the next.
+Other PRs run on the Linux runner. CI runs on PRs only: branch protection requires the four
+`checks (<group>)` statuses on an up-to-date branch, so the tree that lands on main is exactly the
+one the PR passed.
 Only the areas a change touches, plus the areas that read them, are checked (a backend-only PR
 runs only backend checks; contracts are compiled and tested only when contract code changes).
-Toolchain, lockfile, CI and unclassified files check everything. Heavy groups (browser tests, contracts, storage layout) run as parallel jobs. Contract
+Toolchain, lockfile, CI and unclassified files check everything. The four groups run as parallel jobs;
+the browser suite is split into four lanes, one per job, and each lane runs next to that job's other
+checks. Contract
 tests take seconds; contract CI time is solc via-IR compilation, which is single-threaded and
 incremental, so only changed sources and their dependents recompile.
 
