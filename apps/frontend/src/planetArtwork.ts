@@ -1,4 +1,4 @@
-import type { PlanetType } from "./types";
+import type { PlanetType } from "./types.ts";
 
 // Shared by app and social rendering. Never use this visual family for economics.
 function seededRandom(seed: number): number {

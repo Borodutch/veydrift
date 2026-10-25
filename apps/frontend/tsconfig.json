@@ -2,6 +2,7 @@
   "compilerOptions": {
     "incremental": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsc-frontend.tsbuildinfo",
+    "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,

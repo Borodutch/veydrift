@@ -108,7 +108,11 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
         const label = width + '-' + (query ? 'reversed' : 'ordered');
         await load(query, width);
         await check(captures[0], label + '-initial');
+        // Page.reload returns before the old document goes away: wait for the new one,
+        // or ready() can pass on the page being replaced.
+        await evaluate('window.beforeReload = true');
         await send('Page.reload', { ignoreCache: true });
+        while (await evaluate('window.beforeReload === true').catch(() => true)) await new Promise(resolve => setTimeout(resolve, 25));
         await ready();
         await check(captures[0], label + '-reload');
         for (const capture of [...captures.slice(1), captures[0]]) {

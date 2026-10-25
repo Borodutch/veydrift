@@ -17,7 +17,7 @@ import {
   type AccountAssociation,
   type HtmlEnv,
   type MiniAppSurface,
-} from "./miniAppMetadata";
+} from "./miniAppMetadata.ts";
 
 // Local-dev CORS bypass: the Veydrift APIs only allow the veydrift.com
 // origins, so localhost fetches go through the dev server instead. Point

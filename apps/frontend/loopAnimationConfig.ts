@@ -1,4 +1,4 @@
-import loops from "./loopAnimations.json";
+import loops from "./loopAnimations.json" with { type: "json" };
 
 // Seamless building/ship loops, delivered as precomputed WebM (VP9) with an MP4
 // (H.264) fallback. loopAnimations.json is written by `bun scripts/media.mjs
