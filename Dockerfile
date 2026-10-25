@@ -70,16 +70,17 @@ ARG VITE_VEYDRIFT_PAID_ALLIANCE_INVITE_ADDRESS
 ARG VITE_VEYDRIFT_REFERRAL_SYSTEM_ADDRESS
 ARG VITE_VEYDRIFT_SETTLEMENT_ADDRESS
 ARG VITE_VEYDRIFT_SURFACE
-# `bun run build` without its prebuild step, which frontend-public already ran.
-RUN cd apps/frontend && vite build
+# `bun run build` without its prebuild step, which frontend-public already ran, and
+# without copying public/ into dist/: the frontend stage does that from a cached layer.
+RUN cd apps/frontend && VEYDRIFT_PUBLIC_FROM_IMAGE=1 vite build
 
-# The large, rarely changing game art (public/ and its copy in dist/assets/game)
-# goes in first, so a code change only adds the code layers after it.
+# The large, rarely changing game art (public/, and its copy in dist/ without the
+# unpublished whitepaper) goes in first, so a code change only adds the code layers after it.
 FROM deps AS frontend
 COPY --from=frontend-public /app/apps/frontend/public apps/frontend/public
-COPY --from=frontend-build /app/apps/frontend/dist/assets/game apps/frontend/dist/assets/game
+COPY --from=frontend-public --exclude=whitepaper.pdf /app/apps/frontend/public apps/frontend/dist
 COPY apps/backend apps/backend
 COPY --exclude=public apps/frontend apps/frontend
-COPY --from=frontend-build --exclude=assets/game /app/apps/frontend/dist apps/frontend/dist
+COPY --from=frontend-build /app/apps/frontend/dist apps/frontend/dist
 WORKDIR /app/apps/frontend
 CMD ["bun", "run", "serve"]

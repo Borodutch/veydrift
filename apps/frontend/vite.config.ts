@@ -112,6 +112,9 @@ function hideWhitepaper(): Plugin {
     configureServer,
     configurePreviewServer: configureServer,
     writeBundle() {
+      // The Docker image puts public/ into dist/ from its own cached layer instead of
+      // rewriting ~70 MB of game art on every build.
+      if (process.env.VEYDRIFT_PUBLIC_FROM_IMAGE === "1") return;
       // Retain the source PDF in public/ without publishing it in any build mode.
       cpSync(config.publicDir, resolve(config.root, config.build.outDir), {
         recursive: true,
