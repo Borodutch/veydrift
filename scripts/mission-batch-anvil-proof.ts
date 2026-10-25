@@ -23,7 +23,7 @@ const oracleAbi = parseAbi([
 // Refuse to attach to an existing service: this test must own its isolated local node.
 try { await fetch(url, { signal: AbortSignal.timeout(300) }); throw new Error("test port is already in use"); }
 catch (e) { if (e instanceof Error && e.message === "test port is already in use") throw e; }
-const node = Bun.spawn(["anvil", "--host", "127.0.0.1", "--port", String(port), "--chain-id", "8453", "--gas-limit", "30000000", "--base-fee", "100", "--silent"], { stdout: "ignore", stderr: "pipe" });
+const node = Bun.spawn([...(process.env.ANVIL ?? "plain node").split(" "), "--host", "127.0.0.1", "--port", String(port), "--chain-id", "8453", "--gas-limit", "30000000", "--base-fee", "100", "--silent"], { stdout: "ignore", stderr: "pipe" });
 try {
   const raw = http(url, { retryCount: 0, timeout: 5000 })({ chain: undefined }).request;
   let ready = false;

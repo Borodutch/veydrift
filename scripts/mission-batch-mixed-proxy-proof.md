@@ -3,9 +3,9 @@
 Run with Forge 1.7.1, Solidity 0.8.28 and Bun 1.1.42, with the repository pinned submodules/dependencies:
 
 ```sh
-(cd packages/contracts && VEY918_EXPORT_FIXTURE=true forge test --force --match-path test/VeydriftBatchFixtureExport.t.sol --match-test testExportMixedProxyFixture -vv)
+(cd packages/contracts && VEY918_EXPORT_FIXTURE=true plain test --force --match-path test/VeydriftBatchFixtureExport.t.sol --match-test testExportMixedProxyFixture -vv)
 NO_PROXY=127.0.0.1,localhost bun scripts/mission-batch-mixed-proxy-proof.ts
-(cd packages/contracts && forge test --match-contract "^(VeydriftCombatReferenceParityTest|VeydriftBatchFixtureExportTest)$")
+(cd packages/contracts && plain test --match-contract "^(VeydriftCombatReferenceParityTest|VeydriftBatchFixtureExportTest)$")
 ```
 
 The opt-in exporter reuses the counterplay reference fixture: 10 battlecruisers attack 100 heavy fighters plus one allied defending battleship; two unrelated recalled transports are due first. It constructs the actual compiled Game, modules and OpenZeppelin Transparent proxy, including native initializer and EIP-1967 wiring. Setup uses the existing test resource tokens and cheatcodes for resources, ships, technologies, coordinates, synthetic ownership, ETH balances and randomness fulfillment. No production source is substituted.

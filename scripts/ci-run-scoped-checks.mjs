@@ -195,12 +195,10 @@ export function planChecks(scope, group = "all") {
       "scripts/veydrift-referral-migration-live-shape.test.mjs",
       "scripts/veydrift-referral-migration-repeat.test.mjs",
     ]);
-    // Compile check of src, test and script on plain (getplain.org), plus the two out/ artifacts the
-    // mixed-proxy proof reads (in contracts-test). plain's compile cache is shared by every runner, so
-    // this is near-free after the first build; forge build was a cold via-IR compile (~7 min) on each
-    // runner. (plain 0.4.0's whole-project --out stops at lib/ files, hence the two named sources.)
-    add("contracts-build", "bash", ["-lc",
-      "cd packages/contracts && plain build && plain build src/VeydriftGame.sol src/VeydriftBatchTransportModule.sol --out out"]);
+    // plain (getplain.org) compiles src, test and script into forge's out/ (the proofs in contracts-test read
+    // it). Its compile cache is shared by every runner, so this is near-free after the first build; forge
+    // build was a cold via-IR compile (~7 min) on each runner.
+    add("contracts-build", "bun", ["run", "build:contracts"]);
     add("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
     add("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {

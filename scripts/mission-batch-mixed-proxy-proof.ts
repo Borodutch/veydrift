@@ -1,5 +1,5 @@
 /** LOCAL synthetic full-Game/proxy proof. First export with:
- * cd packages/contracts && VEY918_EXPORT_FIXTURE=true forge test --match-test testExportMixedProxyFixture
+ * cd packages/contracts && VEY918_EXPORT_FIXTURE=true plain test --match-test testExportMixedProxyFixture
  * Then (repo root): NO_PROXY=127.0.0.1,localhost bun scripts/mission-batch-mixed-proxy-proof.ts
  * No public RPC, keys, runtime code relocation, production signing, or raised batch/fee caps.
  */
@@ -60,7 +60,7 @@ assert.equal(new URL(url).hostname, "127.0.0.1");
 assert.equal(new URL(url).protocol, "http:");
 try { await fetch(url, { signal: AbortSignal.timeout(300) }); throw new Error("test port occupied"); }
 catch (e) { if (e instanceof Error && e.message === "test port occupied") throw e; }
-const node = Bun.spawn(["anvil", "--host", "127.0.0.1", "--port", "18518", "--init", genesis,
+const node = Bun.spawn([...(process.env.ANVIL ?? "plain node").split(" "), "--host", "127.0.0.1", "--port", "18518", "--init", genesis,
   "--chain-id", "8453", "--gas-limit", "16777216", "--base-fee", "100", "--silent"], { stdout: "ignore", stderr: "inherit" });
 const stringify = (v: unknown) => JSON.stringify(v, (_, x) => typeof x === "bigint" ? x.toString() : x, 2);
 try {

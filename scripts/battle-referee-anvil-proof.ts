@@ -1,5 +1,5 @@
 /** LOCAL synthetic ticket #44 referee proof. First export with:
- * cd packages/contracts && VEY44_EXPORT_FIXTURE=true forge test --match-test testExportRefereeFixture
+ * cd packages/contracts && VEY44_EXPORT_FIXTURE=true plain test --match-test testExportRefereeFixture
  * Then (repo root): NO_PROXY=127.0.0.1,localhost bun scripts/battle-referee-anvil-proof.ts
  * Drives the real backend referee (viem client, coordinator, report store) against the exported
  * proxy on Anvil: advance -> submit -> apply leaves -> ordinary economics -> casualties match report.
@@ -29,7 +29,7 @@ const directory = mkdtempSync(join(tmpdir(), "ticket44-referee-"));
 const genesis = join(directory, "genesis.json");
 writeFileSync(genesis, JSON.stringify({ config: { chainId: 8453 }, timestamp: toHex(Math.floor(Date.now() / 1000)), alloc }));
 const url = "http://127.0.0.1:18519";
-const node = Bun.spawn(["anvil", "--host", "127.0.0.1", "--port", "18519", "--init", genesis,
+const node = Bun.spawn([...(process.env.ANVIL ?? "plain node").split(" "), "--host", "127.0.0.1", "--port", "18519", "--init", genesis,
   "--chain-id", "8453", "--gas-limit", "16777216", "--base-fee", "100", "--silent"], { stdout: "ignore", stderr: "inherit" });
 const chain = defineChain({ id: 8453, name: "anvil-8453", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [url] } } });
 const transport = http(url, { retryCount: 0, timeout: 30_000 });

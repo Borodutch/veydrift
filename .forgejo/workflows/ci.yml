@@ -38,7 +38,7 @@ jobs:
       # The PR's base commit: ci-scope.mjs checks what changed since its merge base with the head.
       BASE_REF: ${{ github.event.pull_request.base.sha }}
       HEAD_REF: ${{ github.event.pull_request.head.sha }}
-      PLAIN_VERSION: 0.4.0
+      PLAIN_VERSION: 0.5.0
     steps:
       # The Mac runners (host mode) give every job a new, empty workspace, so actions/checkout
       # re-downloaded ~60 MiB of blobs plus the contract submodules each time, and every ignored
@@ -102,7 +102,7 @@ jobs:
           needs_packages="$(printf '%s\n' "$planned" | grep -v -e '^docs-' -e '^$' || true)"
           echo "work=$([ -n "$needs_packages" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "docs=$([ -n "$planned" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "foundry=$(printf '%s\n' "$planned" | grep -q '^contracts-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "contracts=$(printf '%s\n' "$planned" | grep -q '^contracts-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "frontend=$(printf '%s\n' "$planned" | grep -q '^frontend-' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Bun
@@ -111,35 +111,13 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      # Each runner instance has its own tool cache and runs one job at a time, so a missing
-      # Foundry is installed there once (checked against the release's .sha256) without racing.
-      - name: Use the runner's Foundry
-        if: steps.plan.outputs.foundry == 'true'
-        run: |
-          dir="$RUNNER_TOOL_CACHE/foundry/1.7.1"
-          if ! "$dir/forge" --version 2>/dev/null | grep -q 'Version: 1.7.1'; then
-            case "$(uname -s)/$(uname -m)" in
-              Darwin/arm64) target=darwin_arm64 ;;
-              Linux/x86_64) target=linux_amd64 ;;
-              *) echo "::error::No Foundry release for $(uname -s) $(uname -m)"; exit 1 ;;
-            esac
-            base="https://github.com/foundry-rs/foundry/releases/download/v1.7.1/foundry_v1.7.1_$target"
-            curl -fsSL -o "$RUNNER_TEMP/foundry.tar.gz" "$base.tar.gz"
-            want="$(curl -fsSL "$base.sha256" | cut -d' ' -f1)"
-            got="$( (sha256sum "$RUNNER_TEMP/foundry.tar.gz" 2>/dev/null || shasum -a 256 "$RUNNER_TEMP/foundry.tar.gz") | cut -d' ' -f1)"
-            [ -n "$want" ] && [ "$want" = "$got" ] || { echo "::error::Foundry 1.7.1 doesn't match its .sha256"; exit 1; }
-            rm -rf "$dir" && mkdir -p "$dir" && tar -xzf "$RUNNER_TEMP/foundry.tar.gz" -C "$dir"
-          fi
-          echo "$dir" >> "$GITHUB_PATH"
-          "$dir/forge" --version
-
-      # plain (getplain.org) runs the contract tests and the size and storage-layout checks; Foundry
-      # still formats, builds out/ and runs anvil.
-      # Like Foundry, plain is installed once per runner tool cache, at a path per version.
+      # plain (getplain.org) does all the contract work: build, format check, tests, size and storage-layout
+      # checks, and the local chain the proofs run on (plain node, anvil-compatible). No Foundry in CI.
+      # plain is installed once per runner tool cache, at a path per version.
       # CI keeps its own PLAIN_HOME (solc, test-result cache) so local and dev builds on this Mac never
       # feed results into CI.
       - name: Use the runner's plain
-        if: steps.plan.outputs.foundry == 'true'
+        if: steps.plan.outputs.contracts == 'true'
         run: |
           dir="$RUNNER_TOOL_CACHE/plain/$PLAIN_VERSION"
           "$dir/plain" --version 2>/dev/null | grep -qx "plain $PLAIN_VERSION" \
