@@ -11,9 +11,9 @@ const stages = Object.fromEntries(
   dockerfile.split(/^(?=FROM )/m).map((block) => [/^FROM \S+ AS (\S+)/.exec(block)?.[1], block]),
 );
 
-test("deps copies the manifests of every workspace", () => {
+test("install copies the manifests of every workspace", () => {
   const { workspaces } = JSON.parse(readFileSync(`${root}package.json`, "utf8"));
-  const copy = /^COPY --parents (.+) \.\/$/m.exec(stages.deps)?.[1].split(" ");
+  const copy = /^COPY --parents (.+) \.\/$/m.exec(stages.install)?.[1].split(" ");
   assert.deepEqual(copy, ["package.json", "bun.lockb", ...workspaces.map((pattern) => `${pattern}/package.json`)]);
 });
 

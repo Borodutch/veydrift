@@ -126,13 +126,16 @@ below). The layout keeps a code-only deploy to the code layers:
   image build. The backend writes its build SHA last: `GIT_SHA` is declared only
   there, so the commit changes nothing before it.
 - **Frontend:** image variants (the `prebuild` step) depend only on `public/` and
-  run in their own cached stage, so the frontend build runs `vite build` alone.
+  run in their own cached stage, built off the dependency install rather than the
+  shared packages, so the frontend build runs `vite build` alone and takes only the
+  image-size manifest from `public/`.
   The `VITE_*` variables are build `ARG`s, which Tugport fills from the service
   environment; `scripts/dockerfile.test.mjs` checks every `import.meta.env.VITE_*`
   the frontend reads is declared. `vite build` runs with `VEYDRIFT_PUBLIC_FROM_IMAGE=1`,
   so it leaves `public/` out of `dist/`; the image adds the game art (`public/`, and
-  its copy in `dist/` without the whitepaper) as layers ahead of the code, so they
-  are reused and a code change only writes the few MB of the bundle.
+  its copy in `dist/` without the whitepaper) as layers ahead of the shared packages
+  and the code, so they are reused and a code or packages change only writes the few
+  MB of the bundle.
 - Service environment reaches containers at runtime and as BuildKit secrets
   during the build; only the declared `ARG`s become build arguments, so secrets
   never land in an image.

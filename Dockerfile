@@ -18,10 +18,13 @@ WORKDIR /app
 
 # Dependencies, keyed only on the lockfile and the workspace manifests, so a code
 # change reuses this layer (and the image layer it exports) as is.
-FROM base AS deps
+FROM base AS install
 COPY --parents package.json bun.lockb apps/*/package.json packages/*/package.json ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
   NODE_ENV=development bun install --frozen-lockfile
+
+# The shared packages every app imports.
+FROM install AS deps
 COPY tsconfig.base.json ./
 COPY packages packages
 
@@ -51,14 +54,15 @@ WORKDIR /app/apps/stats
 CMD ["bun", "run", "start"]
 
 # The frontend's prebuild step (image variants) depends only on public/, so it runs
-# in its own stage and stays cached across code changes.
-FROM deps AS frontend-public
+# in its own stage, off the shared packages, and stays cached across code changes.
+FROM install AS frontend-public
 COPY apps/frontend/scripts/generate-image-variants.mjs apps/frontend/scripts/
 COPY apps/frontend/public apps/frontend/public
 RUN cd apps/frontend && node scripts/generate-image-variants.mjs
 
+# Of public/ the bundle only imports the image-size manifest the prebuild step writes.
 FROM deps AS frontend-build
-COPY --from=frontend-public /app/apps/frontend/public apps/frontend/public
+COPY --from=frontend-public /app/apps/frontend/public/assets/game/sizes/manifest.json apps/frontend/public/assets/game/sizes/
 COPY apps/backend apps/backend
 COPY --exclude=public apps/frontend apps/frontend
 # Vite bakes these into the bundle; Tugport passes the service's values as build args.
@@ -75,10 +79,13 @@ ARG VITE_VEYDRIFT_SURFACE
 RUN cd apps/frontend && VEYDRIFT_PUBLIC_FROM_IMAGE=1 vite build
 
 # The large, rarely changing game art (public/, and its copy in dist/ without the
-# unpublished whitepaper) goes in first, so a code change only adds the code layers after it.
-FROM deps AS frontend
+# unpublished whitepaper) goes in first, ahead of the shared packages, so a code or
+# packages change only adds the small layers after it.
+FROM install AS frontend
 COPY --from=frontend-public /app/apps/frontend/public apps/frontend/public
 COPY --from=frontend-public --exclude=whitepaper.pdf /app/apps/frontend/public apps/frontend/dist
+COPY tsconfig.base.json ./
+COPY packages packages
 COPY apps/backend apps/backend
 COPY --exclude=public apps/frontend apps/frontend
 COPY --from=frontend-build /app/apps/frontend/dist apps/frontend/dist
