@@ -1,11 +1,24 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SharedResponseCache, type SharedCachedJsonResponse } from "./sharedResponseCache";
+import { openSharedResponseCache, SharedResponseCache, type SharedCachedJsonResponse } from "./sharedResponseCache";
 
 describe("SharedResponseCache", () => {
+  test("a corrupt cache file (it runs without fsync) is recreated instead of disabling the cache", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-response-cache-"));
+    try {
+      const path = join(dir, "response-cache.sqlite");
+      writeFileSync(path, "x".repeat(8192));
+      const cache = openSharedResponseCache(path);
+      expect(cache.get("missing")).toBeNull();
+      expect(cache.tryAcquireRefresh("key")).not.toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("upgrades an existing lock table without dropping cache data or live leases", () => {
     const directory = mkdtempSync(join(tmpdir(), "veydrift-response-cache-migration-"));
     const databasePath = join(directory, "response-cache.sqlite");

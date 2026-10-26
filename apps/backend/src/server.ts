@@ -101,7 +101,7 @@ import {
 } from "./allianceInvites";
 import { CcaInterestStore, ccaInterestStorePath, notifyCcaInterest, validateCcaInterest } from "./ccaInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
-import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
+import { openSharedResponseCache, responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
 import {
   DEFAULT_MAX_WORKER_COUNT,
@@ -407,6 +407,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     ?? (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, {
       rpcCallSource: "mission-eligibility", minRequestIntervalMs: 0, cacheTtlMs: 0, requestTimeoutMs: 1_500
     }) : undefined);
+  // Every polling client asked the node the same eligibility questions for the same overdue
+  // missions, two sequential eth_calls each. The answer only changes with a new block (2 s on
+  // Base) or an indexed event, so share one in-flight/settled answer per leg in that window.
+  const eligibilityAnswers = new Map<string, { expiresAt: number; eligible: Promise<boolean> }>();
+  const sharedMissionEligibilityReader: Pick<ChainReader, "canResolveFleetMission"> | undefined =
+    dependencies.chainReader || !missionEligibilityReader?.canResolveFleetMission ? missionEligibilityReader : {
+      canResolveFleetMission: (missionId, leg) => {
+        const key = `${missionId}:${leg}:${indexer?.indexedStateCacheVersion() ?? ""}`;
+        const now = Date.now();
+        const cached = eligibilityAnswers.get(key);
+        if (cached && cached.expiresAt > now) return cached.eligible;
+        // ponytail: wholesale clear bounds memory; keys expire within 2 s anyway.
+        if (eligibilityAnswers.size > 2_000) eligibilityAnswers.clear();
+        const eligible = missionEligibilityReader.canResolveFleetMission!(missionId, leg);
+        eligibilityAnswers.set(key, { expiresAt: now + 2_000, eligible });
+        eligible.catch(() => eligibilityAnswers.delete(key));
+        return eligible;
+      }
+    };
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
   // Public CCA state is intentionally served from the backend's configured Base
@@ -2452,7 +2471,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       let response = await routeRequest(request);
       if (needsMissionEligibility && response.ok && jsonContentType(response.headers.get("content-type"))) {
         const payload = await response.json() as Record<string, unknown>;
-        await applyMissionEligibility(payload, missionEligibilityReader);
+        await applyMissionEligibility(payload, sharedMissionEligibilityReader);
         response = Response.json(payload, { status: response.status, headers: response.headers });
       }
       if (request.method === "GET" && jsonContentType(response.headers.get("content-type"))) {
@@ -3043,7 +3062,7 @@ function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache |
   const path = responseCachePath(indexDbPath);
   if (!path) return null;
   try {
-    return new SharedResponseCache(path);
+    return openSharedResponseCache(path);
   } catch (error) {
     console.warn("Veydrift shared response cache unavailable", reasonText(error));
     return null;

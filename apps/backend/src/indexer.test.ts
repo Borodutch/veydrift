@@ -14404,7 +14404,7 @@ describe("SettlementIndexer", () => {
       WHERE status_id IN (3, 4) AND (owner = ? OR target_planet_id = ?)
     `).all(player, planet.planetId) as Array<{ detail: string }>;
     const queryPlanDetail = queryPlan.map((row) => row.detail).join(" ");
-    expect(queryPlanDetail).toContain("USING INDEX contract_fleet_missions_");
+    expect(queryPlanDetail).toMatch(/USING (COVERING )?INDEX contract_fleet_missions_/);
     expect(queryPlanDetail).not.toContain("SCAN contract_fleet_missions");
     database.close();
   });

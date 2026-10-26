@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 
 export type SharedCachedJsonResponse = {
@@ -31,7 +31,11 @@ export class SharedResponseCache {
     mkdirSync(dirname(databasePath), { recursive: true });
     this.db = new Database(databasePath);
     this.db.exec("PRAGMA journal_mode = WAL;");
-    this.db.exec("PRAGMA synchronous = NORMAL;");
+    // Cache rows are disposable, so never fsync. Under NORMAL, whichever reader crossed the
+    // auto-checkpoint threshold fsynced a multi-MB checkpoint inside its request while the other
+    // readers sat in the busy handler: production stalled every reader for 200-400 ms at once on
+    // its SATA SSDs. An OS crash can now corrupt this file; openSharedResponseCache recreates it.
+    this.db.exec("PRAGMA synchronous = OFF;");
     // A WAL file is reused from its start after a full checkpoint, but it is never shrunk. One
     // burst of cache writes left a 530 MB WAL behind in production (#75). Truncate it back to this
     // limit whenever it is reset.
@@ -145,8 +149,12 @@ export class SharedResponseCache {
 
   async waitForFresh(cacheKey: string, deadlineMs = 8_000): Promise<SharedCachedJsonResponse | null> {
     const deadline = Date.now() + deadlineMs;
+    // Most peers finish cheap builds within a few ms; back off from 2 ms instead of always
+    // sleeping a full 25 ms poll before the first look.
+    let wait = 2;
     while (Date.now() < deadline) {
-      await delay(25);
+      await delay(wait);
+      wait = Math.min(25, wait * 2);
       const cached = this.get(cacheKey);
       if (cached) return cached;
     }
@@ -174,9 +182,21 @@ export class SharedResponseCache {
     try {
       return operation();
     } catch (error) {
-      if (isSqliteBusyError(error)) return fallback;
+      // Busy or corrupt, a cache read is a miss and a cache write is skipped.
+      if (isSqliteBusyError(error) || isSqliteCorruptError(error)) return fallback;
       throw error;
     }
+  }
+}
+
+/** The cache runs without fsync; after an OS crash left it corrupt, start it over. */
+export function openSharedResponseCache(path: string): SharedResponseCache {
+  try {
+    return new SharedResponseCache(path);
+  } catch (error) {
+    if (!isSqliteCorruptError(error)) throw error;
+    for (const suffix of ["", "-wal", "-shm"]) rmSync(path + suffix, { force: true });
+    return new SharedResponseCache(path);
   }
 }
 
@@ -193,6 +213,11 @@ function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isSqliteCorruptError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /SQLITE_CORRUPT|SQLITE_NOTADB|malformed|not a database/i.test(message);
 }
 
 function isSqliteBusyError(error: unknown): boolean {
