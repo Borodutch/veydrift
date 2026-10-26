@@ -14224,6 +14224,60 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("attack launch timestamps survive unrelated mission events and extend incrementally", () => {
+    const attacker = "0x7777777777777777777777777777777777777777" as Address;
+    const otherAttacker = "0x6666666666666666666666666666666666666666" as Address;
+    const newIndexer = (database: Database) => new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const launch = (missionId: bigint, owner: Address, block: number, target: bigint) => ({
+      blockNumber: "0x" + block.toString(16),
+      blockTimestamp: "0x" + (block * 10).toString(16),
+      transactionHash: `0xlaunch-${missionId}`,
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+      data: abiWords(7n, target, 1770001200n, 1770002400n, 0n)
+    });
+    const body = (missionId: bigint, block: number, moon: boolean) => ({
+      blockNumber: "0x" + block.toString(16),
+      blockTimestamp: "0x" + (block * 10).toString(16),
+      transactionHash: `0xlaunch-${missionId}`,
+      logIndex: "0x1",
+      topics: [fleetMissionBodiesTopic, topic(missionId)],
+      data: abiWords(0n, moon ? 1n : 0n)
+    });
+    const database = new Database(":memory:");
+    const indexer = newIndexer(database);
+    indexer.applyLog(launch(60n, attacker, 0x90, 99n));
+    indexer.applyLog(body(60n, 0x90, true));
+    indexer.applyLog(launch(61n, attacker, 0x91, 99n));
+    indexer.applyLog(body(61n, 0x91, false));
+    const first = indexer.attackLaunchSecondsByTarget(attacker);
+    expect(first.get("moon:99")).toEqual([0x90 * 10]);
+    expect(first.get("99")).toEqual([0x91 * 10]);
+
+    // Another player's launch changes the mission read model but not this attacker's history.
+    indexer.applyLog(launch(62n, otherAttacker, 0x92, 99n));
+    indexer.applyLog(body(62n, 0x92, false));
+    expect(indexer.attackLaunchSecondsByTarget(attacker)).toBe(first);
+
+    // A newer launch extends the cached lists to exactly what a full rebuild produces.
+    indexer.applyLog(launch(63n, attacker, 0x93, 99n));
+    indexer.applyLog(body(63n, 0x93, false));
+    const extended = indexer.attackLaunchSecondsByTarget(attacker);
+    expect(extended.get("99")).toEqual([0x91 * 10, 0x93 * 10]);
+    expect(first.get("99")).toEqual([0x91 * 10]);
+    const rebuilt = newIndexer(database).attackLaunchSecondsByTarget(attacker);
+    expect([...extended]).toEqual([...rebuilt]);
+
+    // A body removed on its own turns its moon target back into a planet target.
+    indexer.applyLog({ ...body(60n, 0x90, true), removed: true });
+    expect(indexer.attackLaunchSecondsByTarget(attacker).has("moon:99")).toBe(false);
+    expect(indexer.attackLaunchSecondsByTarget(attacker).get("99")).toEqual([0x90 * 10, 0x91 * 10, 0x93 * 10]);
+  });
+
   test("memoizes attack launch timestamps for highscore protection scans until indexed state changes", () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const otherAttacker = "0x8888888888888888888888888888888888888888" as Address;

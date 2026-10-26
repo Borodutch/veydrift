@@ -1,8 +1,14 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
-import { createReaderBootstrapHandler, createRequestHandler } from "./server";
+import { loadBackendConfig } from "./config";
+import { healthSnapshotPath, healthSnapshotResponse, startHealthSnapshotPublisher } from "./healthSnapshot";
+import { createReaderBootstrapHandler, createRequestHandler, withRequestCors } from "./server";
 import {
   createForwardingFetch,
+  createRankingsForwardingFetch,
   createRequestLoggingFetch,
+  RANKINGS_INTERNAL_PORT_ENV,
+  RANKINGS_WORKER_INDEX,
+  resolveRankingsInternalPort,
   resolveWorkerAssignment,
   resolveWriterInternalPort,
   roleForIndex,
@@ -22,6 +28,11 @@ const port = Number.parseInt(process.env.PORT ?? "4000", 10);
 const hostname = process.env.HOST ?? "0.0.0.0";
 const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECONDS ?? "30", 10);
 
+function healthSnapshotFile(): string | null {
+  const loaded = loadBackendConfig();
+  return loaded.problems.length === 0 ? healthSnapshotPath(loaded.config.indexDbPath) : null;
+}
+
 // Reader workers bind the shared public port with SO_REUSEPORT so the kernel load-balances user-facing
 // reads across them. The writer worker (index 0) runs chain-sync ingestion + the on-chain committers
 // and stays off the public socket so applyLog/poll work cannot stall normal API reads.
@@ -32,6 +43,8 @@ const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECON
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
   if (role === "writer" && writerInternalPort !== undefined) {
     const handler = createRequestHandler({ role, logRequests: false });
+    const snapshotFile = healthSnapshotFile();
+    if (snapshotFile) startHealthSnapshotPublisher(snapshotFile, handler);
     Bun.serve({
       development: false,
       idleTimeout,
@@ -47,12 +60,28 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   }
 
   if (role === "reader" && writerInternalPort !== undefined) {
+    const rankingsHost = index === RANKINGS_WORKER_INDEX;
+    const snapshotFile = healthSnapshotFile();
+    const rankingsPort = resolveRankingsInternalPort(process.env, writerInternalPort);
     let handler: ReturnType<typeof createRequestHandler> | undefined;
     const localReaderHandler = async (request: Request): Promise<Response> => {
-      handler ??= createRequestHandler({ role, logRequests: false });
+      handler ??= createRequestHandler({ role, logRequests: false, warmRankings: rankingsHost });
       return handler(request);
     };
     const localBootstrapHandler = createReaderBootstrapHandler(role);
+    if (rankingsHost) {
+      // Rankings reads forwarded by the other readers; they log them, so this listener does not.
+      Bun.serve({ development: false, idleTimeout, port: rankingsPort, hostname: "127.0.0.1", fetch: localReaderHandler });
+    }
+    const forwardingFetch = createForwardingFetch(
+      localReaderHandler,
+      `http://127.0.0.1:${writerInternalPort}`,
+      fetch,
+      localBootstrapHandler
+    );
+    const routedFetch = rankingsHost
+      ? forwardingFetch
+      : createRankingsForwardingFetch(forwardingFetch, localReaderHandler, `http://127.0.0.1:${rankingsPort}`);
 
     Bun.serve({
       development: false,
@@ -60,15 +89,10 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
       port,
       hostname,
       reusePort: true,
-      fetch: createRequestLoggingFetch(
-        createForwardingFetch(
-          localReaderHandler,
-          `http://127.0.0.1:${writerInternalPort}`,
-          fetch,
-          localBootstrapHandler
-        ),
-        role
-      )
+      fetch: createRequestLoggingFetch(async (request) => {
+        const snapshot = snapshotFile ? healthSnapshotResponse(snapshotFile, request) : undefined;
+        return snapshot ? withRequestCors(request, snapshot) : routedFetch(request);
+      }, role)
     });
     console.log(
       `Veydrift backend worker ${index} (reader) listening on http://localhost:${port} [reusePort]; ` +
@@ -113,7 +137,8 @@ function superviseWorkers(workerCount: number): void {
         [WORKER_COUNT_ENV]: String(workerCount),
         [WORKER_ROLE_ENV]: role,
         [WORKER_INDEX_ENV]: String(index),
-        [WRITER_INTERNAL_PORT_ENV]: String(writerInternalPort)
+        [WRITER_INTERNAL_PORT_ENV]: String(writerInternalPort),
+        [RANKINGS_INTERNAL_PORT_ENV]: String(resolveRankingsInternalPort(process.env, writerInternalPort))
       },
       stdio: ["inherit", "inherit", "inherit"]
     });

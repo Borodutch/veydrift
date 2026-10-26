@@ -365,6 +365,8 @@ export type ServerDependencies = {
   // Test seam for the production route-level response cache. Production enables it only for the
   // dependency-free server construction path.
   enableResponseCache?: boolean;
+  // The rankings worker keeps recently requested /highscores views warm in the background.
+  warmRankings?: boolean;
   // Test seam for disabling asynchronous production cache prewarming while exercising the response cache.
   prewarmResponseCache?: boolean;
   // Test seam for request access logging. Production construction enables it by default.
@@ -768,66 +770,132 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     process.env.VEYDRIFT_PREWARM_RESPONSE_CACHE === "true" && isWriter && enableResponseCache
   );
 
+  // Everything in a /highscores response that does not depend on the viewer, per category, page
+  // and view. Rankings may be up to 1 s stale (highscoreMaxStaleMs), so viewers share one build.
+  type HighscoreBase = ReturnType<typeof buildHighscoreBase>;
+  const highscoreBases = new Map<string, { builtAt: number; base: HighscoreBase }>();
+  // The rankings worker keeps recently requested bases warm, off the request path.
+  const highscoreDemand = new Map<string, { lastRequestedAt: number; url: URL }>();
+  const highscoreBaseKey = (url: URL): string => {
+    const pagination = highscorePagination(url);
+    return `${highscoreRequestedCategories(url).join(",")}|${pagination.page}|${pagination.pageSize}|${url.searchParams.get("view") ?? ""}`;
+  };
+  const buildHighscoreBase = (indexer: SettlementIndexer, url: URL) => {
+    const pagination = highscorePagination(url);
+    const view = url.searchParams.get("view");
+    const leaderboard = indexer.highscoreLeaderboard(highscoreMaxStaleMs);
+    const entries = leaderboard.entries;
+    const totalEntries = entries.length;
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
+    const page = Math.min(pagination.page, totalPages);
+    const offset = (page - 1) * pagination.pageSize;
+    const requestedCategories = highscoreRequestedCategories(url);
+    const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
+    const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
+    const visibleWallets = highscoreRankingWallets(visibleEntries, null);
+    const profiles = indexer.playerProfiles(visibleWallets);
+    const allianceIntel = allianceIntelForPlayers(visibleWallets, indexer);
+    const rankedRows = highscoreRows(visibleEntries, leaderboard.planetsByOwner, profiles, allianceIntel, indexer, view !== "scoreboard");
+    const rankings = highscoreRankings(sortedRankings, requestedCategories, pagination.pageSize, offset, rankedRows);
+    return { entries, pagination, page, totalEntries, totalPages, requestedCategories, sortedRankings, allianceIntel, rankings };
+  };
+  const highscoreBase = (indexer: SettlementIndexer, url: URL): HighscoreBase => {
+    const key = highscoreBaseKey(url);
+    const now = Date.now();
+    highscoreDemand.delete(key);
+    highscoreDemand.set(key, { lastRequestedAt: now, url });
+    for (const oldest of highscoreDemand.keys()) {
+      if (highscoreDemand.size <= highscoreWarmMaxViews) break;
+      highscoreDemand.delete(oldest);
+      highscoreBases.delete(oldest);
+    }
+    const cached = highscoreBases.get(key);
+    if (cached && now - cached.builtAt <= highscoreBaseMaxAgeMs) return cached.base;
+    const base = buildHighscoreBase(indexer, url);
+    highscoreBases.set(key, { builtAt: Date.now(), base });
+    return base;
+  };
+  let warmingHighscores = false;
+  const warmHighscoreBases = async (): Promise<void> => {
+    if (warmingHighscores || !indexer) return;
+    warmingHighscores = true;
+    try {
+      for (const [key, demand] of highscoreDemand) {
+        const now = Date.now();
+        if (now - demand.lastRequestedAt > highscoreWarmWindowMs) {
+          highscoreDemand.delete(key);
+          highscoreBases.delete(key);
+          continue;
+        }
+        const cached = highscoreBases.get(key);
+        if (cached && now - cached.builtAt < highscoreWarmRebuildAgeMs) continue;
+        if (highscoreIndexNotReadyResponse(indexer, now)) continue;
+        // Rebuild the visible owners' planet intel a few owners at a time, yielding between chunks
+        // so a warm-up never holds this process for more than a few milliseconds.
+        const leaderboard = indexer.highscoreLeaderboard(highscoreMaxStaleMs);
+        const pagination = highscorePagination(demand.url);
+        const categories = highscoreRequestedCategories(demand.url);
+        const page = Math.min(pagination.page, Math.max(1, Math.ceil(leaderboard.entries.length / pagination.pageSize)));
+        const visible = highscoreVisibleEntries(sortedHighscoreRankings(leaderboard.entries, categories), categories, pagination.pageSize, (page - 1) * pagination.pageSize);
+        if (demand.url.searchParams.get("view") !== "scoreboard") {
+          for (let start = 0; start < visible.length; start += 4) {
+            indexer.readConsistentSnapshot(() => {
+              const owners = visible.slice(start, start + 4);
+              indexer.prefetchPlanetReads(
+                owners.flatMap((entry) => (leaderboard.planetsByOwner.get(entry.wallet.toLowerCase()) ?? []).map((planet) => planet.planetId)),
+                owners.map((entry) => entry.wallet)
+              );
+              for (const entry of owners) cachedRankedHighscorePlanets(entry, leaderboard.planetsByOwner, indexer, true);
+            });
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+        }
+        // A request may have evicted this view while the warm-up yielded.
+        if (highscoreDemand.has(key)) highscoreBases.set(key, { builtAt: Date.now(), base: buildHighscoreBase(indexer, demand.url) });
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    } catch (error) {
+      console.warn("Veydrift rankings warm-up failed", reasonText(error));
+    } finally {
+      warmingHighscores = false;
+    }
+  };
+  if (dependencies.warmRankings && indexer) {
+    setInterval(() => { void warmHighscoreBases(); }, highscoreWarmIntervalMs).unref?.();
+  }
+
   const routeHighscores = (url: URL): Response => {
       const startedAt = Date.now();
       try {
-        const pagination = highscorePagination(url);
         const view = url.searchParams.get("view");
         if (view !== null && view !== "scoreboard") return errorResponse(new Error("Unsupported highscore view."), 400);
-        let planetsByOwner: Map<string, SettledPlanetEvent[]>;
-        let entries: HighscoreEntry[];
         const source = "contract-state-indexer";
-
-        if (indexer) {
-          const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
-          if (indexNotReady) return indexNotReady;
-          // Memoized against the indexer state version: the full leaderboard is recomputed only
-          // when integrated events change state, not on every request (VEY-KANEO-467).
-          const leaderboard = indexer.highscoreLeaderboard();
-          planetsByOwner = leaderboard.planetsByOwner;
-          entries = leaderboard.entries;
-        } else {
+        if (!indexer) {
           return indexedReadNotReadyResponse("highscores", indexer, {
             page: url.searchParams.get("page"),
             pageSize: url.searchParams.get("pageSize")
           });
         }
+        const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
+        if (indexNotReady) return indexNotReady;
+        const base = highscoreBase(indexer, url);
 
-        const totalEntries = entries.length;
-        const totalPages = Math.max(1, Math.ceil(totalEntries / pagination.pageSize));
-        const page = Math.min(pagination.page, totalPages);
-        const offset = (page - 1) * pagination.pageSize;
-        const requestedCategories = highscoreRequestedCategories(url);
-        const sortedRankings = sortedHighscoreRankings(entries, requestedCategories);
-        const visibleEntries = highscoreVisibleEntries(sortedRankings, requestedCategories, pagination.pageSize, offset);
-        const rankingWallets = highscoreRankingWallets(visibleEntries, url.searchParams.get("currentWallet"));
-        const profiles = indexer?.playerProfiles(rankingWallets) ?? new Map<string, PlayerProfile>();
-        const allianceIntel = allianceIntelForPlayers(rankingWallets, indexer);
-        const rankedRows = highscoreRows(
-          visibleEntries,
-          planetsByOwner,
-          profiles,
-          allianceIntel,
-          indexer,
-          view !== "scoreboard"
-        );
-        const rankings = highscoreRankings(
-          sortedRankings,
-          requestedCategories,
-          pagination.pageSize,
-          offset,
-          rankedRows
-        );
+        // Viewer overlay: attack protection against the viewer and the viewer's own rank pages.
+        const currentWallet = url.searchParams.get("currentWallet");
+        const viewerWallets = highscoreRankingWallets([], currentWallet).filter((wallet) => !base.allianceIntel.has(wallet));
+        const allianceIntel = viewerWallets.length === 0
+          ? base.allianceIntel
+          : new Map([...base.allianceIntel, ...allianceIntelForPlayers(viewerWallets, indexer)]);
         const protection = rankedHighscoreIndexedProtectionLookup(
-          highscoreRankingRows(rankings),
-          entries,
+          highscoreRankingRows(base.rankings),
+          base.entries,
           allianceIntel,
-          url.searchParams.get("currentWallet"),
+          currentWallet,
           highscoreAttackProtectionRequested(url),
           indexer
         );
-        const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
-        const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
+        const protectedRankings = highscoreRankingsWithProtection(base.rankings, protection);
+        const currentPlayer = highscoreCurrentPlayerPages(base.sortedRankings, base.requestedCategories, base.pagination.pageSize, currentWallet);
 
         return Response.json(
           {
@@ -835,12 +903,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             durationMs: Date.now() - startedAt,
             formula: highscoreFormula,
             pagination: {
-              page,
-              pageSize: pagination.pageSize,
-              totalEntries,
-              totalPages,
-              hasPreviousPage: page > 1,
-              hasNextPage: page < totalPages
+              page: base.page,
+              pageSize: base.pagination.pageSize,
+              totalEntries: base.totalEntries,
+              totalPages: base.totalPages,
+              hasPreviousPage: base.page > 1,
+              hasNextPage: base.page < base.totalPages
             },
             currentPlayer,
             rankings: protectedRankings,
@@ -2286,7 +2354,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         if (hasWarmPlanetIndex(indexer)) {
           const profile = indexer.playerProfile(wallet);
-          const rankings = sortedHighscores(indexer.highscoreLeaderboard().entries, "total");
+          const rankings = sortedHighscores(indexer.highscoreLeaderboard(highscoreMaxStaleMs).entries, "total");
           const rankIndex = rankings.findIndex(entry => entry.wallet.toLowerCase() === wallet.toLowerCase());
           return Response.json(
             {
@@ -5816,8 +5884,13 @@ function highscoreRows(
   indexer?: SettlementIndexer | undefined,
   includePlanetDetails = true,
 ): Map<string, RankedHighscoreEntry> {
-  const buildRows = () => new Map<string, RankedHighscoreEntry>(
-    entries.map((entry) => {
+  const prefetch = (owners: readonly HighscoreEntry[]) => {
+    const planetIds = owners.flatMap((entry) => (planetsByOwner.get(entry.wallet.toLowerCase()) ?? []).map((planet) => planet.planetId));
+    if (indexer && planetIds.length > 0) indexer.prefetchPlanetReads(planetIds, owners.map((entry) => entry.wallet));
+  };
+  const buildRows = () => {
+    if (includePlanetDetails) prefetch(entries);
+    return new Map<string, RankedHighscoreEntry>(entries.map((entry) => {
       const planets = includePlanetDetails ? cachedRankedHighscorePlanets(entry, planetsByOwner, indexer) : [];
       const homePlanet = rankedHighscoreHomePlanet(entry, planets);
       return [
@@ -5832,8 +5905,8 @@ function highscoreRows(
           rank: 0
         }
       ];
-    })
-  );
+    }));
+  };
   // All visible planets share one committed projection context, rather than
   // reopening a SQLite snapshot and reloading its metadata for every planet.
   return indexer ? indexer.readConsistentSnapshot(buildRows) : buildRows();
@@ -6132,26 +6205,39 @@ function highscoreSortValue(entry: HighscoreEntry, category: HighscoreCategory):
   return category === "total" ? entry.totalUserScore : entry.score[category];
 }
 
-// A leaderboard page shows the same owners' planet intel to every viewer, but personalized
-// requests (currentWallet) only get a 1 s response cache, so each one rebuilt ~100 owners'
-// planets. Share them per indexer for the same state version and response-cache lifetime.
-const rankedHighscorePlanetsCaches = new WeakMap<SettlementIndexer, Map<string, { version: string; expiresAt: number; planets: RankedHighscorePlanet[] }>>();
+// Rankings may show data up to 1 s old (product decision, 2026-10-26): the response-cache version
+// includes the fleet horizon, which moves every block, so exact freshness rebuilt the leaderboard
+// and every visible owner's planet intel on nearly every request.
+const highscoreMaxStaleMs = 1_000;
+// A base older than this is rebuilt; with the owners' intel refreshed just before it, served
+// rankings stay within highscoreMaxStaleMs.
+const highscoreBaseMaxAgeMs = 850;
+// The warmer rebuilds a view once its base is this old, so the rebuild (~130 ms in production)
+// lands before requests would find it expired and rebuild it themselves.
+const highscoreWarmRebuildAgeMs = 550;
+const highscoreWarmIntervalMs = 100;
+// Keep at most this many recently requested rankings views warm, each for this long. Warming a
+// view costs roughly 15-20% of one core while it is being viewed.
+const highscoreWarmMaxViews = 4;
+const highscoreWarmWindowMs = 120_000;
+// A leaderboard page shows the same owners' planet intel to every viewer; share it per indexer.
+const rankedHighscorePlanetsCaches = new WeakMap<SettlementIndexer, Map<string, { expiresAt: number; planets: RankedHighscorePlanet[] }>>();
 
 function cachedRankedHighscorePlanets(
   entry: HighscoreEntry,
   planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-  indexer?: SettlementIndexer | undefined
+  indexer?: SettlementIndexer | undefined,
+  refresh = false
 ): RankedHighscorePlanet[] {
   const key = entry.wallet.toLowerCase();
   if (!indexer || !planetsByOwner.get(key)?.length) return rankedHighscorePlanets(entry, planetsByOwner, indexer);
   let cache = rankedHighscorePlanetsCaches.get(indexer);
   if (!cache) rankedHighscorePlanetsCaches.set(indexer, cache = new Map());
-  const version = indexer.responseCacheVersion();
   const now = Date.now();
   const cached = cache.get(key);
-  if (cached && cached.version === version && cached.expiresAt > now) return cached.planets;
+  if (!refresh && cached && cached.expiresAt > now) return cached.planets;
   const planets = rankedHighscorePlanets(entry, planetsByOwner, indexer);
-  cache.set(key, { version, expiresAt: now + 1_000, planets });
+  cache.set(key, { expiresAt: now + highscoreMaxStaleMs, planets });
   return planets;
 }
 

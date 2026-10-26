@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -206,6 +206,8 @@ test("rankings retain one WAL view across leaderboard and ship-bearing rows", as
     const handler = createRequestHandler({ indexer, role: "reader", enableResponseCache: true, prewarmResponseCache: false, sharedResponseCache: null });
     const count = (body: any) => body.rankings.total.find((r: any) => r.wallet === owner).planets[0].tactical.ships.count;
     expect(count(await get(handler, "/highscores?live=1&pageSize=10"))).toBe(12);
+    // Rankings may be up to 1 s stale; past that bound the next read sees the commit.
+    setSystemTime(new Date(Date.now() + 1_001));
     expect(count(await get(handler, "/highscores?live=1&pageSize=10"))).toBe(3);
-  } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  } finally { setSystemTime(); db.close(); rmSync(dir, { recursive: true, force: true }); }
 });

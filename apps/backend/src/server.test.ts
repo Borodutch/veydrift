@@ -10965,8 +10965,14 @@ describe("Veydrift backend", () => {
       data: abiWords(7n, 100n, 300n, 0n, 0n, 0n)
     });
 
-    expect((await handler(request.clone())).status).toBe(200);
-    expect(highscoreLeaderboardCalls).toBe(2);
+    // Rankings may be up to 1 s stale; past that bound the leaderboard is rebuilt.
+    setSystemTime(new Date(Date.now() + 1_001));
+    try {
+      expect((await handler(request.clone())).status).toBe(200);
+      expect(highscoreLeaderboardCalls).toBe(2);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test("keeps resource-bearing public reads out of browser caches", async () => {
@@ -11038,7 +11044,9 @@ describe("Veydrift backend", () => {
       indexer.applyLog(log);
     }
 
-    const refreshedHighscoresBody = await (await handler(highscoresRequest.clone())).json();
+    // Rankings may be up to 1 s stale; past that bound they reflect the new alliance.
+    setSystemTime(new Date(Date.now() + 1_001));
+    const refreshedHighscoresBody = await (await handler(highscoresRequest.clone())).json().finally(() => setSystemTime());
     const refreshedMissionsBody = await (await handler(missionsRequest.clone())).json();
 
     expect(refreshedHighscoresBody.rankings.total[0].alliance).toMatchObject({

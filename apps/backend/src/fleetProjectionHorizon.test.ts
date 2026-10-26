@@ -11,6 +11,9 @@ const hash = "0x" + "a".repeat(64);
 const topic = (n: bigint) => "0x" + n.toString(16).padStart(64, "0");
 const words = (...ns: bigint[]) => "0x" + ns.map(n => topic(n).slice(2)).join("");
 afterEach(() => setSystemTime());
+// Rankings may serve data up to 1 s old (server.ts highscoreMaxStaleMs); step the fake clock past
+// that bound before asserting a ranking reflects a state change.
+const pastRankingsStaleness = () => setSystemTime(new Date(Date.now() + 1_001));
 
 function fixture(moon = false, returning = false, deploy = false) {
   const db = new Database(":memory:");
@@ -131,6 +134,7 @@ for (const moon of [false, true]) test("warm public resource routes follow water
   for (const stage of [1019, 1020, null]) {
     if (stage !== null) anchor(stage);
     else (indexer as any).setMetadata("transportStaleReason", "test outage");
+    pastRankingsStaleness();
     const metal = stage === null ? null : stage === 1020 ? "180" : "100";
     for (const route of rankings) for (let warm = 0; warm < 2; warm++) {
       const response = await get(route);
@@ -196,6 +200,7 @@ for (const moon of [false, true]) for (const invalidation of [false, true]) {
     expect(metal(await get(path))).toBe(invalidation ? "180" : "100");
     if (invalidation) (indexer as any).setMetadata("transportStaleReason", "test outage");
     else anchor(1020);
+    pastRankingsStaleness();
     const expected = invalidation ? null : "180";
     expect(metal(await get(path))).toBe(expected);
     expect(metal(await get(path + "&fresh=1"))).toBe(expected);
@@ -384,6 +389,7 @@ for (const moon of [false, true]) test("unknown body balances retain canonical h
   (indexer as any).setMetadata("lastReconciledAt", new Date().toISOString());
   anchor(1019);
   const assertUnknown = async () => {
+    pastRankingsStaleness();
     const publicResponse = await get("/universe/galaxies/2/systems/44?detail=full");
     expect(publicResponse.status).toBe(200);
     const publicPlanet = publicResponse.body.planets.find((p: any) => p.occupiedBy?.planetId === "7");

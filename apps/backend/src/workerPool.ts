@@ -23,6 +23,10 @@ export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
 export const LEGACY_MAX_WORKER_COUNT_ENV = "VEYDRIFT_MAX_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
+export const RANKINGS_INTERNAL_PORT_ENV = "VEYDRIFT_RANKINGS_INTERNAL_PORT";
+// The first reader also serves Rankings for every reader over loopback, so one process holds the
+// warm leaderboard instead of nine cold copies (see warmRankings in server.ts).
+export const RANKINGS_WORKER_INDEX = 1;
 export const DEFAULT_MAX_WORKER_COUNT = 2;
 export const HARD_MAX_WORKER_COUNT = 32;
 
@@ -121,6 +125,33 @@ export function resolveWriterInternalPort(
   return mainPort + 1;
 }
 
+// Private loopback port of the rankings reader. Defaults to the writer's internal port + 1.
+export function resolveRankingsInternalPort(
+  env: Record<string, string | undefined>,
+  writerInternalPort: number
+): number {
+  const parsed = Number.parseInt(env[RANKINGS_INTERNAL_PORT_ENV] ?? "", 10);
+  return Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535 ? parsed : writerInternalPort + 1;
+}
+
+export function isRankingsReadPath(method: string, pathname: string): boolean {
+  return method === "GET" && (pathname === "/highscores" || /^\/wallet\/[^/]+\/highscore$/.test(pathname));
+}
+
+// Send Rankings reads to the rankings reader; serve them locally if it is unreachable.
+export function createRankingsForwardingFetch(
+  next: (request: Request) => Promise<Response>,
+  localHandler: (request: Request) => Promise<Response>,
+  rankingsOrigin: string,
+  fetchImpl: typeof fetch = fetch
+): (request: Request) => Promise<Response> {
+  return (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    if (!isRankingsReadPath(request.method, url.pathname)) return next(request);
+    return forwardToWriter(request, url, rankingsOrigin, fetchImpl, () => localHandler(request));
+  };
+}
+
 // Wrap a reader's request handler so it serves read-only traffic locally and forwards only writes plus
 // writer-owned streams to the single writer's loopback listener at `writerOrigin`
 // (e.g. "http://127.0.0.1:4001"). Keeping indexed GETs on readers preserves the 9-reader capacity for
@@ -156,7 +187,8 @@ async function forwardToWriter(
   request: Request,
   url: URL,
   writerOrigin: string,
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  whenUnreachable?: () => Promise<Response>
 ): Promise<Response> {
     const target = `${writerOrigin}${url.pathname}${url.search}`;
     const headers = new Headers(request.headers);
@@ -199,6 +231,7 @@ async function forwardToWriter(
       });
     } catch {
       request.signal?.removeEventListener("abort", abortForwardedRequest);
+      if (whenUnreachable && !request.signal?.aborted) return whenUnreachable();
       return Response.json(
         {
           error: "writer_unavailable",

@@ -690,6 +690,19 @@ type PlayerActivityRow = {
 /** Activity sort key, compared descending like SQLite ORDER BY: NULL sorts lowest. */
 type PlayerActivityRank = Array<number | string | null>;
 
+// A launch and its optional body share a transaction, so a body lags its launch by seconds at most.
+const attackBodyArrivalWindowBlocks = 1_800;
+
+type AttackLaunchSecondsCacheEntry = {
+  count: number;
+  maxBlock: number | null;
+  /** topics[1] of this attacker's moon-target missions, re-checked on every read. */
+  moonMissionTopics: string[];
+  /** Body-less launches recent enough that their body may still be ingested; re-checked too. */
+  recentBodylessTopics: string[];
+  launchesByTarget: Map<string, number[]>;
+};
+
 type ArchiveMissionKey = {
   mission_id: string;
   status_id: number;
@@ -874,6 +887,7 @@ export class SettlementIndexer {
   private leaderboardCache:
     | {
       generation: string;
+      computedAt: number;
       planetsByOwner: Map<string, SettledPlanetEvent[]>;
       entries: HighscoreEntry[];
     }
@@ -983,7 +997,7 @@ export class SettlementIndexer {
     missionGeneration: number;
     reports: BattleReport[];
   }>();
-  private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
+  private attackLaunchSecondsCache = new Map<string, AttackLaunchSecondsCacheEntry>();
   private snapshotCache:
     | {
       expiresAtMs: number;
@@ -1062,6 +1076,16 @@ export class SettlementIndexer {
   private readSnapshotDepth = 0;
   private readSnapshotResourceProjectionContext: ResourceProjectionContext | null = null;
   private readSnapshotStateVersion: string | null = null;
+  private readSnapshotMissionVersion: string | null = null;
+  private readTransactionMemo: Map<string, unknown> | null = null;
+  private activeMissionsByTouchedPlanet: {
+    stateVersion: string;
+    missionGeneration: number;
+    asOfSeconds: number;
+    includeOverduePendingRandomness: boolean;
+    byPlanet: Map<string, FleetMissionSummary[]>;
+  } | null = null;
+  private readSnapshotBattleReportVersion: string | null = null;
   private readSnapshotProductionSecond: number | null = null;
 
   private productionReadSecond(): number {
@@ -1327,6 +1351,8 @@ export class SettlementIndexer {
     if (outermost) {
       this.readSnapshotResourceProjectionContext = null;
       this.readSnapshotStateVersion = null;
+      this.readSnapshotMissionVersion = null;
+      this.readSnapshotBattleReportVersion = null;
       this.readSnapshotProductionSecond = nowSeconds();
     }
     this.readSnapshotDepth += 1;
@@ -1337,6 +1363,8 @@ export class SettlementIndexer {
       if (outermost) {
         this.readSnapshotResourceProjectionContext = null;
         this.readSnapshotStateVersion = null;
+        this.readSnapshotMissionVersion = null;
+        this.readSnapshotBattleReportVersion = null;
         this.readSnapshotProductionSecond = null;
       }
     }
@@ -1346,7 +1374,65 @@ export class SettlementIndexer {
   // composing that projection so another indexer process cannot interleave a roster transition
   // between candidate selection and cooperative classification.
   readConsistentSnapshot<T>(read: () => T): T {
-    return this.readSnapshot(() => this.db.transaction(read)());
+    return this.readSnapshot(() => this.db.transaction(() => {
+      // A read-only connection cannot change rows inside its own read transaction, so repeated
+      // per-planet lookups (and prefetchPlanetReads batches) are served from memory until it ends.
+      const outermost = this.readTransactionMemo === null;
+      if (outermost && this.readOnly) this.readTransactionMemo = new Map();
+      try {
+        return read();
+      } finally {
+        if (outermost) this.readTransactionMemo = null;
+      }
+    })());
+  }
+
+  private memoInReadTransaction<T>(key: string, load: () => T): T {
+    const memo = this.readTransactionMemo;
+    if (!memo) return load();
+    if (memo.has(key)) return memo.get(key) as T;
+    const value = load();
+    memo.set(key, value);
+    return value;
+  }
+
+  /** Batch the per-planet reads a rankings page makes for every visible planet and owner. */
+  prefetchPlanetReads(planetIds: readonly string[], owners: readonly string[]): void {
+    const memo = this.readTransactionMemo;
+    if (!memo) return;
+    const levelCache = this.indexedLevelsByIdCacheForCurrentVersion();
+    for (const chunk of chunks([...new Set(planetIds)].filter((id) => !memo.has(`planetRow:${id}`)), 500)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const levels = (table: string, idColumn: string, valueColumn: string) => {
+        const byPlanet = new Map(chunk.map((id) => [id, new Map<number, number>()]));
+        for (const row of this.db.query(`
+          SELECT planet_id, ${idColumn} AS id, ${valueColumn} AS value FROM ${table} WHERE planet_id IN (${placeholders})
+        `).all(...chunk) as Array<{ planet_id: string; id: number; value: number }>) byPlanet.get(row.planet_id)?.set(row.id, row.value);
+        return byPlanet;
+      };
+      for (const [table, idColumn] of [["contract_ship_counts", "ship_id"], ["contract_defense_counts", "defense_id"]] as const) {
+        for (const [planetId, values] of levels(table, idColumn, "count")) memo.set(`levels:${table}:${idColumn}:count:${planetId}`, values);
+      }
+      for (const [planetId, values] of levels("contract_building_levels", "building_id", "level")) {
+        const key = `contract_building_levels:building_id:level:${planetId}`;
+        if (!levelCache.values.has(key)) levelCache.values.set(key, values);
+      }
+      const jsonRows = (table: string) => {
+        const byPlanet = new Map<string, string | null>(chunk.map((id) => [id, null]));
+        for (const row of this.db.query(`SELECT planet_id, event_json FROM ${table} WHERE planet_id IN (${placeholders})`)
+          .all(...chunk) as Array<{ planet_id: string; event_json: string }>) byPlanet.set(row.planet_id, row.event_json);
+        return byPlanet;
+      };
+      for (const [planetId, json] of jsonRows("indexed_moons")) memo.set(`moon:${planetId}`, json);
+      for (const [planetId, json] of jsonRows("contract_planets")) memo.set(`planetRow:${planetId}`, json);
+    }
+    for (const chunk of chunks([...new Set(owners.map((owner) => owner.toLowerCase()))].filter((owner) => !memo.has(`boost:${owner}`)), 500)) {
+      const expiresAt = new Map<string, string | null>(chunk.map((owner) => [owner, null]));
+      for (const row of this.db.query(`
+        SELECT player, expires_at FROM contract_invitee_production_boosts WHERE player IN (${chunk.map(() => "?").join(",")})
+      `).all(...chunk) as Array<{ player: string; expires_at: string }>) expiresAt.set(row.player, row.expires_at);
+      for (const [owner, value] of expiresAt) memo.set(`boost:${owner}`, value);
+    }
   }
 
   referralHistoryBackfillStatus(
@@ -1795,9 +1881,10 @@ export class SettlementIndexer {
   }
 
   hasPendingPlanetResources(planetId: string): boolean {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    if (!row) return false;
-    return isZeroResourcePlaceholder(parseEvent<SettledPlanetEvent>(row.event_json))
+    const json = this.memoInReadTransaction(`planetRow:${planetId}`, () =>
+      (this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null)?.event_json ?? null);
+    if (json === null) return false;
+    return isZeroResourcePlaceholder(parseEvent<SettledPlanetEvent>(json))
       && !this.planetResourceSnapshot(planetId);
   }
 
@@ -2623,13 +2710,12 @@ export class SettlementIndexer {
   }
 
   inviteeProductionBoostExpiresAt(player: `0x${string}`): string | null {
-    const row = this.db.query(`
+    return this.memoInReadTransaction(`boost:${player.toLowerCase()}`, () => (this.db.query(`
       SELECT expires_at
       FROM contract_invitee_production_boosts
       WHERE player = lower(?)
       LIMIT 1
-    `).get(player) as { expires_at: string } | null;
-    return row?.expires_at ?? null;
+    `).get(player) as { expires_at: string } | null)?.expires_at ?? null);
   }
 
   referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null {
@@ -4384,16 +4470,19 @@ export class SettlementIndexer {
   // Reader workers do not see the writer's in-memory stateGeneration, so this uses the shared DB
   // token to avoid serving stale Raid Finder planet resources after another process indexes a spend
   // or raid settlement. (VEY-KANEO-467)
-  highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
+  // `maxStaleMs` lets the Rankings page reuse a leaderboard computed under an older state for
+  // that long (product decision: up to 1 s stale); every other caller keeps exact freshness.
+  highscoreLeaderboard(maxStaleMs = 0): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
     const generation = this.indexedStateCacheVersion();
     const cached = this.leaderboardCache;
-    if (cached && cached.generation === generation) {
+    if (cached && (cached.generation === generation || (maxStaleMs > 0 && Date.now() - cached.computedAt <= maxStaleMs))) {
       return cached;
     }
     const planetsByOwner = this.settledPlanetsByOwner();
     const entries = this.highscoreEntriesForOwners(planetsByOwner);
     this.leaderboardCache = {
       generation,
+      computedAt: Date.now(),
       planetsByOwner,
       entries
     };
@@ -6690,6 +6779,14 @@ export class SettlementIndexer {
           lower(json_extract(event_json, '$.topics[2]')),
           json_extract(event_json, '$.topics[3]'),
           CAST(block_number AS INTEGER)
+        );
+      -- Optional per-mission logs (e.g. FleetMissionBodies) by mission id, without reading every
+      -- other fleet event of that mission.
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic0_topic1_idx
+        ON indexed_mission_event_logs (
+          event_kind,
+          lower(json_extract(event_json, '$.topics[0]')),
+          json_extract(event_json, '$.topics[1]')
         );
       -- Joining an active attack previews the exact Solidity DefenseHold storage lanes. Keep both
       -- target-topic layouts indexed: stationed logs put the planet in topics[3], while ended logs
@@ -11589,12 +11686,11 @@ export class SettlementIndexer {
     const cached = cache?.values.get(cacheKey);
     if (cached) return new Map(cached);
 
-    const rows = this.db.query(`
+    const levels = this.memoInReadTransaction(`levels:${cacheKey}`, () => new Map((this.db.query(`
       SELECT ${idColumn} AS id, ${valueColumn} AS value
       FROM ${table}
       WHERE planet_id = ?
-    `).all(planetId) as Array<{ id: number; value: number }>;
-    const levels = new Map(rows.map((row) => [row.id, row.value]));
+    `).all(planetId) as Array<{ id: number; value: number }>).map((row) => [row.id, row.value])));
     cache?.values.set(cacheKey, levels);
     return new Map(levels);
   }
@@ -12189,11 +12285,12 @@ export class SettlementIndexer {
     this.missionReferenceCache = null;
     this.canonicalActiveMissionCache.clear();
     this.canonicalCompletedMissionCache = null;
-    this.attackLaunchSecondsCache.clear();
   }
 
   private currentMissionReadModelDbVersion(): string {
-    const version = this.metadata("missionReadModelVersion") ?? "0";
+    // One rankings page asked ~900 times; like the state version, it is fixed within a snapshot.
+    const version = this.readSnapshotMissionVersion ?? this.metadata("missionReadModelVersion") ?? "0";
+    if (this.readSnapshotDepth > 0) this.readSnapshotMissionVersion = version;
     if (this.missionReadModelDbVersion !== version) {
       this.missionReadModelDbVersion = version;
       this.missionGeneration += 1;
@@ -12205,13 +12302,13 @@ export class SettlementIndexer {
       this.missionReferenceCache = null;
       this.canonicalActiveMissionCache.clear();
       this.canonicalCompletedMissionCache = null;
-      this.attackLaunchSecondsCache.clear();
     }
     return version;
   }
 
   private advanceMissionReadModelDbVersion(): string {
     this.snapshotCache = null;
+    this.readSnapshotMissionVersion = null;
     const row = this.db.query(`
       INSERT INTO indexer_metadata (key, value)
       VALUES ('missionReadModelVersion', '1')
@@ -12222,7 +12319,8 @@ export class SettlementIndexer {
   }
 
   private currentBattleReportReadModelDbVersion(): string {
-    const version = this.metadata("battleReportReadModelVersion") ?? "0";
+    const version = this.readSnapshotBattleReportVersion ?? this.metadata("battleReportReadModelVersion") ?? "0";
+    if (this.readSnapshotDepth > 0) this.readSnapshotBattleReportVersion = version;
     if (this.battleReportReadModelDbVersion !== version) {
       this.battleReportReadModelDbVersion = version;
       this.battleReportGeneration += 1;
@@ -12242,6 +12340,7 @@ export class SettlementIndexer {
 
   private advanceBattleReportReadModelDbVersion(): string {
     this.snapshotCache = null;
+    this.readSnapshotBattleReportVersion = null;
     const row = this.db.query(`
       INSERT INTO indexer_metadata (key, value)
       VALUES ('battleReportReadModelVersion', '1')
@@ -13200,8 +13299,9 @@ export class SettlementIndexer {
   }
 
   private moon(planetId: string): IndexedMoonCreatedEvent | null {
-    const row = this.db.query("SELECT event_json FROM indexed_moons WHERE planet_id = ?").get(planetId) as MoonRow | null;
-    return row ? parseEvent<IndexedMoonCreatedEvent>(row.event_json) : null;
+    const json = this.memoInReadTransaction(`moon:${planetId}`, () =>
+      (this.db.query("SELECT event_json FROM indexed_moons WHERE planet_id = ?").get(planetId) as MoonRow | null)?.event_json ?? null);
+    return json === null ? null : parseEvent<IndexedMoonCreatedEvent>(json);
   }
 
   private hasIndexedMoonProjection(planetId: string): boolean {
@@ -13418,12 +13518,31 @@ export class SettlementIndexer {
     planetId: string,
     options: { includeOverduePendingRandomness?: boolean } = {}
   ): FleetMissionSummary[] {
-    return this.activeFleetMissionsFromCanonicalRowsWhere(
-      `touching:${planetId}`,
-      "(origin_planet_id = ? OR target_planet_id = ?)",
-      [planetId, planetId],
-      options
-    );
+    // Resource and intel reads ask this for every visible planet (269 queries for one rankings
+    // page). Project the active set once per state and second, then index it by touched planet.
+    const includeOverduePendingRandomness = options.includeOverduePendingRandomness === true;
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const asOfSeconds = nowSeconds();
+    let index = this.activeMissionsByTouchedPlanet;
+    if (
+      !index
+      || index.stateVersion !== stateVersion
+      || index.missionGeneration !== this.missionGeneration
+      || index.asOfSeconds !== asOfSeconds
+      || index.includeOverduePendingRandomness !== includeOverduePendingRandomness
+    ) {
+      const byPlanet = new Map<string, FleetMissionSummary[]>();
+      for (const mission of this.activeFleetMissionsFromCanonicalRowsWhere("touching:*", "1 = 1", [], options)) {
+        for (const id of new Set([mission.originPlanetId, mission.targetPlanetId])) {
+          (byPlanet.get(id) ?? byPlanet.set(id, []).get(id)!).push(mission);
+        }
+      }
+      index = this.activeMissionsByTouchedPlanet = {
+        stateVersion, missionGeneration: this.missionGeneration, asOfSeconds, includeOverduePendingRandomness, byPlanet
+      };
+    }
+    return [...(index.byPlanet.get(planetId) ?? [])];
   }
 
   private activeFleetMissionsForWalletVisibility(
@@ -13859,39 +13978,87 @@ export class SettlementIndexer {
   // Launches whose block lacks an ingested timestamp are skipped (they cannot be placed in the 24h
   // window), which biases toward not-blocking rather than fabricating a window position.
   attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
-    this.currentMissionReadModelDbVersion();
     const normalizedAttacker = attacker.toLowerCase();
+    const attackerTopic = `0x${normalizedAttacker.slice(2).padStart(64, "0")}`;
+    const attackMissionTypeTopic = `0x${3n.toString(16).padStart(64, "0")}`;
+    const launchFilterSql = `
+      event_kind = 'fleet'
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND lower(json_extract(event_json, '$.topics[2]')) = ?
+        AND json_extract(event_json, '$.topics[3]') = ?`;
+    const launchParams = [fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic];
+    // Only this attacker's Attack launches (and their bodies, same transaction) feed the result.
+    // Validate against a covering-index fingerprint of those rows instead of dropping the cache on
+    // every mission event in the game: a busy attacker's full rebuild cost ~0.5 s.
+    const fingerprint = this.db.query(`
+      SELECT COUNT(*) AS count, MAX(CAST(block_number AS INTEGER)) AS max_block
+      FROM indexed_mission_event_logs
+      WHERE ${launchFilterSql}
+    `).get(...launchParams) as { count: number; max_block: number | null };
     const cached = this.attackLaunchSecondsCache.get(normalizedAttacker);
-    if (cached && cached.missionGeneration === this.missionGeneration) {
+    // Bodies are optional (only some missions emit one) and can change without a new launch: a
+    // removed body turns a moon target back into a planet, and a body can be ingested just after
+    // its launch. Re-check exactly those missions: moon targets, and recent body-less launches.
+    const bodiesUnchanged = (entry: AttackLaunchSecondsCacheEntry) => {
+      const topics = [...entry.moonMissionTopics, ...entry.recentBodylessTopics];
+      if (topics.length === 0) return true;
+      const withBody = new Set((this.db.query(`
+        SELECT json_extract(event_json, '$.topics[1]') AS topic
+        FROM indexed_mission_event_logs
+        WHERE event_kind = 'fleet'
+          AND json_extract(event_json, '$.topics[1]') IN (${topics.map(() => "?").join(",")})
+          AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+      `).all(...topics, fleetMissionBodiesTopic) as Array<{ topic: string }>).map((row) => row.topic));
+      return entry.moonMissionTopics.every((topic) => withBody.has(topic))
+        && entry.recentBodylessTopics.every((topic) => !withBody.has(topic));
+    };
+    const cachedValid = cached !== undefined && bodiesUnchanged(cached);
+    if (cachedValid && cached.count === fingerprint.count && cached.maxBlock === fingerprint.max_block) {
       return cached.launchesByTarget;
     }
 
-    const attackerTopic = `0x${normalizedAttacker.slice(2).padStart(64, "0")}`;
-    const attackMissionTypeTopic = `0x${3n.toString(16).padStart(64, "0")}`;
+    // Newer launches only extend the ascending per-target lists. Anything else (a removed or
+    // same-block late row, or a body that had not arrived yet) takes the exact full rebuild.
+    const incremental = cachedValid && cached.maxBlock !== null && fingerprint.max_block !== null
+      && fingerprint.max_block > cached.maxBlock;
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_mission_event_logs
-      WHERE event_kind = 'fleet'
-        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
-        AND lower(json_extract(event_json, '$.topics[2]')) = ?
-        AND json_extract(event_json, '$.topics[3]') = ?
+      WHERE ${launchFilterSql}
+        ${incremental ? "AND CAST(block_number AS INTEGER) > ?" : ""}
       ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all(fleetMissionLaunchedTopic, attackerTopic, attackMissionTypeTopic) as EventRow[];
+    `).all(...launchParams, ...(incremental ? [cached!.maxBlock!] : [])) as EventRow[];
+    if (incremental && cached!.count + rows.length !== fingerprint.count) {
+      this.attackLaunchSecondsCache.delete(normalizedAttacker);
+      return this.attackLaunchSecondsByTarget(attacker);
+    }
     const launches = sortedEventRows(rows);
     const missionTopics = [...new Set(launches.map(log => log.topics[1]).filter((topic): topic is string => Boolean(topic)))];
     const bodyRows = chunks(missionTopics, 500).flatMap(topics => this.db.query(`
       SELECT event_json
-      FROM indexed_mission_event_logs INDEXED BY indexed_mission_event_logs_kind_topic1_block_idx
+      FROM indexed_mission_event_logs
       WHERE event_kind = 'fleet'
         AND json_extract(event_json, '$.topics[1]') IN (${topics.map(() => '?').join(',')})
         AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
     `).all(...topics, fleetMissionBodiesTopic) as EventRow[]);
     const moonTargetMissionIds = new Set<string>();
+    const moonMissionTopics = incremental ? [...cached!.moonMissionTopics] : [];
+    const bodyMissionTopics = new Set<string>();
     for (const bodyLog of sortedEventRows(bodyRows)) {
       const identity = decodeFleetMissionBodyIdentity(bodyLog);
-      if (identity?.targetIsMoon) moonTargetMissionIds.add(identity.missionId);
+      if (bodyLog.topics[1]) bodyMissionTopics.add(bodyLog.topics[1]);
+      if (identity?.targetIsMoon) {
+        moonTargetMissionIds.add(identity.missionId);
+        if (bodyLog.topics[1]) moonMissionTopics.push(bodyLog.topics[1]);
+      }
     }
-    const byTarget = new Map<string, number[]>();
+    const byTarget = incremental
+      ? new Map([...cached!.launchesByTarget].map(([target, seconds]) => [target, [...seconds]]))
+      : new Map<string, number[]>();
+    const recentBodylessTopics = incremental
+      ? cached!.recentBodylessTopics.filter((topic) => !bodyMissionTopics.has(topic))
+      : [];
+    const recentFromBlock = (fingerprint.max_block ?? 0) - attackBodyArrivalWindowBlocks;
     for (const log of launches) {
       const launch = decodeAttackMissionLaunch(log);
       if (!launch || launch.attacker.toLowerCase() !== normalizedAttacker) continue;
@@ -13900,6 +14067,10 @@ export class SettlementIndexer {
       const seconds = Number(launchedAt);
       if (!Number.isFinite(seconds)) continue;
       const missionId = fleetMissionLogMissionId(log);
+      const missionTopic = log.topics[1];
+      if (missionTopic && !bodyMissionTopics.has(missionTopic) && Number(BigInt(log.blockNumber)) >= recentFromBlock) {
+        recentBodylessTopics.push(missionTopic);
+      }
       const targetKey = missionId && moonTargetMissionIds.has(missionId)
         ? `moon:${launch.targetPlanetId}`
         : launch.targetPlanetId;
@@ -13908,7 +14079,10 @@ export class SettlementIndexer {
       else byTarget.set(targetKey, [seconds]);
     }
     this.attackLaunchSecondsCache.set(normalizedAttacker, {
-      missionGeneration: this.missionGeneration,
+      count: fingerprint.count,
+      maxBlock: fingerprint.max_block,
+      moonMissionTopics: [...new Set(moonMissionTopics)],
+      recentBodylessTopics: [...new Set(recentBodylessTopics)].filter((topic) => !moonMissionTopics.includes(topic)),
       launchesByTarget: byTarget
     });
     return byTarget;

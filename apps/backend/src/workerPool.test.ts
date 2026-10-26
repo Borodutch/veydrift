@@ -595,3 +595,35 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toMatchObject({ error: "writer_unavailable" });
   });
 });
+
+describe("rankings reader routing", () => {
+  test("forwards only Rankings reads and serves them locally when the rankings reader is down", async () => {
+    const { createRankingsForwardingFetch, isRankingsReadPath, resolveRankingsInternalPort } = await import("./workerPool");
+    expect(isRankingsReadPath("GET", "/highscores")).toBe(true);
+    expect(isRankingsReadPath("GET", "/wallet/0xabc/highscore")).toBe(true);
+    expect(isRankingsReadPath("GET", "/wallet/0xabc/highscores")).toBe(false);
+    expect(isRankingsReadPath("POST", "/highscores")).toBe(false);
+    expect(resolveRankingsInternalPort({}, 4001)).toBe(4002);
+    expect(resolveRankingsInternalPort({ VEYDRIFT_RANKINGS_INTERNAL_PORT: "5000" }, 4001)).toBe(5000);
+
+    const seen: string[] = [];
+    const next = async (request: Request) => { seen.push("next " + new URL(request.url).pathname); return new Response("next"); };
+    const local = async (request: Request) => { seen.push("local " + new URL(request.url).pathname); return new Response("local"); };
+    const up = createRankingsForwardingFetch(next, local, "http://127.0.0.1:1", (async (target: string) => {
+      seen.push("forward " + target);
+      return new Response("rankings");
+    }) as unknown as typeof fetch);
+    expect(await (await up(new Request("http://localhost/highscores?page=2"))).text()).toBe("rankings");
+    expect(await (await up(new Request("http://localhost/wallet/0xabc/planets"))).text()).toBe("next");
+
+    const down = createRankingsForwardingFetch(next, local, "http://127.0.0.1:1", (async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch);
+    expect(await (await down(new Request("http://localhost/highscores"))).text()).toBe("local");
+    expect(seen).toEqual([
+      "forward http://127.0.0.1:1/highscores?page=2",
+      "next /wallet/0xabc/planets",
+      "local /highscores"
+    ]);
+  });
+});
