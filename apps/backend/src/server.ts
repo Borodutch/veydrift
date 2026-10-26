@@ -398,7 +398,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // Queue progress is user-visible.  Keep the production timing slots on the
       // narrow live reader so Overview can render a determinate whole-queue bar.
       hydrateQueueStartedAt: true,
-      rpcCallSource: "api-explicit-live-read"
+      rpcCallSource: "api-explicit-live-read",
+      // Request-path reads must not queue behind each other: a 300 ms start-slot spacing made two
+      // sequential calls cost 600 ms. Like the other API transports, the node needs no throttle.
+      minRequestIntervalMs: 0
     }) : undefined);
   const missionEligibilityReader = dependencies.chainReader
     ?? (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, {
@@ -5796,7 +5799,7 @@ function highscoreRows(
 ): Map<string, RankedHighscoreEntry> {
   const buildRows = () => new Map<string, RankedHighscoreEntry>(
     entries.map((entry) => {
-      const planets = includePlanetDetails ? rankedHighscorePlanets(entry, planetsByOwner, indexer) : [];
+      const planets = includePlanetDetails ? cachedRankedHighscorePlanets(entry, planetsByOwner, indexer) : [];
       const homePlanet = rankedHighscoreHomePlanet(entry, planets);
       return [
         entry.wallet.toLowerCase(),
@@ -6108,6 +6111,29 @@ function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory
 
 function highscoreSortValue(entry: HighscoreEntry, category: HighscoreCategory): string {
   return category === "total" ? entry.totalUserScore : entry.score[category];
+}
+
+// A leaderboard page shows the same owners' planet intel to every viewer, but personalized
+// requests (currentWallet) only get a 1 s response cache, so each one rebuilt ~100 owners'
+// planets. Share them per indexer for the same state version and response-cache lifetime.
+const rankedHighscorePlanetsCaches = new WeakMap<SettlementIndexer, Map<string, { version: string; expiresAt: number; planets: RankedHighscorePlanet[] }>>();
+
+function cachedRankedHighscorePlanets(
+  entry: HighscoreEntry,
+  planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
+  indexer?: SettlementIndexer | undefined
+): RankedHighscorePlanet[] {
+  const key = entry.wallet.toLowerCase();
+  if (!indexer || !planetsByOwner.get(key)?.length) return rankedHighscorePlanets(entry, planetsByOwner, indexer);
+  let cache = rankedHighscorePlanetsCaches.get(indexer);
+  if (!cache) rankedHighscorePlanetsCaches.set(indexer, cache = new Map());
+  const version = indexer.responseCacheVersion();
+  const now = Date.now();
+  const cached = cache.get(key);
+  if (cached && cached.version === version && cached.expiresAt > now) return cached.planets;
+  const planets = rankedHighscorePlanets(entry, planetsByOwner, indexer);
+  cache.set(key, { version, expiresAt: now + 1_000, planets });
+  return planets;
 }
 
 function rankedHighscorePlanets(

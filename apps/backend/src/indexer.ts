@@ -687,13 +687,17 @@ type PlayerActivityRow = {
   wallet: string;
 };
 
-type PlayerActivityFeedRow = {
-  activity_json: string;
-};
+/** Activity sort key, compared descending like SQLite ORDER BY: NULL sorts lowest. */
+type PlayerActivityRank = Array<number | string | null>;
 
-type PlayerActivitySummaryRow = {
+type PlayerActivityGroup = {
+  id: string;
   category: PlayerActivityCategory;
-  count: number;
+  maxAt: number;
+  maxTxAt: number;
+  rows: number;
+  rowid: number;
+  rank: PlayerActivityRank;
 };
 
 type AllianceRow = {
@@ -1025,6 +1029,10 @@ export class SettlementIndexer {
     if (!options.readOnly && !options.assumeSchemaReady) {
       this.migrate(options.runStartupBackfill ?? true);
       this.seedStartPriceBootstrap(options.settlementStartPriceWei ?? null);
+      // Without sqlite_stat1 the planner guesses between the many expression indexes and picks
+      // range scans over equality ones (activity quantity lookups took 18 ms instead of 0.03 ms).
+      // Sampled ANALYZE takes ~1 s on the production index and only reruns once a table grows 10x.
+      if (databasePath !== ":memory:") this.db.exec("PRAGMA analysis_limit = 1000; PRAGMA optimize = 0x10002;");
     }
     // Do the one diagnostic count pass before a read worker accepts traffic. This keeps wallet,
     // fleet, and CCA responses off the full-table COUNT(*) path under load.
@@ -1942,37 +1950,109 @@ export class SettlementIndexer {
     const since = options.since === undefined ? undefined : Math.max(0, Math.floor(options.since));
     const projected = options.includeProjected !== false ? this.projectedPlayerActivity(normalizedWallet, since ?? 0, queueThrough, fleetThrough) : [];
     for (const item of projected) {
-      const existing = this.db.query("SELECT SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0)) AS quantity FROM indexed_player_activity_feed WHERE wallet = ? AND json_extract(activity_json, '$.id') = ? AND CAST(transaction_at AS INTEGER) <= ?").get(normalizedWallet, item.id, through) as {quantity: number | null};
-      if (typeof item.metadata.quantity === "number") item.metadata.quantity += existing.quantity ?? 0;
+      if (typeof item.metadata.quantity === "number") item.metadata.quantity += this.playerActivityQuantity(normalizedWallet, item.id, through);
       normalizeBatchActivity(item);
     }
-    const cte = `WITH projected AS (SELECT value AS activity_json, json_extract(value, '$.id') AS id FROM json_each(?)),
-      ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY json_extract(activity_json, '$.id') ORDER BY CAST(occurred_at AS INTEGER) DESC, CAST(transaction_at AS INTEGER) DESC, CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC) AS rank FROM indexed_player_activity_feed WHERE wallet = ? AND CAST(transaction_at AS INTEGER) <= ?),
-      grouped AS (
-        SELECT json_extract(activity_json, '$.id') AS id,
-          MAX(CAST(occurred_at AS INTEGER)) AS at,
-          MAX(CAST(transaction_at AS INTEGER)) AS tx_at,
-          CASE WHEN json_extract(activity_json, '$.metadata.quantity') IS NOT NULL AND json_extract(activity_json, '$.id') LIKE 'completion:%'
-            THEN json_set(MAX(CASE WHEN rank = 1 THEN activity_json END), '$.metadata.quantity', SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0))) ELSE MAX(CASE WHEN rank = 1 THEN activity_json END) END AS activity_json
-        FROM ranked
-        GROUP BY json_extract(activity_json, '$.id')
-        HAVING (? IS NULL OR at > ? OR tx_at > ?)
-      ), combined AS (
-        SELECT activity_json FROM grouped WHERE id NOT IN (SELECT id FROM projected)
-        UNION ALL SELECT activity_json FROM projected
-      )`;
-    const params: SQLQueryBindings[] = [JSON.stringify(projected), normalizedWallet, through, since ?? null, since ?? null, since ?? null];
-    const summaryRows = this.db.query(cte + " SELECT json_extract(activity_json, '$.category') AS category, COUNT(*) AS count FROM combined GROUP BY category").all(...params) as PlayerActivitySummaryRow[];
-    const summary: Partial<Record<PlayerActivityCategory, number>> = Object.fromEntries(summaryRows.map((row) => [row.category, row.count]));
-    const totalEntries = summaryRows.reduce((sum, row) => sum + row.count, 0);
+    // Group on covering-index columns only. Ranking and sorting every row's activity_json made a
+    // busy wallet (11k rows) cost ~250 ms; activity_json is read for the requested page alone.
+    return this.readConsistentSnapshot(() => this.playerActivityPage(normalizedWallet, projected, through, since, options));
+  }
+
+  private playerActivityPage(
+    normalizedWallet: Address,
+    projected: PlayerActivityItem[],
+    through: number,
+    since: number | undefined,
+    options: { page: number; pageSize: number }
+  ): PlayerActivityPage {
+    const projectedIds = new Set(projected.map((item) => item.id));
+    const ids = new Map((this.db.query(`
+      SELECT rowid, json_extract(activity_json, '$.id') AS id
+      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_occurrence_idx
+      WHERE wallet = ?
+    `).all(normalizedWallet) as Array<{ rowid: number; id: string }>).map((row) => [row.rowid, row.id]));
+    const categories = new Map((this.db.query(`
+      SELECT rowid, json_extract(activity_json, '$.category') AS category, CAST(transaction_at AS INTEGER) AS tx_at
+      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_wallet_category_idx
+      WHERE wallet = ?
+    `).all(normalizedWallet) as Array<{ rowid: number; category: PlayerActivityCategory; tx_at: number }>).map((row) => [row.rowid, row]));
+    const rows = this.db.query(`
+      SELECT rowid, CAST(occurred_at AS INTEGER) AS at, CAST(block_number AS INTEGER) AS block, log_index
+      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_wallet_game_time_idx
+      WHERE wallet = ?
+    `).all(normalizedWallet) as Array<{ rowid: number; at: number; block: number; log_index: string }>;
+    const groups = new Map<string, PlayerActivityGroup>();
+    for (const row of rows) {
+      const id = ids.get(row.rowid);
+      const meta = categories.get(row.rowid);
+      if (id === undefined || !meta || meta.tx_at > through) continue;
+      // The representative row is the newest by (occurred, transaction, block, log index).
+      const rank: PlayerActivityRank = [row.at, meta.tx_at, row.block, row.log_index.length, row.log_index];
+      const group = groups.get(id);
+      if (!group) {
+        groups.set(id, { id, category: meta.category, maxAt: row.at, maxTxAt: meta.tx_at, rows: 1, rowid: row.rowid, rank });
+        continue;
+      }
+      group.rows += 1;
+      group.maxAt = Math.max(group.maxAt, row.at);
+      group.maxTxAt = Math.max(group.maxTxAt, meta.tx_at);
+      if (compareActivityKeysDesc(rank, group.rank) < 0) {
+        group.rowid = row.rowid;
+        group.rank = rank;
+      }
+    }
+    const entries: Array<{ key: PlayerActivityRank; category: PlayerActivityCategory; group?: PlayerActivityGroup; item?: PlayerActivityItem }> = [];
+    for (const group of groups.values()) {
+      if (projectedIds.has(group.id)) continue;
+      if (since !== undefined && group.maxAt <= since && group.maxTxAt <= since) continue;
+      const [at = null, , block = null, logLength = null, logIndex = null] = group.rank;
+      entries.push({ key: [at, block, logLength, logIndex, group.id], category: group.category, group });
+    }
+    for (const item of projected) {
+      const logIndex = item.logIndex === null || item.logIndex === undefined ? null : String(item.logIndex);
+      entries.push({
+        key: [sqliteInteger(item.occurredAt), sqliteInteger(item.blockNumber), logIndex?.length ?? null, logIndex, item.id],
+        category: item.category,
+        item
+      });
+    }
+    const summary: Partial<Record<PlayerActivityCategory, number>> = {};
+    for (const entry of entries) summary[entry.category] = (summary[entry.category] ?? 0) + 1;
+    const totalEntries = entries.length;
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
     const offset = Math.max(0, (Math.min(Math.max(1, Math.trunc(options.page) || 1), Math.max(1, Math.ceil(totalEntries / pageSize))) - 1) * pageSize);
-    const rows = this.db.query(cte + " SELECT activity_json FROM combined ORDER BY CAST(json_extract(activity_json, '$.occurredAt') AS INTEGER) DESC, CAST(json_extract(activity_json, '$.blockNumber') AS INTEGER) DESC, length(json_extract(activity_json, '$.logIndex')) DESC, json_extract(activity_json, '$.logIndex') DESC, json_extract(activity_json, '$.id') DESC LIMIT ? OFFSET ?").all(...params, pageSize, offset) as PlayerActivityFeedRow[];
-    const items = rows.map((row) => {
-      const item = parseEvent<PlayerActivityItem>(row.activity_json); normalizeBatchActivity(item);
-      return this.withPlayerActivityPlanetContext(item);
+    entries.sort((left, right) => compareActivityKeysDesc(left.key, right.key));
+    const page = entries.slice(offset, offset + pageSize);
+    const pageRowIds = page.flatMap((entry) => entry.group ? [entry.group.rowid] : []);
+    const activityJson = new Map(pageRowIds.length === 0 ? [] : (this.db.query(`
+      SELECT rowid, activity_json FROM indexed_player_activity_feed WHERE rowid IN (${pageRowIds.map(() => "?").join(",")})
+    `).all(...pageRowIds) as Array<{ rowid: number; activity_json: string }>).map((row) => [row.rowid, row.activity_json]));
+    const items = page.flatMap((entry) => {
+      let item: PlayerActivityItem;
+      if (entry.group) {
+        const json = activityJson.get(entry.group.rowid);
+        if (json === undefined) return [];
+        item = parseEvent<PlayerActivityItem>(json);
+        // Batch completions journal one row per partial completion; the card shows their total.
+        if (entry.group.rows > 1 && entry.group.id.startsWith("completion:") && item.metadata.quantity !== null && item.metadata.quantity !== undefined) {
+          item.metadata.quantity = this.playerActivityQuantity(normalizedWallet, entry.group.id, through);
+        }
+      } else {
+        item = parseEvent<PlayerActivityItem>(JSON.stringify(entry.item));
+      }
+      normalizeBatchActivity(item);
+      return [this.withPlayerActivityPlanetContext(item)];
     });
     return { items, summary, totalEntries, through: through.toString() };
+  }
+
+  private playerActivityQuantity(wallet: Address, id: string, through: number): number {
+    const row = this.db.query(`
+      SELECT SUM(COALESCE(json_extract(activity_json, '$.metadata.quantity'), 0)) AS quantity
+      FROM indexed_player_activity_feed INDEXED BY indexed_player_activity_feed_occurrence_idx
+      WHERE wallet = ? AND json_extract(activity_json, '$.id') = ? AND CAST(transaction_at AS INTEGER) <= ?
+    `).get(wallet, id, through) as { quantity: number | null };
+    return row.quantity ?? 0;
   }
 
   private projectedPlayerActivity(wallet: Address, since: number, queueThrough: number, fleetThrough: number): PlayerActivityItem[] {
@@ -2338,14 +2418,18 @@ export class SettlementIndexer {
         )
       ORDER BY CAST(alliance_id AS INTEGER) ASC
     `).all(...(allianceId === undefined ? [] : [allianceId])) as AllianceRow[];
+    // Score every listed member in one batched highscore pass instead of ~7 queries per member.
+    const memberScores = this.walletTotalScores(rows.length === 0 ? [] : (this.db.query(`
+      SELECT wallet FROM contract_alliance_members WHERE alliance_id IN (${rows.map(() => "?").join(",")})
+    `).all(...rows.map((row) => row.alliance_id)) as Array<{ wallet: Address }>).map((member) => member.wallet));
     return rows.map((row) => {
       const members = rosterAllianceId === undefined || rosterAllianceId === row.alliance_id
-        ? this.allianceMembers(row.alliance_id)
+        ? this.allianceMembers(row.alliance_id, memberScores)
         : undefined;
       // Summary readers need scores, not foreign profiles, roles or invite metadata.
       const scores = members?.map(member => member.totalScore ?? "0") ??
         (this.db.query("SELECT wallet FROM contract_alliance_members WHERE alliance_id = ?")
-          .all(row.alliance_id) as Array<{ wallet: Address }>).map(member => this.walletTotalScore(member.wallet));
+          .all(row.alliance_id) as Array<{ wallet: Address }>).map(member => memberScores.get(member.wallet.toLowerCase()) ?? this.walletTotalScore(member.wallet));
       return {
         allianceId: row.alliance_id,
         active: row.active === 1,
@@ -2362,7 +2446,7 @@ export class SettlementIndexer {
     });
   }
 
-  private allianceMembers(allianceId: string): NonNullable<AllianceState["directory"][number]["members"]> {
+  private allianceMembers(allianceId: string, scores: ReadonlyMap<string, string>): NonNullable<AllianceState["directory"][number]["members"]> {
     const rows = this.db.query(`
       SELECT member.alliance_id, member.wallet, member.role_id, member.joined_at,
              redemption.inviter AS invited_by, redemption.redeemed_at AS invited_at
@@ -2384,7 +2468,7 @@ export class SettlementIndexer {
         displayName: this.playerProfile(address).displayName,
         role: allianceRoleName(row.role_id),
         joinedAt: row.joined_at,
-        totalScore: this.walletTotalScore(address),
+        totalScore: scores.get(address) ?? this.walletTotalScore(address),
         ...(invitedBy ? {
           invitedBy,
           invitedByDisplayName: this.playerProfile(invitedBy).displayName,
@@ -2478,6 +2562,26 @@ export class SettlementIndexer {
         alliance: directoryById.get(otherAllianceId) ?? null
       };
     }).sort((left, right) => right.statusId - left.statusId || Number(left.otherAllianceId) - Number(right.otherAllianceId));
+  }
+
+  /** Batched walletTotalScore; a wallet missing from the result falls back to the single read. */
+  private walletTotalScores(wallets: readonly string[]): Map<string, string> {
+    const planetsByOwner = new Map<string, SettledPlanetEvent[]>(
+      [...new Set(wallets.map((wallet) => wallet.toLowerCase()))].map((owner) => [owner, []])
+    );
+    for (const ownerChunk of chunks([...planetsByOwner.keys()], 500)) {
+      const rows = this.db.query(`
+        SELECT owner, event_json FROM indexed_planets
+        WHERE owner IN (${ownerChunk.map(() => "?").join(",")})
+        ORDER BY CAST(planet_id AS INTEGER) ASC
+      `).all(...ownerChunk) as Array<{ owner: string; event_json: string }>;
+      for (const row of rows) planetsByOwner.get(row.owner)?.push(parseEvent<SettledPlanetEvent>(row.event_json));
+    }
+    try {
+      return new Map(this.highscoreEntriesForOwners(planetsByOwner).map((entry) => [entry.wallet.toLowerCase(), entry.totalUserScore]));
+    } catch {
+      return new Map();
+    }
   }
 
   private walletTotalScore(wallet: Address): string {
@@ -2684,7 +2788,8 @@ export class SettlementIndexer {
     const allianceMemberAddresses = new Set(
       allianceId === null
         ? []
-        : this.allianceMembers(allianceId).map((member) => member.address.toLowerCase())
+        : (this.db.query("SELECT wallet FROM contract_alliance_members WHERE alliance_id = ?")
+          .all(allianceId) as Array<{ wallet: string }>).map((member) => member.wallet.toLowerCase())
     );
     const ownedPlanetIds = new Set(
       this.settledPlanetsForOwner(wallet)
@@ -3022,25 +3127,35 @@ export class SettlementIndexer {
         ${visibleMissionIdsSql}
       )
     `;
-    const countRow = this.db.query(`${visibleMissionCte}
+    // UNION already de-duplicates mission ids; only the optional filters need the table rows.
+    const countRow = this.db.query(archiveFilters ? `${visibleMissionCte}
       SELECT COUNT(*) AS count
       FROM contract_fleet_missions
       WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
         ${archiveFilters}
-    `).get(...visibleMissionParams, ...archiveFilterParams) as CountRow | null;
+    ` : `${visibleMissionCte} SELECT COUNT(*) AS count FROM visible_mission_ids`).get(...visibleMissionParams, ...archiveFilterParams) as CountRow | null;
     const totalEntries = Number(countRow?.count ?? 0);
     const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
     const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
     const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
+    const effectiveIdList = effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL";
+    const archiveOrderSql = (t: string) => `
+      CAST(CASE WHEN ${t}status_id IN (2, 4, 5) OR (${t}mission_id IN (${effectiveIdList}) AND ${t}mission_type_id != 1) THEN ${t}return_at ELSE ${t}arrival_at END AS INTEGER) DESC,
+      CAST(${t}mission_id AS INTEGER) DESC`;
+    // Sort ids only, then load the page's rows: sorting thousands of full rows (ships + event
+    // JSON) to keep 25 of them dominated busy wallets' archive reads.
     const rows = this.db.query(`${visibleMissionCte}
-      SELECT *
-      FROM contract_fleet_missions
-      WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
-        ${archiveFilters}
-      ORDER BY
-        CAST(CASE WHEN status_id IN (2, 4, 5) OR (mission_id IN (${effectiveIds.length ? effectiveIds.map((id) => "'" + BigInt(id).toString() + "'").join(",") : "NULL"}) AND mission_type_id != 1) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
-        CAST(mission_id AS INTEGER) DESC
-      LIMIT ? OFFSET ?
+      SELECT missions.*
+      FROM (
+        SELECT mission_id
+        FROM contract_fleet_missions
+        WHERE mission_id IN (SELECT mission_id FROM visible_mission_ids)
+          ${archiveFilters}
+        ORDER BY ${archiveOrderSql("")}
+        LIMIT ? OFFSET ?
+      ) page
+      JOIN contract_fleet_missions missions ON missions.mission_id = page.mission_id
+      ORDER BY ${archiveOrderSql("missions.")}
     `).all(...visibleMissionParams, ...archiveFilterParams, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
     const stateVersion = this.indexedStateCacheVersion();
     const completedMissions = this.canonicalFleetMissionSummaries(rows).map((summary) => {
@@ -15379,6 +15494,24 @@ function battleActivityMetadata(report: BattleReport): Record<string, boolean | 
     rounds: report.rounds,
     targetPlanetId: report.targetPlanetId
   };
+}
+
+function compareActivityKeysDesc(left: PlayerActivityRank, right: PlayerActivityRank): number {
+  for (let index = 0; index < left.length; index++) {
+    const a = left[index] ?? null;
+    const b = right[index] ?? null;
+    if (a === b) continue;
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return a > b ? -1 : 1;
+  }
+  return 0;
+}
+
+/** SQLite CAST(value AS INTEGER) for the activity sort keys: the leading integer, NULL stays NULL. */
+function sqliteInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  return Number(/^\s*[-+]?\d+/.exec(String(value))?.[0] ?? 0);
 }
 
 // A production batch is one stable game activity, not one allocated JS object

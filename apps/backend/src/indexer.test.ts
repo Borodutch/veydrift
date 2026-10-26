@@ -8180,18 +8180,20 @@ describe("SettlementIndexer", () => {
     const state = indexer.allianceState(owner);
     const originalMembers = (indexer as any).allianceMembers.bind(indexer);
     const hydratedRosters: string[] = [];
-    (indexer as any).allianceMembers = (id: string) => { hydratedRosters.push(id); return originalMembers(id); };
-    const scoreReads: string[] = [];
-    const originalScore = indexer.highscoreForWallet.bind(indexer);
-    indexer.highscoreForWallet = (wallet, ids) => { scoreReads.push(wallet); return originalScore(wallet, ids); };
+    (indexer as any).allianceMembers = (id: string, ...rest: unknown[]) => { hydratedRosters.push(id); return originalMembers(id, ...rest); };
+    const scoreReads: string[][] = [];
+    const originalScore = indexer.highscoreEntriesForOwners.bind(indexer);
+    indexer.highscoreEntriesForOwners = (planetsByOwner) => { scoreReads.push([...planetsByOwner.keys()]); return originalScore(planetsByOwner); };
     const summary = indexer.allianceState(owner, true);
     expect(hydratedRosters).toEqual(["15"]);
     expect(summary.members).toEqual(state.members);
     expect(summary.directory.map(({ members, ...row }) => row)).toEqual(state.directory.map(({ members, ...row }) => row));
     expect(summary.directory.filter(row => row.allianceId !== "15").every(row => row.members === undefined)).toBe(true);
-    expect(scoreReads).toHaveLength(state.directory.reduce((sum, row) => sum + row.memberCount, 0));
+    // Every listed member is scored in one batched pass, not one highscore read per member.
+    expect(scoreReads).toHaveLength(1);
+    expect(scoreReads[0]).toHaveLength(new Set(state.directory.flatMap(row => row.members?.map(member => member.address) ?? [])).size);
     (indexer as any).allianceMembers = originalMembers;
-    indexer.highscoreForWallet = originalScore;
+    indexer.highscoreEntriesForOwners = originalScore;
     expect(indexer.snapshot()).toMatchObject({
       allianceStaleReason: null,
       safeToServeAllianceState: true

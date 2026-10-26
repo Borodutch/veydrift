@@ -237,24 +237,36 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   };
 }
 
+// Both sums are pure in their arguments, and every planet repeats the same few hundred
+// (cost, level) pairs; recomputing the BigInt series dominated alliance and highscore reads.
+const completedValues = new Map<string, bigint>();
+
 function completedLevelValue(baseCost: Cost | undefined, level: number, factor: CostFactor): bigint {
   if (!baseCost || level <= 0) return 0n;
+  const key = `${baseCost.join(",")}:${factor.join("/")}:${level}`;
+  let value = completedValues.get(key);
+  if (value !== undefined) return value;
 
-  let value = 0n;
+  value = 0n;
   for (let currentLevel = 0; currentLevel < level; currentLevel += 1) {
     value += unitValue(scaleByFactor(baseCost, currentLevel, factor));
   }
+  completedValues.set(key, value);
   return value;
 }
 
 function completedResearchValue(technologyId: number, level: number): bigint {
   const baseCost = researchBaseCosts[technologyId];
   if (!baseCost || level <= 0) return 0n;
+  const key = `research:${technologyId}:${level}`;
+  let value = completedValues.get(key);
+  if (value !== undefined) return value;
 
-  let value = 0n;
+  value = 0n;
   for (let currentLevel = 0; currentLevel < level; currentLevel += 1) {
     value += unitValue(researchCost(technologyId, currentLevel, baseCost));
   }
+  completedValues.set(key, value);
   return value;
 }
 
