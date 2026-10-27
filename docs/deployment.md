@@ -136,6 +136,15 @@ below). The layout keeps a code-only deploy to the code layers:
   its copy in `dist/` without the whitepaper) as layers ahead of the shared packages
   and the code, so they are reused and a code or packages change only writes the few
   MB of the bundle.
+- **Prerender:** the `frontend-prerender` stage opens the built bundle in headless
+  Chromium (`apps/frontend/scripts/prerender.mjs`, Chromium from the `chromium` stage,
+  cached with the dependency install) and saves the home page as `index.html` and the
+  docs chapters and the battle calculator as their own files (`docs/concepts.html`,
+  `calculator.html`), so crawlers that don't run JavaScript read their text. Media and
+  requests to other origins get no answer while it renders, so each file is the app's first
+  render, which the app boots over without a flash. `app.html` keeps the empty app: `serve.mjs` answers it
+  for every other page and share link (the home page's referral links get `index.html`). A
+  new docs chapter needs its route added to the stage.
 - Service environment reaches containers at runtime and as BuildKit secrets
   during the build; only the declared `ARG`s become build arguments, so secrets
   never land in an image.

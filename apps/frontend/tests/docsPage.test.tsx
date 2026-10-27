@@ -47,7 +47,7 @@ energy scale = produced / required
     const serveSource = readFileSync(new URL("../scripts/serve.mjs", import.meta.url), "utf8");
     expect(serveSource).toContain('pathname === "/docs" || pathname.startsWith("/docs/")');
     expect(serveSource).toContain('pathname === "/play" || pathname.startsWith("/play/")');
-    expect(serveSource).toContain('return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html")');
+    expect(serveSource).toContain('return responseFor(await prerendered.exists() ? prerendered : Bun.file(await appShellUrl()), "/index.html")');
     expect(serveSource).toContain('".md": "text/markdown; charset=utf-8"');
 
     const rawDocs = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");

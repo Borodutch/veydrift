@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { App } from "./App";
+import { App, preloadPage } from "./App";
 import { scheduleFarcasterReady } from "./farcasterReady";
 import { canonicalPathForLegacyHashLocation } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
@@ -13,6 +13,10 @@ if (canonicalPath) {
 
 resetDocumentTitle();
 document.documentElement.dataset.veydriftSurface = import.meta.env.MODE;
-render(<App />, document.querySelector("#app") as HTMLElement);
-scheduleFarcasterReady();
-initSfx();
+// A lazy page's chunk loads before the first render, so the app takes over the copy prerendered for
+// crawlers (scripts/prerender.mjs) in place instead of showing its loading fallback first.
+void preloadPage().catch(() => undefined).then(() => {
+  render(<App />, document.querySelector("#app") as HTMLElement);
+  scheduleFarcasterReady();
+  initSfx();
+});

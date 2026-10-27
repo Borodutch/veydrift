@@ -716,8 +716,15 @@ function shortAddress(value) {
   return text.length > 12 ? `${text.slice(0, 6)}...${text.slice(-4)}` : text;
 }
 
+// The image prerenders the home page into index.html for crawlers and keeps the empty app as app.html
+// (Dockerfile, frontend-prerender), which every other page boots from.
+async function appShellUrl() {
+  const shell = staticFileUrl("/app.html");
+  return (await Bun.file(shell).exists()) ? shell : staticFileUrl("/index.html");
+}
+
 async function shareHtmlResponse(request, route) {
-  const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
+  const appHtml = await readFile(route.kind === "referral" ? staticFileUrl("/index.html") : await appShellUrl(), "utf8");
   const html = await renderShareHtml(request, route, appHtml);
 
   return new Response(html, {
@@ -805,78 +812,78 @@ export function injectShareMeta(html, {
   nextHtml = replaceHeadTag(nextHtml, /<title>.*?<\/title>/s, `<title>${escapeHtml(title)}</title>`);
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+name="description"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/s,
     `<meta name="description" content="${escapeHtml(description)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<link\s+rel="canonical"\s+href="[^"]*"\s*\/>/s,
+    /<link\s+rel="canonical"\s+href="[^"]*"\s*\/?>/s,
     `<link rel="canonical" href="${escapeHtml(canonicalUrl)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:title"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:description"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:url"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:url"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:url" content="${escapeHtml(canonicalUrl)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:image"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:image"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:image" content="${escapeHtml(imageUrl)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:image:secure_url"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:image:secure_url"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:image:secure_url" content="${escapeHtml(imageUrl)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:image:type" content="${escapeHtml(imageType)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/?>/s,
     `<meta property="og:image:alt" content="${escapeHtml(title)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/?>/s,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/?>/s,
     `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/?>/s,
     `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`,
   );
   nextHtml = replaceHeadTag(
     nextHtml,
-    /<meta\s+name="twitter:image:alt"\s+content="[^"]*"\s*\/>/s,
+    /<meta\s+name="twitter:image:alt"\s+content="[^"]*"\s*\/?>/s,
     `<meta name="twitter:image:alt" content="${escapeHtml(title)}" />`,
   );
   if (launchUrl) {
     nextHtml = replaceHeadTag(
       nextHtml,
-      /<meta\s+name="fc:miniapp"\s+content='[^']*'\s*\/>/s,
+      /<meta\s+name="fc:miniapp"\s+content=(?:'[^']*'|"[^"]*")\s*\/?>/s,
       `<meta name="fc:miniapp" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl: miniAppImageUrl, launchUrl })))}' />`,
     );
     nextHtml = replaceHeadTag(
       nextHtml,
-      /<meta\s+name="fc:frame"\s+content='[^']*'\s*\/>/s,
+      /<meta\s+name="fc:frame"\s+content=(?:'[^']*'|"[^"]*")\s*\/?>/s,
       `<meta name="fc:frame" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl: miniAppImageUrl, launchUrl, actionType: "launch_frame" })))}' />`,
     );
   }
@@ -1224,7 +1231,9 @@ export async function frontendResponse(request) {
     || inviteAppRouteForPathname(route)
     || gameAppRouteForPathname(route)
   ) {
-    return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
+    // Pages the image prerendered for crawlers (/docs/concepts → docs/concepts.html) answer with their own copy.
+    const prerendered = Bun.file(staticFileUrl(`${route.replace(/\/+$/, "")}.html`));
+    return responseFor(await prerendered.exists() ? prerendered : Bun.file(await appShellUrl()), "/index.html");
   }
 
   return new Response("Not found", { status: 404 });

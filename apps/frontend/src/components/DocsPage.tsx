@@ -1,6 +1,7 @@
 import { Bot, GitFork } from "lucide-preact";
 import { useLayoutEffect, useRef, useState } from "preact/hooks";
 import { SiteHeader } from "./SiteHeader";
+import { setPageHead } from "../pageTitle";
 import { docsPageForSlug, docsPages, docsSlugFromPath } from "../docs/docsSource";
 import { InlineMarkdown } from "../docs/inlineMarkdown";
 import { parseMarkdown, type MarkdownNode } from "../docs/markdown";
@@ -10,7 +11,12 @@ type DocsPageProps = {
 };
 
 export function DocsApp() {
-  return <DocsPage pathname={typeof window === "undefined" ? "/docs" : window.location.pathname} />;
+  const pathname = typeof window === "undefined" ? "/docs" : window.location.pathname;
+  useLayoutEffect(() => {
+    const page = docsPageForSlug(docsSlugFromPath(pathname));
+    setPageHead({ title: `${page.title} — Veydrift docs`, description: page.description, path: page.slug === "beginner" ? "/docs" : `/docs/${page.slug}` });
+  }, [pathname]);
+  return <DocsPage pathname={pathname} />;
 }
 
 export function DocsPage({ pathname = "/docs" }: DocsPageProps) {

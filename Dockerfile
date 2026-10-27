@@ -78,6 +78,24 @@ ARG VITE_VEYDRIFT_SURFACE
 # without copying public/ into dist/: the frontend stage does that from a cached layer.
 RUN cd apps/frontend && VEYDRIFT_PUBLIC_FROM_IMAGE=1 vite build
 
+# Headless Chromium for the prerender step below, built off the dependency install so it
+# stays cached until the lockfile changes.
+FROM install AS chromium
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium \
+  && rm -rf /var/lib/apt/lists/*
+
+# Search engines and AI crawlers that don't run JavaScript get pages as headless Chromium
+# renders them (scripts/prerender.mjs): the home page into index.html, the docs chapters
+# and the battle calculator into their own files. app.html keeps the empty app, which
+# every other page boots from (serve.mjs). A new docs chapter goes in this list.
+FROM chromium AS frontend-prerender
+COPY --from=frontend-build /app/apps/frontend/dist apps/frontend/dist
+COPY apps/frontend/scripts/prerender.mjs apps/frontend/scripts/
+RUN cd apps/frontend && cp dist/index.html dist/app.html \
+  && CHROME_PATH=/usr/bin/chromium node scripts/prerender.mjs dist / /calculator \
+    /docs /docs/concepts /docs/catalogs /docs/formulas /docs/mechanics /docs/contracts
+
 # The large, rarely changing game art (public/, and its copy in dist/ without the
 # unpublished whitepaper) goes in first, ahead of the shared packages, so a code or
 # packages change only adds the small layers after it.
@@ -88,6 +106,6 @@ COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/backend apps/backend
 COPY --exclude=public apps/frontend apps/frontend
-COPY --from=frontend-build /app/apps/frontend/dist apps/frontend/dist
+COPY --from=frontend-prerender /app/apps/frontend/dist apps/frontend/dist
 WORKDIR /app/apps/frontend
 CMD ["bun", "run", "serve"]

@@ -22,6 +22,7 @@ import { useVerifiedCombatModel } from "../combatModel";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { apiBaseUrlForRuntimeConfig, runtimeConfigUrl } from "../runtimeConfig";
+import { setPageHead } from "../pageTitle";
 import { getSrcSet } from "../utils/imageSizes";
 import { fetchGameApiJson } from "../walletFlow";
 import { BattleResults } from "./BattleResults";
@@ -58,6 +59,11 @@ export function fleetsToLoadOnOpen(setup: CalculatorSetup): Array<{ side: keyof 
 }
 
 export function BattleCalculatorApp() {
+  useEffect(() => setPageHead({
+    title: "Battle calculator — Veydrift",
+    description: "Simulate a Veydrift battle before you send a fleet: set the attacking and defending fleets and defenses, or load them from a planet's coordinates, and see how the fight ends.",
+    path: "/calculator",
+  }), []);
   return (
     // No z-indexed content wrapper: the battle report dialog must stack above the sticky header.
     <div className="min-h-dvh bg-[#060b16] text-slate-100">
