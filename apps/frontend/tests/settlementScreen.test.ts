@@ -71,11 +71,10 @@ describe("settlement screen mode", () => {
     ).toBe(false);
   });
 
-  test("routes the landing through the retro CD box pre-play gate before playable state", async () => {
+  test("routes the landing through the still CD box hero before playable state", async () => {
     const appSource = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
     const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
     const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
     expect(appSource).toContain("module.FirstPlanetSettlementApp");
@@ -84,19 +83,16 @@ describe("settlement screen mode", () => {
     expect(settlementSource).toContain("<ComingSoonApp");
     expect(settlementSource).toContain("heroSupport={<SettlementSupportLinks />}");
     expect(settlementSource).not.toContain("<SettlementScanner");
-    expect(landingSource).toContain("<RetroCdBoxHero");
-    expect(landingSource).toContain('ariaLabel="Veydrift landing"');
-    expect(landingSource).toContain('stage="section"');
-    expect(landingSource).toContain('id="claim"');
-    expect(heroSource).toContain("retro-cd-case");
-    expect(heroSource).toContain("retro-cd-front");
-    expect(heroSource).toContain("retro-cd-back");
-    expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
-    expect(heroSource).toContain("/assets/landing/qa-screens/shipyard-desktop.jpg");
-    expect(heroSource).toContain("/assets/landing/qa-screens/missions-desktop.jpg");
-    expect(stylesSource).toContain(".retro-cd-case");
-    expect(stylesSource).toContain(".retro-cd-front");
-    expect(stylesSource).toContain(".retro-cd-back");
+    expect(landingSource).toContain('<section className="retro-cd-stage" id="claim">');
+    expect(landingSource).toContain('className="retro-cd-cover-art"');
+    for (const width of [480, 600, 720, 1080]) {
+      expect(landingSource).toContain(`/assets/landing/cd-cover-${width}.webp ${width}w`);
+      expect(await Bun.file(new URL(`../public/assets/landing/cd-cover-${width}.webp`, import.meta.url)).exists()).toBe(true);
+    }
+    expect(stylesSource).toContain(".retro-cd-cover-art");
+    // The hero is still: no perpetual animation on the first screen
+    expect(stylesSource).not.toContain("retro-cd-disc-spin");
+    expect(stylesSource).not.toContain("retro-cd-twinkle");
   });
 
   test("fails closed when a canonical alliance invite is incomplete or mismatched", async () => {
@@ -109,26 +105,15 @@ describe("settlement screen mode", () => {
     expect(settlementSource.indexOf('title="Invalid alliance invite"')).toBeLessThan(settlementSource.indexOf("<FlowBody", settlementSource.indexOf('title="Invalid alliance invite"')));
   });
 
-  test("uses the beta cover badge without the retired CD cover labels", async () => {
+  test("uses the beta cover art without the retired CD cover labels", async () => {
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
+    const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
 
-    expect(heroSource).not.toContain("PC CD-ROM");
-    expect(heroSource).not.toContain(">ALPHA<");
-    expect(heroSource).toContain(">BETA<");
-    expect(heroSource).not.toContain("Back cover");
-    expect(heroSource).not.toContain("Live Veydrift surfaces from the current alpha build.");
-
+    expect(landingSource).toContain("marked Open Beta on Base Mainnet");
+    expect(landingSource).not.toContain("PC CD-ROM");
+    expect(landingSource).not.toContain(">ALPHA<");
     expect(settlementSource).toContain("Connect wallet");
     expect(settlementSource).toContain("Paste invite code");
-    expect(heroSource).toContain("Build an empire, raid your rivals and drift through the Rift.");
-    expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
-    expect(heroSource).toContain("/assets/landing/qa-screens/shipyard-desktop.jpg");
-    expect(heroSource).toContain("/assets/landing/qa-screens/missions-desktop.jpg");
-    expect(heroSource).toContain("Onchain");
-    expect(heroSource).toContain("Alliances");
-    expect(heroSource).toContain("Fleet ops");
-    expect(heroSource).toContain("Rift economy");
   });
 
   test("keeps the landing wallet and alliance invitation hero warm and concise", async () => {

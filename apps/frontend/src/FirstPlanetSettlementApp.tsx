@@ -1646,7 +1646,6 @@ export function FirstPlanetSettlementApp() {
   return (
     <>
       <ComingSoonApp
-        heroViewSignal={planet.kind === "success" ? "open" : undefined}
         hero={
           invalidPaidAllianceInvite ? (
             <StateMessage title="Invalid alliance invite" body="This link is incomplete or does not match its private invite key. Ask the alliance member for a fresh invite link." tone="warning" />

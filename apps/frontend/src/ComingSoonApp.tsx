@@ -12,7 +12,6 @@ import {
   Rocket,
   Users,
 } from "lucide-preact";
-import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
 import { landingImage } from "./landingImage";
 import { getStillVariantSrc } from "./utils/imageSizes";
 import { Skeleton, SkeletonRegion, skeletonList } from "./components/Skeleton";
@@ -141,11 +140,9 @@ type LandingFleetMission = {
 export function ComingSoonApp({
   hero,
   heroSupport,
-  heroViewSignal,
 }: {
   hero: ComponentChildren;
   heroSupport?: ComponentChildren;
-  heroViewSignal?: CdView | undefined;
 }) {
   useLandingScrollParallax();
   useLandingReveals();
@@ -161,7 +158,7 @@ export function ComingSoonApp({
 
   return (
     <main className="landing-page min-h-dvh overflow-hidden text-white">
-      <HeroSection hero={hero} heroSupport={heroSupport} heroViewSignal={heroViewSignal} />
+      <HeroSection hero={hero} heroSupport={heroSupport} />
       <LandingTrailer />
       <ScreenshotsSection />
       <HowItWorksSection />
@@ -275,19 +272,26 @@ function LandingTrailer() {
   );
 }
 
-function HeroSection({
-  hero,
-  heroSupport,
-  heroViewSignal,
-}: {
-  hero: ComponentChildren;
-  heroSupport?: ComponentChildren;
-  heroViewSignal?: CdView | undefined;
-}) {
+// A still render of the Veydrift CD box: nothing on the first screen animates, so the page settles at first paint.
+function HeroSection({ hero, heroSupport }: { hero: ComponentChildren; heroSupport?: ComponentChildren }) {
   return (
-    <RetroCdBoxHero ariaLabel="Veydrift landing" id="claim" stage="section" support={heroSupport} viewSignal={heroViewSignal}>
-      {hero}
-    </RetroCdBoxHero>
+    <section className="retro-cd-stage" id="claim">
+      {heroSupport}
+      <div className="retro-cd-hero">
+        <div className="retro-cd-copy-panel">{hero}</div>
+        <img
+          alt="The Veydrift game box: a violet crystal planet under the Veydrift logo, marked Open Beta on Base Mainnet"
+          className="retro-cd-cover-art"
+          decoding="async"
+          fetchpriority="high"
+          height={1232}
+          sizes="(min-width: 1021px) 540px, (min-width: 601px) 400px, 340px"
+          src="/assets/landing/cd-cover-600.webp"
+          srcSet="/assets/landing/cd-cover-480.webp 480w, /assets/landing/cd-cover-600.webp 600w, /assets/landing/cd-cover-720.webp 720w, /assets/landing/cd-cover-1080.webp 1080w"
+          width={1080}
+        />
+      </div>
+    </section>
   );
 }
 

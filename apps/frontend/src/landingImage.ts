@@ -1,6 +1,6 @@
 import { getImageDimensions, getSrcSet } from "./utils/imageSizes";
 
-// A lighter candidate for the art a phone draws largest at the top of the landing (the CD disc, its LCP image).
+// A lighter candidate for the landing art drawn at mid sizes (between the 256 and 512 px variants).
 const lighter: Record<string, string> = {
   "/assets/game/style-pass/generated/planets/crystal-violet.webp": "/assets/landing/crystal-violet-480.webp 480w",
 };

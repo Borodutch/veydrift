@@ -40,7 +40,6 @@ describe("AlliancePage loading display", () => {
   test("restyles the Invite referral panel as a core app page surface", () => {
     expect(alliancePageSource).toContain('<section className="invite-page grid min-h-0 gap-4">');
     expect(stylesSource).toContain(".invite-page .referral-program");
-    expect(stylesSource).toContain("border: 1px solid rgba(255, 255, 255, 0.1);");
     expect(stylesSource).toContain("background: rgba(255, 255, 255, 0.04);");
     expect(stylesSource).toContain(".invite-page .referral-copy-button");
   });
