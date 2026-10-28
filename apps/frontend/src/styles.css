@@ -2573,6 +2573,11 @@ h4 {
   animation: state-enter 320ms ease both;
 }
 
+/* The landing hero's copy is part of the prerendered first paint: drawn at once, not faded in. */
+.retro-cd-copy-panel .state-enter {
+  animation: none;
+}
+
 @keyframes state-shake {
   0%, 100% {
     transform: translateX(0);
