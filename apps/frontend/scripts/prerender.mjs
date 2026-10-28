@@ -94,10 +94,11 @@ try {
     }, builtPreloads);
     // The page carries the CSS for its top (rules matching something in the first 1600 px, which covers a phone's
     // first screen too, ignoring states like :hover, plus fonts and animations), so the first paint waits only for
-    // the HTML. The full stylesheet loads alongside without blocking it, for the rest of the page and whatever the
-    // app draws later. The browser itself does the matching.
+    // the HTML. The full stylesheet, for the rest of the page and whatever the app draws later, loads after the page
+    // (below). The browser itself does the matching.
     const used = await page.evaluate(() => {
-      const bare = (selector) => selector.replace(/::?[\w-]+(\((?:[^()]|\([^()]*\))*\))?/g, "").trim();
+      // Drops pseudo-classes and pseudo-elements, but not the escaped colons of Tailwind variants (.sm\:px-6).
+      const bare = (selector) => selector.replace(/(?<!\\)::?[\w-]+(\((?:[^()]|\([^()]*\))*\))?/g, "").trim();
       const nearTop = (element) => element.getBoundingClientRect().top + window.scrollY < 1600;
       const keep = (rule) => {
         if (rule instanceof CSSStyleRule) {
@@ -123,8 +124,9 @@ try {
       .replace(/<link rel="stylesheet"[^>]*href="(\/assets\/[^"]+\.css)"[^>]*>/g, (_, href) => (styles.push(href), ""))
       .replace(/<script type="module"[^>]*src="(\/assets\/[^"]+\.js)"[^>]*><\/script>/g, (_, src) => (scripts.push(src), ""))
       .replace(/<link rel="modulepreload"[^>]*>/g, "")
-      .replace("</head>", `<style>${used}</style>${styles.map((href) => `<link rel="preload" as="style" href="${href}" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="${href}"></noscript>`).join("")}</head>`)
+      .replace("</head>", `<style>${used}</style>${styles.map((href) => `<noscript><link rel="stylesheet" href="${href}"></noscript>`).join("")}</head>`)
       .replace("</body>", `<script>addEventListener("load",()=>{${[
+        ...styles.map((href) => `document.head.append(Object.assign(document.createElement("link"),{rel:"stylesheet",href:${JSON.stringify(href)}}));`),
         ...scripts.map((src) => `document.head.append(Object.assign(document.createElement("script"),{type:"module",src:${JSON.stringify(src)}}));`),
       ].join("")}})</script></body>`);
     if (!scripts.length) throw new Error(`${route}: no app script found in the page`);
