@@ -4308,3 +4308,53 @@ h4 {
 :root[data-sfx-muted="1"] .sound-toggle-icon-off {
   display: block;
 }
+
+/* Docs tables: on phones each row becomes a card of label/value pairs (the label comes from the cell's
+   data-label), so nothing scrolls sideways and nothing needs JavaScript. */
+@media (max-width: 720px) {
+  .docs-table table,
+  .docs-table tbody,
+  .docs-table tr,
+  .docs-table td {
+    display: block;
+    width: 100%;
+  }
+  .docs-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .docs-table tr {
+    padding: 0.625rem 0.75rem;
+  }
+  .docs-table td {
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    column-gap: 0.75rem;
+    padding: 0.125rem 0;
+  }
+  .docs-table td::before {
+    content: attr(data-label);
+    padding-top: 0.3rem;
+    color: rgb(103 232 249 / 0.7);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    line-height: 1.25rem;
+    text-transform: uppercase;
+  }
+  .docs-table td:first-child {
+    display: block;
+    color: rgb(241 245 249);
+    font-weight: 600;
+  }
+  .docs-table td:first-child::before {
+    content: none;
+  }
+  .docs-table .docs-long {
+    min-width: 0;
+  }
+}

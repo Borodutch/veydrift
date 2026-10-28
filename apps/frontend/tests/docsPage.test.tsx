@@ -41,8 +41,8 @@ energy scale = produced / required
     expect(docsPageForSlug("ai").title).toBe("Beginner Tutorial");
 
     const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-    expect(appSource).toContain('window.location.pathname.startsWith("/docs")');
-    expect(appSource).toContain("return <DocsApp />");
+    expect(appSource).toContain('path === "/docs" || path.startsWith("/docs/")');
+    expect(appSource).toContain('docs: () => import("./components/DocsPage").then((module) => module.DocsApp)');
 
     const serveSource = readFileSync(new URL("../scripts/serve.mjs", import.meta.url), "utf8");
     expect(serveSource).toContain('pathname === "/docs" || pathname.startsWith("/docs/")');

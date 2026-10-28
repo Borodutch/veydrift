@@ -9,10 +9,10 @@ describe("app routing", () => {
     ]);
 
     expect(source).toContain("<AuctionBanner />");
-    expect(source).toContain('pathname.startsWith("/docs")');
+    expect(source).toContain('path === "/docs" || path.startsWith("/docs/")');
     expect(source).not.toContain("CcaApp");
     expect(source).not.toContain("Pact");
-    expect(source).toContain("return <FirstPlanetSettlementApp />");
+    expect(source).toContain('home: () => import("./FirstPlanetSettlementApp")');
     expect(game).not.toContain("auctionBanner");
     expect(topBar).not.toContain("auctionBanner");
     expect(topBar).toContain('key="crystal"');

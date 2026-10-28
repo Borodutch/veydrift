@@ -1,17 +1,32 @@
-import { useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { Play } from "lucide-preact";
 
 // Versioned: /assets/ is served immutable, so a new cut needs a new file name.
 const trailer = {
   captions: "/assets/landing/veydrift-trailer-v1.vtt",
-  poster: "/assets/landing/veydrift-trailer-v1-poster.webp",
+  poster: "/assets/landing/veydrift-trailer-v1-poster-960.webp",
   src: "/assets/landing/veydrift-trailer-v1.mp4",
 };
 
 // Click-to-play with sound; preload="none" keeps the 2-minute file off the wire until asked for.
 export function TrailerPlayer() {
   const video = useRef<HTMLVideoElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const [started, setStarted] = useState(false);
+  // A poster downloads with the page wherever the player is, so it's only set once the player nears the screen.
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const element = box.current;
+    if (!element || typeof IntersectionObserver === "undefined") return setNear(true);
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setNear(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "600px" });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const play = () => {
     setStarted(true);
@@ -19,14 +34,14 @@ export function TrailerPlayer() {
   };
 
   return (
-    <div className="relative mx-auto max-w-6xl overflow-hidden rounded-xl border border-cyan-300/15 bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
+    <div ref={box} className="relative mx-auto max-w-6xl overflow-hidden rounded-xl border border-cyan-300/15 bg-black shadow-[0_28px_110px_rgba(0,0,0,0.55),0_0_60px_rgba(128,241,255,0.08)]">
       <video
         className="block aspect-video w-full bg-black"
         controls={started}
         onEnded={() => setStarted(false)}
         onPlay={() => setStarted(true)}
         playsInline
-        poster={trailer.poster}
+        poster={near ? trailer.poster : undefined}
         preload="none"
         ref={video}
         title="Veydrift in two minutes"

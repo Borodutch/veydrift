@@ -63,6 +63,7 @@ export function BattleCalculatorApp() {
     title: "Battle calculator — Veydrift",
     description: "Simulate a Veydrift battle before you send a fleet: set the attacking and defending fleets and defenses, or load them from a planet's coordinates, and see how the fight ends.",
     path: "/calculator",
+    image: "/assets/og/calculator-v1.jpg",
   }), []);
   return (
     // No z-indexed content wrapper: the battle report dialog must stack above the sticky header.
@@ -269,7 +270,7 @@ function FleetCard({ error, fleet, loading, onChange, onLoad, onRemove, target, 
       {error ? <p className="text-xs text-red-200" role="alert">{error}</p> : null}
       <div className="grid grid-cols-3 gap-2">
         {(["weapons", "shielding", "armor"] as const).map((key) => (
-          <label className="grid gap-1 text-[11px] text-slate-500" key={key}>
+          <label className="grid gap-1 text-[11px] text-slate-400" key={key}>
             {key === "weapons" ? "Weapons" : key === "shielding" ? "Shields" : "Armor"}
             <CountInput
               label={`${title} ${key}`}

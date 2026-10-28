@@ -3,7 +3,7 @@ import { defenseCatalog, shipyardCatalog } from "./playableMvp";
 import { MAX_PRODUCTION_ORDERS } from "./productionBuildPlan";
 import { diagnosticRoute } from "./requestDiagnostics";
 import type * as Api from "../../../packages/api-types/src/index";
-import { sdk } from "@farcaster/miniapp-sdk";
+import { loadFarcasterSdk, mightBeFarcasterMiniApp } from "./farcasterReady";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toFunctionSelector, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
@@ -1755,7 +1755,7 @@ export function getInjectedProvider(globalWindow: InjectedWindow | undefined): E
 
 export async function getAvailableWalletProviderDetails(
   globalWindow: InjectedWindow | undefined,
-  farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+  farcasterClient?: FarcasterWalletClient,
   options: AvailableWalletProviderOptions = {},
 ): Promise<AvailableWalletProvider | undefined> {
   const injected = getInjectedProvider(globalWindow);
@@ -1767,7 +1767,11 @@ export async function getAvailableWalletProviderDetails(
     };
   }
 
-  const farcasterProvider = await getFarcasterEthereumProvider(farcasterClient);
+  // The Mini App SDK loads only where a Mini App host could be (an iframe or a React Native web view).
+  const client = farcasterClient ?? (mightBeFarcasterMiniApp()
+    ? await loadFarcasterSdk().then((sdk) => sdk as unknown as FarcasterWalletClient).catch(() => undefined)
+    : undefined);
+  const farcasterProvider = client ? await getFarcasterEthereumProvider(client) : undefined;
   if (farcasterProvider) {
     configureWalletTransactionTransport(farcasterProvider, "farcaster", defaultVeydriftChainForLocation().rpcUrls[0]);
     return {
@@ -1787,7 +1791,7 @@ export async function getAvailableWalletProviderDetails(
 
 export async function getAvailableWalletProvider(
   globalWindow: InjectedWindow | undefined,
-  farcasterClient: FarcasterWalletClient = sdk as unknown as FarcasterWalletClient,
+  farcasterClient?: FarcasterWalletClient,
   options: AvailableWalletProviderOptions = {},
 ): Promise<Eip1193Provider | undefined> {
   return (await getAvailableWalletProviderDetails(globalWindow, farcasterClient, options))?.provider;

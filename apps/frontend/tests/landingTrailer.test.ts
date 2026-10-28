@@ -6,7 +6,7 @@ import { frontendResponse, responseHeadersFor } from "../scripts/serve.mjs";
 const landingSource = new URL("../src/ComingSoonApp.tsx", import.meta.url);
 const playerSource = new URL("../src/components/TrailerPlayer.tsx", import.meta.url);
 const landingAsset = (name: string) => new URL(`../public/assets/landing/${name}`, import.meta.url);
-const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster.webp", "veydrift-trailer-v1.vtt"];
+const trailerFiles = ["veydrift-trailer-v1.mp4", "veydrift-trailer-v1-poster-960.webp", "veydrift-trailer-v1.vtt"];
 
 describe("landing trailer", () => {
   test("places the trailer right under the claim hero", async () => {

@@ -1,3 +1,4 @@
+import { landingImage } from "../landingImage";
 import { ArrowRight, ExternalLink, GitFork } from "lucide-preact";
 import { auctionUrl } from "../auction";
 import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
@@ -23,7 +24,7 @@ export function SiteHeader({ current, overlay = false, wide = false }: { current
       <div className={`mx-auto flex h-14 items-center gap-2 px-4 sm:gap-3 sm:px-6 ${wide ? "max-w-[96rem]" : "max-w-6xl"}`}>
         <a aria-label="Veydrift home" className="group flex shrink-0 items-center gap-2.5" href="/">
           <span className="relative grid h-8 w-8 place-items-center overflow-hidden rounded-full ring-1 ring-cyan-300/40 transition group-hover:ring-cyan-200/80">
-            <img alt="" className="h-full w-full scale-125 object-cover" src="/assets/game/style-pass/generated/planets/crystal-violet.webp" />
+            <img alt="" className="h-full w-full scale-125 object-cover" {...landingImage("/assets/game/style-pass/generated/planets/crystal-violet.webp", "32px")} />
           </span>
           <span className="text-sm font-semibold uppercase tracking-[0.32em] text-white">Veydrift</span>
         </a>

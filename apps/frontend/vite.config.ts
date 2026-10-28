@@ -64,14 +64,13 @@ export default defineConfig(({ mode }) => {
           entryFileNames: isTestSurface
             ? "assets/[name]-settlement-[hash].js"
             : "assets/[name]-[hash].js",
-          manualChunks(id) {
-            // Reown is only imported after a regular-browser player explicitly
-            // opens Connect. Keep it out of the initial bundle, especially the
-            // Farcaster Mini App surface where this connector is disabled.
-            if (id.includes("/node_modules/@reown/") || id.includes("/node_modules/@walletconnect/")) {
-              return "reown-wallet";
-            }
-            return undefined;
+          codeSplitting: {
+            // Reown is only imported after a regular-browser player explicitly opens Connect. Keep it out of
+            // the initial bundle, especially the Farcaster Mini App surface where this connector is disabled.
+            // Only Reown and WalletConnect themselves go in its chunk: the libraries they share with the rest of
+            // the app (the Mini App SDK's, say) must not follow them in, or every page would download it up front.
+            includeDependenciesRecursively: false,
+            groups: [{ name: "reown-wallet", test: /\/node_modules\/@(reown|walletconnect)\// }],
           },
         },
       },

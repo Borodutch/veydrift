@@ -13,6 +13,8 @@ import {
   Users,
 } from "lucide-preact";
 import { RetroCdBoxHero, type CdView } from "./components/RetroCdBoxHero";
+import { landingImage } from "./landingImage";
+import { getStillVariantSrc } from "./utils/imageSizes";
 import { Skeleton, SkeletonRegion, skeletonList } from "./components/Skeleton";
 import { TrailerPlayer } from "./components/TrailerPlayer";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
@@ -295,7 +297,8 @@ function ScreenshotsSection() {
       <img
         alt=""
         className="landing-layer landing-layer-ship right-[-2rem] top-14 hidden w-52 opacity-40 md:block"
-        src={ships.lightFighter}
+        loading="lazy"
+        {...landingImage(ships.lightFighter, "208px")}
       />
       <div className="relative z-10 mx-auto max-w-7xl">
         <div className="grid gap-5 lg:grid-cols-[0.78fr_1.22fr] lg:items-end">
@@ -313,7 +316,7 @@ function ScreenshotsSection() {
               data-tilt
               key={shot.title}
             >
-              <img alt={`${shot.title} screenshot`} src={shot.src} />
+              <img alt={`${shot.title} screenshot`} loading="lazy" {...landingImage(shot.src, "(min-width: 1024px) 430px, 92vw")} />
               <div>
                 <h3>{shot.title}</h3>
                 <p>{shot.body}</p>
@@ -332,7 +335,8 @@ function HowItWorksSection() {
       <img
         alt=""
         className="landing-layer landing-layer-research right-[-3rem] top-12 hidden w-72 opacity-35 md:block"
-        src={assets.plasma}
+        loading="lazy"
+        {...landingImage(assets.plasma, "288px")}
       />
       <div className="mx-auto max-w-7xl">
         <div className="landing-reveal max-w-3xl">
@@ -452,7 +456,11 @@ function RiftSection() {
           <img
             alt=""
             className="absolute inset-0 h-full w-full object-cover opacity-88"
-            src={assets.rift}
+            loading="lazy"
+            decoding="async"
+            height={512}
+            src={getStillVariantSrc(assets.rift, 512)}
+            width={512}
           />
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(13,24,41,0.94)_0%,rgba(13,24,41,0.5)_56%,rgba(13,24,41,0.18)_100%)]" />
           <div className="relative z-10 flex h-full min-h-[22rem] flex-col justify-end p-6 sm:p-9">
@@ -499,7 +507,8 @@ function FeedSection() {
       <img
         alt=""
         className="landing-layer landing-layer-ship left-[-1rem] top-12 w-44 rotate-[12deg] opacity-45 md:w-64"
-        src={ships.colonyShip}
+        loading="lazy"
+        {...landingImage(ships.colonyShip, "(min-width: 768px) 256px, 176px")}
       />
       <div className="relative z-10 mx-auto max-w-4xl">
         <div className="landing-reveal mx-auto max-w-2xl text-center">
@@ -550,7 +559,8 @@ function AlphaSection() {
       <img
         alt=""
         className="landing-layer landing-layer-planet left-[62%] top-8 w-72 opacity-38 md:w-96"
-        src={planets.crystal}
+        loading="lazy"
+        {...landingImage(planets.crystal, "(min-width: 768px) 384px, 288px")}
       />
       <div className="relative z-10 mx-auto max-w-7xl">
         <div
@@ -618,7 +628,8 @@ function AlliancesSection() {
       <img
         alt=""
         className="landing-layer landing-layer-ship-slow right-[4%] top-16 hidden w-44 opacity-32 md:block"
-        src={ships.deathstar}
+        loading="lazy"
+        {...landingImage(ships.deathstar, "176px")}
       />
       <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:gap-16">
         <div className="landing-reveal">

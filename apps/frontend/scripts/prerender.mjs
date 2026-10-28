@@ -34,6 +34,8 @@ const fileFor = (path) =>
     .map((file) => join(dir, file))
     .find((file) => existsSync(file) && statSync(file).isFile());
 const app = join(dir, existsSync(join(dir, "404.html")) ? "404.html" : "index.html");
+// The chunks the build itself preloads; prerendered pages keep only these.
+const builtPreloads = [...readFileSync(app, "utf8").matchAll(/<link rel="modulepreload"[^>]*href="([^"]+)"/g)].map((match) => match[1]);
 const server = createServer((request, response) => {
   const path = decodeURIComponent(new URL(request.url, "http://x").pathname);
   const file = fileFor(path) ?? (extname(path) ? undefined : app);
@@ -81,8 +83,51 @@ try {
       if (Date.now() > deadline) throw new Error(`${route}: still changing after 20 s`);
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    // Links the app added while loading (like Vite's preloads of lazy chunks) are absolute; make them root-relative
-    const html = (await page.content()).replaceAll(`${origin}/`, "/");
+    // Preloads the app added while loading are lazy chunks (the WalletConnect bundle among them): saved into
+    // the page, every visitor would fetch them up front, competing with the stylesheet for the first paint.
+    await page.evaluate((keep) => {
+      for (const link of document.querySelectorAll('link[rel="modulepreload"]')) {
+        if (!keep.includes(new URL(link.href).pathname)) link.remove();
+      }
+      // A poster downloads with the page wherever its video is; the app sets it once the player nears the screen.
+      for (const video of document.querySelectorAll("video[poster]")) video.removeAttribute("poster");
+    }, builtPreloads);
+    // The page carries the CSS for its top (rules matching something in the first 1600 px, which covers a phone's
+    // first screen too, ignoring states like :hover, plus fonts and animations), so the first paint waits only for
+    // the HTML. The full stylesheet loads alongside without blocking it, for the rest of the page and whatever the
+    // app draws later. The browser itself does the matching.
+    const used = await page.evaluate(() => {
+      const bare = (selector) => selector.replace(/::?[\w-]+(\((?:[^()]|\([^()]*\))*\))?/g, "").trim();
+      const nearTop = (element) => element.getBoundingClientRect().top + window.scrollY < 1600;
+      const keep = (rule) => {
+        if (rule instanceof CSSStyleRule) {
+          try { return [...document.querySelectorAll(bare(rule.selectorText) || "*")].some(nearTop); } catch { return true; }
+        }
+        if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
+          const inner = [...rule.cssRules].filter(keep).map((child) => child.cssText).join("");
+          return inner ? `${rule.cssText.slice(0, rule.cssText.indexOf("{"))}{${inner}}` : false;
+        }
+        return true; // @font-face, @keyframes, @property and the like
+      };
+      return [...document.styleSheets].filter((sheet) => sheet.href?.endsWith(".css"))
+        .map((sheet) => [...sheet.cssRules].map((rule) => { const kept = keep(rule); return kept === true ? rule.cssText : kept || ""; }).join(""))
+        .join("");
+    });
+    // On screen the page needs only its HTML and the CSS it uses. The full stylesheet (for what the app draws later)
+    // and the app itself start once the page has loaded, so nothing competes with the first paint and the first
+    // images for the connection; main.tsx then boots at once. Without JavaScript the full stylesheet still applies.
+    const styles = [];
+    const scripts = [];
+    // Links the app added while loading (like the stylesheets of lazy chunks) are absolute; make them root-relative
+    const html = (await page.content()).replaceAll(`${origin}/`, "/")
+      .replace(/<link rel="stylesheet"[^>]*href="(\/assets\/[^"]+\.css)"[^>]*>/g, (_, href) => (styles.push(href), ""))
+      .replace(/<script type="module"[^>]*src="(\/assets\/[^"]+\.js)"[^>]*><\/script>/g, (_, src) => (scripts.push(src), ""))
+      .replace(/<link rel="modulepreload"[^>]*>/g, "")
+      .replace("</head>", `<style>${used}</style>${styles.map((href) => `<link rel="preload" as="style" href="${href}" onload="this.onload=null;this.rel='stylesheet'"><noscript><link rel="stylesheet" href="${href}"></noscript>`).join("")}</head>`)
+      .replace("</body>", `<script>addEventListener("load",()=>{${[
+        ...scripts.map((src) => `document.head.append(Object.assign(document.createElement("script"),{type:"module",src:${JSON.stringify(src)}}));`),
+      ].join("")}})</script></body>`);
+    if (!scripts.length) throw new Error(`${route}: no app script found in the page`);
     if (errors.length) throw new Error(`${route}: ${errors.join("; ")}`);
     if (html.includes(origin)) throw new Error(`${route}: the page wrote ${origin} into its HTML`);
     await page.close();

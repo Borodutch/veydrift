@@ -73,16 +73,14 @@ Shipyard builds ships and most defenses. Ships can move in missions. Defenses st
 
 Open Galaxy or Raid Finder to choose a target. The mission composer previews route, speed, fuel, cargo, and blockers.
 
-| Mission | What it changes |
-| --- | --- |
-| Attack | Sends combat ships to fight, grab loot, and create debris from destroyed units. |
-| Transport | Moves resources to another owned or target planet without replacing your origin fleet. |
-| Deploy | Moves ships and cargo to another owned planet. |
-| Harvest | Sends recyclers to collect debris. |
-| Colonize | Uses a colony ship to settle a new planet slot. |
-| Missile | Fires interplanetary missiles at a target planet's defenses. |
-| ACS Attack | Lets allied fleets join an attack group when available. |
-| ACS Defend | Stations allied defense at a target until the hostile attack lands or the hold expires. |
+- **Attack**: sends combat ships to fight, grab loot, and create debris from destroyed units.
+- **Transport**: moves resources to another owned or target planet without replacing your origin fleet.
+- **Deploy**: moves ships and cargo to another owned planet.
+- **Harvest**: sends recyclers to collect debris.
+- **Colonize**: uses a colony ship to settle a new planet slot.
+- **Missile**: fires interplanetary missiles at a target planet's defenses.
+- **ACS Attack**: lets allied fleets join an attack group when available.
+- **ACS Defend**: stations allied defense at a target until the hostile attack lands or the hold expires.
 
 Mission arrivals and returns update automatically. **Battle pending** or **Battle in progress** means the outcome is not known yet. Check the mission details again shortly for the result; no completion transaction is needed.
 
@@ -136,13 +134,11 @@ Harvest missions use recyclers to collect debris. Recycler cargo capacity and ro
 
 Attack protection prevents invalid or abusive launches. The mission screen shows protection status for the current target.
 
-| Rule | Effect |
-| --- | --- |
-| New or low-score protection | Below 50,000 score, attacks are limited to a 1.5× gap. From 50,000 to 499,999, the limit is 10×. |
-| Same alliance | Blocks hostile attacks against current allies. |
-| Bashing window | Tracks repeated attacks by attacker, defender, and planet in the 24 hour window. |
-| Inactive defender | May remove some protection gates when the defender is marked inactive. |
-| Live Rift extraction | A planet with resources locked in the Rift can be attacked through new or low-score protection and the bashing window, but never by its own alliance. When the attack is only allowed because of the lock, raiders can take only the locked resources. |
+- **New or low-score protection**: below 50,000 score, attacks are limited to a 1.5× gap. From 50,000 to 499,999, the limit is 10×.
+- **Same alliance**: blocks hostile attacks against current allies.
+- **Bashing window**: tracks repeated attacks by attacker, defender, and planet in the 24 hour window.
+- **Inactive defender**: may remove some protection gates when the defender is marked inactive.
+- **Live Rift extraction**: a planet with resources locked in the Rift can be attacked through new or low-score protection and the bashing window, but never by its own alliance. When the attack is only allowed because of the lock, raiders can take only the locked resources.
 
 ### The Rift
 

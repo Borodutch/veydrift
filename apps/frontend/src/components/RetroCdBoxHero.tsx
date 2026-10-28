@@ -1,3 +1,4 @@
+import { landingImage } from "../landingImage";
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Disc3, RotateCw, Undo2 } from "lucide-preact";
@@ -112,7 +113,7 @@ export function RetroCdBoxHero({
         <div className="retro-cd-floaters">
           {cdBackdropFloaters.map((floater) => (
             <div className={`retro-cd-floater ${floater.className}`} key={floater.className}>
-              <img alt={floater.alt} loading="lazy" src={floater.src} />
+              <img alt={floater.alt} loading="lazy" {...landingImage(floater.src, "220px")} />
             </div>
           ))}
         </div>
@@ -142,7 +143,7 @@ export function RetroCdBoxHero({
                           className={`retro-cd-screen ${index === 0 ? "retro-cd-screen-wide" : ""}`}
                           key={screen.src}
                         >
-                          <img alt={screen.alt} src={screen.src} />
+                          <img alt={screen.alt} {...landingImage(screen.src, "(min-width: 1024px) 400px, 270px")} />
                           <figcaption>{screen.label}</figcaption>
                         </figure>
                       ))}
@@ -180,13 +181,13 @@ export function RetroCdBoxHero({
                     alt=""
                     aria-hidden="true"
                     className="retro-cd-tray-art retro-cd-tray-art-planet"
-                    src="/assets/game/style-pass/generated/planets/deuterium-blue.webp"
+                    {...landingImage("/assets/game/style-pass/generated/planets/deuterium-blue.webp", "(min-width: 1024px) 220px, 136px")}
                   />
                   <img
                     alt=""
                     aria-hidden="true"
                     className="retro-cd-tray-art retro-cd-tray-art-ship"
-                    src="/assets/game/style-pass/generated/ships/battlecruiser.webp"
+                    {...landingImage("/assets/game/style-pass/generated/ships/battlecruiser.webp", "(min-width: 1024px) 220px, 145px")}
                   />
 
                   <div className="retro-cd-disc" aria-hidden="true">
@@ -194,7 +195,8 @@ export function RetroCdBoxHero({
                       <img
                         alt=""
                         className="retro-cd-disc-art"
-                        src="/assets/game/style-pass/generated/planets/crystal-violet.webp"
+                        fetchpriority="high"
+                        {...landingImage("/assets/game/style-pass/generated/planets/crystal-violet.webp", "(min-width: 1024px) 450px, 270px")}
                       />
                       <div className="retro-cd-disc-print">
                         <strong>VEYDRIFT</strong>
@@ -225,7 +227,7 @@ export function RetroCdBoxHero({
                   <div className="retro-cd-booklet" aria-hidden="true">
                     <strong className="retro-cd-booklet-title">Field manual</strong>
                     <figure className="retro-cd-booklet-fig">
-                      <img alt="" src="/assets/landing/qa-screens/overview-desktop.jpg" />
+                      <img alt="" {...landingImage("/assets/landing/qa-screens/overview-desktop.jpg", "100px")} />
                       <figcaption>FIG. 1 — COMMAND DECK</figcaption>
                     </figure>
                     <ol className="retro-cd-booklet-tracks">
@@ -239,7 +241,7 @@ export function RetroCdBoxHero({
                     <img
                       alt=""
                       className="retro-cd-booklet-art"
-                      src="/assets/game/style-pass/generated/planets/crystal-violet.webp"
+                      {...landingImage("/assets/game/style-pass/generated/planets/crystal-violet.webp", "(min-width: 1024px) 450px, 270px")}
                     />
                     <p className="retro-cd-booklet-note">
                       Insert into nearest browser. No install required.
@@ -252,14 +254,14 @@ export function RetroCdBoxHero({
                       alt=""
                       aria-hidden="true"
                       className="retro-cd-front-art"
-                      src="/assets/game/style-pass/generated/planets/crystal-violet.webp"
+                      {...landingImage("/assets/game/style-pass/generated/planets/crystal-violet.webp", "(min-width: 1024px) 450px, 270px")}
                     />
                     <div className="retro-cd-brand">
                       <span>Onchain space strategy</span>
                       <strong>VEYDRIFT</strong>
                     </div>
                     <div className="retro-cd-holo" aria-hidden="true">
-                      <img alt="" src="/assets/game/style-pass/generated/ships/deathstar.webp" />
+                      <img alt="" {...landingImage("/assets/game/style-pass/generated/ships/deathstar.webp", "64px")} />
                     </div>
                     <div className="retro-cd-badges" aria-hidden="true">
                       <div className="retro-cd-rating">

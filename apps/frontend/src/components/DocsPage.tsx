@@ -1,5 +1,5 @@
 import { Bot, GitFork } from "lucide-preact";
-import { useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useLayoutEffect } from "preact/hooks";
 import { SiteHeader } from "./SiteHeader";
 import { setPageHead } from "../pageTitle";
 import { docsPageForSlug, docsPages, docsSlugFromPath } from "../docs/docsSource";
@@ -14,7 +14,7 @@ export function DocsApp() {
   const pathname = typeof window === "undefined" ? "/docs" : window.location.pathname;
   useLayoutEffect(() => {
     const page = docsPageForSlug(docsSlugFromPath(pathname));
-    setPageHead({ title: `${page.title} — Veydrift docs`, description: page.description, path: page.slug === "beginner" ? "/docs" : `/docs/${page.slug}` });
+    setPageHead({ title: `${page.title} — Veydrift docs`, description: page.description, path: page.slug === "beginner" ? "/docs" : `/docs/${page.slug}`, image: `/assets/og/docs-${page.slug}-v1.jpg` });
   }, [pathname]);
   return <DocsPage pathname={pathname} />;
 }
@@ -29,6 +29,8 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
   const nodes = first?.type === "heading" && first.text.trim().toLowerCase() === activePage.title.trim().toLowerCase() ? parsed.nodes.slice(1) : parsed.nodes;
   const tocHeadings = parsed.headings.filter((heading) => heading.depth > 1 && heading.text.trim().toLowerCase() !== activePage.title.trim().toLowerCase());
   const tocBaseDepth = Math.min(...tocHeadings.map((heading) => heading.depth));
+  // The chapter title is the page's h1, so its top markdown headings are h2s whatever their depth in docs.md.
+  const levelShift = Math.min(...nodes.flatMap((node) => (node.type === "heading" ? [node.depth] : []))) - 2;
 
   return (
     <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#060b16] text-slate-100">
@@ -74,7 +76,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
           </div>
         </aside>
 
-        <article className="surface min-w-0 rounded-xl">
+        <main className="surface min-w-0 rounded-xl">
           <div className="border-b border-cyan-300/10 px-5 py-6 sm:px-8 sm:py-8">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">{activePage.eyebrow}</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-normal text-white sm:text-4xl">{activePage.title}</h1>
@@ -82,10 +84,10 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
           </div>
           <div className="docs-prose break-words px-5 pb-8 pt-2 sm:px-8 [&>*:not(.docs-table)]:max-w-[52rem]">
             {nodes.map((node, index) => (
-              <MarkdownBlock key={`${node.type}-${index}`} node={node} />
+              <MarkdownBlock key={`${node.type}-${index}`} node={node} levelShift={levelShift} />
             ))}
           </div>
-        </article>
+        </main>
 
         <aside className="hidden lg:sticky lg:top-20 lg:block lg:self-start">
           <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-300/70">On this page</p>
@@ -106,7 +108,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
   );
 }
 
-function MarkdownBlock({ node }: { node: MarkdownNode }) {
+function MarkdownBlock({ node, levelShift = 0 }: { node: MarkdownNode; levelShift?: number }) {
   if (node.type === "heading") {
     const className = node.depth === 1
       ? "mt-8 text-3xl"
@@ -119,9 +121,8 @@ function MarkdownBlock({ node }: { node: MarkdownNode }) {
         <span className="text-sm text-cyan-300/60 opacity-0 transition group-hover:opacity-100">#</span>
       </a>
     );
-    if (node.depth === 1) return <h1 className={`${className} font-semibold tracking-normal`} id={node.id}>{content}</h1>;
-    if (node.depth === 2) return <h2 className={`${className} font-semibold tracking-normal`} id={node.id}>{content}</h2>;
-    return <h3 className={`${className} font-semibold tracking-normal`} id={node.id}>{content}</h3>;
+    const Tag = `h${Math.min(6, Math.max(2, node.depth - (Number.isFinite(levelShift) ? levelShift : 0)))}` as "h2";
+    return <Tag className={`${className} font-semibold tracking-normal`} id={node.id}>{content}</Tag>;
   }
 
   if (node.type === "paragraph") {
@@ -147,65 +148,30 @@ function MarkdownBlock({ node }: { node: MarkdownNode }) {
   return <aside className={`mt-6 rounded-r-lg border-l-2 px-4 py-3 text-sm leading-6 ${tone}`}><InlineMarkdown text={node.text} /></aside>;
 }
 
-/** A table while it fits the article (tables may use its full width, text stays at 52rem); once it would
- *  overflow, each row stacks as a card of label/value pairs. */
+/** A table on wide screens (tables may use the article's full width, text stays at 52rem); on phones each row is a
+ *  card of label/value pairs (styles.css, .docs-table), with no measuring or layout shift, and without JavaScript. */
 function DocsTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
-  const box = useRef<HTMLDivElement>(null);
-  const table = useRef<HTMLTableElement>(null);
-  const [width, setWidth] = useState(0);
-  const [needed, setNeeded] = useState(0); // box width the table needs, 0 while it fits
-
-  useLayoutEffect(() => {
-    const element = box.current;
-    if (!element || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      setWidth(element.clientWidth);
-      if (table.current) setNeeded(element.scrollWidth > element.clientWidth + 1 ? element.scrollWidth : 0);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  // Long text gets a floor width, so a tight table overflows (and stacks) instead of wrapping a word per line.
+  // Long text gets a floor width on wide screens, so a tight table scrolls instead of wrapping a word per line.
   const long = headers.map((_, column) => rows.some((row) => (row[column] ?? "").replace(/\]\([^)]*\)/g, "]").length > 60));
 
   return (
-    <div className="docs-table surface-inset mt-6 overflow-x-auto rounded-lg" ref={box}>
-      {needed > 0 && width < needed ? (
-        <div className="divide-y divide-cyan-300/10 text-sm leading-6">
+    <div className="docs-table surface-inset mt-6 overflow-x-auto rounded-lg">
+      <table className="min-w-full border-collapse text-left text-sm">
+        <thead className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">
+          <tr>{headers.map((header) => <th className="border-b border-cyan-300/10 px-3 py-2.5 font-semibold" key={header}>{header}</th>)}</tr>
+        </thead>
+        <tbody>
           {rows.map((row, rowIndex) => (
-            <dl className="px-3 py-2.5" key={rowIndex}>
-              <dt className="sr-only">{headers[0]}</dt>
-              <dd className="font-semibold text-slate-100"><InlineMarkdown text={row[0] ?? ""} /></dd>
-              {row.slice(1).map((cell, cellIndex) => cell.trim() && (
-                <div className="mt-1 grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3" key={cellIndex}>
-                  <dt className="pt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-300/70">{headers[cellIndex + 1]}</dt>
-                  <dd className="text-slate-300"><InlineMarkdown text={cell} /></dd>
-                </div>
+            <tr className="border-b border-cyan-300/[0.06] last:border-0" key={rowIndex}>
+              {row.map((cell, cellIndex) => (
+                <td className="align-top px-3 py-2 leading-6 text-slate-300" data-label={headers[cellIndex]} key={`${rowIndex}-${cellIndex}`}>
+                  {long[cellIndex] ? <div className="docs-long min-w-[14rem]"><InlineMarkdown text={cell} /></div> : <InlineMarkdown text={cell} />}
+                </td>
               ))}
-            </dl>
+            </tr>
           ))}
-        </div>
-      ) : (
-        <table className="min-w-full border-collapse text-left text-sm" ref={table}>
-          <thead className="text-[10px] uppercase tracking-[0.12em] text-cyan-300/70">
-            <tr>{headers.map((header) => <th className="border-b border-cyan-300/10 px-3 py-2.5 font-semibold" key={header}>{header}</th>)}</tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => (
-              <tr className="border-b border-cyan-300/[0.06] last:border-0" key={rowIndex}>
-                {row.map((cell, cellIndex) => (
-                  <td className="align-top px-3 py-2 leading-6 text-slate-300" key={`${rowIndex}-${cellIndex}`}>
-                    {long[cellIndex] ? <div className="min-w-[14rem]"><InlineMarkdown text={cell} /></div> : <InlineMarkdown text={cell} />}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+        </tbody>
+      </table>
     </div>
   );
 }

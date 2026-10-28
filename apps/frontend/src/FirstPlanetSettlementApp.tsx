@@ -18,7 +18,7 @@ import {
 } from "./farcasterReady";
 import { haptic } from "./haptics";
 import { buildInspectPath, type InspectRoute } from "./inspectRoutes";
-import { PlayableMvpApp } from "./PlayableMvpApp";
+import { lazy, Suspense } from "preact/compat";
 import { copyReferralText, type ReferralCopyOutcome } from "./referralClipboard";
 import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
 import { readReferralStorage, REFERRAL_CLAIM_CODE_STORAGE_KEY, REFERRAL_CODE_STORAGE_KEY, referralCodeForLanding, referralCodeFromText, writeReferralStorage } from "./referralStorage";
@@ -262,6 +262,11 @@ const WALLET_BOOTSTRAP_MAX_RETRIES = 4;
 const WALLET_BOOTSTRAP_RETRY_MS = 1_200;
 const WALLET_BOOTSTRAP_FEEDBACK_MS = 3_000;
 
+// The game is its own chunk: visitors on the landing never download it. It starts loading as soon as a
+// wallet connects, so a settled player's overview is usually ready by the time the planet check finishes.
+const loadGame = () => import("./PlayableMvpApp");
+const PlayableMvpApp = lazy(() => loadGame().then((module) => ({ default: module.PlayableMvpApp })));
+
 export function FirstPlanetSettlementApp() {
   const [provider, setProvider] = useState<Eip1193Provider>();
   const [settlementConfigState, setSettlementConfigState] = useState<SettlementConfigState>(() => ({
@@ -309,6 +314,9 @@ export function FirstPlanetSettlementApp() {
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
+  useEffect(() => {
+    if (account) void loadGame().catch(() => undefined);
+  }, [account]);
   const settlementConfig = settlementConfigState.config;
   const requiredChain = defaultVeydriftChainForLocation();
   const currentAccount = useRef(account);
@@ -1605,29 +1613,31 @@ export function FirstPlanetSettlementApp() {
 
   if (hasOverview && !holdSuccessReveal) {
     return (
-      <PlayableMvpApp
-        provider={provider}
-        walletProviderSource={walletProviderSource}
-        account={account}
-        playerAccount={playerAccount}
-        initialDelegation={delegation}
-        onDelegationChanged={() => provider && account ? refreshWallet(provider, account) : undefined}
-        miniAppMode={miniAppMode}
-        planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
-        referralProgramPanel={(onInspect) => (
-          <ReferralProgramPanel
-            apiBaseUrl={settlementConfigState.apiUrl ?? playableApiUrl}
-            claimCode={referralClaimCodeInput}
-            inspection={referralClaimInspection}
-            onClaimCodeChange={setReferralClaimCodeInput}
-            onClaim={claimReferralInvite}
-            onInspect={onInspect}
-            state={referralProgram}
-            startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
-            wallet={playerAccount}
-          />
-        )}
-      />
+      <Suspense fallback={<div className="min-h-dvh bg-[#060b16]" />}>
+        <PlayableMvpApp
+          provider={provider}
+          walletProviderSource={walletProviderSource}
+          account={account}
+          playerAccount={playerAccount}
+          initialDelegation={delegation}
+          onDelegationChanged={() => provider && account ? refreshWallet(provider, account) : undefined}
+          miniAppMode={miniAppMode}
+          planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
+          referralProgramPanel={(onInspect) => (
+            <ReferralProgramPanel
+              apiBaseUrl={settlementConfigState.apiUrl ?? playableApiUrl}
+              claimCode={referralClaimCodeInput}
+              inspection={referralClaimInspection}
+              onClaimCodeChange={setReferralClaimCodeInput}
+              onClaim={claimReferralInvite}
+              onInspect={onInspect}
+              state={referralProgram}
+              startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
+              wallet={playerAccount}
+            />
+          )}
+        />
+      </Suspense>
     );
   }
 

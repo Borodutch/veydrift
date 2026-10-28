@@ -1,8 +1,7 @@
 // Tactile feedback: Farcaster Mini App SDK haptics when running inside a
 // mini app host, navigator.vibrate in regular browsers. Fire and forget.
 
-import { sdk } from "@farcaster/miniapp-sdk";
-import { detectFarcasterMiniApp } from "./farcasterReady";
+import { detectFarcasterMiniApp, loadFarcasterSdk } from "./farcasterReady";
 
 export type HapticPattern = "complete" | "error" | "select" | "success" | "tick" | "warning";
 
@@ -25,7 +24,7 @@ function isMiniAppHost(): Promise<boolean> {
 
 async function fireMiniAppHaptic(pattern: HapticPattern): Promise<boolean> {
   try {
-    const haptics = sdk.haptics;
+    const haptics = (await loadFarcasterSdk()).haptics;
     if (!haptics) return false;
     switch (pattern) {
       case "tick":
