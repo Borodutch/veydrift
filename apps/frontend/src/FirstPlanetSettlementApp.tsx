@@ -2333,7 +2333,9 @@ function FlowBody({
       tone="warning"
     />;
   }
-  if (mode === "resolving") {
+  // While the wallet is still being looked for, show the call to action a first visit ends on (the prerendered page
+  // carries it too) rather than a skeleton that swaps to it seconds later. Connecting starts its own wallet lookup.
+  if (mode === "resolving" && wallet.kind !== "loading") {
     return <SettlementFormSkeleton />;
   }
 
@@ -2352,7 +2354,7 @@ function FlowBody({
     );
   }
 
-  if (mode === "connect") {
+  if (mode === "connect" || mode === "resolving") {
     const waitingForWallet = wallet.kind === "connecting";
     return (
       <StateMessage

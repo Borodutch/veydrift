@@ -127,6 +127,9 @@ describe("settlement screen mode", () => {
     expect(settlementSource).toContain("2× production · 7 days");
     expect(settlementSource).toContain('label="Loading settlement"');
     expect(settlementSource).toContain("return <SettlementFormSkeleton />");
+    // The landing (and its prerendered HTML) shows the call to action while the wallet is looked for, not a skeleton
+    expect(settlementSource).toContain('if (mode === "resolving" && wallet.kind !== "loading") {');
+    expect(settlementSource).toContain('if (mode === "connect" || mode === "resolving") {');
     expect(settlementSource).not.toContain('title="Reading wallet link"');
     expect(settlementSource).not.toContain('visual={<SettlementScanVisual label="SETTLEMENT SCAN" />}');
     expect(stylesSource).toContain(".landing-invite-welcome");
