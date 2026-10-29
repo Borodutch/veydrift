@@ -71,8 +71,8 @@ test("39 candidates use <=50-call real-reader waves, two-second heads and a full
 test("expired actual candidate wave stops before next wave and retries all39 next interval, not300 seconds",async()=>{
  await scenario({expireCandidates:true},async f=>{await f.service.tick();expect(f.counts()).toEqual({signs:0,sends:0});expect(f.requests).toHaveLength(1);expect(f.service.snapshot().sharedAdmission.blocked).toBe(true);f.healthy();f.advance(5000);await f.service.tick();expect(f.requests[1].count).toBe(50);expect(f.counts()).toEqual({signs:1,sends:1});});
 });
-test("39-candidate postpersist signing or presend expiry remains prevented across restart without resend",async()=>{
- for(const options of [{signingDelay:31_000},{canonicalDelay:31_000}])await scenario(options,async f=>{await expect(f.client.resolveMissionBatch(f.items)).rejects.toBeInstanceOf(BatchQuoteExpiredError);expect(f.counts()).toEqual({signs:1,sends:0});expect(f.rows()).toEqual([{status:"prevented"}]);await expect(f.restart().resolveMissionBatch([])).rejects.toThrow("locally prevented");expect(f.counts()).toEqual({signs:1,sends:0});});
+test("39-candidate postpersist signing or presend expiry is never sent and is retired on restart without resend",async()=>{
+ for(const options of [{signingDelay:31_000},{canonicalDelay:31_000}])await scenario(options,async f=>{await expect(f.client.resolveMissionBatch(f.items)).rejects.toBeInstanceOf(BatchQuoteExpiredError);expect(f.counts()).toEqual({signs:1,sends:0});expect(f.rows()).toEqual([{status:"prevented"}]);await f.restart().resolveMissionBatch([]);expect(f.rows()).toEqual([]);expect(f.counts()).toEqual({signs:1,sends:0});});
 });
 test("HTTP Retry-After holds the real reader transport without retry/failover or queued burst",async()=>{
  const originalFetch=globalThis.fetch,originalNow=Date.now;let now=base,calls=0;Date.now=()=>now;

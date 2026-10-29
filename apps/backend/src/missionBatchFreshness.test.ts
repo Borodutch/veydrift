@@ -29,11 +29,13 @@ async function scenario(options: Options, check: (f: ReturnType<typeof fixture>)
   const originalNow = Date.now;
   let clock = base * 1000;
   Date.now = () => clock;
-  try { await check(fixture(join(dir, "intents.sqlite"), options, (ms) => { clock += ms; })); }
+  try { await check(fixture(join(dir, "intents.sqlite"), options, (ms) => { clock += ms; }, () => clock)); }
   finally { Date.now = originalNow; rmSync(dir, { recursive: true, force: true }); }
 }
-function fixture(path: string, options: Options, advance: (ms: number) => void) {
+function fixture(path: string, options: Options, advance: (ms: number) => void, now: () => number) {
   let signs = 0, sends = 0, blocks = 0, exactCalls = 0, mined = false;
+  // Chain controls for retirement proofs; fresh blocks follow the fixture clock.
+  const chainState: { latest?: number; pending?: number; seen?: boolean; readError?: boolean; onNonceRead?: () => void; fresh?: boolean } = {};
 
   const receipt = { status: "success", blockNumber: 1n, blockHash, gasUsed: 100_000n,
     effectiveGasPrice: 100n, l1Fee: 200n, operatorFee: 0n };
@@ -46,7 +48,12 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
   };
   const publicClient = {
     getStorageAt: async () => "0x00",
-    getTransactionCount: async () => mined ? 5 : 4,
+    getTransactionCount: async ({ blockTag }: { blockTag: "latest" | "pending" }) => {
+      chainState.onNonceRead?.();
+      if (chainState.readError) throw new Error("rpc unavailable");
+      const nonce = mined ? 5 : 4;
+      return blockTag === "pending" ? chainState.pending ?? nonce : chainState.latest ?? nonce;
+    },
     getBlock: async () => {
       blocks++;
       // initial block, packing quote, prepare block, final quote, pre-sign canonical, pre-send canonical
@@ -57,7 +64,8 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
       if (blocks === 6) advance(options.broadcastReadDelayMs ?? 0);
       return { number: 1n, hash: (options.mismatchQuote && blocks === 4) || (options.reorgAfterSign && blocks === 6)
         ? "0x" + "bb".repeat(32) : blockHash,
-        timestamp: BigInt(base - (options.blockAge ?? 29) + (options.futureBlock ? 100 : 0)), baseFeePerGas: 100n, gasLimit: 30_000_000n };
+        timestamp: chainState.fresh ? BigInt(Math.floor(now() / 1000) - 1)
+          : BigInt(base - (options.blockAge ?? 29) + (options.futureBlock ? 100 : 0)), baseFeePerGas: 100n, gasLimit: 30_000_000n };
     },
     estimateMaxPriorityFeePerGas: async () => 10n,
     readContract: async ({ functionName }: { functionName: string }) => {
@@ -77,12 +85,15 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
       return keccak256(inertBytes);
     },
     waitForTransactionReceipt: async () => receipt,
-    getTransaction: async () => { throw new TransactionNotFoundError({}); },
+    getTransaction: async () => {
+      if (chainState.seen) return { hash: keccak256(inertBytes), blockHash: null };
+      throw new TransactionNotFoundError({});
+    },
     getTransactionReceipt: async () => { if (!mined) throw new TransactionReceiptNotFoundError({ hash: keccak256(inertBytes) }); return { ...receipt, transactionHash: keccak256(inertBytes), from: address, to: game }; }
   };
   const sender = { address, signTransaction: async (tx: Parameters<typeof account.signTransaction>[0]) => {
     signs++;
-    advance(options.signingDelayMs ?? 0);
+    if (signs === 1) advance(options.signingDelayMs ?? 0);
     if (options.loseLeaseDuringSigning) loseLease();
     inertBytes = await account.signTransaction(tx);
     return inertBytes;
@@ -109,7 +120,20 @@ function fixture(path: string, options: Options, advance: (ms: number) => void) 
     try { return db.query("SELECT nonce, transaction_hash AS hash, status FROM resolver_transaction_attempts").all(); }
     finally { db.close(); }
   };
-  return { client: makeClient(), restart: makeClient, rows, signingRows, attempts, advance, counts: () => ({ signs, sends }),
+  // Retirement evidence: retired identities, and every place the signed bytes could still live.
+  const retirement = () => {
+    const db = new Database(path);
+    try {
+      return {
+        retired: db.query("SELECT nonce, transaction_hash AS hash, membership, json_extract(evidence,'$.reason') AS reason FROM resolver_retired_intents").all(),
+        rawIntents: (db.query("SELECT count(*) AS n FROM resolver_prepared_intents WHERE serialized_transaction IS NOT NULL").get() as { n: number }).n,
+        rawResults: (db.query("SELECT count(*) AS n FROM resolver_signing_results WHERE serialized_transaction IS NOT NULL").get() as { n: number }).n,
+        audit: db.query("SELECT nonce, status FROM resolver_transaction_audit ORDER BY sequence").all()
+      };
+    } finally { db.close(); }
+  };
+  const write = (sql: string) => { const db = new Database(path); try { db.query(sql).run(); } finally { db.close(); } };
+  return { client: makeClient(), restart: makeClient, rows, signingRows, attempts, retirement, write, chainState, loseLease, advance, counts: () => ({ signs, sends }),
     items: [{ missionId: "1", leg: "arrival" as const, dueAt: base - 5 }] };
 }
 
@@ -135,20 +159,70 @@ test("actual exact simulation and final canonical await cannot age a fee quote i
   }
 });
 
-test("signing/pre-send awaits expiring fee quote preserve locally prevented intent across restart", async () => {
+test("signing/pre-send expiry prevents the send; restart retires the undispatched envelope and reuses its nonce", async () => {
   for (const options of [{ signingDelayMs: 2000 }, { signingDelayMs: 31_000 },
     { blockAge: 0, signingDelayMs: 30_001 }, { broadcastReadDelayMs: 2000 },
     { blockAge: 0, broadcastReadDelayMs: 30_001 }, { reorgAfterSign: true }]) {
     await scenario(options, async (f) => {
       await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
       expect(f.counts()).toEqual({ signs: 1, sends: 0 });
-      const saved = [{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "prevented" }];
+      const preventedHash = keccak256(inertBytes);
+      const saved = [{ nonce: 4, hash: preventedHash, membership: JSON.stringify(f.items), status: "prevented" }];
       expect(f.rows()).toEqual(saved);
+      // An empty pass (e.g. a sibling writer's reconciliation) retires it: no signature, no send.
       const restarted = f.restart();
-      await expect(restarted.resolveMissionBatch(f.items)).rejects.toThrow("locally prevented");
-      await expect(restarted.resolveMissionBatch([])).rejects.toThrow("locally prevented");
+      await restarted.resolveMissionBatch([]);
       expect(f.counts()).toEqual({ signs: 1, sends: 0 });
-      expect(f.rows()).toEqual(saved);
+      expect(f.rows()).toEqual([]);
+      const evidence = f.retirement();
+      expect(evidence.retired).toEqual([{ nonce: 4, hash: preventedHash, membership: JSON.stringify(f.items), reason: "prevented-before-dispatch" }]);
+      expect(evidence.rawIntents).toBe(0);
+      expect(evidence.rawResults).toBe(0);
+      expect(evidence.audit.map((row: any) => row.status)).toEqual(["allocating", "submitted", "prevented", "retired"]);
+      expect(f.attempts()).toEqual([{ nonce: 4, hash: preventedHash, status: "retired" }]);
+      // The same legs are then signed afresh at the unused nonce and sent once.
+      f.chainState.fresh = true;
+      // The fixture's fee inputs are unchanged, so the fresh signature reproduces the retired
+      // hash: the retired evidence must not collide with the new intent row.
+      expect((await restarted.resolveMissionBatch(f.items)).hash).toBe(preventedHash);
+      expect(f.counts()).toEqual({ signs: 2, sends: 1 });
+      expect(f.rows()).toEqual([{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "confirmed" }]);
+    });
+  }
+});
+
+test("prevented intent stays fenced unless the journal and chain prove it was never dispatched", async () => {
+  const fence = "INSERT OR IGNORE INTO resolver_send_fences VALUES (8453, lower('" + address + "'), 't', 'h', 1, '0x00')";
+  const cases: Array<[string, (f: any) => void, string]> = [
+    ["nonce consumed", (f) => { f.chainState.latest = 5; f.chainState.pending = 5; }, "signer nonce is not exactly the prevented nonce"],
+    ["pending ahead", (f) => { f.chainState.pending = 5; }, "signer nonce is not exactly the prevented nonce"],
+    ["nonce behind", (f) => { f.chainState.latest = 3; f.chainState.pending = 3; }, "signer nonce is not exactly the prevented nonce"],
+    ["hash known", (f) => { f.chainState.seen = true; }, "envelope visible on chain"],
+    ["rpc down", (f) => { f.chainState.readError = true; }, "automatic retirement unavailable: rpc-unavailable"],
+    ["send attempted", (f) => f.write("UPDATE resolver_prepared_intents SET send_attempts = 1"), "not provably undispatched"],
+    ["validated", (f) => f.write("UPDATE resolver_prepared_intents SET replay_state = 'ready'"), "not provably undispatched"],
+    ["no bytes", (f) => f.write("UPDATE resolver_prepared_intents SET serialized_transaction = NULL"), "not provably undispatched"],
+    ["attempt moved", (f) => f.write("UPDATE resolver_transaction_attempts SET status = 'submitted'"), "attempt identity changed"],
+    ["foreign send fence before lease", (f) => f.write(fence), "send still outstanding"],
+    ["send fence during proof", (f) => { f.chainState.onNonceRead = () => f.write(fence); }, "automatic retirement unavailable: send outstanding"],
+    ["concurrent intent change", (f) => { f.chainState.onNonceRead = () => f.write("UPDATE resolver_prepared_intents SET send_attempts = 1"); }, "automatic retirement unavailable: intent changed"],
+    ["later journal nonce", (f) => f.write("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES (8453, lower('" + address + "'), 'later', 5, '0x" + "cc".repeat(32) + "', '[]', 'finalized')"), "automatic retirement unavailable: later journal nonce"],
+    ["binding mismatch", (f) => f.write("UPDATE resolver_signing_reservations SET membership = 'changed'"), "automatic retirement unavailable: signed envelope binding mismatch"],
+    ["lease lost mid-proof", (f) => { f.chainState.onNonceRead = () => f.loseLease(); }, "lease was lost"]
+  ];
+  for (const [name, arrange, reason] of cases) {
+    await scenario({ signingDelayMs: 31_000 }, async (f) => {
+      await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow();
+      const saved = f.rows();
+      expect(saved).toEqual([{ nonce: 4, hash: keccak256(inertBytes), membership: JSON.stringify(f.items), status: "prevented" }]);
+      arrange(f);
+      const attempt = f.restart().resolveMissionBatch(f.items);
+      if (reason) await expect(attempt, name).rejects.toThrow(reason);
+      else await expect(attempt, name).rejects.toThrow();
+      expect(f.counts(), name).toEqual({ signs: 1, sends: 0 });
+      expect(f.rows().filter((row: any) => row.nonce === 4), name).toEqual(saved);
+      expect(f.retirement().retired, name).toEqual([]); // includes a rolled-back retirement transaction
+      expect(f.retirement().rawResults, name).toBe(1);
     });
   }
 });

@@ -865,6 +865,10 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           try { return await this.publicClient!.getTransaction({ hash }); }
           catch (error) { if (error instanceof TransactionNotFoundError) return null; throw new RecoveryReadinessError("rpc-unavailable"); }
         },
+        getTransactionCount: async (blockTag) => {
+          try { return await this.publicClient!.getTransactionCount({ address, blockTag }); }
+          catch { throw new RecoveryReadinessError("rpc-unavailable"); }
+        },
         validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
           if(pass.recoveryTrace)pass.recoveryTrace.stage="pause";
           if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");

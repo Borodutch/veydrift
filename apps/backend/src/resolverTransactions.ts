@@ -33,6 +33,8 @@ export type PreparedReplayGuard = (() => void) & { finalCheck?: () => Promise<vo
 export type PreparedReplay = {
   /** Only explicit not-found returns null; transport errors throw. */
   getTransaction: (hash: Hex) => Promise<{ hash: Hex; blockHash: Hex | null } | null>;
+  /** Signer nonce at a block tag; transport errors throw. Required to retire a locally prevented intent. */
+  getTransactionCount?: (blockTag: "latest" | "pending") => Promise<number>;
   validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<PreparedReplayGuard>;
   broadcast: (raw: Hex) => Promise<Hex>;
 };
@@ -123,7 +125,7 @@ export type ResolverTransactionCoordinatorOptions = {
 type StoredAttempt = {
   operationId?: string;
   nonce: number;
-  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled" | "prevented";
+  status: "allocating" | "ambiguous" | "submitted" | "confirmed" | "reverted" | "rejected" | "cancelled" | "prevented" | "retired";
   transactionHash: Hex | null;
   updatedAt: string;
 };
@@ -257,6 +259,13 @@ export class ResolverTransactionCoordinator {
       CREATE TABLE IF NOT EXISTS resolver_nonce_recovery_history (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL,
         nonce INTEGER NOT NULL, event TEXT NOT NULL, evidence TEXT NOT NULL
+      );
+      -- Append-only evidence of locally prevented intents retired before any dispatch. The
+      -- signed bytes are destroyed on retirement; identity and the chain proof remain.
+      CREATE TABLE IF NOT EXISTS resolver_retired_intents (
+        sequence INTEGER PRIMARY KEY AUTOINCREMENT, chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL,
+        operation_id TEXT NOT NULL, nonce INTEGER NOT NULL, transaction_hash TEXT NOT NULL, membership TEXT NOT NULL,
+        evidence TEXT NOT NULL, retired_at_ms INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS resolver_send_fences (
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, token TEXT NOT NULL,
@@ -802,11 +811,64 @@ export class ResolverTransactionCoordinator {
         stage = resumeStage;
       };
       await verifyFrontier();
+      // A prevented intent is written only in the pre-broadcast catch: after its signed bytes are
+      // persisted, before the first-send ready marker, send attempt or send fence. While the chain
+      // still has its nonce unused and does not know its hash, it is retired: the bytes are destroyed
+      // (they are never sent) and the nonce is free for a freshly prepared batch. Anything else,
+      // including any sign of dispatch, keeps the original fail-closed block.
+      const retirePrevented = async (intent: Intent) => {
+        const prevented = (reason: string) => new Error("resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign"
+          + " (automatic retirement unavailable: " + reason + ")");
+        const replay = this.preparedReplayers.get(key);
+        if (!replay?.getTransactionCount) throw prevented("replay client unavailable");
+        if (!intent.raw || intent.replayState !== "unvalidated" || intent.attempts !== 0 || intent.admissionProven)
+          throw prevented("not provably undispatched");
+        const attempt = this.loadAttempt(chainId, address, intent.operationId);
+        if (attempt?.status !== "prevented" || attempt.nonce !== intent.nonce || attempt.transactionHash?.toLowerCase() !== intent.hash.toLowerCase())
+          throw prevented("attempt identity changed");
+        if (this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce>? LIMIT 1")
+          .get(chainId, normalizeAddress(address), intent.nonce)) throw prevented("later journal nonce");
+        // The envelope's own signer/chain/nonce bind the chain reads below to this intent.
+        try { await bounded(() => this.validatePreparedBinding(chainId, address, intent)); }
+        catch { assertActive(); throw prevented("signed envelope binding mismatch"); }
+        // Deadline and lease loss propagate as themselves; a failed read keeps the prevented block.
+        const proofRead = async <T>(operation: () => Promise<T>): Promise<T> => {
+          try { return await pass.read(operation); }
+          catch (error) { assertActive(); throw prevented(error instanceof RecoveryReadinessError ? error.reason : "chain read failed"); }
+        };
+        const seen = await proofRead(() => replay.getTransaction(intent.hash));
+        if (seen) throw prevented("envelope visible on chain");
+        const latest = await proofRead(() => replay.getTransactionCount!("latest"));
+        const pending = await proofRead(() => replay.getTransactionCount!("pending"));
+        if (latest !== intent.nonce || pending !== intent.nonce) throw prevented("signer nonce is not exactly the prevented nonce");
+        assertActive();
+        this.database.transaction(() => {
+          assertActive();
+          if (this.database.query("SELECT 1 FROM resolver_send_fences WHERE chain_id=? AND resolver_address=? LIMIT 1")
+            .get(chainId, normalizeAddress(address))) throw prevented("send outstanding");
+          this.database.query("INSERT INTO resolver_retired_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,evidence,retired_at_ms) VALUES (?,?,?,?,?,?,?,?)")
+            .run(chainId, normalizeAddress(address), intent.operationId, intent.nonce, intent.hash, intent.membership,
+              JSON.stringify({ reason: "prevented-before-dispatch", latest, pending, transactionKnown: false }), this.now());
+          const removed = this.database.query("DELETE FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND operation_id=? AND nonce=? AND membership=? AND status='prevented' AND replay_state='unvalidated' AND send_attempts=0 AND admission_proven=0 AND serialized_transaction=?")
+            .run(chainId, normalizeAddress(address), intent.hash, intent.operationId, intent.nonce, intent.membership, intent.raw);
+          if (removed.changes !== 1) throw prevented("intent changed");
+          this.database.query("UPDATE resolver_signing_results SET serialized_transaction=NULL WHERE transaction_hash=? AND reservation_id IN (SELECT id FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND operation_id=? AND nonce=? AND transferred=1)")
+            .run(intent.hash, chainId, normalizeAddress(address), intent.operationId, intent.nonce);
+          this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "retired");
+        }).immediate();
+        emitObservabilityEvent({ kind: "resolver_prevented_intent_retired", chainId, address, nonce: intent.nonce,
+          transactionHash: intent.hash, operationId: intent.operationId, membership: intent.membership,
+          action: "envelope never dispatched and destroyed; nonce reusable by a freshly prepared batch" }, "warn");
+      };
       const reconcile = async (intent: Intent, archival = false) => {
         pass.intentIdentity = intent.raw || intent.admissionProven ? { chainId, address, nonce: intent.nonce } : undefined;
         pass.archive = archival;
-        if (intent.status === "prevented") throw new Error(
-          "resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
+        if (intent.status === "prevented") {
+          if (archival) throw new Error("resolver batch broadcast locally prevented; retained signed intent requires explicit recovery; never resend or re-sign");
+          await retirePrevented(intent);
+          checked++;
+          return;
+        }
         if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, intent.nonce,
           "durable batch intent cannot bypass canonical receipt/finality reconciliation");
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
@@ -899,7 +961,7 @@ export class ResolverTransactionCoordinator {
         ...(error instanceof RecoveryReadinessError && !uncodedBlocks.has(error) ? { reasonCode: error.reason } : {}),
         // Retained (even finalized) lineage is context, never a substitute for the real error.
         ...(groups.length ? { recoveryGroups: groups.length, recoveryNote: "recovery lineage retained; inspect public lineage and prerequisites" } : {}),
-        action: "check RPC/finality; retry bounded reconciliation; never delete intents or bypass admission" }, "warn");
+        action: "check RPC/finality; retry bounded reconciliation; never delete intents manually or bypass admission" }, "warn");
       throw error;
     } finally {
       active = false;

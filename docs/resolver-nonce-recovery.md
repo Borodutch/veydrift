@@ -137,6 +137,27 @@ canonical <=30s fee block and synchronous final guard. An unaffordable/stale/unp
 waits for prerequisites or reviewed operator recovery; it is never fee-bumped or re-signed.
 Receipt inclusion, per-member domain completion and finality retirement remain separate gates.
 
+A **locally prevented** batch is different: its pre-broadcast check (quote freshness, canonical
+block, lease) rejected it after the signed bytes were persisted but before the first-send ready
+marker, send attempt or send fence. The coordinator writes `prevented` only in that catch, so the
+journal itself proves the envelope never reached `sendPrepared`. The next lease-fenced
+reconciliation pass (any writer: mission, randomness or moon) retires it automatically when all of
+these hold: the replay client is registered; the row has its signed bytes, `replay_state =
+'unvalidated'`, zero send attempts and is not admission-proven; its operation attempt is still the
+same `prevented` nonce/hash; no journal intent has a higher nonce; the persisted envelope still
+authenticates against its signing reservation (chain, signer, nonce, hash); the node does not know
+the hash; and the signer's `latest` and `pending` nonces both equal the prevented nonce. In one
+`BEGIN IMMEDIATE` transaction under the current lease (and with no outstanding send fence) the
+identity and proof move to the append-only `resolver_retired_intents` table, the intent row is
+removed, the signed bytes are nulled in its signing result, and the attempt/audit record
+`retired`. The bytes are never sent and are removed from the live journal (old WAL/freelist pages
+or backups may still hold them until overwritten; restoring such a copy fails closed because the
+nonce is consumed by then). The nonce is then free and the same legs are packed, quoted and signed
+afresh by the normal path. Any failed condition (including an RPC error or a signing-binding
+mismatch) keeps the original fail-closed `locally prevented` block with a fixed
+`automatic retirement unavailable: <reason>` suffix, and every byte stays in place for reviewed
+recovery; only a pass deadline or lease loss surfaces as itself and is retried on the next pass. A `resolver_prevented_intent_retired` event records each retirement.
+
 Crash states before signing-result transfer or before first-send validation stay explicitly fenced
 (no automatic send), retaining any available raw envelope for independently reviewed recovery.
 They do not silently restart preparation. Pending legacy rows with no signed bytes are labeled
