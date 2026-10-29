@@ -3,3 +3,5 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+Sitemap: https://veydrift.com/sitemap.xml

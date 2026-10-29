@@ -39,3 +39,10 @@ test("the frontend build declares every VITE_ variable the frontend reads", () =
   const declared = new Set([...stages["frontend-build"].matchAll(/^ARG (VITE_[A-Z0-9_]+)$/gm)].map((m) => m[1]));
   for (const name of used) assert.ok(declared.has(name), `${name} is not an ARG of frontend-build`);
 });
+
+test("sitemap.xml lists exactly the pages the image prerenders", () => {
+  const routes = stages["frontend-prerender"].split("prerender.mjs dist")[1].split(/\s+/).filter((word) => word.startsWith("/"));
+  const sitemap = readFileSync(`${root}apps/frontend/public/sitemap.xml`, "utf8");
+  const locs = [...sitemap.matchAll(/<loc>https:\/\/veydrift\.com([^<]*)<\/loc>/g)].map((m) => m[1] || "/");
+  assert.deepEqual(locs.sort(), routes.sort());
+});

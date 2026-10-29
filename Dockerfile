@@ -88,7 +88,8 @@ RUN apt-get update \
 # Search engines and AI crawlers that don't run JavaScript get pages as headless Chromium
 # renders them (scripts/prerender.mjs): the home page into index.html, the docs chapters
 # and the battle calculator into their own files. app.html keeps the empty app, which
-# every other page boots from (serve.mjs). A new docs chapter goes in this list.
+# every other page boots from (serve.mjs). A new docs chapter goes in this list and in
+# apps/frontend/public/sitemap.xml (scripts/dockerfile.test.mjs checks they match).
 FROM chromium AS frontend-prerender
 COPY --from=frontend-build /app/apps/frontend/dist apps/frontend/dist
 COPY apps/frontend/scripts/prerender.mjs apps/frontend/scripts/
