@@ -16,7 +16,9 @@ document.documentElement.dataset.veydriftSurface = import.meta.env.MODE;
 // A lazy page's chunk loads before the first render, so the app takes over the copy prerendered for
 // crawlers (scripts/prerender.mjs) in place instead of showing its loading fallback first.
 const root = document.querySelector("#app") as HTMLElement;
-const boot = () => void preloadPage().catch(() => undefined).then(() => {
+// The page's modules run in one task as the chunk arrives; the first render waits for the next task, so neither is
+// a long task that holds up a tap (Lighthouse's Total Blocking Time).
+const boot = () => void preloadPage().catch(() => undefined).then(() => new Promise((resolve) => setTimeout(resolve))).then(() => {
   render(<App />, root);
   scheduleFarcasterReady();
   initSfx();
