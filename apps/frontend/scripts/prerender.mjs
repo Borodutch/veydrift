@@ -115,8 +115,11 @@ try {
         .join("");
     });
     // On screen the page needs only its HTML and the CSS it uses. The full stylesheet (for what the app draws later)
-    // and the app itself start once the page has loaded, so nothing competes with the first paint and the first
-    // images for the connection; main.tsx then boots at once. Without JavaScript the full stylesheet still applies.
+    // and the app itself start once the page has loaded and its high-priority images (the hero cover, the largest
+    // paint) are decoded and on screen (the frame after; at most 500 ms more where no frames run, like a background tab), so nothing competes with the first paint and the first images for the
+    // connection; main.tsx then boots at once. "load" alone sometimes fired before the cover was painted, the app
+    // loaded in between, and PageSpeed counted all its chunks against the largest paint (mobile 92-95 instead of 100).
+    // Without JavaScript the full stylesheet still applies.
     const styles = [];
     const scripts = [];
     // Links the app added while loading (like the stylesheets of lazy chunks) are absolute; make them root-relative
@@ -125,10 +128,10 @@ try {
       .replace(/<script type="module"[^>]*src="(\/assets\/[^"]+\.js)"[^>]*><\/script>/g, (_, src) => (scripts.push(src), ""))
       .replace(/<link rel="modulepreload"[^>]*>/g, "")
       .replace("</head>", `<style>${used}</style>${styles.map((href) => `<noscript><link rel="stylesheet" href="${href}"></noscript>`).join("")}</head>`)
-      .replace("</body>", `<script>addEventListener("load",()=>{${[
+      .replace("</body>", `<script>addEventListener("load",()=>Promise.all([...document.querySelectorAll("img[fetchpriority=high]")].map((i)=>i.decode().catch(()=>{}))).then(()=>new Promise((r)=>{requestAnimationFrame(()=>setTimeout(r));setTimeout(r,500);})).then(()=>{${[
         ...styles.map((href) => `document.head.append(Object.assign(document.createElement("link"),{rel:"stylesheet",href:${JSON.stringify(href)}}));`),
         ...scripts.map((src) => `document.head.append(Object.assign(document.createElement("script"),{type:"module",src:${JSON.stringify(src)}}));`),
-      ].join("")}})</script></body>`);
+      ].join("")}}))</script></body>`);
     if (!scripts.length) throw new Error(`${route}: no app script found in the page`);
     if (errors.length) throw new Error(`${route}: ${errors.join("; ")}`);
     if (html.includes(origin)) throw new Error(`${route}: the page wrote ${origin} into its HTML`);
