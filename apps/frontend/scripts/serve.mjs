@@ -7,6 +7,7 @@ import { animationConfigs, animationFilename, animationKey, animationRoot, asser
 import { LOOP_ANIMATION_BASE, LOOP_ANIMATIONS, loopAnimationWidths } from "../loopAnimationConfig.ts";
 import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
 import { auctionUrl } from "../src/auction.ts";
 
@@ -1239,6 +1240,24 @@ export async function frontendResponse(request) {
   return new Response("Not found", { status: 404 });
 }
 
+// Pages aren't cached at Cloudflare's edge, so every visit fetches its HTML from here. Uncompressed (50-80 KB) it
+// crosses from this server in several round trips, arriving at the browser in pieces ~300 ms apart; Chrome holds its
+// first paint while the inline CSS is still incomplete, and after a hold that long it may not paint for another
+// second (the late LCP behind PageSpeed's mobile dips). Compressed (~13 KB) it fits the first round trip.
+export async function compressHtml(request, response) {
+  const accepts = request.headers.get("accept-encoding") ?? "";
+  const encoding = /\bbr\b/.test(accepts) ? "br" : /\bgzip\b/.test(accepts) ? "gzip" : undefined;
+  if (!encoding || !response.headers.get("content-type")?.startsWith("text/html") || response.headers.has("content-encoding")) return response;
+  const body = new Uint8Array(await response.arrayBuffer());
+  const headers = new Headers(response.headers);
+  headers.set("content-encoding", encoding);
+  headers.set("vary", "accept-encoding");
+  headers.delete("content-length");
+  // Quality 5: within a few percent of the smallest output at about a millisecond for the largest page
+  const compressed = encoding === "br" ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } }) : gzipSync(body);
+  return new Response(compressed, { status: response.status, headers });
+}
+
 if (import.meta.main) {
   console.info(JSON.stringify({ event: "media_sync", ...(await syncMedia()) }));
   await assertAnimationVariantsReady();
@@ -1247,7 +1266,7 @@ if (import.meta.main) {
     hostname: "0.0.0.0",
     port,
     fetch(request) {
-      return observeFrontendRequest(request, () => frontendResponse(request));
+      return observeFrontendRequest(request, async () => compressHtml(request, await frontendResponse(request)));
     },
   });
 
