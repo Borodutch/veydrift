@@ -895,7 +895,11 @@ export class ResolverTransactionCoordinator {
           assertActive();
         }
         if (!stored || receipt.admissionProven !== Boolean(intent.admissionProven) || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
-          this.database.transaction(() => {
+          // Canonical evidence, re-derivable from the chain: no commit fsync (#279). A power loss
+          // can only rewind to an older checkpoint that the next pass reconciles again; at worst the
+          // replay path resends the identical bytes. No broadcast decision trusts these rows over
+          // the chain, and the next nonce allocation or send fence (both FULL) syncs them.
+          withoutCommitSync(this.database, () => this.database.transaction(() => {
             assertActive();
             this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ?, admission_proven = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
               .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes, receipt.admissionProven ? 1 : 0,
@@ -915,7 +919,7 @@ export class ResolverTransactionCoordinator {
                   .run(intent.hash, chainId, normalizeAddress(address), intent.nonce);
               }
             }
-          }).immediate();
+          }).immediate());
         }
         if (receipt.admissionProven && (!frontier || intent.nonce > frontier.nonce))
           frontier = { ...intent, admissionProven: 1, status: receipt.finalized ? "finalized" : "confirmed", blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, outcomes: receipt.outcomes };
@@ -930,14 +934,14 @@ export class ResolverTransactionCoordinator {
         await reconcile(intent, true);
         archiveReached = intent.nonce;
       }
-      // One cursor write per pass, and none when unchanged: every synchronous FULL commit
-      // can stall the whole event loop on a contended disk.
+      // One cursor write per pass, and none when unchanged. Housekeeping only, so it also skips
+      // the commit fsync, which can stall the whole event loop on a contended disk (#74, #279).
       const nextCursor = archive.length > archivePage ? page[archivePage - 1]!.nonce : -1;
       archiveReached = nextCursor;
       if (nextCursor !== cursor) {
         assertActive();
         cursorWritten = true;
-        writeCursor(nextCursor);
+        withoutCommitSync(this.database, () => writeCursor(nextCursor));
       }
       stage = "final-frontier";
       await verifyFrontier();
@@ -951,7 +955,7 @@ export class ResolverTransactionCoordinator {
       // last one instead of re-reading them. Still at most one cursor write, and only while
       // this process owns the lease (a deadline is not a lease loss; a takeover is).
       if (!cursorWritten && archiveReached !== undefined && archiveReached !== cursor) {
-        try { this.database.transaction(() => { assertLease(); writeCursor(archiveReached!); }).immediate(); }
+        try { withoutCommitSync(this.database, () => this.database.transaction(() => { assertLease(); writeCursor(archiveReached!); }).immediate()); }
         catch { /* housekeeping only; the original failure is what matters */ }
       }
       emitObservabilityEvent({ kind: "resolver_reconciliation_blocked", chainId, address, checked, reads,
@@ -985,6 +989,8 @@ export class ResolverTransactionCoordinator {
   private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
     assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<boolean> {
     const sendToken = randomUUID();
+    // Keeps the FULL commit: it is the durability point of every journal write made since the
+    // last fsync, including the NORMAL-sync preparation rows, and it precedes every broadcast (#279).
     this.database.transaction(() => {
       assertLease();
       guard?.();
@@ -1410,24 +1416,34 @@ export class ResolverTransactionCoordinator {
         if (request.prepare) {
           let reservationId: string | undefined;
           let prepared: Awaited<ReturnType<NonNullable<typeof request.prepare>>>;
+          // #279: between the batch quote and the broadcast, only the send-fence commit in
+          // sendPrepared fsyncs (plus, at most, a WAL-restart header sync after a full checkpoint).
+          // The reservation, signing result, intent and ready marker skip the commit fsync:
+          // nothing leaves this process before that FULL commit, and it syncs the whole WAL
+          // (frames are append-ordered), so all of them are durable before the broadcast. A
+          // power loss before it can only rewind the journal to a state that a process crash at
+          // an earlier pre-broadcast point already leaves. Each FULL commit used to block the
+          // event loop for the disk's fsync latency (5-16 s on the contended host), and five
+          // of them in a row expired the 30 s quote. A legacy hash-only preparation has no send
+          // fence, so its intent commit keeps FULL.
           try { prepared = await request.prepare(nonce, { sign: async (membership, signer) => {
             if (reservationId) throw new Error("batch preparation cannot sign twice");
             const id = randomUUID();
-            this.database.transaction(() => {
+            withoutCommitSync(this.database, () => this.database.transaction(() => {
               assertLease();
               const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
               if (attempt?.nonce !== nonce || attempt.transactionHash !== null || attempt.status !== "allocating")
                 throw new Error("batch signing allocation identity changed");
               this.database.query("INSERT INTO resolver_signing_reservations (id,chain_id,resolver_address,operation_id,nonce,membership) VALUES (?, ?, ?, ?, ?, ?)")
                 .run(id, request.chainId, normalizeAddress(request.address), request.operationId, nonce, membership);
-            }).immediate();
+            }).immediate());
             reservationId = id;
             assertLease(); // synchronous fence after the last await, immediately before actual signer
             const signed = await signer();
             // Immutable, reservation-scoped evidence only: even a late result cannot touch
             // shared attempts/intents. The reservation already blocks all automatic writers.
-            this.database.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash,serialized_transaction) VALUES (?, ?, ?)")
-              .run(id, keccak256(signed), signed);
+            withoutCommitSync(this.database, () => this.database.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash,serialized_transaction) VALUES (?, ?, ?)")
+              .run(id, keccak256(signed), signed));
             assertLease();
             return signed;
           } }); } catch (error) {
@@ -1444,7 +1460,7 @@ export class ResolverTransactionCoordinator {
             if (!reservationId) throw new Error("durable replay requires fenced signing reservation");
             await this.validateEnvelope(request.chainId, request.address, nonce, prepared.hash, prepared.serializedTransaction);
           }
-          this.database.transaction(() => {
+          const persistIntent = () => this.database.transaction(() => {
             assertLease();
             const attempt = this.loadAttempt(request.chainId, request.address, request.operationId);
             if (attempt?.nonce !== nonce || attempt.transactionHash !== null || attempt.status !== "allocating")
@@ -1460,6 +1476,8 @@ export class ResolverTransactionCoordinator {
             recordOwnedAttempt(request.chainId, request.address, request.operationId, nonce, prepared.hash, "submitted");
             if (reservationId) this.database.query("UPDATE resolver_signing_reservations SET transferred = 1 WHERE id = ?").run(reservationId);
           }).immediate();
+          if (prepared.serializedTransaction) withoutCommitSync(this.database, persistIntent);
+          else persistIntent();
           try {
             await prepared.validateBeforeBroadcast?.();
             assertLease();
@@ -1481,13 +1499,14 @@ export class ResolverTransactionCoordinator {
           }
           if (prepared.serializedTransaction) {
             // A durable ready marker distinguishes completed first-send validation from
-            // a crash while it was in flight; the latter must remain explicitly fenced.
-            this.database.transaction(() => {
+            // a crash while it was in flight; the latter must remain explicitly fenced. The send
+            // fence's FULL commit right after it makes it durable before the broadcast (#279).
+            withoutCommitSync(this.database, () => this.database.transaction(() => {
               assertLease(); prepared.assertBeforeBroadcast?.();
               const ready = this.database.query("UPDATE resolver_prepared_intents SET replay_state = 'ready' WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ? AND status = 'pending' AND replay_state = 'unvalidated'")
                 .run(request.chainId, normalizeAddress(request.address), prepared.hash);
               if (ready.changes !== 1) throw new Error("first-send validation identity changed");
-            }).immediate();
+            }).immediate());
             const intent: ReplayIntent = { operationId: request.operationId, nonce, hash: prepared.hash,
               membership: prepared.membership, raw: prepared.serializedTransaction, attempts: 0, nextRetry: 0,
               replayState: "ready", status: "pending", originalMaxFeeWei: prepared.replayMaxFeeWei ?? null };

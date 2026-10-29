@@ -3,12 +3,14 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { keccak256, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 import { BattleReportStore } from "./battleReferee";
 import { EventLoopLagMonitor } from "./eventLoopLag";
 import { SqliteRandomnessCommitmentStore, type RandomnessCommitmentRecord, type RandomnessPendingReveal } from "./randomness";
 import { withoutCommitSync } from "./sqliteCommitSync";
-import { ResolverTransactionCoordinator } from "./resolverTransactions";
+import { ResolverTransactionCoordinator, type ResolverTransactionRequest } from "./resolverTransactions";
 import { WalCheckpointer, type WalCheckpointResult } from "./walCheckpointer";
 
 // #74: the writer froze for seconds in WAL fsyncs and checkpoints on a contended disk.
@@ -507,5 +509,120 @@ describe("lease writes skip the commit fsync", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// #279: on prod a batch quote expired because five FULL commits (each a WAL fsync that blocks the
+// event loop) sat between the quote and the broadcast; under host write load each took 5-16 s.
+describe("batch preparation fsyncs once between the quote and the broadcast", () => {
+  type Commit = { level: number; writes: string[] };
+  /** Records every commit on the connection with its synchronous level and the tables it wrote. */
+  function recordCommits(database: Database, onCommit: (commit: Commit) => void): void {
+    const query = database.query.bind(database);
+    const transaction = database.transaction.bind(database);
+    let writes: string[] = [];
+    const level = () => (query("PRAGMA synchronous").get() as { synchronous: number }).synchronous;
+    const commit = () => { const done = { level: level(), writes }; writes = []; onCommit(done); };
+    database.query = ((sql: string) => {
+      const statement = query(sql);
+      const write = /^\s*(INSERT|UPDATE|DELETE)\b/i.exec(sql) && /(?:INTO|UPDATE|FROM)\s+(\w+)/i.exec(sql)?.[1];
+      if (!write) return statement;
+      return new Proxy(statement, { get(target, key) {
+        if (key !== "run") return Reflect.get(target, key, target);
+        return (...args: unknown[]) => {
+          const result = (target.run as (...a: unknown[]) => unknown)(...args);
+          writes.push(write);
+          if (!database.inTransaction) commit();
+          return result;
+        };
+      } });
+    }) as typeof database.query;
+    database.transaction = ((fn: (...args: unknown[]) => unknown) => {
+      const inner = transaction(fn);
+      // A nested transaction is a savepoint inside the outer one, not a commit.
+      const wrap = (run: (...args: unknown[]) => unknown) => (...args: unknown[]) => {
+        const outer = !database.inTransaction;
+        if (outer) writes = [];
+        let result: unknown;
+        try { result = run(...args); } catch (error) { if (outer) writes = []; throw error; } // rolled back
+        if (outer && writes.length) commit();
+        return result;
+      };
+      return Object.assign(wrap(inner), { immediate: wrap(inner.immediate), deferred: wrap(inner.deferred), exclusive: wrap(inner.exclusive) });
+    }) as typeof database.transaction;
+  }
+
+  const account = privateKeyToAccount(("0x" + "11".repeat(32)) as Hex); // fixture only
+  const chainId = 8453, nonce = 7, membership = '[{"missionId":"108276","leg":"return"}]';
+
+  async function run(fsyncMs: number, legacyHashOnly = false) {
+    const dir = tempDir();
+    try {
+      const signed = await account.signTransaction({ type: "eip1559", chainId, nonce, to: account.address,
+        data: "0x12345678", value: 0n, gas: 100000n, maxFeePerGas: 100n, maxPriorityFeePerGas: 1n });
+      const hash = keccak256(signed);
+      let clock = 1_000_000, mined = false;
+      const coordinator = new ResolverTransactionCoordinator(join(dir, "transactions.sqlite"), {
+        now: () => clock, sleep: async (ms) => { clock += ms; }, leaseRenewIntervalMs: 1_000_000, leaseDurationMs: 3_600_000 });
+      const timeline: string[] = [];
+      // Every FULL commit costs the incident's fsync latency on the clock the quote ages by.
+      recordCommits((coordinator as unknown as { database: Database }).database, (commit) => {
+        timeline.push((commit.level === 2 ? "FULL " : "NORMAL ") + [...new Set(commit.writes)].join(","));
+        if (commit.level === 2) clock += fsyncMs;
+      });
+      let quotedAt = 0;
+      const assertQuoteFresh = () => { if (clock - quotedAt > 30_000) throw new Error("batch quote block expired"); };
+      const request: ResolverTransactionRequest = { chainId, address: account.address, operationId: "mission-batch:fixture",
+        getTransactionCount: async () => mined ? nonce + 1 : nonce, submit: async () => { throw new Error("blind signing forbidden"); },
+        prepare: async (_nonce, signing) => {
+          quotedAt = clock; timeline.push("quote");
+          const raw = await signing.sign(membership, async () => { assertQuoteFresh(); return signed; });
+          if (legacyHashOnly) return { hash, membership, broadcast: async () => { timeline.push("broadcast"); mined = true; return hash; } };
+          return { hash, membership, serializedTransaction: raw, replayMaxFeeWei: "1000000",
+            validateBeforeBroadcast: async () => assertQuoteFresh(), assertBeforeBroadcast: assertQuoteFresh,
+            broadcast: async () => { timeline.push("broadcast"); mined = true; return hash; } };
+        },
+        reconcilePrepared: async () => mined ? { finalized: true, blockNumber: "10", blockHash: hash, outcomes: "[]", admissionProven: true } : undefined,
+        confirm: async () => {}, isOperationComplete: async () => true };
+      const outcome = await coordinator.submit(request).then(() => "broadcast", (error: Error) => error.message);
+      const database = (coordinator as unknown as { database: Database }).database;
+      const level = (database.query("PRAGMA synchronous").get() as { synchronous: number }).synchronous;
+      const attempt = database.query("SELECT status FROM resolver_transaction_attempts").get() as { status: string } | null;
+      return { outcome, timeline, level, attempt: attempt?.status ?? null, quoteAgeAtBroadcast: clock - quotedAt };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("only the send-fence commit fsyncs before the broadcast; the canonical checkpoint skips it", async () => {
+    const { outcome, timeline, level } = await run(0);
+    expect(outcome).toBe("broadcast");
+    const window = timeline.slice(timeline.indexOf("quote") + 1, timeline.indexOf("broadcast"));
+    // reservation, signing result, intent + attempt, ready marker, then the send fence
+    expect(window.length).toBe(5);
+    expect(window.slice(0, -1).every((commit) => commit.startsWith("NORMAL "))).toBe(true);
+    expect(window.at(-1)).toStartWith("FULL ");
+    expect(window.at(-1)).toContain("resolver_send_fences");
+    const checkpoint = timeline.slice(timeline.indexOf("broadcast")).find((commit) => commit.includes("resolver_prepared_intents") && !commit.includes("resolver_send_fences"));
+    expect(checkpoint).toStartWith("NORMAL ");
+    expect(level).toBe(2);
+  });
+
+  test("a legacy hash-only preparation has no send fence, so its intent commit keeps FULL", async () => {
+    // Only the commits before the broadcast matter; the fixture's receipt is not a legacy proof.
+    const { timeline } = await run(0, true);
+    expect(timeline).toContain("broadcast");
+    const window = timeline.slice(timeline.indexOf("quote") + 1, timeline.indexOf("broadcast"));
+    expect(window.at(-1)).toStartWith("FULL ");
+    expect(window.at(-1)).toContain("resolver_prepared_intents");
+    expect(window.some((commit) => commit.includes("resolver_send_fences"))).toBe(false);
+  });
+
+  test("the incident's fsync latency no longer expires the quote before the broadcast", async () => {
+    // 04:04Z: the signing phase took 18 s for two fsyncs; the intent commit took another ~16 s.
+    const { outcome, quoteAgeAtBroadcast, attempt } = await run(9_000);
+    expect(outcome).toBe("broadcast");
+    expect(attempt).not.toBe("prevented");
+    expect(quoteAgeAtBroadcast).toBeLessThan(30_000);
   });
 });

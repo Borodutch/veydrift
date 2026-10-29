@@ -205,6 +205,21 @@ writer follows these rules:
   battle referee's discovery cursor commit without fsync through `withoutCommitSync`.
   The next FULL commit syncs those frames first, and every lease holder dies with the
   host on power loss. A lost cursor only rescans the same blocks.
+- A mission batch fsyncs the resolver journal once between its quote and its broadcast,
+  at the send-fence commit (#279). The signing reservation, signing result, prepared
+  intent and first-send ready marker commit without fsync. Nothing leaves the process
+  before the FULL fence commit, and that commit syncs the whole WAL, so all of these
+  rows are durable before any broadcast. A power loss before it rewinds the journal to a
+  state that a process crash at an earlier pre-broadcast point already produces. The
+  prevented marker and the fence release keep their FULL commits. Before this, five
+  FULL commits sat in that window. On 2026-10-29 the host's write load made each one
+  take 5–16 s, the 30 s quote expired and the batch was left `prevented`.
+  A WAL restart after a full checkpoint can still add one header sync to that window. A
+  legacy hash-only preparation, which has no send fence, keeps its FULL intent commit.
+  Reconciliation's confirmed/finalized checkpoints and its archive cursor also skip the
+  fsync: they are canonical chain evidence that the next pass derives again. A rewind can at
+  most make the replay path resend the identical bytes. No broadcast decision trusts these
+  rows over the chain, and the next nonce allocation or send fence (both FULL) syncs them.
 - WAL checkpoints for the index, the resolver journal, the randomness commitments and
   the battle reports run on one worker thread (`WalCheckpointer`) on its own
   connections. Each writer connection's autocheckpoint stays off while the worker
