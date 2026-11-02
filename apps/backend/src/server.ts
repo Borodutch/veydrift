@@ -99,7 +99,6 @@ import {
   resolvePaidAllianceInvite,
   type PaidAllianceInviteReader,
 } from "./allianceInvites";
-import { CcaInterestStore, ccaInterestStorePath, notifyCcaInterest, validateCcaInterest } from "./ccaInterest";
 import { maxGalaxy, maxSystem, planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, universeGeneratorVersion, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { openSharedResponseCache, responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import { normalizeStatsUtcOffsetMinutes } from "./stats";
@@ -373,7 +372,6 @@ export type ServerDependencies = {
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
   referralStore?: ReferralInviteStore;
-  ccaInterestStore?: CcaInterestStore;
   paidAllianceInviteReader?: PaidAllianceInviteReader;
   paidAllianceInviteSecretStore?: PaidAllianceInviteSecretStore;
   walletMessageVerifier?: WalletMessageVerifier;
@@ -744,8 +742,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
   const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
-  let ccaInterestStore = dependencies.ccaInterestStore;
-  const ccaInterestRateLimits = new Map<string, { count: number; resetAt: number }>();
   const directWalletMessageVerifier = dependencies.walletMessageVerifier ?? (
     usesProductionDependencies && loaded.problems.length === 0
       ? createRpcWalletMessageVerifier(walletMessageRpcUrlsForConfig(loaded.config))
@@ -1139,29 +1135,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/cca") {
       if (!ccaRpc) return unavailableResponse(loaded.problems);
       return ccaStateResponse(ccaRpc, ccaBidOwnerFromQuery(url.searchParams.get("owner")));
-    }
-
-    if (request.method === "POST" && url.pathname === "/cca/interest") {
-      const now = Date.now();
-      if (ccaInterestRateLimits.size > 2_048) ccaInterestRateLimits.clear();
-      const clientKey = requestClientKey(request) ?? "unknown";
-      const limit = ccaInterestRateLimits.get(clientKey);
-      if (limit && limit.resetAt > now && ++limit.count > 10) {
-        return Response.json({ error: "rate_limited", message: "Too many submissions. Try again later." }, { headers: corsHeaders, status: 429 });
-      }
-      if (!limit || limit.resetAt <= now) ccaInterestRateLimits.set(clientKey, { count: 1, resetAt: now + 600_000 });
-      try {
-        const interest = validateCcaInterest(await readJsonBody(request));
-        if (typeof interest === "string") {
-          return Response.json({ error: "invalid_cca_interest", message: interest }, { headers: corsHeaders, status: 400 });
-        }
-        ccaInterestStore ??= new CcaInterestStore(ccaInterestStorePath(loaded.config.indexDbPath));
-        ccaInterestStore.save(interest);
-        void notifyCcaInterest(interest);
-        return Response.json({ ok: true }, { headers: corsHeaders });
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
