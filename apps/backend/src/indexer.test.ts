@@ -406,6 +406,14 @@ describe("SettlementIndexer", () => {
     `).run(player);
 
     expect(indexer.missionResolutionCandidates(1_000)).toEqual({ arrivals: [], returns: [] });
+
+    // Prod 2026-11-02: a staged referee battle requested its gated seed mid-resolution; hiding it
+    // deadlocked the seal that releases the seed. A started battle stays a candidate.
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES ('stage-44', '0xaa', '0x0', '1', 0, ?, 'now')
+    `).run(JSON.stringify({ topics: [combatStageAdvancedTopic, `0x${(44).toString(16).padStart(64, "0")}`] }));
+    expect(indexer.missionResolutionCandidates(1_000).arrivals.map((mission) => mission.missionId)).toEqual(["44"]);
     database.close();
   });
 

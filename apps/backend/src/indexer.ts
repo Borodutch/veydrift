@@ -3714,6 +3714,16 @@ export class SettlementIndexer {
                 FROM indexed_fulfilled_randomness_requests
                 WHERE request_id = contract_fleet_missions.randomness_request_id
               )
+              -- A staged (referee) battle requests its gated seed mid-resolution and only seals the
+              -- snapshot that releases it after further bounded steps. Once staging has begun the
+              -- randomness gate must not hide it; the resolver's referee-wait check handles phases 16/17.
+              OR EXISTS (
+                SELECT 1
+                FROM indexed_event_logs
+                WHERE removed = 0
+                  AND lower(json_extract(event_json, '$.topics[0]')) = ?
+                  AND lower(json_extract(event_json, '$.topics[1]')) = printf('0x%064x', CAST(contract_fleet_missions.mission_id AS INTEGER))
+              )
             )
           ) OR (
             mission_type_id = 9
@@ -3741,6 +3751,7 @@ export class SettlementIndexer {
       asOfSeconds,
       asOfSeconds,
       this.randomnessEngineConfigured ? 1 : 0,
+      combatStageAdvancedTopic.toLowerCase(),
       asOfSeconds,
       asOfSeconds,
       boundedLimit
