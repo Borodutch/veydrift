@@ -1,4 +1,5 @@
 import { BatchQuoteExpiredError } from "./missionBatchFees";
+import { SupersessionUnavailableError } from "./resolverReplacementFees";
 import { classifyRecoveryReadError, RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,8 @@ export type PreparedReconciliationPass = {
   /** Every asynchronous read must pass here; late completions cannot resume hydration. */
   read: <T>(operation: () => Promise<T>) => Promise<T>;
   assertActive: () => void;
+  /** Push the pass deadline to at least now + ms. Used once, for bounded supersession planning (#397). */
+  extendDeadline?: (ms: number) => void;
   finalizedHead?: Promise<bigint>;
   archivalFinalizedHead?: Promise<bigint | null>;
   finalizedRecoveryIdentity?: Promise<{ chainId: number; nonce: number }>;
@@ -37,6 +40,13 @@ export type PreparedReplay = {
   getTransactionCount?: (blockTag: "latest" | "pending") => Promise<number>;
   validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<PreparedReplayGuard>;
   broadcast: (raw: Hex) => Promise<Hex>;
+  /**
+   * Plan the single same-nonce alternative for an accepted envelope that is never included (#397):
+   * same chain/nonce/target/calldata, lighter signed gas, both fees raised >=10%, exact preflight
+   * already passed. Returns the unsigned envelope and its signer; nothing is signed by planning.
+   */
+  supersede?: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null,
+    pass: PreparedReconciliationPass) => Promise<{ unsigned: Hex; guard: PreparedReplayGuard; sign: () => Promise<Hex> }>;
 };
 export type LegacyRecoveryBinding = {
   chainId: number; address: Hex; nonce: number; originalHash: Hex; operationId: string;
@@ -55,7 +65,9 @@ export type RecoveryObserver = {
 };
 
 type ReplayIntent = { operationId: string; nonce: number; hash: Hex; membership: string;
-  raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null };
+  raw: Hex | null; attempts: number; nextRetry: number; replayState: string; status: string; originalMaxFeeWei: string | null;
+  /** Set on a same-nonce alternative: the original it supersedes (#397). */
+  supersedes?: Hex | null };
 
 export type ResolverTransactionRequest = {
   chainId: number;
@@ -116,6 +128,13 @@ export type ResolverTransactionCoordinatorOptions = {
   auditRetentionMs?: number;
   /** Coordinator-side bound on the post-broadcast inclusion wait, whatever the caller's `confirm` does. */
   inclusionWaitMs?: number;
+  /** Identical-byte sends of an accepted but never-included envelope before one same-nonce
+   * alternative is signed (#397). After the third send retries are 60 s apart, so the default
+   * also means at least three minutes without inclusion. */
+  supersedeAfterAttempts?: number;
+  /** Own wall-clock budget for planning the same-nonce alternative; the pass deadline is extended by
+   * it once. A planning timeout or failure keeps the unchanged identical-byte resend (#397). */
+  supersessionPlanningMs?: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   /** Arms a reconciliation pass deadline; returns its cancel. Tests inject one to expire a pass on demand. */
@@ -144,6 +163,8 @@ const defaultStaleTransactionMs = 5 * 60_000;
 // Active/unproven intents are bounded independently of confirmed archival retention.
 const defaultMaxUnfinalizedIntents = 32;
 const defaultReconciliationTimeoutMs = 5_000;
+// Planning makes ~12 sequential reads, two of them heavy exact eth_calls (#397).
+const defaultSupersessionPlanningMs = 20_000;
 const defaultReconciliationReadLimit = 128;
 // The audit table is append-only operator history: no admission, replay or recovery
 // decision reads it. Bounded retention keeps it from growing the journal without limit.
@@ -159,6 +180,10 @@ const journalStorageLimitBytes = 240 * 1024 * 1024;
 // so retention can recover a full journal without a pinned WAL reader growing it unbounded.
 const journalPruneReserveBytes = 16 * 1024 * 1024;
 const defaultInclusionWaitMs = 30_000;
+const defaultSupersedeAfterAttempts = 6;
+// Reservation ids of same-nonce alternatives; a crash between reservation and transfer resumes
+// only from the retained signing result, never by signing again.
+const supersessionReservationPrefix = "supersede:";
 
 /**
  * Serializes every transaction signed by one resolver EOA, including across rolling backend
@@ -181,6 +206,8 @@ export class ResolverTransactionCoordinator {
   private readonly reconciliationReadLimit: number;
   private readonly auditRetentionMs: number;
   private readonly inclusionWaitMs: number;
+  private readonly supersedeAfterAttempts: number;
+  private readonly supersessionPlanningMs: number;
   // Per resolver: last prune attempt, the audit sequence already swept and when this sweep began.
   private readonly auditPrune = new Map<string, { at: number; cursor: number; sweepStartedAt: number }>();
   // A transport may not support abort. Never stack abandoned reads on the same signer.
@@ -209,6 +236,11 @@ export class ResolverTransactionCoordinator {
     this.reconciliationReadLimit = options.reconciliationReadLimit ?? defaultReconciliationReadLimit;
     this.auditRetentionMs = options.auditRetentionMs ?? defaultAuditRetentionMs;
     this.inclusionWaitMs = options.inclusionWaitMs ?? defaultInclusionWaitMs;
+    this.supersedeAfterAttempts = options.supersedeAfterAttempts ?? defaultSupersedeAfterAttempts;
+    if (!Number.isSafeInteger(this.supersedeAfterAttempts) || this.supersedeAfterAttempts < 3) throw new Error("invalid resolver supersession bound");
+    this.supersessionPlanningMs = options.supersessionPlanningMs ?? defaultSupersessionPlanningMs;
+    if (!Number.isSafeInteger(this.supersessionPlanningMs) || this.supersessionPlanningMs < 1 || this.supersessionPlanningMs > 60_000)
+      throw new Error("invalid resolver supersession planning budget");
     if (this.auditRetentionMs > maxAuditRetentionMs) throw new Error("invalid resolver audit retention");
     for (const value of [this.maxUnfinalizedIntents, this.maxRetainedConfirmedIntents, this.reconciliationTimeoutMs, this.reconciliationReadLimit, this.auditRetentionMs, this.inclusionWaitMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("invalid resolver reconciliation bounds");
@@ -319,7 +351,7 @@ export class ResolverTransactionCoordinator {
       }
       const intentColumns = this.database.query("PRAGMA table_info(resolver_prepared_intents)").all() as Array<{ name: string }>;
       for (const [name, definition] of Object.entries({ admission_proven: "INTEGER NOT NULL DEFAULT 0", serialized_transaction: "TEXT", replay_state: "TEXT NOT NULL DEFAULT 'legacy'",
-        send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT" })) {
+        send_attempts: "INTEGER NOT NULL DEFAULT 0", next_retry_ms: "INTEGER NOT NULL DEFAULT 0", replay_max_fee_wei: "TEXT", supersedes: "TEXT" })) {
         if (!intentColumns.some((column) => column.name === name)) this.database.exec(`ALTER TABLE resolver_prepared_intents ADD COLUMN ${name} ${definition}`);
       }
       const resultColumns = this.database.query("PRAGMA table_info(resolver_signing_results)").all() as Array<{ name: string }>;
@@ -371,14 +403,14 @@ export class ResolverTransactionCoordinator {
     const count = (predicate: string, limit: number) => (this.database.query(
       "SELECT count(*) AS n FROM (SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND " + predicate + " LIMIT ?)")
       .get(chainId, normalizeAddress(address), limit) as { n: number }).n;
-    const active = count("status != 'finalized' AND admission_proven=0 AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)", this.maxUnfinalizedIntents + 1);
+    const active = count("status != 'finalized' AND status != 'superseded' AND admission_proven=0 AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)", this.maxUnfinalizedIntents + 1);
     const retainedConfirmed = count("status != 'finalized' AND admission_proven=1", this.maxRetainedConfirmedIntents + 1);
     const journalBytes = this.journalBytes();
     const lastProgress = (this.database.query("SELECT last_confirmation_ms AS n FROM resolver_archive_progress WHERE chain_id=? AND resolver_address=?")
       .get(chainId, normalizeAddress(address)) as { n: number | null } | null)?.n;
     const recovery = this.database.query("SELECT 1 FROM resolver_nonce_recovery WHERE chain_id=? AND resolver_address=? AND finalized=0 LIMIT 1")
       .get(chainId, normalizeAddress(address));
-    const unresolved = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND admission_proven=0 AND status NOT IN ('confirmed','finalized') AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) LIMIT 1")
+    const unresolved = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND admission_proven=0 AND status NOT IN ('confirmed','finalized') AND status != 'superseded' AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) LIMIT 1")
       .get(chainId, normalizeAddress(address));
     const reservation = this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1")
       .get(chainId, normalizeAddress(address));
@@ -481,7 +513,7 @@ export class ResolverTransactionCoordinator {
             AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g
               WHERE g.chain_id=a.chain_id AND g.resolver_address=a.resolver_address AND g.nonce=a.nonce)
             AND NOT EXISTS (SELECT 1 FROM resolver_prepared_intents i
-              WHERE i.chain_id=a.chain_id AND i.resolver_address=a.resolver_address AND i.nonce=a.nonce AND i.status != 'finalized')
+              WHERE i.chain_id=a.chain_id AND i.resolver_address=a.resolver_address AND i.nonce=a.nonce AND i.status != 'finalized' AND i.status != 'superseded')
             AND NOT EXISTS (SELECT 1 FROM resolver_transaction_attempts t
               WHERE t.chain_id=a.chain_id AND t.resolver_address=a.resolver_address AND t.operation_id=a.operation_id
                 AND t.status IN ('allocating','ambiguous','submitted'))`)
@@ -536,7 +568,7 @@ export class ResolverTransactionCoordinator {
             .get(chainId, normalizeAddress(address), nonce, binding.originalHash) as { operation_id: string; membership: string; status: string; serialized_transaction: string | null } | null;
           if (!original || original.operation_id !== binding.operationId || original.membership !== binding.membership
             || original.status !== "pending" || original.serialized_transaction !== null) throw new Error("original legacy recovery binding mismatch");
-          const others = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status!='finalized' AND transaction_hash!=? LIMIT 1")
+          const others = this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status!='finalized' AND status!='superseded' AND transaction_hash!=? LIMIT 1")
             .get(chainId, normalizeAddress(address), binding.originalHash);
           const reservations = this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1")
             .get(chainId, normalizeAddress(address));
@@ -696,8 +728,10 @@ export class ResolverTransactionCoordinator {
     const signing = this.database.query(
       "SELECT id FROM resolver_signing_reservations WHERE chain_id = ? AND resolver_address = ? AND transferred = 0 LIMIT 1"
     ).get(chainId, normalizeAddress(address));
-    const ownedReservation = this.recoveryGroups(chainId, address).some((g) => g.reservation_id === (signing as { id: string } | null)?.id);
-    if (signing && !ownedReservation) throw new Error("resolver signed preparation requires explicit fenced recovery; never re-sign or resend");
+    const signingId = (signing as { id: string } | null)?.id;
+    const ownedReservation = this.recoveryGroups(chainId, address).some((g) => g.reservation_id === signingId);
+    if (signingId?.startsWith(supersessionReservationPrefix)) await this.transferSupersession(chainId, address, signingId, assertLease);
+    else if (signing && !ownedReservation) throw new Error("resolver signed preparation requires explicit fenced recovery; never re-sign or resend");
     const key = resolverKey(chainId, address);
     confirm ??= this.preparedReconcilers.get(key);
     const started = performance.now();
@@ -716,7 +750,8 @@ export class ResolverTransactionCoordinator {
       if (error.reason === "proof-rejected" && !proofReasons.includes(reason)) uncodedBlocks.add(error);
       return error;
     };
-    const deadline = started + this.reconciliationTimeoutMs;
+    // Mutable only through pass.extendDeadline (one bounded supersession planning budget, #397).
+    let deadline = started + this.reconciliationTimeoutMs;
     const assertActive = () => {
       if (budgetError) throw budgetError;
       if (!active || performance.now() >= deadline) throw blocked("read deadline exceeded");
@@ -727,7 +762,7 @@ export class ResolverTransactionCoordinator {
     const projection = `operation_id AS operationId, nonce, transaction_hash AS hash,
       membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry,
       replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei,
-      receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven`;
+      receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven, supersedes`;
     type Intent = ReplayIntent & { blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number };
     let frontier = this.database.query(`SELECT ${projection} FROM resolver_prepared_intents INDEXED BY resolver_intents_confirmed_nonce
       WHERE chain_id=? AND resolver_address=? AND admission_proven=1 ORDER BY nonce DESC LIMIT 1`)
@@ -744,21 +779,25 @@ export class ResolverTransactionCoordinator {
       .all(chainId, normalizeAddress(address), cursor, archivePage + 1) as Intent[];
     // LIMIT bounds memory AND index traversal, even on a pre-upgrade oversized journal.
     const intents = this.database.query(`SELECT operation_id AS operationId, nonce, transaction_hash AS hash,
-      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven
-      FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0
+      membership, status, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, replay_max_fee_wei AS originalMaxFeeWei, receipt_block_number AS blockNumber, receipt_block_hash AS blockHash, outcomes, admission_proven AS admissionProven, supersedes
+      FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0 AND status != 'superseded'
       AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce)
       ORDER BY nonce LIMIT ?`).all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents + 1) as Array<{
         operationId: string; nonce: number; hash: Hex; membership: string; status: string;
         raw: Hex | null; attempts: number; nextRetry: number; replayState: string; originalMaxFeeWei: string | null;
-        blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number;
+        blockNumber: string | null; blockHash: Hex | null; outcomes: string | null; admissionProven: number; supersedes: Hex | null;
       }>;
     const groups = this.recoveryGroups(chainId, address);
     if (groups.length>32) throw blocked("recovery history window exceeded; explicit review required");
     if (!intents.length && !groups.length && !frontier) { this.admissionBlocks.delete(key); return; }
     let cancelDeadline = () => {};
-    const expired = new Promise<never>((_, reject) => {
-      cancelDeadline = this.reconciliationTimer(() => { active = false; reject(blocked("read deadline exceeded")); }, this.reconciliationTimeoutMs);
-    });
+    let expire: (error: Error) => void = () => {};
+    const expired = new Promise<never>((_, reject) => { expire = reject; });
+    const armDeadline = (ms: number) => {
+      cancelDeadline();
+      cancelDeadline = this.reconciliationTimer(() => { active = false; expire(blocked("read deadline exceeded")); }, ms);
+    };
+    armDeadline(this.reconciliationTimeoutMs);
     // Recovery identity reads use bounded parallel waves; a timeout releases the lease,
     // not permission to hydrate/write late. Retain every unresolved handle so retries
     // cannot pile up reads.
@@ -777,7 +816,14 @@ export class ResolverTransactionCoordinator {
       assertActive();
       return result;
     };
-    const pass: PreparedReconciliationPass = { assertActive, ...(trace?{recoveryTrace:trace}:{}), read: async (operation) => {
+    const extendDeadline = (ms: number) => {
+      assertActive();
+      const until = performance.now() + ms;
+      if (until <= deadline) return;
+      deadline = until;
+      armDeadline(ms);
+    };
+    const pass: PreparedReconciliationPass = { assertActive, extendDeadline, ...(trace?{recoveryTrace:trace}:{}), read: async (operation) => {
       if (reads >= this.reconciliationReadLimit) {
         budgetError = blocked("read budget exhausted");
         throw budgetError;
@@ -860,7 +906,7 @@ export class ResolverTransactionCoordinator {
           transactionHash: intent.hash, operationId: intent.operationId, membership: intent.membership,
           action: "envelope never dispatched and destroyed; nonce reusable by a freshly prepared batch" }, "warn");
       };
-      const reconcile = async (intent: Intent, archival = false) => {
+      const reconcile = async (intent: Intent, archival = false, known?: PreparedReceipt) => {
         pass.intentIdentity = intent.raw || intent.admissionProven ? { chainId, address, nonce: intent.nonce } : undefined;
         pass.archive = archival;
         if (intent.status === "prevented") {
@@ -874,7 +920,8 @@ export class ResolverTransactionCoordinator {
         const stored = intent.blockNumber !== null && intent.blockHash !== null && intent.outcomes !== null
           ? { finalized: false, blockNumber: intent.blockNumber, blockHash: intent.blockHash, outcomes: intent.outcomes, admissionProven: Boolean(intent.admissionProven) } : undefined;
         if (intent.raw && !intent.admissionProven) await bounded(() => this.validatePreparedBinding(chainId, address, intent));
-        let receipt = await bounded(() => confirm!(intent.hash, intent.membership, intent.raw && !intent.admissionProven ? undefined : stored, pass));
+        // A same-nonce pair already read this exact receipt (no stored evidence) in this pass.
+        let receipt = known ?? await bounded(() => confirm!(intent.hash, intent.membership, intent.raw && !intent.admissionProven ? undefined : stored, pass));
         for (let retry = 0; !receipt && !stored && retry < 3; retry++) {
           if (!intent.raw) throw new Error("legacy durable batch intent missing signed bytes; canonical receipt unknown; preserve journal and obtain independently reviewed original-envelope recovery; never re-sign/reset");
           await bounded(() => this.replayIntent(chainId, address, intent, assertActive, pass));
@@ -894,6 +941,7 @@ export class ResolverTransactionCoordinator {
           await verifyFrontier();
           assertActive();
         }
+        let retired: Hex[] = [];
         if (!stored || receipt.admissionProven !== Boolean(intent.admissionProven) || receipt.finalized || receipt.blockNumber !== stored.blockNumber || receipt.blockHash !== stored.blockHash || receipt.outcomes !== stored.outcomes) {
           // Canonical evidence, re-derivable from the chain: no commit fsync (#279). A power loss
           // can only rewind to an older checkpoint that the next pass reconciles again; at worst the
@@ -904,6 +952,9 @@ export class ResolverTransactionCoordinator {
             this.database.query("UPDATE resolver_prepared_intents SET status = ?, receipt_block_number = ?, receipt_block_hash = ?, outcomes = ?, admission_proven = ? WHERE chain_id = ? AND resolver_address = ? AND transaction_hash = ?")
               .run(receipt.finalized ? "finalized" : "confirmed", receipt.blockNumber, receipt.blockHash, receipt.outcomes, receipt.admissionProven ? 1 : 0,
                 chainId, normalizeAddress(address), intent.hash);
+            // The canonical, nonce-consuming candidate of a same-nonce pair retires the other one
+            // (#397). Its signed bytes stay as evidence; a reorg fails the frontier check closed.
+            if (receipt.admissionProven || receipt.finalized) retired = this.retireSupersededSibling(chainId, address, intent);
             if (intent.status !== "confirmed") {
               this.recordAttempt(chainId, address, intent.operationId, intent.nonce, intent.hash, "confirmed");
               this.database.query("INSERT INTO resolver_archive_progress (chain_id,resolver_address,last_confirmation_ms) VALUES (?,?,?) ON CONFLICT(chain_id,resolver_address) DO UPDATE SET last_confirmation_ms=excluded.last_confirmation_ms")
@@ -921,12 +972,35 @@ export class ResolverTransactionCoordinator {
             }
           }).immediate());
         }
+        for (const loserHash of retired) emitObservabilityEvent({ kind: "resolver_same_nonce_candidate_retired", chainId, address, nonce: intent.nonce,
+          winnerHash: intent.hash, loserHash, action: "winner canonical with consumed nonce; loser retained as evidence" }, "info");
         if (receipt.admissionProven && (!frontier || intent.nonce > frontier.nonce))
           frontier = { ...intent, admissionProven: 1, status: receipt.finalized ? "finalized" : "confirmed", blockNumber: receipt.blockNumber, blockHash: receipt.blockHash, outcomes: receipt.outcomes };
         checked++;
       };
+      // A same-nonce pair (#397): read both receipts first. Whichever is canonical wins and
+      // retires the other; while neither is, only the alternative is resent.
+      const reconcilePair = async (original: Intent, alternative: Intent) => {
+        if (!confirm) throw new ResolverSubmissionAmbiguousError(chainId, address, original.nonce,
+          "durable batch intent cannot bypass canonical receipt/finality reconciliation");
+        for (const candidate of [original, alternative])
+          if (candidate.raw) await bounded(() => this.validatePreparedBinding(chainId, address, candidate));
+        pass.intentIdentity = { chainId, address, nonce: original.nonce };
+        pass.archive = false;
+        const originalReceipt = await bounded(() => confirm!(original.hash, original.membership, undefined, pass));
+        const alternativeReceipt = await bounded(() => confirm!(alternative.hash, alternative.membership, undefined, pass));
+        if (originalReceipt && alternativeReceipt) throw new Error("conflicting canonical same-nonce candidates; fail closed, preserve both envelopes");
+        if (originalReceipt) await reconcile(original, false, originalReceipt);
+        else await reconcile(alternative, false, alternativeReceipt || undefined);
+      };
       stage = "active";
-      for (const intent of intents.slice(0, this.maxUnfinalizedIntents)) await reconcile(intent);
+      const active = intents.slice(0, this.maxUnfinalizedIntents);
+      for (const intent of active) {
+        if (intent.supersedes && active.some((other) => other.hash === intent.supersedes && other.nonce === intent.nonce)) continue;
+        const alternative = active.find((other) => other.supersedes === intent.hash && other.nonce === intent.nonce);
+        if (alternative) await reconcilePair(intent, alternative);
+        else await reconcile(intent);
+      }
       stage = "archive";
       // One look-ahead row tells a full page from the end, so the cursor never needs an empty pass.
       const page = archive.slice(0, archivePage);
@@ -1057,7 +1131,11 @@ export class ResolverTransactionCoordinator {
     const replay = this.preparedReplayers.get(resolverKey(chainId, address));
     if (!replay) throw this.replayError(intent, "replay client unavailable");
     const recovery = this.getRecoveryBinding(chainId,address,intent.raw!);
-    if (!(recovery && intent.replayState === "unvalidated") && intent.replayState !== "retryable" && intent.replayState !== "ready"
+    if (this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND supersedes=? LIMIT 1")
+      .get(chainId, normalizeAddress(address), intent.nonce, intent.hash))
+      throw this.replayError(intent, "superseded by a same-nonce alternative; awaiting either candidate's canonical receipt, original never resent");
+    const alternative = Boolean(intent.supersedes) && !recovery;
+    if (!((recovery || alternative) && intent.replayState === "unvalidated") && intent.replayState !== "retryable" && intent.replayState !== "ready"
       && intent.replayState !== "deterministic-rejection" && intent.replayState !== "invalid-response")
       throw this.replayError(intent, "first-send validation not durably completed; explicit fenced recovery required; never auto-send");
     await this.validatePreparedBinding(chainId, address, intent);
@@ -1069,6 +1147,30 @@ export class ResolverTransactionCoordinator {
     if (["deterministic-rejection", "invalid-response"].includes(intent.replayState))
       throw this.replayError(intent, "deterministic send rejection; operator review required, receipt reconciliation remains active");
     if (recovery && pass.recoveryTrace) pass.recoveryTrace.stage="retry-hold";
+    // Accepted ("already known") but never included after bounded identical sends: Base's builder
+    // can refuse a hash permanently (execution metering), so identical bytes can never succeed.
+    // Sign at most one lighter, fee-bumped alternative at the same nonce instead (#397).
+    if (!recovery && !intent.supersedes && replay.supersede && replay.getTransactionCount && intent.replayState === "retryable"
+      && intent.attempts >= this.supersedeAfterAttempts && intent.nextRetry <= this.now()) {
+      try {
+        await this.supersedeIntent(chainId, address, intent, replay, assertLease, pass);
+      } catch (error) {
+        // Nothing was reserved or signed: keep the unchanged identical-byte resend (the original may
+        // merely have been dropped) and alert. Lease, deadline, transport and signing errors propagate.
+        if (!(error instanceof SupersessionUnavailableError)) throw error;
+        pass.assertActive();
+        emitObservabilityEvent({ kind: "resolver_same_nonce_supersession_unavailable", chainId, address, nonce: intent.nonce,
+          transactionHash: intent.hash, attempts: intent.attempts, reason: safeDiagnosticText(error),
+          action: "identical bytes keep resending; if Base never includes them, operator review is required (see docs/mission-resolver-reliability.md)" }, "warn");
+      }
+      if (this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND supersedes=? LIMIT 1")
+        .get(chainId, normalizeAddress(address), intent.nonce, intent.hash))
+        throw this.replayError(intent, "same-nonce alternative dispatched; reconcile both candidates next pass");
+    }
+    if (alternative && intent.attempts >= this.supersedeAfterAttempts && intent.nextRetry <= this.now())
+      emitObservabilityEvent({ kind: "resolver_same_nonce_alternative_not_included", chainId, address, nonce: intent.nonce,
+        transactionHash: intent.hash, supersedes: intent.supersedes, attempts: intent.attempts,
+        action: "the lighter same-nonce alternative is still not included; it is never superseded again, operator review required (see docs/mission-resolver-reliability.md)" }, "warn");
     if (intent.nextRetry > this.now()) {
       if (intent.attempts >= 3) throw recovery ? new RecoveryReadinessError("retry-cooldown", "recoverable pending; bounded retry cooling down") : this.replayError(intent, "recoverable pending; bounded retry cooling down");
       await this.sleep(intent.nextRetry - this.now());
@@ -1090,12 +1192,12 @@ export class ResolverTransactionCoordinator {
     }
     await guard.finalCheck?.();
     assertLease();
-    if (recovery && intent.replayState === "unvalidated") {
+    if ((recovery || alternative) && intent.replayState === "unvalidated") {
       this.database.transaction(() => {
         assertLease(); guard();
         const ready=this.database.query("UPDATE resolver_prepared_intents SET replay_state='ready' WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND replay_state='unvalidated'")
           .run(chainId,normalizeAddress(address),intent.hash);
-        if (ready.changes!==1) throw new Error("recovery validation state changed");
+        if (ready.changes!==1) throw new Error((alternative ? "alternative" : "recovery") + " validation state changed");
       }).immediate();
       intent.replayState="ready";
     }
@@ -1103,10 +1205,154 @@ export class ResolverTransactionCoordinator {
     await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
   }
 
+  /** Exactly one alternative per original; the original row is never modified or resent. */
+  private async supersedeIntent(chainId: number, address: Hex, intent: ReplayIntent, replay: PreparedReplay,
+    assertLease: () => void, pass: PreparedReconciliationPass): Promise<void> {
+    const unavailable = (reason: string) => new SupersessionUnavailableError(`resolver same-nonce supersession unavailable for nonce ${intent.nonce}: ${reason}`);
+    const resolver = normalizeAddress(address);
+    const exclusive = () => {
+      if (this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND (nonce>? OR (nonce=? AND transaction_hash!=?)) LIMIT 1")
+        .get(chainId, resolver, intent.nonce, intent.nonce, intent.hash)) throw unavailable("another journal intent at or after this nonce");
+      if (this.database.query("SELECT 1 FROM resolver_nonce_recovery WHERE chain_id=? AND resolver_address=? AND nonce=?").get(chainId, resolver, intent.nonce))
+        throw unavailable("nonce has recovery lineage");
+    };
+    exclusive();
+    // Planning (~12 sequential reads, two heavy exact eth_calls) gets its own bounded budget: the pass
+    // deadline is extended once and planning is raced against it. Nothing is reserved or signed until
+    // planning returns, so a planning timeout or failure (stale quote, fee cap, transport, unproductive
+    // envelope) is only "unavailable": the original keeps its identical-byte resend this pass. Only
+    // the pass itself (lease loss, outer deadline) propagates.
+    // The pass keeps a full ordinary pass budget AFTER the planning budget, so a planner that times out
+    // still leaves time for the unchanged identical-byte resend (the planning timer always fires first).
+    pass.extendDeadline?.(this.supersessionPlanningMs + this.reconciliationTimeoutMs);
+    const planningDeadline = performance.now() + this.supersessionPlanningMs;
+    let planningOver = false;
+    const planningActive = () => {
+      pass.assertActive();
+      if (planningOver || performance.now() >= planningDeadline) throw unavailable("planning budget exceeded");
+    };
+    const planning: PreparedReconciliationPass = { ...pass, assertActive: planningActive,
+      read: (operation) => { planningActive(); return pass.read(operation); } };
+    const original = parseTransaction(intent.raw!);
+    type Plan = Awaited<ReturnType<NonNullable<PreparedReplay["supersede"]>>>;
+    let cancelPlanningTimer = () => {};
+    let planned: { plan: Plan; next: ReturnType<typeof parseTransaction> };
+    try {
+      const timedOut = new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => reject(unavailable("planning budget exceeded")), this.supersessionPlanningMs);
+        cancelPlanningTimer = () => clearTimeout(timer);
+      });
+      planned = await Promise.race([timedOut, (async () => {
+        const latest = await planning.read(() => replay.getTransactionCount!("latest"));
+        if (latest !== intent.nonce) throw unavailable("signer nonce is not exactly the pending nonce");
+        const plan = await replay.supersede!(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, planning);
+        planningActive();
+        const next = parseTransaction(plan.unsigned);
+        if (next.type !== "eip1559" || original.type !== "eip1559" || next.r || next.s || next.chainId !== chainId || original.chainId !== chainId
+          || next.nonce !== intent.nonce || original.nonce !== intent.nonce || !next.to || next.to.toLowerCase() !== original.to?.toLowerCase()
+          || next.data !== original.data || (next.value ?? 0n) !== 0n || (next.accessList?.length ?? 0) !== 0
+          || next.gas === undefined || next.gas >= original.gas! || next.maxFeePerGas === undefined || next.maxPriorityFeePerGas === undefined
+          || next.maxPriorityFeePerGas * 10n < original.maxPriorityFeePerGas! * 11n || next.maxFeePerGas * 10n < original.maxFeePerGas! * 11n)
+          throw unavailable("alternative plan violates same-intent replacement bounds");
+        await plan.guard.finalCheck?.();
+        planningActive();
+        return { plan, next };
+      })()]);
+    } catch (error) {
+      pass.assertActive(); // lease loss / outer pass deadline: the pass fails as before
+      if (error instanceof SupersessionUnavailableError) throw error;
+      throw unavailable("planning failed: " + safeDiagnosticText(error));
+    } finally {
+      planningOver = true; // a late planner read fails fast instead of spending the pass budget
+      cancelPlanningTimer();
+    }
+    const { plan, next } = planned;
+    const id = supersessionReservationPrefix + randomUUID();
+    // NORMAL sync (#279): the send fence's FULL commit makes these durable before any broadcast;
+    // a power-loss rewind before it is equivalent to "never signed".
+    withoutCommitSync(this.database, () => this.database.transaction(() => {
+      pass.assertActive();
+      // Before the irreversible reservation; no awaits until the signer is invoked. A quote that
+      // expired here reserved nothing: unavailable, so the original keeps resending.
+      try { plan.guard(); } catch (error) { throw unavailable("alternative quote expired before reservation: " + safeDiagnosticText(error)); }
+      exclusive();
+      if (this.database.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1").get(chainId, resolver)
+        || this.database.query("SELECT 1 FROM resolver_send_fences WHERE chain_id=? AND resolver_address=? LIMIT 1").get(chainId, resolver))
+        throw unavailable("signing or send outstanding");
+      if (!this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND status='pending' AND admission_proven=0 AND send_attempts=? AND serialized_transaction=?")
+        .get(chainId, resolver, intent.hash, intent.attempts, intent.raw)) throw unavailable("original intent changed");
+      this.database.query("INSERT INTO resolver_signing_reservations(id,chain_id,resolver_address,operation_id,nonce,membership) VALUES(?,?,?,?,?,?)")
+        .run(id, chainId, resolver, intent.operationId, intent.nonce, intent.membership);
+      this.auditOnly(chainId, address, intent.operationId, intent.nonce, intent.hash, "superseding");
+    }).immediate());
+    const signing = plan.sign();
+    const raw = await signing;
+    // Append-only evidence bound to this reservation; survives a lost lease or deadline.
+    withoutCommitSync(this.database, () => this.database.query("INSERT INTO resolver_signing_results(reservation_id,transaction_hash,serialized_transaction) VALUES(?,?,?)").run(id, keccak256(raw), raw));
+    const transferred = await this.transferSupersession(chainId, address, id, pass.assertActive, plan.unsigned);
+    emitObservabilityEvent({ kind: "resolver_same_nonce_supersession", chainId, address, nonce: intent.nonce,
+      originalHash: intent.hash, alternativeHash: transferred.hash, originalAttempts: intent.attempts,
+      gas: next.gas!.toString(), maxFeePerGas: next.maxFeePerGas!.toString(), maxPriorityFeePerGas: next.maxPriorityFeePerGas!.toString(),
+      action: "original accepted but never included; one lighter fee-bumped alternative at the same nonce, whichever is mined wins" }, "warn");
+    await this.replayIntent(chainId, address, transferred, assertLease, pass);
+  }
+
+  /** Persist a signed alternative from its retained result; never signs. Also resumes after a crash. */
+  private async transferSupersession(chainId: number, address: Hex, id: string, assertActive: () => void,
+    expectedUnsigned?: Hex): Promise<ReplayIntent> {
+    const resolver = normalizeAddress(address);
+    const reservation = this.database.query("SELECT operation_id AS operationId, nonce, membership, transferred FROM resolver_signing_reservations WHERE id=? AND chain_id=? AND resolver_address=?")
+      .get(id, chainId, resolver) as { operationId: string; nonce: number; membership: string; transferred: number } | null;
+    const result = this.database.query("SELECT transaction_hash AS hash, serialized_transaction AS raw FROM resolver_signing_results WHERE reservation_id=?")
+      .get(id) as { hash: Hex; raw: Hex | null } | null;
+    if (!reservation || reservation.transferred || !result?.raw)
+      throw new Error("same-nonce alternative signing result unknown; preserve reservation and original, never re-sign");
+    const original = this.database.query("SELECT operation_id AS operationId, nonce, transaction_hash AS hash, membership, serialized_transaction AS raw, send_attempts AS attempts, next_retry_ms AS nextRetry, replay_state AS replayState, status, replay_max_fee_wei AS originalMaxFeeWei FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND operation_id=? AND membership=? AND supersedes IS NULL AND status='pending' AND admission_proven=0")
+      .all(chainId, resolver, reservation.nonce, reservation.operationId, reservation.membership) as ReplayIntent[];
+    if (original.length !== 1 || !original[0]!.raw) throw new Error("same-nonce alternative original changed; preserve reservation, never re-sign");
+    const source = original[0]!;
+    await this.validateEnvelope(chainId, address, reservation.nonce, result.hash, result.raw);
+    const signed = parseTransaction(result.raw), base = parseTransaction(source.raw!);
+    const unsigned = serializeTransaction({ type: "eip1559", chainId: signed.chainId!, nonce: signed.nonce!, to: signed.to, data: signed.data,
+      value: signed.value ?? 0n, gas: signed.gas!, maxFeePerGas: signed.maxFeePerGas!, maxPriorityFeePerGas: signed.maxPriorityFeePerGas! });
+    if (signed.type !== "eip1559" || (signed.accessList?.length ?? 0) !== 0 || (expectedUnsigned && unsigned !== expectedUnsigned)
+      || signed.to?.toLowerCase() !== base.to?.toLowerCase() || signed.data !== base.data || (signed.value ?? 0n) !== 0n
+      || signed.gas! >= base.gas! || signed.maxFeePerGas! * 10n < base.maxFeePerGas! * 11n || signed.maxPriorityFeePerGas! * 10n < base.maxPriorityFeePerGas! * 11n)
+      throw new Error("same-nonce alternative signed intent mismatch; preserve reservation and evidence");
+    withoutCommitSync(this.database, () => this.database.transaction(() => {
+      assertActive();
+      this.database.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,serialized_transaction,replay_state,replay_max_fee_wei,supersedes) VALUES(?,?,?,?,?,?,'pending',?,'unvalidated',?,?)")
+        .run(chainId, resolver, reservation.operationId, reservation.nonce, result.hash, reservation.membership, result.raw, source.originalMaxFeeWei, source.hash);
+      const changed = this.database.query("UPDATE resolver_signing_reservations SET transferred=1 WHERE id=? AND transferred=0").run(id);
+      if (changed.changes !== 1) throw new Error("same-nonce alternative may transfer only once");
+      this.auditOnly(chainId, address, reservation.operationId, reservation.nonce, result.hash, "superseding-candidate");
+    }).immediate());
+    return { operationId: reservation.operationId, nonce: reservation.nonce, hash: result.hash, membership: reservation.membership,
+      raw: result.raw, attempts: 0, nextRetry: 0, replayState: "unvalidated", status: "pending", originalMaxFeeWei: source.originalMaxFeeWei, supersedes: source.hash };
+  }
+
+  /** Inside the winner's receipt transaction: the other candidate of its pair can never be mined. */
+  private retireSupersededSibling(chainId: number, address: Hex, winner: { operationId: string; nonce: number; hash: Hex; supersedes?: Hex | null }): Hex[] {
+    const resolver = normalizeAddress(address);
+    const losers = this.database.query("SELECT transaction_hash AS hash FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND transaction_hash!=? AND status='pending' AND admission_proven=0 AND (supersedes=? OR transaction_hash=?)")
+      .all(chainId, resolver, winner.nonce, winner.hash, winner.hash, winner.supersedes ?? "") as Array<{ hash: Hex }>;
+    for (const loser of losers) {
+      this.database.query("UPDATE resolver_prepared_intents SET status='superseded' WHERE chain_id=? AND resolver_address=? AND transaction_hash=? AND status='pending'")
+        .run(chainId, resolver, loser.hash);
+      this.auditOnly(chainId, address, winner.operationId, winner.nonce, loser.hash, "superseded");
+    }
+    return losers.map((loser) => loser.hash); // events only after the enclosing transaction commits
+  }
+
+  private auditOnly(chainId: number, address: Hex, operationId: string, nonce: number, transactionHash: Hex | null, status: string): void {
+    this.database.query("INSERT INTO resolver_transaction_audit (chain_id, resolver_address, operation_id, nonce, transaction_hash, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(chainId, normalizeAddress(address), operationId, nonce, transactionHash, status, new Date(this.now()).toISOString());
+  }
+
   private assertPreparedAdmission(chainId: number, address: Hex): void {
     const health = this.admissionSnapshot(chainId, address);
     if (health.blockedReason) throw new Error("resolver admission blocked: " + health.blockedReason + "; preserve all signed evidence");
-    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0 AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) ORDER BY nonce LIMIT ?")
+    const rows = this.database.query("SELECT nonce FROM resolver_prepared_intents INDEXED BY resolver_intents_active_nonce WHERE chain_id = ? AND resolver_address = ? AND status != 'finalized' AND admission_proven=0 AND status != 'superseded' AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=resolver_prepared_intents.chain_id AND g.resolver_address=resolver_prepared_intents.resolver_address AND g.nonce=resolver_prepared_intents.nonce AND g.finalized=1) ORDER BY nonce LIMIT ?")
       .all(chainId, normalizeAddress(address), this.maxUnfinalizedIntents);
     if (rows.length >= this.maxUnfinalizedIntents) {
       this.admissionBlocks.set(resolverKey(chainId, address), "active-window-full");

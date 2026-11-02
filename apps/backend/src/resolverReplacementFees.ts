@@ -5,6 +5,10 @@ export type ResolverReplacementFees = {
   maxPriorityFeePerGas: bigint;
 };
 
+/** A same-nonce alternative cannot help (for example it would not do less work): keep resending
+ * the original's identical bytes and alert the operator; nothing was reserved or signed (#397). */
+export class SupersessionUnavailableError extends Error {}
+
 const replacementNumerator = 125n;
 const replacementDenominator = 100n;
 

@@ -10,6 +10,7 @@ import {
   http,
   keccak256,
   parseAbi,
+  parseTransaction,
   serializeTransaction,
   toHex,
   type Hex,
@@ -33,7 +34,7 @@ import { safeDiagnosticText } from "./safeDiagnostics";
 import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
-import { validateMissionBatchReplay, BatchQuoteExpiredError, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
+import { validateMissionBatchReplay, planMissionSupersession, BatchQuoteExpiredError, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
 
 const missionResolutionIntervalMs = 5_000;
 const maxMissionsPerTick = 100;
@@ -897,7 +898,26 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
             recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
           return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard,pass.recoveryTrace) : feeGuard;
         },
-        broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw })
+        broadcast: (raw) => this.publicClient!.sendRawTransaction({ serializedTransaction: raw }),
+        // #397: one lighter, fee-bumped alternative at the same nonce for an accepted batch that
+        // Base never includes. Only planned here; the coordinator fences reservation and signing.
+        ...(typeof this.sender === "string" ? {} : { supersede: async (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => {
+          const account = this.sender as Exclude<typeof this.sender, string>;
+          if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");
+          const items: BatchLeg[] = JSON.parse(membership);
+          if (!Array.isArray(items) || items.length < 1 || items.length > 32
+            || operationId !== "mission-batch:" + this.gameAddress.toLowerCase() + ":" + keccak256(batchCalldata(items)))
+            throw new Error("mission supersession intent mismatch");
+          if (!originalMaxFeeWei || !/^[0-9]{1,18}$/.test(originalMaxFeeWei) || BigInt(originalMaxFeeWei) <= 0n)
+            throw new Error("original replay fee policy unavailable");
+          const maxFeeWei = BigInt(originalMaxFeeWei) < this.batchPolicy.maxFeeWei ? BigInt(originalMaxFeeWei) : this.batchPolicy.maxFeeWei;
+          const plan = await planMissionSupersession(this.publicClient!, raw, { items, account: address, game: this.gameAddress,
+            chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei } }, pass);
+          const tx = parseTransaction(plan.unsigned);
+          return { unsigned: plan.unsigned, guard: plan.guard, sign: () => account.signTransaction({ type: "eip1559", chainId: this.chain!.id,
+            to: this.gameAddress, data: tx.data!, nonce: tx.nonce!, value: 0n, gas: plan.gas,
+            maxFeePerGas: plan.maxFeePerGas, maxPriorityFeePerGas: plan.maxPriorityFeePerGas }) };
+        } })
       });
     }
   }

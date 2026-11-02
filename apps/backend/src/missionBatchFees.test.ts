@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import { encodeFunctionResult, parseTransaction, type PublicClient } from "viem";
-import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy } from "./missionBatch";
+import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy, BatchWorkBudgetError, BatchWorkCeilingError } from "./missionBatch";
 import { privateKeyToAccount } from "viem/accounts";
-import { validateMissionBatchReplay, BatchQuoteExpiredError, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
+import { SupersessionUnavailableError } from "./resolverReplacementFees";
+import { validateMissionBatchReplay, planMissionSupersession, BatchQuoteExpiredError, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
 
 const now = BigInt(Math.floor(Date.now() / 1000));
 const input = { items: [{ missionId: "1", leg: "arrival" as const, dueAt: Number(now - 5n) }], nonce: 99,
@@ -42,7 +43,9 @@ function fixture(overrides: Record<string, unknown> = {}) {
 test("quotes actual nonce/calldata/gas/maxfee and Base fee oracles without any USD reads", async () => {
   const { client, calls } = fixture();
   const quote = await quoteMissionBatch(client, input);
-  expect(quote.totalWei).toBe(signedGas * 210n + 2200n);
+  // Signed gas is the per-transaction work budget; L1/operator fees stay quoted at the cap.
+  expect(quote.gas).toBe(2_500_000n);
+  expect(quote.totalWei).toBe(2_500_000n * 210n + 2200n);
   expect(Object.isFrozen(quote)).toBe(true);
   expect(Object.isFrozen(quote.provenance)).toBe(true);
   expect(quote.provenance).toEqual({ blockNumber: 10n, blockHash: block().hash as `0x${string}`, blockTimestamp: now });
@@ -77,10 +80,76 @@ test("reference and exact-signed-gas no-progress never produce a quote", async (
   let calls = 0;
   expect((await quoteMissionBatch(fixture({ call: async () => result(calls++ === 0 ? 0 : 7) }).client, input)).outcomes).toEqual([7]);
 });
-test("a staged battle measured near the unchanged gas cap is clamped, not excluded", async () => {
-  const quote = await quoteMissionBatch(fixture({ call: async () => result(7, 15_000_000n), readContract: async () => 100n }).client, input);
-  expect(quote.gas).toBe(16_777_216n);
+test("a staged battle measured near the gas cap is bounded by the work budget, not excluded (#397)", async () => {
+  const signed: bigint[] = [];
+  const quote = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return result(7, gas < 15_000_000n ? gas - gas / 10n : 15_000_000n); }, readContract: async () => 100n }).client, input);
+  expect(quote.gas).toBe(2_500_000n);
+  expect(signed).toEqual([16_777_216n, 2_500_000n]);
   expect(quote.outcomes).toEqual([7]);
+  const wide = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(7, gas < 15_000_000n ? gas - gas / 10n : 15_000_000n),
+    readContract: async () => 100n }).client, { ...input, policy: { ...input.policy, workGas: 16_777_216n, maxWorkGas: 16_777_216n } });
+  expect(wide.gas).toBe(16_777_216n);
+});
+test("a leg Settled at the cap with work above the budget is signed at the budget where it makes Progress (#397 review)", async () => {
+  // The final segment of the prod battle: Settled at the cap with ~4.2M of work, Progress at the budget.
+  const signed: bigint[] = [];
+  const quote = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return gas >= 16_000_000n ? result(0, 4_200_000n) : result(7, gas / 2n); }, readContract: async () => 100n }).client, input);
+  expect(quote.gas).toBe(2_500_000n);
+  expect(quote.outcomes).toEqual([7]);
+  expect(signed).toEqual([16_777_216n, 2_500_000n]);
+});
+test("a single staged leg whose first stage exceeds the work budget escalates, never above the hard work ceiling (#397 review)", async () => {
+  const signed: bigint[] = [];
+  const staged = (productiveFrom: bigint) => fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return result(gas < productiveFrom ? 5 : 7, gas / 2n); }, readContract: async () => 100n }).client;
+  const quote = await quoteMissionBatch(staged(2_800_000n), input);
+  expect(quote.gas).toBe(3_000_000n);
+  expect(signed).toEqual([16_777_216n, 2_500_000n, 3_000_000n]);
+  expect(quote.outcomes).toEqual([7]);
+  // Unproductive at the ceiling: an indivisible blocker, never signed heavier.
+  for (const productiveFrom of [3_000_001n, 12_000_000n]) {
+    signed.length = 0;
+    await expect(quoteMissionBatch(staged(productiveFrom), input)).rejects.toBeInstanceOf(BatchWorkCeilingError);
+    expect(signed).toEqual([16_777_216n, 2_500_000n, 3_000_000n]);
+  }
+  // An explicitly raised ceiling escalates 2x, 4x, ... (and the measured need + 20%) up to it, never past it.
+  signed.length = 0;
+  const raised = { ...input, policy: { ...input.policy, maxWorkGas: 8_000_000n } };
+  expect((await quoteMissionBatch(staged(5_000_000n), raised)).gas).toBe(5_000_000n);
+  signed.length = 0;
+  await expect(quoteMissionBatch(staged(12_000_000n), raised)).rejects.toBeInstanceOf(BatchWorkCeilingError);
+  expect(signed).toEqual([16_777_216n, 2_500_000n, 5_000_000n, 8_000_000n]);
+  expect(signed.every((gas, i) => i === 0 || gas <= 8_000_000n)).toBe(true);
+  await expect(quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas < 16_777_216n ? 5 : 7, 1_000n), readContract: async () => 100n }).client,
+    { ...input, items: [...input.items, { ...input.items[0]!, missionId: "8" }] })).rejects.toThrow();
+});
+test("a non-staged leg that needs more than the budget is signed at its measured need + 20% when that fits the ceiling", async () => {
+  const signed: bigint[] = [];
+  // Needs 2.2M of work: GasLimited/Failed below that, Settled from there.
+  const need = 2_200_000n;
+  const heavy = fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return gas < 2_700_000n ? result(5, gas / 2n) : result(0, need); }, readContract: async () => 100n }).client;
+  const quote = await quoteMissionBatch(heavy, input);
+  const minimum = (measuredBatchGas(need, batchCalldata(input.items), 1) * 120n + 99n) / 100n;
+  expect(minimum).toBeLessThan(3_000_000n);
+  expect(quote.gas).toBe(minimum);
+  expect(signed).toEqual([16_777_216n, 2_500_000n, minimum]);
+});
+test("settling legs over the work budget are signed at the budget when productive there, else split; never above the ceiling", async () => {
+  const items = [input.items[0]!, { ...input.items[0]!, missionId: "8" }];
+  const batch = (outcomes: (gas: bigint) => number[]) => fixture({ call: async ({ gas }: { gas: bigint }) => ({ data: encodeFunctionResult({ abi: missionBatchAbi,
+    functionName: "resolveFleetMissionBatch", result: [outcomes(gas), gas >= 16_000_000n ? 4_000_000n : gas - 100_000n] }) }), readContract: async () => 100n }).client;
+  // Both legs still settle (or make Progress) at the budget: one transaction at the budget.
+  expect((await quoteMissionBatch(batch(() => [0, 0]), { ...input, items })).gas).toBe(2_500_000n);
+  expect((await quoteMissionBatch(batch((gas) => gas >= 16_000_000n ? [0, 0] : [0, 7]), { ...input, items })).outcomes).toEqual([0, 7]);
+  // The second leg no longer fits at the budget: split by packing.
+  await expect(quoteMissionBatch(batch((gas) => gas >= 16_000_000n ? [0, 0] : [0, 6]), { ...input, items })).rejects.toBeInstanceOf(BatchWorkBudgetError);
+  // One indivisible settling leg is never signed above the hard ceiling.
+  const single = fixture({ call: async ({ gas }: { gas: bigint }) => result(gas >= 16_000_000n ? 0 : 6, gas >= 16_000_000n ? 4_000_000n : gas - 100_000n),
+    readContract: async () => 100n }).client;
+  await expect(quoteMissionBatch(single, input)).rejects.toBeInstanceOf(BatchWorkCeilingError);
 });
 test("an unfinished battle shrinks gas to the ETH budget and stays productive", async () => {
   const policy = { ...input.policy, maxFeeWei: 100_000_000_000_000n };
@@ -173,4 +242,36 @@ test("every fee-age failure is typed for shared repacking, including oracle-awai
     const client = fixture({ readContract: async () => { clock = Number(now + 31n) * 1000; return 100n; } }).client;
     await expect(quoteMissionBatch(client, input)).rejects.toBeInstanceOf(BatchQuoteExpiredError);
   } finally { Date.now = originalNow; }
+});
+
+test("same-nonce supersession plan: lighter gas, >=10% less simulated work, both fees bumped >=25% and to the current quote (#397)", async () => {
+  const signer = privateKeyToAccount(("0x" + "22".repeat(32)) as `0x${string}`); // fixture only
+  const original = await signer.signTransaction({ type: "eip1559", chainId: 8453, nonce: 99, to: input.game, data: batchCalldata(input.items),
+    value: 0n, gas: 16_777_216n, maxFeePerGas: 210n, maxPriorityFeePerGas: 10n });
+  const pass = { read: <T>(operation: () => Promise<T>) => operation(), assertActive: () => {} };
+  const simulated: Array<[bigint, bigint]> = [];
+  const staged = (failBelow: bigint, work = (gas: bigint) => gas / 4n) => fixture({ readContract: async () => 100n,
+    call: async ({ gas, nonce, maxFeePerGas }: { gas: bigint; nonce: number; maxFeePerGas: bigint }) => {
+      simulated.push([gas, maxFeePerGas]); expect(nonce).toBe(99);
+      return result(gas < failBelow ? 5 : 7, work(gas));
+    } }).client;
+  const plan = await planMissionSupersession(staged(0n), original, input, pass);
+  expect({ gas: plan.gas, maxFeePerGas: plan.maxFeePerGas, maxPriorityFeePerGas: plan.maxPriorityFeePerGas })
+    .toEqual({ gas: 2_500_000n, maxFeePerGas: 263n, maxPriorityFeePerGas: 13n });
+  expect({ lighter: plan.executionGasUsed, original: plan.originalExecutionGasUsed }).toEqual({ lighter: 625_000n, original: 4_194_304n });
+  // The lighter exact envelope at bumped fees, then the original's own envelope at the same block.
+  expect(simulated).toEqual([[2_500_000n, 263n], [16_777_216n, undefined as unknown as bigint]]);
+  const unsigned = parseTransaction(plan.unsigned);
+  expect(unsigned).toMatchObject({ nonce: 99, to: input.game, data: batchCalldata(input.items), gas: 2_500_000n });
+  expect(unsigned.r).toBeUndefined();
+  // No alternative that cannot do less work: never spend it on an envelope Base would refuse again.
+  await expect(planMissionSupersession(staged(3_000_000n), original, input, pass)).rejects.toBeInstanceOf(SupersessionUnavailableError);
+  await expect(planMissionSupersession(staged(0n, () => 1_000_000n), original, input, pass)).rejects.toThrow("10% less work");
+  const light = await signer.signTransaction({ type: "eip1559", chainId: 8453, nonce: 99, to: input.game, data: batchCalldata(input.items),
+    value: 0n, gas: 2_500_000n, maxFeePerGas: 210n, maxPriorityFeePerGas: 10n });
+  await expect(planMissionSupersession(staged(0n), light, input, pass)).rejects.toThrow("already within the work budget");
+  // Caps, transport and envelope identity stay fatal (not "unavailable").
+  await expect(planMissionSupersession(staged(0n), original, { ...input, policy: { ...input.policy, maxFeeWei: 1_000_000n } }, pass)).rejects.toThrow("ETH cap");
+  await expect(planMissionSupersession(fixture({ readContract: async () => 100n, call: async () => { throw new Error("rpc down"); } }).client, original, input, pass)).rejects.toThrow("rpc down");
+  await expect(planMissionSupersession(staged(0n), original, { ...input, items: [{ ...input.items[0]!, missionId: "2" }] }, pass)).rejects.toThrow("original envelope mismatch");
 });

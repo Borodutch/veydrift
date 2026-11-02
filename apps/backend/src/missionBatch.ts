@@ -10,11 +10,36 @@ export type MissionBatchPolicy = {
   enabled: boolean;
   maxItems: number;
   maxFeeWei: bigint;
+  /** Per-transaction work budget (signed gas) for batches that can stop early (Progress). */
+  workGas?: bigint;
+  /** Hard ceiling on automatically signed gas, escalation included (#397). */
+  maxWorkGas?: bigint;
 };
 export const resolverTransactionMaxFeeWei = 200_000_000_000_000n;
 export const resolverBatchMaxFeeWei = 400_000_000_000_000n;
+/** Base's builder rejects a transaction whose metered execution time exceeds its per-transaction
+ * limit, permanently for that hash (#397). Staged combat burns whatever gas it is given, so the
+ * signed gas is the work bound: one combat stage needs ~1.3M, a 4.2M-gas battle tx was refused. */
+export const defaultBatchWorkGas = 2_500_000n;
+export const minBatchWorkGas = 1_500_000n;
+export const maxTransactionGas = 16_777_216n;
+export function batchWorkGas(policy: Pick<MissionBatchPolicy, "workGas">): bigint {
+  const value = policy.workGas ?? defaultBatchWorkGas;
+  if (value < minBatchWorkGas || value > maxTransactionGas) throw new Error("invalid batch work gas budget");
+  return value;
+}
+/** Hard ceiling for any automatically signed batch, clearly below the ~4.2M of work Base refused.
+ * A leg that is not productive under it is excluded as an indivisible blocker, never signed. */
+export const defaultBatchMaxWorkGas = 3_000_000n;
+/** Operators may raise the ceiling, but never back to the envelope Base refused (~4.2M of work). */
+export const maxConfigurableWorkGas = 4_000_000n;
+export function batchMaxWorkGas(policy: Pick<MissionBatchPolicy, "workGas" | "maxWorkGas">): bigint {
+  const value = policy.maxWorkGas ?? defaultBatchMaxWorkGas;
+  if (value < batchWorkGas(policy) || value > maxTransactionGas) throw new Error("invalid batch max work gas ceiling");
+  return value;
+}
 export const defaultMissionBatchPolicy: MissionBatchPolicy = {
-  enabled: false, maxItems: 16, maxFeeWei: resolverBatchMaxFeeWei
+  enabled: false, maxItems: 16, maxFeeWei: resolverBatchMaxFeeWei, workGas: defaultBatchWorkGas, maxWorkGas: defaultBatchMaxWorkGas
 };
 export function loadMissionBatchPolicy(env: Record<string, string | undefined>, problems: Array<{ field: string; message: string }>): MissionBatchPolicy {
   const prefix = "VEYDRIFT_MISSION_BATCH_";
@@ -25,7 +50,14 @@ export function loadMissionBatchPolicy(env: Record<string, string | undefined>, 
   if (!Number.isInteger(maxItems) || maxItems < 1 || maxItems > 32) problems.push({ field: prefix + "MAX_ITEMS", message: "must be 1..32" });
   if (maxFeeWei <= 0n || maxFeeWei > resolverBatchMaxFeeWei) problems.push({ field: prefix + "MAX_FEE_WEI", message: "must be positive and at most 400000000000000 wei (0.0004 ETH)" });
   if (enabled && !env.VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY) problems.push({ field: prefix + "ENABLED", message: "requires local signer; unlocked batching unsupported" });
-  return { enabled, maxItems, maxFeeWei };
+  const rawWorkGas = env[prefix + "WORK_GAS"] ?? defaultBatchWorkGas.toString();
+  const workGas = /^[0-9]{1,9}$/.test(rawWorkGas) ? BigInt(rawWorkGas) : 0n;
+  if (workGas < minBatchWorkGas || workGas > maxTransactionGas) problems.push({ field: prefix + "WORK_GAS", message: "must be 1500000..16777216 gas" });
+  const rawMaxWorkGas = env[prefix + "MAX_WORK_GAS"] ?? defaultBatchMaxWorkGas.toString();
+  const maxWorkGas = /^[0-9]{1,9}$/.test(rawMaxWorkGas) ? BigInt(rawMaxWorkGas) : 0n;
+  if (maxWorkGas < minBatchWorkGas || maxWorkGas > maxConfigurableWorkGas || maxWorkGas < workGas)
+    problems.push({ field: prefix + "MAX_WORK_GAS", message: "must be 1500000..4000000 gas and at least " + prefix + "WORK_GAS" });
+  return { enabled, maxItems, maxFeeWei, workGas, maxWorkGas };
 }
 export function batchCalldata(items: readonly BatchLeg[]): Hex {
   return encodeFunctionData({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch",
@@ -38,6 +70,11 @@ export function compareBatchLegs(a: BatchLeg, b: BatchLeg): number {
   return BigInt(a.missionId) < BigInt(b.missionId) ? -1 : BigInt(a.missionId) > BigInt(b.missionId) ? 1 : 0;
 }
 export class BatchCapacityError extends Error {}
+/** The batch needs more signed gas than the per-transaction work budget; try fewer legs. */
+export class BatchWorkBudgetError extends BatchCapacityError {}
+/** A single leg is not productive at any envelope up to the hard work ceiling: an indivisible
+ * blocker (alerted, not "unproductive"), never signed heavier (#397). */
+export class BatchWorkCeilingError extends BatchCapacityError {}
 export class BatchUnproductiveError extends BatchCapacityError {
   constructor(readonly rejected: BatchExclusion[]) { super(rejected.map((x) => `${x.item.missionId}:${x.reason}`).join(", ")); }
 }
@@ -77,7 +114,7 @@ export async function packMissionBatch<T>(items: readonly BatchLeg[], maxItems: 
   // Unproductive = the exact simulation rejected the leg (chronology blocker, pending oracle):
   // unpaid and expected to clear on its own, unlike a genuine gas/fee capacity problem.
   const exclude = (item: BatchLeg, reason: string, error: unknown) => {
-    const unproductive = error instanceof BatchUnproductiveError;
+    const unproductive = error instanceof BatchUnproductiveError || error instanceof BatchWorkBudgetError;
     exclusions.push({ item, reason, ...(unproductive ? { unproductive } : {}) });
     if (!unproductive) blocked(item, reason);
   };

@@ -53,3 +53,58 @@ Targets for the existing deterministic monitor (no new model polling):
 The offline integration tests exercise 48 locally signed coordinator submissions and 40 full production batch selection/readiness/sign/send/receipt paths with finality frozen, including restart after 32. They assert bounded reconciliation reads, durable archive cursor movement, deep reorg and consumed-nonce failure, missing finality versus contradictory finality, retention admission stops and finality-safe compaction. Existing crash/persist/send, ambiguous transport, lease, two-second recovery readiness, chronology and domain accounting suites remain release gates. Post-finality regression tests also cover a 5.1-second historical transaction transport that is never touched by the reused proof, complete fresh batch readiness/sign/send after recovery, winner/chain/nonce/journal contradictions, conflicting candidates, explicit pruning versus transport failure, and 47 candidates recovering from repeated shared admission failures after 5 seconds rather than 300 seconds. Synthetic keys and transports never send to a live chain.
 
 Release must retain one writer and the same private journal through the managed stop-first rollout. Back up consistently, verify current recovery owner and running SHA, and never overlap an operator recovery with deployment. The schema is additive but an old binary does not understand admission separation and will conservatively see retained rows as a full window; use hold-sends/forward repair rather than assuming a transparent downgrade. Dedicated QA and the release owner still owe sustained live queue drainage, real traffic, node/reference advancement and asset-accounting proof; offline tests alone do not complete ticket #61.
+
+## Accepted but never included: same-nonce supersession (#397)
+
+On 2026-11-02 resolver nonce 212987 was accepted by every Base endpoint (`already known`) but never included, and mission resolution stopped for more than an hour. The batch held one `Progress` battle leg, signed at the full 16,777,216 gas.
+
+Base's builder (`base/base crates/builder`) checks each transaction's *metered execution time* against `max_execution_time_per_tx_us`. A refusal there is permanent for that hash, so the transaction stays in the mempool and identical-byte replay can never succeed. A fee bump on its own does not help either, because only less work does.
+
+**Per-transaction work budget.** Staged combat commits as many 1M-gas stages as its envelope allows, so the signed gas limit is what bounds the work. Batches are now signed at `VEYDRIFT_MISSION_BATCH_WORK_GAS` instead of the full cap. It defaults to 2,500,000 and accepts values from 1,500,000 to 16,777,216; an invalid value is a config error.
+
+**Hard work ceiling.** `VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS` caps every automatically signed batch, escalation included. It defaults to 3,000,000, clearly below the ~4.2M of work Base refused, must be within 1,500,000..4,000,000 and at least the work budget (so the work budget is effectively at most 4,000,000 too); an invalid value is a config error. Nothing is ever signed above it (or above what the ETH cap affords).
+
+Within those bounds:
+- Every batch is first simulated exactly at the work budget, whatever the reference at the cap needed, and signed there if every leg is still `Settled` or `Progress`. A battle that would settle at the cap with more work than the budget therefore commits fewer stages (`Progress`) and continues next tick. Each leg runs in its own bounded delegatecall, so a leg short of gas returns `Failed`/`GasLimited`, never reverting the batch.
+- Several legs that are not productive at the budget are split by packing (`BatchWorkBudgetError`, an unpaid unproductive exclusion; each leg is retried alone).
+- A single leg that is not productive at the budget escalates gradually (2×, 4×, …, and its measured need + 20%) to the smallest productive envelope, never above the hard ceiling, with a `mission_batch_work_budget_exceeded` warning.
+- A single leg that is not productive even at the ceiling is excluded as an indivisible blocker (`BatchWorkCeilingError`, the existing `mission_batch_indivisible_blocker` alert) and is never signed: one stuck mission instead of a wedged signer.
+
+On mainnet, the stuck leg (mission 109746, arrival) did 1.27M gas of work (`Progress`) at the budget, against 4.21M at the cap; at 1.5M it fails.
+
+**When supersession triggers.** A durable batch intent qualifies when all of the following hold:
+- Its sends were accepted or ambiguous (`replay_state = retryable`).
+- It has been sent `supersedeAfterAttempts` times (default 6). After the third send, retries are 60 s apart, so this also means at least three minutes without inclusion.
+- The signer's latest nonce still equals the intent's nonce.
+- No other journal intent exists at or after that nonce, and the nonce has no recovery lineage.
+
+Instead of sending identical bytes again, the coordinator plans **at most one alternative at the same nonce**:
+- It keeps the same chain, target, calldata and membership.
+- Its signed gas is the work budget, which must be strictly below the original's.
+- An exact simulation at the same block must show at least 10% less execution work than the original envelope.
+- Both fee fields are raised by at least 25% (Base's replacement rule needs 10%) and at least to the current quote.
+- It passes the unchanged exact-envelope replay preflight before signing and again before its first send. That covers fee freshness, the per-transaction 0.0002 ETH ceiling and the batch budget, and a productive simulation.
+
+**Planning budget.** Planning makes about a dozen sequential reads, two of them heavy exact `eth_call`s (about 0.9 s against a public Base RPC on 2026-11-02, for nonce 212987). It gets its own bounded budget (`supersessionPlanningMs`, default 20 s): the reconciliation pass deadline is extended once by it plus a full ordinary pass budget, and planning is raced against the planning budget alone. A planner that overruns therefore always leaves time for the unchanged identical-byte resend in the same pass. Nothing is reserved or signed before planning returns, so a planning timeout, a stale quote, a fee-cap or transport error, or a quote that expires just before the reservation is reported as unavailable (below), never as a failed pass. Only a lost lease or the (extended) pass deadline fails the pass.
+
+If the alternative cannot do less work (for example an original already within the budget, a batch with no staged leg, or a first stage that does not fit), the planner raises `SupersessionUnavailableError`. The same applies to any out-of-bounds plan, a moved nonce or a non-exclusive journal. In all these cases nothing is reserved or signed: `resolver_same_nonce_supersession_unavailable` is emitted and the original keeps its unchanged identical-byte resends, since it may only have been dropped from the mempool. If Base never includes it, an operator has to review it. No fresh nonce is allocated and no evidence is deleted.
+
+**Signing.** Signing follows the existing reservation fence:
+1. A `supersede:` reservation is committed after the final guard. The signer is then invoked with no await in between.
+2. The signed result is inserted as append-only evidence.
+3. One lease-fenced transaction inserts the alternative (`supersedes = <original hash>`) and transfers the reservation.
+
+These three commits use NORMAL sync, because the send fence's FULL commit makes them durable before any broadcast. After a crash between steps 2 and 3, the next pass resumes the transfer from the retained result and never signs again.
+
+A reservation without a result stays fenced (`signing result unknown`) and blocks every pass. The alternative can only be broadcast from its transferred row, so such a reservation was provably never dispatched. Even so, clearing it is a manual, reviewed journal repair: stop the writer, back up the journal, mark that one reservation transferred and add an audit note. Never re-sign.
+
+**Reconciling the pair.** While both candidates are pending:
+- Each pass reads both receipts and reuses them for the winner.
+- Only the alternative is resent (identical bytes, the normal backoff). The original is never resent.
+- An alternative is never superseded again.
+
+The candidate whose canonical receipt proves the consumed nonce (or is finalized) wins. In the same transaction that persists its receipt, the other candidate becomes `superseded`. Its signed bytes, its row and its audit history are retained, and it no longer counts toward admission, audit-prune holds or legacy-recovery exclusivity. Two canonical candidates fail closed and keep both envelopes. An alternative that is itself sent `supersedeAfterAttempts` times without inclusion emits `resolver_same_nonce_alternative_not_included` on every further send: it is never superseded again, so that needs operator review.
+
+A reorg that drops the winner and mines the retired candidate fails the frontier check closed. The retired row is then excluded from automatic reconciliation, and an operator must repair it. Audit rows `superseding`, `superseding-candidate` and `superseded` record the lineage, together with the events `resolver_same_nonce_supersession` and `resolver_same_nonce_candidate_retired`.
+
+**Rollback.** An older binary does not understand `supersedes` or `superseded`. It treats a `superseded` row as unresolved and blocks admission permanently once any supersession has happened, not only while a pair is unresolved. Roll forward; never downgrade past this release.

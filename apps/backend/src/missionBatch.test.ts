@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decodeFunctionData } from "viem";
 import { BatchCapacityError, batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, loadMissionBatchPolicy,
-  missionBatchAbi, packMissionBatch, totalBatchExposure, type BatchLeg } from "./missionBatch";
+  missionBatchAbi, packMissionBatch, totalBatchExposure, batchMaxWorkGas, BatchWorkCeilingError, BatchUnproductiveError, type BatchLeg } from "./missionBatch";
 
 const policy = { ...defaultMissionBatchPolicy, enabled: true, maxFeeWei: 200_000_000_000_000n };
 const feeInput = { gas: 120_000n, blockGasLimit: 30_000_000n, maxFeePerGas: 1_000_000n,
@@ -27,7 +27,7 @@ describe("mission batch fee envelope", () => {
   });
   test("defaults disabled, ignores retired USD inputs and rejects looser ETH configuration", () => {
     const problems: Array<{ field: string; message: string }> = [];
-    expect(loadMissionBatchPolicy({}, problems)).toEqual({ enabled: false, maxItems: 16, maxFeeWei: 400_000_000_000_000n });
+    expect(loadMissionBatchPolicy({}, problems)).toEqual({ enabled: false, maxItems: 16, maxFeeWei: 400_000_000_000_000n, workGas: 2_500_000n, maxWorkGas: 3_000_000n });
     expect(loadMissionBatchPolicy({ VEYDRIFT_MISSION_BATCH_MAX_USD: "0", VEYDRIFT_MISSION_BATCH_ETH_USD_FEED: "missing" }, problems))
       .toEqual(defaultMissionBatchPolicy);
     expect(problems).toEqual([]);
@@ -36,6 +36,23 @@ describe("mission batch fee envelope", () => {
     expect(problems.map((problem) => problem.field).sort()).toEqual([
       "VEYDRIFT_MISSION_BATCH_ENABLED", "VEYDRIFT_MISSION_BATCH_MAX_FEE_WEI", "VEYDRIFT_MISSION_BATCH_MAX_ITEMS"
     ]);
+  });
+  test("the hard work ceiling is validated and never below the work budget (#397)", () => {
+    for (const [env, fields] of [
+      [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "2400000" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "3500000" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "16777217" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "4000001" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "16777216", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "16777216" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "3e6" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "3500000", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "3500000" }, []]
+    ] as const) {
+      const problems: Array<{ field: string; message: string }> = [];
+      loadMissionBatchPolicy(env, problems);
+      expect(problems.map((problem) => problem.field)).toEqual([...fields]);
+    }
+    expect(() => batchMaxWorkGas({ workGas: 3_500_000n })).toThrow("max work gas");
+    expect(batchMaxWorkGas({})).toBe(3_000_000n);
   });
 });
 
@@ -77,6 +94,17 @@ describe("chronological bounded packing", () => {
     }, (i) => blocked.push(i.missionId));
     expect(blocked).toEqual(["1"]);
     expect(result.items.map((i) => i.missionId)).toEqual(["2"]);
+  });
+  test("a leg unproductive under the hard work ceiling is an alerted indivisible blocker, not a silent unproductive skip (#397)", async () => {
+    const blocked: string[] = [];
+    const result = await packMissionBatch([item(1), item(2), item(3)], 16, async (items) => {
+      if (items.some((i) => i.missionId === "1")) throw new BatchWorkCeilingError("leg not productive within the work ceiling");
+      if (items.some((i) => i.missionId === "3")) throw new BatchUnproductiveError([{ item: item(3), reason: "Pending" }]);
+      return 10;
+    }, (i) => blocked.push(i.missionId));
+    expect(blocked).toEqual(["1"]);
+    expect(result.items.map((i) => i.missionId)).toEqual(["2"]);
+    expect(result.exclusions.map((x) => [x.item.missionId, x.unproductive ?? false])).toEqual([["1", false], ["3", true]]);
   });
   test("transport/price/estimate failures never bypass envelope or masquerade as oversize", async () => {
     await expect(packMissionBatch([item(1)], 16, async () => { throw new Error("stale price"); }, () => {})).rejects.toThrow("stale price");

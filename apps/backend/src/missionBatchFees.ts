@@ -1,8 +1,9 @@
 import { decodeFunctionResult, parseAbi, parseTransaction, serializeTransaction, type Hex, type PublicClient } from "viem";
-import { BatchUnproductiveError, resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
+import { BatchCapacityError, BatchUnproductiveError, BatchWorkBudgetError, BatchWorkCeilingError, batchMaxWorkGas, batchWorkGas,resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 
 import type { PreparedReconciliationPass } from "./resolverTransactions";
-import { resolverReplacementFees } from "./resolverReplacementFees";
+import { emitObservabilityEvent } from "./observability";
+import { resolverReplacementFees, SupersessionUnavailableError } from "./resolverReplacementFees";
 
 export const oracleAbi = parseAbi([
   "function getL1Fee(bytes data) view returns (uint256)",
@@ -63,20 +64,60 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   if (Math.abs(Date.now() / 1000 - Number(block.timestamp)) > 30) throw new BatchQuoteExpiredError();
   const l1Fee = l1Exact > l1Upper ? l1Exact : l1Upper;
   // Staged battles use whatever gas they get and only start another stage with headroom left, so
-  // sign as much as the ETH cap affords (unused gas is not charged), up to the cap, never below
-  // the measured estimate + 20%. A battle that cannot finish even at the cap (Progress) may
-  // shrink below that estimate and simply commits fewer stages.
+  // the signed gas limit is what bounds the work. Unused gas is not charged.
   const budgetWei = policy.maxFeeWei < resolverTransactionMaxFeeWei ? policy.maxFeeWei : resolverTransactionMaxFeeWei;
   const reserved = l1Fee * 2n + operatorFee * 2n;
   const affordable = budgetWei > reserved && maxFeePerGas > 0n ? (budgetWei - reserved) / maxFeePerGas : 0n;
-  let gas = affordable < cap ? affordable : cap;
-  if (gas < minimumGas && !(reference.outcomes.includes(7) && gas > 0n)) gas = minimumGas < cap ? minimumGas : cap;
-  const exposure = totalBatchExposure({ gas, blockGasLimit: block.gasLimit, maxFeePerGas,
+  // Base refuses a transaction whose metered execution time is too long, permanently for its hash
+  // (#397). Every batch is therefore signed at the per-transaction work budget whenever that is
+  // productive, whatever the reference at the cap needed (a battle Settled at the cap may only make
+  // Progress at the budget: it commits fewer stages and continues next tick). Nothing is ever signed
+  // above the hard work ceiling.
+  const workGas = batchWorkGas(policy);
+  const maxWorkGas = batchMaxWorkGas(policy);
+  const limit = affordable < cap ? affordable : cap;
+  const ceiling = limit < maxWorkGas ? limit : maxWorkGas;
+  if (ceiling <= 0n) throw new BatchCapacityError("total batch transaction network fee exceeds ETH cap");
+  let gas = ceiling < workGas ? ceiling : workGas;
+  const exposureAt = (signed: bigint) => totalBatchExposure({ gas: signed, blockGasLimit: block.gasLimit, maxFeePerGas,
     maxPriorityFeePerGas: tip, l1Fee, operatorFee, policy });
-  // Throws unless every leg is still Settled or Progress at the exact signed gas. Settled turning
-  // into Progress is fine: the battle commits fewer stages and continues next tick.
-  const exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
-    maxFeePerGas, maxPriorityFeePerGas: tip });
+  let exposure = exposureAt(gas);
+  // Throws unless every leg is still Settled or Progress at the exact signed gas.
+  let exact: Awaited<ReturnType<typeof simulateProductiveBatch>> | undefined;
+  try {
+    exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
+      maxFeePerGas, maxPriorityFeePerGas: tip });
+  } catch (error) {
+    if (!(error instanceof BatchUnproductiveError)) throw error;
+    // Several legs that do not fit the budget are split by packing (each leg is retried alone).
+    if (input.items.length > 1) throw minimumGas > gas ? new BatchWorkBudgetError("batch work budget exceeded: " + error.message) : error;
+    // A single leg whose first combat stage (or whole non-staged settlement) does not fit escalates
+    // gradually (2x, 4x, ..., and its measured need + 20%) to the smallest productive envelope, but
+    // never above the hard ceiling. Unproductive at the ceiling = an indivisible blocker.
+    const candidates = new Set<bigint>();
+    for (let next = gas * 2n; next < ceiling; next *= 2n) candidates.add(next);
+    if (minimumGas > gas && minimumGas < ceiling) candidates.add(minimumGas);
+    if (ceiling > gas) candidates.add(ceiling);
+    let lastError: BatchUnproductiveError = error;
+    exact = undefined;
+    for (const candidate of [...candidates].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)) {
+      gas = candidate;
+      exposure = exposureAt(gas);
+      try {
+        exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
+          maxFeePerGas, maxPriorityFeePerGas: tip });
+        break;
+      } catch (escalationError) {
+        if (!(escalationError instanceof BatchUnproductiveError)) throw escalationError;
+        lastError = escalationError;
+      }
+    }
+    if (exact === undefined) throw new BatchWorkCeilingError("leg not productive within the " + ceiling.toString()
+      + " gas work/fee ceiling (" + lastError.message + "); never signed heavier, Base refuses heavy execution");
+    emitObservabilityEvent({ kind: "mission_batch_work_budget_exceeded", missionId: input.items[0]!.missionId, leg: input.items[0]!.leg,
+      workGas: workGas.toString(), maxWorkGas: maxWorkGas.toString(), signedGas: gas.toString(),
+      action: "single leg needs more than the per-transaction work budget (still within the hard ceiling); watch inclusion" }, "warn");
+  }
   assertBatchQuoteFresh(provenance); // exact eth_call can outlive the freshness window
   return Object.freeze({ ...exposure, blockNumber, provenance, outcomes: exact.outcomes, executionGasUsed: exact.executionGasUsed });
 }
@@ -194,4 +235,56 @@ export async function validateMissionBatchReplay(client: PublicClient, raw: Hex,
   assertBatchQuoteFresh(provenance);
   observe?.(JSON.stringify({provenance,exposure,measured,l1Exact:exact,l1Upper:upper,operatorFee},(_,value)=>typeof value === "bigint" ? value.toString() : value));
   return () => assertBatchQuoteFresh(provenance);
+}
+
+/** Base (reth) mempool replacement rule: both fee fields must rise by at least 10%. */
+const supersessionBumpPercent = 125n;
+
+/**
+ * Plan the single same-nonce alternative for an accepted batch envelope that the sequencer holds
+ * but never includes (#397). Same chain, nonce, target and calldata; signed gas lowered to the
+ * per-transaction work budget, both fee fields raised at least 25% and to the current quote. Base
+ * meters execution time, so the alternative must do measurably less work than the original (an
+ * exact simulation at each gas, same block): otherwise SupersessionUnavailableError, and the single
+ * alternative is not spent on an envelope the builder would refuse again. The returned unsigned
+ * envelope already passed the exact replay preflight (fee freshness, ETH caps, productive
+ * simulation). Nothing is signed here.
+ */
+export async function planMissionSupersession(client: PublicClient, originalRaw: Hex, input: {
+  items: BatchLeg[]; account: Hex; game: Hex; chainId: number; policy: MissionBatchPolicy;
+}, pass: PreparedReconciliationPass): Promise<{ unsigned: Hex; gas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint; guard: () => void; executionGasUsed: bigint; originalExecutionGasUsed: bigint }> {
+  const original = parseTransaction(originalRaw);
+  if (original.type !== "eip1559" || original.chainId !== input.chainId || original.to?.toLowerCase() !== input.game.toLowerCase()
+    || original.data !== batchCalldata(input.items) || (original.value ?? 0n) !== 0n || original.nonce === undefined
+    || original.gas === undefined || original.maxFeePerGas === undefined || original.maxPriorityFeePerGas === undefined
+    || (original.accessList?.length ?? 0) !== 0) throw new Error("supersession original envelope mismatch");
+  const workGas = batchWorkGas(input.policy);
+  if (original.gas <= workGas) throw new SupersessionUnavailableError("supersession cannot reduce work: original already within the work budget");
+  const block = await pass.read(() => client.getBlock({ blockTag: "latest" }));
+  if (block.number === null || !block.hash || block.baseFeePerGas === null) throw new Error("supersession fee block unavailable");
+  assertBatchQuoteFresh({ blockNumber: block.number, blockHash: block.hash, blockTimestamp: block.timestamp });
+  const tip = await pass.read(() => client.estimateMaxPriorityFeePerGas());
+  const bump = (value: bigint) => (value * supersessionBumpPercent + 99n) / 100n;
+  const maxPriorityFeePerGas = [bump(original.maxPriorityFeePerGas), tip].reduce((a, b) => a > b ? a : b);
+  const maxFeePerGas = [bump(original.maxFeePerGas), block.baseFeePerGas * 2n + maxPriorityFeePerGas].reduce((a, b) => a > b ? a : b);
+  const gas = workGas;
+  const unsigned = serializeTransaction({ type: "eip1559", chainId: input.chainId, to: original.to!, data: original.data!,
+    value: 0n, nonce: original.nonce, gas, maxFeePerGas, maxPriorityFeePerGas });
+  let measured: { executionGasUsed: bigint } | undefined;
+  let guard: () => void;
+  try {
+    guard = await validateMissionBatchReplay(client, unsigned, { ...input, blockNumber: block.number }, pass, false,
+      (evidence) => { measured = { executionGasUsed: BigInt(JSON.parse(evidence).measured.executionGasUsed) }; });
+  } catch (error) {
+    // Only a non-productive lighter envelope is "unavailable"; fees, caps and transport stay fatal.
+    if (error instanceof BatchUnproductiveError) throw new SupersessionUnavailableError("supersession cannot reduce work: lighter envelope is not productive (" + error.message + ")");
+    throw error;
+  }
+  // Same block and original gas: the work the refused envelope does. No fee fields, so a base fee
+  // above the original's cap (exactly when superseding helps) cannot fail this measurement.
+  const reference = await pass.read(() => simulateProductiveBatch(client, { ...input, data: original.data!, nonce: original.nonce!,
+    gas: original.gas!, blockNumber: block.number! }));
+  if (!measured || measured.executionGasUsed * 10n > reference.executionGasUsed * 9n)
+    throw new SupersessionUnavailableError("supersession cannot reduce work: lighter envelope does not do at least 10% less work");
+  return { unsigned, gas, maxFeePerGas, maxPriorityFeePerGas, guard, executionGasUsed: measured.executionGasUsed, originalExecutionGasUsed: reference.executionGasUsed };
 }

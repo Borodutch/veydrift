@@ -49,7 +49,7 @@ async function scenario(options: { signingDelay?:number; canonicalDelay?:number;
   estimateMaxPriorityFeePerGas:async()=>10n,
   readContract:async()=>100n,
   call:async({data,blockNumber,gas}:any)=>{expect(blockNumber).toBeDefined();expect(gas).toBeLessThanOrEqual(16_777_216n);now+=options.simulationDelay??150; if(++simulationCount===34)signingReady=true;
-   const decoded=decodeFunctionData({abi:missionBatchAbi,data});return {data:encodeFunctionResult({abi:missionBatchAbi,functionName:"resolveFleetMissionBatch",result:[decoded.args![0].map(()=>0),BigInt(decoded.args![0].length)*500_000n]})};},
+   const decoded=decodeFunctionData({abi:missionBatchAbi,data});return {data:encodeFunctionResult({abi:missionBatchAbi,functionName:"resolveFleetMissionBatch",result:[decoded.args![0].map(()=>0),BigInt(decoded.args![0].length)*100_000n]})};},
   sendRawTransaction:async({serializedTransaction}:any)=>{sends++;raw=serializedTransaction;const tx=parseTransaction(raw);expect(tx.gas!).toBeLessThanOrEqual(16_777_216n);expect(tx.gas!*tx.maxFeePerGas!+400n).toBeLessThanOrEqual(200_000_000_000_000n);receiptBlock=head();mined=true;for(const item of decodeFunctionData({abi:missionBatchAbi,data:tx.data!}).args![0])settled.add(String(item.missionId));return keccak256(raw)},
   waitForTransactionReceipt:async()=>({status:"success"}),
   getTransaction:async()=>{throw new TransactionNotFoundError({})},
