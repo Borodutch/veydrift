@@ -31,7 +31,7 @@ import {
 import { ResolverAdmissionBlockedError, ResolverTransactionCoordinator, type PreparedReceipt, type PreparedReconciliationPass, type LegacyRecoveryBinding } from "./resolverTransactions";
 import { recoveryProofGuard, prepareRecoveryEnvelope, recoveryBinding, verifyRecoveryIdentity, verifyRecoveryReference, type MissionRecoveryInput } from "./missionLegacyRecovery";
 import { safeDiagnosticText } from "./safeDiagnostics";
-import { batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
+import { batchCalldata, batchMaxWorkGas, compareBatchLegs, defaultMissionBatchPolicy, packMissionBatch, type BatchLeg, type BatchExclusion, type BatchLegOutcome, type MissionBatchPolicy } from "./missionBatch";
 
 import { cancelResolverTransaction } from "./resolverCancellation";
 import { validateMissionBatchReplay, planMissionSupersession, BatchQuoteExpiredError, assertBatchQuoteFresh, quoteMissionBatch, batchOutcomeNames, rpcQuantity, gasOracle, oracleAbi, quoteResolverGas } from "./missionBatchFees";
@@ -49,10 +49,11 @@ const longPauseAlertAfterMs = 10 * 60_000;
 // VeydriftGame.v1 storage layout fixes `_gamePaused` at proxy slot 52. Reading the canonical proxy
 // storage avoids a contract upgrade solely to expose an operational getter.
 const gamePausedStorageSlot = toHex(52n, { size: 32 });
-// Base caps an individual transaction at 2^24 gas. Supply that envelope explicitly: Reth's
-// estimator can stop at an inner delegatecall's empty out-of-gas revert and misreport a valid,
-// bounded battle as UnsupportedGameplayModule instead of broadcasting it.
-const fleetMissionResolutionGas = 16_777_216n;
+// The single-call resolveFleetMission envelope is supplied explicitly (Reth's estimator can stop at
+// an inner delegatecall's empty out-of-gas revert and misreport a valid, bounded battle as
+// UnsupportedGameplayModule) and is the same hard work ceiling as batches, never Base's 2^24 block
+// envelope: the builder refuses heavy metered execution permanently for a hash (#397/#408), and a
+// staged battle uses whatever gas it gets (fewer stages per transaction).
 
 const batchReceiptAbi = parseAbi([
   "event FleetMissionBatchItem(uint256 indexed index,uint256 indexed missionId,uint8 leg,uint8 outcome,bytes4 errorSelector)"
@@ -1367,7 +1368,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     const cappedFees = async (nonce: number, previousHash?: Hex) => {
       const client = this.publicClient!;
       const requested = functionName === "resolveFleetMission"
-        ? fleetMissionResolutionGas
+        ? batchMaxWorkGas(this.batchPolicy)
         : (await client.estimateGas({ account: from, to: targetAddress, data })) * 6n / 5n;
       const quote = await quoteResolverGas(client, { chainId: this.chain!.id, dataBytes: (data.length - 2) / 2, gas: requested,
         ...(previousHash ? { previousHash } : {}) });

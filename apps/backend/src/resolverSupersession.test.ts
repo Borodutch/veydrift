@@ -166,6 +166,45 @@ test("no alternative before the bounded deadline; an unavailable or out-of-bound
   }
 });
 
+test("an unavailable supersession re-plans every pass but warns once per reason, then at most hourly (#408)", async () => {
+  await withJournal(async (path) => {
+    const f = make(path);
+    let reason = "lighter envelope is not productive";
+    f.replay.supersede = async () => { throw new SupersessionUnavailableError("supersession cannot reduce work: " + reason); };
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (line: unknown) => { if (String(line).includes("resolver_same_nonce_supersession_unavailable")) warnings.push(String(line)); };
+    try {
+      await stuck(f);
+      let plans = 0;
+      const supersede = f.replay.supersede;
+      f.replay.supersede = async (...args) => { plans++; return supersede(...args); };
+      for (let minute = 0; minute < 10; minute++) { f.advance(60_000); await expect(f.pass()).rejects.toThrow("cooling down"); }
+      expect(plans).toBe(10);
+      expect(warnings).toHaveLength(1);
+      // A different reason is new information: warned at once.
+      reason = "lighter envelope does not do at least 10% less work";
+      f.advance(60_000); await expect(f.pass()).rejects.toThrow("cooling down");
+      expect(warnings).toHaveLength(2);
+      expect(warnings[1]).toContain("10% less work");
+      // Reasons alternating pass by pass (e.g. a slow RPC) do not re-warn every minute either.
+      const reasons = ["lighter envelope is not productive", "lighter envelope does not do at least 10% less work"];
+      for (let minute = 0; minute < 40; minute++) {
+        reason = reasons[minute % 2]!;
+        f.advance(60_000); await expect(f.pass()).rejects.toThrow("cooling down");
+      }
+      expect(warnings).toHaveLength(2);
+      // A reason persisting: repeated once its hour has passed, not before.
+      reason = reasons[0]!;
+      f.advance(11 * 60_000); await expect(f.pass()).rejects.toThrow("cooling down");
+      expect(warnings).toHaveLength(3);
+      expect(warnings[2]).toContain("not productive");
+      // The original keeps its unchanged identical-byte resend throughout.
+      expect(new Set(f.sent)).toEqual(new Set([original]));
+    } finally { console.warn = originalWarn; }
+  });
+});
+
 test("after a superseded nonce, ordinary batches are admitted, signed at the next nonce and finalized", async () => {
   await withJournal(async (path) => {
     const f = make(path);

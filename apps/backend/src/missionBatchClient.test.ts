@@ -113,8 +113,9 @@ test("single-call resolve refuses referee-wait battles before signing", async ()
 });
 
 test("an accepted batch that is never included gets one lighter, fee-bumped same-nonce alternative from the configured key after deploy (#397)", async () => {
-  // The prod original: a staged battle signed by the old code at the full cap.
-  const f = fixture({ ambiguous: true, progress: true, workGas: 16_777_216n });
+  // An original signed heavier than the current budget (the prod one was signed by older code at the
+  // full cap; a policy can no longer exceed the 4M ceiling, #408).
+  const f = fixture({ ambiguous: true, progress: true, workGas: 4_000_000n });
   await expect(f.client.resolveMissionBatch(f.items)).rejects.toThrow("recoverable pending");
   for (let i = 0; i < 3; i++) { f.advance(60_000); await expect(f.client.resolveMissionBatch([])).rejects.toThrow(); }
   expect(new Set(f.raws).size).toBe(1);
@@ -123,7 +124,7 @@ test("an accepted batch that is never included gets one lighter, fee-bumped same
   await expect(deployed.resolveMissionBatch([])).rejects.toThrow("same-nonce alternative dispatched");
   const [first, alternative] = [parseTransaction(f.raws[0]!), parseTransaction(f.raws.at(-1)!)];
   expect(new Set(f.raws).size).toBe(2);
-  expect(first.gas).toBe(16_777_216n);
+  expect(first.gas).toBe(4_000_000n);
   expect(alternative).toMatchObject({ nonce: 4, to: first.to, data: first.data, gas: defaultBatchWorkGas });
   expect(alternative.maxPriorityFeePerGas! * 100n).toBeGreaterThanOrEqual(first.maxPriorityFeePerGas! * 125n);
   expect(alternative.maxFeePerGas! * 100n).toBeGreaterThanOrEqual(first.maxFeePerGas! * 125n);

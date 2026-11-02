@@ -966,8 +966,8 @@ describe("ViemMissionResolutionChainClient", () => {
           expect(writes).toEqual([7, 7, 8]);
           expect(await makeClient().isMissionLegComplete("77", leg)).toBe(true);
           expect(simulations).toHaveLength(6);
-          // Simulated at the exact ETH-capped signing gas: 2^24 for staged arrivals, 1.2x estimate for returns.
-          const gas = leg === "arrival" ? "0x1000000" : "0x1d4c0";
+          // Simulated at the exact ETH-capped signing gas: the 3M work ceiling for staged arrivals (#408), 1.2x estimate for returns.
+          const gas = leg === "arrival" ? "0x2dc6c0" : "0x1d4c0";
           for (const [index, params] of simulations.entries()) expect(params).toEqual([
             { from, to: config.gameContractAddress, data, gas, value: "0x0",
               nonce: index === 5 ? "0x8" : "0x7",
@@ -1174,7 +1174,8 @@ describe("ViemMissionResolutionChainClient", () => {
     ]);
 
     expect(broadcasts).toEqual([
-      { functionName: "resolveFleetMission", gas: 16_777_216n, nonce: 7 },
+      // Bounded by the hard work ceiling, never the 2^24 block envelope (#408).
+      { functionName: "resolveFleetMission", gas: 3_000_000n, nonce: 7 },
       { functionName: "completeFleetMissionReturn", gas: 120_000n, nonce: 8 }
     ]);
     expect(peakBroadcasts).toBe(1);
@@ -1234,9 +1235,9 @@ describe("ViemMissionResolutionChainClient", () => {
     await expect(client.resolveFleetMission("45237")).resolves.toBe(replacementHash);
 
     expect(writes).toHaveLength(2);
-    expect(writes[0]).toMatchObject({ gas: 16_777_216n, nonce: 7 });
+    expect(writes[0]).toMatchObject({ gas: 3_000_000n, nonce: 7 });
     expect(writes[1]).toMatchObject({
-      gas: 16_777_216n,
+      gas: 3_000_000n,
       maxFeePerGas: 181n,
       maxPriorityFeePerGas: 10n,
       nonce: 7
@@ -1283,7 +1284,7 @@ describe("ViemMissionResolutionChainClient", () => {
       await client.resolveFleetMission("23007");
       await client.completeFleetMissionReturn("23008");
 
-      expect(transactions[0]?.gas).toBe("0x1000000");
+      expect(transactions[0]?.gas).toBe("0x2dc6c0"); // the 3M work ceiling, never 2^24 (#408)
       expect(transactions[0]?.nonce).toBe("0x7");
       // Returns sign an explicit, USD-capped gas too (1.2x the estimate), never wallet defaults.
       expect(transactions[1]?.gas).toBe("0x1d4c0");

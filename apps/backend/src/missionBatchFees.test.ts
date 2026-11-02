@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { encodeFunctionResult, parseTransaction, type PublicClient } from "viem";
-import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy, BatchWorkBudgetError, BatchWorkCeilingError } from "./missionBatch";
+import { batchCalldata, missionBatchAbi, defaultMissionBatchPolicy, BatchCapacityError, BatchWorkBudgetError, BatchWorkCeilingError } from "./missionBatch";
 import { privateKeyToAccount } from "viem/accounts";
 import { SupersessionUnavailableError } from "./resolverReplacementFees";
 import { validateMissionBatchReplay, planMissionSupersession, BatchQuoteExpiredError, quoteMissionBatch, measuredBatchGas, rpcQuantity, quoteResolverGas, singleResolverMaxFeeWei, ResolverFeeCapError } from "./missionBatchFees";
@@ -88,8 +88,11 @@ test("a staged battle measured near the gas cap is bounded by the work budget, n
   expect(signed).toEqual([16_777_216n, 2_500_000n]);
   expect(quote.outcomes).toEqual([7]);
   const wide = await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(7, gas < 15_000_000n ? gas - gas / 10n : 15_000_000n),
-    readContract: async () => 100n }).client, { ...input, policy: { ...input.policy, workGas: 16_777_216n, maxWorkGas: 16_777_216n } });
-  expect(wide.gas).toBe(16_777_216n);
+    readContract: async () => 100n }).client, { ...input, policy: { ...input.policy, workGas: 4_000_000n, maxWorkGas: 4_000_000n } });
+  expect(wide.gas).toBe(4_000_000n);
+  // Never above the 4M ceiling, even for a policy built in code (#408).
+  await expect(quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(7, gas - gas / 10n), readContract: async () => 100n }).client,
+    { ...input, policy: { ...input.policy, workGas: 16_777_216n, maxWorkGas: 16_777_216n } })).rejects.toThrow("invalid batch");
 });
 test("a leg Settled at the cap with work above the budget is signed at the budget where it makes Progress (#397 review)", async () => {
   // The final segment of the prod battle: Settled at the cap with ~4.2M of work, Progress at the budget.
@@ -116,12 +119,12 @@ test("a single staged leg whose first stage exceeds the work budget escalates, n
   }
   // An explicitly raised ceiling escalates 2x, 4x, ... (and the measured need + 20%) up to it, never past it.
   signed.length = 0;
-  const raised = { ...input, policy: { ...input.policy, maxWorkGas: 8_000_000n } };
-  expect((await quoteMissionBatch(staged(5_000_000n), raised)).gas).toBe(5_000_000n);
+  const raised = { ...input, policy: { ...input.policy, workGas: 1_500_000n, maxWorkGas: 4_000_000n } };
+  expect((await quoteMissionBatch(staged(3_000_000n), raised)).gas).toBe(3_000_000n);
   signed.length = 0;
   await expect(quoteMissionBatch(staged(12_000_000n), raised)).rejects.toBeInstanceOf(BatchWorkCeilingError);
-  expect(signed).toEqual([16_777_216n, 2_500_000n, 5_000_000n, 8_000_000n]);
-  expect(signed.every((gas, i) => i === 0 || gas <= 8_000_000n)).toBe(true);
+  expect(signed).toEqual([16_777_216n, 1_500_000n, 3_000_000n, 4_000_000n]);
+  expect(signed.every((gas, i) => i === 0 || gas <= 4_000_000n)).toBe(true);
   await expect(quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(gas < 16_777_216n ? 5 : 7, 1_000n), readContract: async () => 100n }).client,
     { ...input, items: [...input.items, { ...input.items[0]!, missionId: "8" }] })).rejects.toThrow();
 });
@@ -140,7 +143,7 @@ test("a non-staged leg that needs more than the budget is signed at its measured
 test("settling legs over the work budget are signed at the budget when productive there, else split; never above the ceiling", async () => {
   const items = [input.items[0]!, { ...input.items[0]!, missionId: "8" }];
   const batch = (outcomes: (gas: bigint) => number[]) => fixture({ call: async ({ gas }: { gas: bigint }) => ({ data: encodeFunctionResult({ abi: missionBatchAbi,
-    functionName: "resolveFleetMissionBatch", result: [outcomes(gas), gas >= 16_000_000n ? 4_000_000n : gas - 100_000n] }) }), readContract: async () => 100n }).client;
+    functionName: "resolveFleetMissionBatch", result: [outcomes(gas), gas >= 16_000_000n ? 4_000_000n : outcomes(gas).every((o) => o === 0) ? 1_500_000n : gas - 100_000n] }) }), readContract: async () => 100n }).client;
   // Both legs still settle (or make Progress) at the budget: one transaction at the budget.
   expect((await quoteMissionBatch(batch(() => [0, 0]), { ...input, items })).gas).toBe(2_500_000n);
   expect((await quoteMissionBatch(batch((gas) => gas >= 16_000_000n ? [0, 0] : [0, 7]), { ...input, items })).outcomes).toEqual([0, 7]);
@@ -150,6 +153,65 @@ test("settling legs over the work budget are signed at the budget when productiv
   const single = fixture({ call: async ({ gas }: { gas: bigint }) => result(gas >= 16_000_000n ? 0 : 6, gas >= 16_000_000n ? 4_000_000n : gas - 100_000n),
     readContract: async () => 100n }).client;
   await expect(quoteMissionBatch(single, input)).rejects.toBeInstanceOf(BatchWorkCeilingError);
+});
+test("a Settled leg is never signed with under a 20% margin over its measured need: escalate or block (#408)", async () => {
+  const data = batchCalldata(input.items);
+  const withMargin = (work: bigint, count = 1, calldata = data) => (measuredBatchGas(work, calldata, count) * 120n + 99n) / 100n;
+  const signed: bigint[] = [];
+  // Non-staged settlement doing a fixed amount of work: Settled whenever it fits at all.
+  const settles = (work: bigint) => fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return measuredBatchGas(work, data, 1) <= gas ? result(0, work) : result(6, gas - 1n); }, readContract: async () => 100n }).client;
+  // ~2.3M of work fits the 2.5M budget with ~2% headroom: escalated to its need + 20%, within the ceiling.
+  const work = 2_250_000n;
+  expect(measuredBatchGas(work, data, 1)).toBeLessThan(2_500_000n);
+  expect(withMargin(work)).toBeGreaterThan(2_500_000n);
+  expect(withMargin(work)).toBeLessThan(3_000_000n);
+  const quote = await quoteMissionBatch(settles(work), input);
+  expect(quote.gas).toBe(withMargin(work));
+  expect(signed).toEqual([16_777_216n, 2_500_000n, withMargin(work)]);
+  expect(quote.outcomes).toEqual([0]);
+  // Need + 20% above the ceiling: an alerted indivisible blocker, never signed thin at the ceiling.
+  const heavy = 2_400_000n;
+  expect(withMargin(heavy)).toBeGreaterThan(3_000_000n);
+  signed.length = 0;
+  await expect(quoteMissionBatch(settles(heavy), input)).rejects.toBeInstanceOf(BatchWorkCeilingError);
+  expect(signed.every((gas, i) => i === 0 || gas <= 3_000_000n)).toBe(true);
+  // A raised ceiling admits it at exactly its need + 20%.
+  expect((await quoteMissionBatch(settles(heavy), { ...input, policy: { ...input.policy, maxWorkGas: 4_000_000n } })).gas).toBe(withMargin(heavy));
+  // Settled at the budget, thin; Settled thin at the doubled candidate too: the need is learned and tried next.
+  signed.length = 0;
+  const raised = { ...input, policy: { ...input.policy, workGas: 1_500_000n, maxWorkGas: 4_000_000n } };
+  const drifting = fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return result(0, gas >= 16_000_000n ? 1_000_000n : gas >= 3_000_000n ? 2_700_000n : gas - 200_000n); }, readContract: async () => 100n }).client;
+  expect((await quoteMissionBatch(drifting, raised)).gas).toBe(withMargin(2_700_000n));
+  expect(signed[signed.length - 1]).toBe(withMargin(2_700_000n));
+  // Several settling legs without the margin are split by packing instead.
+  const items = [input.items[0]!, { ...input.items[0]!, missionId: "8" }];
+  const pair = fixture({ call: async () => ({ data: encodeFunctionResult({ abi: missionBatchAbi, functionName: "resolveFleetMissionBatch",
+    result: [[0, 0], 2_250_000n] }) }), readContract: async () => 100n }).client;
+  await expect(quoteMissionBatch(pair, { ...input, items })).rejects.toBeInstanceOf(BatchWorkBudgetError);
+  // A staged battle's final segment: Settles thin at the budget with a need + 20% above the ceiling, but
+  // makes Progress (one stage fewer) below it. Signed lighter, never blocked and never heavier (#408 review).
+  signed.length = 0;
+  const finalSegment = fixture({ call: async ({ gas }: { gas: bigint }) => { signed.push(gas);
+    return gas >= 2_500_000n ? result(0, 2_350_000n) : result(7, gas - 1n); }, readContract: async () => 100n }).client;
+  expect(withMargin(2_350_000n)).toBeGreaterThan(3_000_000n);
+  const lighter = await quoteMissionBatch(finalSegment, input);
+  expect(lighter.outcomes).toEqual([7]);
+  expect(lighter.gas).toBeLessThan(2_500_000n);
+  expect(lighter.gas).toBeGreaterThanOrEqual(1_500_000n);
+  expect(signed.every((gas, i) => i === 0 || gas <= 3_000_000n)).toBe(true);
+  // Fee-limited below the budget: a capacity problem that clears with fees, not an indivisible work blocker.
+  const feeLimited = fixture({ call: async ({ gas }: { gas: bigint }) => result(0, gas > 1_000_000n ? 1_000_000n : gas - 1n),
+    readContract: async () => 0n }).client;
+  const tight = { ...input, policy: { ...input.policy, maxFeeWei: 210n * 1_100_000n } };
+  const thrown = await quoteMissionBatch(feeLimited, tight).catch((error: unknown) => error);
+  expect(thrown).toBeInstanceOf(BatchCapacityError);
+  expect(thrown).not.toBeInstanceOf(BatchWorkCeilingError);
+  expect((thrown as Error).message).toContain("ETH cap affords");
+  // A staged leg making Progress needs no margin: it uses whatever gas it gets.
+  expect((await quoteMissionBatch(fixture({ call: async ({ gas }: { gas: bigint }) => result(7, gas - 1n), readContract: async () => 100n }).client, input)).gas)
+    .toBe(2_500_000n);
 });
 test("an unfinished battle shrinks gas to the ETH budget and stays productive", async () => {
   const policy = { ...input.policy, maxFeeWei: 100_000_000_000_000n };

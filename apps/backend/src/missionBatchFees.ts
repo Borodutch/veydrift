@@ -1,5 +1,5 @@
 import { decodeFunctionResult, parseAbi, parseTransaction, serializeTransaction, type Hex, type PublicClient } from "viem";
-import { BatchCapacityError, BatchUnproductiveError, BatchWorkBudgetError, BatchWorkCeilingError, batchMaxWorkGas, batchWorkGas,resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
+import { BatchCapacityError, BatchUnproductiveError, BatchWorkBudgetError, BatchWorkCeilingError, batchMaxWorkGas, batchWorkGas, minBatchWorkGas,resolverTransactionMaxFeeWei, missionBatchAbi, batchCalldata, totalBatchExposure, type BatchLeg, type MissionBatchPolicy } from "./missionBatch";
 
 import type { PreparedReconciliationPass } from "./resolverTransactions";
 import { emitObservabilityEvent } from "./observability";
@@ -16,6 +16,9 @@ export const gasOracle = "0x420000000000000000000000000000000000000F" as const;
 export type BatchQuoteProvenance = Readonly<{
   blockNumber: bigint; blockHash: Hex; blockTimestamp: bigint;
 }>;
+
+/** Exact simulations one single-leg escalation may spend (RPC cost per quote stays bounded). */
+const maxEscalationSimulations = 12;
 
 export class BatchQuoteExpiredError extends Error { constructor() { super("batch quote block expired"); } }
 
@@ -82,8 +85,22 @@ export async function quoteMissionBatch(client: PublicClient, input: {
   const exposureAt = (signed: bigint) => totalBatchExposure({ gas: signed, blockGasLimit: block.gasLimit, maxFeePerGas,
     maxPriorityFeePerGas: tip, l1Fee, operatorFee, policy });
   let exposure = exposureAt(gas);
+  // A batch whose every leg Settles did all its work inside the signed gas: its measured need is
+  // exact, and signing with less than the 20% safety margin over it lets a small state drift before
+  // inclusion turn the transaction into a paid no-op (#408). A staged leg making Progress uses
+  // whatever gas it gets and only starts another stage with headroom, so it needs no such margin.
+  // In a mixed batch a Settled leg ahead of a Progress leg had at least that leg's first stage of
+  // spare gas in the simulation, so a small drift costs the Progress leg a stage, never the whole
+  // transaction; a Progress leg ahead of a Settled one already made progress.
+  const settledNeed = (measured: { outcomes: readonly number[]; executionGasUsed: bigint }) =>
+    measured.outcomes.every((outcome) => outcome === 0)
+      ? (measuredBatchGas(measured.executionGasUsed, data, input.items.length) * 120n + 99n) / 100n : 0n;
+  const thinMargin = (signed: bigint, need: bigint) => "settled at " + signed.toString() + " gas with under the 20% margin (needs "
+    + need.toString() + ")";
   // Throws unless every leg is still Settled or Progress at the exact signed gas.
   let exact: Awaited<ReturnType<typeof simulateProductiveBatch>> | undefined;
+  let escalation: string | undefined;
+  const needs: bigint[] = [minimumGas];
   try {
     exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
       maxFeePerGas, maxPriorityFeePerGas: tip });
@@ -91,33 +108,74 @@ export async function quoteMissionBatch(client: PublicClient, input: {
     if (!(error instanceof BatchUnproductiveError)) throw error;
     // Several legs that do not fit the budget are split by packing (each leg is retried alone).
     if (input.items.length > 1) throw minimumGas > gas ? new BatchWorkBudgetError("batch work budget exceeded: " + error.message) : error;
-    // A single leg whose first combat stage (or whole non-staged settlement) does not fit escalates
-    // gradually (2x, 4x, ..., and its measured need + 20%) to the smallest productive envelope, but
-    // never above the hard ceiling. Unproductive at the ceiling = an indivisible blocker.
+    escalation = error.message;
+  }
+  if (exact !== undefined && settledNeed(exact) > gas) {
+    const need = settledNeed(exact);
+    // Several settling legs without the margin are split by packing, never signed thin.
+    if (input.items.length > 1) throw new BatchWorkBudgetError("batch work budget exceeded: " + thinMargin(gas, need));
+    escalation = thinMargin(gas, need);
+    needs.push(need);
+    exact = undefined;
+  }
+  if (escalation !== undefined) {
+    // A single leg whose first combat stage (or whole non-staged settlement) does not fit, or that
+    // settles without the 20% margin, escalates gradually (2x, 4x, ..., and its measured need + 20%)
+    // to the smallest productive envelope with that margin, but never above the hard ceiling. Not
+    // so at the ceiling = an indivisible blocker.
     const candidates = new Set<bigint>();
     for (let next = gas * 2n; next < ceiling; next *= 2n) candidates.add(next);
-    if (minimumGas > gas && minimumGas < ceiling) candidates.add(minimumGas);
+    for (const need of needs) if (need > gas && need < ceiling) candidates.add(need);
     if (ceiling > gas) candidates.add(ceiling);
-    let lastError: BatchUnproductiveError = error;
-    exact = undefined;
-    for (const candidate of [...candidates].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)) {
-      gas = candidate;
+    const queue = [...candidates].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+    let lastError = escalation;
+    // The lightest envelope seen settling without the margin, if any.
+    let lightest = needs.length > 1 ? { gas, need: needs[1]! } : undefined;
+    const attempt = async (signed: bigint) => {
+      gas = signed;
       exposure = exposureAt(gas);
+      let measured: Awaited<ReturnType<typeof simulateProductiveBatch>>;
       try {
-        exact = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
+        measured = await simulateProductiveBatch(client, { ...input, data, blockNumber, gas,
           maxFeePerGas, maxPriorityFeePerGas: tip });
-        break;
       } catch (escalationError) {
         if (!(escalationError instanceof BatchUnproductiveError)) throw escalationError;
-        lastError = escalationError;
+        lastError = escalationError.message;
+        return undefined;
       }
+      const need = settledNeed(measured);
+      if (need <= gas) return measured;
+      lastError = thinMargin(gas, need);
+      if (!lightest || gas < lightest.gas) lightest = { gas, need };
+      // Settles here but thin: try its exact need + 20% next when that still fits the ceiling.
+      if (need <= ceiling && !queue.includes(need)) {
+        queue.push(need);
+        queue.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+      }
+      return undefined;
+    };
+    // Bounded: each learned need is above the last signed gas and at most the ceiling.
+    for (let i = 0; i < queue.length && i < maxEscalationSimulations && exact === undefined; i++) exact = await attempt(queue[i]!);
+    // A staged battle's final segment can settle thin at the budget with a need + 20% above the
+    // ceiling, yet make Progress (safe: it only starts a stage with headroom) at a lighter envelope.
+    // Try once below the lightest thin settlement by the missing margin, never under the minimum budget.
+    if (exact === undefined && lightest) {
+      const lower = lightest.gas - (lightest.need - lightest.gas);
+      const floored = lower < minBatchWorkGas ? minBatchWorkGas : lower;
+      if (floored < lightest.gas) exact = await attempt(floored);
     }
-    if (exact === undefined) throw new BatchWorkCeilingError("leg not productive within the " + ceiling.toString()
-      + " gas work/fee ceiling (" + lastError.message + "); never signed heavier, Base refuses heavy execution");
-    emitObservabilityEvent({ kind: "mission_batch_work_budget_exceeded", missionId: input.items[0]!.missionId, leg: input.items[0]!.leg,
+    if (exact === undefined) {
+      const message = "leg not productive with a 20% margin within the " + ceiling.toString() + " gas " + (ceiling < maxWorkGas
+        ? "ceiling the ETH cap affords at current fees (" : "work ceiling (") + lastError + "); never signed heavier or thinner";
+      // Below the work ceiling only because of fees: a capacity problem that clears when fees fall,
+      // not an indivisible work blocker.
+      throw ceiling < maxWorkGas ? new BatchCapacityError(message) : new BatchWorkCeilingError(message + ", Base refuses heavy execution");
+    }
+    if (gas > workGas) emitObservabilityEvent({ kind: "mission_batch_work_budget_exceeded", missionId: input.items[0]!.missionId, leg: input.items[0]!.leg,
       workGas: workGas.toString(), maxWorkGas: maxWorkGas.toString(), signedGas: gas.toString(),
       action: "single leg needs more than the per-transaction work budget (still within the hard ceiling); watch inclusion" }, "warn");
   }
+  if (exact === undefined) throw new Error("batch productive measurement unavailable");
   assertBatchQuoteFresh(provenance); // exact eth_call can outlive the freshness window
   return Object.freeze({ ...exposure, blockNumber, provenance, outcomes: exact.outcomes, executionGasUsed: exact.executionGasUsed });
 }

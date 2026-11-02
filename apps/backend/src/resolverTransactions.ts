@@ -181,6 +181,10 @@ const journalStorageLimitBytes = 240 * 1024 * 1024;
 const journalPruneReserveBytes = 16 * 1024 * 1024;
 const defaultInclusionWaitMs = 30_000;
 const defaultSupersedeAfterAttempts = 6;
+// A persisting supersession warning for the same envelope and reason repeats at most hourly (#408).
+const supersessionWarningIntervalMs = 60 * 60_000;
+const maxSupersessionWarningKeys = 256;
+const maxSupersessionWarningReasons = 8;
 // Reservation ids of same-nonce alternatives; a crash between reservation and transfer resumes
 // only from the retained signing result, never by signing again.
 const supersessionReservationPrefix = "supersede:";
@@ -208,6 +212,8 @@ export class ResolverTransactionCoordinator {
   private readonly inclusionWaitMs: number;
   private readonly supersedeAfterAttempts: number;
   private readonly supersessionPlanningMs: number;
+  // Per stuck envelope: when each repeating supersession warning reason was last emitted (#408).
+  private readonly supersessionWarnings = new Map<string, Map<string, number>>();
   // Per resolver: last prune attempt, the audit sequence already swept and when this sweep began.
   private readonly auditPrune = new Map<string, { at: number; cursor: number; sweepStartedAt: number }>();
   // A transport may not support abort. Never stack abandoned reads on the same signer.
@@ -1159,15 +1165,20 @@ export class ResolverTransactionCoordinator {
         // merely have been dropped) and alert. Lease, deadline, transport and signing errors propagate.
         if (!(error instanceof SupersessionUnavailableError)) throw error;
         pass.assertActive();
-        emitObservabilityEvent({ kind: "resolver_same_nonce_supersession_unavailable", chainId, address, nonce: intent.nonce,
-          transactionHash: intent.hash, attempts: intent.attempts, reason: safeDiagnosticText(error),
-          action: "identical bytes keep resending; if Base never includes them, operator review is required (see docs/mission-resolver-reliability.md)" }, "warn");
+        const reason = safeDiagnosticText(error);
+        // Re-planned every pass (the state can change), but warned once per envelope and reason, then
+        // at most hourly while it persists: not every minute (#408).
+        if (this.shouldWarnSupersession(chainId, address, intent.hash, "unavailable:" + reason))
+          emitObservabilityEvent({ kind: "resolver_same_nonce_supersession_unavailable", chainId, address, nonce: intent.nonce,
+            transactionHash: intent.hash, attempts: intent.attempts, reason,
+            action: "identical bytes keep resending; if Base never includes them, operator review is required (see docs/mission-resolver-reliability.md)" }, "warn");
       }
       if (this.database.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND nonce=? AND supersedes=? LIMIT 1")
         .get(chainId, normalizeAddress(address), intent.nonce, intent.hash))
         throw this.replayError(intent, "same-nonce alternative dispatched; reconcile both candidates next pass");
     }
-    if (alternative && intent.attempts >= this.supersedeAfterAttempts && intent.nextRetry <= this.now())
+    if (alternative && intent.attempts >= this.supersedeAfterAttempts && intent.nextRetry <= this.now()
+      && this.shouldWarnSupersession(chainId, address, intent.hash, "alternative-not-included"))
       emitObservabilityEvent({ kind: "resolver_same_nonce_alternative_not_included", chainId, address, nonce: intent.nonce,
         transactionHash: intent.hash, supersedes: intent.supersedes, attempts: intent.attempts,
         action: "the lighter same-nonce alternative is still not included; it is never superseded again, operator review required (see docs/mission-resolver-reliability.md)" }, "warn");
@@ -1203,6 +1214,25 @@ export class ResolverTransactionCoordinator {
     }
     if(pass.recoveryTrace)pass.recoveryTrace.stage="dispatch";
     await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
+  }
+
+  /** True the first time an envelope hits a repeating supersession warning reason, and then at most
+   * once per interval per reason while it persists (alternating reasons do not re-warn every pass).
+   * Bounded memory: a few reasons per envelope, a few hundred envelopes, oldest dropped first. */
+  private shouldWarnSupersession(chainId: number, address: Hex, hash: Hex, signature: string): boolean {
+    const key = resolverKey(chainId, address) + ":" + hash.toLowerCase();
+    const now = this.now();
+    const reasons = this.supersessionWarnings.get(key) ?? new Map<string, number>();
+    const last = reasons.get(signature);
+    if (last !== undefined && now - last < supersessionWarningIntervalMs) return false;
+    reasons.delete(signature);
+    reasons.set(signature, now);
+    while (reasons.size > maxSupersessionWarningReasons) reasons.delete(reasons.keys().next().value!);
+    this.supersessionWarnings.delete(key);
+    this.supersessionWarnings.set(key, reasons);
+    while (this.supersessionWarnings.size > maxSupersessionWarningKeys)
+      this.supersessionWarnings.delete(this.supersessionWarnings.keys().next().value!);
+    return true;
   }
 
   /** Exactly one alternative per original; the original row is never modified or resent. */

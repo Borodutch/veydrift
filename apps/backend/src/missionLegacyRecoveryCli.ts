@@ -81,7 +81,9 @@ export function assertRecoveryJournalReadiness(db: Database, binding: ReturnType
     .all(chainId,address) as Array<{nonce:number;binding:string;max_fee_wei:string;reservation_id:string|null;alternative_hash:Hex|null;winner_hash:string|null;finalized:number}>;
   if(groups.length>32 || groups.some(g=>(g.nonce!==nonce&&!g.finalized) || (g.nonce===nonce&&(g.binding!==JSON.stringify(binding)||g.max_fee_wei!==maxFeeWei||g.winner_hash||g.finalized))))reject();
   const group=groups.find(g=>g.nonce===nonce);
-  if(db.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status!='finalized' AND transaction_hash!=? AND transaction_hash!=? LIMIT 1").get(chainId,address,originalHash,group?.alternative_hash??originalHash)
+  // Same exclusivity as the coordinator's claim: a same-nonce loser marked superseded is terminal
+  // (its winner row is checked on its own), and a retired prevented intent no longer has a row (#408).
+  if(db.query("SELECT 1 FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status!='finalized' AND status!='superseded' AND transaction_hash!=? AND transaction_hash!=? LIMIT 1").get(chainId,address,originalHash,group?.alternative_hash??originalHash)
     || db.query("SELECT 1 FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=0 LIMIT 1").get(chainId,address)
     || db.query("SELECT 1 FROM resolver_send_fences WHERE chain_id=? AND resolver_address=? LIMIT 1").get(chainId,address))reject();
   if(!group?.alternative_hash) {if(group?.reservation_id)reject();return undefined;}

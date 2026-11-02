@@ -22,20 +22,21 @@ export const resolverBatchMaxFeeWei = 400_000_000_000_000n;
  * signed gas is the work bound: one combat stage needs ~1.3M, a 4.2M-gas battle tx was refused. */
 export const defaultBatchWorkGas = 2_500_000n;
 export const minBatchWorkGas = 1_500_000n;
-export const maxTransactionGas = 16_777_216n;
-export function batchWorkGas(policy: Pick<MissionBatchPolicy, "workGas">): bigint {
-  const value = policy.workGas ?? defaultBatchWorkGas;
-  if (value < minBatchWorkGas || value > maxTransactionGas) throw new Error("invalid batch work gas budget");
-  return value;
-}
 /** Hard ceiling for any automatically signed batch, clearly below the ~4.2M of work Base refused.
  * A leg that is not productive under it is excluded as an indivisible blocker, never signed. */
 export const defaultBatchMaxWorkGas = 3_000_000n;
-/** Operators may raise the ceiling, but never back to the envelope Base refused (~4.2M of work). */
+/** Operators may raise the ceiling, but never back to the envelope Base refused (~4.2M of work).
+ * Enforced wherever a budget is read, not only by the env loader (#408): a policy built in code
+ * can never sign above it. */
 export const maxConfigurableWorkGas = 4_000_000n;
+export function batchWorkGas(policy: Pick<MissionBatchPolicy, "workGas">): bigint {
+  const value = policy.workGas ?? defaultBatchWorkGas;
+  if (value < minBatchWorkGas || value > maxConfigurableWorkGas) throw new Error("invalid batch work gas budget");
+  return value;
+}
 export function batchMaxWorkGas(policy: Pick<MissionBatchPolicy, "workGas" | "maxWorkGas">): bigint {
   const value = policy.maxWorkGas ?? defaultBatchMaxWorkGas;
-  if (value < batchWorkGas(policy) || value > maxTransactionGas) throw new Error("invalid batch max work gas ceiling");
+  if (value < batchWorkGas(policy) || value > maxConfigurableWorkGas) throw new Error("invalid batch max work gas ceiling");
   return value;
 }
 export const defaultMissionBatchPolicy: MissionBatchPolicy = {
@@ -52,7 +53,7 @@ export function loadMissionBatchPolicy(env: Record<string, string | undefined>, 
   if (enabled && !env.VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY) problems.push({ field: prefix + "ENABLED", message: "requires local signer; unlocked batching unsupported" });
   const rawWorkGas = env[prefix + "WORK_GAS"] ?? defaultBatchWorkGas.toString();
   const workGas = /^[0-9]{1,9}$/.test(rawWorkGas) ? BigInt(rawWorkGas) : 0n;
-  if (workGas < minBatchWorkGas || workGas > maxTransactionGas) problems.push({ field: prefix + "WORK_GAS", message: "must be 1500000..16777216 gas" });
+  if (workGas < minBatchWorkGas || workGas > maxConfigurableWorkGas) problems.push({ field: prefix + "WORK_GAS", message: "must be 1500000..4000000 gas" });
   const rawMaxWorkGas = env[prefix + "MAX_WORK_GAS"] ?? defaultBatchMaxWorkGas.toString();
   const maxWorkGas = /^[0-9]{1,9}$/.test(rawMaxWorkGas) ? BigInt(rawMaxWorkGas) : 0n;
   if (maxWorkGas < minBatchWorkGas || maxWorkGas > maxConfigurableWorkGas || maxWorkGas < workGas)

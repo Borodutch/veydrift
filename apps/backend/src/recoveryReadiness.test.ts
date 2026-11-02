@@ -48,6 +48,27 @@ test("SELECT-only journal admission preserves every table and rejects outstandin
  expect(()=>assertRecoveryJournalReadiness(db,binding,input.maxFeeWei)).toThrow("journal-mismatch");
  db.close();
 });
+test("a same-nonce supersession elsewhere does not block legacy recovery readiness; its unfinished winner does (#408)",()=>{
+ const coordinator=new ResolverTransactionCoordinator(":memory:");
+ const db=(coordinator as unknown as {database:Database}).database;
+ const input=verifyReviewedRecoveryManifest(readFileSync(new URL("../../../docs/recovery-58-input.json",import.meta.url),"utf8"));
+ const binding=recoveryBinding(input);
+ const insert=(nonce:number,hash:string,status:string,supersedes:string|null=null)=>db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,supersedes) VALUES(?,?,?,?,?,?,?,?)")
+  .run(input.chainId,input.address,"batch:"+hash,nonce,hash,"[]",status,supersedes);
+ db.query("INSERT INTO resolver_prepared_intents(chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status) VALUES(?,?,?,?,?,?,'pending')").run(input.chainId,input.address,input.operationId,input.nonce,input.originalHash,input.membership);
+ const loser="0x"+"a1".repeat(32), winner="0x"+"b2".repeat(32);
+ insert(input.nonce+1,loser,"superseded");
+ insert(input.nonce+1,winner,"confirmed",loser);
+ // The winner is not finalized yet: still an outstanding candidate.
+ expect(()=>assertRecoveryJournalReadiness(db,binding,input.maxFeeWei)).toThrow("journal-mismatch");
+ db.query("UPDATE resolver_prepared_intents SET status='finalized' WHERE transaction_hash=?").run(winner);
+ // Superseded loser + finalized winner: terminal, readiness proceeds.
+ expect(assertRecoveryJournalReadiness(db,binding,input.maxFeeWei)).toBeUndefined();
+ // Any other unfinished intent still blocks.
+ insert(input.nonce+2,"0x"+"c3".repeat(32),"pending");
+ expect(()=>assertRecoveryJournalReadiness(db,binding,input.maxFeeWei)).toThrow("journal-mismatch");
+ db.close();
+});
 test("diagnostic never copies arbitrary transport exception fields or messages",()=>{
  const trace=new RecoveryTrace();
  expect(trace.diagnostic(Object.assign(new Error("credential raw envelope"),{reason:"credential",request:"raw envelope"}))).toMatchObject({stage:"journal",reason:"proof-rejected",reads:0});

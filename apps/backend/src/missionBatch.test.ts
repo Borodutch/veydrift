@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { decodeFunctionData } from "viem";
 import { BatchCapacityError, batchCalldata, compareBatchLegs, defaultMissionBatchPolicy, loadMissionBatchPolicy,
-  missionBatchAbi, packMissionBatch, totalBatchExposure, batchMaxWorkGas, BatchWorkCeilingError, BatchUnproductiveError, type BatchLeg } from "./missionBatch";
+  missionBatchAbi, packMissionBatch, totalBatchExposure, batchMaxWorkGas, batchWorkGas, BatchWorkCeilingError, BatchUnproductiveError, type BatchLeg } from "./missionBatch";
 
 const policy = { ...defaultMissionBatchPolicy, enabled: true, maxFeeWei: 200_000_000_000_000n };
 const feeInput = { gas: 120_000n, blockGasLimit: 30_000_000n, maxFeePerGas: 1_000_000n,
@@ -43,7 +43,8 @@ describe("mission batch fee envelope", () => {
       [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "3500000" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
       [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "16777217" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
       [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "4000001" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
-      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "16777216", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "16777216" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "16777216", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "16777216" }, ["VEYDRIFT_MISSION_BATCH_WORK_GAS", "VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
+      [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "4000001", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "4000000" }, ["VEYDRIFT_MISSION_BATCH_WORK_GAS", "VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
       [{ VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "3e6" }, ["VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS"]],
       [{ VEYDRIFT_MISSION_BATCH_WORK_GAS: "3500000", VEYDRIFT_MISSION_BATCH_MAX_WORK_GAS: "3500000" }, []]
     ] as const) {
@@ -53,6 +54,13 @@ describe("mission batch fee envelope", () => {
     }
     expect(() => batchMaxWorkGas({ workGas: 3_500_000n })).toThrow("max work gas");
     expect(batchMaxWorkGas({})).toBe(3_000_000n);
+  });
+  test("the 4M ceiling is enforced where the budget is used, not only by the env loader (#408)", () => {
+    expect(batchMaxWorkGas({ workGas: 4_000_000n, maxWorkGas: 4_000_000n })).toBe(4_000_000n);
+    expect(batchWorkGas({ workGas: 4_000_000n })).toBe(4_000_000n);
+    for (const policy of [{ maxWorkGas: 4_000_001n }, { maxWorkGas: 8_000_000n }, { workGas: 16_777_216n, maxWorkGas: 16_777_216n }])
+      expect(() => batchMaxWorkGas(policy)).toThrow("invalid batch");
+    for (const workGas of [4_000_001n, 16_777_216n]) expect(() => batchWorkGas({ workGas })).toThrow("work gas budget");
   });
 });
 
