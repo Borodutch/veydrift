@@ -10,7 +10,7 @@ import preact from "@preact/preset-vite";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Current state surfaces render safe lifecycle and inventory at desktop/mobile sizes", { timeout: 120_000 }, async () => {
+test("Current state surfaces render safe lifecycle and inventory at desktop/mobile sizes", { timeout: 120_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
@@ -26,9 +26,9 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     const apiBase = "http://127.0.0.1:" + await freePort();
     backend = spawn("bun", ["tests/fixtures/inventory65Server.ts", new URL(apiBase).port], { stdio: "ignore",
       env: { ...process.env, VEYDRIFT_ALLOWED_ORIGIN: `http://127.0.0.1:${server.httpServer.address().port}` } });
-    const apiDeadline = Date.now() + 15000;
     while (!(await fetch(apiBase + "/__fixture/status").then(r => r.ok).catch(() => false))) {
-      assert.ok(Date.now() < apiDeadline && backend.exitCode === null, "real fixture backend starts");
+      t.signal.throwIfAborted();
+      assert.equal(backend.exitCode, null, "real fixture backend starts");
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/currentState.html`;
@@ -69,8 +69,8 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       return result.result.value;
     }
     await send("Page.navigate", { url });
-    const deadline = Date.now() + 20000;
-    while (!(await evaluate("Boolean(window.fixture)"))) { assert.ok(Date.now() < deadline, "fixture load"); await new Promise(r => setTimeout(r, 100)); }
+    // Polls until the fixture is up; only the test's own timeout bounds it, so a loaded runner can't fail it.
+    while (!(await evaluate("Boolean(window.fixture)"))) { t.signal.throwIfAborted(); await new Promise(r => setTimeout(r, 50)); }
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await evaluate('fixture.show("inventory-composer", "current"); new Promise(requestAnimationFrame)');
@@ -82,26 +82,26 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       // Inventory readiness logic is width-independent: its body × mission matrix runs at one width.
       if (width === 390) for (const [body, kind] of ["planet", "moon"].flatMap(body => ["transport", "deploy", "attack", "acs", ...(body === "planet" ? ["defend"] : [])].map(kind => [body, kind]))) {
         const label = body + " " + kind + " at " + width;
-        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-" + kind) + '); new Promise(resolve => setTimeout(resolve, 150))');
+        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-" + kind) + '); fixture.settled()');
         await evaluate(`(() => { const input = document.querySelector('input[aria-label="Large Cargo quantity"]'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)`);
         const confirmDisabled = () => evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled');
         const quantity = () => evaluate(`document.querySelector('input[aria-label="Large Cargo quantity"]').value`);
         assert.equal(await confirmDisabled(), false, "ready " + label + ": " + await evaluate('document.body.innerText'));
         // An unrelated body's failed read must not poison the selected origin.
-        await evaluate('fixture.refreshInventory(' + JSON.stringify(body === "planet" ? "moon" : "planet") + '); new Promise(resolve => setTimeout(resolve, 150))');
+        await evaluate('fixture.refreshInventory(' + JSON.stringify(body === "planet" ? "moon" : "planet") + '); fixture.settled()');
         assert.equal(await confirmDisabled(), false, "other body failure " + label);
-        await evaluate('fixture.refreshInventory(' + JSON.stringify(body) + '); new Promise(resolve => setTimeout(resolve, 150))');
+        await evaluate('fixture.refreshInventory(' + JSON.stringify(body) + '); fixture.settled()');
         assert.equal(await quantity(), "6", "failed refresh preserves draft " + label);
         assert.equal(await confirmDisabled(), true, "selected read503 blocks " + label);
         assert.match(await evaluate('document.querySelector("main").innerText'), /Current fleet inventory is unavailable/, label);
         assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected[\s\S]*\/ 6/, "retains last-good display " + label);
         await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
         assert.equal(await evaluate('fixture.confirmed()'), 0, "failed read cannot submit " + label);
-        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 150))');
+        await evaluate('fixture.refreshInventory(); fixture.settled()');
         assert.equal(await quantity(), "6", "recovery preserves draft " + label);
         assert.equal(await confirmDisabled(), false, "fresh successful read restores launch " + label);
         for (const unsafe of [{ stale: true }, { degraded: true }, { safeToProject: false }, { indexer: { safeToServeIndexedState: false } }]) {
-          await evaluate('fixture.refreshInventory(undefined, ' + JSON.stringify(unsafe) + '); new Promise(resolve => setTimeout(resolve, 100))');
+          await evaluate('fixture.refreshInventory(undefined, ' + JSON.stringify(unsafe) + '); fixture.settled()');
           assert.equal(await quantity(), "6", "unsafe success preserves draft " + label);
           assert.equal(await confirmDisabled(), true, "unsafe success blocks " + label);
           assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected[\s\S]*\/ 6/, "unsafe rows are display-only " + label);
@@ -111,23 +111,23 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
           await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
           assert.equal(await evaluate('fixture.confirmed()'), 0, "unsafe success cannot submit " + label);
         }
-        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 100))');
+        await evaluate('fixture.refreshInventory(); fixture.settled()');
         assert.equal(await confirmDisabled(), false, "recovery after unsafe success " + label);
       }
-      await evaluate('fixture.show("store-supply", "current"); new Promise(resolve => setTimeout(resolve, 150))');
+      await evaluate('fixture.show("store-supply", "current"); fixture.settled()');
       assert.equal(await evaluate('[...document.querySelectorAll("button")].some(b => b.textContent === "Auto-plan cargo")'), false, "initial planning needs no removed manual action");
       // A prior pass can leave a cached empty inventory. Fresh counts must not
       // silently change source intent; select through the supported checkboxes.
       await evaluate('[...document.querySelectorAll("[data-supply-source] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click()); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'normal subscribed store hydrates nine-source plan at ' + width + ': ' + await evaluate('document.body.innerText'));
       assert.match(await evaluate('document.body.innerText'), /9 transports/);
-      await evaluate('fixture.show("store-supply", "unsafe"); new Promise(resolve => setTimeout(resolve, 150))');
+      await evaluate('fixture.show("store-supply", "unsafe"); fixture.settled()');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'unsafe success blocks mounted Supply');
       assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '1260000', 'unsafe Supply preserves cargo');
       assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Source planets"] input[type="checkbox"]:checked').length`), 9);
       await evaluate('document.querySelector("footer button").click()');
       assert.equal(await evaluate('fixture.confirmed()'), 0, 'unsafe Supply cannot submit');
-      await evaluate('fixture.show("store-supply", "empty"); new Promise(resolve => setTimeout(resolve, 150))');
+      await evaluate('fixture.show("store-supply", "empty"); fixture.settled()');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'ordinary store refresh blocks obsolete six-ship proposals');
       assert.equal(await evaluate('document.querySelector(\'input[aria-label="metal to send"]\').value'), '1260000');
       assert.equal(await evaluate('document.querySelectorAll(\'[aria-label="Source planets"] input[type="checkbox"]:checked\').length'), 9);
@@ -167,22 +167,26 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     // Actual cache-enabled HTTP handler + ordinary subscribed store + mounted controls.
     // Its deleted anchor has timestamp:null, while six canonical ships remain populated.
     await evaluate('fixture.realApi(' + JSON.stringify(apiBase) + ')');
+    // The real backend's answer changes when its cache catches up, not at a fixed time: drive the store's ordinary
+    // polling tick until the expected state shows (the test's timeout bounds it).
+    const untilPolled = async expression => { while (!(await evaluate(expression))) { t.signal.throwIfAborted(); await evaluate('fixture.refreshInventory(); fixture.settled()'); } };
     // Width-independent too (and covered at unit level by inventoryReadiness65.test.ts): one width.
     for (const width of [390]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       for (const body of ["planet", "moon"]) {
         await fetch(apiBase + "/__fixture/recover");
-        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-transport") + '); new Promise(resolve => setTimeout(resolve, 200))');
+        await evaluate('fixture.show(' + JSON.stringify("store-composer-" + body + "-transport") + '); fixture.settled()');
         // A remount may reuse a recent successful (but unsafe) response. Drive the
         // ordinary polling tick after subscriptions attach, not before layout effects.
-        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+        await evaluate('fixture.refreshInventory(); fixture.settled()');
         await evaluate(`(() => { const input = document.querySelector('input[aria-label="Large Cargo quantity"]'); input.value="6"; input.dispatchEvent(new Event("input", {bubbles:true})); })(); new Promise(requestAnimationFrame)`);
+        await untilPolled('document.querySelector("[data-mission-actions] button:last-child").disabled === false');
         assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), false, 'real HTTP inventory ready ' + body + ': ' + JSON.stringify(await evaluate('fixture.inventoryStatus()')) + await evaluate('document.body.innerText'));
         const invalidated = await (await fetch(apiBase + "/__fixture/invalidate")).json();
         assert.equal(invalidated.projection.timestamp, null);
         assert.equal(invalidated.projection.safeToProject, false);
         assert.equal(invalidated.ships, 6);
-        await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+        await untilPolled('document.querySelector("[data-mission-actions] button:last-child").disabled === true');
         assert.equal(await evaluate(`document.querySelector('input[aria-label="Large Cargo quantity"]').value`), "6");
         assert.match(await evaluate('document.body.innerText'), /6 selected[\s\S]*\/ 6/);
         assert.equal(await evaluate('document.querySelector("[data-mission-actions] button:last-child").disabled'), true, 'real invalidation blocks ' + body);
@@ -190,16 +194,16 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         assert.equal(await evaluate('fixture.confirmed()'), 0);
       }
       await fetch(apiBase + "/__fixture/recover");
-      await evaluate('fixture.show("store-supply"); new Promise(resolve => setTimeout(resolve, 200))');
-      await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
+      await evaluate('fixture.show("store-supply"); fixture.settled()');
+      await evaluate('fixture.refreshInventory(); fixture.settled()');
       assert.equal(await evaluate('[...document.querySelectorAll("button")].some(b => b.textContent === "Auto-plan cargo")'), false, "initial planning needs no removed manual action");
       // A prior pass can leave a cached empty inventory. Fresh counts must not
-      // silently change source intent; select through the supported checkboxes.
+      // silently change source intent; select through the supported checkboxes, once the real sources are in.
+      await untilPolled('[...document.querySelectorAll("[data-supply-source] input[type=checkbox]")].some(input => !input.disabled)');
       await evaluate('[...document.querySelectorAll("[data-supply-source] input[type=checkbox]")].filter(input => !input.checked && !input.disabled).forEach(input => input.click()); new Promise(requestAnimationFrame)');
       assert.equal(await evaluate('document.querySelector("footer button").disabled'), false, 'real HTTP Supply ready');
       await fetch(apiBase + "/__fixture/invalidate");
-      await evaluate('fixture.refreshInventory(); new Promise(resolve => setTimeout(resolve, 200))');
-      assert.equal(await evaluate('document.querySelector("footer button").disabled'), true, 'real invalidation blocks Supply');
+      await untilPolled('document.querySelector("footer button").disabled === true');
       assert.equal(await evaluate(`document.querySelector('input[aria-label="metal to send"]').value`), '10000');
       await evaluate('document.querySelector("footer button").click()');
       assert.equal(await evaluate('fixture.confirmed()'), 0);
@@ -228,12 +232,12 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     assert.equal(await readiness(), '7');
     await evaluate('supplyPreload.dispose()');
     console.log('PASS mounted Supply readiness across pending/ready chain changes');
-    await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
-      chrome.kill();
+      // Its profile is a temp dir: nothing to save, so no graceful shutdown.
+      chrome.kill("SIGKILL");
       await exited;
     }
     if (backend && backend.exitCode === null) {

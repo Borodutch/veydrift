@@ -12,7 +12,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 async function until(check: () => boolean) {
-  for (let i = 0; i < 100 && !check(); i++) await Bun.sleep(1);
+  // Polls as long as the test may run (bun's 5 s per-test timeout), not a fixed count a loaded runner can outlast.
+  for (const deadline = performance.now() + 5_000; !check() && performance.now() < deadline;) await Bun.sleep(1);
   expect(check()).toBe(true);
 }
 function fixture(timeout = 1_000) {

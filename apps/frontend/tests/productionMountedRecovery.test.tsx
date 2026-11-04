@@ -68,8 +68,9 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "document");
 });
 
+// Polls as long as the test may run (bun's 5 s per-test timeout): 100 polls of 2 ms ran out on a loaded runner.
 async function until(predicate: () => boolean, label = "condition") {
-  for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(2);
+  for (const deadline = performance.now() + 5_000; !predicate() && performance.now() < deadline;) await Bun.sleep(2);
   if (!predicate()) throw new Error(`Timed out: ${label}; rendered: ${root.textContent}`);
 }
 const ship = shipyardCatalog[0]!;

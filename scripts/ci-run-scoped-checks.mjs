@@ -127,12 +127,22 @@ const PLACE = {
   "contracts-build": ["contracts", 0],
   "contracts-test": ["contracts", 0],
   "deployment-manifest-test": ["contracts", 1],
-  "referral-migration-manifest-test": ["contracts", 1],
   "contracts-fast-check": ["contracts", 1],
   "contracts-storage-check": ["contracts", 1],
+  // As long as contracts-build + contracts-test, so a chain of its own.
+  "referral-migration-manifest-test": ["contracts", 2],
   "backend-test": ["backend", 0],
+  // Beside the backend typecheck (chain 1), which is the long one.
+  "script-test scripts/ci-run-scoped-checks.test.mjs": ["backend", 2],
+  "backend-performance-tool-test": ["backend", 2],
+  "release-diagnostics-test": ["backend", 2],
+  "stats-check": ["backend", 2],
+  "keeper-check": ["backend", 2],
+  "keeper-test": ["backend", 2],
+  "chicken-burn-listener-check": ["backend", 2],
+  "chicken-burn-listener-test": ["backend", 2],
 };
-// Everything else (backend typecheck, universe, stats, keeper, chicken, docs and script tests) is backend chain 1.
+// Everything else (backend and universe checks, docs and script tests) is backend chain 1.
 const place = (label) => PLACE[label] ?? ["backend", 1];
 
 export function planChecks(scope, group = "all") {
@@ -144,9 +154,12 @@ export function planChecks(scope, group = "all") {
   // Documentation-only changes must run these too; neither needs Bun or installed packages.
   add("docs-link-tests", "node", ["--test", "scripts/veydrift-docs-links-check.test.mjs"]);
   add("docs-check", "node", ["scripts/veydrift-docs-content-check.mjs"]);
+  // The planner's own tests run in every CI run (in the backend job, beside the other checks). Not in the
+  // local preflight ("all"): one of these tests runs that preflight itself.
+  const plannerTests = "scripts/ci-run-scoped-checks.test.mjs";
+  if (group !== "all") add(`script-test ${plannerTests}`, "node", ["--test", plannerTests]);
   for (const testFile of scope.script_tests ?? []) {
-    // The CI workflow already runs this one first, in the rest job, on every PR.
-    if (group !== "all" && testFile === "scripts/ci-run-scoped-checks.test.mjs") continue;
+    if (testFile === plannerTests) continue;
     add(`script-test ${testFile}`, "node", ["--test", testFile]);
   }
 

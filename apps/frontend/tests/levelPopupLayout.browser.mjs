@@ -15,7 +15,7 @@ import { freePort } from "./freePort.mjs";
 // the panel caps at max-w-4xl, so wider viewports lay out the same). In-between widths repeated these.
 const WIDTHS = [320, 390, 640, 1024];
 
-test("level popups fit every structure at every width", { timeout: 180_000 }, async () => {
+test("level popups fit every structure at every width", { timeout: 180_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered layout regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-level-popup-"));
@@ -71,9 +71,10 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
     for (const width of WIDTHS) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url });
-      const deadline = Date.now() + 20_000;
+      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
+      // wait), so a loaded runner can't fail it.
       while (!(await evaluate("Boolean(window.levelPopup)"))) {
-        assert.ok(Date.now() < deadline, "level popup fixture did not render");
+        t.signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       const cases = await evaluate("window.levelPopup.cases");
@@ -116,12 +117,12 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
       writeFileSync(join(artifacts, "level-popup-all-layout.json"), JSON.stringify(measurements, null, 2));
     }
     assert.deepEqual(failures, []);
-    await send("Browser.close", {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
-      chrome.kill();
+      // Its profile is a temp dir: nothing to save, so no graceful shutdown.
+      chrome.kill("SIGKILL");
       await exited;
     }
     await server.close();

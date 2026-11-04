@@ -1,39 +1,37 @@
 #!/usr/bin/env node
 // Runs the browser smoke tests: real headless Chrome against the Vite dev server, for what unit tests
 // can't see (layout at real widths, touch scrolling, navigation). Kept deliberately small so CI stays
-// fast; app logic belongs in unit tests. The files run as side-by-side chains (the tests mostly wait on
-// the browser, ~0.3 core each), each chain's files one after another; every file has its own Vite cache dir.
+// fast; app logic belongs in unit tests. Every file runs at once (the tests mostly wait on the browser),
+// each in its own process with its own Chrome, Vite server and Vite cache dir; the long planet picker
+// file as SHARDS processes, each with every SHARDS-th of its tests.
 import { spawn } from "node:child_process";
 
-export const CHAINS = [
-  ["planetPickerTouchBrowser"],
-  ["levelPopupLayout", "galaxySlots"],
-  ["productionQueueSizing", "sidebar", "currentState"],
-];
+export const FILES = ["planetPickerTouchBrowser", "levelPopupLayout", "galaxySlots", "productionQueueSizing", "sidebar", "currentState"];
+const SHARDS = { planetPickerTouchBrowser: 2 };
 
-// Resolves to the file's exit code and full log.
-function run(unit) {
+// Resolves to the process's exit code and full log.
+function run(file, shard) {
+  const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--test", `tests/${unit}.browser.mjs`], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, ["--test", `tests/${file}.browser.mjs`], {
+      env: shard ? { ...process.env, BROWSER_TEST_SHARD: shard } : process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let log = "";
     child.stdout.on("data", (chunk) => { log += chunk; });
     child.stderr.on("data", (chunk) => { log += chunk; });
-    child.on("close", (code) => resolve({ code, log }));
+    child.on("close", (code) => {
+      // One block per process, so side-by-side runs never interleave their output.
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      process.stdout.write(`\n# ${file}${shard ? ` ${shard}` : ""} (exit ${code} after ${seconds}s)\n${log}`);
+      resolve(code === 0);
+    });
   });
 }
 
-async function chain(units) {
-  let ok = true;
-  for (const unit of units) {
-    const result = await run(unit);
-    // One block per file, so side-by-side chains never interleave their output.
-    process.stdout.write(`\n# ${unit} (exit ${result.code})\n${result.log}`);
-    ok = result.code === 0 && ok;
-  }
-  return ok;
-}
-
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const results = await Promise.all(CHAINS.map(chain));
-  process.exit(results.every(Boolean) ? 0 : 1);
+  const runs = FILES.flatMap((file) => SHARDS[file]
+    ? Array.from({ length: SHARDS[file] }, (_, i) => run(file, `${i + 1}/${SHARDS[file]}`))
+    : [run(file)]);
+  process.exit((await Promise.all(runs)).every(Boolean) ? 0 : 1);
 }

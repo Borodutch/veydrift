@@ -32,6 +32,7 @@ test("PR and push CI select the same scoped checks for the same change", () => {
     "packages/contracts/src/Example.sol": ["backend", "contracts", "storage_layout"],
     "package.json": ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"],
     "Dockerfile": ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"],
+    ".forgejo/workflows/ci.yml": ["universe", "backend", "frontend", "stats", "keeper", "chicken", "contracts", "storage_layout"],
   };
   try {
     git("init", "--initial-branch=main");
@@ -135,7 +136,8 @@ test("shared JSON contracts require both frontend and backend validation", () =>
   const files = ["packages/api-types/src/index.ts"];
   assert.equal(filesRequireFrontendChecks(files), true);
   assert.equal(filesRequireBackendChecks(files), true);
-  assert.equal(filesRequireContractChecks(files), false);
+  // The contract proofs import backend code that imports these too.
+  assert.equal(filesRequireContractChecks(files), true);
 });
 
 test("the contract-generated demolition parity fixture requires backend, frontend and contract validation", () => {
@@ -156,6 +158,18 @@ test("flushes a large failure log to a pipe before exiting", () => {
   assert.equal(result.status, 1);
   assert.equal(result.stdout.length, 200015);
   assert.ok(result.stdout.endsWith("FAILURE DETAIL\n"));
+});
+
+test("backend code the contract proofs import runs the contract checks", async () => {
+  const { contractProofSources } = await import("./ci-scope.mjs");
+  const sources = contractProofSources();
+  // Imported by the proofs directly and through missionBatchFees.ts.
+  for (const file of ["apps/backend/src/missionBatch.ts", "apps/backend/src/missionBatchFees.ts", "apps/backend/src/resolverTransactions.ts"]) {
+    assert.ok(sources.has(file), file);
+  }
+  assert.equal(filesRequireContractChecks(["apps/backend/src/missionBatchFees.ts"]), true);
+  assert.equal(filesRequireContractChecks(["apps/backend/src/server.ts"]), false);
+  assert.equal(filesRequireContractChecks(["scripts/battle-referee-anvil-proof.ts"]), true);
 });
 
 test("routes deployment proof changes through blocking contract CI", () => {
@@ -228,7 +242,8 @@ const labels = (plan) => plan.map((step) => step.label);
 test("area check groups partition the full sequential plan", () => {
   const all = labels(planChecks(FULL_SCOPE));
   const grouped = CHECK_GROUPS.filter((group) => group !== "all").flatMap((group) => labels(planChecks(FULL_SCOPE, group)));
-  assert.deepEqual([...grouped].sort(), [...all].sort());
+  // Plus the planner's own tests, which CI always runs (and the local preflight never, as they run it).
+  assert.deepEqual([...grouped].sort(), [...all, "script-test scripts/ci-run-scoped-checks.test.mjs"].sort());
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "contracts")), ["deployment-manifest-test", "referral-migration-manifest-test",
     "contracts-build", "contracts-fast-check", "contracts-test", "contracts-storage-check"]);
   assert.deepEqual(labels(planChecks(FULL_SCOPE, "frontend")), ["frontend-precheck", "frontend-typecheck", "frontend-test",
@@ -241,20 +256,20 @@ test("area check groups partition the full sequential plan", () => {
 
 test("groups with nothing in scope plan no checks", () => {
   const docsOnly = Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false]));
-  assert.deepEqual(labels(planChecks(docsOnly, "backend")), ["docs-link-tests", "docs-check"]);
+  assert.deepEqual(labels(planChecks(docsOnly, "backend")), ["docs-link-tests", "docs-check", "script-test scripts/ci-run-scoped-checks.test.mjs"]);
   for (const group of ["contracts", "frontend"]) assert.deepEqual(planChecks(docsOnly, group), []);
 });
 
 test("a backend-only change plans only backend checks", () => {
   const backend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), backend: true };
-  assert.deepEqual(labels(planChecks(backend, "backend")), ["docs-link-tests", "docs-check", "backend-check", "backend-test",
+  assert.deepEqual(labels(planChecks(backend, "backend")), ["docs-link-tests", "docs-check", "script-test scripts/ci-run-scoped-checks.test.mjs", "backend-check", "backend-test",
     "backend-performance-tool-test", "release-diagnostics-test"]);
   for (const group of ["contracts", "frontend"]) assert.deepEqual(planChecks(backend, group), []);
 });
 
 test("a frontend-only change plans only frontend checks (plus the docs checks in backend)", () => {
   const frontend = { ...Object.fromEntries(Object.keys(FULL_SCOPE).map((key) => [key, false])), frontend: true };
-  assert.deepEqual(labels(planChecks(frontend, "backend")), ["docs-link-tests", "docs-check"]);
+  assert.deepEqual(labels(planChecks(frontend, "backend")), ["docs-link-tests", "docs-check", "script-test scripts/ci-run-scoped-checks.test.mjs"]);
   assert.deepEqual(planChecks(frontend, "contracts"), []);
   assert.equal(labels(planChecks(frontend, "frontend")).length, 5);
 });
@@ -287,10 +302,10 @@ test("unoptimized contract test list rejects files that carry src logic or fork 
   assert.deepEqual(profileProblems("test/DFork.t.sol", "", src), ["is a mainnet-fork test"]);
 });
 
-test("the browser smoke chains run every browser test file exactly once", async () => {
+test("the browser smoke run covers every browser test file exactly once", async () => {
   const { readdirSync } = await import("node:fs");
-  const { CHAINS } = await import("../apps/frontend/scripts/touch-browser.mjs");
+  const { FILES } = await import("../apps/frontend/scripts/touch-browser.mjs");
   const files = readdirSync(new URL("../apps/frontend/tests/", import.meta.url)).filter((file) => file.endsWith(".browser.mjs"))
     .map((file) => file.replace(/\.browser\.mjs$/, "")).sort();
-  assert.deepEqual(CHAINS.flat().sort(), files);
+  assert.deepEqual([...FILES].sort(), files);
 });

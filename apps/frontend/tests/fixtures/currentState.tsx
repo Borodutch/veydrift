@@ -42,7 +42,11 @@ let unsafe: Record<string, unknown> = {};
 const inventory: ChainShipyardState = { ...defense, wallet: owner, planetId: "99", ships: [{ id: 4, count: 6, cost }], launchableShips: [{ id: 4, count: 6 }], fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 } };
 const originalFetch = window.fetch.bind(window);
 let realApiBase: string | undefined;
-window.fetch = (input, init) => realApiBase && String(input).includes("/wallet/") ? originalFetch(String(input).replace(location.origin, realApiBase), init) : String(input).includes("/supply-sources") ? Promise.resolve(Response.json({
+// Requests in flight, so the tests wait for the store to settle (settled()) instead of sleeping. A real HTTP
+// request counts until its whole body is in (a copy of it is read first; the store gets the original).
+let inFlight = 0;
+const buffered = (response: Promise<Response>) => response.then(r => r.clone().arrayBuffer().then(() => r));
+const respond = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => realApiBase && String(input).includes("/wallet/") ? buffered(originalFetch(String(input).replace(location.origin, realApiBase), init)) : String(input).includes("/supply-sources") ? Promise.resolve(Response.json({
  ...unsafe, wallet: owner, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 }, technologyLevels: {},
  sources: Array.from({ length: 9 }, (_, i) => ({ planetId: String(i + 1), name: "Source " + i, galaxy: 1, system: 1, position: i + 1, coordinates: "1:1:" + (i + 1), resources, launchableShips: [{ id: 4, count: available }] })),
 } satisfies SupplySourcesResponse)) : /\/(shipyard|moon)\?/.test(String(input)) ? (() => {
@@ -50,6 +54,19 @@ window.fetch = (input, init) => realApiBase && String(input).includes("/wallet/"
  if (failedBody === (moon ? "moon" : "planet")) return Promise.resolve(Response.json({ error: "Inventory unavailable" }, { status: 503 }));
  return Promise.resolve(Response.json(moon ? { ...inventory, ...unsafe, moon: { exists: true, planetId: "99" } } : { ...inventory, ...unsafe }));
 })() : originalFetch(input, init);
+window.fetch = (input, init) => {
+ inFlight++;
+ return respond(input, init).finally(() => { inFlight--; });
+};
+// Resolves after two frames in a row (each followed by a task) with no request in flight: by then the store's reads,
+// their state updates and Preact's renders and effects have run, as have the reads those effects start.
+async function settled() {
+ for (let quiet = 0; quiet < 2;) {
+   await new Promise(requestAnimationFrame);
+   await new Promise(resolve => setTimeout(resolve));
+   quiet = inFlight ? 0 : quiet + 1;
+ }
+}
 const supplyTarget = { planetId: "99", name: "Destination", coordinates: "1:2:1", galaxy: 1, system: 2, position: 1 } as ManagedPlanetResponse;
 function StoreSupply() {
  const { snapshot, isInitialLoading } = useBackendDataQuery(store.queries.supplySources(owner, "99"));
@@ -114,5 +131,5 @@ function show(surface = "defense", mode = "current") {
  if (surface === "activity") page = <ActivityRow explorerUrl="https://basescan.org" item={{ ...activity, ...(mode === "indexed" ? { reconciliation: "indexed", transactionHash: "0xabc" } : {}) }} />;
  render(<main data-fixture-ready style={{ maxWidth: "1060px", margin: "16px auto", padding: "0 12px" }}>{page}</main>, document.getElementById("app")!);
 }
-Object.assign(window, { fixture: { show, refreshInventory, confirmed: () => confirmed, inventoryStatus: () => [store.queries.shipyard(owner, "99"), store.queries.moon(owner, "99")].map(query => { const snapshot = store.snapshot<any>(query.key); return { error: snapshot?.error, stale: snapshot?.data?.stale, ready: snapshot?.data?.fleetLaunchAvailable, indexer: snapshot?.data?.indexer }; }), realApi: (url?: string) => { realApiBase = url; } } });
+Object.assign(window, { fixture: { show, refreshInventory, settled, confirmed: () => confirmed, inventoryStatus: () => [store.queries.shipyard(owner, "99"), store.queries.moon(owner, "99")].map(query => { const snapshot = store.snapshot<any>(query.key); return { error: snapshot?.error, stale: snapshot?.data?.stale, ready: snapshot?.data?.fleetLaunchAvailable, indexer: snapshot?.data?.indexer }; }), realApi: (url?: string) => { realApiBase = url; } } });
 show();

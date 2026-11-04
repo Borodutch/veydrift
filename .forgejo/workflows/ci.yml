@@ -87,10 +87,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Test CI scope and output guards
-        if: matrix.group == 'backend'
-        run: node --test scripts/ci-run-scoped-checks.test.mjs
-
       # Only the areas a change touches (plus what depends on them) are checked;
       # toolchain/CI/unclassified changes check everything.
       - name: Plan this group's checks

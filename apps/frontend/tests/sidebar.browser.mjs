@@ -10,7 +10,7 @@ import { createServer } from "vite";
 import preact from "@preact/preset-vite";
 import { freePort } from "./freePort.mjs";
 
-test("Desktop sidebar persists and stays accessible independently of mobile navigation", { timeout: 300_000 }, async () => {
+test("Desktop sidebar persists and stays accessible independently of mobile navigation", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-sidebar-"));
@@ -65,9 +65,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     const key = 'veydrift.sidebar.collapsed.v1';
     const frame = () => evaluate('new Promise(requestAnimationFrame)');
     async function mounted() {
-      const deadline = Date.now() + 20000;
+      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
+      // wait), so a loaded runner can't fail it.
       while (!await evaluate('Boolean(window.fixture && document.querySelector('+JSON.stringify(desktop)+'))').catch(() => false)) {
-        assert.ok(Date.now() < deadline, 'fixture did not mount');
+        t.signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       await frame();
@@ -76,8 +77,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       const locate = () => evaluate('(() => {const n=document.querySelector('+JSON.stringify(selector)+'); n.scrollIntoView({block:"nearest"});const r=n.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,hit:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest("button,summary,a")===n};})()');
       // Wait out a closing popover or transition over the target before the trusted click.
       let point = await locate();
-      for (const deadline = Date.now() + 5_000; !point.hit && Date.now() < deadline; point = await locate()) await frame();
-      assert.ok(point.hit, selector + ': unobstructed');
+      while (!point.hit) { t.signal.throwIfAborted(); await frame(); point = await locate(); }
       await send('Input.dispatchMouseEvent', { type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1 });
       await send('Input.dispatchMouseEvent', { type:'mouseReleased',x:point.x,y:point.y,button:'left',clickCount:1 });
       await frame();
@@ -160,7 +160,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await evaluate('fixture.remount()'); await frame();
     assert.equal(await expanded(),'false');
     // Restore after full document reload, not merely a Preact rerender.
-    await send('Page.reload'); await new Promise(resolve=>setTimeout(resolve,150)); await mounted();
+    // The marker goes with the old document, so mounted() can't see the outgoing one.
+    await evaluate('window.beforeReload = true'); await send('Page.reload');
+    while (await evaluate('window.beforeReload === true').catch(() => true)) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 25)); }
+    await mounted();
     assert.equal(await expanded(),'false');
     // Close the tab and reopen a fresh document on the same origin.
     await send('Target.closeTarget', {targetId}, false);
@@ -172,7 +175,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await expanded(),'false');
     const research=desktop+' a[aria-label="Research"]';
     await evaluate('document.querySelector('+JSON.stringify(research)+').focus()');
-    await new Promise(resolve=>setTimeout(resolve,150));
+    while (!await evaluate('Boolean(document.querySelector("[role=tooltip]"))')) { t.signal.throwIfAborted(); await frame(); }
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Research');
     assert.ok(await evaluate('document.querySelector("[role=tooltip]").getBoundingClientRect().x>64'));
     await press('Escape'); assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false);
@@ -187,7 +190,8 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     const tooltipPoint=await evaluate('(() => {const r=document.querySelector("[role=tooltip]").getBoundingClientRect();return {x:r.x+8,y:r.y+8};})()');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',...tooltipPoint});
-    await new Promise(resolve=>setTimeout(resolve,200));
+    // A page timer set now fires after the 150ms hide timer leaving the link set, however late either runs.
+    await evaluate('new Promise(resolve => setTimeout(resolve, 200))');
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await press('Escape');
     assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'),false,'hover tooltip remains dismissible');
@@ -195,11 +199,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await evaluate('document.querySelector("[role=tooltip]")?.textContent'),'Empire');
     await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:500,y:20});
     // The label hides 150ms after leaving; poll instead of one fixed 200ms wait, which a loaded runner overran.
-    const hideDeadline=Date.now()+5_000;
-    while(await evaluate('Boolean(document.querySelector("[role=tooltip]"))')){
-      assert.ok(Date.now()<hideDeadline,'leaving the hover target dismisses its label');
-      await new Promise(resolve=>setTimeout(resolve,50));
-    }
+    while(await evaluate('Boolean(document.querySelector("[role=tooltip]"))')) { t.signal.throwIfAborted(); await frame(); }
     // Real Tab navigation must retain labels when focus auto-scrolls the rail.
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:480,deviceScaleFactor:1,mobile:false}); await frame();
     const overview=desktop+' a[aria-label="Empire"]';
@@ -295,12 +295,12 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     assert.equal(await expanded(),'true'); await click(toggle); assert.equal(await expanded(),'false');
     await click(toggle); assert.equal(await expanded(),'true');
     if (artifacts) writeFileSync(join(artifacts, "measurements.json"), JSON.stringify(measurements, null, 2));
-    await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
-      chrome.kill();
+      // Its profile is a temp dir: nothing to save, so no graceful shutdown.
+      chrome.kill("SIGKILL");
       await exited;
     }
     await server.close();

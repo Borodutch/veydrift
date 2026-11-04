@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Build plan matches the real active Queue at desktop/mobile sizes on both bodies", { timeout: 120_000 }, async () => {
+test("Build plan matches the real active Queue at desktop/mobile sizes on both bodies", { timeout: 120_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
@@ -60,9 +60,10 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
     async function load(query, width = 1280) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url: url + "?" + query });
-      const deadline = Date.now() + 20_000;
+      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
+      // wait), so a loaded runner can't fail it.
       while (!(await evaluate('Boolean(document.querySelector("[data-build-plan]"))'))) {
-        assert.ok(Date.now() < deadline, "fixture did not render");
+        t.signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 50));
       }
       await evaluate('document.fonts.ready.then(() => Promise.all([...document.images].map(image => image.decode())))');
@@ -174,12 +175,12 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
     assert.ok(await evaluate('document.querySelector("[data-build-plan] [role=alert]").textContent.includes("previous request")'));
     assert.equal(await evaluate('document.querySelector("[data-build-plan] [role=status]").textContent'), 'Wallet request rejected');
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
-    await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
-      chrome.kill();
+      // Its profile is a temp dir: nothing to save, so no graceful shutdown.
+      chrome.kill("SIGKILL");
       await exited;
     }
     await server.close();

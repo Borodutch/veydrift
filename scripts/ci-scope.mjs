@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, statSync } from "node:fs";
+import { posix } from "node:path";
 
 const TRUE = "true";
 const FALSE = "false";
@@ -127,19 +128,41 @@ export function filesRequireChickenChecks(files) {
   return anyMatch(files, /^apps\/chicken-burn-listener\//);
 }
 
-export function filesRequireContractChecks(files) {
+// The proofs contracts-test runs on a local chain (packages/contracts/scripts/run-mission-batch-proof.mjs).
+const CONTRACT_PROOFS = ["scripts/mission-batch-mixed-proxy-proof.ts", "scripts/battle-referee-anvil-proof.ts"];
+const isFile = (file) => { try { return statSync(file).isFile(); } catch { return false; } };
+
+// Every local file the proofs import, directly or not (backend code among them): a change to any of them can break
+// a proof, so it runs the contract checks too. Relative imports only; workspace packages have their own scopes.
+export function contractProofSources(read = (file) => readFileSync(file, "utf8"), exists = isFile) {
+  const seen = new Set();
+  const visit = (file) => {
+    if (seen.has(file) || !exists(file)) return;
+    seen.add(file);
+    for (const [, spec] of read(file).matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) {
+      const path = posix.normalize(posix.join(posix.dirname(file), spec));
+      const resolved = [path, `${path}.ts`, `${path}.tsx`, `${path}/index.ts`].find(exists);
+      if (resolved) visit(resolved);
+    }
+  };
+  CONTRACT_PROOFS.forEach(visit);
+  return seen;
+}
+
+export function filesRequireContractChecks(files, proofSources = contractProofSources()) {
   return anyMatch(files, /^packages\/contracts\//)
     || anyMatch(files, /^\.gitmodules$/)
+    || files.some((file) => proofSources.has(file))
     || anyMatch(
       files,
-      /^scripts\/(veydrift-(apply-deployment-manifest|deployment-manifest|postdeploy-smoke|upgrade-receipt|referral-migration-[a-z-]+)|mission-batch-[a-z-]+)(\.test)?\.(mjs|ts)$/,
+      /^scripts\/(veydrift-(apply-deployment-manifest|deployment-manifest|postdeploy-smoke|upgrade-receipt|referral-migration-[a-z-]+)|mission-batch-[a-z-]+|battle-referee-[a-z-]+)(\.test)?\.(mjs|ts)$/,
     );
 }
 
 // Changes that affect every package (toolchain, lockfile, CI itself) run the full suite.
-const REPO_WIDE = /^(\.github\/workflows\/ci\.yml|package\.json|bun\.lockb|tsconfig\.base\.json)$/;
+const REPO_WIDE = /^(\.forgejo\/workflows\/ci\.yml|package\.json|bun\.lockb|tsconfig\.base\.json)$/;
 // Paths no check reads (beyond the docs checks, which always run).
-const NO_CHECKS = /^(docs\/|[^/]+\.md$|\.dockerignore$|\.gitignore$|LICENSE$|\.github\/(?!workflows\/ci\.yml))/;
+const NO_CHECKS = /^(docs\/|[^/]+\.md$|\.dockerignore$|\.gitignore$|LICENSE$|\.github\/)/;
 const AREA_PATHS = /^(apps\/(backend|frontend|stats|battle-keeper|chicken-burn-listener)|packages\/(universe|api-types|contracts))\//;
 
 // scripts/<name>.mjs and scripts/<name>.test.mjs: a change runs that script's own tests.

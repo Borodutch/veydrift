@@ -304,15 +304,14 @@ test("supersession planning has its own bounded budget: a slow planner falls bac
     let release = () => {};
     const hanging = new Promise<void>((resolve) => { release = resolve; });
     f.replay.supersede = async (_raw, _operationId, _membership, _originalMaxFeeWei, pass) => {
-      await pass.read(() => Promise.race([hanging, realSleep(600)]));
+      // Hangs until the end of the test: a pass that waited for the planner would never finish.
+      await pass.read(() => hanging);
       throw new Error("planner resumed after its budget");
     };
     await stuck(f);
     const sends = f.sent.length;
     f.advance(60_000);
-    const started = performance.now();
     await expect(f.pass()).rejects.toThrow("cooling down");
-    expect(performance.now() - started).toBeLessThan(550);
     expect(f.sent.slice(sends)).toEqual([original]);
     expect(f.counts().signs).toBe(0);
     expect(f.query("SELECT 1 FROM resolver_signing_reservations WHERE id LIKE 'supersede:%'")).toEqual([]);

@@ -30,7 +30,7 @@ test("action selectors stay scoped by wallet, feature, and planet through comple
   const read = (wallet: string, planet: string) => store.snapshot<WriteTransactionState>(store.writeTransactionKey("group:building", wallet, planet))?.data;
   try {
     const first = store.runWriteTransaction({ key: "building:start:mine", label: "Build", invalidateTags: ["wallet:0xabc", "planet:7"], send: async () => "0xfirst" });
-    for (let i = 0; i < 50 && !read("0xabc", "7")?.txHash; i++) await Bun.sleep(1);
+    for (const deadline = performance.now() + 5_000; !read("0xabc", "7")?.txHash && performance.now() < deadline;) await Bun.sleep(1);
     expect(transactionActionNotice(read("0xabc", "7")).status).toBe("pending");
     await store.runWriteTransaction({ key: "building:start:mine", label: "Build", invalidateTags: ["wallet:0xabc", "planet:8"], send: async () => "0xsecond" });
     expect(transactionActionNotice(read("0xabc", "8")).status).toBe("success");

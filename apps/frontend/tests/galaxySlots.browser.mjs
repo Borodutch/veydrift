@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Galaxy preserves all 15 slots for sparse captured systems, navigation and reload", { timeout: 120_000 }, async () => {
+test("Galaxy preserves all 15 slots for sparse captured systems, navigation and reload", { timeout: 120_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-galaxy-slots-"));
@@ -59,9 +59,10 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
     // Select row containers by their leading slot badge, for both empty and planet rows.
     const rowExpression = '[...document.querySelectorAll("main .grid > div")].filter(row => row.children.length > 1 && row.firstElementChild && /^(?:[1-9]|1[0-5])$/.test(row.firstElementChild.textContent.trim()))';
     async function ready(galaxy = 5, system = 199, empty = false) {
-      const deadline = Date.now() + 20_000;
+      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
+      // wait), so a loaded runner can't fail it.
       while (!(await evaluate('(' + rowExpression + ').length === 15 && ' + (empty ? 'true' : 'document.querySelector(' + JSON.stringify('button[aria-label="Open Planet ' + galaxy + '.' + system + '.1"]') + ') !== null')))) {
-        assert.ok(Date.now() < deadline, 'fixture rows did not render: ' + await evaluate('document.body.innerText'));
+        t.signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
@@ -112,7 +113,7 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
         // or ready() can pass on the page being replaced.
         await evaluate('window.beforeReload = true');
         await send('Page.reload', { ignoreCache: true });
-        while (await evaluate('window.beforeReload === true').catch(() => true)) await new Promise(resolve => setTimeout(resolve, 25));
+        while (await evaluate('window.beforeReload === true').catch(() => true)) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 25)); }
         await ready();
         await check(captures[0], label + '-reload');
         for (const capture of [...captures.slice(1), captures[0]]) {
@@ -130,12 +131,12 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
     }
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
     console.log('Verified ' + measurements.length + ' rendered states / ' + measurements.length * 15 + ' rows');
-    await send('Browser.close', {}, false);
   } finally {
     for (const command of pending.values()) clearTimeout(command.timer);
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
-      chrome.kill();
+      // Its profile is a temp dir: nothing to save, so no graceful shutdown.
+      chrome.kill("SIGKILL");
       await exited;
     }
     await server.close();

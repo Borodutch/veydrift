@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, before, test } from "node:test";
+import { after, before, test as nodeTest } from "node:test";
 import sharp from "sharp";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
@@ -33,6 +33,14 @@ let recoveryFixtureUrl;
 let server;
 let routeChunkGate;
 let gatedRouteChunkRequests = [];
+
+// BROWSER_TEST_SHARD=i/n keeps every n-th test, starting at the i-th: touch-browser.mjs runs this file's tests as n
+// processes side by side, each with its own Chrome and Vite server.
+const [shardIndex, shardCount] = (process.env.BROWSER_TEST_SHARD ?? "1/1").split("/").map(Number);
+let testCount = 0;
+function test(...args) {
+  if (testCount++ % shardCount === shardIndex - 1) nodeTest(...args);
+}
 
 const INSPECTOR_APP_READY_TIMEOUT_MS = 30_000;
 const INSPECTOR_PRELOAD_TIMEOUT_MS = 120_000;
@@ -274,17 +282,10 @@ before(async () => {
 
 after(async () => {
   if (chrome && chrome.exitCode === null) {
+    // Its profile is a temp dir: nothing to save, so no graceful shutdown.
     const exited = new Promise((resolve) => chrome.once("exit", resolve));
-    await Promise.race([browserCdp?.send("Browser.close").catch(() => undefined), delay(1_000)]);
-    await Promise.race([exited, delay(3_000)]);
-    if (chrome.exitCode === null) {
-      chrome.kill("SIGTERM");
-      await Promise.race([exited, delay(2_000)]);
-    }
-    if (chrome.exitCode === null) {
-      chrome.kill("SIGKILL");
-      await Promise.race([exited, delay(2_000)]);
-    }
+    chrome.kill("SIGKILL");
+    await exited;
   }
   cdp?.close();
   browserCdp?.close();
@@ -338,7 +339,7 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   await delay(30);
   await moveTouch(center.x, center.y, "y");
   await dispatchTouch("touchEnd", center.x, center.y - 105);
-  await delay(250);
+  await waitForExpression('document.querySelector("#scroller").scrollTop > 0');
 
   const scrollState = await proofState();
   assert.equal(scrollState.activations, 0);
@@ -351,7 +352,7 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   await delay(30);
   await moveTouch(center.x, center.y, "x");
   await dispatchTouch("touchEnd", center.x - 105, center.y);
-  await delay(250);
+  await waitForExpression('document.querySelector("#scroller").scrollLeft > 0');
 
   const horizontalScrollState = await proofState();
   assert.equal(horizontalScrollState.activations, 0);
@@ -361,13 +362,14 @@ test("native two-axis touch scroll works before the hold and post-hold movement 
   await loadFixture();
   center = await planetCenter();
   await dispatchTouch("touchStart", center.x, center.y);
-  await delay(550);
+  // The hold activates the reorder, however late its timer runs.
+  await waitForExpression("window.touchProof.activations === 1");
   for (const offset of [15, 30, 50, 70]) {
     await dispatchTouch("touchMove", center.x - offset, center.y);
     await delay(30);
   }
   await dispatchTouch("touchEnd", center.x - 70, center.y);
-  await delay(100);
+  await waitForExpression("window.touchProof.preventedTouchMoves > 0 && window.touchProof.pointerMovesAfterActivation > 0");
 
   const reorderState = await proofState();
   assert.equal(reorderState.activations, 1);
