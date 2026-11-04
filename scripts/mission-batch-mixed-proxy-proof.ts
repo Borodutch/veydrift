@@ -148,7 +148,9 @@ try {
   }
   let after = await send(packed.items, packed.quote);
   assert(after.missions.slice(2).every(x => x.values[0] === 4), "cheap returns settled");
-  for (let i = 0; i < 10 && after.missions[0].values[0] === 1; i++) {
+  // Each tx is capped at the batch work budget (#397), so the battle advances in stages: it settles
+  // after 19 progress txs on this fixture. 32 leaves headroom while still proving it finishes.
+  for (let i = 0; i < 32 && after.missions[0].values[0] === 1; i++) {
     const selected = [items[2]!];
     const quote = await quoteMissionBatch(client, { items: selected, nonce: await client.getTransactionCount({ address: account }), account, game, chainId: chain.id, policy });
     after = await send(selected, quote);
