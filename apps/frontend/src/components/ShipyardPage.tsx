@@ -11,7 +11,7 @@ import { formatStatValue } from "../numberFormat";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipSpecRows, shipyardCatalog } from "../playableMvp";
 import { activeProductionQueue } from "../productionQueueFallback";
-import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
+import { walletRecoveryActionMessage, type ChainInfrastructureState, type ChainShipyardState } from "../walletFlow";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { ShipyardSkeleton } from "./LoadingSkeletons";
 import {
@@ -24,6 +24,7 @@ import {
   scaleProductionCost,
   type ProductionCatalogItem,
   type ProductionDetailSection,
+  type ProductionDetailStat,
   type ProductionQuantityInput,
   type ProductionRequirementState,
 } from "./ProductionCatalog";
@@ -39,6 +40,8 @@ interface ShipyardPageProps {
   buildPlan?: import("./ProductionCatalog").ProductionCatalogProps<ShipKey>["buildPlan"];
   actionState: ShipyardActionState;
   canTransact: boolean;
+  // Infrastructure snapshot carrying the backend crawler cap; ignored for another planet.
+  crawlerInfrastructure?: Pick<ChainInfrastructureState, "planetId" | "homePlanetId" | "crawlerProduction"> | null | undefined;
   error: string | undefined;
   loading: boolean;
   now?: number | undefined;
@@ -78,6 +81,7 @@ export function ShipyardPage({
   actionState,
   buildPlan,
   canTransact,
+  crawlerInfrastructure,
   error,
   loading,
   now,
@@ -127,6 +131,7 @@ export function ShipyardPage({
           items={(quantities) => shipProductionItems({
             actionPending: isActionBusy(actionState),
             canTransact,
+            crawlerCap: shipyardCrawlerCap(shipyardState, crawlerInfrastructure),
             productionAvailable,
             quantities,
             queue,
@@ -226,6 +231,7 @@ export function shipyardRefreshErrorLabel({
 export function shipProductionItems({
   actionPending,
   canTransact,
+  crawlerCap,
   productionAvailable,
   quantities,
   queue,
@@ -237,6 +243,7 @@ export function shipProductionItems({
 }: {
   actionPending: boolean;
   canTransact: boolean;
+  crawlerCap?: number | undefined;
   productionAvailable: boolean;
   quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainShipyardState["queue"] | undefined;
@@ -281,6 +288,9 @@ export function shipProductionItems({
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
     const stats = combatStats.rows.map((row) => formatShipSummaryStat(row.label, row.value)).join(" · ");
+    const crawlerCapView = ship.key === "crawler" && owned !== undefined && crawlerCap !== undefined
+      ? crawlerCapItemFields(crawlerCapSummary({ cap: crawlerCap, atPlanet: owned, queued, quantity: quantityValid ? quantity : 0 }))
+      : undefined;
 
     return {
       actionLabel: "Build",
@@ -293,9 +303,13 @@ export function shipProductionItems({
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "At planet",
       countValue: owned,
+      ...(crawlerCapView?.countDetail ? { countDetail: crawlerCapView.countDetail } : {}),
+      ...(crawlerCapView?.quantityWarning ? { quantityWarning: crawlerCapView.quantityWarning } : {}),
+      ...(crawlerCapView?.quantityPreset ? { quantityPreset: crawlerCapView.quantityPreset } : {}),
       detailLayout: "inline",
       detailSections: shipDetailSections({
         affordable,
+        capStats: crawlerCapView?.stats,
         totalCost,
         unitCost: baseCost,
         durationSeconds,
@@ -318,6 +332,108 @@ export function shipProductionItems({
   });
 }
 
+// Crawler rule (mirrors the backend read model): 8 crawlers per combined mine level count,
+// up to the +50% boost (+0.02% each = 2,500 crawlers). Only the copy depends on these here;
+// the cap itself always comes from the backend's crawlerProduction.maxEffective.
+export const CRAWLERS_PER_MINE_LEVEL = 8;
+export const CRAWLER_BOOST_MAX_EFFECTIVE = 2_500;
+
+export type CrawlerCapSummary = {
+  cap: number;
+  /** Crawlers at the planet plus queued ones. */
+  planned: number;
+  /** Planned crawlers that will count toward the boost. */
+  effective: number;
+  /** Planned crawlers above the cap. */
+  idle: number;
+  /** Selected quantity that would sit idle if built. */
+  selectedIdle: number;
+  /** Quantity that fills the cap exactly (0 when it is already full). */
+  fillQuantity: number;
+  /** The cap is the +50% boost limit, so more mine levels will not raise it. */
+  boostMaxed: boolean;
+};
+
+export function crawlerCapSummary({
+  atPlanet,
+  cap,
+  quantity,
+  queued,
+}: {
+  atPlanet: number;
+  cap: number;
+  quantity: number;
+  queued: number;
+}): CrawlerCapSummary {
+  const safeCap = Math.max(0, Math.floor(cap));
+  const planned = Math.max(0, atPlanet) + Math.max(0, queued);
+  const selected = Math.max(0, quantity);
+  return {
+    cap: safeCap,
+    planned,
+    effective: Math.min(planned, safeCap),
+    idle: Math.max(0, planned - safeCap),
+    selectedIdle: Math.min(selected, Math.max(0, planned + selected - safeCap)),
+    fillQuantity: Math.max(0, safeCap - planned),
+    boostMaxed: safeCap >= CRAWLER_BOOST_MAX_EFFECTIVE,
+  };
+}
+
+export function crawlerCapItemFields(summary: CrawlerCapSummary): {
+  countDetail: NonNullable<ProductionCatalogItem["countDetail"]>;
+  quantityPreset: NonNullable<ProductionCatalogItem["quantityPreset"]>;
+  quantityWarning: string | undefined;
+  stats: ProductionDetailStat[];
+} {
+  const count = (value: number) => value.toLocaleString("en-US");
+  const capHint = summary.boostMaxed
+    ? `Counts crawlers at the planet and in the queue. The cap is the +50% boost limit (${count(CRAWLER_BOOST_MAX_EFFECTIVE)} crawlers).`
+    : `Counts crawlers at the planet and in the queue. The cap is ${CRAWLERS_PER_MINE_LEVEL} per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer), up to ${count(CRAWLER_BOOST_MAX_EFFECTIVE)}.`;
+  const effectiveText = `${count(summary.effective)} / cap ${count(summary.cap)}`;
+  const idleReason = summary.boostMaxed
+    ? `because the crawler boost tops out at +50% (${count(CRAWLER_BOOST_MAX_EFFECTIVE)} crawlers)`
+    : `until mine levels increase (+${CRAWLERS_PER_MINE_LEVEL} per mine level)`;
+
+  return {
+    countDetail: {
+      text: `Effective ${effectiveText}${summary.idle > 0 ? ` · ${count(summary.idle)} idle` : ""}`,
+      tone: summary.idle > 0 ? "warning" : "normal",
+    },
+    quantityPreset: {
+      label: "Fill to cap",
+      quantity: summary.fillQuantity,
+      title: summary.fillQuantity > 0
+        ? `Set the amount to ${count(summary.fillQuantity)}, filling the effective crawler cap`
+        : "The effective crawler cap is already filled",
+    },
+    quantityWarning: summary.selectedIdle > 0
+      ? `${count(summary.selectedIdle)} of these will be idle ${idleReason}.`
+      : undefined,
+    stats: [
+      { label: "Effective", value: effectiveText, hint: capHint },
+      ...(summary.idle > 0
+        ? [{ label: "Idle", value: count(summary.idle), hint: "Crawlers at the planet and in the queue above the effective cap.", tone: "danger" as const }]
+        : []),
+    ],
+  };
+}
+
+/**
+ * The backend crawler cap for the shipyard's planet, or undefined when the infrastructure
+ * snapshot is missing or belongs to another planet (never show one planet's cap on another).
+ */
+export function shipyardCrawlerCap(
+  shipyardState: Pick<ChainShipyardState, "planetId" | "homePlanetId"> | null | undefined,
+  infrastructureState: Pick<ChainInfrastructureState, "planetId" | "homePlanetId" | "crawlerProduction"> | null | undefined,
+): number | undefined {
+  const cap = infrastructureState?.crawlerProduction?.maxEffective;
+  if (cap === undefined || !Number.isFinite(cap) || cap < 0) return undefined;
+  const shipyardPlanet = shipyardState?.planetId ?? shipyardState?.homePlanetId;
+  const infrastructurePlanet = infrastructureState?.planetId ?? infrastructureState?.homePlanetId;
+  if (!shipyardPlanet || !infrastructurePlanet || String(shipyardPlanet) !== String(infrastructurePlanet)) return undefined;
+  return cap;
+}
+
 function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
   if (ship.key === "solarSatellite") {
     return [
@@ -338,6 +454,7 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 
 function shipDetailSections({
   affordable,
+  capStats,
   durationSeconds,
   energyPerUnit,
   owned,
@@ -346,6 +463,7 @@ function shipDetailSections({
   unitCost,
 }: {
   affordable: boolean;
+  capStats?: ProductionDetailStat[] | undefined;
   durationSeconds: number | undefined;
   energyPerUnit: string | undefined;
   owned: number | undefined;
@@ -371,6 +489,7 @@ function shipDetailSections({
           label: "At planet",
           value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
         },
+        ...(capStats ?? []),
         ...(energyPerUnit === undefined
           ? []
           : [{ label: "Energy output", value: energyPerUnit, wide: true } as const]),

@@ -7519,6 +7519,7 @@ export function PlayableMvpApp({
           buildPlan={buildPlan}
           actionState={shipyardAction}
           canTransact={canSubmitGameTransaction}
+          crawlerInfrastructure={infrastructureChainState}
           error={shipyardError ?? walletRecoveryReadError}
           loading={shipyardLoading}
           now={now}

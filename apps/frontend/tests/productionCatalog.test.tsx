@@ -463,6 +463,50 @@ describe("ProductionCatalog selected panel", () => {
       expect(visibleText(nodes[headingIndex + 1]).replace(/\s+/g, "")).toBe(count + "/15");
     }
   });
+
+  test("renders the count detail line, quantity warning, and quantity preset", () => {
+    const quantities: ProductionQuantityInput[] = [];
+    const render = (overrides: Partial<ProductionCatalogItem<"rocketLauncher">>) => ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [catalogItem({
+        countDetail: { text: "Effective 450 / cap 496", tone: "warning" },
+        quantity: 100,
+        quantityPreset: { label: "Fill to cap", quantity: 46, title: "Set the amount to 46" },
+        quantityWarning: "54 of these will be idle until mine levels increase (+8 per mine level).",
+        ...overrides,
+      })],
+      onBuild: () => undefined,
+      onQuantity: (_key, quantity) => quantities.push(quantity),
+      onSelect: () => undefined,
+      selectedKey: "rocketLauncher",
+    });
+    const nodes = elementNodes(render({}));
+    const detail = nodes.find((node) => node.props["data-production-count-detail"]);
+    expect(visibleText(detail!)).toBe("Effective 450 / cap 496");
+    expect(String(detail!.props.className)).toContain("text-amber-200");
+    const warning = nodes.find((node) => node.props["data-production-quantity-warning"]);
+    expect(visibleText(warning!)).toBe("54 of these will be idle until mine levels increase (+8 per mine level).");
+    const preset = nodes.find((node) => node.props["data-production-quantity-preset"]);
+    expect(visibleText(preset!)).toBe("Fill to cap");
+    expect(preset!.props["aria-label"]).toBe("Rocket Launcher Fill to cap");
+    expect(preset!.props.disabled).toBe(false);
+    preset!.props.onClick();
+    expect(quantities).toEqual([46]);
+
+    const filled = elementNodes(render({ quantity: 46, quantityPreset: { label: "Fill to cap", quantity: 46, title: "t" } }))
+      .find((node) => node.props["data-production-quantity-preset"]);
+    expect(filled!.props.disabled).toBe(true);
+    const full = elementNodes(render({ quantityPreset: { label: "Fill to cap", quantity: 0, title: "t" } }))
+      .find((node) => node.props["data-production-quantity-preset"]);
+    expect(full!.props.disabled).toBe(true);
+
+    const invalid = elementNodes(render({ quantityInput: "", quantityValid: false }));
+    expect(invalid.some((node) => node.props["data-production-quantity-warning"])).toBe(false);
+    const plain = elementNodes(render({ countDetail: undefined, quantityPreset: undefined, quantityWarning: undefined }));
+    expect(plain.some((node) => node.props["data-production-count-detail"] || node.props["data-production-quantity-preset"] || node.props["data-production-quantity-warning"])).toBe(false);
+  });
 });
 
 function catalogItem(overrides: Partial<ProductionCatalogItem<"rocketLauncher">> = {}): ProductionCatalogItem<"rocketLauncher"> {

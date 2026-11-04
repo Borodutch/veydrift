@@ -49,6 +49,12 @@ export type ProductionCatalogItem<Key extends string = string> = {
   countLabel: string;
   countValue: number | undefined;
   queued?: number | undefined;
+  // Extra catalog-card line under the count (e.g. the crawler effective cap).
+  countDetail?: { text: string; tone?: "normal" | "warning" | undefined } | undefined;
+  // Panel warning about the selected quantity, shown on every viewport.
+  quantityWarning?: string | undefined;
+  // Optional quantity preset next to the quantity controls (e.g. "Fill to cap").
+  quantityPreset?: { label: string; title: string; quantity: number } | undefined;
   status: "ready" | "locked" | "queued" | "unavailable";
   statusLabel?: string | undefined;
   labelTone?: "normal" | "muted" | undefined;
@@ -487,6 +493,14 @@ function CatalogButton<Key extends string>({
           {item.countLabel}: {item.countValue === undefined ? "unavailable" : format(item.countValue)}
           {item.queued ? ` · Queued: ${format(item.queued)}` : ""}
         </p>
+        {item.countDetail ? (
+          <p
+            className={`mt-0.5 truncate text-xs ${item.countDetail.tone === "warning" ? "text-amber-200" : "text-slate-400"}`}
+            data-production-count-detail
+          >
+            {item.countDetail.text}
+          </p>
+        ) : null}
       </div>
       {item.statusLabel ? <span className={`text-xs font-semibold ${statusClass}`}>{item.statusLabel}</span> : null}
     </button>
@@ -664,7 +678,27 @@ function SelectedProductionPanel<Key extends string>({
           >
             <X aria-hidden="true" size={17} />
           </button>
+          {item.quantityPreset ? (
+            <button
+              aria-label={`${item.label} ${item.quantityPreset.label}`}
+              title={item.quantityPreset.title}
+              className="inline-flex h-11 items-center justify-center rounded surface-inset px-3 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600 sm:h-9"
+              data-production-quantity-preset
+              disabled={item.quantityPreset.quantity < 1 || (!quantityInvalid && item.quantity === item.quantityPreset.quantity)}
+              onClick={() => {
+                if (item.quantityPreset && item.quantityPreset.quantity >= 1) onQuantity(item.key, item.quantityPreset.quantity);
+              }}
+              type="button"
+            >
+              {item.quantityPreset.label}
+            </button>
+          ) : null}
         </div>
+        {item.quantityWarning && !quantityInvalid ? (
+          <p className="text-xs leading-5 text-amber-200" data-production-quantity-warning>
+            {item.quantityWarning}
+          </p>
+        ) : null}
         {quantityInvalid || item.blockedReason ? (
           <p className="text-xs text-slate-500">
             {quantityInvalid ? productionQuantityValidationMessage : item.blockedReason}

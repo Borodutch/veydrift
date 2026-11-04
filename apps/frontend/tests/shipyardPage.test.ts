@@ -11,9 +11,11 @@ import {
   selectedProductionItem,
 } from "../src/components/ProductionCatalog";
 import {
+  crawlerCapSummary,
   getBlockedReason,
   getShipRequirementStates,
   shipProductionItems,
+  shipyardCrawlerCap,
   shipyardRefreshErrorLabel,
   shouldShowShipyardInitialLoader,
   StatusPanel,
@@ -841,3 +843,115 @@ function shipyardState(overrides: Partial<ChainShipyardState> = {}): ChainShipya
     ...overrides,
   };
 }
+
+describe("Crawler effective cap", () => {
+  const crawlerShip = { id: 15, count: 960, cost: { metal: "2000", crystal: "2000", deuterium: "1000" } };
+  const crawlerQueue = (quantity: number, backlog = 0) => ({
+    active: true,
+    kind: "ship",
+    itemId: 15,
+    quantity,
+    readyAt: "1770000060",
+    cost: { metal: "0", crystal: "0", deuterium: "0" },
+    ...(backlog ? { backlog: [{ active: true, kind: "ship", itemId: 15, quantity: backlog, readyAt: "1770000120", cost: { metal: "0", crystal: "0", deuterium: "0" } }] } : {}),
+  }) as unknown as ChainShipyardState["queue"];
+  const crawlerItem = ({ cap, atPlanet = 960, queue = crawlerQueue(900, 79), quantity = 10 as number | string }: {
+    cap: number | undefined;
+    atPlanet?: number;
+    queue?: ChainShipyardState["queue"] | undefined;
+    quantity?: number | string;
+  }) => shipProductionItems({
+    actionPending: false,
+    canTransact: true,
+    crawlerCap: cap,
+    productionAvailable: true,
+    quantities: { crawler: quantity },
+    queue,
+    resources: { metal: 1e9, crystal: 1e9, deuterium: 1e9 },
+    shipyardLevel: 5,
+    shipyardState: shipyardState({ ships: [...shipyardState().ships, { ...crawlerShip, count: atPlanet }] }),
+  }).find((item) => item.key === "crawler")!;
+
+  test("counts the planet and the whole queue against the cap (New Zion case)", () => {
+    expect(crawlerCapSummary({ cap: 496, atPlanet: 960, queued: 979, quantity: 10 })).toEqual({
+      cap: 496,
+      planned: 1939,
+      effective: 496,
+      idle: 1443,
+      selectedIdle: 10,
+      fillQuantity: 0,
+      boostMaxed: false,
+    });
+  });
+
+  test("only the part of the selection above the cap is idle", () => {
+    expect(crawlerCapSummary({ cap: 496, atPlanet: 400, queued: 50, quantity: 100 })).toMatchObject({
+      effective: 450,
+      idle: 0,
+      selectedIdle: 54,
+      fillQuantity: 46,
+    });
+    expect(crawlerCapSummary({ cap: 496, atPlanet: 400, queued: 50, quantity: 46 }).selectedIdle).toBe(0);
+  });
+
+  test("shows effective / cap on the card and panel, warns, and offers fill to cap", () => {
+    const item = crawlerItem({ cap: 496 });
+    expect(item.queued).toBe(979);
+    expect(item.countDetail).toEqual({ text: "Effective 496 / cap 496 · 1,443 idle", tone: "warning" });
+    expect(item.quantityWarning).toBe("10 of these will be idle until mine levels increase (+8 per mine level).");
+    expect(item.quantityPreset).toMatchObject({ label: "Fill to cap", quantity: 0 });
+    const build = item.detailSections?.find((section) => section.title === "Build");
+    expect(build?.stats).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Effective", value: "496 / cap 496" }),
+      expect.objectContaining({ label: "Idle", value: "1,443", tone: "danger" }),
+    ]));
+  });
+
+  test("below the cap the card is neutral and fill to cap targets the remaining room", () => {
+    const item = crawlerItem({ cap: 496, atPlanet: 400, queue: crawlerQueue(50), quantity: 20 });
+    expect(item.countDetail).toEqual({ text: "Effective 450 / cap 496", tone: "normal" });
+    expect(item.quantityWarning).toBeUndefined();
+    expect(item.quantityPreset?.quantity).toBe(46);
+    const build = item.detailSections?.find((section) => section.title === "Build");
+    expect(build?.stats.some((stat) => stat.label === "Idle")).toBe(false);
+  });
+
+  test("names the +50% boost limit instead of mine levels at the hard cap", () => {
+    const item = crawlerItem({ cap: 2500, atPlanet: 2500, queue: null, quantity: 3 });
+    expect(item.quantityWarning).toBe("3 of these will be idle because the crawler boost tops out at +50% (2,500 crawlers).");
+    expect(crawlerItem({ cap: 2500, atPlanet: 2400, queue: null, quantity: 200 }).quantityWarning)
+      .toBe("100 of these will be idle because the crawler boost tops out at +50% (2,500 crawlers).");
+  });
+
+  test("an invalid amount does not produce a warning", () => {
+    expect(crawlerItem({ cap: 496, quantity: "" }).quantityWarning).toBeUndefined();
+  });
+
+  test("without a known cap nothing crawler-specific is shown, and other ships never get it", () => {
+    const item = crawlerItem({ cap: undefined });
+    expect(item.countDetail).toBeUndefined();
+    expect(item.quantityWarning).toBeUndefined();
+    expect(item.quantityPreset).toBeUndefined();
+    const smallCargo = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      crawlerCap: 496,
+      productionAvailable: true,
+      quantities: {},
+      resources: { metal: 1e9, crystal: 1e9, deuterium: 1e9 },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    }).find((entry) => entry.key === "smallCargo")!;
+    expect(smallCargo.countDetail).toBeUndefined();
+    expect(smallCargo.quantityPreset).toBeUndefined();
+  });
+
+  test("uses the infrastructure cap only for the same planet", () => {
+    const crawlerProduction = { total: 960, effective: 496, maxEffective: 496, boostBps: "992", capped: true, productionIncreasePerHour: { metal: "1", crystal: "1", deuterium: "1" } };
+    expect(shipyardCrawlerCap({ planetId: "7", homePlanetId: "7" }, { planetId: "7", homePlanetId: "7", crawlerProduction })).toBe(496);
+    expect(shipyardCrawlerCap({ homePlanetId: "7" }, { homePlanetId: "7", crawlerProduction })).toBe(496);
+    expect(shipyardCrawlerCap({ planetId: "8", homePlanetId: "7" }, { planetId: "7", homePlanetId: "7", crawlerProduction })).toBeUndefined();
+    expect(shipyardCrawlerCap({ planetId: "7", homePlanetId: "7" }, { planetId: "7", homePlanetId: "7", crawlerProduction: null })).toBeUndefined();
+    expect(shipyardCrawlerCap(null, { planetId: "7", homePlanetId: "7", crawlerProduction })).toBeUndefined();
+  });
+});
