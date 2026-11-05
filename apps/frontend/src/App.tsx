@@ -1,6 +1,5 @@
 import type { ComponentType } from "preact";
 import { lazy, Suspense } from "preact/compat";
-import { AuctionBanner } from "./components/AuctionBanner";
 
 // Each page is its own chunk, so the docs and the calculator don't download the game, and the home page
 // doesn't download the docs. main.tsx loads the current page's chunk before the first render, so the app
@@ -31,12 +30,7 @@ export function preloadPage(): Promise<void> {
 }
 
 export function App() {
-  return (
-    <>
-      <AuctionBanner />
-      <Page />
-    </>
-  );
+  return <Page />;
 }
 
 function Page() {
