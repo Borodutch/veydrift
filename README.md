@@ -1,8 +1,49 @@
 # Veydrift
 
-Veydrift is a public onchain space strategy game targeting Base. Contracts enforce
-gameplay; the backend indexes public chain state into SQLite; the frontend renders
+Veydrift is an onchain space strategy game on Base that you play in the browser at
+[veydrift.com](https://veydrift.com): you settle planets, grow mines and research, build
+fleets, raid other players and fight in alliances, and every planet, fleet, resource and
+battle outcome is public contract state on Base.
+
+Under the hood, contracts enforce gameplay; the backend indexes public chain state into SQLite; the frontend renders
 indexed state and submits user-authorized wallet actions.
+
+## How onchain it is
+
+Contracts on Base hold the game's state and enforce its rules: ownership, resources,
+buildings, research, fleets, mission timing, combat losses, alliances and the
+[contract and token addresses](https://veydrift.com/docs/contracts) are all public,
+and the backend only indexes them. There is no fog of war or espionage: anyone can
+inspect a planet or a fleet in flight, so defense is about timing, protection rules
+and alliances rather than hiding.
+
+It is onchain but not trustless. Battles are fought off-chain by a trusted referee
+service that uses OGame's combat rules. The chain freezes each battle's
+inputs and random seed first and accepts a single result that matches them, and
+anyone can replay the battle from the public record ([Battle referee](docs/battle-referee.md)).
+Randomness comes from a precommit/reveal oracle that the game runs
+([Randomness engine](docs/randomness-engine.md)), and the game contract can be upgraded
+by its owner. Fully onchain games such as Dark Forest keep all of their logic in contracts
+and hide players' positions with zero-knowledge proofs; Veydrift chose fully public state
+and a referee whose results can be checked.
+
+## FAQ
+
+**What do I need to play?** A wallet on Base with a little ETH for gas, since every game
+action is a transaction. Connect it at [veydrift.com](https://veydrift.com) and claim a
+home planet; an invite code is optional.
+
+**Are the resources tokens?** Yes. Metal, Crystal and Deuterium are ERC-20 tokens
+(vMETAL, vCRYSTAL and vDEUT), one token per in-game unit. The Rift moves them between
+your planets and your wallet; an extraction spends 28 days locked on its planet, where
+raiders can take it.
+
+**Can an AI agent play for me?** Yes. A main wallet can name one delegate wallet, such as
+an agent's, to play on its behalf without owning anything. Point the agent at the
+[player manual](https://veydrift.com/docs) to learn the rules.
+
+**Is it open source?** The source is public here, but it isn't under an open-source
+license: all rights are reserved.
 
 ## Start here
 
