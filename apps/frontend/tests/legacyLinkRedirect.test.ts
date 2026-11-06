@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
 import { frontendResponse } from "../scripts/serve.mjs";
-import { auctionUrl } from "../src/auction";
+import { veydriftSwapUrl } from "../src/swap";
 
-test("/cca and the retired /pact send visitors to the live auction on Uniswap", async () => {
+test("the shared /cca and /pact links send visitors to the $VEYDRIFT swap on Uniswap", async () => {
   for (const path of ["/cca", "/cca/", "/pact", "/pact/"]) {
     const response = await frontendResponse(new Request(`https://veydrift.com${path}`));
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(auctionUrl);
+    expect(response.headers.get("location")).toBe(veydriftSwapUrl);
   }
 });

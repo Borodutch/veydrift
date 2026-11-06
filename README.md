@@ -40,6 +40,22 @@ A local page connected to mainnet still submits real mainnet transactions.
 Package commands live in [package.json](package.json). Use focused tests while
 iterating; `bun run check`, `bun run test`, and `bun run build` cover the workspace.
 
+## Token and liquidity
+
+All tokens are on Base and have fixed supplies with no owner, minter or proxy.
+
+| What | Address |
+| --- | --- |
+| VEYDRIFT (1,000,000,000, 18 decimals) | `0x442E9Ba64899d6B0bD25DF2558d3E804427bF448` |
+| vMETAL / vCRYSTAL / vDEUT (50,000,000,000 each, 0 decimals, 1 token = 1 in-game unit) | `0x078b4EC3E7681D1A658c32eb806872FBCD922CFc` / `0x045627dc0b1A10289B53E23a5045aF7D470EF50f` / `0x99FF0a1e24c3171132912D4703dF2c67b4Da6698` |
+| Development / contributor / ecosystem vesting (250M / 200M / 200M VEYDRIFT) | `0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4` / `0x4A55cff3006e87360285969dD366acBd79445BeD` / `0x64C323e8ef7D6df9730E64627d7755c9A1050162` |
+| Uniswap v4 position lock (`V4PositionLock`) | `0x490e1952310c49D865F04ae3B70B06FC004cFb36` |
+
+The remaining 350,000,000 VEYDRIFT is liquidity in four hookless, full-range Uniswap v4 pools
+(0.9% fee): 150M in VEYDRIFT/ETH and about 66.67M in each of the vMETAL, vCRYSTAL and vDEUT pools.
+All four position NFTs are locked until 2027-11-06 20:00 UTC, and their trading fees go to
+borodutch.eth. Pool ids, positions and lock terms are in [Token and liquidity](docs/token-launch.md).
+
 ## Safety and architecture
 
 Veydrift is in open alpha as of 2026-05-29. Preserve existing player and indexed

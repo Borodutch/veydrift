@@ -34,7 +34,7 @@ Do not maintain copies of those tables here.
 | Moons and alliances | [Moon system](src/VeydriftMoonSystem.sol), [alliance system](src/VeydriftAllianceSystem.sol) |
 | Randomness | [RandomnessEngine](src/RandomnessEngine.sol), [operational guide](../../docs/randomness-engine.md) |
 | Resource supply and backing | [Resource token](src/VeydriftResourceToken.sol), [reserve release](src/libraries/VeydriftReserveRelease.sol) |
-| VEYDRIFT supply and vesting | [VeydriftToken](src/VeydriftToken.sol), [token guide](../../docs/token-launch.md#token-foundation) |
+| VEYDRIFT supply and vesting | [VeydriftToken](src/VeydriftToken.sol), [token guide](../../docs/token-launch.md) |
 | Combat parity and reports | [Combat reference](../../docs/combat-reference.md) |
 
 [The player manual](../../apps/frontend/src/docs/content/docs.md) describes gameplay.
@@ -80,5 +80,5 @@ Specialized operations:
 
 - [Referral migration](../../docs/referral-code-migration.md): source freeze, receipt-backed
   import, ownership/redemption completeness, credits and rollback.
-- [Token supply and launch](../../docs/token-launch.md): irreversible no-mint upgrade,
-  reserve release, vesting, pinned Uniswap bundle and owner-gated recovery.
+- [Token and liquidity](../../docs/token-launch.md): token supplies, allocation, vesting,
+  Uniswap v4 pools and the liquidity lock.
