@@ -19,7 +19,7 @@
   pdftitle={Veydrift: A Persistent Onchain Space Economy},
   pdfauthor={Veydrift},
   pdfsubject={Veydrift white paper},
-  pdfkeywords={Veydrift, tokenomics, Base, game economy, Rift, continuous clearing auction, Uniswap v4}
+  pdfkeywords={Veydrift, tokenomics, Base, game economy, Rift, Uniswap v4, liquidity lock}
 }
 
 \setlist{leftmargin=*,topsep=0.3em,itemsep=0.15em,parsep=0pt,partopsep=0pt}
@@ -47,7 +47,7 @@
 
 \vspace{1em}
 \begin{abstract}
-Veydrift is a persistent onchain strategy game in which players settle planets, construct infrastructure, research technologies, manufacture fleets, form alliances, trade, and raid. Three productive resources---metal, crystal, and deuterium---exist both as in-game units and as fully reserve-backed tokens on Base. The Rift connects these domains: market resources enter the game immediately, while resources leaving the game remain locked on a planet for four weeks, visible and vulnerable to raids. A fixed-supply \token{VEYDRIFT} token routes liquidity between WETH and the three resources. Initial \token{VEYDRIFT} price discovery uses an onchain continuous clearing auction before liquidity migrates into a Uniswap v4 pool. This paper defines the game formulas, reserve model, token supplies, liquidity structure, Rift mechanics, and economic controls that allow production, conflict, trade, and long-term resource sinks to reinforce one another.
+Veydrift is a persistent onchain strategy game in which players settle planets, construct infrastructure, research technologies, manufacture fleets, form alliances, trade, and raid. Three productive resources---metal, crystal, and deuterium---exist both as in-game units and as fully reserve-backed tokens on Base. The Rift connects these domains: market resources enter the game immediately, while resources leaving the game remain locked on a planet for four weeks, visible and vulnerable to raids. A fixed-supply \token{VEYDRIFT} token routes liquidity between ETH and the three resources. Liquidity is seeded directly into full-range Uniswap v4 pools on Base, and every liquidity position is time-locked for one year. This paper defines the game formulas, reserve model, token supplies, liquidity structure, Rift mechanics, and economic controls that allow production, conflict, trade, and long-term resource sinks to reinforce one another.
 \end{abstract}
 
 \section{Introduction}
@@ -59,23 +59,23 @@ The central economic design is deliberately simple:
 \begin{itemize}
   \item \textbf{Resources are useful before they are tradable.} Mines create resources; buildings, research, ships, defenses, energy systems, logistics, and recovery consume them.
   \item \textbf{The Rift connects the game to markets.} External resource tokens can enter the game instantly. Leaving the game requires a four-week, planet-bound lock that is visible, unusable, immovable, and raidable.
-  \item \textbf{\token{VEYDRIFT} is the routing and coordination asset.} It is a fixed-supply Base mainnet token paired with WETH. Resource tokens pair only with \token{VEYDRIFT}, concentrating liquidity and making the game's economy legible.
-  \item \textbf{Launch price discovery is continuous and onchain.} A continuous clearing auction distributes a predeclared tranche over time, reducing first-block timing advantage before proceeds and reserved tokens migrate into the canonical Uniswap v4 pool.
+  \item \textbf{\token{VEYDRIFT} is the routing and coordination asset.} It is a fixed-supply Base mainnet token paired with ETH. Resource tokens pair only with \token{VEYDRIFT}, concentrating liquidity and making the game's economy legible.
+  \item \textbf{Launch liquidity is direct and locked.} All circulating \token{VEYDRIFT} starts as full-range Uniswap v4 liquidity, and the positions are held by a no-owner lock contract for one year, so the liquidity cannot be removed early.
   \item \textbf{The system remains solvent by construction.} Every internal resource liability is backed by the corresponding ERC-20 reserve held by the game contract.
   \item \textbf{Extraction is a strategic event, not a passive yield claim.} A player advertising an exit creates a four-week target, an incentive to defend, and an opportunity for rivals. Security, intelligence, transport, and conflict become economic services.
 \end{itemize}
 
 Each resource token has no decimals and a fixed genesis supply of 50 billion tokens, and one token represents one in-game resource unit. The game reserve holds 2 billion of each as backing capacity; the token treasury holds the rest for the resource pools and later reserve top-ups.
 
-\token{VEYDRIFT} has a fixed maximum supply of 1 billion tokens on Base mainnet. Most of the supply not reserved for development, contributors, Pact participants, and strategic uses enters circulation through an auction and protocol-owned liquidity. The launch bootstrap assigns 250 million \token{VEYDRIFT} to a continuous clearing auction and reserves 250 million for the post-auction \token{VEYDRIFT}/WETH pool. Before the auction, a 5\% Pact round sells 50 million \token{VEYDRIFT} at \$0.002 per token. The auction floor is \$0.0026 per \token{VEYDRIFT}, 30\% above the Pact price; it is a minimum accepted price, not the expected clearing price or a peg. The three resource pools are balanced at the floor against reference prices of \$1.50, \$2.25, and \$3.75 per \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}, encoding the initial $1:1.5:2.5$ scarcity ratio:
+\token{VEYDRIFT} has a fixed maximum supply of 1 billion tokens on Base mainnet. Development, contributor, and ecosystem vesting wallets hold 650 million; the other 350 million is Uniswap v4 liquidity. 150 million \token{VEYDRIFT} pairs with 0.5 ETH, and about 66.67 million pairs with each resource token. The three resource pools open at prices quoted in \token{VEYDRIFT} that encode a $1:1.5:3$ scarcity ratio:
 
 \begin{align*}
-1\ \token{vMETAL} &\approx 577\ \token{VEYDRIFT}, &
-1\ \token{vCRYSTAL} &\approx 865\ \token{VEYDRIFT},\\
-1\ \token{vDEUT} &\approx 1{,}442\ \token{VEYDRIFT}. &&
+1\ \token{vMETAL} &= 0.005\ \token{VEYDRIFT}, &
+1\ \token{vCRYSTAL} &= 0.0075\ \token{VEYDRIFT},\\
+1\ \token{vDEUT} &= 0.015\ \token{VEYDRIFT}. &&
 \end{align*}
 
-Every dollar-denominated amount in this paper is an illustrative estimate derived from the auction floor, discovered clearing price, assumed asset prices, or pool contributions identified alongside it. These figures are neither pegs nor promises of market value, proceeds, yield, or liquidity. Actual WETH, \token{VEYDRIFT}, \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT} prices remain market-discovered and may differ materially.
+Every dollar-denominated amount in this paper is an illustrative estimate derived from assumed asset prices or pool contributions identified alongside it. These figures are neither pegs nor promises of market value, proceeds, yield, or liquidity. Actual ETH, \token{VEYDRIFT}, \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT} prices remain market-discovered and may differ materially.
 
 \section{The game economy}
 
@@ -101,7 +101,7 @@ Deuterium & Energy-intensive systems, propulsion, fleet movement, and strategic 
 \bottomrule
 \end{tabularx}
 
-The launch price ratio in Section~\ref{sec:liquidity} follows the underlying full-power production ratio rather than an arbitrary marketing number. At a neutral planet temperature, base production approaches $30:20:12.8$, suggesting an inverse scarcity ratio near $1:1.5:2.34$. The chosen relative ratio of $1:1.5:2.5$ adds a modest premium for deuterium's logistical utility. Because one external resource token represents one million in-game units, the launch reference prices are \$1.50, \$2.25, and \$3.75 per resource token, converted into \token{VEYDRIFT} at the auction floor.
+The launch price ratio in Section~\ref{sec:liquidity} follows the underlying full-power production ratio rather than an arbitrary marketing number. At a neutral planet temperature, base production approaches $30:20:12.8$, suggesting an inverse scarcity ratio near $1:1.5:2.34$. The chosen opening ratio of $1:1.5:3$ adds a premium for deuterium's logistical utility and fuel demand. The pools open at 0.005, 0.0075, and 0.015 \token{VEYDRIFT} per \token{vMETAL}, \token{vCRYSTAL}, and \token{vDEUT}. The valuation scenarios below use illustrative reference prices of \$1.50, \$2.25, and \$3.75 per resource token; they are modeling assumptions, not pool prices.
 
 \subsection{Starting state}
 
@@ -275,7 +275,7 @@ Each resource token has a hard supply cap of 50 billion, minted once to the toke
 
 \begin{itemize}
   \item the sole routing asset for resource liquidity;
-  \item the WETH-facing liquidity and price-discovery asset;
+  \item the ETH-facing liquidity and price-discovery asset;
   \item the common quote and settlement asset between the three resource markets.
 \end{itemize}
 
@@ -293,13 +293,11 @@ Decimals & 18 \\
 Maximum supply & 1,000,000,000 \token{VEYDRIFT} \\
 Inflation & None after genesis \\
 Pact price & \$0.002 per \token{VEYDRIFT} (\$2,000,000 FDV) \\
-CCA floor price & \$0.0026 per \token{VEYDRIFT}, 30\% above the Pact price (minimum, not a target) \\
-Floor FDV & \$2,600,000 at the floor price \\
-CCA minimum raise & About \$150,000 of WETH; below it the auction does not graduate and bids are refunded \\
+Launch liquidity & Full-range Uniswap v4 pools, 0.9\% fee, locked until November 6, 2027 \\
 \bottomrule
 \end{tabularx}
 
-The full supply is created at genesis, and the economic model assumes no further issuance. The CCA floor is used to model minimum launch values; it is not a peg, target, or promise that the token will trade at that value. The floor is fixed in WETH at a reference ETH price shortly before the auction, so its dollar value moves with ETH.
+The full supply is created at genesis, and the economic model assumes no further issuance. There is no price floor or peg; the opening pool ratios set only the starting prices.
 
 \subsection{Allocation}
 
@@ -308,22 +306,20 @@ The full supply is created at genesis, and the economic model assumes no further
 \toprule
 \textbf{Allocation} & \textbf{Share} & \textbf{Tokens} & \textbf{Release structure} \\
 \midrule
-CCA public distribution & 25\% & 250,000,000 & Distributed through the Base CCA over a 48-hour window. \\
-Uniswap v4 main liquidity & 25\% & 250,000,000 & Reserved for automatic migration into the canonical \token{VEYDRIFT}/WETH pool. \\
-Initial resource liquidity & 15\% & 150,000,000 & Circulating at launch; 50,000,000 tokens pair with each resource. \\
-Development reserve & 15\% & 150,000,000 & Five-year linear release for development, infrastructure, security, and operations. \\
-Core contributors & 5\% & 50,000,000 & Four-year vesting with a one-year cliff. Unsold Pact tokens remain here. \\
-Pact & 5\% & 50,000,000 & Sold before the auction at \$0.002 per token. 12.5\% releases six months after the auction ends; the rest releases linearly over the following 3.5 years. \\
-Ecosystem / strategic & 10\% & 100,000,000 & Six-year release for integrations, partnerships, and market expansion. Unsold auction tokens are added here. \\
+Development reserve & 25\% & 250,000,000 & Five-year linear release for development, infrastructure, security, and operations. \\
+Core contributors & 20\% & 200,000,000 & Four-year vesting with a one-year cliff. Unsold Pact tokens remain here. \\
+Ecosystem / strategic & 20\% & 200,000,000 & Six-year linear release for integrations, partnerships, and market expansion. \\
+\token{VEYDRIFT}/ETH liquidity & 15\% & 150,000,000 & Paired with 0.5 ETH in a full-range Uniswap v4 position, locked until November 6, 2027. \\
+Resource liquidity & 20\% & 200,000,000 & About 66.67 million pairs with each resource in full-range Uniswap v4 positions, locked until November 6, 2027. \\
 \midrule
 \textbf{Total} & \textbf{100\%} & \textbf{1,000,000,000} & \\
 \bottomrule
 \end{tabularx}
 \normalsize
 
-\paragraph{Initial circulation.} The auction, post-auction main pool, and three resource pools together place 650,000,000 \token{VEYDRIFT}, or 65\% of maximum supply, into launch circulation. At the \$0.0026 floor, the corresponding floor-value arithmetic is \$1,690,000; the auction may discover a higher price. This is scenario arithmetic, not a promised valuation. The remaining 350,000,000 tokens are reserved for development, contributors, Pact participants, and ecosystem or strategic uses and do not count as circulating until their releases become transferable.
+\paragraph{Initial circulation.} The four pools together hold 350,000,000 \token{VEYDRIFT}, or 35\% of maximum supply. The remaining 650,000,000 tokens sit in the three vesting wallets and do not count as circulating until their releases become transferable. All vesting starts on October 22, 2026 at 20:00 UTC.
 
-\paragraph{Release discipline.} Auction and launch-liquidity allocations are fixed before bidding and are not supported by later inflation. Development, contributor, Pact, and strategic allocations follow their release schedules without accelerating because of short-term market conditions. Unsold auction tokens join the ecosystem allocation's six-year release, and migration residuals remain restricted to the published launch-liquidity mandate; neither becomes discretionary contributor inventory.
+\paragraph{Release discipline.} Launch-liquidity allocations are fixed and are not supported by later inflation. Development, contributor, and strategic allocations follow their release schedules without accelerating because of short-term market conditions. Liquidity positions cannot be withdrawn before the lock ends, so they never become discretionary inventory during the lock.
 
 \section{Liquidity bootstrap and price discovery}\label{sec:liquidity}
 
@@ -332,56 +328,49 @@ Ecosystem / strategic & 10\% & 100,000,000 & Six-year release for integrations, 
 The liquidity graph is intentionally sparse:
 
 \begin{center}
-WETH $\longleftrightarrow$ \token{VEYDRIFT} $\longleftrightarrow$
+ETH $\longleftrightarrow$ \token{VEYDRIFT} $\longleftrightarrow$
 \{\token{vMETAL},\token{vCRYSTAL},\token{vDEUT}\}.
 \end{center}
 
-There are no protocol-seeded resource/WETH or resource/stablecoin pools. This concentrates price discovery, increases the utility of \token{VEYDRIFT}, and avoids fragmenting thin resource liquidity. The trade-off is that resource pricing inherits \token{VEYDRIFT} volatility and most resource-to-WETH trades use two hops. A production router must quote both hops, enforce user-defined slippage, and use time-weighted prices only for protocol accounting.
+There are no protocol-seeded resource/ETH or resource/stablecoin pools. This concentrates price discovery, increases the utility of \token{VEYDRIFT}, and avoids fragmenting thin resource liquidity. The trade-off is that resource pricing inherits \token{VEYDRIFT} volatility and most resource-to-ETH trades use two hops. A production router must quote both hops, enforce user-defined slippage, and use time-weighted prices only for protocol accounting.
 
-\subsection{Continuous clearing auction}
+\subsection{Direct liquidity}
 
-The launch begins with Uniswap's Continuous Clearing Auction (CCA) on Base rather than an immediately tradable fixed-price AMM. The auction tranche is 250,000,000 \token{VEYDRIFT}, the quote currency is WETH, and the duration is 48 hours expressed as immutable start and end block numbers. The floor is set 30\% above the Pact price and the minimum raise is about \$150,000 of WETH; if the auction raises less, it does not graduate and bidders are refunded. Exact blocks, the WETH-denominated floor, minimum raise, migration block, claim block, fee settings, recipients, and contract addresses are published before bidding begins.
-
-Each bid declares a WETH budget and maximum accepted \token{VEYDRIFT} price. The protocol spreads the bid across the auction's remaining blocks. Within each block, successful bidders pay one clearing price; higher maximum-price bids fill first and marginal bids fill pro rata. Supply is released gradually, so demand cannot be concentrated into a single first or final transaction. Early participation receives exposure to more clearing blocks, but transaction ordering alone does not grant the entire launch allocation.
-
-The CCA reduces first-block and last-minute timing games; it does not eliminate automation, Sybil participation, market risk, or price volatility. There is no owner-controlled ERC-20 transfer tax, blacklist, maximum-wallet rule, or hidden trading switch. Auction parameters are immutable after creation. The production launch uses the current audited CCA deployment supported by the Uniswap Liquidity Launchpad on Base and publishes the exact deployed version.
-
-After the end block, the auction is finalized. If its predeclared graduation condition is met, the liquidity strategy initializes the canonical Uniswap v4 \token{VEYDRIFT}/WETH pool at the discovered price. Auction proceeds and the 250,000,000-token liquidity reserve supply the pool, subject to the published position plan and currency cap. Unsold auction tokens go to the ecosystem allocation; any other residual token or WETH follows the predeclared strategy into disclosed liquidity positions or the launch Safe after the sweep delay. Participants claim purchased tokens only from the auction contract after the published claim block.
-
-\subsection{Initial liquidity}
-
-At the \$0.0026 floor, a fully sold 250,000,000-token auction tranche raises an estimated \$650,000 of WETH-equivalent value before fees. The 250,000,000-token migration reserve has the same \$650,000 floor value, implying approximately \$1,300,000 of main-pool depth if the tranche clears at the floor and the position plan uses the balanced amounts. If the auction raises only its \$150,000 minimum at the floor, about 57.7 million tokens sell and the main pool starts near \$300,000 of depth. A higher clearing price increases the WETH raised and changes every dollar estimate. The contracts use token quantities and WETH amounts, not a dollar oracle.
+Liquidity is seeded directly into four Uniswap v4 pools on Base. Every pool is hookless, spans the full price range, and charges a 0.9\% swap fee (fee 9000, tick spacing 90). The positions are NFTs of the official Uniswap v4 PositionManager.
 
 \begin{table}[h]
 \centering
 \scriptsize
-\begin{tabular}{@{}l r r r r@{}}
+\begin{tabular}{@{}l r r l@{}}
 \toprule
-\textbf{Component} & \textbf{External side} & \textbf{\token{VEYDRIFT} side} & \textbf{Pricing method} & \textbf{Floor-value estimate} \\
+\textbf{Pool} & \textbf{Other side} & \textbf{\token{VEYDRIFT} side} & \textbf{Opening price} \\
 \midrule
-CCA distribution & WETH bids & 250,000,000 & Per-block clearing & \$650,000 distributed value \\
-\token{VEYDRIFT}/WETH LP & Auction WETH & 250,000,000 & Discovered CCA price & \$1,300,000 pool depth \\
-\token{vMETAL}/\token{VEYDRIFT} & 86,666.667 & 50,000,000 & \$1.50 reference & \$260,000 est. \\
-\token{vCRYSTAL}/\token{VEYDRIFT} & 57,777.778 & 50,000,000 & \$2.25 reference & \$260,000 est. \\
-\token{vDEUT}/\token{VEYDRIFT} & 34,666.667 & 50,000,000 & \$3.75 reference & \$260,000 est. \\
+\token{VEYDRIFT}/ETH & 0.5 ETH & 150,000,000 & 150,000,000 \token{VEYDRIFT} per 0.5 ETH \\
+\token{vMETAL}/\token{VEYDRIFT} & 13,333,334,000 & $\approx$66,666,667 & 1 \token{vMETAL} = 0.005 \token{VEYDRIFT} \\
+\token{vCRYSTAL}/\token{VEYDRIFT} & 8,888,889,000 & $\approx$66,666,667 & 1 \token{vCRYSTAL} = 0.0075 \token{VEYDRIFT} \\
+\token{vDEUT}/\token{VEYDRIFT} & 4,444,445,000 & $\approx$66,666,667 & 1 \token{vDEUT} = 0.015 \token{VEYDRIFT} \\
 \midrule
-\textbf{Launch circulation} & & \textbf{650,000,000 \token{VEYDRIFT}} & & \textbf{\$2,080,000 DEX depth est.} \\
+\textbf{Total} & & \textbf{350,000,000 \token{VEYDRIFT}} & \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The resource pools are initialized only after the main pool establishes the \token{VEYDRIFT}/WETH price. Each pool pairs 50,000,000 \token{VEYDRIFT} with a fixed resource amount balanced at the floor, so resources open at their reference prices if the auction clears at the floor and proportionally higher if it clears above it. The intended $1:1.5:2.5$ relative scarcity holds either way. Resource tranches are released from excess game reserves only when post-transfer backing remains greater than internal liabilities plus an operational safety margin. Market depth can expand with actual demand.
+The resource pools are priced in \token{VEYDRIFT}, so their value in ETH follows the \token{VEYDRIFT}/ETH price while the $1:1.5:3$ opening ratio sets their relative prices. The resource side comes from the token treasury's existing supply; no resource token is minted for liquidity. Market depth can expand with actual demand.
+
+\subsection{Liquidity lock}
+
+All four position NFTs are held by a no-owner lock contract, \texttt{V4PositionLock} at \address{0x490e1952310c49D865F04ae3B70B06FC004cFb36}, whose beneficiary and unlock time are fixed at deployment. Nobody can remove liquidity before November 6, 2027 at 20:00 UTC; after that, only the beneficiary, borodutch.eth, can take the positions. Accrued trading fees can be collected at any time and always go to the beneficiary. The lock has no rescue method and no early release.
 
 \section{Production valuation and mature-production stress model}
 
 \subsection{Level-25 valuation anchor}
 
-The resource-price scenario is anchored to a developed planet with level-25 metal, crystal, and deuterium mines. At full energy, neutral temperature, no fusion consumption, and the maximum crawler count effective at those mine levels, that planet produces 218,424 metal, 145,608 crystal, and 93,144 deuterium per day. Because one external token represents one million in-game units, the valuation model uses the launch reference prices:
+The resource-price scenario is anchored to a developed planet with level-25 metal, crystal, and deuterium mines. At full energy, neutral temperature, no fusion consumption, and the maximum crawler count effective at those mine levels, that planet produces 218,424 metal, 145,608 crystal, and 93,144 deuterium per day. Because one external token represents one million in-game units, the valuation model uses the illustrative reference prices:
 
 \begin{align*}
-P_M &= \$1.50\ \text{per}\ \token{vMETAL}\ \text{(launch reference)},\\
-P_C &= \$2.25\ \text{per}\ \token{vCRYSTAL}\ \text{(launch reference)},\\
-P_D &= \$3.75\ \text{per}\ \token{vDEUT}\ \text{(launch reference)}.
+P_M &= \$1.50\ \text{per}\ \token{vMETAL}\ \text{(illustrative reference)},\\
+P_C &= \$2.25\ \text{per}\ \token{vCRYSTAL}\ \text{(illustrative reference)},\\
+P_D &= \$3.75\ \text{per}\ \token{vDEUT}\ \text{(illustrative reference)}.
 \end{align*}
 
 Under those price assumptions, the estimated gross reference value is
@@ -557,13 +546,9 @@ Resource supply integrity & Unexpected issuance dilutes float or reserve credibi
 \addlinespace
 Aggregate export wave & Many mature accounts sell simultaneously into shallow pools. & Four-week public locks reveal pending supply, all locked resources remain fully raidable, and AMM price impact makes large immediate sales progressively less attractive. There is no export quota. \\
 \addlinespace
-Two-hop volatility & Resource prices inherit \token{VEYDRIFT}/WETH volatility and compound slippage. & Deepest pool is \token{VEYDRIFT}/WETH; router quotes both hops; user-set slippage; TWAP for protocol accounting; no thin direct pools seeded by protocol. \\
+Two-hop volatility & Resource prices inherit \token{VEYDRIFT}/ETH volatility and compound slippage. & Deepest pool is \token{VEYDRIFT}/ETH; router quotes both hops; user-set slippage; TWAP for protocol accounting; no thin direct pools seeded by protocol. \\
 \addlinespace
-Auction configuration & A bad floor, duration, supply schedule, recipient, or migration plan produces weak distribution or failed migration. & Immutable parameters disclosed before bidding, independent review, Base-fork rehearsal, minimum-raise graduation condition, delayed sweep, and exact post-auction balance assertions. \\
-\addlinespace
-Pact sell pressure & Early buyers sell into thin post-auction liquidity. & Pact tokens are locked until six months after the auction ends; 12.5\% releases then and the rest releases linearly over 3.5 years. The auction floor sits 30\% above the Pact price. \\
-\addlinespace
-Launch automation / sniping & Automated bidders seek ordering or information advantages. & Continuous per-block clearing, bids spread across remaining blocks, one clearing price per block, no first-block AMM, and transparent onchain parameters. CCA reduces timing games but does not promise bot-free distribution. \\
+Liquidity withdrawal & Launch liquidity is pulled after trading starts. & All four positions sit in a no-owner lock until November 6, 2027; the lock cannot remove liquidity early and only sends accrued fees to the beneficiary. \\
 \addlinespace
 Impermanent loss & LP providers lose relative value during strong directional moves. & Honest disclosure, protocol-owned liquidity, measured liquidity expansion, and no guaranteed APY. \\
 \addlinespace
@@ -585,7 +570,6 @@ The protocol publishes the following metrics by resource:
   \item 30-day production, consumption, imports, export requests, raid losses, and completed exports;
   \item resource velocity and the share of production reinvested in sinks;
   \item AMM depth, volume, fee revenue, LP concentration, and price impact for 30 days of modeled mature production;
-  \item CCA bidder count, wallet concentration, fill distribution, clearing-price path, WETH raised, and migration residuals;
   \item distribution of mine levels, planets, fleet power, and export activity;
   \item the fraction of locked exits attacked and the value successfully defended;
   \item \token{VEYDRIFT} circulating supply, scheduled unlocks, treasury inventory, and protocol-owned liquidity.
@@ -595,13 +579,11 @@ Parameter tuning responds to data, while core property rights---fixed resource s
 
 \section{Launch structure}
 
-\token{VEYDRIFT} launches on Base mainnet with a fixed 1-billion-token supply created once. Source code, allocations, vesting contracts, auction parameters, strategy contracts, and treasury addresses are public.
+\token{VEYDRIFT} launches on Base mainnet with a fixed 1-billion-token supply created once. Source code, allocations, vesting contracts, pool parameters, the liquidity lock, and treasury addresses are public.
 
-Before the auction, the Pact sells 50,000,000 \token{VEYDRIFT} (5\% of supply, taken from the contributor allocation) at \$0.002 per token, raising up to \$100,000. Pact proceeds fund game improvements and marketing to grow the player base before the auction. Pact tokens are locked until six months after the auction ends, when 12.5\% releases; the remainder releases linearly over the following 3.5 years.
+The canonical \token{VEYDRIFT}/ETH pool and the three resource/\token{VEYDRIFT} pools are seeded directly on Uniswap v4 at their fixed opening ratios. Resource float comes from the token treasury without new minting. LP positions, lock terms, pool parameters, and treasury movements remain publicly auditable.
 
-At the announced launch block, a 48-hour CCA opens for 250,000,000 \token{VEYDRIFT}. After the auction ends and graduates, its proceeds and the separate 250,000,000-token liquidity reserve migrate into the canonical Uniswap v4 \token{VEYDRIFT}/WETH pool at the discovered price. The three resource/\token{VEYDRIFT} pools are then initialized at their fixed floor-balanced ratios. Resource float is released from excess reserve without new minting. Protocol LP positions, lock terms, pool parameters, auction receipts, migration residuals, and treasury movements remain publicly auditable.
-
-The production runbook treats auction creation, token funding, finalization, migration, resource-pool initialization, LP custody, and approval revocation as one rehearsed sequence with explicit abort conditions. No duplicate protocol-seeded \token{VEYDRIFT}/WETH pool launches on another DEX. A later secondary venue requires separate depth, disclosure, and treasury approval rather than silently fragmenting the canonical market.
+No duplicate protocol-seeded \token{VEYDRIFT}/ETH pool launches on another DEX. A later secondary venue requires separate depth, disclosure, and treasury approval rather than silently fragmenting the canonical market.
 
 Rift exports have no quantity ceiling or daily completion limit. Contract changes and the bytecode they install are public and onchain. Fixed token supplies, reserve backing, active lock state, and user balances remain directly auditable.
 

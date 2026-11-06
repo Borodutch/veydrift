@@ -598,7 +598,7 @@ Jump Gate transfers require both origin and destination moons to have a Jump Gat
 
 ## Contracts And Tokens
 
-Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on October 21, 2026.
+Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan, where you can check live balances and verified source code. Tables reflect the setup on November 6, 2026.
 
 ### $VEYDRIFT
 
@@ -606,16 +606,35 @@ Every Veydrift contract runs on Base (chain id 8453). Addresses link to Basescan
 
 | Holder | Address | $VEYDRIFT | Share | Purpose |
 | --- | --- | --- | --- | --- |
-| Continuous clearing auction | [0xD06dC962191c591522C1243848012f9b0549df7a](https://basescan.org/address/0xD06dC962191c591522C1243848012f9b0549df7a) | 100,000,000 | 10% | Sold for ETH on [Uniswap](https://app.uniswap.org/explore/auctions/base/0xd06dc962191c591522c1243848012f9b0549df7a) from October 22 to November 5; any unsold tokens return to borodutch.eth |
-| Auction pool reserve (Uniswap launch strategy) | [0xf10124B01E9fa88b0a2eF3fA95a53B3310446000](https://basescan.org/address/0xf10124B01E9fa88b0a2eF3fA95a53B3310446000) | 100,000,000 | 10% | Goes into the $VEYDRIFT/ETH pool with all the ETH the auction raises; the pool position is locked until November 2027 in Uniswap's timelock [0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a](https://basescan.org/address/0x1d89d786eAA2972f82e7d53440a7613D7CF4c92a) |
-| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 150,000,000 | 15% | The $VEYDRIFT side of the vMETAL, vCRYSTAL and vDEUT pools (50M each) |
+| $VEYDRIFT/ETH liquidity | Uniswap v4 PoolManager [0x498581fF718922c3f8e6A244956aF099B2652b2b](https://basescan.org/address/0x498581fF718922c3f8e6A244956aF099B2652b2b) | 150,000,000 | 15% | Paired with 0.5 ETH in one full-range position; see [Liquidity](#liquidity) |
+| Resource liquidity | Uniswap v4 PoolManager [0x498581fF718922c3f8e6A244956aF099B2652b2b](https://basescan.org/address/0x498581fF718922c3f8e6A244956aF099B2652b2b) | 200,000,000 | 20% | About 66.67 million in each of the vMETAL, vCRYSTAL and vDEUT pools; see [Liquidity](#liquidity) |
 | Development vesting | [0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4](https://basescan.org/address/0xB2554e9e2B201F299d8f0fF8A522FAd3057E87A4) | 250,000,000 | 25% | Locked; vests over 5 years |
 | Contributor vesting | [0x4A55cff3006e87360285969dD366acBd79445BeD](https://basescan.org/address/0x4A55cff3006e87360285969dD366acBd79445BeD) | 200,000,000 | 20% | Locked; 1-year cliff, then vests until year 4 |
 | Ecosystem vesting | [0x64C323e8ef7D6df9730E64627d7755c9A1050162](https://basescan.org/address/0x64C323e8ef7D6df9730E64627d7755c9A1050162) | 200,000,000 | 20% | Locked; vests over 6 years |
 
+### Liquidity
+
+All $VEYDRIFT liquidity sits in four Uniswap v4 pools on Base. Every pool is hookless, uses the full price range and charges a 0.9% swap fee (fee 9000, tick spacing 90). The pools live in the Uniswap v4 PoolManager [0x498581fF718922c3f8e6A244956aF099B2652b2b](https://basescan.org/address/0x498581fF718922c3f8e6A244956aF099B2652b2b), and each position is an NFT of the PositionManager [0x7C5f5A4bBd8fD63184577525326123B519429bDc](https://basescan.org/address/0x7C5f5A4bBd8fD63184577525326123B519429bDc). You can trade $VEYDRIFT on [Uniswap](https://app.uniswap.org/swap?chain=base&outputCurrency=0x442E9Ba64899d6B0bD25DF2558d3E804427bF448).
+
+| Pool | Pool id | Position | Opening price |
+| --- | --- | --- | --- |
+| $VEYDRIFT/ETH | [0xa48cdc0e5f4612b2400ea20aad0df45cdd3f51e1f7584d318239d217cef45c51](https://app.uniswap.org/explore/pools/base/0xa48cdc0e5f4612b2400ea20aad0df45cdd3f51e1f7584d318239d217cef45c51) | [3204128](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204128) | 150,000,000 $VEYDRIFT against 0.5 ETH (1 ETH = 300,000,000 $VEYDRIFT) |
+| vMETAL/$VEYDRIFT | [0x52254cbdbe214d5956d31250f750dac0cdad33b164c3636f28a49f969e1b7154](https://app.uniswap.org/explore/pools/base/0x52254cbdbe214d5956d31250f750dac0cdad33b164c3636f28a49f969e1b7154) | [3204056](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204056) | 1 vMETAL = 0.005 $VEYDRIFT |
+| vCRYSTAL/$VEYDRIFT | [0x09fddc405f13c6c802576601bd31824c4029825301753c17fad07b62aecfb64f](https://app.uniswap.org/explore/pools/base/0x09fddc405f13c6c802576601bd31824c4029825301753c17fad07b62aecfb64f) | [3204065](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204065) | 1 vCRYSTAL = 0.0075 $VEYDRIFT |
+| $VEYDRIFT/vDEUT | [0x20aadf49294552454661fc8a57a7beb32b870dc4190a9466629816d8baa713b7](https://app.uniswap.org/explore/pools/base/0x20aadf49294552454661fc8a57a7beb32b870dc4190a9466629816d8baa713b7) | [3204067](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204067) | 1 vDEUT = 0.015 $VEYDRIFT |
+
+The resource pools opened at a 1 : 1.5 : 3 price ratio for metal, crystal and deuterium, and from then on the market sets every price.
+
+All four position NFTs are held by the lock contract `V4PositionLock` at [0x490e1952310c49D865F04ae3B70B06FC004cFb36](https://basescan.org/address/0x490e1952310c49D865F04ae3B70B06FC004cFb36). It has no owner, and its terms cannot be changed:
+
+- Nobody can remove liquidity before November 6, 2027 at 20:00 UTC. After that, only borodutch.eth ([0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE](https://basescan.org/address/0xbf74483DB914192bb0a9577f3d8Fb29a6d4c08eE)) can take the positions.
+- Trading fees can be collected at any time, and they always go to borodutch.eth.
+
+The lock's source code is at [git.borodutch.com/backmeupplz/locker](https://git.borodutch.com/backmeupplz/locker/src/branch/main/contracts/src/V4PositionLock.sol), and you can inspect the locked positions at [locker.borodutch.com](https://locker.borodutch.com).
+
 ### Vesting Schedules
 
-The three vesting wallets are OpenZeppelin `VestingWallet` contracts. All of them start on October 22, 2026 at 20:00 UTC, when the auction opens, and each year counts as 365 days.
+The three vesting wallets are OpenZeppelin `VestingWallet` contracts. All of them start on October 22, 2026 at 20:00 UTC, and each year counts as 365 days.
 
 | Wallet | Locked | Schedule | Fully vested |
 | --- | --- | --- | --- |
@@ -635,10 +654,11 @@ Metal, Crystal and Deuterium are ERC-20 tokens with a fixed supply of 50,000,000
 | vCRYSTAL | [0x045627dc0b1A10289B53E23a5045aF7D470EF50f](https://basescan.org/token/0x045627dc0b1A10289B53E23a5045aF7D470EF50f) |
 | vDEUT | [0x99FF0a1e24c3171132912D4703dF2c67b4Da6698](https://basescan.org/token/0x99FF0a1e24c3171132912D4703dF2c67b4Da6698) |
 
-| Holder | Address | Of each token | Purpose |
+| Holder | Address | Amount | Purpose |
 | --- | --- | --- | --- |
-| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 2,000,000,000 | Backs every resource in the game; players inject and extract tokens through the Rift |
-| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 48,000,000,000 | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT, added after the auction; the rest tops up the game's reserve as players produce more resources |
+| Game contract (the Rift reserve) | [0xf397910F005151b09644228573a4353818D3755d](https://basescan.org/address/0xf397910F005151b09644228573a4353818D3755d) | 2,000,000,000 of each | Backs every resource in the game; players inject and extract tokens through the Rift |
+| Uniswap v4 pools | [0x498581fF718922c3f8e6A244956aF099B2652b2b](https://basescan.org/address/0x498581fF718922c3f8e6A244956aF099B2652b2b) | 13,333,334,000 vMETAL, 8,888,889,000 vCRYSTAL and 4,444,445,000 vDEUT | The resource side of the vMETAL, vCRYSTAL and vDEUT pools against $VEYDRIFT; see [Liquidity](#liquidity) |
+| Treasury | [0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7](https://basescan.org/address/0x2732e87c9b9A9Ce3C1C78968B12F56Ec74D1c9d7) | 34,666,666,000 vMETAL, 39,111,111,000 vCRYSTAL and 43,555,555,000 vDEUT | Tops up the game's reserve as players produce more resources |
 
 ### Game Contracts And Owners
 

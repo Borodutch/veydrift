@@ -26,7 +26,7 @@ deployed: verify live configuration and health before operational changes.
 
 ## Token contracts
 
-- [Token supply, vesting and Uniswap CCA/v4 launch](token-launch.md)
+- [Token supply, vesting and Uniswap v4 liquidity](token-launch.md)
 
 Launch and migration documents require their own approval and verification;
 their presence does not authorize a deployment.

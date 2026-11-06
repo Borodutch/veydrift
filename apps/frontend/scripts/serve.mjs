@@ -9,7 +9,7 @@ import { mediaFileForPathname, syncMedia } from "./media.mjs";
 import { Readable } from "node:stream";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import { diagnosticRoute, observeFrontendRequest } from "../src/requestDiagnostics.ts";
-import { auctionUrl } from "../src/auction.ts";
+import { veydriftSwapUrl } from "../src/swap.ts";
 
 const distRoot = new URL("../dist/", import.meta.url);
 const publicRoot = new URL("../public/", import.meta.url);
@@ -1215,8 +1215,8 @@ export async function frontendResponse(request) {
     return shareHtmlResponse(request, shareRoute);
   }
 
-  // The auction page and the retired Pact page both point at the live auction on Uniswap.
-  if (["/cca", "/pact"].includes(route.replace(/\/+$/, ""))) return Response.redirect(auctionUrl, 302);
+  // /cca and /pact were shared publicly; both now open the $VEYDRIFT swap on Uniswap.
+  if (["/cca", "/pact"].includes(route.replace(/\/+$/, ""))) return Response.redirect(veydriftSwapUrl, 302);
 
   // Pinned media is authoritative, even over a stale copy left in dist/.
   const mediaPath = mediaFileForPathname(route);
