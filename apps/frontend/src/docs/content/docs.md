@@ -618,7 +618,7 @@ All $VEYDRIFT liquidity sits in four Uniswap v4 pools on Base. Every pool is hoo
 
 | Pool | Pool id | Position | Opening price |
 | --- | --- | --- | --- |
-| $VEYDRIFT/ETH | TBD_ETH_POOL_ID | TBD_ETH_POSITION_ID | 150,000,000 $VEYDRIFT against 0.5 ETH |
+| $VEYDRIFT/ETH | [0xa48cdc0e5f4612b2400ea20aad0df45cdd3f51e1f7584d318239d217cef45c51](https://app.uniswap.org/explore/pools/base/0xa48cdc0e5f4612b2400ea20aad0df45cdd3f51e1f7584d318239d217cef45c51) | [3204128](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204128) | 150,000,000 $VEYDRIFT against 0.5 ETH (1 ETH = 300,000,000 $VEYDRIFT) |
 | vMETAL/$VEYDRIFT | [0x52254cbdbe214d5956d31250f750dac0cdad33b164c3636f28a49f969e1b7154](https://app.uniswap.org/explore/pools/base/0x52254cbdbe214d5956d31250f750dac0cdad33b164c3636f28a49f969e1b7154) | [3204056](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204056) | 1 vMETAL = 0.005 $VEYDRIFT |
 | vCRYSTAL/$VEYDRIFT | [0x09fddc405f13c6c802576601bd31824c4029825301753c17fad07b62aecfb64f](https://app.uniswap.org/explore/pools/base/0x09fddc405f13c6c802576601bd31824c4029825301753c17fad07b62aecfb64f) | [3204065](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204065) | 1 vCRYSTAL = 0.0075 $VEYDRIFT |
 | $VEYDRIFT/vDEUT | [0x20aadf49294552454661fc8a57a7beb32b870dc4190a9466629816d8baa713b7](https://app.uniswap.org/explore/pools/base/0x20aadf49294552454661fc8a57a7beb32b870dc4190a9466629816d8baa713b7) | [3204067](https://basescan.org/nft/0x7C5f5A4bBd8fD63184577525326123B519429bDc/3204067) | 1 vDEUT = 0.015 $VEYDRIFT |
