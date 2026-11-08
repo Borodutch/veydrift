@@ -25,25 +25,40 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
     let id = 0, buffered = "", sessionId;
+    // No per-command deadline: on a loaded runner one command (the first evaluate on a cold
+    // Vite page, say) can take well over any fixed limit, so the test's own timeout is the
+    // only limit. Aborting it rejects every command still waiting, naming each one.
+    function settle(commandId, settler, value) {
+      const command = pending.get(commandId);
+      if (!command) return;
+      pending.delete(commandId);
+      t.signal.removeEventListener("abort", command.abort);
+      command[settler](value);
+    }
     function send(method, params = {}, page = true) {
+      t.signal.throwIfAborted();
+      if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error(method + ": Chrome exited");
       const commandId = ++id;
+      const what = method === "Runtime.evaluate" ? method + " " + JSON.stringify(params.expression.slice(0, 120)) : method;
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(commandId); reject(new Error(method + " timed out")); }, 15_000);
-        pending.set(commandId, { resolve, reject, timer });
+        // Logged too: node:test reports only "test timed out", not this rejection.
+        const abort = () => { console.error(what + " still pending when the test was aborted"); settle(commandId, "reject", new Error(what + " still pending when the test was aborted")); };
+        pending.set(commandId, { resolve, reject, abort, what });
+        t.signal.addEventListener("abort", abort, { once: true });
         chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
       });
     }
+    chrome.once("exit", (code, signal) => {
+      for (const [commandId, command] of [...pending]) settle(commandId, "reject", new Error(command.what + ": Chrome exited (" + (signal ?? code) + ")"));
+    });
     chrome.stdio[4].on("data", chunk => {
       buffered += chunk.toString();
       let end;
       while ((end = buffered.indexOf("\0")) >= 0) {
         const message = JSON.parse(buffered.slice(0, end));
         buffered = buffered.slice(end + 1);
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer);
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
+        if (message.error) settle(message.id, "reject", new Error(JSON.stringify(message.error)));
+        else settle(message.id, "resolve", message.result);
       }
     });
     await send("Browser.getVersion", {}, false);
@@ -132,7 +147,8 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
     console.log('Verified ' + measurements.length + ' rendered states / ' + measurements.length * 15 + ' rows');
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    for (const command of pending.values()) t.signal.removeEventListener("abort", command.abort);
+    pending.clear();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.
