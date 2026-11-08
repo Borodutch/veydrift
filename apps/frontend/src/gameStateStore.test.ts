@@ -61,6 +61,41 @@ describe("GameStateStore", () => {
     expect(store.value<{ revision: number }>("planet:1")).toEqual({ revision: 2 });
   });
 
+  test("a retry keeps last-good rows marked failed until it succeeds (#528)", async () => {
+    const store = new GameStateStore();
+    const key = "shipyard:wallet:planet";
+    await store.read(key, async () => ({ ships: 6 }));
+    await expect(store.read(key, async () => { throw new Error("Inventory unavailable"); })).rejects.toThrow();
+    expect(store.snapshot(key)).toMatchObject({ data: { ships: 6 }, error: "Inventory unavailable", freshness: "delayed" });
+
+    // Invalidation (resume/recovery/chain event) and the retry it starts stay failed while in flight.
+    store.invalidate(key);
+    expect(store.snapshot(key)?.error).toBe("Inventory unavailable");
+    const retry = deferred<{ ships: number }>();
+    const retryRead = store.read(key, () => retry.promise);
+    expect(store.snapshot(key)).toMatchObject({ data: { ships: 6 }, error: "Inventory unavailable", freshness: "refreshing" });
+
+    // A cancelled retry proves nothing either.
+    retry.reject(new DOMException("aborted", "AbortError"));
+    await expect(retryRead).rejects.toThrow();
+    expect(store.snapshot(key)).toMatchObject({ error: "Inventory unavailable", freshness: "delayed" });
+
+    const recovered = store.read(key, async () => ({ ships: 5 }));
+    expect(store.snapshot(key)?.error).toBe("Inventory unavailable");
+    await recovered;
+    expect(store.snapshot(key)).toMatchObject({ data: { ships: 5 }, freshness: "fresh" });
+    expect(store.snapshot(key)?.error).toBeUndefined();
+
+    // With no rows to act on, a first-load retry is plain loading.
+    await expect(store.read("moon:wallet:planet", async () => { throw new Error("offline"); })).rejects.toThrow();
+    const firstLoad = deferred<{ ships: number }>();
+    const firstLoadRead = store.read("moon:wallet:planet", () => firstLoad.promise);
+    expect(store.snapshot("moon:wallet:planet")).toMatchObject({ error: undefined, freshness: "refreshing" });
+    firstLoad.resolve({ ships: 1 });
+    await firstLoadRead;
+    store.dispose();
+  });
+
   test("clearing an error does not invalidate an in-flight deduplicated read", async () => {
     const store = new GameStateStore();
     const response = deferred<{ level: number }>();

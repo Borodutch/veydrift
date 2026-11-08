@@ -10,7 +10,7 @@ import preact from "@preact/preset-vite";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Current state surfaces render safe lifecycle and inventory at desktop/mobile sizes", { timeout: 120_000 }, async (t) => {
+test("Current state surfaces render safe lifecycle and inventory at desktop/mobile sizes", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
@@ -37,11 +37,21 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
     let id = 0, buffered = "", sessionId;
+    // Under a loaded CI Mac one awaited step (a cold Vite transform, a starved renderer's frames) can take
+    // tens of seconds, so the cap is generous (as in galaxySlots, #523). Commands slower than 5 s, and one
+    // that times out, are reported as test diagnostics with their expression (#528).
     function send(method, params = {}, page = true) {
       const commandId = ++id;
+      const what = method + (params.expression ? "(" + JSON.stringify(params.expression.length > 200 ? params.expression.slice(0, 80) + "…" + params.expression.slice(-120) : params.expression) + ")" : "");
+      const started = Date.now();
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(commandId); reject(new Error(method + " timed out")); }, 15_000);
-        pending.set(commandId, { resolve, reject, timer });
+        const timer = setTimeout(() => {
+          pending.delete(commandId);
+          const error = new Error(what + " timed out after 60s");
+          t.diagnostic(error.message);
+          reject(error);
+        }, 60_000);
+        pending.set(commandId, { resolve, reject, timer, settled: () => { const ms = Date.now() - started; if (ms > 5_000) t.diagnostic("slow CDP command (" + ms + " ms): " + what); } });
         chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
       });
     }
@@ -53,7 +63,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         buffered = buffered.slice(end + 1);
         const command = pending.get(message.id);
         if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer);
+        pending.delete(message.id); clearTimeout(command.timer); command.settled();
         if (message.error) command.reject(new Error(JSON.stringify(message.error)));
         else command.resolve(message.result);
       }
@@ -70,7 +80,10 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     }
     await send("Page.navigate", { url });
     // Polls until the fixture is up; only the test's own timeout bounds it, so a loaded runner can't fail it.
-    while (!(await evaluate("Boolean(window.fixture)"))) { t.signal.throwIfAborted(); await new Promise(r => setTimeout(r, 50)); }
+    // Also wait for load: its pageshow makes the store re-read every resource (resume recovery). On a loaded
+    // runner that can land mid-step, so let it fire and settle before the first one (#528).
+    while (!(await evaluate("Boolean(window.fixture) && document.readyState === 'complete'"))) { t.signal.throwIfAborted(); await new Promise(r => setTimeout(r, 50)); }
+    await evaluate('fixture.settled()');
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await evaluate('fixture.show("inventory-composer", "current"); new Promise(requestAnimationFrame)');
@@ -97,6 +110,15 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
         assert.match(await evaluate('document.querySelector("main").innerText'), /6 selected[\s\S]*\/ 6/, "retains last-good display " + label);
         await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
         assert.equal(await evaluate('fixture.confirmed()'), 0, "failed read cannot submit " + label);
+        // A retry of the failed read (poll tick, focus/pageshow recovery) must keep launch blocked while in flight (#528).
+        await evaluate('fixture.holdInventory(); fixture.retryInventory(); new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve)))');
+        assert.equal(await evaluate('fixture.inFlight()'), 2, "planet and moon retries are in flight " + label);
+        assert.equal(await confirmDisabled(), true, "in-flight retry of a failed read blocks " + label);
+        assert.match(await evaluate('document.querySelector("main").innerText'), /Current fleet inventory is unavailable/, "in-flight retry keeps notice " + label);
+        await evaluate('document.querySelector("[data-mission-actions] button:last-child").click()');
+        assert.equal(await evaluate('fixture.confirmed()'), 0, "in-flight retry cannot submit " + label);
+        await evaluate('fixture.releaseInventory(); fixture.settled()');
+        assert.equal(await confirmDisabled(), true, "retry that fails again still blocks " + label);
         await evaluate('fixture.refreshInventory(); fixture.settled()');
         assert.equal(await quantity(), "6", "recovery preserves draft " + label);
         assert.equal(await confirmDisabled(), false, "fresh successful read restores launch " + label);

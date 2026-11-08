@@ -46,13 +46,19 @@ let realApiBase: string | undefined;
 // request counts until its whole body is in (a copy of it is read first; the store gets the original).
 let inFlight = 0;
 const buffered = (response: Promise<Response>) => response.then(r => r.clone().arrayBuffer().then(() => r));
+// holdInventory() keeps the fixture's inventory answers in flight until releaseInventory(), so a test can
+// inspect the UI while a retry of a failed read is pending.
+let inventoryHold: Promise<void> | undefined;
+let releaseInventory = () => {};
+function holdInventory() { inventoryHold ??= new Promise(resolve => { releaseInventory = () => { inventoryHold = undefined; resolve(); }; }); }
 const respond = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => realApiBase && String(input).includes("/wallet/") ? buffered(originalFetch(String(input).replace(location.origin, realApiBase), init)) : String(input).includes("/supply-sources") ? Promise.resolve(Response.json({
  ...unsafe, wallet: owner, fleetLaunchAvailable: true, fleetSlots: { active: 0, limit: 15 }, technologyLevels: {},
  sources: Array.from({ length: 9 }, (_, i) => ({ planetId: String(i + 1), name: "Source " + i, galaxy: 1, system: 1, position: i + 1, coordinates: "1:1:" + (i + 1), resources, launchableShips: [{ id: 4, count: available }] })),
 } satisfies SupplySourcesResponse)) : /\/(shipyard|moon)\?/.test(String(input)) ? (() => {
  const moon = String(input).includes("/moon?");
- if (failedBody === (moon ? "moon" : "planet")) return Promise.resolve(Response.json({ error: "Inventory unavailable" }, { status: 503 }));
- return Promise.resolve(Response.json(moon ? { ...inventory, ...unsafe, moon: { exists: true, planetId: "99" } } : { ...inventory, ...unsafe }));
+ const response = failedBody === (moon ? "moon" : "planet") ? Response.json({ error: "Inventory unavailable" }, { status: 503 })
+   : Response.json(moon ? { ...inventory, ...unsafe, moon: { exists: true, planetId: "99" } } : { ...inventory, ...unsafe });
+ return inventoryHold ? inventoryHold.then(() => response) : Promise.resolve(response);
 })() : originalFetch(input, init);
 window.fetch = (input, init) => {
  inFlight++;
@@ -89,6 +95,10 @@ function StoreComposer({ body, kind }: { body: "planet" | "moon"; kind: "transpo
 function refreshInventory(body?: "planet" | "moon", state: Record<string, unknown> = {}) {
  unsafe = state;
  failedBody = body;
+ retryInventory();
+}
+// The ordinary polling tick, with the fixture backend's answers unchanged.
+function retryInventory() {
  clock += 20000;
  (store as unknown as { refreshGameplay(): void }).refreshGameplay();
 }
@@ -131,5 +141,5 @@ function show(surface = "defense", mode = "current") {
  if (surface === "activity") page = <ActivityRow explorerUrl="https://basescan.org" item={{ ...activity, ...(mode === "indexed" ? { reconciliation: "indexed", transactionHash: "0xabc" } : {}) }} />;
  render(<main data-fixture-ready style={{ maxWidth: "1060px", margin: "16px auto", padding: "0 12px" }}>{page}</main>, document.getElementById("app")!);
 }
-Object.assign(window, { fixture: { show, refreshInventory, settled, confirmed: () => confirmed, inventoryStatus: () => [store.queries.shipyard(owner, "99"), store.queries.moon(owner, "99")].map(query => { const snapshot = store.snapshot<any>(query.key); return { error: snapshot?.error, stale: snapshot?.data?.stale, ready: snapshot?.data?.fleetLaunchAvailable, indexer: snapshot?.data?.indexer }; }), realApi: (url?: string) => { realApiBase = url; } } });
+Object.assign(window, { fixture: { show, refreshInventory, retryInventory, holdInventory, releaseInventory: () => releaseInventory(), inFlight: () => inFlight, settled, confirmed: () => confirmed, inventoryStatus: () => [store.queries.shipyard(owner, "99"), store.queries.moon(owner, "99")].map(query => { const snapshot = store.snapshot<any>(query.key); return { error: snapshot?.error, stale: snapshot?.data?.stale, ready: snapshot?.data?.fleetLaunchAvailable, indexer: snapshot?.data?.indexer }; }), realApi: (url?: string) => { realApiBase = url; } } });
 show();

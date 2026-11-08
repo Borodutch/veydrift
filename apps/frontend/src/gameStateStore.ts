@@ -162,7 +162,7 @@ export class GameStateStore {
     const current = this.entries.get(key);
     this.entries.set(key, {
       ...current,
-      error: undefined,
+      error: retainedFailure(current),
       freshness: "delayed",
       generation,
     });
@@ -178,7 +178,7 @@ export class GameStateStore {
     const previous = this.entries.get(key);
     this.entries.set(key, {
       ...previous,
-      error: undefined,
+      error: retainedFailure(previous),
       freshness: "refreshing",
       generation,
       planetId: options.planetId ?? previous?.planetId,
@@ -212,10 +212,12 @@ export class GameStateStore {
           if (this.isCurrent(key, generation)) {
             const current = this.entries.get(key);
             const cancelled = isAbortError(error);
+            // A cancelled retry proves nothing: retained rows stay unconfirmed.
+            const failure = cancelled ? retainedFailure(current) : errorMessage(error);
             this.entries.set(key, {
               ...current,
-              error: cancelled ? undefined : errorMessage(error),
-              freshness: cancelled ? (current?.data === undefined ? "delayed" : "fresh") : current?.data === undefined ? "failed" : "delayed",
+              error: failure,
+              freshness: failure !== undefined ? (current?.data === undefined ? "failed" : "delayed") : current?.data === undefined ? "delayed" : "fresh",
               generation,
             });
             this.emit([key]);
@@ -271,6 +273,17 @@ export class GameStateStore {
 
 function normalizeWallet(wallet: string | undefined): string | undefined {
   return wallet?.toLowerCase();
+}
+
+/**
+ * Last-good rows shown after a failed read are not current. A retry (poll,
+ * focus/resume recovery, invalidation) must not clear that failure before it
+ * succeeds, or every in-flight retry briefly re-authorizes actions such as a
+ * fleet launch from the unconfirmed rows. Without data there is nothing to
+ * act on, so a first-load retry still reads as plain loading.
+ */
+function retainedFailure(entry: GameStateEntry | undefined): string | undefined {
+  return entry?.data === undefined ? undefined : entry.error;
 }
 
 function errorMessage(error: unknown): string {
