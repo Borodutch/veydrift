@@ -470,6 +470,221 @@ contract VeydriftRefereeBattleTest is VeydriftMoonSystemTestBase {
         }
     }
 
+    bytes32 constant RESOLVED_TOPIC = keccak256(
+        "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
+    );
+    bytes32 constant SNAPSHOT_TOPIC =
+        keccak256("CombatMemberSnapshot(uint256,uint256,address,uint8,uint8,uint32)");
+    bytes32 constant EVIDENCE_TOPIC =
+        keccak256("CombatEvidenceComplete(uint256,uint256,uint256,uint256,uint256)");
+    bytes32 constant UNDEFENDED_TOPIC = keccak256("RefereeBattleUndefended(uint256)");
+
+    function _attackWith(uint256 origin, uint256 target, bool moon) private returns (uint256) {
+        _setShipCount(origin, Ship.SmallCargo, 10);
+        G.MissionShips memory ships;
+        ships.battleship = 2;
+        ships.smallCargo = 3;
+        vm.prank(player);
+        return game.launchBodyFleetMission(
+            origin, target, G.FleetMissionType.Attack, ships, G.Resources(0, 0, 0), 100, false, moon
+        );
+    }
+
+    /// @dev Resolves with the production resolver's 2.5M work budget; returns the call count.
+    function _resolveAtWorkBudget(uint256 id) private returns (uint256 calls) {
+        (, uint64 impact,,) = _fleetMission(id);
+        vm.warp(impact);
+        for (; calls < 64; ++calls) {
+            (G.FleetMissionStatus status,,,) = _fleetMission(id);
+            if (status != G.FleetMissionStatus.Outbound) return calls;
+            game.resolveFleetMission{gas: 2_500_000}(id);
+        }
+        fail("undefended attack did not settle");
+    }
+
+    function _assertUndefendedSettled(uint256 id, uint256 calls) private view {
+        (G.FleetMissionStatus status,,,) = _fleetMission(id);
+        assertEq(uint8(status), uint8(G.FleetMissionStatus.Returning));
+        (, P.Phase phase, bytes32 snapshot,,, uint256 rows) = _status(id);
+        assertEq(uint8(phase), uint8(P.Phase.Bypassed));
+        assertEq(snapshot, bytes32(0));
+        assertEq(rows, 0);
+        (,,,,,,,,,, uint256 requestId) = game.fleetMission(id);
+        assertEq(requestId, 0, "no gated randomness requested");
+        assertEq(randomness.readyCommitmentCount(), 1, "committed word still unused");
+        (uint8 stage,,) = game.stagedBattleProgress(id);
+        assertEq(stage, 13);
+        // Two calls today. Before: 24 resident-lane stages, the journal, seal, reveal wait,
+        // referee submit and leaf application.
+        assertLe(calls, 3, "undefended battle took too many resolver transactions");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint32[16] memory snapshots;
+        uint256 snapshotCount;
+        bool resolved;
+        bool evidence;
+        bool undefended;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length < 2 || uint256(logs[i].topics[1]) != id) continue;
+            if (logs[i].topics[0] == SNAPSHOT_TOPIC) {
+                (uint8 side, uint8 unit, uint32 count) =
+                    abi.decode(logs[i].data, (uint8, uint8, uint32));
+                assertEq(uint256(logs[i].topics[2]), id);
+                assertEq(address(uint160(uint256(logs[i].topics[3]))), player);
+                assertEq(side, 0);
+                assertEq(snapshots[unit], 0, "one snapshot per lane");
+                snapshots[unit] = count;
+                ++snapshotCount;
+            } else if (logs[i].topics[0] == RESOLVED_TOPIC) {
+                (G.BattleOutcome outcome, uint8 rounds,,,,) = abi.decode(
+                    logs[i].data, (G.BattleOutcome, uint8, uint256, uint128, uint128, uint128)
+                );
+                assertEq(uint8(outcome), uint8(G.BattleOutcome.AttackerWin));
+                assertEq(rounds, 0);
+                resolved = true;
+            } else if (logs[i].topics[0] == EVIDENCE_TOPIC) {
+                (uint256 count, uint256 losses,,) =
+                    abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+                assertEq(count, 2);
+                assertEq(losses, 0);
+                evidence = true;
+            } else if (logs[i].topics[0] == UNDEFENDED_TOPIC) {
+                undefended = true;
+            }
+        }
+        assertEq(snapshotCount, 2, "attacker snapshot evidence");
+        assertEq(snapshots[uint8(Ship.Battleship)], 2);
+        assertEq(snapshots[uint8(Ship.SmallCargo)], 3);
+        assertTrue(resolved && evidence && undefended);
+    }
+
+    function testUndefendedPlanetSettlesWithoutRefereeOrReveal() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 0);
+        _fundPlanet(target, 100_000, 100_000, 100_000);
+        _enableFixture();
+        _commit(4321);
+        uint256 id = _attackWith(origin, target, false);
+        vm.recordLogs();
+        uint256 calls = _resolveAtWorkBudget(id);
+        _assertUndefendedSettled(id, calls);
+        (,,, G.Resources memory cargo) = _fleetMission(id);
+        assertGt(uint256(cargo.metal) + cargo.crystal + cargo.deuterium, 0, "raid still loots");
+    }
+
+    /// The fast path settles exactly like a full battle with no defender (here the staged path
+    /// the referee replaced, which fights the same zero-round battle with randomness).
+    function testUndefendedFastPathMatchesFullBattleEconomics() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 0);
+        _fundPlanet(target, 100_000, 200_000, 50_000);
+        uint256 base = vm.snapshotState();
+        _enableFixture();
+        _commit(4325);
+        uint256 fast = _attackWith(origin, target, false);
+        _resolveAtWorkBudget(fast);
+        (G.FleetMissionStatus fastStatus,, uint64 fastReturn, G.Resources memory fastCargo) =
+            _fleetMission(fast);
+        (, P.Phase phase,,,,) = _status(fast);
+        assertEq(uint8(phase), uint8(P.Phase.Bypassed));
+
+        vm.revertToState(base);
+        uint256 full = _attackWith(origin, target, false);
+        assertEq(full, fast);
+        _fulfillAttackBattleRandomness(full, 4325);
+        (, uint64 impact,,) = _fleetMission(full);
+        vm.warp(impact);
+        _resolveAttackFully(full);
+        (G.FleetMissionStatus status,, uint64 returnAt, G.Resources memory cargo) =
+            _fleetMission(full);
+        (P.Version memory version,,,,,) = _status(full);
+        assertEq(version.version, 0, "full battle took the randomness path");
+        assertEq(uint8(status), uint8(fastStatus));
+        assertEq(returnAt, fastReturn);
+        assertEq(cargo.metal, fastCargo.metal);
+        assertEq(cargo.crystal, fastCargo.crystal);
+        assertEq(cargo.deuterium, fastCargo.deuterium);
+        assertGt(uint256(cargo.metal) + cargo.crystal + cargo.deuterium, 0);
+    }
+
+    function testUndefendedMoonIgnoresParentPlanetFleetAndReleasesFreeze() public {
+        (uint256 origin, uint256 target, address defender) = _fixture();
+        _enableFixture();
+        _commit(4322);
+        uint256 id = _attackWith(origin, target, true);
+        vm.recordLogs();
+        uint256 calls = _resolveAtWorkBudget(id);
+        _assertUndefendedSettled(id, calls);
+        assertEq(game.shipCount(target, Ship.LightFighter), 7);
+        // The moon combat freeze taken at preparation is released by the staged finish.
+        vm.prank(defender);
+        moons.finishMoonBuildingUpgrade(target);
+    }
+
+    function _assertKeepsReferee(uint256 id, uint256 rows) private {
+        _prepare(id);
+        (, P.Phase phase,,,, uint256 recorded) = _status(id);
+        assertEq(uint8(phase), uint8(P.Phase.AwaitingRandomness));
+        assertEq(recorded, rows);
+    }
+
+    function testDefenseOnlyTargetKeepsRefereeRowsInLaneOrder() public {
+        (uint256 origin, uint256 target, address defender) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 0);
+        _setShipCount(target, Ship.SmallCargo, 2);
+        // _defenseCounts (slot 19): RocketLauncher (0) and LargeShieldDome (7).
+        bytes32 outer = keccak256(abi.encode(target, uint256(19)));
+        vm.store(address(game), keccak256(abi.encode(uint256(0), outer)), bytes32(uint256(3)));
+        vm.store(address(game), keccak256(abi.encode(uint256(7), outer)), bytes32(uint256(1)));
+        _enableFixture();
+        _commit(4323);
+        uint256 id = _launch(origin, target);
+        _assertKeepsReferee(id, 4);
+        uint8[4] memory lanes = [uint8(Ship.SmallCargo), 16, 23, uint8(Ship.Battleship)];
+        uint32[4] memory counts = [uint32(2), 3, 1, 1];
+        for (uint256 i; i < 4; ++i) {
+            P.Row memory row = _row(id, i);
+            assertEq(row.unit, lanes[i]);
+            assertEq(row.count, counts[i]);
+            assertEq(row.owner, i == 3 ? player : defender);
+        }
+    }
+
+    function testSatelliteOrCrawlerOnlyTargetKeepsReferee() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 0);
+        _enableFixture();
+        uint256 base = vm.snapshotState();
+        Ship[2] memory lanes = [Ship.SolarSatellite, Ship.Crawler];
+        for (uint256 i; i < 2; ++i) {
+            vm.revertToState(base);
+            _setShipCount(target, lanes[i], 4);
+            _commit(4326 + i);
+            uint256 id = _launch(origin, target);
+            _assertKeepsReferee(id, 2);
+            assertEq(_row(id, 0).unit, uint8(lanes[i]));
+        }
+    }
+
+    function testEmptyTargetWithLinkedOrStationedRecordKeepsReferee() public {
+        (uint256 origin, uint256 target,) = _fixture();
+        _setShipCount(target, Ship.LightFighter, 0);
+        _enableFixture();
+        (uint256 linked, uint256 held,,) = (new RefereeFixtureSlots()).slots();
+        uint256 base = vm.snapshotState();
+        for (uint256 i; i < 2; ++i) {
+            vm.revertToState(base);
+            _commit(4324 + i);
+            uint256 id = _launch(origin, target);
+            uint256[] memory records = new uint256[](1);
+            // A historical non-qualifying record: the fast path stays conservative.
+            records[0] = 100;
+            if (i == 0) _array(id, linked, records);
+            else _array(target, held, records);
+            _assertKeepsReferee(id, 1);
+            assertEq(_row(id, 0).owner, player);
+        }
+    }
+
     function testQualifiedLinkedHeldBodyTimingAndDuplicateScans() public {
         (uint256 origin, uint256 target,) = _fixture();
         _enableFixture();

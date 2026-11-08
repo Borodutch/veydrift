@@ -21,10 +21,13 @@ interface IRefereeMoonDefense {
     function moonDefensePacked(uint256) external view returns (uint256);
 }
 
-/// @notice Inactive prospective path; no result/settlement application.
+/// @notice Referee preparation: journals the roster for the trusted referee, or settles a battle
+/// nothing can defend without it. No result/settlement application.
 contract VeydriftRefereePreparationModule is VeydriftResourceReserves {
     address private immutable _protectionModule;
     event CombatStageAdvanced(uint256 indexed missionId, uint8 phase, uint256 cursor, uint8 round);
+    /// @notice Nothing could defend the target: bypassed with no randomness or referee result.
+    event RefereeBattleUndefended(uint256 indexed battleId);
     // Same evidence event as staged combat so existing battle reports cover referee battles.
     event CombatMemberSnapshot(
         uint256 indexed battleId,
@@ -129,7 +132,25 @@ contract VeydriftRefereePreparationModule is VeydriftResourceReserves {
                         m.arrivalAt
                     );
                 }
-                {
+                if (b.linkedLength == 0 && b.stationedLength == 0 && _undefended(m)) {
+                    // Nothing can defend (no resident ship or defense, no linked or stationed
+                    // fleet): zero rounds and an attacker win need no randomness or referee
+                    // result. Bypass before `begin` (no FIFO word is reserved), record the
+                    // attacker's staged evidence and go straight to the economics phases.
+                    Referee.bypass(id);
+                    emit RefereeBattleUndefended(id);
+                    b.enrolled[id] = true;
+                    b.missions.push(id);
+                    MissionShips memory ships = m.ships;
+                    for (uint8 unit; unit < 16; ++unit) {
+                        uint32 count = _missionShipQuantity(ships, Ship(unit));
+                        if (count == 0) continue;
+                        b.math.sides[0].total += count;
+                        ++b.snapshotCount;
+                        emit CombatMemberSnapshot(id, id, m.owner, 0, unit, count);
+                    }
+                    b.phase = 11;
+                } else {
                     // The gated request is reserved here (not at launch); mirror its id on the
                     // leader so fleetMission() and the leader's journaled source keep showing it.
                     m.randomnessRequestId = Referee.begin(
@@ -149,24 +170,30 @@ contract VeydriftRefereePreparationModule is VeydriftResourceReserves {
                             _battleRaidPlunderBps[id]
                         )
                     );
+                    b.phase = 2;
                 }
-                b.phase = 2;
             }
         } else if (b.phase == 2) {
-            uint8 unit = uint8(b.cursor++);
-            uint32 count;
-            if (unit < 16) {
-                count = m.targetIsMoon
-                    ? _moonShipCounts[m.targetPlanetId][Ship(unit)]
-                    : _shipCounts[m.targetPlanetId][Ship(unit)];
-            } else {
-                uint32[8] memory defenses = _defenseSnapshot(m.targetPlanetId, m.targetIsMoon);
-                count = defenses[unit - 16];
+            // Empty lanes enroll nothing, so they cost one stage together instead of one each.
+            // A stage still enrolls at most one resident lane; rows keep their lane order.
+            uint32[8] memory defenses = _defenseSnapshot(m.targetPlanetId, m.targetIsMoon);
+            uint256 unit = b.cursor;
+            bool enrolled;
+            for (; unit < 24; ++unit) {
+                uint32 count = _residentCount(m, unit, defenses);
+                if (count == 0) continue;
+                if (enrolled) break;
+                enrolled = true;
+                // Lane index below 24 (loop bound).
+                // forge-lint: disable-next-line(unsafe-typecast)
+                uint8 lane = uint8(unit);
+                _enrollUnit(b, 0, _planets[m.targetPlanetId].owner, 1, lane, count, m.arrivalAt);
             }
-            _enrollUnit(b, 0, _planets[m.targetPlanetId].owner, 1, unit, count, m.arrivalAt);
-            if (b.cursor == 24) {
+            if (unit == 24) {
                 b.cursor = 0;
                 b.phase = 3;
+            } else {
+                b.cursor = unit;
             }
         } else if (b.phase == 3) {
             _enrollMission(b, id, 0, m.arrivalAt);
@@ -305,6 +332,29 @@ contract VeydriftRefereePreparationModule is VeydriftResourceReserves {
             && joined.targetPlanetId == _fleetMissions[attackMissionId].targetPlanetId
             && joined.targetIsMoon == _fleetMissions[attackMissionId].targetIsMoon
             && joined.missionType == FleetMissionType.AcsAttack;
+    }
+
+    /// @dev Resident lane count at the target body: lanes 0-15 ships, 16-23 defenses.
+    function _residentCount(FleetMission storage m, uint256 unit, uint32[8] memory defenses)
+        private
+        view
+        returns (uint32)
+    {
+        if (unit >= 16) return defenses[unit - 16];
+        // Lane index below 16 maps to a Ship.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        Ship ship = Ship(uint8(unit));
+        return m.targetIsMoon
+            ? _moonShipCounts[m.targetPlanetId][ship]
+            : _shipCounts[m.targetPlanetId][ship];
+    }
+
+    function _undefended(FleetMission storage m) private view returns (bool) {
+        uint32[8] memory defenses = _defenseSnapshot(m.targetPlanetId, m.targetIsMoon);
+        for (uint256 unit; unit < 24; ++unit) {
+            if (_residentCount(m, unit, defenses) != 0) return false;
+        }
+        return true;
     }
 
     function _defenseSnapshot(uint256 planetId, bool isMoon)

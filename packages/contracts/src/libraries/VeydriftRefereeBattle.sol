@@ -126,8 +126,10 @@ library VeydriftRefereeBattle {
 
     event RefereeBattleBypassed(uint256 indexed battleId);
 
-    /// @dev Protection established no combat before enrollment. Existing bounded bounce/return
-    /// settlement remains authoritative; no randomness was ever requested for this battle.
+    /// @dev No randomness was ever requested for this battle; staged settlement finishes it. Either
+    /// protection blocked it (no fight: fleets bounce, CombatProtectionSnapshot.blocked) or nothing
+    /// could defend the target (RefereeBattleUndefended: zero rounds, attacker win, raid). Battle
+    /// seed and request id stay zero, so neither is a "battle happened" flag.
     function bypass(uint256 id) public {
         Job storage j = layout().jobs[id];
         if (j.phase != Phase.Preparing || j.header.length != 0) revert InvalidRefereeLifecycle();
