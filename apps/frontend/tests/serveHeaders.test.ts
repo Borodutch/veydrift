@@ -346,24 +346,21 @@ describe("frontend static server headers", () => {
     expect(referralOgLayout.titleSafeBottom).toBeLessThan(referralOgLayout.codeTop);
     expect(referralOgLayout.codeBottom).toBeLessThan(referralOgLayout.supportingTop);
     expect(referralOgLayout.supportingBottom).toBeLessThan(referralOgLayout.footerTop);
+    // ogSvg still decodes and resizes both planet images through sharp.
+  }, 20_000);
 
+  // Each composite referral render (ogPng, farcasterReferralPng) costs ~170 ms
+  // on the shared dev Mac at load ~100 and grows with contention: 16 concurrent
+  // copies of the old combined test took ~3 s and 32 took up to 4.9 s each. The
+  // CI Mac reached that and timed out at bun's default 5 s (#524), so every
+  // composite render gets its own test and an explicit timeout instead of one
+  // test chaining three.
+  test("renders the referral OG PNG with title and supporting copy inside the safe area", async () => {
+    const meta = await referralMeta();
     const png = await ogPng(meta);
     expect(png.subarray(1, 4).toString()).toBe("PNG");
     expect(png.length).toBeGreaterThan(100_000);
     await expect(sharp(png).metadata()).resolves.toMatchObject({ width: 1200, height: 630 });
-
-    const miniAppPng = await farcasterReferralPng(meta);
-    await expect(sharp(miniAppPng).metadata()).resolves.toMatchObject({
-      width: referralMiniAppLayout.width,
-      height: referralMiniAppLayout.height,
-    });
-    expect(referralMiniAppLayout.width / referralMiniAppLayout.height).toBe(3 / 2);
-    expect(referralMiniAppLayout.contentLeft).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
-    expect(referralMiniAppLayout.width - referralMiniAppLayout.contentLeft - referralMiniAppLayout.contentWidth)
-      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
-    expect(referralMiniAppLayout.contentTop).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
-    expect(referralMiniAppLayout.height - referralMiniAppLayout.contentTop - referralMiniAppLayout.contentHeight)
-      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
 
     const titleOnlyPng = await sharp(Buffer.from(await ogSvg(meta, { omitReferralVisual: true })))
       .png()
@@ -395,13 +392,29 @@ describe("frontend static server headers", () => {
     expect(supportingCopy.maxX).toBeLessThanOrEqual(referralOgLayout.supportingSafeRight);
     expect(supportingCopy.minY).toBeGreaterThanOrEqual(referralOgLayout.supportingTop);
     expect(supportingCopy.maxY).toBeLessThanOrEqual(referralOgLayout.supportingBottom);
+  }, 20_000);
 
+  test("renders the Farcaster referral image at 3:2 inside its safe margins", async () => {
+    const miniAppPng = await farcasterReferralPng(await referralMeta());
+    await expect(sharp(miniAppPng).metadata()).resolves.toMatchObject({
+      width: referralMiniAppLayout.width,
+      height: referralMiniAppLayout.height,
+    });
+    expect(referralMiniAppLayout.width / referralMiniAppLayout.height).toBe(3 / 2);
+    expect(referralMiniAppLayout.contentLeft).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.width - referralMiniAppLayout.contentLeft - referralMiniAppLayout.contentWidth)
+      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.contentTop).toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+    expect(referralMiniAppLayout.height - referralMiniAppLayout.contentTop - referralMiniAppLayout.contentHeight)
+      .toBeGreaterThanOrEqual(referralMiniAppLayout.safeMargin);
+  }, 20_000);
+
+  test("keeps an over-wide referral title inside the OG safe area", async () => {
     const wideTitle = await referralTitlePixels(await ogPng({
-      ...meta,
+      ...(await referralMeta()),
       imageTitle: "WWWWWWWWWWWWWWWWWWWWWWWWWW",
     }));
     expect(wideTitle.maxX).toBeLessThanOrEqual(referralOgLayout.titleSafeRight);
-    // Renders several PNGs: ~3 s on a busy Mac, 3.5 s on the shared CI Mac at load 100-180 (#518).
   }, 20_000);
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
@@ -490,6 +503,10 @@ describe("frontend static server headers", () => {
     expect(output).toContain("Accept invite");
   });
 });
+
+function referralMeta() {
+  return routeMeta({ kind: "referral", code: "secret-invite-code" });
+}
 
 async function referralTitlePixels(png: Buffer) {
   const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
