@@ -89,9 +89,17 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       await frame();
     }
     async function controlGeometry(collapsed) {
-      const geometry = await evaluate(`(() => {
+      const geometry = await evaluate(`(async () => {
         const nav = document.querySelector(${JSON.stringify(desktop)});
         const toggle = document.querySelector(${JSON.stringify(toggle)});
+        // The trusted click leaves the toggle easing back from the global button:active scale(0.97)
+        // (and its hover colours fading in). getBoundingClientRect includes the transform, so on a
+        // starved runner a read mid-transition measured the 47x44 toggle at 46.98x43.98. Read only
+        // once every transition in the rail has finished: they are all finite, and nothing below
+        // starts a new one.
+        let running;
+        while ((running = nav.getAnimations({ subtree:true }).filter(a => a instanceof CSSTransition)).length)
+          await Promise.all(running.map(a => a.finished.catch(() => {})));
         const box = node => {
           const r = node.getBoundingClientRect(), s = getComputedStyle(node);
           return { width:r.width, height:r.height, center:r.x+r.width/2, left:r.left, right:r.right,
@@ -103,7 +111,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
           links:[...nav.querySelectorAll('#desktop-navigation-links a:not([aria-current])')].map(a => ({visual:box(a.firstElementChild), icon:box(a.querySelector('svg'))})),
           account:nav.querySelector('summary') ? box(nav.querySelector('summary')) : null };
       })()`);
-      assert.ok(geometry.target.width >= 44 && geometry.target.height >= 44, 'toggle retains a usable hit area');
+      assert.ok(geometry.target.width >= 44 && geometry.target.height >= 44, 'toggle retains a usable hit area ' + JSON.stringify(geometry.target));
       assert.ok(geometry.target.left >= geometry.rail.left && geometry.target.right <= geometry.rail.right, 'toggle stays inside sidebar');
       for (const link of geometry.links) {
         for (const field of ['width','height','border','background','color','opacity']) {
