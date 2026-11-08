@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
+import { connect } from "./cdp.mjs";
 
 test("Galaxy preserves all 15 slots for sparse captured systems, navigation and reload", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
@@ -13,7 +14,7 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
   const profile = mkdtempSync(join(tmpdir(), "veydrift-galaxy-slots-"));
   const server = await createServer({ cacheDir: `node_modules/.vite-browser/galaxySlots`, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
-  const pending = new Map();
+  let cdp;
   const artifacts = process.env.GALAXY_SLOTS_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
   const measurements = [];
@@ -24,70 +25,10 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
       env: { ...process.env, HOME: process.env.HOME },
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
-    // The page's current URL (from main-frame navigations), so a stalled command says where it stalled.
-    let id = 0, buffered = "", sessionId, pageUrl = "about:blank";
-    // Under a loaded CI Mac one command can take tens of seconds (a cold Vite transform, a starved
-    // renderer), so the cap is generous; waits that poll use a short cap and retry instead (until()).
-    // Commands slower than 5 s, and ones that time out (including retried tries), are reported as
-    // test diagnostics with their expression and page.
-    function send(method, params = {}, { page = true, timeout = 60_000 } = {}) {
-      const commandId = ++id;
-      const what = method + (params.expression ? "(" + JSON.stringify(params.expression.length > 200 ? params.expression.slice(0, 80) + "…" + params.expression.slice(-120) : params.expression) + ")" : "");
-      const started = Date.now();
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(commandId);
-          const error = Object.assign(new Error(what + " timed out after " + timeout / 1000 + "s on " + pageUrl), { timedOut: true });
-          t.diagnostic(error.message);
-          reject(error);
-        }, timeout);
-        pending.set(commandId, { resolve, reject, timer, settled: () => { const ms = Date.now() - started; if (ms > 5_000) t.diagnostic("slow CDP command (" + ms + " ms) on " + pageUrl + ": " + what); } });
-        chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
-      });
-    }
-    chrome.stdio[4].on("data", chunk => {
-      buffered += chunk.toString();
-      let end;
-      while ((end = buffered.indexOf("\0")) >= 0) {
-        const message = JSON.parse(buffered.slice(0, end));
-        buffered = buffered.slice(end + 1);
-        if (message.method === "Page.frameNavigated" && !message.params.frame.parentId) pageUrl = message.params.frame.url.replace(/^https?:\/\/[^/]+/, "");
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer); command.settled();
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
-      }
-    });
+    cdp = connect(t, chrome);
+    const { send, evaluate, until } = cdp;
     await send("Browser.getVersion", {}, { page: false });
-    const { targetId } = await send("Target.createTarget", { url: "about:blank" }, { page: false });
-    ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, { page: false }));
-    await send("Page.enable");
-    async function evaluate(expression, timeout) {
-      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, { timeout });
-      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    }
-    // Polls a short expression until it's true. A try that stalls or fails (a navigation or reload in
-    // flight, a starved renderer) is abandoned and retried, so only the wait's own deadline (well
-    // inside the test's) can fail it, with the expression, page and last error. Tries get 5 s, doubled
-    // after each timeout up to 20 s, so a renderer that stays slow still gets to answer.
-    async function until(expression, deadline = 90_000) {
-      const end = Date.now() + deadline;
-      let last, cap = 5_000;
-      for (;;) {
-        try {
-          if (await evaluate(expression, Math.max(1_000, Math.min(cap, end - Date.now())))) return;
-          last = undefined;
-        } catch (error) {
-          last = error;
-          if (error.timedOut) cap = Math.min(cap * 2, 20_000);
-        }
-        t.signal.throwIfAborted();
-        if (Date.now() > end) throw new Error("Not true after " + deadline / 1000 + "s on " + pageUrl + ": " + expression + (last ? "\nLast try: " + last.message : ""));
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-    }
+    await cdp.openPage();
     const captures = JSON.parse(readFileSync(new URL('./fixtures/galaxySlots.json', import.meta.url), 'utf8'));
     // Select row containers by their leading slot badge, for both empty and planet rows.
     const rowExpression = '[...document.querySelectorAll("main .grid > div")].filter(row => row.children.length > 1 && row.firstElementChild && /^(?:[1-9]|1[0-5])$/.test(row.firstElementChild.textContent.trim()))';
@@ -163,7 +104,7 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
     console.log('Verified ' + measurements.length + ' rendered states / ' + measurements.length * 15 + ' rows');
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    cdp?.close();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
+import { connect } from "./cdp.mjs";
 
 // One width per layout: 320 (narrowest, ellipsis allowed), 390 (no ellipsis from here), 640 (sm), 1024 (lg;
 // the panel caps at max-w-4xl, so wider viewports lay out the same). In-between widths repeated these.
@@ -25,7 +26,7 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
       if (animations) animations.configureServer = undefined;
     } }], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
-  const pending = new Map();
+  let cdp;
   const artifacts = process.env.LEVEL_POPUP_ARTIFACTS;
   const measurements = [];
   try {
@@ -35,48 +36,16 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
       env: process.env,
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
-    let id = 0, buffered = "", sessionId;
-    function send(method, params = {}, page = true) {
-      const commandId = ++id;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(commandId); reject(new Error(method + " timed out")); }, 15_000);
-        pending.set(commandId, { resolve, reject, timer });
-        chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
-      });
-    }
-    chrome.stdio[4].on("data", chunk => {
-      buffered += chunk.toString();
-      let end;
-      while ((end = buffered.indexOf("\0")) >= 0) {
-        const message = JSON.parse(buffered.slice(0, end));
-        buffered = buffered.slice(end + 1);
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer);
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
-      }
-    });
-    await send("Browser.getVersion", {}, false);
-    const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
-    ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
-    await send("Page.enable");
-    async function evaluate(expression) {
-      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    }
+    cdp = connect(t, chrome);
+    const { send, evaluate, until } = cdp;
+    await send("Browser.getVersion", {}, { page: false });
+    await cdp.openPage();
     const settle = () => evaluate("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
     const failures = [];
     for (const width of WIDTHS) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url });
-      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
-      // wait), so a loaded runner can't fail it.
-      while (!(await evaluate("Boolean(window.levelPopup)"))) {
-        t.signal.throwIfAborted();
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      await until("Boolean(window.levelPopup)");
       const cases = await evaluate("window.levelPopup.cases");
       for (let index = 0; index < cases.length; index++) {
         await evaluate(`window.levelPopup.show(${index})`);
@@ -118,7 +87,7 @@ test("level popups fit every structure at every width", { timeout: 180_000 }, as
     }
     assert.deepEqual(failures, []);
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    cdp?.close();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.

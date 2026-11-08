@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
+import { connect } from "./cdp.mjs";
 
 test("Build plan matches the real active Queue at desktop/mobile sizes on both bodies", { timeout: 120_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
@@ -15,7 +16,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
   const profile = mkdtempSync(join(tmpdir(), "veydrift-queue-sizing-"));
   const server = await createServer({ cacheDir: `node_modules/.vite-browser/productionQueueSizing`, logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
-  const pending = new Map();
+  let cdp;
   const artifacts = process.env.QUEUE_SIZING_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
   const measurements = [];
@@ -26,46 +27,14 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
       env: process.env,
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
-    let id = 0, buffered = "", sessionId;
-    function send(method, params = {}, page = true) {
-      const commandId = ++id;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(commandId); reject(new Error(method + " timed out")); }, 15_000);
-        pending.set(commandId, { resolve, reject, timer });
-        chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
-      });
-    }
-    chrome.stdio[4].on("data", chunk => {
-      buffered += chunk.toString();
-      let end;
-      while ((end = buffered.indexOf("\0")) >= 0) {
-        const message = JSON.parse(buffered.slice(0, end));
-        buffered = buffered.slice(end + 1);
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer);
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
-      }
-    });
-    await send("Browser.getVersion", {}, false);
-    const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
-    ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
-    await send("Page.enable");
-    async function evaluate(expression) {
-      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    }
+    cdp = connect(t, chrome);
+    const { send, evaluate, until } = cdp;
+    await send("Browser.getVersion", {}, { page: false });
+    await cdp.openPage();
     async function load(query, width = 1280) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
       await send("Page.navigate", { url: url + "?" + query });
-      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
-      // wait), so a loaded runner can't fail it.
-      while (!(await evaluate('Boolean(document.querySelector("[data-build-plan]"))'))) {
-        t.signal.throwIfAborted();
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      await until('Boolean(document.querySelector("[data-build-plan]"))');
       await evaluate('document.fonts.ready.then(() => Promise.all([...document.images].map(image => image.decode())))');
     }
     const inspect = () => {
@@ -176,7 +145,7 @@ test("Build plan matches the real active Queue at desktop/mobile sizes on both b
     assert.equal(await evaluate('document.querySelector("[data-build-plan] [role=status]").textContent'), 'Wallet request rejected');
     if (artifacts) writeFileSync(join(artifacts, 'measurements.json'), JSON.stringify(measurements, null, 2));
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    cdp?.close();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.

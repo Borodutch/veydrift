@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import preact from "@preact/preset-vite";
 import { freePort } from "./freePort.mjs";
+import { connect } from "./cdp.mjs";
 
 test("Desktop sidebar persists and stays accessible independently of mobile navigation", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
@@ -16,7 +17,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
   const profile = mkdtempSync(join(tmpdir(), "veydrift-sidebar-"));
   const server = await createServer({ cacheDir: `node_modules/.vite-browser/sidebar`, configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome;
-  const pending = new Map();
+  let cdp;
   const artifacts = process.env.SIDEBAR_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
   const measurements = [];
@@ -27,37 +28,10 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
       env: process.env,
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
-    let id = 0, buffered = "", sessionId;
-    function send(method, params = {}, page = true) {
-      const commandId = ++id;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(commandId); reject(new Error(method + " timed out")); }, 15_000);
-        pending.set(commandId, { resolve, reject, timer });
-        chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
-      });
-    }
-    chrome.stdio[4].on("data", chunk => {
-      buffered += chunk.toString();
-      let end;
-      while ((end = buffered.indexOf("\0")) >= 0) {
-        const message = JSON.parse(buffered.slice(0, end));
-        buffered = buffered.slice(end + 1);
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer);
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
-      }
-    });
-    await send("Browser.getVersion", {}, false);
-    const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
-    ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
-    await send("Page.enable");
-    async function evaluate(expression) {
-      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    }
+    cdp = connect(t, chrome);
+    const { send, evaluate, until } = cdp;
+    await send("Browser.getVersion", {}, { page: false });
+    const targetId = await cdp.openPage();
 
     const desktop = 'nav[aria-label="Desktop app sections"]';
     const toggle = desktop + ' button[aria-controls="desktop-navigation-links"]';
@@ -65,12 +39,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     const key = 'veydrift.sidebar.collapsed.v1';
     const frame = () => evaluate('new Promise(requestAnimationFrame)');
     async function mounted() {
-      // Waits as long as it takes: the test's own timeout is the only limit (it aborts the
-      // wait), so a loaded runner can't fail it.
-      while (!await evaluate('Boolean(window.fixture && document.querySelector('+JSON.stringify(desktop)+'))').catch(() => false)) {
-        t.signal.throwIfAborted();
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      await until('Boolean(window.fixture && document.querySelector('+JSON.stringify(desktop)+'))');
       await frame();
     }
     async function click(selector) {
@@ -170,14 +139,12 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     // Restore after full document reload, not merely a Preact rerender.
     // The marker goes with the old document, so mounted() can't see the outgoing one.
     await evaluate('window.beforeReload = true'); await send('Page.reload');
-    while (await evaluate('window.beforeReload === true').catch(() => true)) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 25)); }
+    await until('window.beforeReload !== true');
     await mounted();
     assert.equal(await expanded(),'false');
     // Close the tab and reopen a fresh document on the same origin.
-    await send('Target.closeTarget', {targetId}, false);
-    const reopened=await send('Target.createTarget', {url:'about:blank'}, false);
-    ({sessionId}=await send('Target.attachToTarget',{targetId:reopened.targetId,flatten:true},false));
-    await send('Page.enable');
+    await send('Target.closeTarget', {targetId}, {page:false});
+    await cdp.openPage();
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false});
     await send('Page.navigate',{url}); await mounted();
     assert.equal(await expanded(),'false');
@@ -304,7 +271,7 @@ test("Desktop sidebar persists and stays accessible independently of mobile navi
     await click(toggle); assert.equal(await expanded(),'true');
     if (artifacts) writeFileSync(join(artifacts, "measurements.json"), JSON.stringify(measurements, null, 2));
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    cdp?.close();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.

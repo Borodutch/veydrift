@@ -9,6 +9,7 @@ import { test } from "node:test";
 import preact from "@preact/preset-vite";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
+import { connect } from "./cdp.mjs";
 
 test("Current state surfaces render safe lifecycle and inventory at desktop/mobile sizes", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
@@ -17,7 +18,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
   // Local component proof does not need production animation baking or API proxies.
   const server = await createServer({ cacheDir: `node_modules/.vite-browser/currentState`, configFile: false, plugins: [preact()], logLevel: "error", server: { host: "127.0.0.1", port: await freePort(), strictPort: true } });
   let chrome, backend;
-  const pending = new Map();
+  let cdp;
   const artifacts = process.env.CURRENT_STATE_ARTIFACTS;
   if (artifacts) mkdirSync(artifacts, { recursive: true });
   const measurements = [];
@@ -36,53 +37,16 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
       env: process.env,
       stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
     });
-    let id = 0, buffered = "", sessionId;
-    // Under a loaded CI Mac one awaited step (a cold Vite transform, a starved renderer's frames) can take
-    // tens of seconds, so the cap is generous (as in galaxySlots, #523). Commands slower than 5 s, and one
-    // that times out, are reported as test diagnostics with their expression (#528).
-    function send(method, params = {}, page = true) {
-      const commandId = ++id;
-      const what = method + (params.expression ? "(" + JSON.stringify(params.expression.length > 200 ? params.expression.slice(0, 80) + "…" + params.expression.slice(-120) : params.expression) + ")" : "");
-      const started = Date.now();
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(commandId);
-          const error = new Error(what + " timed out after 60s");
-          t.diagnostic(error.message);
-          reject(error);
-        }, 60_000);
-        pending.set(commandId, { resolve, reject, timer, settled: () => { const ms = Date.now() - started; if (ms > 5_000) t.diagnostic("slow CDP command (" + ms + " ms): " + what); } });
-        chrome.stdio[3].write(JSON.stringify({ id: commandId, method, params, ...(page && sessionId ? { sessionId } : {}) }) + "\0");
-      });
-    }
-    chrome.stdio[4].on("data", chunk => {
-      buffered += chunk.toString();
-      let end;
-      while ((end = buffered.indexOf("\0")) >= 0) {
-        const message = JSON.parse(buffered.slice(0, end));
-        buffered = buffered.slice(end + 1);
-        const command = pending.get(message.id);
-        if (!command) continue;
-        pending.delete(message.id); clearTimeout(command.timer); command.settled();
-        if (message.error) command.reject(new Error(JSON.stringify(message.error)));
-        else command.resolve(message.result);
-      }
-    });
-    await send("Browser.getVersion", {}, false);
-    const { targetId } = await send("Target.createTarget", { url: "about:blank" }, false);
-    ({ sessionId } = await send("Target.attachToTarget", { targetId, flatten: true }, false));
-    await send("Page.enable");
+    cdp = connect(t, chrome);
+    const { send, evaluate, until } = cdp;
+    await send("Browser.getVersion", {}, { page: false });
+    await cdp.openPage();
     await send("Page.bringToFront");
-    async function evaluate(expression) {
-      const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-      assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails));
-      return result.result.value;
-    }
     await send("Page.navigate", { url });
-    // Polls until the fixture is up; only the test's own timeout bounds it, so a loaded runner can't fail it.
-    // Also wait for load: its pageshow makes the store re-read every resource (resume recovery). On a loaded
-    // runner that can land mid-step, so let it fire and settle before the first one (#528).
-    while (!(await evaluate("Boolean(window.fixture) && document.readyState === 'complete'"))) { t.signal.throwIfAborted(); await new Promise(r => setTimeout(r, 50)); }
+    // Waits until the fixture is up. Also wait for load: its pageshow makes the store re-read every resource
+    // (resume recovery). On a loaded runner that can land mid-step, so let it fire and settle before the first
+    // one (#528). The deadline stays well inside the test's 300 s timeout.
+    await until("Boolean(window.fixture) && document.readyState === 'complete'", 240_000);
     await evaluate('fixture.settled()');
     for (const width of [390, 1280]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });
@@ -255,7 +219,7 @@ test("Current state surfaces render safe lifecycle and inventory at desktop/mobi
     await evaluate('supplyPreload.dispose()');
     console.log('PASS mounted Supply readiness across pending/ready chain changes');
   } finally {
-    for (const command of pending.values()) clearTimeout(command.timer);
+    cdp?.close();
     if (chrome && chrome.exitCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.
