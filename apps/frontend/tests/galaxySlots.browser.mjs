@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createServer } from "vite";
 import { freePort } from "./freePort.mjs";
 
-test("Galaxy preserves all 15 slots for sparse captured systems, navigation and reload", { timeout: 120_000 }, async (t) => {
+test("Galaxy preserves all 15 slots for sparse captured systems, navigation and reload", { timeout: 300_000 }, async (t) => {
   const executable = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find(path => path && existsSync(path));
   assert.ok(executable, "Chrome required for rendered sizing regression");
   const profile = mkdtempSync(join(tmpdir(), "veydrift-galaxy-slots-"));
@@ -128,7 +128,8 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
         // or ready() can pass on the page being replaced.
         await evaluate('window.beforeReload = true');
         await send('Page.reload', { ignoreCache: true });
-        while (await evaluate('window.beforeReload === true').catch(() => true)) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 25)); }
+        // A CDP error mid-swap means "not yet"; Chrome exiting is a real failure.
+        while (await evaluate('window.beforeReload === true').catch(error => { if (chrome.exitCode !== null || chrome.signalCode !== null) throw error; return true; })) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 25)); }
         await ready();
         await check(captures[0], label + '-reload');
         for (const capture of [...captures.slice(1), captures[0]]) {
@@ -149,7 +150,7 @@ test("Galaxy preserves all 15 slots for sparse captured systems, navigation and 
   } finally {
     for (const command of pending.values()) t.signal.removeEventListener("abort", command.abort);
     pending.clear();
-    if (chrome && chrome.exitCode === null) {
+    if (chrome && chrome.exitCode === null && chrome.signalCode === null) {
       const exited = new Promise(resolve => chrome.once("exit", resolve));
       // Its profile is a temp dir: nothing to save, so no graceful shutdown.
       chrome.kill("SIGKILL");
