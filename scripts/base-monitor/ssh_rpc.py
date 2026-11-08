@@ -47,7 +47,8 @@ def request(ssh, payload, timeout=8):
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             timeout=timeout, check=False)
     if result.returncode or len(result.stdout) > 16384:
-        raise ValueError('node SSH RPC unavailable')
+        # rc 255 = SSH itself failed, 124 = the remote `timeout 7` fired.
+        raise ValueError('node SSH RPC unavailable (rc %d)' % result.returncode)
     body = json.loads(result.stdout)
     if body.get('hold'):
         error = ValueError('node quota hold')

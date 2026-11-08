@@ -336,12 +336,36 @@ class MonitorTests(unittest.TestCase):
         x['resources'].update(container_node='unknown', syncing='unknown', disk_pct='garbled' * 600,
                               node_critical_errors='')
         text = m.transition(s, x, 0)['text']
-        for line in ("can't read op-node container status", "can't read execution client sync status",
+        self.assertNotIn('sync status', text)  # one unreadable sync sample is not an alert
+        self.assertEqual(m.describe('syncing', x, s), "can't read execution client sync status")
+        for line in ("can't read op-node container status",
                      "can't read chain disk usage", "can't read op-node logs (panic/fatal errors)"):
             self.assertIn(line, text)
         for wrong in ('OOM-killed', 'reports it is syncing', '80% full', 'logged panic', 'garbled'):
             self.assertNotIn(wrong, text)
         self.assertLess(len(text), 3900)
+
+    def test_sync_unreadable_needs_three_runs_and_keeps_real_incident(self):
+        s, x = {}, healthy()
+        x['resources']['syncing'] = 'unknown'
+        for now in (0, 1):
+            m.transition(s, x, now)
+            self.assertFalse(s['incidents']['syncing']['active'])
+        x['resources']['syncing'] = 'false'
+        m.transition(s, x, 2)  # a good read resets the streak
+        x['resources']['syncing'] = 'unknown'
+        for now in (3, 4):
+            m.transition(s, x, now)
+        self.assertFalse(s['incidents']['syncing']['active'])
+        m.transition(s, x, 5)
+        self.assertTrue(s['incidents']['syncing']['active'])
+        # A real syncing answer still alerts on the first run, and unreadable samples don't clear it.
+        s, x = {}, healthy()
+        x['resources']['syncing'] = 'true'
+        self.assertIn('execution client reports it is syncing', m.transition(s, x, 0)['text'])
+        x['resources']['syncing'] = 'unknown'
+        m.transition(s, x, 1)
+        self.assertTrue(s['incidents']['syncing']['active'])
 
     def test_disk_value_is_the_parsed_number(self):
         s, x = {}, healthy()

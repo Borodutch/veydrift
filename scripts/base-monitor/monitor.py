@@ -195,14 +195,20 @@ def collect(health_dir, state=None, persist=lambda state: None):
     # eth_syncing moved from the SSH script to the same guarded local slot.
     # Thus a local 429 suppresses BOTH follow-up RPCs, including within this run.
     if sample['ssh_ok']:
+        probe_started = time.monotonic()
         try:
             code, response = holds.call('local', lambda: ssh_rpc.request(SSH,
                 {'jsonrpc': '2.0', 'id': 62, 'method': 'eth_syncing', 'params': []}))
             if code != 200 or not isinstance(response, dict) or response.get('id') != 62 or 'error' in response:
                 raise ValueError('sync probe unavailable')
             sample['resources']['syncing'] = 'false' if response.get('result') is False else 'true'
-        except Exception:
+        except Exception as error:
             sample['resources']['syncing'] = 'unknown'
+            if state is not None:
+                # Why the sync read failed; only our own fixed-text ValueErrors are kept verbatim.
+                reason = str(error)[:80] if type(error) is ValueError else type(error).__name__
+                state['lastSyncError'] = {'at': int(time.time()), 'error': reason,
+                                          'seconds': round(time.monotonic() - probe_started, 1)}
     # Public health has no signer balance. Read the public resolver address, never signer secrets.
     try:
         address = sample['apps'][HOSTS[0]]['body']['missionResolution']['resolverAddress']
@@ -258,7 +264,15 @@ def signals(sample, state, now):
             else:
                 out['restarts-' + name] = (None, 1)
             add('oom-' + name, len(parts) != 4 or parts[3] != 'false')
-        add('syncing', m.get('syncing') != 'false')
+        # A real "syncing" answer alerts at once; an unreadable one (a fresh SSH session that
+        # timed out on a loaded host) needs 3 runs in a row, like the other probe-unavailable keys.
+        # An unreadable sample never recovers an incident that is already active.
+        if m.get('syncing') in ('true', 'false'):
+            add('syncing', m['syncing'] == 'true')
+        elif state.get('incidents', {}).get('syncing', {}).get('active'):
+            out['syncing'] = (None, 3)
+        else:
+            add('syncing', True, 3)
         for key, limit in [('disk_pct', 80), ('execution_anon_pct', 85), ('execution_psi_avg10', 10),
                            ('failed_units', 1), ('node_reset_events', 3), ('node_critical_errors', 1)]:
             try:
