@@ -50,4 +50,53 @@ class Tests(unittest.TestCase):
   self.assertEqual(e,m.transition(s,x,10))
   m.acknowledge(s,e['eventId'],'12345',20);self.assertIsNone(m.transition(s,x,30));x['resources']['disk_pct']='39';r=m.transition(s,x,40);self.assertIn('OK again',r['text'])
   m.acknowledge(s,r['eventId'],'12346',50);self.assertIsNone(m.transition(s,x,60))
+ def test_curl_transport_failure_retries_once(self):
+  body=json.dumps({'ok':True})
+  def run_factory(results):
+   def run(argv,**kw):
+    rc=results.pop(0)
+    if rc=='timeout':raise subprocess.TimeoutExpired(argv,8)
+    if rc==0:Path(argv[argv.index('--output')+1]).write_text(body)
+    return subprocess.CompletedProcess(argv,rc,'200' if rc==0 else '000')
+   return run
+  with patch.object(health_http.subprocess,'run',side_effect=run_factory([56,0])) as run:
+   self.assertEqual(health_http.fetch('https://api-test.veydrift.com/health',m.retry_seconds,retry_delay=0),(200,{'ok':True}))
+   self.assertEqual(run.call_count,2)
+  with patch.object(health_http.subprocess,'run',side_effect=run_factory(['timeout',28])) as run:
+   with self.assertRaises(health_http.TransportError) as c:health_http.fetch('https://api-test.veydrift.com/health',m.retry_seconds,retry_delay=0)
+   self.assertIn('curl exit 28',str(c.exception));self.assertEqual(run.call_count,2)
+  with patch.object(health_http.subprocess,'run',side_effect=run_factory([7,0])),patch.object(health_http.time,'sleep') as sleep:
+   health_http.fetch('https://api-test.veydrift.com/health',m.retry_seconds,retry_delay=3);sleep.assert_called_once_with(3)
+  with patch.object(health_http.subprocess,'run',side_effect=run_factory([7,0])) as run:
+   with self.assertRaises(health_http.TransportError):health_http.fetch('https://api-test.veydrift.com/health',m.retry_seconds,retry=False)
+   self.assertEqual(run.call_count,1)
+ def test_curl_http_status_failure_not_retried(self):
+  with patch.object(health_http.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'502')) as run,patch.object(health_http.time,'sleep') as sleep:
+   with self.assertRaises(health_http.HealthError) as c:health_http.fetch('https://api.veydrift.com/health',m.retry_seconds)
+   self.assertEqual(str(c.exception),'health HTTP 502');self.assertEqual(run.call_count,1);sleep.assert_not_called()
+ def test_collect_skips_app_retry_when_late(self):
+  calls=[]
+  def fetch(url,_,retry=True):calls.append(retry);raise health_http.TransportError('x')
+  def run(*a,**kw):clock[0]+=m.APP_RETRY_BUDGET_SECONDS+1;raise OSError()
+  clock=[1000.0]
+  with patch.object(m.time,'monotonic',side_effect=lambda:clock[0]),patch.object(m.subprocess,'run',side_effect=run),patch.object(m,'load_health',side_effect=OSError()),patch.object(health_http,'fetch',side_effect=fetch):
+   m.collect(m.HERE.parent/'base-node',{})
+  self.assertEqual(calls,[False,False])
+  calls.clear()
+  with patch.object(m.subprocess,'run',side_effect=OSError()),patch.object(m,'load_health',side_effect=OSError()),patch.object(health_http,'fetch',side_effect=fetch):
+   m.collect(m.HERE.parent/'base-node',{})
+  self.assertEqual(calls,[True,True])
+ def test_collect_records_app_error_without_secrets(self):
+  def fetch(url,_,retry=True):
+   if 'api-test' in url:raise health_http.TransportError('health transport unavailable (curl exit 7 after 0s)')
+   raise OSError('SECRET')
+  s={}
+  with patch.object(m.subprocess,'run',side_effect=OSError('SECRET')),patch.object(m,'load_health',side_effect=OSError('SECRET')),patch.object(health_http,'fetch',side_effect=fetch):
+   out=m.collect(m.HERE.parent/'base-node',s)
+  self.assertEqual({h:a['code'] for h,a in out['apps'].items()},{h:0 for h in m.HOSTS})
+  self.assertEqual(s['lastAppError']['host'],'api-test.veydrift.com');self.assertIn('curl exit 7',s['lastAppError']['error'])
+  s2={}
+  with patch.object(m.subprocess,'run',side_effect=OSError('SECRET')),patch.object(m,'load_health',side_effect=OSError('SECRET')),patch.object(health_http,'fetch',side_effect=OSError('SECRET')):
+   m.collect(m.HERE.parent/'base-node',s2)
+  self.assertEqual(s2['lastAppError']['error'],'OSError');self.assertNotIn('SECRET',json.dumps(s2))
 if __name__=='__main__': unittest.main()

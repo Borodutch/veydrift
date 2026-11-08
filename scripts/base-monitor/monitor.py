@@ -30,6 +30,11 @@ STALE_HELD_SECONDS = 86400
 MAX_RETIRED = 32
 MAX_STATE_BYTES = 262144
 HOSTS = ('api.veydrift.com', 'api-test.veydrift.com')
+# A /health transport retry costs up to 10 s more (2 s pause + 8 s curl). Allow it only while
+# collect() is under this many seconds. Before the apps, collect() spends at most 100 s
+# (45 SSH + 55 node), and after a retried probe at most 8 s (other app) + 2x8 s (RPC) remain,
+# so the worst case stays 132 s, inside job.js's 150 s exec timeout.
+APP_RETRY_BUDGET_SECONDS = 90
 REASONS = {'confirmed-retention-full', 'journal-storage-full', 'canonical-reconciliation-required',
            'recovery-reconciliation-required', 'signing-reservation-unresolved', 'unresolved-intent', 'active-window-full'}
 # These blocks clear on the resolver's ~30s retry while missions keep settling. Alert only when one
@@ -147,6 +152,7 @@ def load_health(directory):
 
 
 def collect(health_dir, state=None, persist=lambda state: None):
+    started = time.monotonic()
     holds = ProbeHolds(state if state is not None else {}, persist)
     sample = {'ssh_ok': False, 'resources': {}, 'node': {'status': 'probe-unavailable'}, 'apps': {}}
     try:
@@ -176,11 +182,16 @@ def collect(health_dir, state=None, persist=lambda state: None):
     except Exception:
         pass
     for index, host in enumerate(HOSTS):
+        retry = time.monotonic() - started <= APP_RETRY_BUDGET_SECONDS
         try:
-            code, body = holds.call('app' + str(index), lambda: health_http.fetch('https://' + host + '/health', retry_seconds))
+            code, body = holds.call('app' + str(index), lambda: health_http.fetch('https://' + host + '/health', retry_seconds, retry=retry))
             sample['apps'][host] = {'code': code, 'body': body}
-        except Exception:
+        except Exception as error:
             sample['apps'][host] = {'code': 0}
+            if state is not None:
+                # Why the last app probe failed; only fixed-text HealthError messages are kept.
+                reason = str(error)[:120] if isinstance(error, health_http.HealthError) else type(error).__name__
+                state['lastAppError'] = {'at': int(time.time()), 'host': host, 'error': reason}
     # eth_syncing moved from the SSH script to the same guarded local slot.
     # Thus a local 429 suppresses BOTH follow-up RPCs, including within this run.
     if sample['ssh_ok']:
