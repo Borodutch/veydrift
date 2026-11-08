@@ -8,7 +8,7 @@ import { batchSupplySourcesFromSnapshot, batchSupplySourceForPlanet, missionInve
 import { buildBatchSupplyPlan, maximumBatchSupplyResource } from "../src/batchSupplyPlanner";
 import { emptyMissionShips } from "../src/galaxyActions";
 import { currentResources } from "../src/currentResources";
-import { fetchGameApiJson, type ChainShipyardState, type ManagedPlanetResponse, type SupplySourcesResponse } from "../src/walletFlow";
+import { fetchGameApiJson, inventoryReadinessBlocker, type ChainShipyardState, type ManagedPlanetResponse, type SupplySourcesResponse } from "../src/walletFlow";
 import { fetchGameApiJson as legacyFetch, playerPlanetTacticalSignals as legacySignals } from "./fixtures/legacyInventory65";
 import { playerPlanetTacticalSignals } from "../src/components/InspectPages";
 const owner = "0x2222222222222222222222222222222222222222";
@@ -33,6 +33,20 @@ function fixture() {
 const normal = { originPlanetId: "1", origin, target, ships: { ...emptyMissionShips(), largeCargo: 1 }, mission: "transport", speedPercent: 100, cargo: { metal: "10000" } };
 function supply(store: BackendDataStore, orders: ReturnType<typeof buildBatchSupplyPlan>["orders"], targetIsMoon = false) {
   return prepareBatchSupplyConfirmation({ queries: store.queries, account: owner, target, targetIsMoon, orders, shipTypesBySource: {}, levelSupply: undefined, levelPreview: undefined, isCurrent: () => true, onPreview() {}, onShortfall() {} });
+}
+/** Readers coalesce the indexer status snapshot for 250 ms (server.ts indexedReadSnapshot), and the
+ * shipyard route labels its 200 response `stale` from that snapshot while gating on the uncached
+ * projection. On a fast machine the whole test fits in the first window, so the label is always the
+ * initial healthy one. On a slow CI machine an invalidated-window read re-caches the stale snapshot,
+ * and a recovered read within the next 250 ms still carries it: fail-closed lag, not a gate bug (#529).
+ * Wait for the recovered label, bounded well below the test timeout. A rejected read (gate regression)
+ * throws immediately. /supply-sources shares the same coalesced snapshot, so one poll covers both. */
+async function untilShipyardReady(store: BackendDataStore) {
+  const deadline = Date.now() + 1_500;
+  while (inventoryReadinessBlocker(await store.shipyard(owner, "1", { fresh: true }))) {
+    if (Date.now() > deadline) throw new Error("Recovered shipyard never became launch-ready.");
+    await Bun.sleep(50);
+  }
 }
 
 test("real cached HTTP/store invalidation retains six canonical ships only as display, never send authority", async () => {
@@ -86,6 +100,7 @@ test("real cached HTTP/store invalidation retains six canonical ships only as di
     expect(f.indexer.resourceProjectionContext().canonicalBaseline).toBe(false);
     expect(f.indexer.moonResourcesAsOfNow("1")).toBeNull();
     f.indexer.recordResourceProjectionWatermark("3", "1000", "0x" + "b".repeat(64));
+    await untilShipyardReady(f.store);
     await prepareMissionLaunchInventory(f.store, owner, normal);
     await supply(f.store, orders);
   } finally { f.close(); }
