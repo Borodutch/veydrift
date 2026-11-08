@@ -44,6 +44,18 @@ class MonitorTests(unittest.TestCase):
         self.assertIn('finalized-local-lag', event['text'])
         self.assertFalse(s['incidents']['node-finalized-local-lag']['notified'])
 
+    def test_single_deploy_502_does_not_alert_but_two_do(self):
+        s, x = {}, healthy()
+        self.assertIsNone(m.transition(s, x, 0))
+        down = copy.deepcopy(x)
+        for host in m.HOSTS:
+            down['apps'][host] = {'code': 0}
+        self.assertIsNone(m.transition(s, down, 300))  # one run inside a deploy's writer boot
+        self.assertIsNone(m.transition(s, x, 600))
+        self.assertIsNone(m.transition(s, down, 900))
+        event = m.transition(s, down, 1200)
+        self.assertEqual(event['changes'], [[host + ':http', True] for host in sorted(m.HOSTS)])
+
     def test_two_admission_and_single_recovery(self):
         s, x = {}, healthy()
         mission(x)['admission']['blockedReason'] = 'unresolved-intent'

@@ -250,7 +250,9 @@ def signals(sample, state, now):
         prefix = host + ':'
         app = sample.get('apps', {}).get(host, {})
         b = app.get('body')
-        add(prefix + 'http', app.get('code') != 200)
+        # Two consecutive runs: each backend deploy (stop_first) answers /health 502 for ~20-40 s
+        # while the writer worker boots; a single failed sample is a deploy, not an outage.
+        add(prefix + 'http', app.get('code') != 200, 2)
         if not isinstance(b, dict):
             if host == HOSTS[0]:
                 state['progress'] = {}
