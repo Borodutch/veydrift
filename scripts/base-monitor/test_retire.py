@@ -115,6 +115,26 @@ class RetireTests(unittest.TestCase):
         self.assertIn('🔴 execution client reports it is syncing', m.transition(s, x, DAY + 200)['text'])
         self.assertLessEqual(len(s['retired']), m.MAX_RETIRED)
 
+    def test_full_legacy_custody_ages_out_while_an_uncertain_pending_waits(self):
+        s, x = {}, healthy()
+        x['resources']['disk_pct'] = '81'
+        e = m.transition(s, x, 0)
+        m.claim(s, e['eventId'], 0)
+        m.finish_send(s, e['eventId'])
+        legacy = [format(i, '024x') for i in range(m.MAX_HELD)]
+        s['held'] = [{'eventId': i, 'text': 'legacy', 'changes': [['syncing', True]]} for i in legacy]
+        fenced = copy.deepcopy(s)
+        fenced['sender'] = {'eventId': 'f' * 24, 'claimedAt': 50}
+        m.transition(fenced, x, 100)  # the sender-held early return starts the clock too
+        self.assertEqual(fenced['heldSeen'], {i: 100 for i in legacy})
+        self.assertIs(m.transition(s, x, 100), s['pending'])  # capacity full: pending cannot migrate
+        self.assertEqual(s['heldSeen'], {i: 100 for i in legacy})
+        self.assertIs(m.transition(s, x, DAY), s['pending'])
+        notice = m.transition(s, x, DAY + 100)  # a day after first sighting the legacy events age out
+        self.assertFalse(set(legacy) & {h['eventId'] for h in s['held']})
+        self.assertIn('Gave up on', notice['text'])
+        self.assertIn(legacy[-1], notice['text'])  # 33 retirements; the bounded history keeps the newest
+
     def test_cli_retire_stale(self):
         import json, subprocess, sys, tempfile
         from pathlib import Path

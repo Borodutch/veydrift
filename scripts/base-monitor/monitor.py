@@ -231,10 +231,16 @@ def signals(sample, state, now):
             parts = m.get('container_' + name, '').split('|')
             add('container-' + name, len(parts) != 4 or parts[:2] != ['running', 'healthy'])
             # RestartCount is cumulative: alert when it grows, recover an hour after the last restart.
-            if len(parts) == 4 and parts[2].isdigit():
+            # isdigit() alone accepts '²' and other non-ASCII digits that int() rejects.
+            if len(parts) == 4 and parts[2].isascii() and parts[2].isdigit():
                 count, prev = int(parts[2]), seen.get(name)
-                if prev is None or count < prev['count']:  # first sample or container recreated
+                if prev is None:
                     seen[name] = {'count': count, 'at': None}
+                elif count < prev['count']:
+                    # Recreated: new baseline, but a restart in the last hour still recovers on its own clock.
+                    seen[name] = {'count': count, 'at': prev.get('at')}
+                    if 'from' in prev:  # keep the alerted counts for its OK again line
+                        seen[name].update({'from': prev['from'], 'to': prev.get('to', prev['count'])})
                 elif count > prev['count']:
                     seen[name] = {'count': count, 'at': now, 'from': prev['count']}
                 add('restarts-' + name, seen[name]['at'] is not None and now - seen[name]['at'] < 3600)
@@ -412,7 +418,7 @@ def describe(key, sample, state, active=True):
         if kind == 'oom':
             return what + ' container was OOM-killed'
         r = state.get('restartSeen', {}).get(name, {})
-        return what + ' container restarted' + (' (restart count %s → %s)' % (r['from'], r['count']) if 'from' in r else '')
+        return what + ' container restarted' + (' (restart count %s → %s)' % (r['from'], r.get('to', r['count'])) if 'from' in r else '')
     if key.startswith('node-') and key.count('-') >= 2:
         tag, status = key[5:].split('-', 1)
         if status in TAG_STATUS:
@@ -448,6 +454,8 @@ def transition(state, sample, now):
         item['active'] = item['streak'] >= threshold if bad else False
     # Retain uncertain attempts without blocking unrelated signal delivery.
     held = state.setdefault('held', [])
+    # Before every early return: legacy held events must start aging even while capacity is full.
+    note_held_seen(state, now)
     if state.get('sender'):
         return state.get('pending')  # sampling progresses; external send still fenced
     retire_aged(state, now)  # before the capacity check, so aged custody frees a slot
@@ -458,10 +466,7 @@ def transition(state, sample, now):
             return state['pending']
         held.append(state.pop('pending'))
         retire_aged(state, now)  # an already-aged migration gets no separate escalation notice
-    # Age anchor for held events without a claim time, kept outside the immutable custody records.
-    seen = state.get('heldSeen', {})
-    state['heldSeen'] = {e['eventId']: seen.get(e['eventId'], now) for e in held
-                         if not isinstance((e.get('delivery') or {}).get('claimedAt'), (int, float))}
+    note_held_seen(state, now)
     fenced = {key for event in held for key, _ in event['changes']}
     changes = []
     for key, item in sorted(incidents.items()):
@@ -505,7 +510,11 @@ def transition(state, sample, now):
         text = (text + '\n' if changes or escalation else head) + 'Gave up on ' + str(len(retired)) + \
             ' unconfirmed alert(s) after ' + str(STALE_HELD_SECONDS // 3600) + 'h (' + \
             ', '.join(r['eventId'] for r in retired) + '); they will re-alert if still true'
-    state['pending'] = {'eventId': event, 'text': text + ('\n' + str(len(held)) + ' earlier alert(s) have unconfirmed delivery' if held else ''), 'changes': changes,
+    if held:
+        text += '\n' + str(len(held)) + ' earlier alert(s) have unconfirmed delivery'
+    # Custody notices name event IDs; this line lets the operator match them to the original message.
+    text += '\nid: ' + event
+    state['pending'] = {'eventId': event, 'text': text, 'changes': changes,
                         'delivery': {'status': 'ready'}}
     if escalation or not changes:
         state['pending']['diagnostic'] = True
@@ -607,6 +616,13 @@ def release_not_delivered(state, event, evidence, now):
     pending['delivery'] = {'status': 'ready'}
     state['lastReconciliation'] = {'eventId': event, 'outcome': 'proven-not-delivered',
                                    'evidence': evidence, 'at': now}
+
+
+def note_held_seen(state, now):
+    # Age anchor for held events without a claim time, kept outside the immutable custody records.
+    seen = state.get('heldSeen', {})
+    state['heldSeen'] = {e['eventId']: seen.get(e['eventId'], now) for e in state.get('held', [])
+                         if not isinstance((e.get('delivery') or {}).get('claimedAt'), (int, float))}
 
 
 def held_age(state, event, now):

@@ -295,6 +295,42 @@ class MonitorTests(unittest.TestCase):
         x['resources']['container_node'] = 'running|healthy|0|false'  # recreated: not a restart
         self.assertIsNone(m.transition(s, x, 3800))
 
+    def test_recreate_within_the_hour_does_not_recover_early(self):
+        s, x = {}, healthy()
+        x['resources']['container_node'] = 'running|healthy|5|false'
+        self.assertIsNone(m.transition(s, x, 0))
+        x['resources']['container_node'] = 'running|healthy|7|false'
+        m.acknowledge(s, m.transition(s, x, 100)['eventId'], '1', 100)
+        x['resources']['container_node'] = 'running|healthy|0|false'  # recreated 10 min after the restart
+        for tick in (700, 1000, 3600):
+            self.assertIsNone(m.transition(s, x, tick))
+        r = m.transition(s, x, 3700)  # an hour after the last restart, not at the recreate
+        self.assertIn('🟢 OK again: op-node container restarted (restart count 5 → 7)', r['text'])
+        m.acknowledge(s, r['eventId'], '2', 3700)
+        x['resources']['container_node'] = 'running|healthy|1|false'  # restarts count from the new baseline
+        self.assertIn('🔴 op-node container restarted (restart count 0 → 1)', m.transition(s, x, 3800)['text'])
+
+    def test_non_ascii_restart_count_is_unreadable_not_a_crash(self):
+        s, x = {}, healthy()
+        for count in ('²', '٣', '５'):  # str.isdigit() is True for all three, int() rejects the first
+            x['resources']['container_node'] = 'running|healthy|' + count + '|false'
+            self.assertIsNone(m.transition(s, x, 0))
+            self.assertEqual(m.signals(x, s, 0)['restarts-node'], (None, 1))
+        self.assertNotIn('node', s['restartSeen'])
+
+    def test_every_message_carries_its_event_id(self):
+        s, x = {}, healthy()
+        x['resources']['disk_pct'] = '81'
+        e = m.transition(s, x, 0)
+        self.assertTrue(e['text'].startswith('Base node monitor\n'))
+        self.assertTrue(e['text'].endswith('\nid: ' + e['eventId']))
+        m.claim(s, e['eventId'], 0)
+        m.finish_send(s, e['eventId'])
+        notice = m.transition(s, x, 1)  # custody escalation names the held alert by the same id
+        self.assertIn('Not sure alert ' + e['eventId'], notice['text'])
+        self.assertTrue(notice['text'].startswith('Base node monitor\n'))
+        self.assertTrue(notice['text'].endswith('\nid: ' + notice['eventId']))
+
     def test_unreadable_values_are_not_described_as_failures(self):
         s, x = {}, healthy()
         x['resources'].update(container_node='unknown', syncing='unknown', disk_pct='garbled' * 600,

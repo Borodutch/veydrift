@@ -117,8 +117,11 @@ An old pending event without delivery metadata is unknown, never ready.
 RestartCount is cumulative, so restarts-<container> alerts only when the count grows
 between samples (restartSeen keeps the last count) and recovers 1h after the last
 increase. A lower count means the container was recreated: the baseline resets
-silently. Messages are plain English ("Base node monitor" header, 🔴 / 🔴 Still: /
-🟢 OK again:). A reading that can't be parsed raises the same key but is described as
+silently, but a restart alert from the last hour still recovers 1h after that restart.
+A count that is not plain ASCII digits is treated as unreadable. Messages are plain
+English ("Base node monitor" header, 🔴 / 🔴 Still: / 🟢 OK again:) and end with an
+"id: <eventId>" line, the same ID custody notices ("Not sure alert ...", "Gave up on ...")
+quote. A reading that can't be parsed raises the same key but is described as
 "can't read ...", and only parsed numbers are quoted, never raw upstream text.
 
 ## Deployment (activation owner only)
