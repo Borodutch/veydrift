@@ -110,7 +110,7 @@ describe("Opt-in Supply fleets", () => {
         const plan = buildBatchSupplyPlan({ ...options, requested: { ...options.requested, metal } });
         if (plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && Object.values(plan.missing).every(value => value === 0)) brute = metal;
       }
-      const maximum = maximumBatchSupplyResource(options, "metal");
+      const maximum = maximumBatchSupplyResource(options, "metal", Infinity);
       expect(maximum).toBe(brute);
       const plan = buildBatchSupplyPlan({ ...options, requested: { ...options.requested, metal: maximum } });
       expect(plan.orders[0]!.ships.lightFighter).toBe(3);
@@ -141,7 +141,7 @@ describe("Opt-in Supply fleets", () => {
           const plan = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: value } });
           if (plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0)) expected = value;
         }
-        expect(maximumBatchSupplyResource(options, resource)).toBe(expected);
+        expect(maximumBatchSupplyResource(options, resource, Infinity)).toBe(expected);
       }
     }
     // Exhaustive: ~0.2 s on an idle Mac, 2.3 s on the shared CI Mac at load 100-180 (#518).

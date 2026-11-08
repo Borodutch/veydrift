@@ -131,8 +131,9 @@ export function maximumBatchSupplyResource(
   options: BatchSupplyOptions,
   resource: keyof SupplyResources,
   budgetMs = 150,
+  now: () => number = () => performance.now(),
 ): number {
-  const deadline = performance.now() + budgetMs;
+  const deadline = now() + budgetMs;
   const requested = normalizeSupplyResources(options.requested);
   const baseline = buildBatchSupplyPlan(options);
   const otherResources = (["metal", "crystal", "deuterium"] as const).filter(key => key !== resource);
@@ -156,7 +157,8 @@ export function maximumBatchSupplyResource(
   // empires, but huge fuel-bound fleets on long routes can need tens of thousands of steps. Past the
   // budget, settle for a bisected launchable total so Max stays an instant click.
   while (upper >= 0) {
-    if (performance.now() > deadline) return bisectedBatchSupplyMaximum(options, requested, resource, upper, missionLimit, deadline + budgetMs);
+    // One clock read per traced interval: tests count these reads to bound the search's work.
+    if (now() > deadline) return bisectedBatchSupplyMaximum(options, requested, resource, upper, missionLimit, deadline + budgetMs, now);
     const range = new SupplyMaxRange(upper);
     const plan = planBatchSupply({ ...options, requested: { ...requested, [resource]: upper } }, { resource, range });
     // Within this traced interval every delivered amount is affine in the
@@ -187,7 +189,8 @@ export function maximumBatchSupplyResource(
 /**
  * Max fallback once the exact search runs out of time: binary search for a launchable total.
  * ponytail: feasibility is not monotone, so this can settle below the exact maximum; it only runs
- * for fleets the exact search cannot finish within the budget, and its answer always launches.
+ * for fleets the exact search cannot finish within the budget. Like the exact search, it keeps the
+ * request when it finds nothing launchable; otherwise its answer always launches.
  */
 function bisectedBatchSupplyMaximum(
   options: BatchSupplyOptions,
@@ -196,21 +199,28 @@ function bisectedBatchSupplyMaximum(
   upper: number,
   missionLimit: number,
   deadline: number,
+  now: () => number,
 ): number {
+  const plan = (value: number) => buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: value } });
+  const clean = (result: BatchSupplyPlan) => result.orders.length <= missionLimit && !result.sourceLimitReached
+    && result.blockedSources.length === 0 && resourceTotal(result.missing) === 0;
   const launchable = (value: number) => {
-    const plan = buildBatchSupplyPlan({ ...options, requested: { ...requested, [resource]: value } });
-    return plan.orders.length > 0 && plan.orders.length <= missionLimit && !plan.sourceLimitReached
-      && plan.blockedSources.length === 0 && resourceTotal(plan.missing) === 0;
+    const result = plan(value);
+    return result.orders.length > 0 && clean(result);
   };
-  if (!launchable(0)) return requested[resource];
-  let low = 0, high = upper;
+  const zero = plan(0);
+  // An empty draft has nothing to launch at 0 yet, but it is still a valid floor to search up from.
+  if (!clean(zero)) return requested[resource];
+  const zeroLaunches = zero.orders.length > 0;
+  // Never lower a request that already launches: bisection can land on an earlier island.
+  let low = requested[resource] <= upper && launchable(requested[resource]) ? requested[resource] : 0, high = upper;
   // Every accepted value launches, so stopping at the deadline still returns a launchable total.
-  while (low < high && performance.now() <= deadline) {
+  while (low < high && now() <= deadline) {
     const value = low + Math.ceil((high - low) / 2);
     if (launchable(value)) low = value;
     else high = value - 1;
   }
-  return low;
+  return low > 0 || zeroLaunches ? low : requested[resource];
 }
 
 /** Shared allocation inputs, not display inventory. Fixed/all fleets stay explicit. */

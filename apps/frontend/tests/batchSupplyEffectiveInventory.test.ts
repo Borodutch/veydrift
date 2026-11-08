@@ -45,7 +45,7 @@ function assertPlan(snapshot: SupplySourcesResponse, shipyard: ChainShipyardStat
   for (const mission of ["transport", "deploy"] as const) {
     const options = { sources, targetCoordinates: target, selectedPlanetIds: new Set(["1"]), requested: { metal: 0 }, mission };
     expect(buildBatchSupplyPlan(options).orders).toEqual([]);
-    const max = maximumBatchSupplyResource(options, "metal");
+    const max = maximumBatchSupplyResource(options, "metal", Infinity);
     if (count === 0) { expect(max).toBe(0); continue; }
     const plan = buildBatchSupplyPlan({ ...options, requested: { metal: max } });
     expect(plan.missing.metal).toBe(0);

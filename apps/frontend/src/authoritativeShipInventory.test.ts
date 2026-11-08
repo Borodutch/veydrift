@@ -111,7 +111,7 @@ test("Supply keeps display proposals and blocks only selected requirements befor
 test("Supply Max finds conservative feasible inventory rather than skipping its interval", () => {
   const source = batchSupplySourceForPlanet(planet, { resources, technologyLevels: {}, launchableShips: [{ id: 4, count: 106 }], fleetLaunchConstraints: { ships: [{ id: 4, count: 1 }], resources, fleetSlots: { active: 1, limit: 16 } } });
   const options = { sources: [source], targetCoordinates: { galaxy: 1, system: 2, position: 1 }, selectedPlanetIds: new Set(["1"]), requested: { metal: 1 } };
-  const max = maximumBatchSupplyResource(options, "metal");
+  const max = maximumBatchSupplyResource(options, "metal", Infinity);
   expect(max).toBeGreaterThan(20000);
   expect(max).toBeLessThanOrEqual(25000);
   const plan = buildBatchSupplyPlan({ ...options, requested: { metal: max } });
@@ -126,7 +126,7 @@ test("multi-source Max replays the exact constrained allocation with effective d
     fleetLaunchConstraints: { ships: [{ id: 4, count: 1 }], resources, fleetSlots: { active: 1, limit: 16 } },
   }));
   const options = { sources, targetCoordinates: { galaxy: 1, system: 2, position: 1 }, selectedPlanetIds: new Set(["1", "2"]), requested: { metal: 1 } };
-  const maximum = maximumBatchSupplyResource(options, "metal");
+  const maximum = maximumBatchSupplyResource(options, "metal", Infinity);
   expect(maximum).toBeGreaterThan(49000);
   const replay = buildBatchSupplyPlan({ ...options, requested: { metal: maximum } });
   expect(replay.orders.map(order => order.ships.largeCargo)).toEqual([1, 1]);
@@ -145,7 +145,7 @@ test.each(["all", "combat"] as const)("Max does not shrink an impossible explici
     fleetModesBySource: { "1": mode === "all" ? "all" as const : "auto" as const },
   };
   expect(buildBatchSupplyPlan(options).blockedSources).toHaveLength(1);
-  expect(maximumBatchSupplyResource(options, "metal")).toBe(123);
+  expect(maximumBatchSupplyResource(options, "metal", Infinity)).toBe(123);
   expect(source.ships.largeCargo).toBe(106);
   expect(source.ships.battleship).toBe(5);
 });

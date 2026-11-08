@@ -118,7 +118,7 @@ for (const unsafe of [{ stale: true }, { degraded: true }, { safeToProject: fals
       const bad = { ...good, ...unsafe };
       const sources = batchSupplySourcesFromSnapshot({ ...snapshot, ...unsafe }, target);
       expect(buildBatchSupplyPlan({ ...options, sources }).orders).toHaveLength(0);
-      expect(maximumBatchSupplyResource({ ...options, requested: { metal: 0 }, sources }, "metal")).toBe(0);
+      expect(maximumBatchSupplyResource({ ...options, requested: { metal: 0 }, sources }, "metal", Infinity)).toBe(0);
       expect(batchSupplySourceForPlanet(target, bad).unavailableReason).toBeDefined();
       expect(missionMoonShipyardState({ shipyardState: bad, moonState: { ...good, stale: false, moon: { exists: true, planetId: "1" } } as any })?.fleetLaunchAvailable).toBe(false);
       // Ordinary store still transports a successful HTTP response: no rejecting mock read.

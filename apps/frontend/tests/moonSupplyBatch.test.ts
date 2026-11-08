@@ -58,7 +58,7 @@ test("zero, sixteen, duplicate and same-planet plans cannot launch; parent-to-mo
 test("moon suggestion, Max, slot bound and mission switch preserve complete selected manifests", () => {
   const src = sources(15), options = { sources: src, targetCoordinates: target, targetIsMoon: true, selectedPlanetIds: new Set(src.map(s => s.planetId)), requested: { metal: 15000 }, maxOrders: 15 };
   expect(suggestBatchSupplySourceIds(options).size).toBe(15);
-  expect(maximumBatchSupplyResource(options, "metal")).toBe(15000);
+  expect(maximumBatchSupplyResource(options, "metal", Infinity)).toBe(15000);
   expect(buildBatchSupplyPlan({ ...options, mission: "deploy" }).orders).toEqual(buildBatchSupplyPlan(options).orders);
   expect(buildBatchSupplyPlan({ ...options, maxOrders: 2 }).sourceLimitReached).toBe(true);
   expect(suggestBatchSupplySourceIds({ ...options, maxOrders: 2 }).size).toBe(2);

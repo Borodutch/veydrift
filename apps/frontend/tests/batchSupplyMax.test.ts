@@ -16,11 +16,14 @@ function source(planetId = "1", overrides: Partial<BatchSupplySource> = {}): Bat
 function options(sources = [source()], requested: Partial<SupplyResources> = zero) {
   return { targetCoordinates: target, sources, requested, selectedPlanetIds: new Set(sources.map(s => s.planetId)) };
 }
+// Exact maxima must not depend on how fast a (possibly overloaded) runner is: lift the click's
+// 150 ms budget here. The deadline fallback has its own fake-clock tests below.
+const unbounded = Infinity;
 function maxPlan(args: Parameters<typeof buildBatchSupplyPlan>[0], resource: keyof SupplyResources) {
-  const maximum = maximumBatchSupplyResource(args, resource);
+  const maximum = maximumBatchSupplyResource(args, resource, unbounded);
   const next = { ...args, requested: { ...zero, ...args.requested, [resource]: maximum } };
   const plan = buildBatchSupplyPlan(next);
-  expect(maximumBatchSupplyResource(next, resource)).toBe(maximum);
+  expect(maximumBatchSupplyResource(next, resource, unbounded)).toBe(maximum);
   return { next, plan, maximum };
 }
 
@@ -163,7 +166,7 @@ describe("Supply Max preserves the actual shipment", () => {
     for (let metal = 67383; metal <= sources.reduce((sum, s) => sum + s.resources.metal, 0); metal += 25) {
       if (feasible(metal)) throw new Error("Unexpected feasible total " + metal);
     }
-  });
+  }, 30_000);
 
   test("matches exhaustive planner maxima for all resources, manual overrides and mixed fleets", () => {
     let seed = 55;
@@ -189,7 +192,7 @@ describe("Supply Max preserves the actual shipment", () => {
       expect(maxPlan(args, resource).maximum).toBe(expected);
     }
     expect(checked).toBeGreaterThan(20);
-  });
+  }, 60_000); // About 1 s on an idle Mac; the shared CI runner has taken over 6 s.
 
   test("Max totals reach Transport and Deploy calldata unchanged (mock wallet only)", async () => {
     for (const mission of ["transport", "deploy"] as const) {
@@ -220,13 +223,13 @@ describe("Supply Max preserves the actual shipment", () => {
         ships: { largeCargo: 10_000 }, driveLevels: {},
       }));
       const args = { ...options(sources), targetCoordinates: { galaxy: 6, system: 9, position: 12 }, maxOrders: 15 };
-      const started = performance.now();
       for (const mission of ["transport", "deploy"] as const) for (const resource of keys) {
-        expect(maximumBatchSupplyResource({ ...args, mission }, resource)).toBe(0);
+        // The exact search reads the clock once per traced interval. Counting reads instead of
+        // timing them catches the old boundary scan (thousands of intervals) on any runner.
+        let reads = 0;
+        expect(maximumBatchSupplyResource({ ...args, mission }, resource, unbounded, () => { reads++; return 0; })).toBe(0);
+        expect(reads).toBeLessThan(20);
       }
-      // A generous CI ceiling catches the old multi-second boundary scan without
-      // treating shared-runner scheduling as a representative desktop benchmark.
-      expect(performance.now() - started).toBeLessThan(1_000);
     }
   });
 
@@ -244,9 +247,46 @@ describe("Supply Max preserves the actual shipment", () => {
             if (plan.orders.length && !plan.blockedSources.length && keys.every(key => plan.missing[key] === 0)) expected = value;
           }
         }
-        expect(maximumBatchSupplyResource(args, resource)).toBe(expected);
+        expect(maximumBatchSupplyResource(args, resource, unbounded)).toBe(expected);
       }
     }
+  });
+
+  test("past the 150 ms click budget, Max falls back to a launchable bisected total (fake clock)", () => {
+    // reads: [start, ...] → the clock reads after the start one, all returning `later`.
+    const clock = (later: number) => { let read = 0; return () => (read++ === 0 ? 0 : later); };
+    const launches = (args: Parameters<typeof buildBatchSupplyPlan>[0], resource: keyof SupplyResources, value: number) => {
+      const plan = buildBatchSupplyPlan({ ...args, requested: { ...zero, ...args.requested, [resource]: value } });
+      return plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0);
+    };
+    // An empty draft is a valid floor: the fallback must not answer 0 just because nothing launches at 0 (CI run 157).
+    const many = options(Array.from({ length: 15 }, (_, i) => source(String(i), { resources: { metal: 10, crystal: 0, deuterium: 100 } })));
+    expect(maximumBatchSupplyResource(many, "metal", 150, clock(151))).toBe(150);
+    expect(maximumBatchSupplyResource(options([source()]), "metal", 150, clock(151))).toBe(maximumBatchSupplyResource(options([source()]), "metal", unbounded));
+    // Non-monotone fleets: the default budget is exactly 150 ms; past it the bisected total launches but may be lower.
+    const island = options([
+      source("0", { coordinates: target, resources: { metal: 55597, crystal: 8866, deuterium: 252 }, ships: { smallCargo: 4 }, driveLevels: { impulseDrive: 3, combustionDrive: 3 } }),
+      source("1", { coordinates: { ...target, system: 110 }, resources: { metal: 15097, crystal: 34519, deuterium: 200 }, ships: { smallCargo: 2 }, driveLevels: { impulseDrive: 6, combustionDrive: 4 } }),
+      source("2", { coordinates: { ...target, system: 120 }, resources: { metal: 54110, crystal: 24895, deuterium: 161 }, ships: { smallCargo: 2, largeCargo: 2, colonyShip: 1 }, driveLevels: { impulseDrive: 4, combustionDrive: 0 } }),
+    ], { crystal: 17435, deuterium: 111 });
+    expect(maximumBatchSupplyResource(island, "metal", undefined, clock(150))).toBe(67382);
+    const bisected = maximumBatchSupplyResource(island, "metal", undefined, clock(151));
+    expect(bisected).not.toBe(67382);
+    expect(bisected).toBeGreaterThan(0);
+    expect(launches(island, "metal", bisected)).toBe(true);
+    // A request that already launches is the floor: the fallback never lowers it to an earlier island.
+    const typed = maximumBatchSupplyResource({ ...island, requested: { ...island.requested, metal: 62500 } }, "metal", undefined, clock(151));
+    expect(typed).toBeGreaterThanOrEqual(62500);
+    expect(launches(island, "metal", typed)).toBe(true);
+    // The bisection has its own 150 ms. Once that is spent too, it returns its launchable floor:
+    // 0 here (an empty draft), or a typed request that already launches (12).
+    expect(maximumBatchSupplyResource(island, "metal", undefined, clock(301))).toBe(0);
+    expect(maximumBatchSupplyResource({ ...island, requested: { metal: 12 } }, "metal", undefined, clock(301))).toBe(12);
+    // 0 is clean but nothing launches at any total (no deuterium for fuel): like the exact search, keep the request.
+    const unfueled = options([source("1", { resources: { metal: 10, crystal: 0, deuterium: 0 } })], { metal: 12 });
+    expect(launches(unfueled, "metal", 12)).toBe(false);
+    expect(maximumBatchSupplyResource(unfueled, "metal", undefined, clock(151))).toBe(12);
+    expect(maximumBatchSupplyResource(unfueled, "metal", unbounded)).toBe(12);
   });
 
   test("large stocks skip resource intervals instead of scanning units", () => {
