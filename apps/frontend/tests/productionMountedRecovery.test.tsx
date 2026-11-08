@@ -68,7 +68,10 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "document");
 });
 
-// Polls as long as the test may run (bun's 5 s per-test timeout): 100 polls of 2 ms ran out on a loaded runner.
+// Polls up to 5 s per wait: 100 polls of 2 ms ran out on a loaded runner. The tests that wait get
+// a longer timeout than bun's default 5 s, so a slow wait fails inside its own test instead of
+// being cut off by the test timeout and rejecting later, between other tests (#518).
+const MOUNTED_TIMEOUT = 30_000;
 async function until(predicate: () => boolean, label = "condition") {
   for (const deadline = performance.now() + 5_000; !predicate() && performance.now() < deadline;) await Bun.sleep(2);
   if (!predicate()) throw new Error(`Timed out: ${label}; rendered: ${root.textContent}`);
@@ -106,8 +109,12 @@ function mountFlow(mode: "timeout" | "disconnect" | "reject" | "revert", body: "
     localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
   }) });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } });
+  // A fixed clock: with real time, a loaded runner pausing this process for over 8 ms between the
+  // store's deadline and the wallet send showed "This preparation attempt has expired" (#518). The
+  // 8 ms timer still fires the foreground timeout, after the send has started.
+  const clock = Date.now();
   const data = new BackendDataStore("https://recovery.test", {
-    transactionForegroundTimeoutMs: 8, transactionPollIntervalMs: 0,
+    now: () => clock, transactionForegroundTimeoutMs: 8, transactionPollIntervalMs: 0,
     transactionStatusReader: async hash => ({ events: [], indexedEventCount: 0, latestIndexedBlock: "20", receiptBlock: "20", transactionHash: hash, phase: mode === "revert" ? "reverted" : "applied" }),
   });
   function MountedPlan() {
@@ -202,7 +209,7 @@ test.each(["planet", "moon"] as const)("mounted %s shared catalogs count Add, ca
     await until(() => !root.query("Confirm build plan"));
     expectCount(0); // Empty plans are hidden, not rendered as 0/15.
   } finally { flow.data.dispose(); }
-});
+}, MOUNTED_TIMEOUT);
 
 test.each(["timeout", "disconnect"] as const)("mounted %s late receipt removes submitted snapshot but retains newer shared row", async mode => {
   const flow = mountFlow(mode);
@@ -225,7 +232,7 @@ test.each(["timeout", "disconnect"] as const)("mounted %s late receipt removes s
     expectCount(1);
     expect(flow.sends).toBe(1);
   } finally { flow.data.dispose(); }
-});
+}, MOUNTED_TIMEOUT);
 
 test("mounted MoonPage shows one shared plan and both populated catalogs keep Add with a shared budget", () => {
   Object.defineProperty(globalThis, "document", { configurable: true, value: document });
@@ -270,7 +277,7 @@ test.each(["timeout", "disconnect"] as const)("mounted plan recovers from %s, pr
     await until(() => !root.query("Retry build plan after checking wallet activity"));
     expect(root.query("Confirm build plan")).toBeUndefined();
   } finally { flow.data.dispose(); }
-});
+}, MOUNTED_TIMEOUT);
 
 test("mounted uncertain retry needs explicit consent, then new receipt removes only submitted snapshot", async () => {
   const flow = mountFlow("timeout");
@@ -286,7 +293,7 @@ test("mounted uncertain retry needs explicit consent, then new receipt removes o
     await Bun.sleep(5);
     expect(flow.sends).toBe(2);
   } finally { flow.data.dispose(); }
-});
+}, MOUNTED_TIMEOUT);
 
 test.each(["reject", "revert"] as const)("mounted %s releases controls and preserves draft", async mode => {
   const flow = mountFlow(mode);
@@ -298,7 +305,7 @@ test.each(["reject", "revert"] as const)("mounted %s releases controls and prese
     click("Clear build plan");
     await until(() => !root.query("Confirm build plan"));
   } finally { flow.data.dispose(); }
-});
+}, MOUNTED_TIMEOUT);
 
 
 test("mounted Defenses consume completed units as current without settlement duty", () => {

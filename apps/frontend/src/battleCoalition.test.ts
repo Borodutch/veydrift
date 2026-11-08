@@ -4,6 +4,8 @@ import { runContractBattle, type BattleFleetParticipant, type CombatTechnology, 
 const tech: CombatTechnology = { weapons: 8, shielding: 8, armor: 8 };
 const counts = (entries: [number, number][], length = 16) => Array.from({ length }, (_, id) => entries.find(([unit]) => unit === id)?.[1] ?? 0);
 const fleet = (id: string, ships: number[], technology = tech, laneGroup = 0): BattleFleetParticipant => ({ id, owner: `owner-${id}`, label: id, ships, technology, laneGroup });
+// 0.2-0.75 s each on an idle Mac, but 1.5-7 s on the shared CI Mac at load 100-180 (#518).
+const COMBAT_TIMEOUT = 30_000;
 const word = (seed: number) => `0x${seed.toString(16).padStart(64, "0")}` as const;
 const totals = (participants: ContractBattleResult["attackers"]) => participants.reduce((result, participant) => {
   for (const row of participant.survivingShips) result[row.id] = (result[row.id] ?? 0) + row.count;
@@ -39,7 +41,7 @@ describe("coherent coalition combat", () => {
       expect(outcome(runContractBattle(split, word(seed)))).toEqual(expected);
       expect(outcome(runContractBattle(reversed, word(seed)))).toEqual(expected);
     }
-  });
+  }, COMBAT_TIMEOUT);
 
   test("mixed owner technology survives permutation and conserves ships", () => {
     const mixed = input();
@@ -58,7 +60,7 @@ describe("coherent coalition combat", () => {
         }
       }
     }
-  });
+  }, COMBAT_TIMEOUT);
   test("owner casualties are stable by owner and mission identity, not array order", () => {
     const value = input();
     value.attackers = [fleet("10", counts([[1, 20], [6, 5]])), fleet("2", counts([[1, 20], [6, 5]])), fleet("7", counts([[1, 20], [6, 5]]))];
@@ -67,7 +69,7 @@ describe("coherent coalition combat", () => {
     reversed.attackers = [...reversed.attackers].reverse();
     const allocation = (result: ContractBattleResult) => Object.fromEntries(result.attackers.map(participant => [participant.id, { lost: participant.lostShips, surviving: participant.survivingShips }]));
     for (const seed of [1, 2, 5, 17, 46, 101]) expect(allocation(runContractBattle(reversed, word(seed)))).toEqual(allocation(runContractBattle(value, word(seed))));
-  });
+  }, COMBAT_TIMEOUT);
 
   test("aggregate cohorts can exceed one mission's uint32 quantity without expansion", () => {
     const max = 4_294_967_295;

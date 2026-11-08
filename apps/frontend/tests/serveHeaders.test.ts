@@ -401,7 +401,8 @@ describe("frontend static server headers", () => {
       imageTitle: "WWWWWWWWWWWWWWWWWWWWWWWWWW",
     }));
     expect(wideTitle.maxX).toBeLessThanOrEqual(referralOgLayout.titleSafeRight);
-  });
+    // Renders several PNGs: ~3 s on a busy Mac, 3.5 s on the shared CI Mac at load 100-180 (#518).
+  }, 20_000);
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
     const html = `

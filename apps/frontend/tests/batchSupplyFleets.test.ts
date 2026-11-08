@@ -144,7 +144,8 @@ describe("Opt-in Supply fleets", () => {
         expect(maximumBatchSupplyResource(options, resource)).toBe(expected);
       }
     }
-  });
+    // Exhaustive: ~0.2 s on an idle Mac, 2.3 s on the shared CI Mac at load 100-180 (#518).
+  }, 30_000);
 
   test("fresh confirmation includes all-ships mode and rejects changed fuel or ship stock", async () => {
     const shipTypesBySource = { "1": ["largeCargo", "lightFighter"] as const };
