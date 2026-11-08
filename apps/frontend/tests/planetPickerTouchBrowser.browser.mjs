@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test as nodeTest } from "node:test";
@@ -232,8 +232,37 @@ async function preloadInspectorFixture() {
     })`).catch((diagnosticError) => ({ diagnosticError: diagnosticError.message }));
     throw new Error(`${error.message}\nInspector preload diagnostics: ${JSON.stringify(diagnostics)}`);
   }
+  await warmRouteChunks();
   await server.waitForRequestsIdle();
   await replacePageTarget();
+}
+
+// PlayableMvpApp's pages are lazy route chunks the overview above never requests. A
+// scenario's first visit to one used to pay its cold Vite transform inside a 5 s wait,
+// which a loaded CI Mac overran: the moon detail sat on its Suspense skeleton and never
+// sent its system read (#520). Import them all here, with a preload-sized deadline of its own.
+const PLAYABLE_APP_SOURCE = readFileSync(new URL("../src/PlayableMvpApp.tsx", import.meta.url), "utf8");
+const ROUTE_CHUNK_IMPORTS = [...PLAYABLE_APP_SOURCE.matchAll(/\blazy\(\(\) => import\("\.\/(components\/\w+)"\)/g)];
+const ROUTE_CHUNKS = [...new Set(ROUTE_CHUNK_IMPORTS.map(([, path]) => `/src/${path}.tsx`))];
+
+async function warmRouteChunks() {
+  // A lazy() written another way must fail here, not silently fall back to a cold first visit.
+  assert.ok(ROUTE_CHUNKS.length > 0, "found no lazy route chunks in PlayableMvpApp.tsx");
+  assert.equal(ROUTE_CHUNK_IMPORTS.length, PLAYABLE_APP_SOURCE.match(/\blazy\(/g).length,
+    "every lazy() in PlayableMvpApp.tsx must match the route chunk pattern in this file");
+  await evaluate(`window.routeChunksPending = new Set(${JSON.stringify(ROUTE_CHUNKS)});
+    void Promise.all([...window.routeChunksPending].map((url) => import(url).then(() => window.routeChunksPending.delete(url))))
+      .then(() => "loaded", (error) => String(error?.stack ?? error))
+      .then((outcome) => { window.routeChunkWarmup = outcome; })`);
+  try {
+    await waitForExpression("window.routeChunkWarmup !== undefined", INSPECTOR_PRELOAD_TIMEOUT_MS);
+  } catch (error) {
+    // A missing set means the page reloaded mid-warm-up and lost the imports' state.
+    const pending = await evaluate("window.routeChunksPending ? [...window.routeChunksPending] : 'page reloaded'").catch((diagnosticError) => diagnosticError.message);
+    throw new Error(`${error.message}\nRoute chunks still importing: ${JSON.stringify(pending)}`);
+  }
+  const outcome = await evaluate("window.routeChunkWarmup");
+  assert.equal(outcome, "loaded", `route chunk warm-up failed: ${outcome}`);
 }
 
 before(async () => {
