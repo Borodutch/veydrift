@@ -255,10 +255,11 @@ class MonitorTests(unittest.TestCase):
         def heads(number, timestamp):
             return {tag: {'number': hex(number), 'timestamp': hex(timestamp), 'hash': '0x' + 'a'*64} for tag in h.TAGS}
         local = heads(10000, 5000)
-        for gap in (60, 61, 100, 900):
-            report = h.classify(local, [heads(10000+gap, 7900)]*2, [local]*2, 8000)
+        # Gaps are seconds between head timestamps (block counts went stale at 0.2s blocks).
+        for gap in (900, 1000, 1800):
+            report = h.classify(local, [heads(10000+gap*5, 5000+gap)]*2, [local]*2, 8000)
             self.assertEqual(report['tags']['finalized']['status'], 'local-staleness')
-        report = h.classify(local, [heads(10901, 7900)]*2, [local]*2, 8000)
+        report = h.classify(local, [heads(19005, 6801)]*2, [local]*2, 8000)
         self.assertEqual(report['tags']['finalized']['status'], 'local-lag')
         report = h.classify(local, [local]*2, [local]*2, 8000)
         self.assertEqual(report['tags']['finalized']['status'], 'chainwide-lag')
@@ -266,6 +267,37 @@ class MonitorTests(unittest.TestCase):
         bad['finalized']['hash'] = '0x' + 'b'*64
         report = h.classify(local, [local]*2, [local, bad], 8000)
         self.assertEqual(report['status'], 'provider-disagreement')
+
+    def test_rejected_telemetry_records_private_reason(self):
+        s, x = {}, healthy()
+        mission(x)['admission']['lastCanonicalSettlementAt'] = '1970-01-01T00:01:00Z'
+        m.transition(s, x, 29)
+        self.assertEqual(s['lastTelemetryError'], {'at': 29, 'error': 'ValueError: future progress timestamp'})
+        self.assertFalse(s['incidents'][m.HOSTS[0] + ':mission-telemetry']['active'])
+        self.assertEqual(s['incidents'][m.HOSTS[0] + ':mission-telemetry']['streak'], 1)
+        mission(x)['admission']['lastCanonicalSettlementAt'] = 'https://user:SECRET@upstream.invalid/'
+        m.transition(s, x, 40)
+        self.assertEqual(s['lastTelemetryError'], {'at': 40, 'error': 'ValueError: invalid timestamp field'})
+        self.assertNotIn('SECRET', json.dumps(s))
+
+    def test_sample_is_judged_at_collection_end(self):
+        # collect() takes 25-60 s; a settlement stamped while it ran is not "from the future".
+        x = healthy()
+        mission(x)['admission']['lastCanonicalSettlementAt'] = '1970-01-01T00:16:40Z'  # t=1000
+        clock = iter([900, 1000, 1000])  # pre-collect, post-collect, spare
+
+        def collect(health_dir, state, persist):
+            return copy.deepcopy(x)
+
+        with tempfile.TemporaryDirectory(dir=m.HERE) as directory:
+            path = Path(directory) / 'state.json'
+            argv = ['monitor.py', '--state', str(path), '--health-dir', directory]
+            with patch.object(m, 'collect', side_effect=collect), patch.object(m.time, 'time', lambda: next(clock)), \
+                    patch('sys.argv', argv), patch('sys.stdout', new_callable=io.StringIO):
+                m.main()
+            state = json.loads(path.read_text())
+        self.assertIsNone(state.get('lastTelemetryError'))
+        self.assertEqual(state['lastObservedAt'], 1000)
 
 
 if __name__ == '__main__':

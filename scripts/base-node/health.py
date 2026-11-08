@@ -42,12 +42,17 @@ def classify(local, references, canonical, now):
         refages=[now-r.quantity(ref[tag].get('timestamp')) for ref in references]
         threshold={'latest':120,'safe':1800,'finalized':2100}[tag]
         gaps=[n-number for n in refnums]
+        # Compare head timestamps, not block counts: Base block time changed (2s -> 0.2s), and
+        # finality advances in ~6.4-minute L1-epoch jumps, so block-count limits went stale.
+        limit=120 if tag=='latest' else 1800
+        localts=r.quantity(local[tag]['timestamp'])
+        refts=[r.quantity(ref[tag].get('timestamp')) for ref in references]
         match=all(c[tag]['hash'].lower()==local[tag]['hash'].lower() for c in canonical)
         if not match:
             status='provider-disagreement'
-        elif max(refnums)-min(refnums) > (60 if tag=='latest' else 900):
+        elif max(refts)-min(refts) > limit:
             status='reference-disagreement'
-        elif all(g > (60 if tag=='latest' else 900) for g in gaps):
+        elif all(t-localts > limit for t in refts):
             status='local-lag'
         elif age > threshold and all(a > threshold for a in refages):
             status='chainwide-lag'

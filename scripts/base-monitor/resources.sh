@@ -27,9 +27,20 @@ printf 'disk_pct=%s
 value=$(systemctl --failed --no-legend 2>/dev/null | awk 'NF {n++} END {print n+0}') || value=unknown
 printf 'failed_units=%s
 ' "$value"
-value=$(docker logs --since 30m base-node-v2-node-1 2>&1 | python3 -c 'import json,sys
+# `docker logs --since` scans the whole unrotated json-file log (6.8 GB, ~66 s on 2026-11-08) and
+# blew the 40 s remote budget, which read as "can't SSH". Read only the log tail (op-node writes
+# ~25 MB/30 min at 0.2 s blocks), keep matching lines, then apply the 30-minute window per entry.
+# Since 2026-11-08 the log rotates at 100 MB (x3), so include the previous file's tail too.
+value=$(log=$(docker inspect -f '{{.LogPath}}' base-node-v2-node-1 2>/dev/null) && [[ -f $log ]] &&
+  { [[ ! -f $log.1 ]] || tail -c 64M "$log.1"; tail -c 128M "$log"; } | { grep -aiE 'Derivation pipeline is being reset|panic|fatal' || [[ $? -eq 1 ]]; } | python3 -c 'import json,sys,datetime
+since=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=30)
 resets=critical=0
-for line in sys.stdin:
+for raw in sys.stdin:
+ try:
+  entry=json.loads(raw)
+  if datetime.datetime.fromisoformat(entry["time"][:19]+"+00:00") < since: continue
+  line=entry["log"]
+ except Exception: continue  # tail -c starts mid-line: a fragment has no time, never count it
  try: msg=str(json.loads(line).get("fields",{}).get("message",""))
  except Exception: msg=line
  if msg == "Derivation pipeline is being reset": resets+=1

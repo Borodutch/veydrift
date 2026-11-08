@@ -206,7 +206,11 @@ def collect(health_dir, state=None, persist=lambda state: None):
 def iso_time(value):
     if value is None:
         return None
-    return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    try:
+        return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        # fromisoformat echoes the raw upstream value; lastTelemetryError must never retain it.
+        raise ValueError('invalid timestamp field') from None
 
 
 def signals(sample, state, now):
@@ -312,7 +316,9 @@ def signals(sample, state, now):
                 progress.clear()
                 add(prefix + 'due-queue-no-settlement-120s', False)
             add(prefix + 'mission-telemetry', False)
-        except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+        except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as error:
+            # Private diagnostic: which check rejected the sample (our own messages / schema key names).
+            state['lastTelemetryError'] = {'at': now, 'error': (type(error).__name__ + ': ' + str(error))[:160]}
             # Discard any partial mission interpretation; keep prior incidents through invalid samples.
             for key in set(out) | set(state.get('incidents', {})):
                 if key.startswith(prefix) and key not in (prefix + 'http', prefix + 'legacy-health'):
@@ -545,6 +551,10 @@ def main():
             if not args.fixture and not args.health_dir:
                 p.error('--health-dir required for live read-only probe')
             sample = json.loads(args.fixture.read_text()) if args.fixture else collect(args.health_dir, state, lambda current: atomic_save(args.state, current))
+            # Judge the sample at the time it was taken: collect() runs 25-60 s, and a settlement
+            # stamped during it read as a "future progress timestamp" (> now+30) against the
+            # pre-collect clock, which flapped "/health is missing mission data".
+            now = int(time.time())
             event = transition(state, sample, now)
             state['lastObservedAt'] = now
             output = held_output(event) if event and delivery_hold(event) else {

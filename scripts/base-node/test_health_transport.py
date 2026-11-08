@@ -44,7 +44,7 @@ class HealthTransportTests(unittest.TestCase):
     def test_all_references_must_be_stale(self):
         for p in (self.local,self.a,self.b):p.age=150
         self.assertEqual(self.observe()['tags']['latest']['status'],'chainwide-lag')
-        self.b.age=1
+        self.b.age=31  # fresh, but within 120s of the stale reference (no reference disagreement)
         self.assertEqual(self.observe()['tags']['latest']['status'],'local-staleness')
     def test_malformed_reference_timestamp_rejected(self):
         self.a.malformed=True
@@ -52,14 +52,14 @@ class HealthTransportTests(unittest.TestCase):
     def test_stale_finality_gap_boundaries_over_http(self):
         self.local.latest=self.a.latest=self.b.latest=5000
         self.local.final=1000;self.local.final_age=5000
-        self.a.final_age=self.b.final_age=4800
-        for gap in (60,61,100,900,901):
+        for gap in (120,121,200,1800,1801):  # seconds between head timestamps
             with self.subTest(gap=gap):
                 self.a.final=self.b.final=1000+gap
+                self.a.final_age=self.b.final_age=5000-gap
                 report=self.observe()
                 self.assertEqual(report['tags']['latest']['status'],'observed')
                 for tag in ('safe','finalized'):
-                    self.assertEqual(report['tags'][tag]['status'],'local-lag' if gap>900 else 'chainwide-lag')
+                    self.assertEqual(report['tags'][tag]['status'],'local-lag' if gap>1800 else 'chainwide-lag')
                 self.assertFalse(h.transition({'notifiedStatus':'local-lag'},report,10000)['recovered'])
     def test_realistic_ordered_frozen_finality(self):
         for p in (self.local,self.a,self.b):p.latest=5000
