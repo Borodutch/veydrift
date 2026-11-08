@@ -83,6 +83,15 @@ discover `RefereeBattleSealed` logs, wait for the reveal, advance to 17, replay,
 submit, then apply leaves in batches of 32. Its transactions go through the shared resolver
 coordinator, so the key may be the randomness fulfiller's. Status is `battleReferee` in `/health`.
 
+The target planet stays locked until the battle settles, so the hand-offs are event-driven (#511).
+In one tick the referee chains consecutive confirmed steps for a battle (advance, submit, then the
+leaf batches), up to 8 per battle. A battle reaching economics wakes the mission resolver for its
+final settle right away. While a due Attack arrival is in `referee-wait`, the resolver re-checks it
+every tick instead of after a 30 s retry, and wakes the referee. A resolver tick whose batch made
+paid progress or settled a leg starts the next tick as soon as it ends (at most 32 such follow-ups
+per 5 s interval). A settled leg also clears the flat retries of legs at the same planets, so the
+next attack queued on that planet starts at once.
+
 | Variable | Meaning |
 |---|---|
 | `VEYDRIFT_BATTLE_REFEREE_PRIVATE_KEY` | Resolver key configured onchain (needs Base ETH) |

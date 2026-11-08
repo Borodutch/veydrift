@@ -46,6 +46,13 @@ const initialFailureRetryMs = 30_000;
 const maxFailureRetryMs = 300_000;
 const maxPauseProbeBackoffMs = 30_000;
 const longPauseAlertAfterMs = 10 * 60_000;
+/** Exclusion reason for an Attack arrival whose staged battle awaits the backend referee. */
+const refereeWaitReason = "referee-wait";
+/** Safety bound on immediate follow-up ticks between two interval ticks (#511). Real chunk
+ * receipts take about a second, so this only stops a pathological hot loop. */
+const maxWakesPerInterval = 32;
+/** A referee-wait longer than this (halted battle, missing referee) falls back to the flat retry. */
+const refereeWaitPromptMs = 120_000;
 // VeydriftGame.v1 storage layout fixes `_gamePaused` at proxy slot 52. Reading the canonical proxy
 // storage avoids a contract upgrade solely to expose an operational getter.
 const gamePausedStorageSlot = toHex(52n, { size: 32 });
@@ -225,6 +232,8 @@ export type MissionResolutionServiceOptions = {
   promptnessTargetMs?: number;
   longPauseAlertAfterMs?: number;
   transactionCoordinator?: ResolverTransactionCoordinator;
+  /** Called when a due Attack arrival waits on the referee, so the referee can run now (#511). */
+  onRefereeWait?: () => void;
 };
 
 export class MissionResolutionService {
@@ -238,6 +247,13 @@ export class MissionResolutionService {
   private readonly promptnessTargetMs: number;
   private readonly longPauseAlertAfterMs: number;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private wakeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Run another tick right after this one: a paid chunk advanced or settled a leg (#511). */
+  private wakeRequested = false;
+  private wakesThisInterval = 0;
+  /** Bumped by every referee release; a tick that started earlier saw pre-release state. */
+  private refereeReleaseEpoch = 0;
+  private readonly onRefereeWait: (() => void) | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
   private lastCompletedRunAt: string | null = null;
@@ -281,7 +297,11 @@ export class MissionResolutionService {
   // Besides wasting RPC/gas-estimation work, viem's multi-line error payloads can flood container
   // stdout and contend with API readers. Keep the candidate visible to health checks, but retry it
   // with bounded exponential backoff until its underlying condition changes.
-  private readonly failedCandidateRetries = new Map<string, { failures: number; retryAtMs: number; error?: string }>();
+  // Flat (failures 0) retries keep the bodies they touch, so a settled leg can release waits
+  // on any page of candidates (#511); refereeWaitSince marks a referee-wait re-check.
+  private readonly failedCandidateRetries = new Map<string, {
+    failures: number; retryAtMs: number; error?: string; bodies?: readonly string[]; refereeWaitSince?: number;
+  }>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -300,6 +320,7 @@ export class MissionResolutionService {
     this.promptnessTargetMs = Math.max(1_000, Math.floor(options.promptnessTargetMs ?? promptnessTargetMs));
     this.longPauseAlertAfterMs = Math.max(1_000, Math.floor(options.longPauseAlertAfterMs ?? longPauseAlertAfterMs));
     this.pauseProbeBackoffMs = this.intervalMs;
+    this.onRefereeWait = options.onRefereeWait;
   }
 
   snapshot(): MissionResolutionSnapshot {
@@ -372,7 +393,10 @@ export class MissionResolutionService {
   start(): void {
     if (this.timer || !this.enabled) return;
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), this.intervalMs);
+    this.timer = setInterval(() => {
+      this.wakesThisInterval = 0;
+      void this.tick();
+    }, this.intervalMs);
     this.timer.unref?.();
   }
 
@@ -381,6 +405,36 @@ export class MissionResolutionService {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    if (this.wakeTimer) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = undefined;
+    }
+    this.wakeRequested = false;
+  }
+
+  /** Run a tick as soon as possible (after the current one, if any) instead of on the next
+   * interval. Used when the referee releases a battle; a no-op unless the service is started. */
+  requestTick(): void {
+    if (!this.timer) return;
+    // The referee released a battle: its final settle must not wait out a referee-wait re-check,
+    // including a wait already on the stuck fallback (slow randomness reveal). A release is
+    // definitive and the re-check read is unpaid. Waits keep their start time.
+    this.refereeReleaseEpoch++;
+    for (const retry of this.failedCandidateRetries.values()) {
+      if (retry.refereeWaitSince !== undefined) retry.retryAtMs = 0;
+    }
+    if (this.inFlight) this.wakeRequested = true;
+    else this.scheduleWake();
+  }
+
+  private scheduleWake(): void {
+    if (!this.timer || this.wakeTimer || this.wakesThisInterval >= maxWakesPerInterval) return;
+    this.wakesThisInterval++;
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = undefined;
+      void this.tick();
+    }, 0);
+    this.wakeTimer.unref?.();
   }
 
   async tick(): Promise<void> {
@@ -423,6 +477,12 @@ export class MissionResolutionService {
       this.lastCompletedRunAt = new Date(completedAtMs).toISOString();
       this.lastTickDurationMs = Math.max(0, completedAtMs - startedAtMs);
       this.inFlight = false;
+      // Progress/settlement is canonical paid chain progress, so each wake is bounded by the
+      // staged battle's finite stages; anything else waits for the ordinary interval.
+      if (this.wakeRequested) {
+        this.wakeRequested = false;
+        if (!this.gamePaused) this.scheduleWake();
+      }
     }
   }
 
@@ -556,18 +616,38 @@ export class MissionResolutionService {
       if (!this.chainClient?.resolveMissionBatch) throw new Error("batch rollout enabled without supported durable batch client");
       if (this.now() < this.sharedAdmissionRetryAtMs) return;
       const candidates = attemptable.slice(0, this.maxMissionsPerTick);
+      const releaseEpoch = this.refereeReleaseEpoch;
       try {
         const result = await this.chainClient.resolveMissionBatch(candidates.map((c) => ({ missionId: c.mission.missionId, leg: c.leg, dueAt: c.dueAt })));
         this.sharedAdmissionBlocked = false;
         this.sharedAdmissionRetryAtMs = 0;
+        let refereeWaiting = false;
+        const releasedBodies = new Set<string>();
         for (const excluded of result.exclusions ?? []) {
           await this.candidateSource?.reconcileMissionResolutionCandidate?.(excluded.item.missionId);
           const candidate = candidates.find((c) => c.mission.missionId === excluded.item.missionId && c.leg === excluded.item.leg);
           const key = candidate && candidateRetryKey(candidate);
           // Settled elsewhere (e.g. a concurrent manual resolve) is success, not a failure.
           if (excluded.terminal) { if (key) this.failedCandidateRetries.delete(key); continue; }
+          if (excluded.reason === refereeWaitReason && key) {
+            // An unpaid read decides this wait and the referee needs only seconds, so re-check
+            // it every interval (and on the referee's wake) instead of after a 30 s flat retry
+            // (#511). A wait outlasting refereeWaitPromptMs (halted battle) uses the flat retry.
+            const since = this.failedCandidateRetries.get(key)?.refereeWaitSince;
+            const nowMs = this.now();
+            if (since === undefined) refereeWaiting = true; // newly waiting: wake the referee once
+            const startedAt = since ?? nowMs;
+            const prompt = nowMs - startedAt < refereeWaitPromptMs;
+            // A release during this tick means this read predates it: re-check at once. Otherwise
+            // a second of slack lets the next 5 s interval tick (timed from tick start) re-check.
+            const delayMs = this.refereeReleaseEpoch !== releaseEpoch ? 0
+              : !prompt ? initialFailureRetryMs : Math.max(0, this.intervalMs - 1_000);
+            this.failedCandidateRetries.set(key, { failures: 0, retryAtMs: nowMs + delayMs, refereeWaitSince: startedAt });
+            emitObservabilityEvent({ kind: "mission_batch_skip", ...excluded.item, reason: excluded.reason, terminal: false });
+            continue;
+          }
           // Unpaid ordering/oracle waits clear on their own: flat short retry, no escalation.
-          if (key) excluded.unproductive ? this.scheduleFlatRetry(key) : this.scheduleRetry(key);
+          if (key && candidate) excluded.unproductive ? this.scheduleFlatRetry(key, candidateBodies(candidate)) : this.scheduleRetry(key);
           emitObservabilityEvent({ kind: "mission_batch_skip", ...excluded.item, reason: excluded.reason,
             terminal: false }, excluded.unproductive ? "info" : "warn");
         }
@@ -578,8 +658,10 @@ export class MissionResolutionService {
           if (!await this.chainClient.isMissionLegComplete?.(item.missionId, item.leg)) {
             const outcome = result.outcomes?.find((o) => o.item.missionId === item.missionId && o.item.leg === item.leg);
             if (outcome?.outcome === "Progress") {
-              // A staged battle committed more stages: continue next tick without backoff.
+              // A staged battle committed more stages: send its next chunk as soon as this tick
+              // ends, not on the next interval, while its target stays locked (#511).
               this.failedCandidateRetries.delete(candidateRetryKey(candidate));
+              this.wakeRequested = true;
               continue;
             }
             emitObservabilityEvent({ kind: "mission_batch_skip", ...item, reason: outcome?.outcome ?? "canonical-leg-incomplete",
@@ -593,7 +675,15 @@ export class MissionResolutionService {
           this.recordLatency(item.leg, item.dueAt);
           this.pendingDueAt[item.leg].delete(item.missionId);
           this.failedCandidateRetries.delete(candidateRetryKey(candidate));
+          for (const body of candidateBodies(candidate)) releasedBodies.add(body);
         }
+        if (settled > 0) {
+          // A settled leg releases its bodies' locks: legs queued behind it at the same planet
+          // (e.g. the next attack on it) retry right away instead of sitting out a flat retry.
+          this.releaseBodyWaits(releasedBodies);
+          this.wakeRequested = true;
+        }
+        if (refereeWaiting) this.onRefereeWait?.();
         emitObservabilityEvent({ kind: "mission_batch_outcomes", hash: result.hash, requestedLegs: result.items.length,
           settledLegs: settled, blockedOrPartialLegs: result.items.length - settled });
       } catch (error) {
@@ -761,7 +851,7 @@ export class MissionResolutionService {
       // An earlier event at this body or a pending oracle word: the preflight caught it unpaid and
       // it clears on its own, so retry on a flat short interval instead of escalating backoff.
       if (isOrderingOrOracleWait(error)) {
-        this.scheduleFlatRetry(candidateRetryKey(candidate));
+        this.scheduleFlatRetry(candidateRetryKey(candidate), candidateBodies(candidate));
         return false;
       }
       const retryAfterMs = this.scheduleRetry(candidateRetryKey(candidate));
@@ -772,13 +862,21 @@ export class MissionResolutionService {
     }
   }
 
+  /** Clear flat (unproductive, unpaid) retries of candidates touching a body whose lock was just
+   * released. Escalating retries of genuine failures are kept. */
+  private releaseBodyWaits(bodies: ReadonlySet<string>): void {
+    for (const [key, retry] of this.failedCandidateRetries) {
+      if (retry.failures === 0 && retry.bodies?.some((body) => bodies.has(body))) this.failedCandidateRetries.delete(key);
+    }
+  }
+
   private canAttempt(candidate: MissionSettlementCandidate): boolean {
     const retry = this.failedCandidateRetries.get(candidateRetryKey(candidate));
     return !retry || retry.retryAtMs <= this.now();
   }
 
-  private scheduleFlatRetry(key: string): void {
-    this.failedCandidateRetries.set(key, { failures: 0, retryAtMs: this.now() + initialFailureRetryMs });
+  private scheduleFlatRetry(key: string, bodies?: readonly string[]): void {
+    this.failedCandidateRetries.set(key, { failures: 0, retryAtMs: this.now() + initialFailureRetryMs, ...(bodies ? { bodies } : {}) });
   }
 
   private scheduleRetry(key: string, error?: string): number {
@@ -1175,7 +1273,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       }
       if (item.leg === "arrival" && refereeWait.has(item.missionId)) {
         // The backend referee advances these battles; an ordinary resolve would be a paid no-op.
-        exclusions.push({ item, reason: "referee-wait", unproductive: true });
+        exclusions.push({ item, reason: refereeWaitReason, unproductive: true });
         continue;
       }
       fresh.push({ ...item, dueAt, ...(hold ? { chronologyKind: 2 as const } : {}) });
@@ -1605,6 +1703,10 @@ function conciseReasonText(error: unknown): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
+}
+
+function candidateBodies(candidate: MissionSettlementCandidate): string[] {
+  return [String(candidate.mission.targetPlanetId), String(candidate.mission.originPlanetId)];
 }
 
 function candidateRetryKey(candidate: MissionSettlementCandidate): string {

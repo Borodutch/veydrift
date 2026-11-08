@@ -2885,6 +2885,42 @@ describe("walletFlow", () => {
     expect(message).toContain("browser wallet flow");
   });
 
+  test("says when the fleet activity holding a locked planet started or is due (#511)", () => {
+    // FleetMissionNotResolved carries a time (the blocking fleet's arrivalAt/returnAt), never a mission id.
+    const nowSeconds = 1_794_132_974;
+    const now = spyOn(Date, "now").mockReturnValue(nowSeconds * 1_000);
+    try {
+      const message = (timestamp: number) => walletRequestErrorMessage({ message: "execution reverted", data: customErrorData("0xb3439205", [timestamp]) });
+      expect(message(nowSeconds - 200)).toBe(
+        "Fleet activity at this planet that started 3m 20s ago must finish first (for an attack, its battle is still being resolved). It continues automatically; try again shortly.",
+      );
+      expect(message(nowSeconds)).toContain("Fleet activity at this planet that started just now must finish first");
+      expect(message(nowSeconds + 45)).toBe(
+        "Fleet activity at this planet due in 45s must finish first (for an attack, its battle is still being resolved). It continues automatically; try again shortly.",
+      );
+      expect(message(nowSeconds + 5 * 60)).toContain("Fleet activity at this planet due in 5m must finish first");
+      // Without a plausible body-lock time the generic message stays: missing, zero, a mission-id-sized number,
+      // more than 30 days ago, or further ahead than a few minutes (recall/complete-return reverts pass a
+      // returnAt or holdUntil such as 40 minutes ahead, which waiting will not clear).
+      for (const data of [
+        "0xb3439205",
+        customErrorData("0xb3439205", [0]),
+        customErrorData("0xb3439205", [112638]),
+        customErrorData("0xb3439205", [nowSeconds - 31 * 24 * 60 * 60]),
+        customErrorData("0xb3439205", [nowSeconds + 5 * 60 + 1]),
+        customErrorData("0xb3439205", [nowSeconds + 40 * 60]),
+        customErrorData("0xb3439205", [nowSeconds + 2 * 60 * 60]),
+        customErrorData("0xb3439205", [nowSeconds + 31 * 24 * 60 * 60]),
+      ]) {
+        expect(walletRequestErrorMessage({ message: "execution reverted", data })).toBe(
+          "Earlier fleet activity at this planet must finish first. It continues automatically; try again shortly.",
+        );
+      }
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
     expect(
       walletRequestErrorMessage({

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { keccak256, stringToHex, type Hex } from "viem";
 
+import type { BackendConfig } from "./config";
 import {
+  BattleRefereeService,
   BattleRefereeWorker,
   BattleReportStore,
   leafHash,
@@ -148,18 +150,16 @@ describe("battle referee worker", () => {
 
     chain.calls = [];
     chain.revealed = true;
-    await worker.tick();
-    await worker.tick();
-    await worker.tick();
+    // #511: one tick chains every confirmed step and hands the battle back to the resolver.
+    expect(await worker.tick()).toBe(1);
     expect(chain.calls).toEqual(["advance:7", "submit:7", "apply:7:0:3"]);
     const saved = store.reportForBattle("7");
     expect(saved).not.toBeNull();
     expect(store.report(saved!.reportHash)).toBe(saved!.report);
+    expect(store.pending()).toEqual([]);
 
     chain.calls = [];
-    await worker.tick();
-    expect(store.pending()).toEqual([]);
-    await worker.tick();
+    expect(await worker.tick()).toBe(0);
     expect(chain.calls).toEqual([]);
     expect(worker.failures.size).toBe(0);
   });
@@ -173,10 +173,81 @@ describe("battle referee worker", () => {
     const store = new BattleReportStore(":memory:");
     const worker = new BattleRefereeWorker(chain, store, { fromBlock: 101n });
     store.saveDiscovery(100n, [8n]);
-    for (let i = 0; i < 6; i += 1) await worker.tick();
+    await worker.tick();
     expect(chain.calls).toEqual(["submit:8", "apply:8:0:32", "apply:8:32:32", "apply:8:64:6"]);
     expect(maxLeavesPerTransaction).toBe(32);
     expect(store.pending()).toEqual([]);
+  });
+
+  test("steps per battle per tick are bounded and resume next tick", async () => {
+    const chain = new FakeChain();
+    chain.battleRows = Array.from({ length: 70 }, (_, index) => ({
+      source: BigInt(index + 1), owner: attacker, count: 1, side: index === 0 ? 1 : 0, unit: 1, ...tech
+    }));
+    chain.statuses.set(8n, { ...status(RefereePhase.AwaitingResult), rowCount: 70 });
+    const store = new BattleReportStore(":memory:");
+    const worker = new BattleRefereeWorker(chain, store, { fromBlock: 101n, maxStepsPerTick: 2 });
+    store.saveDiscovery(100n, [8n]);
+    expect(await worker.tick()).toBe(0);
+    expect(chain.calls).toEqual(["submit:8", "apply:8:0:32"]);
+    expect(await worker.tick()).toBe(0);
+    expect(chain.calls).toEqual(["submit:8", "apply:8:0:32", "apply:8:32:32", "apply:8:64:6"]);
+    expect(await worker.tick()).toBe(1);
+    expect(store.pending()).toEqual([]);
+  });
+
+  test("a read failing right after a confirmed step is retried next tick, not recorded", async () => {
+    const chain = new FakeChain();
+    chain.statuses.set(12n, status(RefereePhase.AwaitingRandomness));
+    chain.revealed = true;
+    const store = new BattleReportStore(":memory:");
+    const worker = new BattleRefereeWorker(chain, store, { fromBlock: 101n });
+    store.saveDiscovery(100n, [12n]);
+    const progress = chain.progress.bind(chain);
+    let lagging = true;
+    chain.progress = async () => { if (lagging) { lagging = false; throw new Error("stale read"); } return progress(); };
+    await worker.tick();
+    expect(chain.calls).toEqual(["advance:12"]);
+    expect(worker.failures.size).toBe(0);
+    expect(await worker.tick()).toBe(1);
+    expect(chain.calls).toEqual(["advance:12", "submit:12", "apply:12:0:3"]);
+  });
+
+  test("a read lagging a confirmed step never pays to repeat that step in the same tick", async () => {
+    const chain = new FakeChain();
+    chain.statuses.set(15n, status(RefereePhase.AwaitingRandomness));
+    chain.revealed = true;
+    const store = new BattleReportStore(":memory:");
+    store.saveDiscovery(100n, [15n]);
+    const worker = new BattleRefereeWorker(chain, store, { fromBlock: 101n });
+    // The node answering reads lags each receipt by one read: it still reports the old state.
+    const statusOf = chain.status.bind(chain), progressOf = chain.progress.bind(chain);
+    let staleStatus: RefereeBattleStatus | undefined, staleProgress: { phase: number; nextIndex: number } | undefined;
+    const advance = chain.advance.bind(chain), submit = chain.submit.bind(chain), apply = chain.apply.bind(chain);
+    chain.status = async (id) => { const lagged = staleStatus; staleStatus = undefined; return lagged ?? statusOf(id); };
+    chain.progress = async () => { const lagged = staleProgress; staleProgress = undefined; return lagged ?? progressOf(); };
+    chain.advance = async (id) => { staleStatus = { ...await statusOf(id) }; return advance(id); };
+    chain.submit = async (id, result) => { staleProgress = await progressOf(); return submit(id, result); };
+    chain.apply = async (id, next, leaves) => { staleProgress = await progressOf(); return apply(id, next, leaves); };
+    await worker.tick();
+    expect(chain.calls).toEqual(["advance:15"]);
+    await worker.tick();
+    expect(chain.calls).toEqual(["advance:15", "submit:15"]);
+    await worker.tick();
+    expect(chain.calls).toEqual(["advance:15", "submit:15", "apply:15:0:3"]);
+    expect(await worker.tick()).toBe(1);
+    expect(chain.calls).toEqual(["advance:15", "submit:15", "apply:15:0:3"]);
+    expect(worker.failures.size).toBe(0);
+  });
+
+  test("a battle still waiting for randomness sends nothing and stays queued", async () => {
+    const chain = new FakeChain();
+    chain.statuses.set(13n, status(RefereePhase.AwaitingRandomness));
+    const store = new BattleReportStore(":memory:");
+    store.saveDiscovery(100n, [13n]);
+    expect(await new BattleRefereeWorker(chain, store, { fromBlock: 101n }).tick()).toBe(0);
+    expect(chain.calls).toEqual([]);
+    expect(store.pending()).toEqual([13n]);
   });
 
   test("an onchain root that differs from the local replay halts that battle", async () => {
@@ -199,8 +270,42 @@ describe("battle referee worker", () => {
     chain.statuses.set(11n, status(RefereePhase.Legacy));
     const store = new BattleReportStore(":memory:");
     store.saveDiscovery(100n, [10n, 11n]);
-    await new BattleRefereeWorker(chain, store).tick();
+    expect(await new BattleRefereeWorker(chain, store).tick()).toBe(2);
     expect(store.pending()).toEqual([]);
     expect(chain.calls).toEqual([]);
   });
+
+  test("the service wakes the resolver when a tick releases battles, and runs on request", async () => {
+    const chain = new FakeChain();
+    chain.statuses.set(14n, status(RefereePhase.AwaitingResult));
+    const store = new BattleReportStore(":memory:");
+    let wakes = 0;
+    const service = new BattleRefereeService({} as BackendConfig, {
+      chain, store, intervalMs: 3_600_000, onBattleReleased: () => { wakes++; }
+    });
+    service.requestTick(); // not started: no-op
+    await Bun.sleep(5);
+    expect(chain.calls).toEqual([]);
+    store.saveDiscovery(chain.head, []);
+    service.start();
+    try {
+      await waitUntil(() => service.snapshot().lastRunAt !== null);
+      expect(wakes).toBe(0);
+      store.saveDiscovery(chain.head, [14n]);
+      service.requestTick();
+      await waitUntil(() => wakes === 1);
+      expect(chain.calls).toEqual(["submit:14", "apply:14:0:3"]);
+      expect(store.pending()).toEqual([]);
+    } finally {
+      service.stop();
+    }
+  });
 });
+
+async function waitUntil(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition not reached");
+    await Bun.sleep(2);
+  }
+}

@@ -1,4 +1,5 @@
 import { GameApiError } from "./gameApiError";
+import { formatDuration } from "./durationFormat";
 import { defenseCatalog, shipyardCatalog } from "./playableMvp";
 import { MAX_PRODUCTION_ORDERS } from "./productionBuildPlan";
 import { diagnosticRoute } from "./requestDiagnostics";
@@ -1933,6 +1934,9 @@ const MISSING_DEPENDENCY_REVERT_SELECTOR = "0xb8f7e9ba";
 const QUEUE_ACTIVE_REVERT_SELECTOR = "0xcc9beebc";
 const QUEUE_INACTIVE_REVERT_SELECTOR = "0x63b016a9";
 const LEVEL_TOO_HIGH_REVERT_SELECTOR = "0x1aca3780";
+// FleetMissionNotResolved(uint64 returnAt): a staged battle or earlier mission still holds the body. The argument is a
+// time, not a mission id: the blocking fleet's arrivalAt for a body lock, otherwise its returnAt or the blocker's time.
+const FLEET_MISSION_NOT_RESOLVED_REVERT_SELECTOR = "0xb3439205";
 export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
   "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
 
@@ -2082,6 +2086,24 @@ function dependencyLabel(dependency: string | undefined): string {
   return level && /^\d+$/.test(level) ? `${readableSubject} ${level}` : dependency.replace(/_/g, " ");
 }
 
+// Bounds for showing FleetMissionNotResolved's timestamp; anything further in the past is not a trustworthy time.
+const FLEET_ACTIVITY_TIMING_MAX_SECONDS = 30 * 24 * 60 * 60;
+// Only a body-lock style time (in the past or just ahead) describes activity that clears by itself. Recall and
+// complete-return reverts pass a returnAt/holdUntil that can be far ahead, and waiting will not make those succeed.
+const FLEET_ACTIVITY_SOON_SECONDS = 5 * 60;
+
+/** "that started 3m 20s ago" / "due in 45s" for the blocking fleet's time, or undefined when it is missing, implausible or far ahead. */
+function fleetActivityTiming(timestamp: bigint | undefined, nowMs: number = Date.now()): string | undefined {
+  if (timestamp === undefined || timestamp <= 0n || timestamp > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return undefined;
+  }
+  const deltaSeconds = Number(timestamp) - Math.floor(nowMs / 1_000);
+  if (deltaSeconds > FLEET_ACTIVITY_SOON_SECONDS || -deltaSeconds > FLEET_ACTIVITY_TIMING_MAX_SECONDS) {
+    return undefined;
+  }
+  return deltaSeconds > 0 ? `due in ${formatDuration(deltaSeconds)}` : `that started ${deltaSeconds === 0 ? "just now" : `${formatDuration(-deltaSeconds)} ago`}`;
+}
+
 function contractRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
   const selector = revertSelector(error);
   if (selector === MISSING_DEPENDENCY_REVERT_SELECTOR) {
@@ -2099,6 +2121,13 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
 
   if (selector === LEVEL_TOO_HIGH_REVERT_SELECTOR) {
     return "This level is already at the maximum.";
+  }
+
+  if (selector === FLEET_MISSION_NOT_RESOLVED_REVERT_SELECTOR) {
+    const timing = fleetActivityTiming(revertUintArg(error, 0));
+    if (timing) {
+      return `Fleet activity at this planet ${timing} must finish first (for an attack, its battle is still being resolved). It continues automatically; try again shortly.`;
+    }
   }
 
   if (selector === INSUFFICIENT_SHIPS_REVERT_SELECTOR) {

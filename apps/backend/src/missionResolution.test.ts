@@ -129,6 +129,233 @@ describe("MissionResolutionService", () => {
     await service.tick();
     expect(batchCalls).toBe(2);
   });
+  test("#511: a started service sends the next staged chunk right after Progress, not on the next interval", async () => {
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    let batchCalls = 0, done = false;
+    client.resolveMissionBatch = async (items) => {
+      if (items.length === 0) return { hash: null, items };
+      batchCalls++;
+      done = batchCalls >= 4;
+      return { hash: "0xabc", items, outcomes: [{ item: items[0]!, outcome: done ? "Settled" : "Progress", errorSelector: null, blockedDependency: null, complete: done }] };
+    };
+    client.isMissionLegComplete = async () => done;
+    const listed = client.listResolvableFleetMissions.bind(client);
+    client.listResolvableFleetMissions = async () => done ? [] : listed(); // a settled leg leaves the candidates
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      // Three Progress chunks and the settle, all without the hour-long interval firing; then idle.
+      await waitFor(() => service.snapshot().resolvedCount === 1);
+      await waitIdle(service);
+      expect(batchCalls).toBe(4);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: follow-up ticks are capped per interval even if a source kept reporting progress", async () => {
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    let batchCalls = 0;
+    client.resolveMissionBatch = async (items) => {
+      batchCalls++;
+      return { hash: "0xabc", items, outcomes: [{ item: items[0]!, outcome: "Progress", errorSelector: null, blockedDependency: null, complete: false }] };
+    };
+    client.isMissionLegComplete = async () => false;
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls >= 33);
+      await waitIdle(service);
+      expect(batchCalls).toBe(33); // the start tick plus 32 wakes
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: an unproductive or empty tick does not wake the next one early", async () => {
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    let batchCalls = 0;
+    client.resolveMissionBatch = async (items) => {
+      batchCalls++;
+      return { hash: null, items: [], exclusions: [{ item: items[0]!, reason: "1:Failed", terminal: false, unproductive: true }] };
+    };
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls === 1);
+      await waitIdle(service);
+      expect(batchCalls).toBe(1);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: referee-wait is re-checked each interval, wakes the referee once, and backs off when stuck", async () => {
+    let now = 1_000_000, refereeWakes = 0;
+    const seen: number[] = [];
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async (items) => {
+      if (items.length) seen.push(now);
+      return { hash: null, items: [], exclusions: items.map((item) => ({ item, reason: "referee-wait", terminal: false, unproductive: true })) };
+    };
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, now: () => now, logger: silentLogger(), onRefereeWait: () => { refereeWakes++; } });
+    for (let i = 0; i < 40; i++) { await service.tick(); now += 5_000; }
+    // Every 5 s tick for the first two minutes, then the 30 s flat retry.
+    const gaps = seen.slice(1).map((at, i) => at - seen[i]!);
+    expect(gaps.slice(0, 24).every((gap) => gap === 5_000)).toBe(true);
+    expect(gaps.slice(24).every((gap) => gap === 30_000)).toBe(true);
+    expect(refereeWakes).toBe(1);
+  });
+  test("#511: the referee's wake clears a referee-wait re-check so the final settle runs at once", async () => {
+    let batchCalls = 0, waiting = true, settled = false;
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async (items) => {
+      if (!items.length) return { hash: null, items };
+      batchCalls++;
+      if (waiting) return { hash: null, items: [], exclusions: [{ item: items[0]!, reason: "referee-wait", terminal: false, unproductive: true }] };
+      settled = true;
+      return { hash: "0x1", items };
+    };
+    const listed = client.listResolvableFleetMissions.bind(client);
+    client.listResolvableFleetMissions = async () => settled ? [] : listed();
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls === 1);
+      await waitIdle(service);
+      waiting = false;
+      service.requestTick(); // the referee released the battle
+      await waitFor(() => service.snapshot().resolvedCount === 1);
+      expect(batchCalls).toBe(2);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: a referee release also clears a referee-wait already on the stuck fallback", async () => {
+    let now = 1_000_000, batchCalls = 0, waiting = true, settled = false;
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async (items) => {
+      if (!items.length) return { hash: null, items };
+      batchCalls++;
+      if (waiting) return { hash: null, items: [], exclusions: [{ item: items[0]!, reason: "referee-wait", terminal: false, unproductive: true }] };
+      settled = true;
+      return { hash: "0x1", items };
+    };
+    const listed = client.listResolvableFleetMissions.bind(client);
+    client.listResolvableFleetMissions = async () => settled ? [] : listed();
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, now: () => now, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls === 1);
+      await waitIdle(service);
+      now += 3_700_000;               // the wait outlasts refereeWaitPromptMs (slow reveal)...
+      await service.tick();
+      expect(batchCalls).toBe(2);     // ...so it is on the 30 s flat retry now
+      waiting = false;
+      service.requestTick();          // the referee releases the battle; the clock does not move
+      await waitFor(() => service.snapshot().resolvedCount === 1);
+      expect(batchCalls).toBe(3);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: a referee release during an in-flight tick is not undone by that tick's older read", async () => {
+    let batchCalls = 0, waiting = true, settled = false, unblock: (() => void) | undefined;
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async (items) => {
+      if (!items.length) return { hash: null, items };
+      batchCalls++;
+      if (batchCalls === 2) await new Promise<void>((resolve) => { unblock = resolve; });
+      if (waiting || batchCalls === 2) return { hash: null, items: [], exclusions: [{ item: items[0]!, reason: "referee-wait", terminal: false, unproductive: true }] };
+      settled = true;
+      return { hash: "0x1", items };
+    };
+    const listed = client.listResolvableFleetMissions.bind(client);
+    client.listResolvableFleetMissions = async () => settled ? [] : listed(); // a settled leg leaves the candidates
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls === 1);
+      await waitIdle(service);
+      service.requestTick();          // tick 2 starts and reads "referee-wait"...
+      await waitFor(() => unblock !== undefined);
+      waiting = false;
+      service.requestTick();          // ...while the referee releases the battle
+      unblock!();
+      await waitFor(() => service.snapshot().resolvedCount === 1);
+      expect(batchCalls).toBe(3);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: a release during an in-flight tick also wins over a stuck referee-wait read", async () => {
+    let now = 1_000_000, batchCalls = 0, waiting = true, settled = false, unblock: (() => void) | undefined;
+    const client = fakeClient({ calls: [], resolvable: ["1"], returnable: [] });
+    client.resolveMissionBatch = async (items) => {
+      if (!items.length) return { hash: null, items };
+      batchCalls++;
+      if (batchCalls === 2) await new Promise<void>((resolve) => { unblock = resolve; });
+      if (waiting || batchCalls === 2) return { hash: null, items: [], exclusions: [{ item: items[0]!, reason: "referee-wait", terminal: false, unproductive: true }] };
+      settled = true;
+      return { hash: "0x1", items };
+    };
+    const listed = client.listResolvableFleetMissions.bind(client);
+    client.listResolvableFleetMissions = async () => settled ? [] : listed();
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, now: () => now, logger: silentLogger(), intervalMs: 3_600_000 });
+    service.start();
+    try {
+      await waitFor(() => batchCalls === 1);
+      await waitIdle(service);
+      now += 3_700_000;               // the wait is past refereeWaitPromptMs: its read would take the flat retry...
+      const tick = service.tick();    // ...tick 2 reads "referee-wait"
+      await waitFor(() => unblock !== undefined);
+      waiting = false;
+      service.requestTick();          // the referee releases the battle mid-tick; the clock does not move
+      unblock!();
+      await tick;
+      await waitFor(() => service.snapshot().resolvedCount === 1);
+      expect(batchCalls).toBe(3);
+    } finally {
+      service.stop();
+    }
+  });
+  test("#511: a settled leg releases flat retries of legs at the same planet only", async () => {
+    let now = 1_000_000, stage = 0;
+    const seen: string[][] = [];
+    const client = fakeClient({ calls: [], resolvable: [], returnable: [] });
+    const planets: Record<string, [string, string]> = { "1": ["85", "86"], "2": ["87", "86"], "3": ["88", "89"] };
+    const settledIds = new Set<string>();
+    // After the first tick 2 and 3 sit on another candidate page; the release must still reach them.
+    let page = ["1", "2", "3"];
+    client.listResolvableFleetMissions = async () => page.filter((id) => !settledIds.has(id)).map((missionId) => ({
+      arrivalAt: "1", missionId, missionType: "Attack", originPlanetId: planets[missionId]![0], targetPlanetId: planets[missionId]![1]
+    }));
+    client.resolveMissionBatch = async (items) => {
+      seen.push(items.map((i) => i.missionId));
+      if (stage++ === 0) {
+        // 1 holds planet 86: the next attack on it (2) and an unrelated leg (3) are refused unpaid.
+        const blocked = items.filter((i) => i.missionId !== "1");
+        return { hash: null, items: [], exclusions: blocked.map((item) => ({ item, reason: `${item.missionId}:Failed`, terminal: false, unproductive: true })) };
+      }
+      const first = items.find((i) => i.missionId === "1");
+      if (first) { settledIds.add("1"); return { hash: "0x1", items: [first] }; }
+      return { hash: "0x2", items };
+    };
+    client.isMissionLegComplete = async (id) => settledIds.has(id);
+    const service = new MissionResolutionService({ ...config, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } },
+      { chainClient: client, now: () => now, logger: silentLogger() });
+    await service.tick();          // 2 and 3 parked on a 30 s flat retry; 1 left for later
+    page = ["1"];
+    now += 5_000; await service.tick(); // 1 settles and releases planet 86
+    page = ["1", "2", "3"];
+    now += 5_000; await service.tick(); // 2 retries right away; 3 keeps its flat retry
+    expect(seen).toEqual([["1", "2", "3"], ["1"], ["2"]]);
+  });
   test("enabled unsupported/failed batch path never silently sends legacy singles", async () => {
     const calls: string[] = [];
     const client = fakeClient({ calls, resolvable: ["1"], returnable: [] });
@@ -1729,3 +1956,21 @@ describe("moon chance resolution", () => {
     });
   });
 });
+
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition not reached");
+    await Bun.sleep(2);
+  }
+}
+
+/** Wait until the service has been idle (no run started) for a while: no wake is pending. */
+async function waitIdle(service: MissionResolutionService, quietMs = 50): Promise<void> {
+  let last = service.snapshot().lastRunAt, quietSince = Date.now();
+  while (Date.now() - quietSince < quietMs) {
+    await Bun.sleep(5);
+    const current = service.snapshot().lastRunAt;
+    if (current !== last) { last = current; quietSince = Date.now(); }
+  }
+}

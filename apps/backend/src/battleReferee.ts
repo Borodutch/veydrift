@@ -305,7 +305,15 @@ export type BattleRefereeSnapshot = {
   failures: Record<string, string>;
 };
 
-/** One tick: discover sealed battles, then advance each pending battle by at most one transaction. */
+/** Upper bound on referee transactions per battle per tick (advance, submit, then leaf batches). */
+export const maxRefereeStepsPerTick = 8;
+
+/** Outcome of one referee step: a transaction was confirmed, the battle left the queue, or it waits. */
+export type RefereeStepResult = "sent" | "released" | "waiting";
+
+/** One tick: discover sealed battles, then advance each pending battle through consecutive
+ * confirmed transactions (advance, submit, leaf batches), bounded per battle, so a battle is not
+ * held one 5 s tick per step while its target planet stays locked (#511). */
 export class BattleRefereeWorker {
   private readonly results = new Map<string, RefereeResult>();
   readonly failures = new Map<string, string>();
@@ -313,19 +321,36 @@ export class BattleRefereeWorker {
   constructor(
     private readonly chain: RefereeChain,
     private readonly store: BattleReportStore,
-    private readonly options: { fromBlock?: bigint; logChunkSpan?: bigint } = {}
+    private readonly options: { fromBlock?: bigint; logChunkSpan?: bigint; maxStepsPerTick?: number } = {}
   ) {}
 
-  async tick(): Promise<void> {
+  /** Returns how many battles left the referee queue (their economics now belong to the resolver). */
+  async tick(): Promise<number> {
     await this.discover();
+    const maxSteps = this.options.maxStepsPerTick ?? maxRefereeStepsPerTick;
+    let released = 0;
     for (const battleId of this.store.pending()) {
       try {
-        await this.step(battleId);
+        // Operations already confirmed this tick. A read lagging the last receipt reports an
+        // earlier state; never pay to repeat one of these, leave it to the next tick instead.
+        const sent = new Set<string>();
+        try {
+          for (let steps = 0; steps < maxSteps; steps++) {
+            const result = await this.step(battleId, sent);
+            if (result === "released") released++;
+            if (result !== "sent") break;
+          }
+        } catch (error) {
+          // A read right after a confirmed step can lag the receipt; this battle already advanced,
+          // so let the next tick retry (and record the error there if it persists).
+          if (sent.size === 0) throw error;
+        }
         this.failures.delete(battleId.toString());
       } catch (error) {
         this.failures.set(battleId.toString(), safeDiagnosticText(error));
       }
     }
+    return released;
   }
 
   private async discover(): Promise<void> {
@@ -362,36 +387,44 @@ export class BattleRefereeWorker {
     this.results.delete(battleId.toString());
   }
 
-  async step(battleId: bigint): Promise<void> {
+  /** Advance one battle by at most one transaction. An operation already in `sent` (confirmed
+   * earlier this tick) is not repeated: that state can only come from a lagging read. */
+  async step(battleId: bigint, sent: Set<string> = new Set()): Promise<RefereeStepResult> {
+    const once = async (operation: string, send: () => Promise<Hex>): Promise<RefereeStepResult> => {
+      if (sent.has(operation)) return "waiting";
+      await send();
+      sent.add(operation);
+      return "sent";
+    };
     const status = await this.chain.status(battleId);
     if (status.phase === RefereePhase.Legacy || status.phase === RefereePhase.Bypassed) {
       this.done(battleId);
-      return;
+      return "released";
     }
     if (status.phase === RefereePhase.AwaitingRandomness) {
       // Reveal timing belongs to the randomness fulfiller; consuming it is permissionless.
-      if (await this.chain.randomnessRevealed(status.engine, status.requestId)) await this.chain.advance(battleId);
-      return;
+      if (!await this.chain.randomnessRevealed(status.engine, status.requestId)) return "waiting";
+      return once("advance", () => this.chain.advance(battleId));
     }
-    if (status.phase !== RefereePhase.AwaitingResult) return;
+    if (status.phase !== RefereePhase.AwaitingResult) return "waiting";
 
     const progress = await this.chain.progress(battleId);
     if (progress.phase === SettlementPhase.Economics) {
       // Remaining loot/debris/return phases continue through ordinary resolveFleetMission calls.
       this.done(battleId);
-      return;
+      return "released";
     }
+    if (progress.phase === SettlementPhase.Unaccepted && sent.has("submit")) return "waiting";
     const computed = await this.replay(battleId, status);
     if (progress.phase === SettlementPhase.Unaccepted) {
-      await this.chain.submit(battleId, computed);
-      return;
+      return once("submit", () => this.chain.submit(battleId, computed));
     }
     const accepted = await this.chain.acceptedRoot(battleId);
     if (accepted.toLowerCase() !== computed.root.toLowerCase()) {
       throw new Error(`battle ${battleId} accepted root ${accepted} differs from local replay ${computed.root}`);
     }
     const batch = computed.leaves.slice(progress.nextIndex, progress.nextIndex + maxLeavesPerTransaction);
-    await this.chain.apply(battleId, progress.nextIndex, batch);
+    return once(`apply:${progress.nextIndex}`, () => this.chain.apply(battleId, progress.nextIndex, batch));
   }
 }
 
@@ -563,9 +596,14 @@ export class BattleRefereeService {
 
   constructor(
     config: BackendConfig,
-    options: { chain?: RefereeChain; store?: BattleReportStore; transactionCoordinator?: ResolverTransactionCoordinator; intervalMs?: number } = {}
+    options: {
+      chain?: RefereeChain; store?: BattleReportStore; transactionCoordinator?: ResolverTransactionCoordinator; intervalMs?: number;
+      /** Called after a tick released battles to the resolver, whose final settle is then due (#511). */
+      onBattleReleased?: () => void;
+    } = {}
   ) {
     this.intervalMs = options.intervalMs ?? 5_000;
+    this.onBattleReleased = options.onBattleReleased;
     let chain = options.chain;
     let resolver: string | null = null;
     if (!chain && config.battleRefereePrivateKey && config.rpcUrl && config.gameContractAddress) {
@@ -601,6 +639,9 @@ export class BattleRefereeService {
 
   private readonly intervalMs: number;
   private readonly store: BattleReportStore | undefined;
+  private readonly onBattleReleased: (() => void) | undefined;
+  private wakeRequested = false;
+  private wakeTimer: ReturnType<typeof setTimeout> | undefined;
 
   walCheckpointTarget(): Pick<WalCheckpointTarget, "databasePath" | "setAutoCheckpoint"> | null {
     return this.store?.walCheckpointTarget() ?? null;
@@ -615,13 +656,33 @@ export class BattleRefereeService {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = undefined;
+    this.wakeRequested = false;
+  }
+
+  /** Run a tick now (or right after the current one) instead of on the next interval: the
+   * resolver saw a battle waiting on the referee. A no-op unless the service is started. */
+  requestTick(): void {
+    if (!this.timer) return;
+    if (this.inFlight) {
+      this.wakeRequested = true;
+      return;
+    }
+    if (this.wakeTimer) return;
+    this.wakeTimer = setTimeout(() => {
+      this.wakeTimer = undefined;
+      void this.tick();
+    }, 0);
+    this.wakeTimer.unref?.();
   }
 
   async tick(): Promise<void> {
     if (!this.worker || this.inFlight) return;
     this.inFlight = true;
+    let released = 0;
     try {
-      await this.worker.tick();
+      released = await this.worker.tick();
       this.lastError = null;
     } catch (error) {
       this.lastError = safeDiagnosticText(error);
@@ -630,6 +691,11 @@ export class BattleRefereeService {
       this.pendingCount = this.store?.pending().length ?? 0;
       this.lastRunAt = new Date().toISOString();
       this.inFlight = false;
+    }
+    if (released > 0) this.onBattleReleased?.();
+    if (this.wakeRequested) {
+      this.wakeRequested = false;
+      this.requestTick();
     }
   }
 

@@ -547,7 +547,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isWriter && loaded.problems.length === 0 && loaded.config.missionResolutionEnabled
       ? new MissionResolutionService(loaded.config, {
         ...(indexer ? { candidateSource: indexer } : {}),
-        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {}),
+        // Staged battles hand off to the referee and back; wake each other instead of waiting
+        // for the next interval while the target planet stays locked (#511).
+        onRefereeWait: () => battleReferee?.requestTick?.()
       })
       : undefined);
 
@@ -555,7 +558,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     dependencies.battleReferee ??
     (isWriter && loaded.problems.length === 0 && loaded.config.battleRefereePrivateKey
       ? new BattleRefereeService(loaded.config, {
-        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {})
+        ...(resolverTransactions ? { transactionCoordinator: resolverTransactions } : {}),
+        onBattleReleased: () => missionResolution?.requestTick?.()
       })
       : undefined);
   let battleReportReader: BattleReportStore | undefined;
