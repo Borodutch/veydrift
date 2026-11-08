@@ -2476,12 +2476,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               if (!owner) return null;
             }
             try {
-              if (indexer && (isGalaxySystemRequest(request, url) || url.pathname === "/highscores")) {
+              if (indexer && (isGalaxySystemRequest(request, url) || url.pathname === "/highscores" || readinessLabelledCachePath(url.pathname))) {
                 // Refresh ownership can await a peer. Reselect the key together with the
-                // synchronous payload, never publish a newer snapshot under the old key.
+                // synchronous payload, never publish a newer snapshot (or readiness label) under the old key.
                 const refresh = indexer.readConsistentSnapshot(() => ({
                   key: cacheableJsonRequestKey(request, url, indexer),
-                  response: url.pathname === "/highscores" ? routeHighscores(url) : routeGalaxySystems(request, url)
+                  response: url.pathname === "/highscores" ? routeHighscores(url)
+                    : url.pathname === "/raid-finder/debris" ? indexedDebrisTargetsResponse(indexer, url)
+                      : url.pathname === "/raid-finder/rifters" ? indexedRiftTargetsResponse(indexer, url)
+                        : routeGalaxySystems(request, url)
                 }));
                 return await refreshCachedJsonResponse(request, url, async () => refresh.response,
                   responseCache, sharedResponseCache, refresh.key, cacheTtlMs);
@@ -3200,9 +3203,36 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
     }
     return indexer.responseCacheVersion();
   }
-  if (["/universe/systems", "/raid-finder/debris", "/raid-finder/rifters"].includes(url.pathname)) return indexer.responseCacheVersion();
+  if (readinessLabelledCachePath(url.pathname)) {
+    return `${indexer.responseCacheVersion()}:readiness=${readinessCacheToken(indexer)}`;
+  }
+  if (url.pathname === "/universe/systems") return indexer.responseCacheVersion();
   const system = url.pathname.match(/^\/universe\/galaxies\/([0-9]+)\/systems\/([0-9]+)$/);
   return system ? galaxySystemCacheVersion(indexer, galaxySystemDetail(url), Number(system[1]), Number(system[2])) : "ttl";
+}
+
+// Cacheable routes whose 200s embed the indexer readiness verdict (`stale`, `indexer.*` and the
+// `x-veydrift-index-state` header, see `indexedJsonResponse`). Readiness can flip with no data
+// change (a pending reconciliation, a reorg flag, a transport stall), which leaves
+// `responseCacheVersion()` untouched, so these keys also carry the verdict itself. Highscores,
+// universe systems, /cca and /stats carry no readiness label and keep their data-only keys. #536
+function readinessLabelledCachePath(pathname: string): boolean {
+  return pathname === "/raid-finder/debris" || pathname === "/raid-finder/rifters";
+}
+
+// Every readiness field `indexedJsonResponse` publishes, read uncached (memoized inside a consistent
+// read). Steady state keeps one token, so the hit rate only drops for the flip itself.
+function readinessCacheToken(indexer: SettlementIndexer): string {
+  const readiness = indexer.readiness();
+  return Bun.hash(JSON.stringify([
+    readiness.indexedState,
+    readiness.safeToServeIndexedState,
+    readiness.safeToServeAllianceState,
+    readiness.allianceStaleReason,
+    readiness.pendingReconciliationReason,
+    readiness.staleReason,
+    readiness.reorgDetectedAt
+  ])).toString(36);
 }
 
 function clientCacheControlHeader(url: URL, ttlMs: number): string {

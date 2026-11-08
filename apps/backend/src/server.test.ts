@@ -10103,6 +10103,61 @@ describe("Veydrift backend", () => {
     }
   });
 
+  // The HTTP JSON response cache keys raid-finder pages by `responseCacheVersion()`. A flip to or from
+  // healthy usually moves its `fleet=` horizon (any pending reason makes the projection unsafe), but
+  // not when a non-blocking reason (a websocket reconnect, planet hydration) is already pending: the
+  // label is then healthy while `fleet=null`, and a transport stall or a blocking reason flips it to
+  // stale with the version unchanged. Date.now() is frozen, so without the readiness token every
+  // follow-up below would be a 30 s cache hit carrying the old label. #536
+  for (const path of ["/raid-finder/debris", "/raid-finder/rifters"] as const) {
+    test(`relabels a cached ${path} response on the next request after a readiness-only flip`, async () => {
+      const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+      await indexer.rebuild();
+      // Production always has a projection watermark (no `baseline=` legacy mode).
+      indexer.recordResourceProjectionWatermark("130", Math.floor(Date.now() / 1000).toString(), `0x${"a".repeat(64)}`);
+      indexer.markStale("websocket reconnected");
+      let builds = 0;
+      for (const method of ["debrisTargets", "riftTargets"] as const) {
+        const original = indexer[method].bind(indexer) as (...args: unknown[]) => unknown;
+        (indexer as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => { builds += 1; return original(...args); };
+      }
+      const handler = createRequestHandler({
+        config: configuredTestConfig, chainReader: new MockChainReader(), indexer, enableResponseCache: true, prewarmResponseCache: false
+      });
+      const expectLabel = async (label: "healthy" | "stale", staleReason: string | null) => {
+        const response = await handler(new Request(`http://localhost${path}?limit=5`));
+        const body = await response.json() as { stale: boolean; indexer: Record<string, unknown> };
+        expect(response.status).toBe(200);
+        expect(response.headers.get("x-veydrift-index-state")).toBe(label);
+        expect(body.stale).toBe(label === "stale");
+        expect(body.indexer).toMatchObject({ indexedState: label, safeToServeIndexedState: label === "healthy", staleReason });
+      };
+
+      await expectLabel("healthy", null);
+      await expectLabel("healthy", null);
+      expect(builds).toBe(1); // steady state stays a cache hit
+      const version = indexer.responseCacheVersion();
+
+      indexer.setTransportStale("rpc_head_stalled:130");
+      expect(indexer.responseCacheVersion()).toBe(version); // readiness-only flip, no data change
+      await expectLabel("stale", "rpc_head_stalled:130");
+      await expectLabel("stale", "rpc_head_stalled:130");
+      expect(builds).toBe(2);
+
+      indexer.setTransportStale(null);
+      await expectLabel("healthy", null);
+      expect(builds).toBe(2); // the healthy entry written before the flip is still valid
+
+      indexer.markStale("indexed_state_reconciliation_pending");
+      expect(indexer.responseCacheVersion()).toBe(version);
+      await expectLabel("stale", "indexed_state_reconciliation_pending");
+      expect(builds).toBe(3);
+      indexer.markStale("websocket reconnected");
+      await expectLabel("healthy", null);
+      expect(builds).toBe(3);
+    });
+  }
+
   test("keeps indexed infrastructure globally healthy while selected planet resources warm", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;
