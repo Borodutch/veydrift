@@ -10045,6 +10045,64 @@ describe("Veydrift backend", () => {
     expect(body.queue).toBeNull();
   });
 
+  // The file freezes Date.now(), so every follow-up request below lands inside the 250 ms coalesced
+  // reader snapshot window (and the indexer's own 1 s snapshot cache). Player queues have no uncached
+  // resource-projection gate, so their 200 label is the only readiness signal a client gets. #534
+  async function expectIndexedLabel(handler: ReturnType<typeof createRequestHandler>, label: "healthy" | "stale") {
+    const response = await handler(new Request(`http://localhost/wallet/${player}/queues`));
+    const body = await response.json() as { stale: boolean; indexer: Record<string, unknown> };
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe(label);
+    expect(body.stale).toBe(label === "stale");
+    expect(body.indexer).toMatchObject({
+      indexedState: label,
+      safeToServeIndexedState: label === "healthy",
+      staleReason: label === "stale" ? "indexed_state_reconciliation_pending" : null,
+      pendingReconciliationReason: label === "stale" ? "indexed_state_reconciliation_pending" : null
+    });
+  }
+
+  test("labels the next indexed 200 with a readiness flip inside the coalesced snapshot window", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    await expectIndexedLabel(handler, "healthy");
+    indexer.markStale("indexed_state_reconciliation_pending");
+    await expectIndexedLabel(handler, "stale");
+    indexer.clearPendingReconciliationReason("indexed_state_reconciliation_pending");
+    await expectIndexedLabel(handler, "healthy");
+  });
+
+  test("reader workers label the next indexed 200 with the writer's readiness flip inside the coalesced window", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-reader-readiness-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      await writer.rebuild();
+      const reader = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+        databasePath,
+        readOnly: true
+      });
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        indexer: reader,
+        role: "reader"
+      });
+
+      await expectIndexedLabel(handler, "healthy");
+      // The writer runs in another process: nothing invalidates the reader's in-memory caches.
+      writer.markStale("indexed_state_reconciliation_pending");
+      await expectIndexedLabel(handler, "stale");
+      expect(reader.snapshot()).toMatchObject({ safeToServeIndexedState: false, indexedState: "stale" });
+      writer.clearPendingReconciliationReason("indexed_state_reconciliation_pending");
+      await expectIndexedLabel(handler, "healthy");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("keeps indexed infrastructure globally healthy while selected planet resources warm", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;

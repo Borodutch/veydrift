@@ -3314,10 +3314,13 @@ const indexedRequestSnapshotCache = new WeakMap<SettlementIndexer, {
 // result. HTTP readers only need the snapshot for readiness headers/status, while their payloads
 // are fetched directly from the indexed tables. Coalesce that broad metadata view briefly so an
 // active writer cannot make every concurrent page request re-run it under SQLite contention.
+// Readiness is the exception: a reorg or pending reconciliation must reach the very next response
+// label, so a coalesced hit always takes the cheap uncached `readiness()` (memoized per consistent
+// read, so it matches the payload's transaction) instead of the cached verdict.
 function indexedReadSnapshot(indexer: SettlementIndexer): IndexerSnapshot {
   const nowMs = Date.now();
   const cached = indexedRequestSnapshotCache.get(indexer);
-  if (cached && cached.expiresAtMs > nowMs) return cached.snapshot;
+  if (cached && cached.expiresAtMs > nowMs) return { ...cached.snapshot, ...indexer.readiness() };
   const snapshot = indexer.snapshot();
   indexedRequestSnapshotCache.set(indexer, { expiresAtMs: nowMs + 250, snapshot });
   return snapshot;

@@ -320,6 +320,33 @@ export type IndexerSnapshot = {
   startPriceWei: string | null;
 };
 
+const readinessMetadataKeys = [
+  "allianceReconciledAt",
+  "lastReconciledAt",
+  "lastReconciliationError",
+  "pendingReconciliationReason",
+  "reorgDetectedAt",
+  "transportStaleReason"
+] as const;
+
+type ReadinessMetadataKey = typeof readinessMetadataKeys[number];
+
+/** The `IndexerSnapshot` fields that decide (or explain) whether indexed state may be served. */
+export type IndexerReadiness = Pick<IndexerSnapshot,
+  | "allianceReconciledAt"
+  | "allianceStaleReason"
+  | "currentStateHealInProgress"
+  | "indexedState"
+  | "lastReconciledAt"
+  | "lastReconciliationError"
+  | "pendingReconciliationReason"
+  | "reconciliationInProgress"
+  | "reorgDetectedAt"
+  | "safeToServeAllianceState"
+  | "safeToServeIndexedState"
+  | "staleReason"
+>;
+
 type ResourceProjectionContext = {
   block: string | null;
   hash: string | null;
@@ -1103,11 +1130,12 @@ export class SettlementIndexer {
       && cached.currentStateHealPromise === this.currentStateHealPromise
       && cached.expiresAtMs > nowMs
     ) {
-      return cached.snapshot;
+      // Read-only API workers never see the writer's in-memory invalidation (`touch()`/`setMetadata`
+      // run in another process), so their cached snapshot can lag a readiness flip by the whole TTL.
+      // Keep the cached counters/diagnostics, but never let them carry a stale readiness verdict.
+      return this.readOnly ? { ...cached.snapshot, ...this.readiness() } : cached.snapshot;
     }
 
-    const currentStateHealInProgress = this.currentStateHealPromise !== null;
-    const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
     const counts = this.indexedCounts();
     const indexedPlanets = counts.indexedPlanets;
     // A snapshot exposes many independent metadata values. Read them in one statement so a reader
@@ -1116,38 +1144,14 @@ export class SettlementIndexer {
     // intermittent multi-second overview tail under the 1-writer/9-reader topology.
     const metadata = this.snapshotMetadata();
     const metadataValue = (key: string): string | null => metadata.get(key) ?? null;
-    const lastReconciledAt = metadataValue("lastReconciledAt");
-    const allianceReconciledAt = metadataValue("allianceReconciledAt") ?? lastReconciledAt;
-    const lastReconciledBlock = metadataValue("lastReconciledBlock");
-    const lastReconciliationError = metadataValue("lastReconciliationError");
-    const pendingReconciliationReason = metadataValue("pendingReconciliationReason");
-    const blockingStaleReason = metadataValue("transportStaleReason") ?? this.blockingStaleReason({
-      lastReconciledAt,
-      lastReconciliationError,
-      pendingReconciliationReason
-    });
-    const staleReason = reconciliationInProgress ? "reconciliation_in_progress" : blockingStaleReason;
-    const canServePreviousReconciliation =
-      reconciliationInProgress
-      && Boolean(lastReconciledAt)
-      && isPlanetHydrationPendingReason(blockingStaleReason);
-    const safeToServeIndexedState =
-      (blockingStaleReason === null || canServePreviousReconciliation)
-      && (!reconciliationInProgress || Boolean(lastReconciledAt));
-    const allianceStaleReason = this.allianceStaleReason({
-      allianceReconciledAt,
-      lastReconciliationError,
-      reconciliationInProgress
-    });
+    const readiness = this.readinessFromMetadata(metadataValue);
     const snapshot: IndexerSnapshot = {
-      allianceReconciledAt,
-      allianceStaleReason,
+      ...readiness,
       indexedDebrisFields: counts.indexedDebrisFields,
       indexedEventLogs: counts.indexedEventLogs,
       indexedMoonChanceReports: counts.indexedMoonChanceReports,
       indexedMoons: counts.indexedMoons,
       indexedPlanets,
-      indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
       indexedRevision: metadataValue(indexedRevisionMetadataKey) ?? "0",
       indexedRiftBalances: counts.indexedRiftBalances,
       fromBlock: this.fromBlock.toString(),
@@ -1174,22 +1178,13 @@ export class SettlementIndexer {
       lastCanonicalFleetMissionSyncError: metadataValue("lastCanonicalFleetMissionSyncError"),
       lastCanonicalFleetMissionSyncRows: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncRows")),
       lastCanonicalFleetMissionSyncUpdatedRows: metadataNumber(metadataValue("lastCanonicalFleetMissionSyncUpdatedRows")),
-      lastReconciledAt,
-      lastReconciledBlock,
-      lastReconciliationError,
-      currentStateHealInProgress,
+      lastReconciledBlock: metadataValue("lastReconciledBlock"),
       currentStateHealRunId: this.currentStateHealRunId,
       latestIndexedBlock: metadataValue("latestIndexedBlock"),
       resourceProjectionBlock: metadataValue(resourceProjectionBlockMetadataKey),
       resourceProjectionHash: metadataValue(resourceProjectionHashMetadataKey),
       resourceProjectionRevision: metadataValue(resourceProjectionRevisionMetadataKey),
       resourceProjectionTimestamp: metadataValue(resourceProjectionTimestampMetadataKey),
-      pendingReconciliationReason,
-      reconciliationInProgress,
-      reorgDetectedAt: metadataValue("reorgDetectedAt"),
-      safeToServeAllianceState: allianceStaleReason === null,
-      safeToServeIndexedState,
-      staleReason,
       startPriceBootstrapDivergence: metadataValue(startPriceBootstrapDivergenceMetadataKey),
       startPriceSource: metadataValue(startPriceSourceMetadataKey),
       startPriceWei: metadataValue(startPriceWeiMetadataKey)
@@ -1203,6 +1198,64 @@ export class SettlementIndexer {
       snapshot
     };
     return snapshot;
+  }
+
+  /**
+   * The readiness verdict of `snapshot()`, read uncached from the few metadata keys it depends on.
+   * Response labels (`stale`, `x-veydrift-index-state`, `indexedState`) must come from here or from
+   * an uncached snapshot: coalesced snapshots may predate a reorg or pending reconciliation by up to
+   * their TTL, and a cached `safeToServeIndexedState: true` would then label stale data healthy.
+   * Inside a read-only consistent read the value is memoized, matching the payload's transaction.
+   */
+  readiness(): IndexerReadiness {
+    return this.memoInReadTransaction("indexer:readiness", () => {
+      const rows = this.db.query(
+        `SELECT key, value FROM indexer_metadata WHERE key IN (${readinessMetadataKeys.map(() => "?").join(", ")})`
+      ).all(...readinessMetadataKeys) as MetadataEntryRow[];
+      const metadata = new Map(rows.map((row) => [row.key, row.value]));
+      return this.readinessFromMetadata((key) => metadata.get(key) ?? null);
+    });
+  }
+
+  private readinessFromMetadata(metadataValue: (key: ReadinessMetadataKey) => string | null): IndexerReadiness {
+    const currentStateHealInProgress = this.currentStateHealPromise !== null;
+    const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
+    const lastReconciledAt = metadataValue("lastReconciledAt");
+    const allianceReconciledAt = metadataValue("allianceReconciledAt") ?? lastReconciledAt;
+    const lastReconciliationError = metadataValue("lastReconciliationError");
+    const pendingReconciliationReason = metadataValue("pendingReconciliationReason");
+    const blockingStaleReason = metadataValue("transportStaleReason") ?? this.blockingStaleReason({
+      lastReconciledAt,
+      lastReconciliationError,
+      pendingReconciliationReason
+    });
+    const staleReason = reconciliationInProgress ? "reconciliation_in_progress" : blockingStaleReason;
+    const canServePreviousReconciliation =
+      reconciliationInProgress
+      && Boolean(lastReconciledAt)
+      && isPlanetHydrationPendingReason(blockingStaleReason);
+    const safeToServeIndexedState =
+      (blockingStaleReason === null || canServePreviousReconciliation)
+      && (!reconciliationInProgress || Boolean(lastReconciledAt));
+    const allianceStaleReason = this.allianceStaleReason({
+      allianceReconciledAt,
+      lastReconciliationError,
+      reconciliationInProgress
+    });
+    return {
+      allianceReconciledAt,
+      allianceStaleReason,
+      currentStateHealInProgress,
+      indexedState: safeToServeIndexedState ? "healthy" : reconciliationInProgress ? "reconciling" : "stale",
+      lastReconciledAt,
+      lastReconciliationError,
+      pendingReconciliationReason,
+      reconciliationInProgress,
+      reorgDetectedAt: metadataValue("reorgDetectedAt"),
+      safeToServeAllianceState: allianceStaleReason === null,
+      safeToServeIndexedState,
+      staleReason
+    };
   }
 
   gameMaintenanceState(nowMs = Date.now()): GameMaintenanceState | null {
