@@ -214,8 +214,11 @@ function bisectedBatchSupplyMaximum(
   const zeroLaunches = zero.orders.length > 0;
   // Never lower a request that already launches: bisection can land on an earlier island.
   let low = requested[resource] <= upper && launchable(requested[resource]) ? requested[resource] : 0, high = upper;
-  // Every accepted value launches, so stopping at the deadline still returns a launchable total.
-  while (low < high && now() <= deadline) {
+  // Every accepted value launches, so stopping at the deadline still returns a launchable total. The
+  // clock may only stop the search once one is in hand (low > 0): a stalled machine must not turn an
+  // empty draft's Max into 0 while a non-zero total launches (#533). Without one the bisection itself
+  // bounds the work (about 53 probes).
+  while (low < high && !(low > 0 && now() > deadline)) {
     const value = low + Math.ceil((high - low) / 2);
     if (launchable(value)) low = value;
     else high = value - 1;

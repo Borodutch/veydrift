@@ -27,6 +27,14 @@ function maxPlan(args: Parameters<typeof buildBatchSupplyPlan>[0], resource: key
   return { next, plan, maximum };
 }
 
+// Injected fake clock. reads: [start, ...] → the clock reads after the start one, all returning `later`.
+// With the default 150 ms budget, 151 spends the exact search's budget and 301 the fallback's too.
+const clock = (later: number) => { let read = 0; return () => (read++ === 0 ? 0 : later); };
+function launches(args: Parameters<typeof buildBatchSupplyPlan>[0], resource: keyof SupplyResources, value: number) {
+  const plan = buildBatchSupplyPlan({ ...args, requested: { ...zero, ...args.requested, [resource]: value } });
+  return plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0);
+}
+
 describe("Supply Max preserves the actual shipment", () => {
   for (const order of [["metal", "crystal", "deuterium"], ["metal", "deuterium", "crystal"], ["crystal", "metal", "deuterium"], ["crystal", "deuterium", "metal"], ["deuterium", "metal", "crystal"], ["deuterium", "crystal", "metal"]] as const) {
     test("stable Max in " + order.join(", ") + " order", () => {
@@ -253,12 +261,6 @@ describe("Supply Max preserves the actual shipment", () => {
   });
 
   test("past the 150 ms click budget, Max falls back to a launchable bisected total (fake clock)", () => {
-    // reads: [start, ...] → the clock reads after the start one, all returning `later`.
-    const clock = (later: number) => { let read = 0; return () => (read++ === 0 ? 0 : later); };
-    const launches = (args: Parameters<typeof buildBatchSupplyPlan>[0], resource: keyof SupplyResources, value: number) => {
-      const plan = buildBatchSupplyPlan({ ...args, requested: { ...zero, ...args.requested, [resource]: value } });
-      return plan.orders.length > 0 && !plan.sourceLimitReached && plan.blockedSources.length === 0 && keys.every(key => plan.missing[key] === 0);
-    };
     // An empty draft is a valid floor: the fallback must not answer 0 just because nothing launches at 0 (CI run 157).
     const many = options(Array.from({ length: 15 }, (_, i) => source(String(i), { resources: { metal: 10, crystal: 0, deuterium: 100 } })));
     expect(maximumBatchSupplyResource(many, "metal", 150, clock(151))).toBe(150);
@@ -278,15 +280,39 @@ describe("Supply Max preserves the actual shipment", () => {
     const typed = maximumBatchSupplyResource({ ...island, requested: { ...island.requested, metal: 62500 } }, "metal", undefined, clock(151));
     expect(typed).toBeGreaterThanOrEqual(62500);
     expect(launches(island, "metal", typed)).toBe(true);
-    // The bisection has its own 150 ms. Once that is spent too, it returns its launchable floor:
-    // 0 here (an empty draft), or a typed request that already launches (12).
-    expect(maximumBatchSupplyResource(island, "metal", undefined, clock(301))).toBe(0);
+    // The bisection has its own 150 ms. Once that is spent too, it stops at the first launchable total it
+    // holds: never 0 for an empty draft while a total launches (#533), and a launchable typed request (12, 62500) as is.
+    const spent = maximumBatchSupplyResource(island, "metal", undefined, clock(301));
+    expect(spent).toBeGreaterThan(0);
+    expect(launches(island, "metal", spent)).toBe(true);
     expect(maximumBatchSupplyResource({ ...island, requested: { metal: 12 } }, "metal", undefined, clock(301))).toBe(12);
+    expect(maximumBatchSupplyResource({ ...island, requested: { ...island.requested, metal: 62500 } }, "metal", undefined, clock(301))).toBe(62500);
     // 0 is clean but nothing launches at any total (no deuterium for fuel): like the exact search, keep the request.
     const unfueled = options([source("1", { resources: { metal: 10, crystal: 0, deuterium: 0 } })], { metal: 12 });
     expect(launches(unfueled, "metal", 12)).toBe(false);
     expect(maximumBatchSupplyResource(unfueled, "metal", undefined, clock(151))).toBe(12);
     expect(maximumBatchSupplyResource(unfueled, "metal", unbounded)).toBe(12);
+  });
+
+  test("a stalled clock never turns an empty draft's Max into 0 while a total launches (#533)", () => {
+    // D → C → M from an empty single-source draft. With the fallback's time left (151) each bisected Max
+    // is exact (this source is monotone); with both budgets spent (301) it is still a launchable total above 0.
+    let exact = options();
+    let spent = options();
+    for (const resource of ["deuterium", "crystal", "metal"] as const) {
+      const fallback = maximumBatchSupplyResource(exact, resource, undefined, clock(151));
+      expect(fallback).toBe(maximumBatchSupplyResource(exact, resource, unbounded));
+      exact = { ...exact, requested: { ...exact.requested, [resource]: fallback } };
+      const late = maximumBatchSupplyResource(spent, resource, undefined, clock(301));
+      expect(late).toBeGreaterThan(0);
+      expect(launches(spent, resource, late)).toBe(true);
+      spent = { ...spent, requested: { ...spent.requested, [resource]: late } };
+    }
+    expect(exact.requested.deuterium).toBe(9997);
+    // An oversized clicked field still gives way to 0 when only 0 launches, as in the exact search.
+    const oversized = options([source("1", { resources: { metal: 0, crystal: 100, deuterium: 100 } })], { metal: 50, crystal: 100 });
+    expect(maximumBatchSupplyResource(oversized, "metal", unbounded)).toBe(0);
+    for (const later of [151, 301]) expect(maximumBatchSupplyResource(oversized, "metal", undefined, clock(later))).toBe(0);
   });
 
   test("large stocks skip resource intervals instead of scanning units", () => {
