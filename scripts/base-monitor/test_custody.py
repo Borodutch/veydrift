@@ -14,10 +14,10 @@ class CustodyTests(unittest.TestCase):
   self.assertEqual(s['held'],[held]);self.assertEqual(m.custody(s)['heldCount'],1)
   x['resources']['node_critical_errors']='1';new=m.transition(s,x,19)
   self.assertNotEqual(new['eventId'],e['eventId']);self.assertNotIn('disk_pct',new['text'])
-  self.assertIn('custody degraded',new['text']);m.acknowledge(s,new['eventId'],'123',20)
+  self.assertIn('unconfirmed delivery',new['text']);m.acknowledge(s,new['eventId'],'123',20)
   x['resources']['disk_pct']='39';self.assertIsNone(m.transition(s,x,21))
   m.acknowledge(s,e['eventId'],'124',22)
-  recovery=m.transition(s,x,23);self.assertIn('RECOVERED resource-disk_pct',recovery['text'])
+  recovery=m.transition(s,x,23);self.assertIn('OK again: chain disk over 80% full',recovery['text'])
  def test_uncertain_recovery_never_recreated(self):
   s={};x=healthy();x['resources']['disk_pct']='81';e=m.transition(s,x,0);m.acknowledge(s,e['eventId'],'123',1)
   x['resources']['disk_pct']='39';e=m.transition(s,x,2);m.claim(s,e['eventId'],3);m.finish_send(s,e['eventId'])

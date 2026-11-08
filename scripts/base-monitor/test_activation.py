@@ -48,6 +48,6 @@ class Tests(unittest.TestCase):
  def test_ack_retry_recovery_unchanged(self):
   s={};x=healthy();x['resources']['disk_pct']='80';e=m.transition(s,x,0)
   self.assertEqual(e,m.transition(s,x,10))
-  m.acknowledge(s,e['eventId'],'12345',20);self.assertIsNone(m.transition(s,x,30));x['resources']['disk_pct']='39';r=m.transition(s,x,40);self.assertIn('RECOVERED',r['text'])
+  m.acknowledge(s,e['eventId'],'12345',20);self.assertIsNone(m.transition(s,x,30));x['resources']['disk_pct']='39';r=m.transition(s,x,40);self.assertIn('OK again',r['text'])
   m.acknowledge(s,r['eventId'],'12346',50);self.assertIsNone(m.transition(s,x,60))
 if __name__=='__main__': unittest.main()

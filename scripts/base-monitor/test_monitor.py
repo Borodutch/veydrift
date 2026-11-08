@@ -41,7 +41,7 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(m.transition(s, x, 10))
         self.assertIsNone(m.transition(s, x, 20))
         event = m.transition(s, x, 30)
-        self.assertIn('finalized-local-lag', event['text'])
+        self.assertIn('finalized block: our node is behind public Base RPCs', event['text'])
         self.assertFalse(s['incidents']['node-finalized-local-lag']['notified'])
 
     def test_single_deploy_502_does_not_alert_but_two_do(self):
@@ -61,11 +61,11 @@ class MonitorTests(unittest.TestCase):
         mission(x)['admission']['blockedReason'] = 'unresolved-intent'
         self.assertIsNone(m.transition(s, x, 0))
         event = m.transition(s, x, 10)
-        self.assertIn('admission-unresolved-intent', event['text'])
+        self.assertIn('mission admission blocked: unresolved-intent', event['text'])
         m.acknowledge(s, event['eventId'], '123', 10)
         mission(x)['admission']['blockedReason'] = None
         recovery = m.transition(s, x, 20)
-        self.assertIn('RECOVERED', recovery['text'])
+        self.assertIn('OK again', recovery['text'])
         m.acknowledge(s, recovery['eventId'], '124', 20)
         self.assertIsNone(m.transition(s, x, 30))
 
@@ -151,7 +151,7 @@ class MonitorTests(unittest.TestCase):
         x['resources']['disk_pct'] = '39'
         self.assertEqual(event, m.transition(s, x, 10))
         m.acknowledge(s, event['eventId'], '125', 10)
-        self.assertIn('RECOVERED', m.transition(s, x, 20)['text'])
+        self.assertIn('OK again', m.transition(s, x, 20)['text'])
 
     def test_progress_120_and_pause(self):
         s, x = {}, healthy()
@@ -159,10 +159,10 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(m.transition(s, x, 1000))
         self.assertIsNone(m.transition(s, x, 1119))
         event = m.transition(s, x, 1120)
-        self.assertIn('no-settlement-120s', event['text'])
+        self.assertIn('due missions not settling for 2+ min', event['text'])
         m.acknowledge(s, event['eventId'], '125', 1120)
         mission(x)['admission']['lastCanonicalSettlementAt'] = '1970-01-01T00:18:41Z'
-        self.assertIn('RECOVERED', m.transition(s, x, 1121)['text'])
+        self.assertIn('OK again', m.transition(s, x, 1121)['text'])
         s = {}
         mission(x)['gamePaused'] = True
         self.assertIsNone(m.transition(s, x, 1300))
@@ -177,8 +177,8 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(m.transition(s, x, 10))
         self.assertIsNone(m.transition(s, x, 20))
         e = m.transition(s, x, 30)
-        self.assertIn('ssh-unavailable', e['text'])
-        self.assertNotIn('RECOVERED', e['text'])
+        self.assertIn("can't SSH into the node server", e['text'])
+        self.assertNotIn('OK again', e['text'])
 
     def test_blind_spot_breaks_consecutive_samples(self):
         s, x = {}, healthy()
@@ -188,7 +188,7 @@ class MonitorTests(unittest.TestCase):
         del mission(x)['admission']
         self.assertIsNone(m.transition(s, x, 10))
         self.assertIsNone(m.transition(s, good, 20))
-        self.assertIn('admission-unresolved-intent', m.transition(s, good, 30)['text'])
+        self.assertIn('mission admission blocked: unresolved-intent', m.transition(s, good, 30)['text'])
 
     def test_storage_counts_funds_and_reset_thresholds(self):
         s, x = {}, healthy()
@@ -197,11 +197,11 @@ class MonitorTests(unittest.TestCase):
         x['resources']['node_reset_events'] = '3'
         x['balanceWei'] -= 1
         event = m.transition(s, x, 0)
-        for key in ('retention-warning', 'journal-warning', 'active-capacity', 'counts-capped', 'node_reset_events'):
+        for key in ('confirmed-mission retention near its limit', 'mission journal over 192 MB', '32+ active missions', 'mission counts capped', 'op-node reset derivation'):
             self.assertIn(key, event['text'])
         m.acknowledge(s, event['eventId'], '125', 0)
         self.assertIsNone(m.transition(s, x, 10))
-        self.assertIn('signer-funds-low', m.transition(s, x, 20)['text'])
+        self.assertIn('resolver signer below 0.0002 ETH', m.transition(s, x, 20)['text'])
 
     def test_secret_redaction(self):
         s, x = {}, healthy()
@@ -279,6 +279,41 @@ class MonitorTests(unittest.TestCase):
         bad['finalized']['hash'] = '0x' + 'b'*64
         report = h.classify(local, [local]*2, [local, bad], 8000)
         self.assertEqual(report['status'], 'provider-disagreement')
+
+    def test_restart_alerts_on_increase_then_recovers_after_an_hour(self):
+        s, x = {}, healthy()
+        x['resources']['container_node'] = 'running|healthy|5|false'  # historical restarts: quiet
+        self.assertIsNone(m.transition(s, x, 0))
+        x['resources']['container_node'] = 'running|healthy|7|false'
+        e = m.transition(s, x, 100)
+        self.assertIn('🔴 op-node container restarted (restart count 5 → 7)', e['text'])
+        m.acknowledge(s, e['eventId'], '1', 100)
+        self.assertIsNone(m.transition(s, x, 3000))
+        r = m.transition(s, x, 3700)
+        self.assertIn('🟢 OK again: op-node container restarted', r['text'])
+        m.acknowledge(s, r['eventId'], '2', 3700)
+        x['resources']['container_node'] = 'running|healthy|0|false'  # recreated: not a restart
+        self.assertIsNone(m.transition(s, x, 3800))
+
+    def test_unreadable_values_are_not_described_as_failures(self):
+        s, x = {}, healthy()
+        x['resources'].update(container_node='unknown', syncing='unknown', disk_pct='garbled' * 600,
+                              node_critical_errors='')
+        text = m.transition(s, x, 0)['text']
+        for line in ("can't read op-node container status", "can't read execution client sync status",
+                     "can't read chain disk usage", "can't read op-node logs (panic/fatal errors)"):
+            self.assertIn(line, text)
+        for wrong in ('OOM-killed', 'reports it is syncing', '80% full', 'logged panic', 'garbled'):
+            self.assertNotIn(wrong, text)
+        self.assertLess(len(text), 3900)
+
+    def test_disk_value_is_the_parsed_number(self):
+        s, x = {}, healthy()
+        x['resources']['disk_pct'] = '81'
+        self.assertIn('chain disk over 80% full (now 81%)', m.transition(s, x, 0)['text'])
+        self.assertEqual(m.describe('resource-disk_pct', {'resources': {'disk_pct': 'x' * 5000}}, {}, active=False),
+                         'chain disk over 80% full')
+
 
     def test_rejected_telemetry_records_private_reason(self):
         s, x = {}, healthy()

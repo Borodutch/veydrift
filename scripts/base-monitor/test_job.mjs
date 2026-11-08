@@ -29,7 +29,7 @@ for(const response of [good,{status:'delivery_queued',delivered:false},{ok:false
    await run(h.exec,message);assert.equal(sends,2);assert.notEqual(h.read().pending.eventId,original);assert.equal(h.read().pending.diagnostic,true);
    for(let i=0;i<15;i++){const tick=await run(h.exec,message);assert.equal(tick.custody.status,'degraded')}
    assert.equal(sends,2);assert.equal(h.read().held.length,2);
-   h.change();await run(h.exec,async o=>{assert.ok(o.message.includes('custody degraded'));sends++;return good});assert.equal(sends,3);
+   h.change();await run(h.exec,async o=>{assert.ok(o.message.includes('unconfirmed delivery'));sends++;return good});assert.equal(sends,3);
    assert.equal(h.read().held[0].eventId,original);
   }cases++;
  }finally{h.close()}
@@ -38,7 +38,7 @@ for(const response of [good,{status:'delivery_queued',delivered:false},{ok:false
 {
  const h=setup();try{
   await run(h.exec,async()=>{throw Error('unknown')});const original=h.read().pending.eventId;let notices=0;
-  const out=await run(h.exec,async o=>{notices++;assert.equal(o.threadId,'4030762');assert.ok(o.message.includes('DELIVERY CUSTODY UNCERTAIN for '+original));return good});
+  const out=await run(h.exec,async o=>{notices++;assert.equal(o.threadId,'4030762');assert.ok(o.message.includes('Not sure alert '+original));return good});
   assert.equal(out.status,'delivered');assert.equal(h.read().held[0].eventId,original);
   for(let i=0;i<15;i++)await run(h.exec,async()=>{throw Error('no duplicate notice')});
   assert.equal(notices,1);cases++;

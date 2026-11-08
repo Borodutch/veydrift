@@ -24,6 +24,10 @@ import health_http
 
 HERE = Path(__file__).resolve().parent
 MAX_HELD = 32
+# A held uncertain event stops fencing its signals after this age. Its delivery can no longer
+# be usefully proven, and a permanent fence would silence those signals forever (#276).
+STALE_HELD_SECONDS = 86400
+MAX_RETIRED = 32
 MAX_STATE_BYTES = 262144
 HOSTS = ('api.veydrift.com', 'api-test.veydrift.com')
 REASONS = {'confirmed-retention-full', 'journal-storage-full', 'canonical-reconciliation-required',
@@ -222,10 +226,20 @@ def signals(sample, state, now):
     # None suspends prior state during blind spots, never falsely recovers it.
     if sample.get('ssh_ok'):
         m = sample.get('resources', {})
+        seen = state.setdefault('restartSeen', {})
         for name in ('execution', 'l1-rpc', 'node'):
             parts = m.get('container_' + name, '').split('|')
             add('container-' + name, len(parts) != 4 or parts[:2] != ['running', 'healthy'])
-            add('restarts-' + name, len(parts) != 4 or parts[2] != '0')
+            # RestartCount is cumulative: alert when it grows, recover an hour after the last restart.
+            if len(parts) == 4 and parts[2].isdigit():
+                count, prev = int(parts[2]), seen.get(name)
+                if prev is None or count < prev['count']:  # first sample or container recreated
+                    seen[name] = {'count': count, 'at': None}
+                elif count > prev['count']:
+                    seen[name] = {'count': count, 'at': now, 'from': prev['count']}
+                add('restarts-' + name, seen[name]['at'] is not None and now - seen[name]['at'] < 3600)
+            else:
+                out['restarts-' + name] = (None, 1)
             add('oom-' + name, len(parts) != 4 or parts[3] != 'false')
         add('syncing', m.get('syncing') != 'false')
         for key, limit in [('disk_pct', 80), ('execution_anon_pct', 85), ('execution_psi_avg10', 10),
@@ -336,6 +350,91 @@ def signals(sample, state, now):
     return out
 
 
+CONTAINERS = {'execution': 'execution client (reth)', 'l1-rpc': 'L1 relay (Alchemy)', 'node': 'op-node'}
+TAG_STATUS = {
+    'provider-disagreement': 'block hash differs from public Base RPCs',
+    'reference-disagreement': 'public Base RPCs disagree with each other (can\'t verify)',
+    'local-lag': 'our node is behind public Base RPCs',
+    'local-staleness': 'our node stopped advancing while public RPCs move',
+    'chainwide-lag': 'all Base RPCs (ours and public) stalled, likely Base-wide',
+}
+LABELS = {
+    'ssh-unavailable': 'can\'t SSH into the node server',
+    'syncing': 'execution client reports it is syncing',
+    'node-probe-unavailable': 'can\'t read block heads from the node',
+    'resource-disk_pct': 'chain disk over 80% full',
+    'resource-execution_anon_pct': 'execution client memory over 85% of its limit',
+    'resource-execution_psi_avg10': 'execution client under memory pressure',
+    'resource-failed_units': 'failed systemd units on the node server',
+    'resource-node_reset_events': 'op-node reset derivation 3+ times in 30 min',
+    'resource-node_critical_errors': 'op-node logged panic/fatal errors',
+    'signer-funds-low': 'Veydrift resolver signer below 0.0002 ETH',
+    'signer-balance-unavailable': 'can\'t read Veydrift resolver signer balance',
+    'http': '/health is not returning 200',
+    'legacy-health': 'chain sync unhealthy (backlog, poll errors or unapproved RPC)',
+    'admission-transient-sustained': 'mission admission blocked for 20+ min',
+    'active-capacity': '32+ active missions (capacity reached)',
+    'retention-warning': 'confirmed-mission retention near its limit',
+    'journal-warning': 'mission journal over 192 MB',
+    'counts-capped': 'mission counts capped in /health',
+    'limits-changed': 'mission limits changed from 32/4096',
+    'due-arrivals': 'fleet arrivals overdue by 60s+',
+    'due-returns': 'fleet returns overdue by 60s+',
+    'due-queue-no-settlement-120s': 'due missions not settling for 2+ min',
+    'mission-telemetry': '/health is missing mission data',
+}
+# A resource reading that fails to parse raises the same key; the alert must not claim the threshold was crossed.
+UNREADABLE = {
+    'disk_pct': 'chain disk usage',
+    'execution_anon_pct': 'execution client memory usage',
+    'execution_psi_avg10': 'execution client memory pressure',
+    'failed_units': 'systemd unit status on the node server',
+    'node_reset_events': 'op-node logs (derivation resets)',
+    'node_critical_errors': 'op-node logs (panic/fatal errors)',
+}
+
+
+def describe(key, sample, state, active=True):
+    """Plain-English line for a signal key; falls back to the raw key. Never echoes raw upstream text."""
+    host, _, sub = key.rpartition(':')
+    if host:
+        label = LABELS.get(sub) or (sub.startswith('admission-') and 'mission admission blocked: ' + sub[10:])
+        return host + ': ' + (label or sub)
+    res = sample.get('resources', {})
+    kind, _, name = key.partition('-')
+    if name in CONTAINERS and kind in ('container', 'restarts', 'oom'):
+        what = CONTAINERS[name]
+        if active and kind != 'restarts' and len(res.get('container_' + name, '').split('|')) != 4:
+            # The same key fires when docker inspect fails: say so instead of claiming an OOM kill.
+            return 'can\'t read ' + what + ' container status'
+        if kind == 'container':
+            return what + ' container not running/healthy'
+        if kind == 'oom':
+            return what + ' container was OOM-killed'
+        r = state.get('restartSeen', {}).get(name, {})
+        return what + ' container restarted' + (' (restart count %s → %s)' % (r['from'], r['count']) if 'from' in r else '')
+    if key.startswith('node-') and key.count('-') >= 2:
+        tag, status = key[5:].split('-', 1)
+        if status in TAG_STATUS:
+            return tag + ' block: ' + TAG_STATUS[status]
+    if active and key == 'syncing' and res.get('syncing') != 'true':
+        return 'can\'t read execution client sync status'
+    if key.startswith('resource-') and key[9:] in UNREADABLE:
+        try:
+            value = number(res[key[9:]])
+        except (KeyError, TypeError, ValueError):
+            value = None
+        if active and value is None:
+            return 'can\'t read ' + UNREADABLE[key[9:]]
+        if key == 'resource-disk_pct' and value is not None:
+            # Only the parsed number: a raw upstream string never reaches the message.
+            return LABELS[key] + ' (now %g%%)' % value
+    text = LABELS.get(key, key)
+    if key == 'signer-funds-low' and isinstance(sample.get('balanceWei'), int):
+        text += ' (now %.5f ETH)' % (sample['balanceWei'] / 1e18)
+    return text
+
+
 def transition(state, sample, now):
     state.setdefault('version', 1)
     incidents = state.setdefault('incidents', {})
@@ -351,12 +450,18 @@ def transition(state, sample, now):
     held = state.setdefault('held', [])
     if state.get('sender'):
         return state.get('pending')  # sampling progresses; external send still fenced
+    retire_aged(state, now)  # before the capacity check, so aged custody frees a slot
     if state.get('pending'):
         if not delivery_hold(state['pending']):
             return state['pending']
         if len(held) >= MAX_HELD:
             return state['pending']
         held.append(state.pop('pending'))
+        retire_aged(state, now)  # an already-aged migration gets no separate escalation notice
+    # Age anchor for held events without a claim time, kept outside the immutable custody records.
+    seen = state.get('heldSeen', {})
+    state['heldSeen'] = {e['eventId']: seen.get(e['eventId'], now) for e in held
+                         if not isinstance((e.get('delivery') or {}).get('claimedAt'), (int, float))}
     fenced = {key for event in held for key, _ in event['changes']}
     changes = []
     for key, item in sorted(incidents.items()):
@@ -376,18 +481,33 @@ def transition(state, sample, now):
     escalation = next((e for e in held if not e.get('diagnostic') and not e.get('escalationCreated')), None) if len(held) < MAX_HELD else None
     if escalation:
         changes = []
-    if not changes and not escalation:
+    # Announce each auto-retirement once, on the next proposal the slot admits.
+    retired = [r for r in state.get('retired', []) if unannounced(r)]
+    if len(held) >= MAX_HELD:
+        retired = []
+    if not changes and not escalation and not retired:
         return None
     state['sequence'] = state.get('sequence', 0) + 1
     event = hashlib.sha256(json.dumps([state['sequence'], now, changes]).encode()).hexdigest()[:24]
-    text = '#61 Base / resolver monitoring; event ' + event + '. ' + '; '.join(
-        ('ALERT ' if active else 'RECOVERED ') + key for key, active in changes)
+    head = 'Base node monitor\n'
+    def line(key, active):
+        if not active:
+            return '🟢 OK again: ' + describe(key, sample, state, active=False)
+        return ('🔴 Still: ' if incidents[key]['notified'] else '🔴 ') + describe(key, sample, state)
+    text = head + '\n'.join(line(key, active) for key, active in changes)
     if escalation:
         escalation['escalationCreated'] = event
-        text = '#61 Base / resolver monitoring; event ' + event + '. DELIVERY CUSTODY UNCERTAIN for ' + escalation['eventId'] + '; inspect exact provider receipt; never resend the original event'
-    state['pending'] = {'eventId': event, 'text': text + ('. Delivery custody degraded: ' + str(len(held)) + ' uncertain events retained; operator reconciliation required.' if held else '') + '. Inspect; no automatic restart or failover.', 'changes': changes,
+        text = head + 'Not sure alert ' + escalation['eventId'] + ' reached Telegram; check the topic, it will not be resent'
+    if retired:
+        # Custody diagnostic only: names the retired IDs, never replays their alert/recovery text.
+        for record in retired:
+            record['announcedIn'] = event
+        text = (text + '\n' if changes or escalation else head) + 'Gave up on ' + str(len(retired)) + \
+            ' unconfirmed alert(s) after ' + str(STALE_HELD_SECONDS // 3600) + 'h (' + \
+            ', '.join(r['eventId'] for r in retired) + '); they will re-alert if still true'
+    state['pending'] = {'eventId': event, 'text': text + ('\n' + str(len(held)) + ' earlier alert(s) have unconfirmed delivery' if held else ''), 'changes': changes,
                         'delivery': {'status': 'ready'}}
-    if escalation:
+    if escalation or not changes:
         state['pending']['diagnostic'] = True
     return state['pending']
 
@@ -489,6 +609,58 @@ def release_not_delivered(state, event, evidence, now):
                                    'evidence': evidence, 'at': now}
 
 
+def held_age(state, event, now):
+    claimed = (event.get('delivery') or {}).get('claimedAt')
+    if not isinstance(claimed, (int, float)):
+        claimed = state.get('heldSeen', {}).get(event['eventId'], now)
+    return now - claimed
+
+
+def retire(state, event, outcome, evidence, now):
+    # Drop custody WITHOUT a resend or fake receipt. Re-arm covered signals: an incident still
+    # active alerts fresh after its normal threshold; a cleared one emits no stale RECOVERED.
+    state['held'].remove(event)
+    for key, _ in event['changes']:
+        item = state.get('incidents', {}).get(key)
+        if item:
+            item.update(notified=False, streak=0, active=False)
+    record = {'eventId': event['eventId'], 'outcome': outcome, 'evidence': evidence, 'at': now,
+              'claimedAt': (event.get('delivery') or {}).get('claimedAt'), 'changes': event['changes']}
+    if event.get('diagnostic'):
+        record['diagnostic'] = True
+    records = state.get('retired', []) + [record]
+    while len(records) > MAX_RETIRED:  # evict settled history first, never an unannounced retirement
+        records.remove(next((r for r in records if not unannounced(r)), records[0]))
+    state['retired'] = records
+    return record
+
+
+def unannounced(record):
+    # Retired diagnostics (custody/retirement notices) are never announced: that would recurse.
+    return (record['outcome'] == 'retired-stale-auto' and not record.get('diagnostic')
+            and 'announcedIn' not in record)
+
+
+def retire_aged(state, now):
+    # Scheduled path; the sender fence is already known clear. Held events carry no in-flight call.
+    aged = [e for e in state.get('held', []) if held_age(state, e, now) >= STALE_HELD_SECONDS]
+    for event in aged:
+        retire(state, event, 'retired-stale-auto', 'age>=' + str(STALE_HELD_SECONDS) + 's', now)
+
+
+def retire_stale(state, event, evidence, now):
+    # Operator-only: give up proving delivery of one held event. Never a resend or an ack.
+    if state.get('sender'):
+        raise ValueError('sender must be stopped and reconciled before retiring custody')
+    held = find_event(state, event)
+    if not held or not delivery_hold(held) or not re.fullmatch(r'[A-Za-z0-9:_./-]{1,160}', evidence):
+        raise ValueError('held event and private operator evidence reference required')
+    if state.get('pending') is held:  # uncertain pending not yet migrated by a sample
+        state.setdefault('held', []).append(state.pop('pending'))
+    record = retire(state, held, 'retired-stale-unproven', evidence, now)
+    state['lastReconciliation'] = {'eventId': event, 'outcome': record['outcome'], 'evidence': evidence, 'at': now}
+
+
 def atomic_save(path, state):
     data = json.dumps(state, sort_keys=True).encode()
     if len(data) > MAX_STATE_BYTES:
@@ -521,6 +693,7 @@ def main():
     action.add_argument('--finish-send')
     action.add_argument('--abandon-sender')
     action.add_argument('--release-not-delivered')
+    action.add_argument('--retire-stale')
     p.add_argument('--receipt')
     p.add_argument('--evidence', default='')
     args = p.parse_args()
@@ -549,6 +722,9 @@ def main():
         elif args.release_not_delivered:
             release_not_delivered(state, args.release_not_delivered, args.evidence, now)
             output = {'status': 'released', 'eventId': args.release_not_delivered}
+        elif args.retire_stale:
+            retire_stale(state, args.retire_stale, args.evidence, now)
+            output = {'status': 'retired', 'eventId': args.retire_stale}
         else:
             if not args.fixture and not args.health_dir:
                 p.error('--health-dir required for live read-only probe')

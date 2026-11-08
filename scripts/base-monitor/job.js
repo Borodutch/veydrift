@@ -17,7 +17,7 @@ if (out.status === 'quiet' || out.status === 'busy') return report(out.status);
 if (out.status === 'delivery-held') return report('delivery-degraded', {eventId:out.eventId});
 if (out.status !== 'proposed') throw new Error('monitor proposal failed');
 const event = out.event;
-if (!event || !/^[a-f0-9]{24}$/.test(event.eventId) || typeof event.text !== 'string' || event.text.length > 3900 || !event.text.startsWith('#61 Base / resolver monitoring; event ' + event.eventId + '. ')) throw new Error('invalid monitor event');
+if (!event || !/^[a-f0-9]{24}$/.test(event.eventId) || typeof event.text !== 'string' || event.text.length > 3900 || !event.text.startsWith('Base node monitor\n')) throw new Error('invalid monitor event');
 // Durable custody is committed BEFORE crossing the message boundary. No TTL/retry.
 const claimed = result(await exec({command:'python3 ' + program + ' --state ' + state + ' --claim ' + event.eventId,host:'gateway',timeoutSeconds:10,yieldMs:1000,awaitResults:true}));
 if (['delivery-held','sender-held','not-current','busy'].includes(claimed.status)) return report('delivery-degraded', {eventId:event.eventId});
