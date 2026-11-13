@@ -15599,6 +15599,8 @@ function contractEnumName(enumName: string, id: number): string | null {
 }
 
 function humanizeContractName(value: string): string {
+  // The contract enum is still Ship.Deathstar; players know it as the Dreadstar.
+  if (value === "Deathstar") return "Dreadstar";
   return value
     .replace(/[-_]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

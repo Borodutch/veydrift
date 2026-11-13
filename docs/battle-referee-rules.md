@@ -70,7 +70,7 @@ hull (full hull `H`).
 
 Evidence: this shield model reproduces all 41 real combat-report data points, including the 13
 exact-percentage cases the plain whole-percent model gets wrong (`oracle.test.ts`). 100
-Battleships against a Deathstar shield of 160,000 absorbed 298,600 (99 × 3,000 + 1,600), which
+Battleships against a Dreadstar shield of 160,000 absorbed 298,600 (99 × 3,000 + 1,600), which
 shows the same-shot spill and rules out TrashSim's carry into the next hit. 49,866 Cruiser shots
 of 1,400 against a 140,000 shield were all absorbed (exactly 1% bounces). An in-game test of a
 Large Cargo at exactly 70% hull being destroyed shows the inclusive threshold; the OWiki says

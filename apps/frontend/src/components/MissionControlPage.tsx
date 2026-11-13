@@ -3448,5 +3448,7 @@ function formatResource(value: string): string {
 }
 
 function shipLabel(key: string): string {
+  // The contract key is still "deathstar"; players know it as the Dreadstar.
+  if (key === "deathstar") return "Dreadstar";
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
 }
