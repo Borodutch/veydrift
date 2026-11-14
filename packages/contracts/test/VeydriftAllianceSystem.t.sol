@@ -31,7 +31,7 @@ import {
     VeydriftPaidAllianceInvites
 } from "../src/VeydriftPaidAllianceInvites.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
-import {Building, Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
+import {Building, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract AllianceMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -1052,6 +1052,113 @@ contract VeydriftAllianceSystemTest is Test {
                 * paidInvites.PRODUCTION_BONUS_BPS() / 10_000,
             "funded balance must include the exact deferred and current 2% production"
         );
+    }
+
+    /// Officer `member` holds a funded paid-invite treasury and has queued a Rift Stabilizer on
+    /// their home planet through the real build path; nothing has settled that planet since.
+    function _officerWithTreasuryAndQueuedStabilizer()
+        internal
+        returns (uint256 allianceId, uint256 planetId, VeydriftGameStorage.Resources memory balance)
+    {
+        vm.prank(leader);
+        allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        bytes32 commitment = keccak256("private-link-673");
+        uint256 price = paidInvites.INVITE_PRICE();
+        vm.prank(leader);
+        paidInvites.buy{value: price}(commitment);
+        uint64 expiresAt = uint64(block.timestamp + 10 minutes);
+        (uint8 v, bytes32 r, bytes32 s) = _signPaidInvite(commitment, newCommander, expiresAt);
+        vm.prank(newCommander);
+        uint256 inviteePlanetId = game.startPlanetWithAllianceInvite(commitment, expiresAt, v, r, s);
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(inviteePlanetId, Building.SolarPlant);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(inviteePlanetId);
+        vm.prank(newCommander);
+        game.startBuildingUpgrade(inviteePlanetId, Building.MetalMine);
+        vm.warp(block.timestamp + 365 days);
+        vm.prank(newCommander);
+        game.collectResources(inviteePlanetId);
+        vm.warp(block.timestamp + 100 hours);
+        vm.prank(newCommander);
+        game.collectResources(inviteePlanetId);
+        balance = paidInvites.bonusBalance(allianceId);
+        assertGt(balance.metal, 0, "settled invitee production must fund the treasury");
+
+        planetId = game.homePlanetOf(member);
+        _setBuildingLevel(planetId, Building.RoboticsFactory, 4);
+        _setBuildingLevel(planetId, Building.ResearchLab, 2);
+        _setTechnologyLevel(member, Technology.Energy, 5);
+        _setTechnologyLevel(member, Technology.Hyperspace, 1);
+        _creditPlanetResources(planetId, 100_000, 100_000, 100_000);
+        vm.prank(member);
+        game.startBuildingUpgrade(planetId, Building.InterdimensionalRiftStabilizer);
+        assertEq(game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer), 0);
+    }
+
+    function testPaidInviteWithdrawalAcceptsDueButUnsettledRiftStabilizer() public {
+        (uint256 allianceId, uint256 planetId, VeydriftGameStorage.Resources memory balance) =
+            _officerWithTreasuryAndQueuedStabilizer();
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt + 6 hours);
+        assertEq(
+            game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer),
+            0,
+            "the due Stabilizer must still be unsettled onchain"
+        );
+        uint128 metalBefore = game.planet(planetId).resources.metal;
+
+        vm.prank(member);
+        paidInvites.withdraw(allianceId, planetId, balance);
+
+        assertEq(game.planet(planetId).resources.metal, metalBefore + balance.metal);
+        assertEq(paidInvites.bonusBalance(allianceId).metal, 0);
+        vm.prank(member);
+        game.collectResources(planetId);
+        assertEq(game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer), 1);
+    }
+
+    function testPaidInviteWithdrawalStillRequiresStabilizerThatIsNotYetDue() public {
+        (uint256 allianceId, uint256 planetId, VeydriftGameStorage.Resources memory balance) =
+            _officerWithTreasuryAndQueuedStabilizer();
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt - 1);
+
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.RiftStabilizerRequiredForPaidInviteWithdrawal.selector,
+                planetId
+            )
+        );
+        paidInvites.withdraw(allianceId, planetId, balance);
+    }
+
+    function testPaidInviteWithdrawalIgnoresDueConstructionOfAnotherBuilding() public {
+        (uint256 allianceId, uint256 planetId, VeydriftGameStorage.Resources memory balance) =
+            _officerWithTreasuryAndQueuedStabilizer();
+        // Rewrite the queued construction's building to the Metal Mine: only a due Stabilizer
+        // counts. Slot 7 is `buildingConstructions`; word 0 packs active|building|targetLevel|readyAt.
+        bytes32 slot = keccak256(abi.encode(planetId, uint256(7)));
+        uint256 word = uint256(vm.load(address(game), slot));
+        word = (word & ~(uint256(0xff) << 8)) | (uint256(uint8(Building.MetalMine)) << 8);
+        vm.store(address(game), slot, bytes32(word));
+        assertEq(
+            uint8(game.activeBuildingConstruction(planetId).building), uint8(Building.MetalMine)
+        );
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt + 1);
+
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.RiftStabilizerRequiredForPaidInviteWithdrawal.selector,
+                planetId
+            )
+        );
+        paidInvites.withdraw(allianceId, planetId, balance);
     }
 
     function testOfficerCreditsCanonicalProductionBonusToOwnedPlanetBeforeRift() public {
@@ -2523,6 +2630,39 @@ contract VeydriftAllianceSystemTest is Test {
         _setBuildingLevel(planetId, Building.MetalMine, 1);
         _setBuildingLevel(planetId, Building.SolarPlant, 10);
         _setBuildingLevel(planetId, Building.MetalStorage, 10);
+    }
+
+    function _setTechnologyLevel(address player, Technology technology, uint16 level) internal {
+        bytes32 outerSlot = keccak256(abi.encode(player, uint256(20)));
+        bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
+        vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    /// Adds resources to one planet and to the game-wide internal total, keeping reserve
+    /// accounting consistent (slots 14/15 hold `totalInternalResources`).
+    function _creditPlanetResources(
+        uint256 planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    ) internal {
+        VeydriftGameStorage.Resources memory current = game.planet(planetId).resources;
+        VeydriftGameStorage.Resources memory total = game.totalInternalResources();
+        uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+        vm.store(
+            address(game),
+            bytes32(planetBase + 2),
+            _packResourcesHead(current.metal + metal, current.crystal + crystal)
+        );
+        vm.store(
+            address(game), bytes32(planetBase + 3), bytes32(uint256(current.deuterium + deuterium))
+        );
+        vm.store(
+            address(game),
+            bytes32(uint256(14)),
+            _packResourcesHead(total.metal + metal, total.crystal + crystal)
+        );
+        vm.store(address(game), bytes32(uint256(15)), bytes32(uint256(total.deuterium + deuterium)));
     }
 
     function _setBuildingLevel(uint256 planetId, Building building, uint16 level) internal {

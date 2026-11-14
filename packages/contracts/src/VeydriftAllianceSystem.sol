@@ -174,6 +174,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error NotGame(address caller);
     error NotPaidInviteSystem(address caller);
     error PaidInviteSystemUnset();
+    /// @dev Raised by the game's Rift module (same selector); kept here for ABI decoding.
     error RiftStabilizerRequiredForPaidInviteWithdrawal(uint256 planetId);
 
     event AllianceCreated(
@@ -349,9 +350,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         if (msg.sender != paidInviteSystem) {
             revert NotPaidInviteSystem(msg.sender);
         }
-        if (game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer) == 0) {
-            revert RiftStabilizerRequiredForPaidInviteWithdrawal(planetId);
-        }
+        // The game's Rift module enforces the Stabilizer requirement: it can count a due but not
+        // yet settled construction as built, which a view call from here cannot do cheaply.
         game.creditAllianceBonusToPlanet(planetId, manager, amount);
     }
 

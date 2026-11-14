@@ -521,6 +521,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error FleetMissionNotResolved(uint64 returnAt);
     error DebrisFieldEmpty();
     error RiftStabilizerRequired(uint256 planetId);
+    error RiftStabilizerRequiredForPaidInviteWithdrawal(uint256 planetId);
     error RiftExtractionActive(uint256 planetId, Resource resource);
     error RiftExtractionInactive(uint256 planetId, Resource resource);
     error ResourceTokenNotConfigured(Resource resource);

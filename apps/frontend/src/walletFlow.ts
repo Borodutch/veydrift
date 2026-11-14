@@ -2021,6 +2021,9 @@ const contractRevertReasons: Record<string, string> = {
   // RiftStabilizerRequired(uint256 planetId): injecting or starting an extraction needs a built Rift Stabilizer.
   "0xa731ae2a":
     "This planet's Interdimensional Rift Stabilizer isn't built yet. Wait for its construction to finish, refresh game state, and try again.",
+  // RiftStabilizerRequiredForPaidInviteWithdrawal(uint256 planetId): crediting the alliance production treasury needs a built Rift Stabilizer.
+  "0x88ee2322":
+    "Build an Interdimensional Rift Stabilizer on this planet before withdrawing the alliance bonus. If it just finished building, refresh and try again.",
 };
 
 const fleetMissionTransactionSelectors = new Set<string>([

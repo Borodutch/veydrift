@@ -133,6 +133,7 @@ import {
   waitForBaseSepoliaNetwork,
   waitForVeydriftNetwork,
   walletRecoveryActionMessage,
+  spendTransactionErrorMessage,
   walletRequestErrorMessage,
   type Eip1193Provider,
 } from "./walletFlow";
@@ -2958,6 +2959,20 @@ describe("walletFlow", () => {
         data: customErrorData("0xa731ae2a", [787]),
       }),
     ).toContain("Rift Stabilizer isn't built yet");
+    expect(
+      walletRequestErrorMessage({
+        message: "execution reverted",
+        data: customErrorData("0x88ee2322", [787]),
+      }),
+    ).toBe(
+      "Build an Interdimensional Rift Stabilizer on this planet before withdrawing the alliance bonus. If it just finished building, refresh and try again.",
+    );
+    expect(
+      spendTransactionErrorMessage({
+        message: "execution reverted",
+        data: customErrorData("0x88ee2322", [787]),
+      }),
+    ).toContain("before withdrawing the alliance bonus");
     expect(
       walletRequestErrorMessage({
         message: "execution reverted",

@@ -19,6 +19,9 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
     ) external {
         if (msg.sender != _allianceSystem) revert Unauthorized(msg.sender);
         if (_planets[planetId].owner != manager) revert Unauthorized(manager);
+        if (!_riftStabilizerBuiltOrDue(planetId)) {
+            revert RiftStabilizerRequiredForPaidInviteWithdrawal(planetId);
+        }
         _planets[planetId].resources = _add(_planets[planetId].resources, amount);
         _emitPlanetSettled(planetId);
         emit AllianceBonusCreditedToPlanet(
@@ -179,6 +182,18 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
         if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
+    }
+
+    /// @dev Building completion is lazy: a Stabilizer whose construction `readyAt` has passed stays
+    ///      at level 0 until a transaction settles the planet, yet nothing can stop it completing.
+    ///      The paid-invite credit counts it as built (as the indexer does) without settling, so the
+    ///      withdrawal gains no pending-mission, lock or production-bonus re-entry side effects.
+    function _riftStabilizerBuiltOrDue(uint256 planetId) private view returns (bool) {
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] != 0) return true;
+        BuildingConstruction storage construction = buildingConstructions[planetId];
+        return construction.active
+            && construction.building == Building.InterdimensionalRiftStabilizer
+            && construction.targetLevel != 0 && construction.readyAt <= _currentTimestamp();
     }
 
     function _requireRiftUnlocked(uint256 planetId) private view {
