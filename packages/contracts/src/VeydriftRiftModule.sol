@@ -31,13 +31,15 @@ contract VeydriftRiftModule is VeydriftResourceReserves {
         _requirePlanetOwner(planetId);
         _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
+        // Settle before the unlock check: a Stabilizer whose construction is due only reaches
+        // level 1 once the planet settles (building completion is lazy).
+        _settleActionPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
         _requireReserveResource(resource);
         RiftExtraction storage extraction = riftExtractions[planetId][resource];
         if (extraction.active) revert RiftExtractionActive(planetId, resource);
 
-        _settleActionPlanet(planetId);
         Resources memory resourceAmount = _resourceAmount(resource, amount);
         _spend(planetId, resourceAmount);
         _lockedWithdrawalResources = _add(_lockedWithdrawalResources, resourceAmount);

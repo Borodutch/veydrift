@@ -2955,6 +2955,12 @@ describe("walletFlow", () => {
     expect(
       walletRequestErrorMessage({
         message: "execution reverted",
+        data: customErrorData("0xa731ae2a", [787]),
+      }),
+    ).toContain("Rift Stabilizer isn't built yet");
+    expect(
+      walletRequestErrorMessage({
+        message: "execution reverted",
         data: bytes32StringErrorData("0xb8f7e9ba", "RESEARCH_LAB_6"),
       }),
     ).toContain("Research Lab 6 is required");

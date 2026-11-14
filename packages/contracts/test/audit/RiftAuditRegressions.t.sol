@@ -892,4 +892,72 @@ contract RiftAuditRegressionsTest is Test {
         assertEq(game.shipCount(colony, Ship.LargeCargo), 0);
         assertEq(game.defenseCount(colony, Defense.RocketLauncher), 0);
     }
+
+    // ------------- #672: a Stabilizer whose construction is due must unlock the Rift lazily
+
+    /// Queues the Stabilizer through the real build path and warps past its `readyAt` without
+    /// any transaction that settles the planet, so `buildingLevel` still reads 0.
+    function _dueUnsettledStabilizer(address who) internal returns (uint256 planetId) {
+        planetId = _start(who);
+        _building(planetId, Building.RoboticsFactory, 4);
+        _building(planetId, Building.ResearchLab, 2);
+        _tech(who, Technology.Energy, 5);
+        _tech(who, Technology.Hyperspace, 1);
+        _res(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.prank(who);
+        game.startBuildingUpgrade(planetId, Building.InterdimensionalRiftStabilizer);
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt + 6 hours);
+        assertEq(game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer), 0);
+    }
+
+    function testDepositSettlesADueStabilizerBeforeTheUnlockCheck() public {
+        uint256 planetId = _dueUnsettledStabilizer(defender);
+        metal.mint(defender, 500);
+        vm.prank(defender);
+        metal.approve(address(game), 500);
+        uint128 before = game.planet(planetId).resources.metal;
+
+        // Before the fix this reverted RiftStabilizerRequired until another action settled it.
+        vm.prank(defender);
+        game.depositMarketResource(planetId, Resource.Metal, 500);
+
+        assertEq(game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer), 1);
+        assertFalse(game.activeBuildingConstruction(planetId).active);
+        assertGe(game.planet(planetId).resources.metal, before + 500, "deposit credited");
+        assertEq(metal.balanceOf(defender), 0);
+    }
+
+    function testStartExtractionSettlesADueStabilizerBeforeTheUnlockCheck() public {
+        uint256 planetId = _dueUnsettledStabilizer(defender);
+
+        vm.prank(defender);
+        rift.startRiftExtraction(planetId, Resource.Metal, 1_000);
+
+        assertEq(game.buildingLevel(planetId, Building.InterdimensionalRiftStabilizer), 1);
+        (bool active, uint128 amount,) = _extraction(planetId, Resource.Metal);
+        assertTrue(active);
+        assertEq(amount, 1_000);
+    }
+
+    function testDepositStillRequiresAStabilizerThatIsNotYetDue() public {
+        uint256 planetId = _start(defender);
+        _building(planetId, Building.RoboticsFactory, 4);
+        _building(planetId, Building.ResearchLab, 2);
+        _tech(defender, Technology.Energy, 5);
+        _tech(defender, Technology.Hyperspace, 1);
+        _res(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.prank(defender);
+        game.startBuildingUpgrade(planetId, Building.InterdimensionalRiftStabilizer);
+        vm.warp(game.activeBuildingConstruction(planetId).readyAt - 1);
+        metal.mint(defender, 500);
+        vm.prank(defender);
+        metal.approve(address(game), 500);
+
+        vm.prank(defender);
+        vm.expectRevert(abi.encodeWithSelector(S.RiftStabilizerRequired.selector, planetId));
+        game.depositMarketResource(planetId, Resource.Metal, 500);
+        vm.prank(defender);
+        vm.expectRevert(abi.encodeWithSelector(S.RiftStabilizerRequired.selector, planetId));
+        rift.startRiftExtraction(planetId, Resource.Metal, 1_000);
+    }
 }

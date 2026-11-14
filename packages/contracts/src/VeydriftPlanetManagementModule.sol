@@ -253,7 +253,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _settleDueColonizeArrivals(_actingPlayer());
         _settleDueCombatArrivals(_actingPlayer());
         _requireNoPendingMissionResolutionForPlanet(planetId);
-        _requireRiftUnlocked(planetId);
+        _settleRiftUnlock(planetId);
         if (amount == 0) revert InvalidQuantity();
 
         _transferReserveIn(resource, amount);
@@ -396,7 +396,12 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (planetRef.owner != _actingPlayer()) revert NotPlanetOwner();
     }
 
-    function _requireRiftUnlocked(uint256 planetId) private view {
+    /// @dev Building completion is lazy: a Rift Stabilizer whose construction `readyAt` has passed
+    ///      stays at level 0 until something settles the planet. Settle first, but only when the
+    ///      Stabilizer still reads as unbuilt, so unlocked planets keep their existing behaviour.
+    function _settleRiftUnlock(uint256 planetId) private {
+        if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] != 0) return;
+        _settleActionPlanet(planetId);
         if (_buildingLevels[planetId][Building.InterdimensionalRiftStabilizer] == 0) {
             revert RiftStabilizerRequired(planetId);
         }

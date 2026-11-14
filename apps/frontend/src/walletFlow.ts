@@ -2018,6 +2018,9 @@ const contractRevertReasons: Record<string, string> = {
   "0x6c5511a3": "This moon's defense queue is full. Wait for queued defenses to finish, then retry.",
   "0xdfa1a408": "The selected mission or target no longer matches current chain state. Refresh mission control and retry.",
   "0x1f38cd02": "Attacks are temporarily unavailable. Please try again later.",
+  // RiftStabilizerRequired(uint256 planetId): injecting or starting an extraction needs a built Rift Stabilizer.
+  "0xa731ae2a":
+    "This planet's Interdimensional Rift Stabilizer isn't built yet. Wait for its construction to finish, refresh game state, and try again.",
 };
 
 const fleetMissionTransactionSelectors = new Set<string>([
