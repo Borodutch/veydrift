@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPublicClient, custom, encodeAbiParameters, encodeFunctionResult, keccak256, parseTransaction, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, type Hex, type PublicClient } from "viem";
+import { createPublicClient, custom, encodeAbiParameters, encodeFunctionResult, keccak256, parseTransaction, RpcRequestError, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { missionBatchAbi, batchCalldata, defaultMissionBatchPolicy } from "./missionBatch";
 import { ViemMissionResolutionChainClient } from "./missionResolution";
@@ -406,6 +406,28 @@ test("finalized reuse retains explicit pruned-receipt proof but fails closed on 
  }finally{f.cleanup();}
 });
 
+
+test("finalized reuse accepts an anchor block pruned by the node but fails closed on other block errors",async()=>{
+ // 2026-11-14: the reth node pruned below 56,000,000 and answered the 5-week-old anchor with 4444,
+ // which blocked every resolver pass as rpc-unavailable.
+ const f=fixture();try {
+  f.win(original);await f.client.recoverLegacyMission(f.input);
+  const block=f.publicClient.getBlock;
+  f.publicClient.getTransactionReceipt=async({hash})=>{throw new TransactionReceiptNotFoundError({hash});};
+  f.publicClient.getBlock=async(args:{blockTag?:string;blockNumber?:bigint})=>{
+   if(args.blockNumber===1n) throw new RpcRequestError({body:{},url:"http://node.invalid",error:{code:4444,message:"pruned history unavailable"}});
+   return block(args);
+  };
+  await f.create().client.resolveMissionBatch([]);
+  expect(f.db.query("SELECT winner_hash,finalized FROM resolver_nonce_recovery").get()).toEqual({winner_hash:original,finalized:1});
+  f.publicClient.getBlock=async(args:{blockTag?:string;blockNumber?:bigint})=>{
+   if(args.blockNumber===1n) throw new RpcRequestError({body:{},url:"http://node.invalid",error:{code:-32000,message:"upstream unavailable"}});
+   return block(args);
+  };
+  await expect(f.create().client.resolveMissionBatch([])).rejects.toThrow("rpc-unavailable");
+  expect(f.signs()).toBe(0);
+ }finally{f.cleanup();}
+});
 
 test("full fresh mission readiness/sign/send path proceeds after finalized recovery despite slow historical transaction transport",async()=>{
  const f=fixture();try {

@@ -1,5 +1,7 @@
 import { acquireRecoveryHead, assertRecoveryNonce, recoveryCandidateReceipt, RecoveryTrace, RecoveryReadinessError } from "./recoveryReadiness";
 import {
+  BaseError,
+  BlockNotFoundError,
   decodeEventLog,
   TransactionNotFoundError,
   TransactionReceiptNotFoundError,
@@ -1071,7 +1073,13 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     // Validate the immutable finalized anchor AFTER candidate observations. The
     // common two-candidate path costs three reads/group plus two shared identity
     // reads, so all 32 retained groups fit the unchanged 128-read pass budget.
-    const canonical = await pass.read(() => client.getBlock({ blockNumber }));
+    const canonical = await pass.read(async () => {
+      try { return await client.getBlock({ blockNumber }); }
+      catch (error) { if (isPrunedBlockError(error)) return null; throw error; }
+    });
+    // A node pruned below the anchor cannot re-serve it. The anchor was finalized when recorded, so it
+    // cannot reorg, and the chain-id and consumed-nonce checks above still ran. Other errors fail closed.
+    if (canonical === null) return;
     if (canonical.number !== blockNumber || canonical.hash !== stored.blockHash) throw contradiction();
     for (const loser of losers) {
       const loserBlock = loser.blockNumber === blockNumber ? canonical
@@ -1766,4 +1774,16 @@ function compareCandidates(
   const leftId = BigInt(left.mission.missionId);
   const rightId = BigInt(right.mission.missionId);
   return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
+}
+
+// reth answers blocks below its pruning horizon with JSON-RPC 4444 ("pruned history unavailable");
+// geth-style nodes return null, which viem raises as BlockNotFoundError. Codes only, never messages.
+const PRUNED_HISTORY_RPC_CODE = 4444;
+function isPrunedBlockError(error: unknown): boolean {
+  let cause: unknown = error;
+  for (let depth = 0; cause instanceof BaseError && depth < 16; depth++, cause = cause.cause) {
+    if (cause instanceof BlockNotFoundError) return true;
+    if ((cause as { code?: unknown }).code === PRUNED_HISTORY_RPC_CODE) return true;
+  }
+  return false;
 }
